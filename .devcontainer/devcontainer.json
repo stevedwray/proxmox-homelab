@@ -12,7 +12,7 @@
         "vscode": {
             "extensions": [
                 "hashicorp.terraform",
-                "redhat.ansible", 
+                "redhat.ansible",
                 "ms-python.python",
                 "continue.continue",
                 "ms-vscode.vscode-json",

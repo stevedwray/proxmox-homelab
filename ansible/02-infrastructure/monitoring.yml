@@ -2,7 +2,7 @@
 - name: Setup monitoring infrastructure
   hosts: all
   become: yes
-  
+
   tasks:
     - name: Placeholder for monitoring setup
       debug:

@@ -12,22 +12,22 @@
       - git
       - python3
       - python3-pip
-  
+
   tasks:
     - name: Update package cache
       apt:
         update_cache: yes
         cache_valid_time: 3600
-    
+
     - name: Install base packages
       apt:
         name: "{{ packages_to_install }}"
         state: present
-    
+
     - name: Configure timezone
       timezone:
         name: "{{ timezone | default('UTC') }}"
-    
+
     - name: Setup SSH keys
       authorized_key:
         user: "{{ ansible_user }}"

@@ -26,22 +26,22 @@ update_system() {
 # Install Terraform
 install_terraform() {
     log_info "Installing Terraform..."
-    
+
     # Check if Terraform is already installed
     if command -v terraform >/dev/null 2>&1; then
         log_info "Terraform already installed: $(terraform version -json | python3 -c "import sys, json; print(json.load(sys.stdin)['terraform_version'])" 2>/dev/null || terraform version)"
         return
     fi
-    
+
     # Get latest Terraform version
     TERRAFORM_VERSION=$(curl -s https://api.github.com/repos/hashicorp/terraform/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/v//')
-    
+
     # Download and install
     wget -q https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
     unzip -q terraform_${TERRAFORM_VERSION}_linux_amd64.zip
     sudo mv terraform /usr/local/bin/
     rm terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-    
+
     # Verify installation
     if terraform version >/dev/null 2>&1; then
         log_success "Terraform $(terraform version -json | python3 -c "import sys, json; print(json.load(sys.stdin)['terraform_version'])" 2>/dev/null || echo "installed") installed"
@@ -54,23 +54,23 @@ install_terraform() {
 # Install Ansible
 install_ansible() {
     log_info "Installing Ansible..."
-    
+
     # Create Python virtual environment for Ansible
     if [[ ! -d ~/.ansible-venv ]]; then
         python3 -m venv ~/.ansible-venv
     fi
-    
+
     source ~/.ansible-venv/bin/activate
-    
+
     # Install Ansible and required packages
     pip install --upgrade pip
     pip install ansible proxmoxer requests python-dotenv paramiko jinja2 pyyaml netaddr
-    
+
     # Install community collections
     ansible-galaxy collection install community.general --force
     ansible-galaxy collection install community.crypto --force
     ansible-galaxy collection install ansible.posix --force
-    
+
     # Create activation script
     cat > ~/.activate-ansible << 'EOF'
 #!/bin/bash
@@ -78,13 +78,13 @@ source ~/.ansible-venv/bin/activate
 export PATH="$HOME/.ansible-venv/bin:$PATH"
 EOF
     chmod +x ~/.activate-ansible
-    
+
     # Add to bashrc if not already there
     if ! grep -q "source ~/.activate-ansible" ~/.bashrc; then
         echo "source ~/.activate-ansible" >> ~/.bashrc
         log_info "Added Ansible activation to ~/.bashrc"
     fi
-    
+
     log_success "Ansible installed in virtual environment"
     log_info "Note: Run 'source ~/.activate-ansible' or restart your shell to activate"
 }
@@ -92,7 +92,7 @@ EOF
 # Configure Git
 configure_git() {
     log_info "Configuring Git..."
-    
+
     # Check if git is already configured
     if git config --global user.name >/dev/null 2>&1 && git config --global user.email >/dev/null 2>&1; then
         log_success "Git already configured:"
@@ -100,49 +100,49 @@ configure_git() {
         echo "  Email: $(git config --global user.email)"
         return
     fi
-    
+
     # Prompt for Git configuration
     echo "Git configuration needed:"
     read -p "Enter your Git username: " git_username
     read -p "Enter your Git email: " git_email
-    
+
     git config --global user.name "$git_username"
     git config --global user.email "$git_email"
     git config --global init.defaultBranch main
     git config --global pull.rebase false
-    
+
     log_success "Git configured with username: $git_username"
 }
 
 # Generate SSH keys
 setup_ssh_keys() {
     log_info "Setting up SSH keys..."
-    
+
     if [[ -f ~/.ssh/id_rsa ]]; then
         log_success "SSH key already exists"
         echo "Public key:"
         cat ~/.ssh/id_rsa.pub
         return
     fi
-    
+
     echo "SSH key generation:"
     read -p "Enter your email for SSH key: " ssh_email
-    
+
     # Create .ssh directory if it doesn't exist
     mkdir -p ~/.ssh
     chmod 700 ~/.ssh
-    
+
     # Generate SSH key
     ssh-keygen -t rsa -b 4096 -C "$ssh_email" -f ~/.ssh/id_rsa -N ""
-    
+
     # Set proper permissions
     chmod 600 ~/.ssh/id_rsa
     chmod 644 ~/.ssh/id_rsa.pub
-    
+
     # Start ssh-agent and add key
     eval "$(ssh-agent -s)"
     ssh-add ~/.ssh/id_rsa
-    
+
     log_success "SSH key generated. Public key:"
     cat ~/.ssh/id_rsa.pub
     echo
@@ -154,13 +154,13 @@ setup_ssh_keys() {
 # Install pre-commit
 install_precommit() {
     log_info "Installing pre-commit hooks..."
-    
+
     # Activate Ansible environment to get pip
     source ~/.ansible-venv/bin/activate
-    
+
     # Install pre-commit
     pip install pre-commit
-    
+
     # Install hooks if .pre-commit-config.yaml exists
     if [[ -f .pre-commit-config.yaml ]]; then
         pre-commit install
@@ -173,12 +173,12 @@ install_precommit() {
 # Create environment file if it doesn't exist
 setup_environment() {
     log_info "Setting up environment configuration..."
-    
+
     if [[ -f .env ]]; then
         log_success ".env file already exists"
         return
     fi
-    
+
     if [[ -f .env.template ]]; then
         log_info "Copy .env.template to .env and configure your settings:"
         echo "  cp .env.template .env"
@@ -191,14 +191,14 @@ setup_environment() {
 # Test installations
 test_installations() {
     log_info "Testing installed tools..."
-    
+
     # Test Terraform
     if terraform version >/dev/null 2>&1; then
         log_success "Terraform: $(terraform version | head -1)"
     else
         log_error "Terraform not working"
     fi
-    
+
     # Test Ansible (need to activate environment first)
     source ~/.ansible-venv/bin/activate
     if ansible --version >/dev/null 2>&1; then
@@ -206,14 +206,14 @@ test_installations() {
     else
         log_error "Ansible not working"
     fi
-    
+
     # Test Python packages
     if python3 -c "import proxmoxer; print('Proxmoxer OK')" >/dev/null 2>&1; then
         log_success "Python packages: proxmoxer installed"
     else
         log_warning "Proxmoxer not available (may need to activate Ansible environment)"
     fi
-    
+
     # Test Git
     if git --version >/dev/null 2>&1; then
         log_success "Git: $(git --version)"
@@ -260,10 +260,10 @@ main() {
     echo "  PROXMOX HOMELAB DEVELOPMENT SETUP"
     echo "=============================================="
     echo
-    
+
     log_info "Starting development environment setup..."
     echo
-    
+
     update_system
     install_terraform
     install_ansible

@@ -23,20 +23,20 @@ resource "proxmox_lxc" "test_containers" {
   ostemplate   = var.lxc_template
   password     = var.lxc_password
   unprivileged = true
-  
+
   memory = 512
   cores  = 1
-  
+
   rootfs {
     storage = var.storage_pool
     size    = "8G"
   }
-  
+
   network {
     name   = "eth0"
     bridge = var.network_bridge
     ip     = "dhcp"
   }
-  
+
   tags = "test,development"
 }

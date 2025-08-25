@@ -53,3 +53,5 @@ id_rsa.pub
 *.log
 
 .continue/config.json
+*~
+

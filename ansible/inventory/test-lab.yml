@@ -6,7 +6,7 @@ all:
           ansible_host: 192.168.1.100
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
-    
+
     test_containers:
       hosts:
         test-1:
