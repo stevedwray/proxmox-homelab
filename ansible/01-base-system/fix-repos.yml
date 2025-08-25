@@ -1,0 +1,32 @@
+---
+- name: Fix Proxmox repositories
+  hosts: proxmox
+  become: yes
+  tasks:
+    - name: Disable enterprise PVE repository
+      replace:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+        regexp: '^Types:'
+        replace: '# Types:'
+        backup: yes
+
+    - name: Disable enterprise Ceph repository
+      replace:
+        path: /etc/apt/sources.list.d/ceph.sources
+        regexp: '^Types:'
+        replace: '# Types:'
+        backup: yes
+
+    - name: Add no-subscription repository
+      copy:
+        content: |
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: trixie
+          Components: pve-no-subscription
+        dest: /etc/apt/sources.list.d/pve-no-subscription.sources
+        backup: yes
+
+    - name: Update package cache
+      apt:
+        update_cache: yes

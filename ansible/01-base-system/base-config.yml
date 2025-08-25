@@ -1,6 +1,6 @@
 ---
-- name: Configure base system
-  hosts: all
+- name: Configure Proxmox base system
+  hosts: proxmox
   become: yes
   vars:
     packages_to_install:
@@ -12,8 +12,32 @@
       - git
       - python3
       - python3-pip
-
   tasks:
+    - name: Disable enterprise PVE repository
+      replace:
+        path: /etc/apt/sources.list.d/pve-enterprise.sources
+        regexp: '^(.*)$'
+        replace: '# \1'
+        backup: yes
+
+    - name: Disable enterprise Ceph repository
+      replace:
+        path: /etc/apt/sources.list.d/ceph.sources
+        regexp: '^(.*)$'
+        replace: '# \1'
+        backup: yes
+
+    - name: Add no-subscription repository
+      copy:
+        content: "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription\n"
+        dest: /etc/apt/sources.list.d/pve-no-subscription.list
+        backup: yes
+
+    - name: Remove duplicate no-subscription sources file if exists
+      file:
+        path: /etc/apt/sources.list.d/pve-no-subscription.sources
+        state: absent
+
     - name: Update package cache
       apt:
         update_cache: yes

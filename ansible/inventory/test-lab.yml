@@ -2,19 +2,18 @@ all:
   children:
     proxmox:
       hosts:
-        pve-lab:
-          ansible_host: 192.168.1.100
+        pvetest:
+          ansible_host: pvetest.gibbsgreatly.xyz
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
-
     test_containers:
       hosts:
         test-1:
-          ansible_host: "{{ hostvars['pve-lab']['container_ips']['test-1'] | default('192.168.1.101') }}"
+          ansible_host: "{{ hostvars['pvetest']['container_ips']['test-1'] | default('dhcp') }}"
           ansible_user: root
           container_id: 101
         test-2:
-          ansible_host: "{{ hostvars['pve-lab']['container_ips']['test-2'] | default('192.168.1.102') }}"
+          ansible_host: "{{ hostvars['pvetest']['container_ips']['test-2'] | default('dhcp') }}"
           ansible_user: root
           container_id: 102
       vars:
