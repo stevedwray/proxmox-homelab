@@ -1,0 +1,32 @@
+{
+    "folders": [
+        {
+            "name": "Proxmox Homelab",
+            "path": "."
+        }
+    ],
+    "settings": {
+        "files.associations": {
+            "*.yml": "yaml",
+            "*.yaml": "yaml",
+            "*.tf": "terraform",
+            "*.tfvars": "terraform"
+        },
+        "terraform.experimentalFeatures.validateOnSave": true,
+        "ansible.python.interpreterPath": "~/.ansible-venv/bin/python",
+        "python.defaultInterpreterPath": "~/.ansible-venv/bin/python",
+        "terminal.integrated.defaultProfile.linux": "bash",
+        "terminal.integrated.env.linux": {
+            "ANSIBLE_CONFIG": "${workspaceFolder}/ansible/ansible.cfg"
+        }
+    },
+    "extensions": {
+        "recommendations": [
+            "ms-vscode-remote.remote-wsl",
+            "continue.continue",
+            "hashicorp.terraform",
+            "redhat.ansible",
+            "ms-python.python"
+        ]
+    }
+}

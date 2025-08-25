@@ -1,0 +1,24 @@
+{
+    "name": "Proxmox Homelab Development",
+    "image": "mcr.microsoft.com/devcontainers/base:ubuntu-22.04",
+    "features": {
+        "ghcr.io/devcontainers/features/terraform:1": {},
+        "ghcr.io/devcontainers/features/python:1": {
+            "version": "3.11"
+        },
+        "ghcr.io/devcontainers/features/git:1": {}
+    },
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "hashicorp.terraform",
+                "redhat.ansible", 
+                "ms-python.python",
+                "continue.continue",
+                "ms-vscode.vscode-json",
+                "ms-vscode-remote.remote-wsl"
+            ]
+        }
+    },
+    "postCreateCommand": "pip install -r requirements.txt && ansible-galaxy install -r ansible/requirements.yml"
+}

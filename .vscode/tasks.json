@@ -1,0 +1,57 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Terraform Init",
+            "type": "shell",
+            "command": "terraform",
+            "args": ["init"],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}/terraform/environments/test-vm"
+            },
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": false,
+                "panel": "shared"
+            }
+        },
+        {
+            "label": "Terraform Plan",
+            "type": "shell",
+            "command": "terraform",
+            "args": ["plan"],
+            "group": "build",
+            "options": {
+                "cwd": "${workspaceFolder}/terraform/environments/test-vm"
+            }
+        },
+        {
+            "label": "Ansible Lint",
+            "type": "shell",
+            "command": "ansible-lint",
+            "args": ["ansible/"],
+            "group": "test"
+        },
+        {
+            "label": "Run Security Scan",
+            "type": "shell",
+            "command": "pre-commit",
+            "args": ["run", "--all-files"],
+            "group": "test"
+        },
+        {
+            "label": "Validate Environment",
+            "type": "shell",
+            "command": "${workspaceFolder}/scripts/validate-environment.sh",
+            "group": "test",
+            "presentation": {
+                "echo": true,
+                "reveal": "always",
+                "focus": true,
+                "panel": "new"
+            }
+        }
+    ]
+}
