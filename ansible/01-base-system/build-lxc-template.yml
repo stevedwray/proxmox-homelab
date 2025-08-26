@@ -36,6 +36,7 @@
         --rootfs {{ storage_pool }}:{{ template_disk }}
         --net0 name=eth0,bridge={{ network_bridge }},ip={{ template_ip }}/24,gw={{ gateway_ip }}
         --ssh-public-keys ~/.ssh/id_rsa.pub
+        --features nesting=1,keyctl=1
         --start
       when: container_exists.rc != 0
 

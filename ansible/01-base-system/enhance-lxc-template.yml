@@ -1,0 +1,414 @@
+---
+# 01-base-system/enhance-lxc-template.yml
+# Enhances existing LXC template with security, monitoring, and standardization
+- name: Enhance LXC template with security and monitoring
+  hosts: "{{ target_hosts | default('template_builder') }}"
+  become: yes
+  vars:
+    enhancement_packages:
+      # Security tools
+      - unattended-upgrades
+      - apt-listchanges
+      - fail2ban
+      - ufw
+      # Monitoring essentials
+      - prometheus-node-exporter
+      # Directory/mount utilities
+      - bindfs
+      - acl
+      # Log management
+      - rsyslog
+      - logrotate
+
+  tasks:
+    - name: Install enhancement packages
+      apt:
+        name: "{{ enhancement_packages }}"
+        state: present
+        update_cache: yes
+
+    - name: Create standardized directory structure
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - /data
+        - /config
+        - /logs
+        - /backups
+        - /opt/docker
+        - /opt/security
+        - /opt/monitoring
+
+    - name: Install Trivy vulnerability scanner
+      block:
+        - name: Download Trivy GPG key
+          get_url:
+            url: https://aquasecurity.github.io/trivy-repo/deb/public.key
+            dest: /tmp/trivy.key
+
+        - name: Add Trivy GPG key
+          shell: gpg --dearmor < /tmp/trivy.key > /usr/share/keyrings/trivy.gpg
+
+        - name: Add Trivy repository
+          apt_repository:
+            repo: "deb [signed-by=/usr/share/keyrings/trivy.gpg] https://aquasecurity.github.io/trivy-repo/deb generic main"
+            state: present
+
+        - name: Install Trivy
+          apt:
+            name: trivy
+            state: present
+            update_cache: yes
+
+        - name: Clean up Trivy key file
+          file:
+            path: /tmp/trivy.key
+            state: absent
+
+    - name: Install Docker Bench Security
+      block:
+        - name: Clone Docker Bench Security
+          git:
+            repo: https://github.com/docker/docker-bench-security.git
+            dest: /opt/security/docker-bench-security
+            version: master
+            force: yes
+
+        - name: Make Docker Bench executable
+          file:
+            path: /opt/security/docker-bench-security/docker-bench-security.sh
+            mode: '0755'
+
+        - name: Create Docker Bench wrapper script
+          copy:
+            content: |
+              #!/bin/bash
+              # Docker Bench Security wrapper
+              cd /opt/security/docker-bench-security
+              ./docker-bench-security.sh "$@"
+            dest: /usr/local/bin/docker-bench
+            mode: '0755'
+
+    - name: Configure Node Exporter
+      block:
+        - name: Create node_exporter user
+          user:
+            name: node_exporter
+            system: yes
+            shell: /bin/false
+            home: /var/lib/node_exporter
+            create_home: no
+
+        - name: Configure node_exporter systemd service
+          copy:
+            content: |
+              [Unit]
+              Description=Prometheus Node Exporter
+              Wants=network-online.target
+              After=network-online.target
+
+              [Service]
+              User=node_exporter
+              Group=node_exporter
+              Type=simple
+              ExecStart=/usr/bin/prometheus-node-exporter \
+                --web.listen-address=:9100 \
+                --path.procfs=/proc \
+                --path.sysfs=/sys \
+                --collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc|rootfs/var/lib/docker/containers|rootfs/var/lib/docker/overlay2|rootfs/run/docker/netns|rootfs/var/lib/docker/aufs)($$|/) \
+                --collector.systemd
+              Restart=always
+
+              [Install]
+              WantedBy=multi-user.target
+            dest: /etc/systemd/system/prometheus-node-exporter.service
+            mode: '0644'
+
+        - name: Enable node_exporter (but don't start in template)
+          systemd:
+            name: prometheus-node-exporter
+            enabled: yes
+            daemon_reload: yes
+
+    - name: Configure enhanced logging
+      block:
+        - name: Configure journald for better log management
+          copy:
+            content: |
+              [Journal]
+              Storage=persistent
+              Compress=yes
+              SyncIntervalSec=5m
+              RateLimitInterval=30s
+              RateLimitBurst=10000
+              SystemMaxUse=1G
+              SystemKeepFree=2G
+              SystemMaxFileSize=128M
+              RuntimeMaxUse=100M
+              RuntimeKeepFree=1G
+              RuntimeMaxFileSize=64M
+              MaxRetentionSec=1month
+              ForwardToSyslog=yes
+            dest: /etc/systemd/journald.conf
+            backup: yes
+
+        - name: Configure rsyslog for remote forwarding capability
+          copy:
+            content: |
+              # Enhanced rsyslog configuration for log forwarding
+              $ModLoad imuxsock # provides support for local system logging
+              $ModLoad imjournal # provides access to the systemd journal
+
+              # Reduce repeated messages
+              $RepeatedMsgReduction on
+
+              # Include all config files in /etc/rsyslog.d/
+              $IncludeConfig /etc/rsyslog.d/*.conf
+
+              # Standard log files
+              *.info;mail.none;authpriv.none;cron.none                /var/log/messages
+              authpriv.*                                              /var/log/secure
+              mail.*                                                  -/var/log/maillog
+              cron.*                                                  /var/log/cron
+              *.emerg                                                 :omusrmsg:*
+              uucp,news.crit                                          /var/log/spooler
+              local7.*                                                /var/log/boot.log
+
+              # Docker container logs (if needed)
+              if $programname == 'docker' then /var/log/docker.log
+              & stop
+            dest: /etc/rsyslog.conf
+            backup: yes
+
+    - name: Create security management scripts
+      block:
+        - name: Create vulnerability scan script
+          copy:
+            content: |
+              #!/bin/bash
+              # Container and system vulnerability scanning
+
+              echo "=== System Vulnerability Scan ==="
+              echo "Scanning filesystem..."
+              trivy fs --severity HIGH,CRITICAL /
+
+              echo ""
+              echo "=== Docker Images Scan ==="
+              if command -v docker &> /dev/null; then
+                  echo "Scanning Docker images..."
+                  docker images --format "table {{'{{'}}.Repository{{'}}'}}:{{'{{'}}.Tag{{'}}'}}" | tail -n +2 | while read image; do
+                      echo "Scanning $image..."
+                      trivy image --severity HIGH,CRITICAL "$image"
+                  done
+              else
+                  echo "Docker not running, skipping image scan"
+              fi
+
+              echo ""
+              echo "=== Docker Security Bench ==="
+              if command -v docker &> /dev/null; then
+                  docker-bench
+              else
+                  echo "Docker not running, skipping Docker Bench"
+              fi
+            dest: /usr/local/bin/security-scan
+            mode: '0755'
+
+        - name: Create mount helper script
+          copy:
+            content: |
+              #!/bin/bash
+              # Helper script for consistent bind mount management
+
+              usage() {
+                  echo "Usage: $0 {create|mount|unmount} <mount-name> [source-path]"
+                  echo ""
+                  echo "Examples:"
+                  echo "  $0 create webapp-data /tank/data/webapp"
+                  echo "  $0 mount webapp-data"
+                  echo "  $0 unmount webapp-data"
+              }
+
+              create_mount_structure() {
+                  local name=$1
+                  local source=$2
+
+                  # Create standard directories
+                  mkdir -p "/data/$name"
+                  mkdir -p "/config/$name"
+                  mkdir -p "/logs/$name"
+
+                  # Create mount info file
+                  cat > "/data/$name/.mount-info" << EOF
+              # Mount configuration for $name
+              SOURCE_PATH=$source
+              MOUNT_POINT=/data/$name
+              CREATED=$(date)
+              EOF
+
+                  echo "Created mount structure for $name"
+                  echo "Data: /data/$name"
+                  echo "Config: /config/$name"
+                  echo "Logs: /logs/$name"
+              }
+
+              case "$1" in
+                  create)
+                      if [[ -z "$2" || -z "$3" ]]; then
+                          usage
+                          exit 1
+                      fi
+                      create_mount_structure "$2" "$3"
+                      ;;
+                  mount|unmount)
+                      echo "Mount operations should be handled by Proxmox host"
+                      echo "Use: pct set <vmid> -mp0 /host/path,mp=/data/$2"
+                      ;;
+                  *)
+                      usage
+                      exit 1
+                      ;;
+              esac
+            dest: /usr/local/bin/mount-helper
+            mode: '0755'
+
+    - name: Configure basic security hardening
+      block:
+        - name: Configure UFW default policies
+          ufw:
+            direction: "{{ item.direction }}"
+            policy: "{{ item.policy }}"
+          loop:
+            - { direction: 'incoming', policy: 'deny' }
+            - { direction: 'outgoing', policy: 'allow' }
+
+        - name: Allow SSH through UFW
+          ufw:
+            rule: allow
+            port: '22'
+            proto: tcp
+
+        - name: Allow Node Exporter through UFW (internal networks)
+          ufw:
+            rule: allow
+            port: '9100'
+            proto: tcp
+            src: '{{ item }}'
+          loop:
+            - '10.0.0.0/8'
+            - '172.16.0.0/12'
+            - '192.168.0.0/16'
+
+        - name: Configure fail2ban for SSH
+          copy:
+            content: |
+              [DEFAULT]
+              bantime = 3600
+              findtime = 600
+              maxretry = 3
+
+              [sshd]
+              enabled = true
+              port = ssh
+              logpath = %(sshd_log)s
+              backend = %(sshd_backend)s
+            dest: /etc/fail2ban/jail.local
+            backup: yes
+
+        - name: Configure automatic security updates
+          copy:
+            content: |
+              APT::Periodic::Update-Package-Lists "1";
+              APT::Periodic::Download-Upgradeable-Packages "1";
+              APT::Periodic::AutocleanInterval "7";
+              APT::Periodic::Unattended-Upgrade "1";
+            dest: /etc/apt/apt.conf.d/20auto-upgrades
+
+    - name: Create system information script
+      copy:
+        content: |
+          #!/bin/bash
+          # System information and status script
+
+          echo "=== LXC Container Information ==="
+          echo "Hostname: $(hostname)"
+          echo "Container ID: $(cat /proc/1/cgroup | grep -o '/lxc/[^/]*' | cut -d'/' -f3 2>/dev/null || echo 'Unknown')"
+          echo "IP Address: $(ip route get 1 | awk '{print $7}' | head -n1)"
+          echo "Uptime: $(uptime -p)"
+          echo ""
+
+          echo "=== Directory Structure ==="
+          ls -la /data /config /logs /backups /opt/docker 2>/dev/null
+          echo ""
+
+          echo "=== Services Status ==="
+          systemctl is-active docker prometheus-node-exporter fail2ban ufw --no-pager
+          echo ""
+
+          echo "=== Security Tools ==="
+          echo "Trivy: $(trivy --version | head -n1)"
+          echo "Docker Bench: Available at /opt/security/docker-bench-security/"
+          echo ""
+
+          echo "=== Docker Status ==="
+          if systemctl is-active docker &>/dev/null; then
+              echo "Docker containers:"
+              docker ps -a --format "table {{'{{'}}.Names{{'}}'}}\t{{'{{'}}.Status{{'}}'}}\t{{'{{'}}.Ports{{'}}'}}"
+          else
+              echo "Docker not running"
+          fi
+        dest: /usr/local/bin/container-info
+        mode: '0755'
+
+    - name: Clean up for template conversion
+      block:
+        - name: Clear package cache
+          apt:
+            autoclean: yes
+            autoremove: yes
+
+        - name: Clear logs
+          shell: |
+            find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
+            journalctl --vacuum-time=1s
+            rm -rf /tmp/*
+            rm -rf /var/tmp/*
+          failed_when: false
+
+        - name: Clear bash history
+          shell: history -c
+          failed_when: false
+
+    - name: Display enhancement summary
+      debug:
+        msg: |
+          LXC Template Enhancement Complete!
+
+          Security Tools:
+          - Trivy vulnerability scanner: trivy --help
+          - Docker Bench Security: docker-bench
+          - UFW firewall configured (SSH + Node Exporter allowed)
+          - Fail2ban configured for SSH protection
+          - Automatic security updates enabled
+
+          Monitoring:
+          - Node Exporter ready on port 9100
+          - Enhanced logging with journald + rsyslog
+
+          Directory Structure:
+          - /data - Application data mounts
+          - /config - Configuration mounts
+          - /logs - Log mounts
+          - /backups - Backup staging
+          - /opt/docker - Docker compose files
+
+          Management Scripts:
+          - security-scan - Run vulnerability scans
+          - mount-helper - Manage bind mount structure
+          - container-info - System information
+
+          Next: Convert to template and clone for production use!
