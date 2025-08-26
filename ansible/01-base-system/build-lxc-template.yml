@@ -1,0 +1,422 @@
+---
+# 01-base-system/build-lxc-template.yml
+- name: Create and configure LXC template
+  hosts: proxmox
+  become: yes
+  vars:
+    template_id: "{{ lxc_template_id | default(900) }}"
+    template_hostname: "{{ lxc_template_hostname | default('template-builder') }}"
+    template_ip: "{{ lxc_template_ip | default('192.168.1.50') }}"
+    template_memory: "{{ lxc_template_memory | default(2048) }}"
+    template_cores: "{{ lxc_template_cores | default(2) }}"
+    template_disk: "{{ lxc_template_disk | default('8') }}"
+    base_template: "{{ lxc_base_template | default('local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst') }}"
+    storage_pool: "{{ lxc_storage_pool | default('local-zfs') }}"
+    network_bridge: "{{ lxc_network_bridge | default('vmbr0') }}"
+    gateway_ip: "{{ lxc_gateway_ip | default('192.168.1.1') }}"
+
+  tasks:
+    - name: Check if template container already exists
+      shell: pct list | grep -q "^{{ template_id }}\s"
+      register: container_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Download Debian 12 template if not present
+      shell: pveam download local debian-12-standard_12.7-1_amd64.tar.zst
+      failed_when: false
+      when: container_exists.rc != 0
+
+    - name: Create base LXC container
+      shell: >
+        pct create {{ template_id }} {{ base_template }}
+        --hostname {{ template_hostname }}
+        --memory {{ template_memory }}
+        --cores {{ template_cores }}
+        --rootfs {{ storage_pool }}:{{ template_disk }}
+        --net0 name=eth0,bridge={{ network_bridge }},ip={{ template_ip }}/24,gw={{ gateway_ip }}
+        --ssh-public-keys ~/.ssh/id_rsa.pub
+        --start
+      when: container_exists.rc != 0
+
+    - name: Wait for container to be running
+      shell: pct status {{ template_id }}
+      register: container_status
+      until: "'running' in container_status.stdout"
+      retries: 10
+      delay: 5
+
+    - name: Wait for SSH to be available
+      wait_for:
+        host: "{{ template_ip }}"
+        port: 22
+        delay: 10
+        timeout: 300
+
+- name: Initial container setup via pct exec
+  hosts: proxmox
+  become: yes
+  vars:
+    template_id: "{{ lxc_template_id | default(900) }}"
+    template_ip: "{{ lxc_template_ip | default('192.168.1.50') }}"
+
+  tasks:
+    - name: Configure SSH and create automation user via pct exec
+      shell: |
+        pct exec {{ template_id }} -- bash -c "
+        apt update && apt install -y openssh-server sudo
+        systemctl enable ssh
+        systemctl start ssh
+        useradd -m -s /bin/bash -G sudo automation
+        mkdir -p /home/automation/.ssh
+        echo '{{ lookup('file', '~/.ssh/id_rsa.pub') }}' > /home/automation/.ssh/authorized_keys
+        chown -R automation:automation /home/automation/.ssh
+        chmod 700 /home/automation/.ssh
+        chmod 600 /home/automation/.ssh/authorized_keys
+        echo 'automation ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/automation
+        echo 'PermitRootLogin yes' >> /etc/ssh/sshd_config
+        echo '{{ lookup('file', '~/.ssh/id_rsa.pub') }}' >> /root/.ssh/authorized_keys || mkdir -p /root/.ssh && echo '{{ lookup('file', '~/.ssh/id_rsa.pub') }}' > /root/.ssh/authorized_keys
+        chmod 700 /root/.ssh
+        chmod 600 /root/.ssh/authorized_keys
+        systemctl restart ssh
+        "
+
+- name: Configure the LXC container via SSH
+  hosts: template_builder
+  become: yes
+  vars:
+    template_packages:
+      # Basic system tools
+      - curl
+      - wget
+      - vim
+      - emacs-nox
+      - htop
+      - unzip
+      - git
+      - python3
+      - python3-pip
+      - net-tools
+      - openssh-server
+      - sudo
+      - systemd
+      - dbus
+      - ca-certificates
+      - gnupg
+      - lsb-release
+      # Network diagnostic tools
+      - tcpdump
+      - netstat-nat
+      - traceroute
+      - nmap
+      - dnsutils
+      - telnet
+      # Additional utilities
+      - tree
+      - less
+      - nano
+
+  tasks:
+    - name: Update package cache
+      apt:
+        update_cache: yes
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
+
+    - name: Install standard packages
+      apt:
+        name: "{{ template_packages }}"
+        state: present
+
+    - name: Configure timezone
+      timezone:
+        name: "{{ timezone | default('Pacific/Auckland') }}"
+
+    - name: Create automation user (password will be disabled)
+      user:
+        name: automation
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        password: '*'  # Disabled password
+
+    - name: Add automation user to sudoers
+      copy:
+        content: 'automation ALL=(ALL) NOPASSWD:ALL'
+        dest: /etc/sudoers.d/automation
+        mode: '0440'
+
+    - name: Configure auto-login for console
+      block:
+        - name: Create getty override directory
+          file:
+            path: /etc/systemd/system/console-getty.service.d
+            state: directory
+            mode: '0755'
+
+        - name: Configure console auto-login
+          copy:
+            content: |
+              [Service]
+              ExecStart=
+              ExecStart=-/sbin/agetty --noissue --autologin root --noclear %I $TERM
+            dest: /etc/systemd/system/console-getty.service.d/autologin.conf
+            mode: '0644'
+
+        - name: Create getty@tty1 override directory
+          file:
+            path: /etc/systemd/system/getty@tty1.service.d
+            state: directory
+            mode: '0755'
+
+        - name: Configure tty1 auto-login
+          copy:
+            content: |
+              [Service]
+              ExecStart=
+              ExecStart=-/sbin/agetty --noissue --autologin root --noclear %I $TERM
+            dest: /etc/systemd/system/getty@tty1.service.d/autologin.conf
+            mode: '0644'
+
+        - name: Enable auto-login services
+          systemd:
+            name: "{{ item }}"
+            enabled: yes
+            daemon_reload: yes
+          loop:
+            - console-getty.service
+    - name: Configure SSH for automation user
+      authorized_key:
+        user: automation
+        state: present
+        key: "{{ lookup('file', '~/.ssh/id_rsa.pub') }}"
+
+    - name: Install Docker (optional)
+      block:
+        - name: Create directory for Docker GPG key
+          file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: '0755'
+
+        - name: Download Docker GPG key
+          get_url:
+            url: https://download.docker.com/linux/debian/gpg
+            dest: /tmp/docker.gpg
+
+        - name: Import Docker GPG key
+          shell: gpg --dearmor < /tmp/docker.gpg > /etc/apt/keyrings/docker.gpg
+
+        - name: Set permissions on Docker GPG key
+          file:
+            path: /etc/apt/keyrings/docker.gpg
+            mode: '0644'
+
+        - name: Add Docker repository
+          apt_repository:
+            repo: "deb [arch=amd64 signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/debian {{ ansible_distribution_release }} stable"
+            state: present
+
+        - name: Update apt cache after adding Docker repo
+          apt:
+            update_cache: yes
+
+        - name: Install Docker packages
+          apt:
+            name:
+              - docker-ce
+              - docker-ce-cli
+              - containerd.io
+              - docker-compose-plugin
+            state: present
+
+        - name: Add automation user to docker group
+          user:
+            name: automation
+            groups: docker
+            append: yes
+
+        - name: Enable and start Docker service
+          systemd:
+            name: docker
+            enabled: yes
+            state: started
+
+        - name: Clean up temporary GPG file
+          file:
+            path: /tmp/docker.gpg
+            state: absent
+
+        - name: Install Docker Compose (standalone)
+          get_url:
+            url: "https://github.com/docker/compose/releases/latest/download/docker-compose-linux-x86_64"
+            dest: /usr/local/bin/docker-compose
+            mode: '0755'
+            owner: root
+            group: root
+
+        - name: Verify Docker Compose installation
+          command: docker-compose --version
+          register: compose_version
+          failed_when: false
+
+    - name: Set up Portainer Agent
+      block:
+        - name: Create portainer directory
+          file:
+            path: /opt/portainer
+            state: directory
+            mode: '0755'
+
+        - name: Create Portainer Agent docker-compose file
+          copy:
+            content: |
+              version: '3.8'
+              services:
+                portainer-agent:
+                  image: portainer/agent:2.21.1
+                  container_name: portainer-agent
+                  restart: unless-stopped
+                  ports:
+                    - "9001:9001"
+                  volumes:
+                    - /var/run/docker.sock:/var/run/docker.sock
+                    - /var/lib/docker/volumes:/var/lib/docker/volumes
+                  environment:
+                    - AGENT_CLUSTER_ADDR=tasks.agent
+                  networks:
+                    - portainer-agent
+                  logging:
+                    driver: "json-file"
+                    options:
+                      max-size: "10m"
+                      max-file: "3"
+
+              networks:
+                portainer-agent:
+                  external: false
+            dest: /opt/portainer/docker-compose.yml
+            mode: '0644'
+
+        - name: Create Portainer Agent systemd service
+          copy:
+            content: |
+              [Unit]
+              Description=Portainer Agent
+              Requires=docker.service
+              After=docker.service
+
+              [Service]
+              Type=oneshot
+              RemainAfterExit=yes
+              WorkingDirectory=/opt/portainer
+              ExecStart=/usr/local/bin/docker-compose up -d
+              ExecStop=/usr/local/bin/docker-compose down
+              TimeoutStartSec=0
+
+              [Install]
+              WantedBy=multi-user.target
+            dest: /etc/systemd/system/portainer-agent.service
+            mode: '0644'
+
+        - name: Enable Portainer Agent service (but don't start in template)
+          systemd:
+            name: portainer-agent
+            enabled: yes
+            daemon_reload: yes
+
+        - name: Create Portainer Agent management script
+          copy:
+            content: |
+              #!/bin/bash
+              # Portainer Agent management script
+
+              case "$1" in
+                start)
+                  echo "Starting Portainer Agent..."
+                  systemctl start portainer-agent
+                  ;;
+                stop)
+                  echo "Stopping Portainer Agent..."
+                  systemctl stop portainer-agent
+                  ;;
+                restart)
+                  echo "Restarting Portainer Agent..."
+                  systemctl restart portainer-agent
+                  ;;
+                status)
+                  systemctl status portainer-agent
+                  echo ""
+                  docker ps | grep portainer-agent
+                  ;;
+                logs)
+                  docker logs portainer-agent
+                  ;;
+                *)
+                  echo "Usage: $0 {start|stop|restart|status|logs}"
+                  exit 1
+                  ;;
+              esac
+            dest: /usr/local/bin/portainer-agent
+            mode: '0755'
+
+      when: install_docker | default(true)
+
+    - name: Clean up for template creation
+      block:
+        - name: Clear package cache
+          apt:
+            autoclean: yes
+            autoremove: yes
+
+        - name: Clear bash history
+          shell: history -c
+          failed_when: false
+
+        - name: Clear log files
+          shell: |
+            find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
+            rm -rf /tmp/*
+            rm -rf /var/tmp/*
+          failed_when: false
+
+        - name: Clear SSH host keys (will be regenerated on first boot)
+          file:
+            path: "{{ item }}"
+            state: absent
+          loop:
+            - /etc/ssh/ssh_host_rsa_key
+            - /etc/ssh/ssh_host_rsa_key.pub
+            - /etc/ssh/ssh_host_ecdsa_key
+            - /etc/ssh/ssh_host_ecdsa_key.pub
+            - /etc/ssh/ssh_host_ed25519_key
+            - /etc/ssh/ssh_host_ed25519_key.pub
+
+- name: Convert container to template
+  hosts: proxmox
+  become: yes
+  vars:
+    template_id: 900
+
+  tasks:
+    - name: Stop the container
+      shell: pct stop {{ template_id }}
+
+    - name: Convert container to template
+      shell: pct template {{ template_id }}
+
+    - name: Display success message
+      debug:
+        msg: |
+          LXC template created successfully!
+          Template ID: {{ template_id }}
+
+          To create new containers from this template:
+          pct clone {{ template_id }} <new_container_id> --hostname <new_hostname>
+
+          Example:
+          pct clone {{ template_id }} 101 --hostname web-server-1
