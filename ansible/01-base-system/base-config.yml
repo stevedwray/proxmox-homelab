@@ -12,36 +12,47 @@
       - git
       - python3
       - python3-pip
+      - iftop
+      - iotop
+      - net-tools
+      - smartmontools
   tasks:
-    - name: Disable enterprise PVE repository
+    - name: Disable enterprise PVE repository (comment all lines)
       replace:
         path: /etc/apt/sources.list.d/pve-enterprise.sources
         regexp: '^(.*)$'
         replace: '# \1'
         backup: yes
+      failed_when: false
 
-    - name: Disable enterprise Ceph repository
+    - name: Disable enterprise Ceph repository (comment all lines)
       replace:
         path: /etc/apt/sources.list.d/ceph.sources
         regexp: '^(.*)$'
         replace: '# \1'
         backup: yes
+      failed_when: false
 
-    - name: Add no-subscription repository
+    - name: Add no-subscription repository (deb822 format)
       copy:
-        content: "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription\n"
-        dest: /etc/apt/sources.list.d/pve-no-subscription.list
+        content: |
+          Types: deb
+          URIs: http://download.proxmox.com/debian/pve
+          Suites: trixie
+          Components: pve-no-subscription
+          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
+        dest: /etc/apt/sources.list.d/proxmox.sources
         backup: yes
-
-    - name: Remove duplicate no-subscription sources file if exists
-      file:
-        path: /etc/apt/sources.list.d/pve-no-subscription.sources
-        state: absent
 
     - name: Update package cache
       apt:
         update_cache: yes
-        cache_valid_time: 3600
+
+    - name: Upgrade all packages
+      apt:
+        upgrade: dist
+        autoremove: yes
+        autoclean: yes
 
     - name: Install base packages
       apt:
@@ -52,9 +63,17 @@
       timezone:
         name: "{{ timezone | default('UTC') }}"
 
-    - name: Setup SSH keys
-      authorized_key:
-        user: "{{ ansible_user }}"
-        key: "{{ lookup('file', ssh_public_key_path) }}"
-        state: present
-      when: ssh_public_key_path is defined
+    - name: Disable subscription nag using shell command
+      shell: |
+        sed -i 's/res.data.status.toLowerCase() !== '\''active'\''/false/' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+
+    - name: Disable HA services for single node setup
+      systemd:
+        name: "{{ item }}"
+        enabled: no
+        state: stopped
+      loop:
+        - pve-ha-lrm
+        - pve-ha-crm
+        - corosync
+      failed_when: false
