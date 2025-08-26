@@ -1,4 +1,7 @@
 ---
+# File: ansible/01-base-system/base-config.yml
+# Updated base configuration playbook with automation user setup
+
 - name: Configure Proxmox base system
   hosts: proxmox
   become: yes
@@ -16,7 +19,13 @@
       - iotop
       - net-tools
       - smartmontools
+      - sudo  # Added: Required for automation user
+      - openssh-server  # Added: Ensure SSH is available
+    automation_user: automation
+    automation_password: "{{ automation_user_password | default('AutomationUser2024!') }}"
+
   tasks:
+    # Repository Configuration
     - name: Disable enterprise PVE repository (comment all lines)
       replace:
         path: /etc/apt/sources.list.d/pve-enterprise.sources
@@ -59,6 +68,7 @@
         name: "{{ packages_to_install }}"
         state: present
 
+    # System Configuration
     - name: Configure timezone
       timezone:
         name: "{{ timezone | default('UTC') }}"
@@ -77,3 +87,62 @@
         - pve-ha-crm
         - corosync
       failed_when: false
+
+    # NEW: Automation User Setup (Robust)
+    - name: Ensure automation user exists with proper configuration
+      user:
+        name: "{{ automation_user }}"
+        password: '*'  # Disabled password - using SSH keys only
+        groups: sudo
+        shell: /bin/bash
+        create_home: yes
+        state: present
+
+    - name: Ensure automation user has sudo privileges
+      copy:
+        content: "{{ automation_user }} ALL=(ALL) NOPASSWD:ALL\n"
+        dest: "/etc/sudoers.d/{{ automation_user }}"
+        mode: '0440'
+        owner: root
+        group: root
+        validate: '/usr/sbin/visudo -cf %s'
+
+    - name: Create .ssh directory for automation user
+      file:
+        path: "/home/{{ automation_user }}/.ssh"
+        state: directory
+        owner: "{{ automation_user }}"
+        group: "{{ automation_user }}"
+        mode: '0700'
+
+    - name: Add SSH public key for automation user
+      authorized_key:
+        user: "{{ automation_user }}"
+        key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub') }}"
+        state: present
+      when: lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub', errors='ignore') != ''
+
+    # NEW: PVE API User Setup
+    - name: Check if PVE automation user exists
+      shell: pveum user list | grep -q "automation@pve"
+      register: pve_user_check
+      failed_when: false
+      changed_when: false
+
+    - name: Create PVE automation user (password to be set manually)
+      shell: |
+        pveum user add automation@pve --comment "Automation user for Ansible/Terraform"
+      when: pve_user_check.rc != 0
+
+    - name: Grant Administrator privileges to PVE automation user
+      shell: |
+        pveum acl modify / --users automation@pve --roles Administrator
+      when: pve_user_check.rc != 0
+
+    - name: Display PVE user setup status
+      debug:
+        msg: |
+          PVE automation user status:
+          - User automation@pve: {{ 'already exists' if pve_user_check.rc == 0 else 'created' }}
+          - Administrator privileges: granted
+          - Password: must be set manually via 'pveum passwd automation@pve' or web interface
