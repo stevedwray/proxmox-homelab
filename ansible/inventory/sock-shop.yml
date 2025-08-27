@@ -1,0 +1,55 @@
+# File: ansible/inventory/sock-shop.yml
+# Inventory file for Sock Shop deployment
+all:
+  children:
+    proxmox:
+      hosts:
+        pvetest:
+          ansible_host: pvetest.gibbsgreatly.xyz
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+    sock_shop_containers:
+      hosts:
+        sock_shop_frontend:
+          ansible_host: 192.168.1.51
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 201
+        sock_shop_user:
+          ansible_host: 192.168.1.61
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 202
+        sock_shop_catalogue:
+          ansible_host: 192.168.1.62
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 203
+        sock_shop_carts:
+          ansible_host: 192.168.1.63
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 204
+        sock_shop_orders:
+          ansible_host: 192.168.1.64
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 205
+        sock_shop_payment:
+          ansible_host: 192.168.1.65
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 206
+        sock_shop_shipping:
+          ansible_host: 192.168.1.66
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 207
+        sock_shop_database:
+          ansible_host: 192.168.1.67
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 208
+      vars:
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
