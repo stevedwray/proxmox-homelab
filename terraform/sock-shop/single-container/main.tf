@@ -22,36 +22,35 @@ provider "proxmox" {
 resource "proxmox_lxc" "sock_shop_frontend" {
   target_node  = var.proxmox_node
   hostname     = "sock-shop-frontend"
-  ostemplate   = "901"
+  ostemplate   = "local:vztmpl/debian-12-base_ansible_amd64.tar.zst"
+  ostype       = "debian" # helps PVE apply the right defaults
   password     = var.lxc_password
   unprivileged = true
   onboot       = true
   start        = true
 
-  memory = 2048
   cores  = 2
+  memory = 2048
 
-  # Enable Docker features
-  features {
-    nesting = true
-  }
+  features { nesting = true }
 
   rootfs {
-    storage = var.storage_pool
+    storage = var.storage_pool # e.g. "local-zfs"
     size    = "12G"
   }
 
   network {
     name   = "eth0"
-    bridge = var.network_bridge
+    bridge = var.network_bridge # e.g. "vmbr0"
     ip     = "192.168.1.60/24"
     gw     = "192.168.1.1"
+    # optional but handy:
+    # firewall = false
   }
 
-  # SSH public key for automation
+  # SSH access
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
-
-  tags = "sock-shop,frontend,test"
+  tags            = "sock-shop,frontend,test"
 }
 
 output "frontend_ip" {
