@@ -1,4 +1,3 @@
-# File: terraform/sock-shop/single-container/main.tf
 # Single container deployment for Sock Shop frontend testing
 
 terraform {
@@ -6,7 +5,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "telmate/proxmox"
-      version = "2.9.11" # Older version that should work
+      version = "2.9.11" # keep as you had it
     }
   }
 }
@@ -20,9 +19,13 @@ provider "proxmox" {
 
 # Frontend container for initial testing
 resource "proxmox_lxc" "sock_shop_frontend" {
-  target_node  = var.proxmox_node
-  hostname     = "sock-shop-frontend"
-  ostemplate   = "local:vztmpl/debian-12-base_ansible_amd64.tar.zst"
+  target_node = var.proxmox_node
+  hostname    = "sock-shop-frontend"
+
+  # Use your new Docker-ready OS template tarball
+  # (shown in UI under local -> CT Templates)
+  ostemplate = "local:vztmpl/debian-12-docker.tar.gz"
+
   ostype       = "debian" # helps PVE apply the right defaults
   password     = var.lxc_password
   unprivileged = true
@@ -31,26 +34,31 @@ resource "proxmox_lxc" "sock_shop_frontend" {
 
   cores  = 2
   memory = 2048
+  swap   = 512
 
-  features { nesting = true }
+  # Docker in LXC needs both nesting and keyctl
+  features {
+    nesting = true
+    #  keyctl  = true
+  }
 
   rootfs {
-    storage = var.storage_pool # e.g. "local-zfs"
+    storage = var.storage_pool # e.g., "local-zfs"
     size    = "12G"
   }
 
   network {
     name   = "eth0"
-    bridge = var.network_bridge # e.g. "vmbr0"
+    bridge = var.network_bridge # e.g., "vmbr0"
     ip     = "192.168.1.60/24"
     gw     = "192.168.1.1"
-    # optional but handy:
-    # firewall = false
+    # firewall = false  # uncomment if you want firewall disabled
   }
 
   # SSH access
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
-  tags            = "sock-shop,frontend,test"
+
+  tags = "sock-shop,frontend,test"
 }
 
 output "frontend_ip" {

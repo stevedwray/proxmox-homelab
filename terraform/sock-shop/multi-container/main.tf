@@ -6,7 +6,7 @@ terraform {
   required_providers {
     proxmox = {
       source  = "telmate/proxmox"
-      version = "~> 2.9"
+      version = "2.9.11" # keep as you had it
     }
   }
 }
@@ -22,18 +22,18 @@ provider "proxmox" {
 resource "proxmox_lxc" "sock_shop_frontend" {
   target_node  = var.proxmox_node
   hostname     = "sock-shop-frontend"
-  ostemplate   = "901"
+  ostemplate   = "local:vztmpl/debian-12-docker.tar.gz"
   password     = var.lxc_password
   unprivileged = true
   onboot       = true
   start        = true
-
-  memory = 2048
-  cores  = 2
+  ostype       = "debian"
+  memory       = 2048
+  cores        = 2
 
   features {
     nesting = true
-    keyctl  = true
+    #  keyctl  = true
   }
 
   rootfs {
@@ -56,18 +56,18 @@ resource "proxmox_lxc" "sock_shop_frontend" {
 resource "proxmox_lxc" "sock_shop_database" {
   target_node  = var.proxmox_node
   hostname     = "sock-shop-db"
-  ostemplate   = "901"
+  ostemplate   = "local:vztmpl/debian-12-docker.tar.gz"
   password     = var.lxc_password
   unprivileged = true
   onboot       = true
   start        = true
-
-  memory = 1024
-  cores  = 1
+  ostype       = "debian"
+  memory       = 1024
+  cores        = 1
 
   features {
     nesting = true
-    keyctl  = true
+    #  keyctl  = true
   }
 
   rootfs {
@@ -90,18 +90,18 @@ resource "proxmox_lxc" "sock_shop_database" {
 resource "proxmox_lxc" "sock_shop_user" {
   target_node  = var.proxmox_node
   hostname     = "sock-shop-user"
-  ostemplate   = "901"
+  ostemplate   = "local:vztmpl/debian-12-docker.tar.gz"
   password     = var.lxc_password
   unprivileged = true
   onboot       = true
   start        = true
-
-  memory = 1024
-  cores  = 1
+  ostype       = "debian"
+  memory       = 1024
+  cores        = 1
 
   features {
     nesting = true
-    keyctl  = true
+    #  keyctl  = true
   }
 
   rootfs {

@@ -12,7 +12,7 @@ all:
     sock_shop_containers:
       hosts:
         sock_shop_frontend:
-          ansible_host: 192.168.1.51
+          ansible_host: 192.168.1.60
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
           container_id: 201
