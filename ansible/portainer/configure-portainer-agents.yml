@@ -1,0 +1,135 @@
+---
+# Rebuild a correct docker-compose.yml for Portainer Agent with hostname FQDN,
+# validate, restart service, and create the endpoint(s) in Portainer via API.
+
+- name: Fix Portainer Agent compose and restart on agent LXCs
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  vars:
+    compose_dir: "/opt/portainer"
+    compose_path: "/opt/portainer/docker-compose.yml"
+    agent_service_unit: "portainer-agent.service"
+    agent_service_name: "portainer-agent"     # service key and container_name
+    agent_domain: "gibbsgreatly.xyz"
+    agent_image: "portainer/agent:latest"
+    agent_port: "9001"
+    agent_fqdn: "{{ hostvars[inventory_hostname].agent_fqdn | default(inventory_hostname ~ '.' ~ agent_domain) }}"
+  tasks:
+    - name: Ensure compose directory exists
+      ansible.builtin.file:
+        path: "{{ compose_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Backup existing compose if present
+      ansible.builtin.copy:
+        src: "{{ compose_path }}"
+        dest: "{{ compose_path }}.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: Write clean docker-compose.yml for Portainer Agent
+      ansible.builtin.copy:
+        dest: "{{ compose_path }}"
+        mode: '0644'
+        content: |
+          version: "3.8"
+          services:
+            {{ agent_service_name }}:
+              image: {{ agent_image }}
+              container_name: {{ agent_service_name }}
+              hostname: {{ agent_fqdn }}
+              restart: always
+              ports:
+                - "{{ agent_port }}:9001"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /var/lib/docker/volumes:/var/lib/docker/volumes
+
+    - name: Validate compose (docker compose config -q)
+      ansible.builtin.command: docker compose -f "{{ compose_path }}" config -q
+      args:
+        chdir: "{{ compose_dir }}"
+      register: compose_validate
+      changed_when: false
+
+    - name: Fail with helpful message if compose invalid (and keep backup)
+      ansible.builtin.fail:
+        msg: "docker compose config failed: {{ compose_validate.stderr | default(compose_validate.stdout) }}"
+      when: compose_validate.rc != 0
+
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Restart Portainer Agent via systemd
+      ansible.builtin.systemd:
+        name: "{{ agent_service_unit }}"
+        state: restarted
+        enabled: true
+
+    - name: Wait for Agent TCP 9001
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: 9001
+        timeout: 60
+
+    # Optional: quick HTTPS probe (self-signed; hostname now matches)
+    - name: Probe agent /ping over HTTPS
+      ansible.builtin.uri:
+        url: "https://{{ agent_fqdn }}:{{ agent_port }}/ping"
+        method: GET
+        validate_certs: no
+      register: ping_out
+      changed_when: false
+      failed_when: false
+
+- name: Create Portainer environments via API using agent FQDNs
+  hosts: localhost
+  gather_facts: false
+  vars:
+    portainer_url: "http://192.168.1.70:9000"
+    portainer_user: "admin"
+    portainer_pass: "eiV8ji2eekair"
+  tasks:
+    - name: Obtain JWT
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/auth"
+        method: POST
+        headers: { Content-Type: "application/json" }
+        body_format: json
+        body:
+          Username: "{{ portainer_user }}"
+          Password: "{{ portainer_pass }}"
+        return_content: true
+      register: auth
+      changed_when: false
+
+    - name: List existing endpoints
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/endpoints"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ (auth.json.jwt | default(auth.json.token)) }}"
+        return_content: true
+      register: endpoints
+      changed_when: false
+
+    - name: Create missing endpoints (Agent type, hostname:port)
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/endpoints"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ (auth.json.jwt | default(auth.json.token)) }}"
+          Content-Type: "application/x-www-form-urlencoded"
+        body_format: form-urlencoded
+        body:
+          Name: "{{ item }}"
+          EndpointCreationType: "2"          # Agent
+          URL: "{{ (hostvars[item].agent_fqdn | default(item ~ '.gibbsgreatly.xyz')) ~ ':9001' }}"
+        status_code: [200, 201]
+      loop: "{{ groups['portainer_agents'] | default([]) }}"
+      vars:
+        exists: "{{ (endpoints.json | selectattr('Name','equalto', item) | list) | length > 0 }}"
+      when: not exists

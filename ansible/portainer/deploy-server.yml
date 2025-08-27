@@ -1,0 +1,66 @@
+---
+- name: Deploy Portainer Server
+  hosts: portainer_server
+  become: yes
+  vars:
+    portainer_data_dir: /opt/portainer/data
+    portainer_version: "2.21.1"
+
+  tasks:
+    - name: Stop existing Portainer if running
+      shell: |
+        cd /opt/portainer
+        docker-compose down || true
+      ignore_errors: yes
+
+    - name: Create portainer directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+      loop:
+        - /opt/portainer
+        - "{{ portainer_data_dir }}"
+
+    - name: Create Portainer Server docker-compose (without admin password)
+      copy:
+        content: |
+          version: '3.8'
+          services:
+            portainer:
+              image: portainer/portainer-ce:{{ portainer_version }}
+              container_name: portainer-server
+              restart: unless-stopped
+              ports:
+                - "9000:9000"
+                - "9443:9443"
+                - "8000:8000"
+              volumes:
+                - {{ portainer_data_dir }}:/data
+                - /var/run/docker.sock:/var/run/docker.sock
+              networks:
+                - portainer-net
+              logging:
+                driver: "json-file"
+                options:
+                  max-size: "10m"
+                  max-file: "3"
+
+          networks:
+            portainer-net:
+              external: false
+        dest: /opt/portainer/docker-compose.yml
+
+    - name: Start Portainer server
+      shell: |
+        cd /opt/portainer
+        docker-compose up -d
+
+    - name: Display setup info
+      debug:
+        msg: |
+          Portainer Server deployed!
+          Web Interface: http://192.168.1.70:9000
+          Complete initial setup through the web interface
