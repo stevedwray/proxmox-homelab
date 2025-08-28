@@ -1,0 +1,123 @@
+# /mnt/i/proxmox/ansible/deploy-media-stack.yml
+
+---
+- name: Deploy and configure Media Stack container
+  hosts: media_stack
+  become: true
+  vars:
+    compose_dir: "/opt/portainer"
+    compose_path: "/opt/portainer/docker-compose.yml"
+    agent_service_unit: "portainer-agent.service"
+    agent_image: "portainer/agent:latest"
+    agent_port: 9001
+    domain: "gibbsgreatly.xyz"
+
+  tasks:
+    # Ensure container is ready
+    - name: Wait for container to be accessible
+      wait_for_connection:
+        timeout: 60
+
+    # Create media directory structure
+    - name: Create media base directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: root
+        group: root
+      loop:
+        - "{{ media_base_path }}"
+        - "{{ downloads_path }}"
+        - "{{ downloads_path }}/incomplete"
+        - "{{ downloads_path }}/complete"
+        - "{{ movies_path }}"
+        - "{{ tv_path }}"
+        - "{{ music_path }}"
+        - "/opt/media-stack"
+        - "/opt/media-stack/config"
+
+    # Ensure Docker and Portainer agent are working
+    - name: Ensure Docker is running
+      systemd:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Ensure compose directory exists
+      file:
+        path: "{{ compose_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Verify Portainer agent docker-compose exists
+      stat:
+        path: "{{ compose_path }}"
+      register: compose_file
+
+    - name: Start Portainer Agent if not running
+      systemd:
+        name: "{{ agent_service_unit }}"
+        state: started
+        enabled: true
+      when: compose_file.stat.exists
+
+    - name: Wait for Portainer Agent to be ready
+      uri:
+        url: "https://{{ ansible_host }}:{{ agent_port }}/ping"
+        method: GET
+        status_code: 204
+        validate_certs: no
+        timeout: 10
+      register: agent_ping
+      retries: 15
+      delay: 2
+      until: agent_ping.status == 204
+
+    # Register agent with Portainer server
+    - name: Register agent with Portainer server
+      uri:
+        url: "http://{{ portainer_server_ip }}:{{ portainer_server_port }}/api/endpoints"
+        method: POST
+        headers:
+          X-API-Key: "{{ portainer_api_key }}"
+        body_format: form-multipart
+        body:
+          Name: "{{ portainer_agent_name }}"
+          URL: "tcp://{{ ansible_host }}:{{ agent_port }}"
+          EndpointCreationType: "2"
+          TLS: "true"
+          TLSSkipVerify: "true"
+          TLSSkipClientVerify: "true"
+        status_code: [200, 409]  # 409 = already exists
+      register: agent_registration
+      delegate_to: localhost
+
+    - name: Show agent registration result
+      debug:
+        msg: |
+          Agent registration result: {{ agent_registration.status }}
+          {% if agent_registration.status == 200 %}
+          Agent {{ portainer_agent_name }} successfully registered
+          Agent ID: {{ agent_registration.json.Id }}
+          {% elif agent_registration.status == 409 %}
+          Agent {{ portainer_agent_name }} already registered
+          {% endif %}
+
+    - name: Create media stack preparation complete marker
+      file:
+        path: "/opt/media-stack/.portainer-ready"
+        state: touch
+        mode: '0644'
+      register: ready_marker
+
+    - name: Display readiness summary
+      debug:
+        msg: |
+          Media Stack Container Ready:
+          - IP: {{ ansible_host }}
+          - Hostname: {{ inventory_hostname }}
+          - Media paths configured: {{ media_base_path }}
+          - Portainer agent registered: {{ portainer_agent_name }}
+          - Ready for media stack deployment via Portainer API
+      when: ready_marker is succeeded

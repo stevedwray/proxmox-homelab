@@ -1,0 +1,29 @@
+# /mnt/i/proxmox/ansible/inventory/media-stack.yml
+
+all:
+  children:
+    portainer_server:
+      hosts:
+        portainer-server:
+          ansible_host: 192.168.1.70
+
+    media_stack:
+      hosts:
+        media-stack:
+          ansible_host: 192.168.1.80
+          portainer_agent_name: "media-stack"
+          # Variables for future media stack expansion
+          media_base_path: "/mnt/media"
+          downloads_path: "/mnt/media/downloads"
+          movies_path: "/mnt/media/movies"
+          tv_path: "/mnt/media/tv"
+          music_path: "/mnt/media/music"
+
+  vars:
+    ansible_user: root
+    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+    # Portainer server details
+    portainer_server_ip: 192.168.1.70
+    portainer_server_port: 9000
+    portainer_api_key: "ptr_5nwUG1ng64+I2oAVK1lyYNUGAq7GN+r8HQ49N4O3nGY="
