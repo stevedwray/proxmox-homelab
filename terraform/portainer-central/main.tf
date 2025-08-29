@@ -1,38 +1,52 @@
 terraform {
   required_providers {
-    null = {
-      source  = "hashicorp/null"
-      version = "~> 3.0"
+    proxmox = {
+      source  = "telmate/proxmox"
+      version = "2.9.11"
     }
   }
 }
 
-resource "null_resource" "portainer_server" {
-  provisioner "remote-exec" {
-    connection {
-      type        = "ssh"
-      host        = "pvetest.gibbsgreatly.xyz"
-      user        = "root"
-      private_key = file("~/.ssh/id_rsa")
-    }
-    inline = [
-      "pct create 100 local:vztmpl/debian-12-docker.tar.gz --hostname portainer-server --memory 3072 --cores 2 --rootfs local-zfs:15 --net0 name=eth0,bridge=vmbr0,ip=192.168.1.70/24,gw=192.168.1.1 --features nesting=1 --unprivileged 1 --onboot 1 --swap 1024 --start"
-    ]
+provider "proxmox" {
+  pm_api_url          = var.proxmox_api_url
+  pm_api_token_id     = var.pm_api_token_id
+  pm_api_token_secret = var.pm_api_token_secret
+  pm_tls_insecure     = true
+}
+
+resource "proxmox_lxc" "portainer_server" {
+  target_node = "pvetest"
+  hostname    = "portainer-server"
+
+  ostemplate   = "local:vztmpl/debian-docker-template.tar.gz"
+  ostype       = "debian"
+  password     = var.lxc_password
+  unprivileged = true
+  onboot       = true
+  start        = true
+
+  cores  = 2
+  memory = 3072
+  swap   = 1024
+
+  features {
+    nesting = true
   }
 
-  provisioner "remote-exec" {
-    when = destroy
-    connection {
-      type        = "ssh"
-      host        = "pvetest.gibbsgreatly.xyz"
-      user        = "root"
-      private_key = file("~/.ssh/id_rsa")
-    }
-    inline = [
-      "pct stop 100 || true",
-      "pct destroy 100 || true"
-    ]
+  rootfs {
+    storage = "local-zfs"
+    size    = "15G"
   }
+
+  network {
+    name   = "eth0"
+    bridge = "vmbr0"
+    ip     = "192.168.1.70/24"
+    gw     = "192.168.1.1"
+  }
+
+  ssh_public_keys = file("~/.ssh/id_rsa.pub")
+  tags            = "portainer,server,management"
 }
 
 output "portainer_server_ip" {

@@ -1,64 +1,29 @@
 ---
-
-# The playbook rotates the token by default so it can print the secret. Set rotate_token: false if you don’t want that (but then it can’t show the secret).
-# Because tokens default to privsep=1, ACLs must be granted to the token identity (automation@pve!terraform) — the playbook does this.
-# The SDN path (/sdn/zones/localnetwork/vmbr0), storages, and node name are variables at the top — adjust to your environment.
-# For Docker in LXC via token: make the container unprivileged and only set features { nesting = true }. Avoid keyctl (root-only via password).
-
 - name: Provision Proxmox user + token + ACLs for Terraform
   hosts: proxmox
   gather_facts: false
   become: true
 
   vars:
-    # ====== EDIT THESE ======
-    pve_node: "pvetest"                         # your node name
-    storages: ["local", "local-zfs"]            # storages used for template/rootfs/mounts
-    sdn_zone_path: "/sdn/zones/localnetwork/vmbr0"  # SDN object that backs vmbr0 (adjust if different)
-
-    # user/token naming
+    # User/token naming
     pve_user: "automation@pve"
     token_id: "terraform"
 
-    # rotate the token to ensure we get/print a fresh secret
+    # Rotate the token to ensure we get/print a fresh secret
     rotate_token: true
 
-    # role names we’ll create/use
-    role_provisioner: "TerraformProvisioner"
-    role_sdn_user: "TFSDNUser"
-
-    # privileges
-    privs_provisioner: >
-      VM.Allocate VM.Audit VM.Config.CPU VM.Config.Disk VM.Config.Memory
-      VM.Config.Network VM.Config.Options VM.PowerMgmt
-      Datastore.AllocateSpace Datastore.AllocateTemplate Datastore.Audit
-      SDN.Use
-    privs_sdn_user: "SDN.Use"
-
   tasks:
-    - name: Ensure pveum outputs JSON (sanity check)
-      command: pveum user list --output-format json
-      register: _pveum_json_check
-
     - name: Ensure automation user exists
       command: pveum user add {{ pve_user }} --comment "Terraform automation account"
       register: _user_add
-      failed_when: _user_add.rc not in [0,2]     # pveum may return 2 for 'already exists'
+      failed_when: _user_add.rc not in [0,2]
       changed_when: _user_add.rc == 0
 
-    - name: Ensure TerraformProvisioner role exists
-      command: pveum roleadd {{ role_provisioner }} -privs "{{ privs_provisioner }}"
-      register: _role1
-      failed_when: _role1.rc not in [0,2]
-      changed_when: _role1.rc == 0
-
-    - name: Ensure TFSDNUser role exists
-      command: pveum roleadd {{ role_sdn_user }} -privs "{{ privs_sdn_user }}"
-      register: _role2
-      failed_when: _role2.rc not in [0,2]
-      changed_when: _role2.rc == 0
-
-    # --- Token management (privsep=1, so we’ll bind ACLs to the token identity) ---
+    - name: Grant Administrator role to user
+      command: pveum aclmod / -user {{ pve_user }} -role Administrator
+      register: _acl_user
+      failed_when: _acl_user.rc != 0
+      changed_when: false
 
     - name: List existing tokens for {{ pve_user }}
       command: pveum user token list {{ pve_user }} --output-format json
@@ -75,9 +40,9 @@
       failed_when: _token_rm.rc not in [0,2]
       changed_when: _token_rm.rc == 0
 
-    - name: Create token (privsep=1) and capture secret
+    - name: Create token (privsep=0) and capture secret
       when: (not token_exists) or rotate_token
-      command: pveum user token add {{ pve_user }} {{ token_id }} --privsep 1 --output-format json
+      command: pveum user token add {{ pve_user }} {{ token_id }} --privsep 0 --output-format json
       register: _token_add
       changed_when: true
 
@@ -92,57 +57,7 @@
       set_fact:
         pm_api_token_id: "{{ pve_user }}!{{ token_id }}"
 
-    # --- ACLs bound to the TOKEN identity (privsep=1) ---
-
-    - name: Grant VM namespace rights to token
-      command: pveum aclmod /vms -token '{{ pve_user }}!{{ token_id }}' -role {{ role_provisioner }}
-      register: _acl_vms
-      failed_when: _acl_vms.rc not in [0,0]    # pveum aclmod is idempotent; nonzero means error
-      changed_when: false
-
-    - name: Grant node rights to token
-      command: pveum aclmod /nodes/{{ pve_node }} -token '{{ pve_user }}!{{ token_id }}' -role {{ role_provisioner }}
-      register: _acl_node
-      failed_when: _acl_node.rc not in [0,0]
-      changed_when: false
-
-    - name: Grant storage rights to token
-      loop: "{{ storages }}"
-      loop_control:
-        loop_var: st
-      command: pveum aclmod /storage/{{ st }} -token '{{ pve_user }}!{{ token_id }}' -role {{ role_provisioner }}
-      register: _acl_stor
-      failed_when: _acl_stor.rc not in [0,0]
-      changed_when: false
-
-    - name: Grant SDN.Use on SDN path to token
-      command: pveum aclmod {{ sdn_zone_path }} -token '{{ pve_user }}!{{ token_id }}' -role {{ role_sdn_user }}
-      register: _acl_sdn
-      failed_when: _acl_sdn.rc not in [0,0]
-      changed_when: false
-
-    # --- Verification calls (optional but helpful) ---
-
-    - name: Verify permissions at /
-      command: >
-        bash -lc
-        "curl -ks -H 'Authorization: PVEAPIToken={{ pve_user }}!{{ token_id }}={{ pm_api_token_secret | default('') }}'
-         'https://127.0.0.1:8006/api2/json/access/permissions?path=/'"
-      register: _verify_root
-      changed_when: false
-      failed_when: false
-
-    - name: Verify permissions at /vms
-      command: >
-        bash -lc
-        "curl -ks -H 'Authorization: PVEAPIToken={{ pve_user }}!{{ token_id }}={{ pm_api_token_secret | default('') }}'
-         'https://127.0.0.1:8006/api2/json/access/permissions?path=/vms'"
-      register: _verify_vms
-      changed_when: false
-      failed_when: false
-
-    # --- Output the token info (secret only when created/rotated) ---
-
+    # Output the token info
     - name: Show token ID
       debug:
         msg: "pm_api_token_id={{ pm_api_token_id }}"
@@ -151,3 +66,12 @@
       when: pm_api_token_secret is defined and pm_api_token_secret | length > 0
       debug:
         msg: "pm_api_token_secret={{ pm_api_token_secret }}"
+
+    - name: Verify token permissions
+      command: pveum user token permissions {{ pve_user }} {{ token_id }}
+      register: _token_perms
+      changed_when: false
+
+    - name: Display permission verification
+      debug:
+        msg: "Token has been created with Administrator privileges via privsep=0"
