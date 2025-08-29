@@ -1,32 +1,61 @@
 all:
   children:
+    # Proxmox host for container management
     proxmox:
       hosts:
         pvetest:
           ansible_host: pvetest.gibbsgreatly.xyz
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
-    template_builder:
+
+    # Debian template builder containers
+    debian_template_builder:
       hosts:
-        template-builder:
+        debian_builder:
           ansible_host: 192.168.1.50
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
-    template_enhanced:
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    # Alpine template builder containers
+    alpine_template_builder:
       hosts:
-        template-enhanced:
-          ansible_host: 192.168.1.51  # Different IP
+        alpine_builder:
+          ansible_host: 192.168.1.52
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_python_interpreter: /usr/bin/python3
+
+    # Enhanced template containers (for more complex setups)
+    debian_template_enhanced:
+      hosts:
+        debian_enhanced:
+          ansible_host: 192.168.1.51
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    alpine_template_enhanced:
+      hosts:
+        alpine_enhanced:
+          ansible_host: 192.168.1.53
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_python_interpreter: /usr/bin/python3
+
+    # Test containers for deployment testing
     test_containers:
       hosts:
-        test-1:
+        test_1:
           ansible_host: "{{ hostvars['pvetest']['container_ips']['test-1'] | default('dhcp') }}"
           ansible_user: root
           container_id: 101
-        test-2:
+        test_2:
           ansible_host: "{{ hostvars['pvetest']['container_ips']['test-2'] | default('dhcp') }}"
           ansible_user: root
           container_id: 102
       vars:
         ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

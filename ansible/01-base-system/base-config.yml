@@ -1,148 +1,164 @@
----
-# File: ansible/01-base-system/base-config.yml
-# Updated base configuration playbook with automation user setup
+# FILE: ansible/01-base-system/base-config.yml
+# Purpose: Proxmox base networking + IPv6 (SLAAC) setup right after initial install.
+# - Fixes repository configuration (removes enterprise repos, adds no-subscription repos)
+# - Installs ifupdown2 so we can reload networking cleanly
+# - Configures /etc/network/interfaces for vmbr0 with IPv4 and IPv6 (SLAAC) and MTU=1480
+# - Persists IPv6 sysctl so RAs are accepted (accept_ra=2) and autoconf is on
+# - Applies sysctl and reloads networking
+# NOTE: This playbook intentionally makes **no changes to LXCs**. New containers
+#       should be created with IPv6=SLAAC (e.g., ip6=auto in net0) outside of this playbook.
 
-- name: Configure Proxmox base system
-  hosts: proxmox
-  become: yes
+- name: Proxmox base system setup (network + IPv6)
+  hosts: proxmox   # adjust to your inventory group
+  become: true
   vars:
-    packages_to_install:
-      - curl
-      - wget
-      - vim
-      - htop
-      - unzip
-      - git
-      - python3
-      - python3-pip
-      - iftop
-      - iotop
-      - net-tools
-      - smartmontools
-      - sudo  # Added: Required for automation user
-      - openssh-server  # Added: Ensure SSH is available
-    automation_user: automation
-    automation_password: "{{ automation_user_password | default('AutomationUser2024!') }}"
+    pmx_bridge_name: vmbr0
+    pmx_bridge_port: ens33
+    pmx_ipv4_addr: 192.168.1.9/24
+    pmx_ipv4_gw: 192.168.1.1
+    pmx_bridge_mtu: 1480           # set 1500 if/when PMTU is fixed upstream
+    pmx_sysctl_path: /etc/sysctl.d/99-ipv6.conf
+    pmx_interfaces_path: /etc/network/interfaces
+
+  pre_tasks:
+    - name: Ensure we are on a Debian-family host (Proxmox)
+      ansible.builtin.assert:
+        that:
+          - ansible_os_family == "Debian"
+        fail_msg: "This playbook is intended for Proxmox/Debian-family hosts only."
 
   tasks:
-    # Repository Configuration
-    - name: Disable enterprise PVE repository (comment all lines)
-      replace:
-        path: /etc/apt/sources.list.d/pve-enterprise.sources
-        regexp: '^(.*)$'
-        replace: '# \1'
-        backup: yes
-      failed_when: false
-
-    - name: Disable enterprise Ceph repository (comment all lines)
-      replace:
-        path: /etc/apt/sources.list.d/ceph.sources
-        regexp: '^(.*)$'
-        replace: '# \1'
-        backup: yes
-      failed_when: false
-
-    - name: Add no-subscription repository (deb822 format)
-      copy:
-        content: |
-          Types: deb
-          URIs: http://download.proxmox.com/debian/pve
-          Suites: trixie
-          Components: pve-no-subscription
-          Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-        dest: /etc/apt/sources.list.d/proxmox.sources
-        backup: yes
-
-    - name: Update package cache
-      apt:
-        update_cache: yes
-
-    - name: Upgrade all packages
-      apt:
-        upgrade: dist
-        autoremove: yes
-        autoclean: yes
-
-    - name: Install base packages
-      apt:
-        name: "{{ packages_to_install }}"
-        state: present
-
-    # System Configuration
-    - name: Configure timezone
-      timezone:
-        name: "{{ timezone | default('UTC') }}"
-
-    - name: Disable subscription nag using shell command
-      shell: |
-        sed -i 's/res.data.status.toLowerCase() !== '\''active'\''/false/' /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-
-    - name: Disable HA services for single node setup
-      systemd:
-        name: "{{ item }}"
-        enabled: no
-        state: stopped
-      loop:
-        - pve-ha-lrm
-        - pve-ha-crm
-        - corosync
-      failed_when: false
-
-    # NEW: Automation User Setup (Robust)
-    - name: Ensure automation user exists with proper configuration
-      user:
-        name: "{{ automation_user }}"
-        password: '*'  # Disabled password - using SSH keys only
-        groups: sudo
-        shell: /bin/bash
-        create_home: yes
-        state: present
-
-    - name: Ensure automation user has sudo privileges
-      copy:
-        content: "{{ automation_user }} ALL=(ALL) NOPASSWD:ALL\n"
-        dest: "/etc/sudoers.d/{{ automation_user }}"
-        mode: '0440'
-        owner: root
-        group: root
-        validate: '/usr/sbin/visudo -cf %s'
-
-    - name: Create .ssh directory for automation user
-      file:
-        path: "/home/{{ automation_user }}/.ssh"
-        state: directory
-        owner: "{{ automation_user }}"
-        group: "{{ automation_user }}"
-        mode: '0700'
-
-    - name: Add SSH public key for automation user
-      authorized_key:
-        user: "{{ automation_user }}"
-        key: "{{ lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub') }}"
-        state: present
-      when: lookup('file', lookup('env', 'HOME') + '/.ssh/id_rsa.pub', errors='ignore') != ''
-
-    # NEW: PVE API User Setup
-    - name: Check if PVE automation user exists
-      shell: pveum user list | grep -q "automation@pve"
-      register: pve_user_check
-      failed_when: false
+    - name: Find all files containing enterprise repository references
+      ansible.builtin.shell: |
+        find /etc/apt -name "*.list" -exec grep -l "enterprise.proxmox.com" {} \; 2>/dev/null || true
+      register: enterprise_files
       changed_when: false
 
-    - name: Create PVE automation user (password to be set manually)
-      shell: |
-        pveum user add automation@pve --comment "Automation user for Ansible/Terraform"
-      when: pve_user_check.rc != 0
+    - name: Remove or disable enterprise repository entries from all sources
+      ansible.builtin.shell: |
+        find /etc/apt -name "*.list" -exec sed -i '/enterprise\.proxmox\.com/d' {} \;
+      register: sed_result
+      changed_when: true
 
-    - name: Grant Administrator privileges to PVE automation user
-      shell: |
-        pveum acl modify / --users automation@pve --roles Administrator
-      when: pve_user_check.rc != 0
+    - name: Ensure no-subscription PVE repository exists
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/pve-no-subscription.list
+        content: "deb http://download.proxmox.com/debian/pve trixie pve-no-subscription\n"
+        mode: "0644"
 
-    - name: Display PVE user setup status
-      debug:
-        msg: |
-          PVE automation user status:
-          - User automation@pve: {{ 'already exists' if pve_user_check.rc == 0 else 'created' }}
-          - Administrator privileges: granted
-          - Password: must be set manually via 'pveum passwd automation@pve' or web interface
+    - name: Ensure no-subscription Ceph repository exists
+      ansible.builtin.copy:
+        dest: /etc/apt/sources.list.d/ceph-no-subscription.list
+        content: "deb http://download.proxmox.com/debian/ceph-squid trixie no-subscription\n"
+        mode: "0644"
+
+    - name: Update apt with --allow-releaseinfo-change to handle repository changes
+      ansible.builtin.shell: |
+        apt update --allow-releaseinfo-change --allow-unauthenticated 2>/dev/null || apt update --allow-releaseinfo-change || apt update
+      register: apt_update_result
+      retries: 2
+      delay: 3
+      changed_when: false
+      failed_when: false  # Don't fail the playbook on apt update issues
+
+    - name: Check if apt update was successful
+      ansible.builtin.debug:
+        msg:
+          - "Apt update result: {{ apt_update_result.rc }}"
+          - "Enterprise repos should now be removed or ignored"
+      when: apt_update_result.rc != 0
+
+    - name: Install networking tooling (ifupdown2) for reliable reloads
+      ansible.builtin.apt:
+        name:
+          - ifupdown2
+        state: present
+        update_cache: false  # Already updated above
+
+    - name: Backup existing /etc/network/interfaces if present
+      ansible.builtin.copy:
+        src: "{{ pmx_interfaces_path }}"
+        dest: "{{ pmx_interfaces_path }}.pre-ansible.bak"
+        remote_src: true
+      ignore_errors: true
+
+    - name: Deploy /etc/network/interfaces with IPv6 SLAAC on {{ pmx_bridge_name }}
+      ansible.builtin.copy:
+        dest: "{{ pmx_interfaces_path }}"
+        mode: "0644"
+        content: |
+          # FILE: /etc/network/interfaces
+          # Managed by Ansible (ansible/01-base-system/base-config.yml)
+          # Proxmox bridge with IPv6 SLAAC + lowered MTU for PMTU workaround
+
+          auto lo
+          iface lo inet loopback
+
+          iface {{ pmx_bridge_port }} inet manual
+
+          auto {{ pmx_bridge_name }}
+          iface {{ pmx_bridge_name }} inet static
+              address {{ pmx_ipv4_addr }}
+              gateway {{ pmx_ipv4_gw }}
+              bridge-ports {{ pmx_bridge_port }}
+              bridge-stp off
+              bridge-fd 0
+              mtu {{ pmx_bridge_mtu }}
+
+          # IPv6 via SLAAC; accept router advertisements even if forwarding is enabled
+          iface {{ pmx_bridge_name }} inet6 auto
+              accept_ra 2
+      notify: Reload networking
+
+    - name: Deploy IPv6 sysctl overrides (accept RA + autoconf)
+      ansible.builtin.copy:
+        dest: "{{ pmx_sysctl_path }}"
+        mode: "0644"
+        content: |
+          # FILE: /etc/sysctl.d/99-ipv6.conf
+          # Managed by Ansible (ansible/01-base-system/base-config.yml)
+          # Ensure host accepts RAs (even with forwarding) and autoconfigures IPv6.
+
+          net.ipv6.conf.all.disable_ipv6 = 0
+          net.ipv6.conf.default.disable_ipv6 = 0
+          net.ipv6.conf.all.autoconf = 1
+          net.ipv6.conf.default.autoconf = 1
+          net.ipv6.conf.{{ pmx_bridge_name }}.accept_ra = 2
+          net.ipv6.conf.{{ pmx_bridge_name }}.autoconf = 1
+
+          # Optional: avoid privacy (temporary) addresses on the host
+          net.ipv6.conf.default.use_tempaddr = 0
+          net.ipv6.conf.{{ pmx_bridge_name }}.use_tempaddr = 0
+      notify: Apply sysctl
+
+    - name: Apply sysctl immediately
+      ansible.builtin.command: sysctl --system
+      changed_when: "'* Applying /etc/sysctl.d' in result.stdout"
+      register: result
+
+    - name: Reload networking (idempotent)
+      ansible.builtin.command: ifreload -a
+      changed_when: false
+
+    - name: Show IPv6 address on bridge
+      ansible.builtin.command: ip -6 addr show dev {{ pmx_bridge_name }}
+      register: ip6_addr
+      changed_when: false
+
+    - name: Show IPv6 routes
+      ansible.builtin.command: ip -6 route show
+      register: ip6_route
+      changed_when: false
+
+    - name: IPv6 status summary (non-fatal)
+      ansible.builtin.debug:
+        msg:
+          - "IPv6 addresses on {{ pmx_bridge_name }}:\n{{ ip6_addr.stdout }}"
+          - "IPv6 routes:\n{{ ip6_route.stdout }}"
+
+  handlers:
+    - name: Apply sysctl
+      ansible.builtin.command: sysctl --system
+
+    - name: Reload networking
+      ansible.builtin.command: ifreload -a

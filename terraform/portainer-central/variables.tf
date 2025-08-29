@@ -19,3 +19,14 @@ variable "lxc_password" {
   type        = string
   sensitive   = true
 }
+
+variable "pm_api_token_id" {
+  description = "Proxmox API token ID, e.g. root@pam!terraform-root"
+  type        = string
+}
+
+variable "pm_api_token_secret" {
+  description = "Proxmox API token secret (value)"
+  type        = string
+  sensitive   = true
+}
