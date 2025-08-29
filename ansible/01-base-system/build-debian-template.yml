@@ -115,7 +115,6 @@
       # Additional utilities
       - tree
       - less
-      - nano
 
   tasks:
     - name: Update package cache
@@ -422,3 +421,98 @@
 
           Example:
           pct clone {{ template_id }} 101 --hostname web-server-1
+
+    # ---------------------------------------------------------------------------
+    # Packaging: make a linked clone -> strip NIC -> vzdump -> rename -> cleanup
+    # ---------------------------------------------------------------------------
+
+    - name: Ensure dump directory exists
+      file:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create linked clone from template {{ template_id | default(lxc_template_id | default(900)) }} -> {{ lxc_clone_id | default(800) }}
+      command: "pct clone {{ template_id | default(lxc_template_id | default(900)) }} {{ lxc_clone_id | default(800) }} --hostname {{ lxc_clone_hostname | default('debian-template-clone') }} --full 0"
+      args:
+        creates: "/etc/pve/lxc/{{ lxc_clone_id | default(800) }}.conf"
+
+    # Remove NIC from the linked clone (try -delete first)
+    - name: "Remove net0 from clone (pct set -delete)"
+      command: "pct set {{ lxc_clone_id | default(800) }} -delete net0"
+      register: del_net
+      changed_when: del_net.rc == 0
+      failed_when: false
+
+    # Fallback for older pct that don't support -delete
+    - name: "Fallback remove net0 by setting none"
+      command: "pct set {{ lxc_clone_id | default(800) }} -net0 none"
+      when: del_net.rc != 0
+      register: del_net_fallback
+      changed_when: del_net_fallback.rc == 0
+      failed_when: false
+
+    - name: Run vzdump to produce gzipped template archive
+      command: "vzdump {{ lxc_clone_id | default(800) }} --mode {{ lxc_vzdump_mode | default('stop') }} --compress {{ lxc_vzdump_compress | default('gzip') }} --dumpdir {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}"
+      register: vzdump_run
+
+    - name: Combine stdout/stderr for parsing
+      set_fact:
+        vzdump_output: "{{ (vzdump_run.stdout | default('')) ~ '\n' ~ (vzdump_run.stderr | default('')) }}"
+
+    - name: Split vzdump output into lines
+      set_fact:
+        vzdump_lines: "{{ vzdump_output.splitlines() }}"
+
+    - name: Pick the line that announces the archive path
+      set_fact:
+        vzdump_line: "{{ (vzdump_lines | select('search', 'creating vzdump archive ') | list | first) | default('') }}"
+
+    - name: Extract archive path from the selected line
+      set_fact:
+        vzdump_archive_path: "{{ vzdump_line | regex_replace(\".*creating vzdump archive '\", '') | regex_replace(\"'.*\", '') }}"
+
+    - name: Fail if vzdump archive path could not be parsed
+      fail:
+        msg: "Could not parse vzdump archive path from output:\n{{ vzdump_run.stdout }}{{ '\n' if vzdump_run.stderr else '' }}{{ vzdump_run.stderr | default('') }}"
+      when: vzdump_archive_path | length == 0
+
+    - name: Stat final template path
+      stat:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}"
+      register: final_tmpl_stat
+
+    - name: Backup existing destination if present
+      shell: |
+        ts=$(date +%Y%m%d-%H%M%S)
+        mv "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}" "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}.bak.$ts"
+      args:
+        warn: false
+      when: final_tmpl_stat.stat.exists
+      changed_when: true
+
+    - name: Rename vzdump tarball to final template name
+      command: "mv {{ vzdump_archive_path }} {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}"
+
+    - name: Ensure final template archive has sane perms
+      file:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}"
+        mode: '0644'
+
+    - name: Destroy linked clone {{ lxc_clone_id | default(800) }}
+      command: "pct destroy {{ lxc_clone_id | default(800) }} --purge 1"
+      register: destroy_clone
+      failed_when: destroy_clone.rc not in [0,2]
+      changed_when: destroy_clone.rc == 0
+
+    - name: Destroy template {{ template_id | default(lxc_template_id | default(900)) }}
+      command: "pct destroy {{ template_id | default(lxc_template_id | default(900)) }} --purge 1"
+      register: destroy_tpl
+      failed_when: destroy_tpl.rc not in [0,2]
+      changed_when: destroy_tpl.rc == 0
+
+    - name: Display packaging result
+      debug:
+        msg: |
+          Template packaged successfully.
+          -> {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('debian-docker-template.tar.gz') }}

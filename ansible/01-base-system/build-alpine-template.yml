@@ -481,25 +481,105 @@
   tasks:
     - name: Stop the container
       shell: pct stop {{ template_id }}
+      failed_when: false # Don't fail if already stopped
 
     - name: Convert container to template
       shell: pct template {{ template_id }}
 
-    - name: Display success message
+    # ---------------------------------------------------------------------------
+    # Packaging: make a linked clone -> strip NIC -> vzdump -> rename -> cleanup
+    # ---------------------------------------------------------------------------
+    - name: Ensure dump directory exists
+      file:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create linked clone from template {{ template_id }} -> {{ lxc_clone_id | default(801) }}
+      command: "pct clone {{ template_id }} {{ lxc_clone_id | default(801) }} --hostname {{ lxc_clone_hostname | default('alpine-template-clone') }} --full 0"
+      args:
+        creates: "/etc/pve/lxc/{{ lxc_clone_id | default(801) }}.conf"
+
+    - name: "Remove net0 from clone (pct set -delete)"
+      command: "pct set {{ lxc_clone_id | default(801) }} -delete net0"
+      register: del_net
+      changed_when: del_net.rc == 0
+      failed_when: false
+
+    - name: "Fallback remove net0 by setting none"
+      command: "pct set {{ lxc_clone_id | default(801) }} -net0 none"
+      when: del_net.rc != 0
+      register: del_net_fallback
+      changed_when: del_net_fallback.rc == 0
+      failed_when: false
+
+    - name: Run vzdump to produce gzipped template archive
+      command: "vzdump {{ lxc_clone_id | default(801) }} --mode {{ lxc_vzdump_mode | default('stop') }} --compress {{ lxc_vzdump_compress | default('gzip') }} --dumpdir {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}"
+      register: vzdump_run
+
+    - name: Combine stdout/stderr for parsing
+      set_fact:
+        vzdump_output: "{{ (vzdump_run.stdout | default('')) ~ '\n' ~ (vzdump_run.stderr | default('')) }}"
+
+    - name: Split vzdump output into lines
+      set_fact:
+        vzdump_lines: "{{ vzdump_output.splitlines() }}"
+
+    - name: Pick the line that announces the archive path
+      set_fact:
+        vzdump_line: "{{ (vzdump_lines | select('search', 'creating vzdump archive ') | list | first) | default('') }}"
+
+    - name: Extract archive path from the selected line
+      set_fact:
+        vzdump_archive_path: "{{ vzdump_line | regex_replace(\".*creating vzdump archive '\", '') | regex_replace(\"'.*\", '') }}"
+
+    - name: Fail if vzdump archive path could not be parsed
+      fail:
+        msg: "Could not parse vzdump archive path from output:\n{{ vzdump_run.stdout }}{{ '\n' if vzdump_run.stderr else '' }}{{ vzdump_run.stderr | default('') }}"
+      when: vzdump_archive_path | length == 0
+
+    - name: Stat final template path
+      stat:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}"
+      register: final_tmpl_stat
+
+    - name: Backup existing destination if present
+      shell: |
+        ts=$(date +%Y%m%d-%H%M%S)
+        mv "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}" "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}.bak.$ts"
+      args:
+        warn: false
+      when: final_tmpl_stat.stat.exists
+      changed_when: true
+
+    - name: Rename vzdump tarball to final template name
+      command: "mv {{ vzdump_archive_path }} {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}"
+
+    - name: Ensure final template archive has sane perms
+      file:
+        path: "{{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}"
+        mode: '0644'
+
+    - name: Destroy linked clone {{ lxc_clone_id | default(801) }}
+      command: "pct destroy {{ lxc_clone_id | default(801) }} --purge 1"
+      register: destroy_clone
+      failed_when: destroy_clone.rc not in [0,2]
+      changed_when: destroy_clone.rc == 0
+
+    - name: Destroy template {{ template_id }}
+      command: "pct destroy {{ template_id }} --purge 1"
+      register: destroy_tpl
+      failed_when: destroy_tpl.rc not in [0,2]
+      changed_when: destroy_tpl.rc == 0
+
+    - name: Display packaging result
       debug:
         msg: |
-          Alpine LXC template created successfully!
-          Template ID: {{ template_id }}
-
-          To create new containers from this template:
-          pct clone {{ template_id }} <new_container_id> --hostname <new_hostname>
-
-          Example:
-          pct clone {{ template_id }} 102 --hostname alpine-web-server-1
+          Alpine template packaged successfully.
+          -> {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}
 
           Key differences from Debian template:
           - Uses apk package manager instead of apt
           - Uses OpenRC instead of systemd
-          - Uses ash shell by default (bash installed as optional)
-          - Smaller resource footprint (1GB RAM, 4GB disk by default)
-          - Uses wheel group for sudo access
+          - Uses ash shell by default (bash is also installed)
+          - Smaller resource footprint
