@@ -8,17 +8,17 @@ terraform {
 }
 
 provider "proxmox" {
-  pm_api_url      = var.proxmox_api_url
-  pm_user         = var.proxmox_user
-  pm_password     = var.proxmox_password
-  pm_tls_insecure = true
+  pm_api_url          = var.proxmox_api_url
+  pm_api_token_id     = var.pm_api_token_id
+  pm_api_token_secret = var.pm_api_token_secret
+  pm_tls_insecure     = true
 }
 
 resource "proxmox_lxc" "portainer_agent" {
   target_node = "pvetest"
   hostname    = "portainer-agent-1"
 
-  ostemplate   = "local:vztmpl/debian-12-docker.tar.gz"
+  ostemplate   = "local:vztmpl/debian-docker-template.tar.gz"
   ostype       = "debian"
   password     = var.lxc_password
   unprivileged = true
@@ -47,6 +47,12 @@ resource "proxmox_lxc" "portainer_agent" {
 
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
   tags            = "portainer,agent"
+
+  # --- Handoff to Ansible ---
+  provisioner "local-exec" {
+    command     = "ansible-playbook -i inventory.yml wait-for-ssh.yml --limit portainer-agent-1 && ansible-playbook -i inventory.yml configure-portainer-agents.yml --limit portainer-agent-1 && ansible-playbook -i inventory.yml register-agent-api.yml"
+    working_dir = "${path.root}/ansible"
+  }
 }
 
 output "agent_ip" {

@@ -1,0 +1,47 @@
+---
+- name: Register Portainer Agent via API
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    portainer_server_ip: "192.168.1.70"
+    portainer_admin_user: "admin"
+    portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD environment variable is not set') }}"
+    agent_name: "production-agent-1"
+    agent_ip: "192.168.1.71"
+  tasks:
+    - name: 1. Get Portainer authentication token
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/auth"
+        method: POST
+        body_format: json
+        body:
+          Username: "{{ portainer_admin_user }}"
+          Password: "{{ portainer_admin_password }}"
+        status_code: 200
+      register: auth_response
+
+    - name: Set auth token fact
+      ansible.builtin.set_fact:
+        portainer_token: "{{ auth_response.json.jwt }}"
+
+    - name: 2. Register agent with Portainer Server
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_token }}"
+        body_format: form-urlencoded # Critical: API requires form data, not JSON
+        body:
+          Name: "{{ agent_name }}"
+          URL: "tcp://{{ agent_ip }}:9001"
+          EndpointCreationType: 2 # 2 = Agent type
+          TLS: "true" # Agent always uses TLS
+          TLSSkipVerify: "true" # Required due to certificate IP mismatch
+          TLSSkipClientVerify: "true" # Required due to certificate IP mismatch
+        status_code: 200
+      register: registration_result
+
+    - name: Display registration result
+      ansible.builtin.debug:
+        msg: "Agent '{{ agent_name }}' successfully registered with ID: {{ registration_result.json.Id }}"
