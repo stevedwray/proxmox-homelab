@@ -1,0 +1,77 @@
+all:
+  children:
+    # Proxmox host for container management
+    proxmox:
+      hosts:
+        pvetest:
+          ansible_host: pvetest.gibbsgreatly.xyz
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+    # Portainer Hosts
+    portainer_server:
+      hosts:
+        portainer-server:
+          ansible_host: 192.168.1.70
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          container_id: 101
+    portainer_agents:
+      hosts:
+        agent1:
+          ansible_host: 192.168.1.71
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+
+    # Debian template builder containers
+    debian_template_builder:
+      hosts:
+        debian_builder:
+          ansible_host: 192.168.1.50
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    # Alpine template builder containers
+    alpine_template_builder:
+      hosts:
+        alpine_builder:
+          ansible_host: 192.168.1.52
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_python_interpreter: /usr/bin/python3
+
+    # Enhanced template containers
+    debian_template_enhanced:
+      hosts:
+        debian_enhanced:
+          ansible_host: 192.168.1.51
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    alpine_template_enhanced:
+      hosts:
+        alpine_enhanced:
+          ansible_host: 192.168.1.53
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          ansible_python_interpreter: /usr/bin/python3
+
+    # Test containers for deployment testing
+    test_containers:
+      hosts:
+        test_1:
+          ansible_host: "{{ hostvars['pvetest']['container_ips']['test-1'] | default('dhcp') }}"
+          ansible_user: root
+          container_id: 101
+        test_2:
+          ansible_host: "{{ hostvars['pvetest']['container_ips']['test-2'] | default('dhcp') }}"
+          ansible_user: root
+          container_id: 102
+      vars:
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+        

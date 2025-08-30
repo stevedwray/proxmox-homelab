@@ -47,8 +47,19 @@ resource "proxmox_lxc" "portainer_server" {
 
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
   tags            = "portainer,server,management"
-}
 
+  # --- Handoff to Ansible ---
+  # This provisioner runs after the LXC is created.
+  provisioner "local-exec" {
+    command     = "ansible-playbook -i inventory.yml deploy-server.yml --limit portainer-server"
+    working_dir = "${path.root}/ansible"
+
+    # Add extra environment variables for Ansible if needed
+    # environment = {
+    #   ANSIBLE_HOST_KEY_CHECKING = "False"
+    # }
+  }
+}
 output "portainer_server_ip" {
   value = "192.168.1.70"
 }
