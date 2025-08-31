@@ -1,0 +1,90 @@
+# File: management-stack/ansible/deploy-management-stack.yml
+
+---
+- name: Deploy Management Stack (Portainer Server)
+  hosts: management_stack
+  remote_user: root
+  become: true
+  vars:
+    portainer_container_name: "portainer"
+    portainer_image: "portainer/portainer-ce:latest"
+    port_http: "9000"
+    port_https: "9443"
+    compose_dir: "/opt/management-stack"
+    compose_path: "/opt/management-stack/docker-compose.yml"
+  tasks:
+    - name: Ensure Docker SDK for Python present (for docker_* modules)
+      package:
+        name: python3-docker
+        state: present
+      ignore_errors: yes
+
+    - name: Ensure compose directory exists
+      file:
+        path: "{{ compose_dir }}"
+        state: directory
+        mode: '0755'
+
+    - name: Create docker-compose.yml for management stack
+      copy:
+        dest: "{{ compose_path }}"
+        mode: '0644'
+        content: |
+          services:
+            portainer:
+              image: portainer/portainer-ce:latest
+              container_name: portainer
+              hostname: portainer.gibbsgreatly.xyz
+              restart: unless-stopped
+              ports:
+                - "9000:9000"
+                - "9443:9443"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - portainer_data:/data
+              command: --tlsskipverify
+              networks:
+                - management-network
+
+          volumes:
+            portainer_data:
+
+          networks:
+            management-network:
+              driver: bridge
+
+    - name: Remove any existing portainer container
+      community.docker.docker_container:
+        name: "{{ portainer_container_name }}"
+        state: absent
+        force_kill: true
+      ignore_errors: yes
+
+    - name: Deploy management stack via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ compose_dir }}"
+        state: present
+
+    - name: Wait for Portainer API HTTP {{ port_http }}
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: "{{ port_http }}"
+        timeout: 60
+
+    # === PLACEHOLDER TASKS FOR FUTURE PHASES ===
+    - name: "[PLACEHOLDER] Setup Harbor Registry"
+      debug:
+        msg: "Phase 2: Harbor registry setup will be implemented here"
+
+    - name: "[PLACEHOLDER] Setup Nginx Proxy Manager"
+      debug:
+        msg: "Phase 3: NPM proxy and SSL setup will be implemented here"
+
+    - name: Display management stack status
+      debug:
+        msg: 
+          - "Management Stack Phase 1 deployed successfully!"
+          - "Portainer HTTP:  http://{{ ansible_host }}:{{ port_http }}"
+          - "Portainer HTTPS: https://{{ ansible_host }}:{{ port_https }}"
+          - "Next: Implement Harbor Registry (Phase 2)"
+          - "Then: Implement Nginx Proxy Manager (Phase 3)"
