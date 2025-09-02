@@ -1,0 +1,11 @@
+# terraform/ansible/shared-roles/portainer_agent/defaults/main.yml
+
+---
+# Portainer Agent configuration defaults
+portainer_compose_dir: "/opt/portainer"
+portainer_compose_path: "/opt/portainer/docker-compose.yml"
+portainer_agent_service_unit: "portainer-agent.service"
+portainer_agent_image: "portainer/agent:latest"
+portainer_agent_port: 9001
+portainer_domain: "gibbsgreatly.xyz"
+portainer_agent_fqdn: "{{ inventory_hostname }}.{{ portainer_domain }}"

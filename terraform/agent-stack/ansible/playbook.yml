@@ -1,0 +1,29 @@
+# terraform/agent-stack/ansible/playbook.yml
+
+---
+- name: Apply base Docker configuration
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  roles:
+    - ../../ansible/shared-roles/docker_base
+
+- name: Configure Portainer Agent
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  vars:
+    # Override any defaults if needed
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+  roles:
+    - ../../ansible/shared-roles/portainer_agent
+
+- name: Register Agent with Portainer Server
+  hosts: portainer_agents
+  vars:
+    # Pass server IP from Terraform or use default
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+    # Use inventory hostname as endpoint name
+    portainer_endpoint_name: "{{ inventory_hostname }}"
+  roles:
+    - ../../ansible/shared-roles/portainer_api

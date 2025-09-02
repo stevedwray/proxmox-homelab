@@ -1,12 +1,12 @@
 # terraform/management-stack/ansible/playbook.yml
-
 ---
+
 - name: Apply base Docker configuration to all hosts
   hosts: all
   remote_user: root
   become: true
   roles:
-    - docker_base
+    - ../../ansible/shared-roles/docker_base  # Updated path
 
 - name: Deploy Portainer Server
   hosts: portainer_server
