@@ -1,0 +1,31 @@
+# terraform/management-stack/ansible/roles/docker_base/tasks/main.yml
+
+---
+- name: Ensure Docker SDK for Python present (for docker_* modules)
+  package:
+    name: python3-docker
+    state: present
+  ignore_errors: yes
+
+- name: Ensure Docker service is running and enabled
+  systemd:
+    name: docker
+    state: started
+    enabled: yes
+
+- name: Ensure Docker Compose is available
+  package:
+    name: docker-compose
+    state: present
+  ignore_errors: yes
+
+- name: Create docker group (if not exists)
+  group:
+    name: docker
+    state: present
+
+- name: Add root user to docker group
+  user:
+    name: root
+    groups: docker
+    append: yes

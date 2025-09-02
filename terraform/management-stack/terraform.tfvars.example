@@ -1,9 +1,0 @@
-# File: management-stack/terraform.tfvars.example
-# Copy this file to terraform.tfvars and fill in your values
-# Note: Most values come from .env file via TF_VAR_ environment variables
-
-# Only add overrides here if needed
-# proxmox_api_url      = "https://your-proxmox:8006/api2/json"
-# pm_api_token_id      = "automation@pve!terraform"  
-# pm_api_token_secret  = "your-secret-token"
-# lxc_password         = "your-container-password"
