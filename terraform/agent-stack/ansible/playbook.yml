@@ -27,3 +27,14 @@
     portainer_endpoint_name: "{{ inventory_hostname }}"
   roles:
     - ../../ansible/shared-roles/portainer_api
+
+- name: Deploy Nginx Test Stack
+  hosts: portainer_agents
+  vars:
+    # Portainer connection details
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+    # Stack configuration
+    app_stack_name: "nginx-test-{{ inventory_hostname }}"
+    app_stack_endpoint_name: "{{ inventory_hostname }}"
+  roles:
+    - ../../ansible/shared-roles/app_stack

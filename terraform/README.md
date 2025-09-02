@@ -324,3 +324,97 @@ When adding new modules or stacks:
 3. Add usage examples
 4. Test with multiple configurations
 5. Update this README with new module information
+
+### agent-stack
+
+**Purpose**: Deploys Portainer Agents that connect to the management-stack server and can host application deployments.
+
+**Components**:
+- LXC container (via `lxc-docker-host` module)
+- Portainer Agent with automatic server registration
+- Application stack deployment via Portainer API
+- Dynamic Ansible inventory generation
+
+**Features**:
+- **Automatic Registration**: Agent automatically registers with Portainer server via API
+- **Application Deployment**: Deploys Docker Compose stacks through Portainer API
+- **Centralized Management**: All containers managed through Portainer web interface
+- **API-Driven**: Full deployment automation without manual Portainer UI interaction
+
+**Documentation**: See [agent-stack/README.md](agent-stack/README.md)
+
+## Shared Infrastructure Components
+
+The architecture includes reusable Ansible roles for common functionality across all stacks:
+
+### Shared Ansible Roles
+
+Located in `ansible/shared-roles/`, these provide consistent functionality across different stacks:
+
+#### docker_base
+- **Purpose**: Base Docker configuration for all LXC containers
+- **Functions**: Ensures Docker service is running, installs Python SDK, configures Docker group
+- **Usage**: Applied to all container deployments as foundation layer
+
+#### portainer_agent  
+- **Purpose**: Deploys and configures Portainer Agent containers
+- **Functions**: Creates agent compose file, manages systemd service, validates agent connectivity
+- **Configuration**: Supports custom ports, domains, and FQDN settings
+
+#### portainer_api
+- **Purpose**: Registers agents with Portainer server via API calls
+- **Functions**: Authenticates with server, registers new endpoints, handles TLS certificate issues
+- **Features**: Automatic endpoint discovery, graceful error handling for existing agents
+
+#### app_stack
+- **Purpose**: Deploys Docker Compose applications via Portainer API
+- **Functions**: Creates stacks through API, manages existing stack cleanup, supports environment variables
+- **Benefits**: Centralized application management, stack versioning, rollback capabilities
+
+### Architecture Flow
+
+```
+1. lxc-docker-host module creates container
+2. docker_base role configures Docker environment  
+3. portainer_agent role deploys agent container
+4. portainer_api role registers agent with server
+5. app_stack role deploys applications via API
+```
+
+### Shared Role Usage Pattern
+
+Each stack follows a consistent pattern:
+
+```yaml
+---
+- name: Apply base Docker configuration
+  hosts: all
+  roles:
+    - ../../ansible/shared-roles/docker_base
+
+- name: Configure Portainer Agent  
+  hosts: target_hosts
+  roles:
+    - ../../ansible/shared-roles/portainer_agent
+
+- name: Register with Portainer Server
+  hosts: target_hosts  
+  roles:
+    - ../../ansible/shared-roles/portainer_api
+
+- name: Deploy Application Stack
+  hosts: target_hosts
+  vars:
+    app_stack_name: "my-application"  
+    app_stack_compose_content: "{{ lookup('file', 'docker-compose.yml') }}"
+  roles:
+    - ../../ansible/shared-roles/app_stack
+```
+
+### Benefits of Shared Architecture
+
+- **Consistency**: Same base configuration across all deployments
+- **Maintainability**: Updates to shared roles affect all stacks  
+- **Reusability**: New stacks inherit proven functionality
+- **API-First**: All management through Portainer API enables full automation
+- **Centralized Control**: Single Portainer interface manages entire infrastructure

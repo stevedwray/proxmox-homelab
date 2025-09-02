@@ -1,0 +1,25 @@
+# terraform/ansible/shared-roles/app_stack/defaults/main.yml
+
+---
+# Portainer Server connection details
+portainer_server_ip: "192.168.1.70"
+portainer_server_port: "9000"
+
+# Authentication credentials
+portainer_admin_user: "admin"
+portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD environment variable is not set') }}"
+
+# Stack deployment configuration
+app_stack_name: "nginx-test"
+app_stack_endpoint_name: "{{ inventory_hostname }}"
+
+# Default nginx stack compose content
+app_stack_compose_content: |
+  version: '3.8'
+  services:
+    nginx:
+      image: nginx:alpine
+      container_name: nginx-test
+      ports:
+        - "80:80"
+      restart: unless-stopped
