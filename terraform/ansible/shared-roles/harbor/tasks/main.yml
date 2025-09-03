@@ -30,29 +30,6 @@
   delegate_to: localhost
   register: harbor_compose_content
 
-- name: Check if Portainer needs initial setup
-  ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:9000/api/users/admin/check"
-    method: GET
-    status_code: [200, 204, 404]
-  register: portainer_setup_check
-  ignore_errors: true
-  delegate_to: localhost
-
-- name: Initialize Portainer admin user if needed
-  ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:9000/api/users/admin/init"
-    method: POST
-    body_format: json
-    body:
-      Username: "admin"
-      Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
-    headers:
-      Content-Type: "application/json"
-    status_code: 200
-  when: portainer_setup_check.status in [204, 404]
-  delegate_to: localhost
-
 - name: Authenticate with Portainer API
   ansible.builtin.uri:
     url: "http://{{ portainer_server_ip }}:9000/api/auth"

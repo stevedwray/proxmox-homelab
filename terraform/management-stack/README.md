@@ -234,14 +234,14 @@ curl http://192.168.1.70:9000/api/status
 
 # Container Registry Integration
 
-The management stack now includes an optional centralized container registry with vulnerability scanning capabilities, deployed alongside Portainer for comprehensive Docker infrastructure management.
+The management stack includes an optional centralized container registry with vulnerability scanning capabilities, deployed alongside Portainer for comprehensive Docker infrastructure management. The registry operates as a **pull-through cache**, automatically caching all images pulled from Docker Hub for vulnerability scanning and centralized management.
 
 ## Registry Components
 
 When enabled (`TF_VAR_enable_harbor="true"`), the stack deploys:
 
-- **Docker Registry**: Central image storage at `http://192.168.1.70:80`
-- **Registry Web UI**: Image browsing and management at `http://192.168.1.70:8080`  
+- **Docker Registry with Pull-Through Cache**: Automatically caches images from Docker Hub at `http://192.168.1.70:80`
+- **Registry Web UI**: Browse all cached images at `http://192.168.1.70:8080`  
 - **Trivy Scanner**: Vulnerability scanning service at `http://192.168.1.70:4954`
 - **Portainer Management**: Registry stack managed via Portainer UI
 
@@ -264,15 +264,18 @@ cd terraform/management-stack
 terraform apply
 ```
 
-## Using the Container Registry
+## Automatic Image Caching
 
-### Configure Docker Clients
+The registry is configured as a pull-through cache for Docker Hub, which means **all Docker operations automatically populate your registry** without manual intervention.
 
-On your LXC containers or other Docker hosts, configure Docker to use the registry:
+### Configure Docker Clients for Automatic Caching
+
+On your LXC containers or other Docker hosts, configure Docker to use the registry as a mirror:
 
 ```bash
 # /etc/docker/daemon.json
 {
+  "registry-mirrors": ["http://192.168.1.70"],
   "insecure-registries": ["192.168.1.70"]
 }
 
@@ -280,152 +283,161 @@ On your LXC containers or other Docker hosts, configure Docker to use the regist
 sudo systemctl restart docker
 ```
 
-### Push and Pull Images
+### How Pull-Through Caching Works
+
+With the mirror configuration:
+
+1. **Any Docker pull** automatically uses your registry:
+   ```bash
+   docker pull nginx:latest
+   # → Checks 192.168.1.70 first
+   # → If not found, pulls from Docker Hub and caches locally
+   # → Future pulls serve from local cache
+   ```
+
+2. **Docker Compose stacks** automatically cache all images:
+   ```yaml
+   version: '3.8'
+   services:
+     nginx:
+       image: nginx:latest     # Automatically cached to 192.168.1.70
+     postgres:
+       image: postgres:13      # Automatically cached to 192.168.1.70
+   ```
+
+3. **All cached images** are immediately available for scanning:
+   ```bash
+   trivy image --server http://192.168.1.70:4954 192.168.1.70/library/nginx:latest
+   ```
+
+### Manual Push Operations
+
+You can still manually push custom images:
 
 ```bash
-# Tag images for your registry
-docker tag nginx:latest 192.168.1.70/nginx:latest
-docker tag postgres:13 192.168.1.70/postgres:13
-
-# Push to registry
-docker push 192.168.1.70/nginx:latest
-docker push 192.168.1.70/postgres:13
-
-# Pull from registry on other hosts
-docker pull 192.168.1.70/nginx:latest
+# Build and push custom images
+docker build -t myapp:latest .
+docker tag myapp:latest 192.168.1.70/myapp:latest
+docker push 192.168.1.70/myapp:latest
 ```
-
-### Web Interface Management
-
-- **Browse Images**: Visit `http://192.168.1.70:8080` to view stored images
-- **Delete Images**: Use the web UI to remove unused images
-- **Registry Stats**: View storage usage and image metadata
 
 ## Vulnerability Scanning
 
-The integrated Trivy scanner provides comprehensive vulnerability detection for container images.
+The integrated Trivy scanner provides comprehensive vulnerability detection for all cached and pushed images.
 
-### Scan Individual Images
+### Install Trivy Client
+
+On machines where you want to run scans:
 
 ```bash
-# Scan local images
-trivy image --server http://192.168.1.70:4954 nginx:latest
-
-# Scan registry images  
-trivy image --server http://192.168.1.70:4954 192.168.1.70/nginx:latest
-
-# Get JSON output for automation
-trivy image --server http://192.168.1.70:4954 --format json 192.168.1.70/nginx:latest
+# Ubuntu/Debian
+wget https://github.com/aquasecurity/trivy/releases/download/v0.45.0/trivy_0.45.0_Linux-64bit.tar.gz
+tar zxf trivy_0.45.0_Linux-64bit.tar.gz
+sudo mv trivy /usr/local/bin/
 ```
 
-### Automated Registry Scanning
+### Scan Cached Images
 
-Create a scanning script for all registry images:
+```bash
+# Scan individual cached images
+trivy image --server http://192.168.1.70:4954 192.168.1.70/library/nginx:latest
+
+# Get JSON output for automation
+trivy image --server http://192.168.1.70:4954 --format json 192.168.1.70/library/postgres:13
+
+# Scan only HIGH/CRITICAL vulnerabilities
+trivy image --server http://192.168.1.70:4954 --severity HIGH,CRITICAL 192.168.1.70/library/nginx:latest
+```
+
+### Automated Scanning of All Cached Images
+
+Create a comprehensive scanning script:
 
 ```bash
 #!/bin/bash
-# scan-registry.sh
+# scan-all-cached.sh
 
 REGISTRY="192.168.1.70"
 TRIVY_SERVER="http://192.168.1.70:4954"
+REPORT_DIR="./vulnerability-reports"
 
-echo "Scanning all images in registry..."
+mkdir -p $REPORT_DIR
 
-# Get catalog of repositories
+echo "Scanning all cached images in registry..."
+
+# Get all repositories (both pulled from Docker Hub and manually pushed)
 curl -s http://$REGISTRY/v2/_catalog | jq -r '.repositories[]' | while read repo; do
-    echo "=== Scanning $repo ==="
+    echo "Processing repository: $repo"
     
-    # Get tags for repository
+    # Get all tags for this repository
     curl -s http://$REGISTRY/v2/$repo/tags/list | jq -r '.tags[]' | while read tag; do
-        echo "Scanning $repo:$tag"
-        trivy image --server $TRIVY_SERVER --severity HIGH,CRITICAL $REGISTRY/$repo:$tag
-        echo "---"
+        IMAGE="$REGISTRY/$repo:$tag"
+        SAFE_NAME=$(echo "$repo-$tag" | tr '/' '_')
+        
+        echo "  Scanning $IMAGE..."
+        
+        # Generate reports
+        trivy image --server $TRIVY_SERVER --format json --output "$REPORT_DIR/$SAFE_NAME.json" $IMAGE
+        trivy image --server $TRIVY_SERVER --severity HIGH,CRITICAL $IMAGE > "$REPORT_DIR/$SAFE_NAME-summary.txt"
+        
+        # Log vulnerabilities for Wazuh/monitoring
+        VULN_COUNT=$(trivy image --server $TRIVY_SERVER --format json $IMAGE | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL" or .Severity=="HIGH")] | length')
+        
+        if [ "$VULN_COUNT" -gt 0 ]; then
+            echo "$(date): Found $VULN_COUNT HIGH/CRITICAL vulnerabilities in $IMAGE" | logger -t CONTAINER_VULNERABILITY
+        fi
+    done
+done
+
+echo "Scan complete. Reports saved to $REPORT_DIR/"
+```
+
+### Integration with Wazuh
+
+For comprehensive security monitoring, integrate vulnerability scanning with Wazuh:
+
+```bash
+#!/bin/bash
+# wazuh-integration.sh
+
+# Scan and send results to Wazuh
+scan_and_report() {
+    local IMAGE=$1
+    local SCAN_RESULT=$(trivy image --server http://192.168.1.70:4954 --format json $IMAGE)
+    
+    # Extract vulnerability counts
+    local CRITICAL=$(echo "$SCAN_RESULT" | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="CRITICAL")] | length')
+    local HIGH=$(echo "$SCAN_RESULT" | jq '[.Results[]?.Vulnerabilities[]? | select(.Severity=="HIGH")] | length')
+    
+    # Send structured log to Wazuh
+    logger -p local0.warn "VULNERABILITY_SCAN: {\"image\":\"$IMAGE\",\"critical\":$CRITICAL,\"high\":$HIGH,\"timestamp\":\"$(date -Iseconds)\"}"
+}
+
+# Scan all cached images
+curl -s http://192.168.1.70/v2/_catalog | jq -r '.repositories[]' | while read repo; do
+    curl -s http://192.168.1.70/v2/$repo/tags/list | jq -r '.tags[]' | while read tag; do
+        scan_and_report "192.168.1.70/$repo:$tag"
     done
 done
 ```
 
-### Integration with CI/CD
+## Registry Management
 
-Include vulnerability scanning in your deployment pipelines:
+### Web Interface
 
-```bash
-# In your CI/CD pipeline
-docker build -t myapp:$BUILD_ID .
-docker tag myapp:$BUILD_ID 192.168.1.70/myapp:$BUILD_ID
-docker push 192.168.1.70/myapp:$BUILD_ID
+- **Browse All Images**: Visit `http://192.168.1.70:8080` to view both cached and pushed images
+- **Cached Images**: Docker Hub images appear as `library/nginx`, `library/postgres`, etc.
+- **Custom Images**: Your pushed images appear with their original names
+- **Delete Images**: Remove unused images via the web interface
 
-# Scan before deployment
-trivy image --server http://192.168.1.70:4954 --exit-code 1 --severity HIGH,CRITICAL 192.168.1.70/myapp:$BUILD_ID
-
-# Deploy only if scan passes
-if [ $? -eq 0 ]; then
-    docker pull 192.168.1.70/myapp:$BUILD_ID
-    docker run -d 192.168.1.70/myapp:$BUILD_ID
-fi
-```
-
-## Architecture Integration
-
-The registry integrates seamlessly with the existing Portainer-based architecture:
-
-### With Agent Stacks
-
-Configure agent containers to use the central registry:
-
-```yaml
-# In agent-stack Docker Compose files
-services:
-  myapp:
-    image: 192.168.1.70/myapp:latest  # Pull from central registry
-    ports:
-      - "8080:80"
-```
-
-### With Application Stacks
-
-Reference centrally-stored images in your application stacks:
-
-```yaml
-version: '3.8'
-services:
-  web:
-    image: 192.168.1.70/nginx:alpine
-  database:
-    image: 192.168.1.70/postgres:13
-  app:
-    image: 192.168.1.70/mycompany/webapp:latest
-```
-
-### Portainer Stack Management
-
-- **View Registry Stack**: Check registry status in Portainer UI under "Stacks"
-- **Monitor Resources**: View registry container logs and resource usage
-- **Update Registry**: Modify registry configuration via Portainer stack editor
-
-## Security Considerations
-
-### Network Security
-- Registry runs on HTTP (port 80) - suitable for internal networks
-- Add TLS termination via reverse proxy for external access
-- Configure firewall rules to restrict registry access
-
-### Image Security
-- Regular vulnerability scanning with Trivy
-- Implement image signing for production workflows
-- Set up automated security policies in CI/CD pipelines
-
-### Access Control
-- Registry has no built-in authentication (suitable for trusted networks)
-- Consider adding proxy with authentication for production use
-- Use Portainer RBAC to control registry stack management
-
-## Monitoring and Maintenance
-
-### Health Checks
+### Health Monitoring
 
 ```bash
 # Registry health
 curl http://192.168.1.70/v2/
+
+# View cached repositories
+curl http://192.168.1.70/v2/_catalog
 
 # Trivy server health  
 curl http://192.168.1.70:4954/version
@@ -434,24 +446,62 @@ curl http://192.168.1.70:4954/version
 curl http://192.168.1.70:8080
 ```
 
-### Maintenance Tasks
+### Storage Management
 
 ```bash
-# View registry storage usage
+# Check registry storage usage
 docker exec central-registry du -sh /var/lib/registry
 
-# Clean up unused images (via UI or API)
-curl -X DELETE http://192.168.1.70/v2/myapp/manifests/<digest>
-
-# Update Trivy vulnerability database
-docker exec trivy-scanner trivy image --download-db-only
+# View storage breakdown by repository
+docker exec central-registry find /var/lib/registry -name repositories -exec du -sh {} \;
 ```
 
-## Extending the Registry
+## Architecture Integration
 
-### Add Authentication
+### With Agent Stacks
 
-Modify the registry configuration to include htpasswd authentication:
+Agent containers automatically benefit from the pull-through cache:
+
+```yaml
+# Agent stack compose - images automatically cached
+version: '3.8'
+services:
+  nginx:
+    image: nginx:alpine     # Cached from Docker Hub
+  app:
+    image: node:18          # Cached from Docker Hub
+```
+
+### With Application Stacks
+
+All application images are automatically cached and scanned:
+
+```yaml
+version: '3.8'
+services:
+  web:
+    image: nginx:alpine                    # Cached automatically
+  database:
+    image: postgres:13                     # Cached automatically  
+  app:
+    image: 192.168.1.70/mycompany/webapp   # Custom pushed image
+```
+
+## Workflow Benefits
+
+The pull-through cache architecture provides:
+
+1. **Zero Configuration**: All Docker operations automatically populate the registry
+2. **Complete Coverage**: Every image used in your infrastructure gets scanned
+3. **Performance**: Faster pulls after initial cache population
+4. **Bandwidth Savings**: Reduces external Docker Hub requests
+5. **Security Visibility**: Comprehensive vulnerability scanning of all images
+6. **Compliance**: Centralized audit trail of all container images
+
+## Future Enhancements
+
+### Authentication
+Add authentication for production environments:
 
 ```yaml
 services:
@@ -459,35 +509,20 @@ services:
     environment:
       - REGISTRY_AUTH=htpasswd
       - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
-    volumes:
-      - ./auth:/auth
 ```
 
-### Add Webhook Notifications
-
-Configure registry webhooks for image push/pull events:
+### Multiple Registry Support
+Extend caching to additional registries:
 
 ```yaml
 services:
   registry:
     environment:
-      - REGISTRY_NOTIFICATIONS_ENDPOINTS=[{"name":"webhook","url":"http://your-webhook-url","headers":{"Authorization":["Bearer <token>"]}}]
+      - REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
+      - REGISTRY_PROXY_REMOTEURL_QUAY=https://quay.io
 ```
 
-### Scale for High Availability
-
-Deploy multiple registry replicas with shared storage:
-
-```yaml
-services:
-  registry:
-    deploy:
-      replicas: 3
-    volumes:
-      - nfs_storage:/var/lib/registry
-```
-
-This container registry integration transforms your management stack into a comprehensive Docker infrastructure platform, providing centralized image storage, vulnerability scanning, and seamless integration with your Portainer-managed container ecosystem.
+This pull-through cache configuration ensures that every Docker image used in your infrastructure is automatically stored in your registry and available for vulnerability scanning, providing comprehensive security coverage with zero operational overhead.
 
 ## Related Documentation
 
