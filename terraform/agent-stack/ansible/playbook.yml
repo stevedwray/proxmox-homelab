@@ -1,10 +1,13 @@
 # terraform/agent-stack/ansible/playbook.yml
 
 ---
-- name: Apply base Docker configuration
+- name: Apply base Docker configuration with registry mirror
   hosts: portainer_agents
   remote_user: root
   become: true
+  vars:
+    docker_registry_mirror: "{{ lookup('env', 'REGISTRY_MIRROR_IP') | default('192.168.1.70') }}"
+    enable_registry_mirror: "{{ lookup('env', 'ENABLE_REGISTRY_MIRROR') | default('true') | bool }}"
   roles:
     - ../../ansible/shared-roles/docker_base
 

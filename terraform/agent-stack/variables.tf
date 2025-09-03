@@ -69,3 +69,16 @@ variable "portainer_server_ip" {
   type        = string
   default     = "192.168.1.70"
 }
+
+# Registry integration variables
+variable "registry_mirror_ip" {
+  description = "IP address of local registry mirror"
+  type        = string
+  default     = "192.168.1.70"
+}
+
+variable "enable_registry_mirror" {
+  description = "Enable local registry mirror configuration"
+  type        = bool
+  default     = true
+}
