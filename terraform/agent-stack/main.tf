@@ -62,13 +62,14 @@ resource "null_resource" "run_ansible" {
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
       PORTAINER_ADMIN_PASSWORD  = var.lxc_password  # Temporary - should be separate
+      # Add registry configuration
+      REGISTRY_MIRROR_IP        = var.registry_mirror_ip
+      ENABLE_REGISTRY_MIRROR    = var.enable_registry_mirror
     }
   }
 
   depends_on = [module.portainer_agent, local_file.ansible_inventory]
 }
-
-# Add this to terraform/agent-stack/main.tf after the existing null_resource
 
 # Cleanup agent registration on destroy
 resource "null_resource" "agent_cleanup" {
@@ -105,3 +106,7 @@ output "agent_url" {
   value = "https://${replace(module.portainer_agent.ip_address, "/24", "")}:9001"
 }
 
+output "registry_mirror_ip" {
+  description = "IP address of the configured registry mirror"
+  value = var.enable_registry_mirror ? var.registry_mirror_ip : "Registry mirror disabled"
+}

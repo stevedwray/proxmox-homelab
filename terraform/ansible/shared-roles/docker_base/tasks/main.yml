@@ -1,31 +1,84 @@
-# terraform/management-stack/ansible/roles/docker_base/tasks/main.yml
-
 ---
-- name: Ensure Docker SDK for Python present (for docker_* modules)
-  package:
-    name: python3-docker
-    state: present
-  ignore_errors: yes
+# terraform/ansible/shared-roles/docker_base/tasks/main.yml
 
-- name: Ensure Docker service is running and enabled
+- name: Ensure Docker service is running
   systemd:
     name: docker
     state: started
     enabled: yes
 
-- name: Ensure Docker Compose is available
-  package:
-    name: docker-compose
+- name: Install Docker Python SDK via system packages
+  apt:
+    name: python3-docker
     state: present
-  ignore_errors: yes
+    update_cache: yes
 
-- name: Create docker group (if not exists)
+- name: Ensure docker group exists
   group:
     name: docker
     state: present
 
-- name: Add root user to docker group
+- name: Add user to docker group
   user:
     name: root
     groups: docker
     append: yes
+
+- name: Check if registry mirror should be configured
+  set_fact:
+    configure_mirror: "{{ enable_registry_mirror | default(false) | bool and docker_registry_mirror is defined }}"
+
+- name: Configure Docker daemon for registry mirror
+  template:
+    src: daemon.json.j2
+    dest: /etc/docker/daemon.json
+    backup: yes
+    mode: '0644'
+  notify: restart docker
+  when: configure_mirror | bool
+
+- name: Restart Docker service if configuration changed
+  systemd:
+    name: docker
+    state: restarted
+  when: configure_mirror | bool
+
+- name: Wait for Docker daemon to restart
+  wait_for:
+    port: 2375
+    host: localhost
+    timeout: 30
+  ignore_errors: yes
+  when: configure_mirror | bool
+
+- name: Verify Docker daemon is responsive
+  command: docker info
+  register: docker_info
+  retries: 5
+  delay: 2
+  until: docker_info.rc == 0
+  when: configure_mirror | bool
+
+- name: Validate registry mirror configuration
+  shell: docker info | grep -A 5 "Registry Mirrors"
+  register: registry_check
+  failed_when: false
+  when: configure_mirror | bool
+
+- name: Display registry mirror status
+  debug:
+    msg: "Registry mirror configured: {{ docker_registry_mirror if configure_mirror else 'Not configured' }}"
+
+- name: Test registry connectivity
+  uri:
+    url: "http://{{ docker_registry_mirror }}/v2/"
+    method: GET
+    timeout: 10
+  register: registry_test
+  failed_when: false
+  when: configure_mirror | bool
+
+- name: Display registry connectivity status
+  debug:
+    msg: "Registry connectivity: {{ 'Success' if registry_test.status == 200 else 'Failed' }}"
+  when: configure_mirror | bool
