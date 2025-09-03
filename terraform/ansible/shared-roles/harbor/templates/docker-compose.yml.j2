@@ -15,6 +15,9 @@ services:
       - REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY=/var/lib/registry
       - REGISTRY_HTTP_ADDR=0.0.0.0:5000
       - REGISTRY_LOG_LEVEL=info
+      - REGISTRY_PROXY_REMOTEURL=https://registry-1.docker.io
+      - REGISTRY_PROXY_USERNAME=
+      - REGISTRY_PROXY_PASSWORD=
     networks:
       - registry
 
@@ -26,7 +29,7 @@ services:
       - "8080:80"
     environment:
       - SINGLE_REGISTRY=true
-      - REGISTRY_TITLE=Central Container Registry
+      - REGISTRY_TITLE=Central Container Registry (Pull-Through Cache)
       - DELETE_IMAGES=true
       - SHOW_CONTENT_DIGEST=true
       - NGINX_PROXY_PASS_URL=http://registry:5000

@@ -26,6 +26,7 @@
   become: false
   gather_facts: yes
   vars:
+
     enable_harbor: "{{ lookup('env', 'TF_VAR_enable_harbor') == 'true' }}"
   
   pre_tasks:
