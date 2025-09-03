@@ -151,6 +151,7 @@
       Authorization: "Bearer {{ portainer_auth.json.jwt }}"
       Content-Type: "application/json"
     status_code: 200
+    timeout: 120
   register: harbor_stack_result
   delegate_to: localhost
 
