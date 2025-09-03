@@ -55,4 +55,3 @@ id_rsa.pub
 .continue/config.json
 *~
 
-terraform/sock-shop/single-container/terraform.tfvars
