@@ -7,7 +7,7 @@
     state: present
 
 # --- Housekeeping: find containers binding 9000/9443
-- name: Find containers binding 0.0.0.0:{{ portainer_port_http }}
+- name: Find containers binding HTTP port
   ansible.builtin.shell: |
     docker ps --format '{{ "{{" }}.ID{{ "}}" }} {{ "{{" }}.Ports{{ "}}" }}' | 
     grep -E '(^|,| )0\.0\.0\.0:{{ portainer_port_http }}->' | 
@@ -15,7 +15,7 @@
   register: port9000_ids
   changed_when: false
 
-- name: Find containers binding 0.0.0.0:{{ portainer_port_https }}
+- name: Find containers binding HTTPS port
   ansible.builtin.shell: |
     docker ps --format '{{ "{{" }}.ID{{ "}}" }} {{ "{{" }}.Ports{{ "}}" }}' | 
     grep -E '(^|,| )0\.0\.0\.0:{{ portainer_port_https }}->' | 
@@ -72,7 +72,7 @@
     state: started
     recreate: true
 
-- name: Wait for Portainer API TCP {{ portainer_port_http }}
+- name: Wait for Portainer API TCP port
   ansible.builtin.wait_for:
     host: "{{ ansible_host | default(inventory_hostname) }}"
     port: "{{ portainer_port_http }}"

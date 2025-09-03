@@ -1,12 +1,12 @@
 # terraform/management-stack/ansible/playbook.yml
----
 
+---
 - name: Apply base Docker configuration to all hosts
   hosts: all
   remote_user: root
   become: true
   roles:
-    - ../../ansible/shared-roles/docker_base  # Updated path
+    - ../../ansible/shared-roles/docker_base
 
 - name: Deploy Portainer Server
   hosts: portainer_server
@@ -15,7 +15,55 @@
   vars:
     portainer_container_name: "portainer"
     portainer_image: "portainer/portainer-ce:latest"
-    portainer_port_http: "9000"
-    portainer_port_https: "9443"
+    portainer_port_http: 9000
+    portainer_port_https: 9443
   roles:
     - portainer_server
+
+- name: Deploy Harbor Container Registry
+  hosts: portainer_server
+  remote_user: root
+  become: false
+  gather_facts: yes
+  vars:
+    enable_harbor: "{{ lookup('env', 'TF_VAR_enable_harbor') == 'true' }}"
+  
+  pre_tasks:
+    - name: Verify required environment variables for Harbor
+      ansible.builtin.fail:
+        msg: "Required environment variable {{ item }} is not set"
+      when: 
+        - enable_harbor | bool
+        - lookup('env', item) == ''
+      loop:
+        - 'HARBOR_ADMIN_PASSWORD'
+        - 'PORTAINER_ADMIN_PASSWORD'
+      delegate_to: localhost
+
+    - name: Wait for Portainer to be ready
+      ansible.builtin.wait_for:
+        host: "{{ ansible_default_ipv4.address }}"
+        port: 9000
+        timeout: 60
+      delegate_to: localhost
+
+  roles:
+    - role: ../../ansible/shared-roles/harbor
+      when: enable_harbor | bool
+      vars:
+        portainer_server_ip: "{{ ansible_default_ipv4.address }}"
+
+  post_tasks:
+    - name: Display deployment summary
+      ansible.builtin.debug:
+        msg:
+          - "Management Stack Deployment Complete!"
+          - "- Portainer: http://{{ ansible_default_ipv4.address }}:9000"
+          - "- Harbor: http://{{ ansible_default_ipv4.address }}:80 ({{ 'Enabled' if enable_harbor else 'Disabled' }})"
+          - "- Harbor Admin: admin / [from HARBOR_ADMIN_PASSWORD env var]"
+      when: enable_harbor | bool
+
+    - name: Display Harbor disabled message
+      ansible.builtin.debug:
+        msg: "Harbor deployment skipped (TF_VAR_enable_harbor={{ enable_harbor }})"
+      when: not (enable_harbor | bool)
