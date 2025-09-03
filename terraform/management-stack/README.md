@@ -232,6 +232,263 @@ docker logs portainer
 curl http://192.168.1.70:9000/api/status
 ```
 
+# Container Registry Integration
+
+The management stack now includes an optional centralized container registry with vulnerability scanning capabilities, deployed alongside Portainer for comprehensive Docker infrastructure management.
+
+## Registry Components
+
+When enabled (`TF_VAR_enable_harbor="true"`), the stack deploys:
+
+- **Docker Registry**: Central image storage at `http://192.168.1.70:80`
+- **Registry Web UI**: Image browsing and management at `http://192.168.1.70:8080`  
+- **Trivy Scanner**: Vulnerability scanning service at `http://192.168.1.70:4954`
+- **Portainer Management**: Registry stack managed via Portainer UI
+
+## Configuration
+
+### Environment Variables
+```bash
+# Required for registry deployment
+export HARBOR_ADMIN_PASSWORD="your-secure-password"
+export PORTAINER_ADMIN_PASSWORD="your-portainer-password"
+
+# Enable/disable registry (default: true if HARBOR_ADMIN_PASSWORD is set)
+export TF_VAR_enable_harbor="true"
+```
+
+### Deployment
+```bash
+source .env
+cd terraform/management-stack
+terraform apply
+```
+
+## Using the Container Registry
+
+### Configure Docker Clients
+
+On your LXC containers or other Docker hosts, configure Docker to use the registry:
+
+```bash
+# /etc/docker/daemon.json
+{
+  "insecure-registries": ["192.168.1.70"]
+}
+
+# Restart Docker
+sudo systemctl restart docker
+```
+
+### Push and Pull Images
+
+```bash
+# Tag images for your registry
+docker tag nginx:latest 192.168.1.70/nginx:latest
+docker tag postgres:13 192.168.1.70/postgres:13
+
+# Push to registry
+docker push 192.168.1.70/nginx:latest
+docker push 192.168.1.70/postgres:13
+
+# Pull from registry on other hosts
+docker pull 192.168.1.70/nginx:latest
+```
+
+### Web Interface Management
+
+- **Browse Images**: Visit `http://192.168.1.70:8080` to view stored images
+- **Delete Images**: Use the web UI to remove unused images
+- **Registry Stats**: View storage usage and image metadata
+
+## Vulnerability Scanning
+
+The integrated Trivy scanner provides comprehensive vulnerability detection for container images.
+
+### Scan Individual Images
+
+```bash
+# Scan local images
+trivy image --server http://192.168.1.70:4954 nginx:latest
+
+# Scan registry images  
+trivy image --server http://192.168.1.70:4954 192.168.1.70/nginx:latest
+
+# Get JSON output for automation
+trivy image --server http://192.168.1.70:4954 --format json 192.168.1.70/nginx:latest
+```
+
+### Automated Registry Scanning
+
+Create a scanning script for all registry images:
+
+```bash
+#!/bin/bash
+# scan-registry.sh
+
+REGISTRY="192.168.1.70"
+TRIVY_SERVER="http://192.168.1.70:4954"
+
+echo "Scanning all images in registry..."
+
+# Get catalog of repositories
+curl -s http://$REGISTRY/v2/_catalog | jq -r '.repositories[]' | while read repo; do
+    echo "=== Scanning $repo ==="
+    
+    # Get tags for repository
+    curl -s http://$REGISTRY/v2/$repo/tags/list | jq -r '.tags[]' | while read tag; do
+        echo "Scanning $repo:$tag"
+        trivy image --server $TRIVY_SERVER --severity HIGH,CRITICAL $REGISTRY/$repo:$tag
+        echo "---"
+    done
+done
+```
+
+### Integration with CI/CD
+
+Include vulnerability scanning in your deployment pipelines:
+
+```bash
+# In your CI/CD pipeline
+docker build -t myapp:$BUILD_ID .
+docker tag myapp:$BUILD_ID 192.168.1.70/myapp:$BUILD_ID
+docker push 192.168.1.70/myapp:$BUILD_ID
+
+# Scan before deployment
+trivy image --server http://192.168.1.70:4954 --exit-code 1 --severity HIGH,CRITICAL 192.168.1.70/myapp:$BUILD_ID
+
+# Deploy only if scan passes
+if [ $? -eq 0 ]; then
+    docker pull 192.168.1.70/myapp:$BUILD_ID
+    docker run -d 192.168.1.70/myapp:$BUILD_ID
+fi
+```
+
+## Architecture Integration
+
+The registry integrates seamlessly with the existing Portainer-based architecture:
+
+### With Agent Stacks
+
+Configure agent containers to use the central registry:
+
+```yaml
+# In agent-stack Docker Compose files
+services:
+  myapp:
+    image: 192.168.1.70/myapp:latest  # Pull from central registry
+    ports:
+      - "8080:80"
+```
+
+### With Application Stacks
+
+Reference centrally-stored images in your application stacks:
+
+```yaml
+version: '3.8'
+services:
+  web:
+    image: 192.168.1.70/nginx:alpine
+  database:
+    image: 192.168.1.70/postgres:13
+  app:
+    image: 192.168.1.70/mycompany/webapp:latest
+```
+
+### Portainer Stack Management
+
+- **View Registry Stack**: Check registry status in Portainer UI under "Stacks"
+- **Monitor Resources**: View registry container logs and resource usage
+- **Update Registry**: Modify registry configuration via Portainer stack editor
+
+## Security Considerations
+
+### Network Security
+- Registry runs on HTTP (port 80) - suitable for internal networks
+- Add TLS termination via reverse proxy for external access
+- Configure firewall rules to restrict registry access
+
+### Image Security
+- Regular vulnerability scanning with Trivy
+- Implement image signing for production workflows
+- Set up automated security policies in CI/CD pipelines
+
+### Access Control
+- Registry has no built-in authentication (suitable for trusted networks)
+- Consider adding proxy with authentication for production use
+- Use Portainer RBAC to control registry stack management
+
+## Monitoring and Maintenance
+
+### Health Checks
+
+```bash
+# Registry health
+curl http://192.168.1.70/v2/
+
+# Trivy server health  
+curl http://192.168.1.70:4954/version
+
+# Web UI availability
+curl http://192.168.1.70:8080
+```
+
+### Maintenance Tasks
+
+```bash
+# View registry storage usage
+docker exec central-registry du -sh /var/lib/registry
+
+# Clean up unused images (via UI or API)
+curl -X DELETE http://192.168.1.70/v2/myapp/manifests/<digest>
+
+# Update Trivy vulnerability database
+docker exec trivy-scanner trivy image --download-db-only
+```
+
+## Extending the Registry
+
+### Add Authentication
+
+Modify the registry configuration to include htpasswd authentication:
+
+```yaml
+services:
+  registry:
+    environment:
+      - REGISTRY_AUTH=htpasswd
+      - REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd
+    volumes:
+      - ./auth:/auth
+```
+
+### Add Webhook Notifications
+
+Configure registry webhooks for image push/pull events:
+
+```yaml
+services:
+  registry:
+    environment:
+      - REGISTRY_NOTIFICATIONS_ENDPOINTS=[{"name":"webhook","url":"http://your-webhook-url","headers":{"Authorization":["Bearer <token>"]}}]
+```
+
+### Scale for High Availability
+
+Deploy multiple registry replicas with shared storage:
+
+```yaml
+services:
+  registry:
+    deploy:
+      replicas: 3
+    volumes:
+      - nfs_storage:/var/lib/registry
+```
+
+This container registry integration transforms your management stack into a comprehensive Docker infrastructure platform, providing centralized image storage, vulnerability scanning, and seamless integration with your Portainer-managed container ecosystem.
+
 ## Related Documentation
 
 - [LXC Docker Host Module](../modules/lxc-docker-host/README.md)
