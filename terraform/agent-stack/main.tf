@@ -68,6 +68,33 @@ resource "null_resource" "run_ansible" {
   depends_on = [module.portainer_agent, local_file.ansible_inventory]
 }
 
+# Add this to terraform/agent-stack/main.tf after the existing null_resource
+
+# Cleanup agent registration on destroy
+resource "null_resource" "agent_cleanup" {
+  # Store values as triggers so they're available during destroy
+  triggers = {
+    agent_hostname = var.agent_hostname
+    portainer_server_ip = var.portainer_server_ip
+    working_dir = "${path.module}/ansible"
+  }
+  
+  provisioner "local-exec" {
+    when    = destroy
+    command = <<-EOT
+      export AGENT_HOSTNAME="${self.triggers.agent_hostname}"
+      export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"
+      export ANSIBLE_HOST_KEY_CHECKING="False"
+      ansible-playbook -i inventory.yml cleanup.yml
+    EOT
+    working_dir = self.triggers.working_dir
+    
+    on_failure = continue  # Don't block destroy if cleanup fails
+  }
+
+  depends_on = [module.portainer_agent]
+}
+
 output "agent_ip" {
   description = "IP address of the Portainer agent"
   value = replace(module.portainer_agent.ip_address, "/24", "")
@@ -77,3 +104,4 @@ output "agent_url" {
   description = "URL to access Portainer agent"
   value = "https://${replace(module.portainer_agent.ip_address, "/24", "")}:9001"
 }
+
