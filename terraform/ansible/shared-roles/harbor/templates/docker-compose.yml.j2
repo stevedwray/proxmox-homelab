@@ -1,0 +1,234 @@
+# terraform/ansible/shared-roles/harbor/templates/docker-compose.yml.j2
+
+version: '3.8'
+
+services:
+  registry:
+    image: goharbor/registry-photon:v2.9.0
+    container_name: harbor-registry
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - registry_data:/storage
+      - harbor_config:/etc/registry
+    networks:
+      - harbor
+    environment:
+      - REGISTRY_HTTP_TLS_CERTIFICATE=/etc/registry/cert.pem
+      - REGISTRY_HTTP_TLS_KEY=/etc/registry/key.pem
+    depends_on:
+      - log
+
+  registryctl:
+    image: goharbor/harbor-registryctl:v2.9.0
+    container_name: harbor-registryctl
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - registry_data:/storage
+      - harbor_config:/etc/registry
+      - harbor_config:/etc/registryctl
+    networks:
+      - harbor
+    depends_on:
+      - registry
+
+  postgresql:
+    image: goharbor/harbor-db:v2.9.0
+    container_name: harbor-db
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - database_data:/var/lib/postgresql/data
+    networks:
+      - harbor
+    environment:
+      - POSTGRES_PASSWORD=root123
+      - POSTGRES_USER=postgres
+      - POSTGRES_DB=registry
+    shm_size: 256m
+
+  core:
+    image: goharbor/harbor-core:v2.9.0
+    container_name: harbor-core
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - SETGID
+      - SETUID
+    volumes:
+      - harbor_config:/etc/core
+      - harbor_ca:/etc/core/ca
+      - harbor_psc:/etc/core/token
+    networks:
+      - harbor
+    environment:
+      - CORE_SECRET=not-a-secure-secret
+      - JOBSERVICE_SECRET=not-a-secure-secret  
+      - ADMIRAL_URL=
+      - WITH_NOTARY=False
+      - WITH_TRIVY=False
+      - WITH_CHARTMUSEUM=False
+      - CFG_EXPIRATION=5
+      - ADMIRAL_ENDPOINT=
+      - REGISTRY_STORAGE_PROVIDER_NAME=filesystem
+      - READ_ONLY=false
+      - RELOAD_CERTIFICATES=false
+      - SKIP_RELOAD_ENV_PATTERN=$$
+      - LOG_LEVEL=info
+      - CONFIG_PATH=/etc/core/app.conf
+      - SYNC_REGISTRY=false
+      - CHART_CACHE_DRIVER=memory
+      - _REDIS_URL_CORE=redis://redis:6379/0
+      - _REDIS_URL_REG=redis://redis:6379/2
+      - PORTAL_URL=http://portal:8080
+      - REGISTRY_URL=http://registry:5000
+      - REGISTRY_CONTROLLER_URL=http://registryctl:8080
+      - POSTGRESQL_HOST=postgresql
+      - POSTGRESQL_PORT=5432
+      - POSTGRESQL_USERNAME=postgres
+      - POSTGRESQL_PASSWORD=root123
+      - POSTGRESQL_DATABASE=registry
+      - POSTGRESQL_SSLMODE=disable
+      - POSTGRESQL_MAX_IDLE_CONNS=50
+      - POSTGRESQL_MAX_OPEN_CONNS=1000
+    depends_on:
+      - log
+      - registry
+      - redis
+      - postgresql
+
+  portal:
+    image: goharbor/harbor-portal:v2.9.0
+    container_name: harbor-portal
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    volumes:
+      - harbor_config:/etc/nginx
+    networks:
+      - harbor
+    depends_on:
+      - log
+
+  jobservice:
+    image: goharbor/harbor-jobservice:v2.9.0
+    container_name: harbor-jobservice
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - harbor_job_logs:/var/log/jobs
+      - harbor_config:/etc/jobservice
+    networks:
+      - harbor
+    environment:
+      - CORE_SECRET=not-a-secure-secret
+      - JOBSERVICE_SECRET=not-a-secure-secret
+      - CORE_URL=http://core:8080
+      - REGISTRY_URL=http://registry:5000
+      - REGISTRY_CONTROLLER_URL=http://registryctl:8080
+      - LOG_LEVEL=info
+      - CONFIG_PATH=/etc/jobservice/config.yml
+      - METRIC_NAMESPACE=harbor
+      - METRIC_SUBSYSTEM=jobservice
+      - _REDIS_URL_REG=redis://redis:6379/2
+    depends_on:
+      - core
+
+  redis:
+    image: goharbor/redis-photon:v2.9.0
+    container_name: harbor-redis
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+    volumes:
+      - redis_data:/var/lib/redis
+    networks:
+      - harbor
+
+  proxy:
+    image: goharbor/nginx-photon:v2.9.0
+    container_name: harbor-proxy
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETGID
+      - SETUID
+      - NET_BIND_SERVICE
+    volumes:
+      - harbor_config:/etc/nginx
+    networks:
+      - harbor
+    ports:
+      - "80:8080"
+    depends_on:
+      - postgresql
+      - registry
+      - core
+      - portal
+      - log
+
+  log:
+    image: goharbor/harbor-log:v2.9.0
+    container_name: harbor-log
+    restart: always
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - SETGID
+      - SETUID
+    volumes:
+      - harbor_logs:/var/log/docker/
+      - harbor_config:/etc/logrotate.d/
+    networks:
+      - harbor
+    ports:
+      - "1514:10514"
+
+volumes:
+  registry_data:
+  database_data:
+  harbor_config:
+  harbor_ca:
+  harbor_psc:
+  harbor_job_logs:
+  redis_data:
+  harbor_logs:
+
+networks:
+  harbor:
+    driver: bridge

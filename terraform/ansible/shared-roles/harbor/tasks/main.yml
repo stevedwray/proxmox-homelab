@@ -1,0 +1,177 @@
+# terraform/ansible/shared-roles/harbor/tasks/main.yml
+
+---
+- name: Set Harbor stack name
+  ansible.builtin.set_fact:
+    harbor_stack_name: "harbor"
+
+- name: Verify required environment variables
+  ansible.builtin.fail:
+    msg: "Required environment variable {{ item }} is not set"
+  when: lookup('env', item) == ''
+  loop:
+    - 'HARBOR_ADMIN_PASSWORD'
+    - 'PORTAINER_ADMIN_PASSWORD'
+  delegate_to: localhost
+
+- name: Debug Harbor deployment
+  ansible.builtin.debug:
+    msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_server_ip }}"
+
+- name: Generate Harbor Docker Compose content
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /tmp/harbor-compose.yml
+  delegate_to: localhost
+
+- name: Read Harbor Docker Compose content
+  ansible.builtin.slurp:
+    src: /tmp/harbor-compose.yml
+  delegate_to: localhost
+  register: harbor_compose_content
+
+- name: Check if Portainer needs initial setup
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/users/admin/check"
+    method: GET
+    status_code: [200, 204, 404]
+  register: portainer_setup_check
+  ignore_errors: true
+  delegate_to: localhost
+
+- name: Initialize Portainer admin user if needed
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/users/admin/init"
+    method: POST
+    body_format: json
+    body:
+      Username: "admin"
+      Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
+    headers:
+      Content-Type: "application/json"
+    status_code: 200
+  when: portainer_setup_check.status in [204, 404]
+  delegate_to: localhost
+
+- name: Authenticate with Portainer API
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/auth"
+    method: POST
+    body_format: json
+    body:
+      Username: "admin"
+      Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
+    headers:
+      Content-Type: "application/json"
+    status_code: 200
+  register: portainer_auth
+  delegate_to: localhost
+
+- name: Get Portainer endpoints
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    status_code: 200
+  register: portainer_endpoints
+  delegate_to: localhost
+
+- name: Find local endpoint ID
+  ansible.builtin.set_fact:
+    local_endpoint_id: "{{ item.Id }}"
+  loop: "{{ portainer_endpoints.json }}"
+  when: item.Name == "local"
+
+- name: Create local Docker endpoint if none exists
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
+    method: POST
+    body_format: form-urlencoded
+    body:
+      Name: "local"
+      URL: "unix:///var/run/docker.sock"
+      EndpointCreationType: "1"
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    status_code: 200
+  register: created_endpoint
+  when: portainer_endpoints.json | length == 0
+  delegate_to: localhost
+
+- name: Set endpoint ID from created endpoint
+  ansible.builtin.set_fact:
+    local_endpoint_id: "{{ created_endpoint.json.Id }}"
+  when: portainer_endpoints.json | length == 0
+
+- name: Debug available endpoints if local not found
+  ansible.builtin.debug:
+    msg: "Available endpoints: {{ portainer_endpoints.json | map(attribute='Name') | list }}"
+  when: local_endpoint_id is not defined
+
+- name: Fail if no local endpoint found
+  ansible.builtin.fail:
+    msg: "No 'local' endpoint found. Available endpoints: {{ portainer_endpoints.json | map(attribute='Name') | list }}"
+  when: local_endpoint_id is not defined
+
+- name: Get existing stacks
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/stacks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    status_code: 200
+  register: existing_stacks
+  delegate_to: localhost
+
+- name: Remove existing Harbor stack if present
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
+    method: DELETE
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+    status_code: [200, 204, 404]
+  loop: "{{ existing_stacks.json | default([]) }}"
+  when: item.Name == harbor_stack_name
+  ignore_errors: true
+  delegate_to: localhost
+
+- name: Deploy Harbor stack via Portainer API
+  ansible.builtin.uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
+    method: POST
+    body_format: json
+    body:
+      method: "string"
+      type: "standalone"
+      Name: "{{ harbor_stack_name }}"
+      StackFileContent: "{{ harbor_compose_content.content | b64decode }}"
+      Env: []
+    headers:
+      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
+      Content-Type: "application/json"
+    status_code: 200
+  register: harbor_stack_result
+  delegate_to: localhost
+
+- name: Wait for Harbor services to be healthy
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: 80
+    timeout: 120
+    delay: 30
+  ignore_errors: true
+
+- name: Display Harbor access information
+  ansible.builtin.debug:
+    msg: 
+      - "Harbor has been deployed successfully!"
+      - "Access Harbor at: http://{{ ansible_host | default(inventory_hostname) }}:80"
+      - "Default admin credentials: admin / [from HARBOR_ADMIN_PASSWORD]"
+      - "Stack ID: {{ harbor_stack_result.json.Id | default('Unknown') }}"
+
+- name: Clean up temporary files
+  ansible.builtin.file:
+    path: /tmp/harbor-compose.yml
+    state: absent
+  delegate_to: localhost
