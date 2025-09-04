@@ -11,8 +11,6 @@
 
 - name: Set NPM configuration variables
   set_fact:
-    npm_data_source: "{{ lookup('env', 'NPM_DATA_SOURCE') | default('/srv/npm/data') }}"
-    npm_letsencrypt_source: "{{ lookup('env', 'NPM_LETSENCRYPT_SOURCE') | default('/srv/npm/letsencrypt') }}"
     npm_data_target: "{{ lookup('env', 'NPM_DATA_TARGET') | default('/srv/npm/data') }}"
     npm_letsencrypt_target: "{{ lookup('env', 'NPM_LETSENCRYPT_TARGET') | default('/srv/npm/letsencrypt') }}"
     portainer_server_ip: "{{ ansible_default_ipv4.address }}"
@@ -28,65 +26,6 @@
     - "{{ npm_data_target }}"
     - "{{ npm_letsencrypt_target }}"
   when: deploy_npm
-
-- name: Check if source data exists on host
-  stat:
-    path: "{{ item }}"
-  register: npm_source_checks
-  loop:
-    - "{{ npm_data_source }}"
-    - "{{ npm_letsencrypt_source }}"
-  when: deploy_npm
-  ignore_errors: yes
-
-- name: Set source data availability facts
-  set_fact:
-    npm_data_exists: "{{ npm_source_checks.results[0].stat.exists | default(false) }}"
-    npm_letsencrypt_exists: "{{ npm_source_checks.results[1].stat.exists | default(false) }}"
-  when: deploy_npm
-
-- name: Display source data status
-  debug:
-    msg: 
-      - "NPM data source: {{ npm_data_source }} - {{ 'Found' if npm_data_exists else 'Not found' }}"
-      - "NPM letsencrypt source: {{ npm_letsencrypt_source }} - {{ 'Found' if npm_letsencrypt_exists else 'Not found' }}"
-      - "{{ 'Will copy existing data' if (npm_data_exists or npm_letsencrypt_exists) else 'Will start with fresh NPM installation' }}"
-  when: deploy_npm
-
-- name: Copy NPM data from host (if exists)
-  synchronize:
-    src: "{{ npm_data_source }}/"
-    dest: "{{ npm_data_target }}/"
-    recursive: yes
-    delete: no
-    perms: yes
-    times: yes
-  when: deploy_npm and npm_data_exists
-  ignore_errors: yes
-
-- name: Copy NPM letsencrypt data from host (if exists)  
-  synchronize:
-    src: "{{ npm_letsencrypt_source }}/"
-    dest: "{{ npm_letsencrypt_target }}/"
-    recursive: yes
-    delete: no
-    perms: yes
-    times: yes
-  when: deploy_npm and npm_letsencrypt_exists
-  ignore_errors: yes
-
-- name: Create initial NPM data structure (fresh installation)
-  file:
-    path: "{{ item }}"
-    state: directory
-    mode: '0755'
-    owner: root
-    group: root
-  loop:
-    - "{{ npm_data_target }}/logs"
-    - "{{ npm_data_target }}/nginx"
-    - "{{ npm_data_target }}/custom_ssl"
-  when: deploy_npm and not npm_data_exists
 
 - name: Wait for Portainer to be ready
   wait_for:
@@ -136,9 +75,9 @@
             container_name: nginx-proxy-manager
             restart: unless-stopped
             ports:
-              - "80:80"     # HTTP proxy - standard port for client traffic
-              - "81:81"     # Admin interface
-              - "443:443"   # HTTPS proxy - standard port for client traffic
+              - "80:80"
+              - "81:81"
+              - "443:443"
             volumes:
               - {{ npm_data_target }}:/data
               - {{ npm_letsencrypt_target }}:/etc/letsencrypt
@@ -164,7 +103,7 @@
 
 - name: Display stack creation result
   debug:
-    msg: "NPM stack creation: {{ 'Success' if stack_creation.status == 200 else 'Failed - ' + (stack_creation.json.message | default('Unknown error')) }}"
+    msg: "NPM stack creation: {{ 'Success' if (stack_creation.status | default(0)) == 200 else 'Failed - ' + (stack_creation.json.message | default('Unknown error')) }}"
   when: deploy_npm
 
 - name: Wait for NPM to be responsive
@@ -187,14 +126,5 @@
 
 - name: Display NPM status
   debug:
-    msg: "NPM is {{ 'running' if (npm_health.status | default(0)) == 200 else 'not responding' }} - Access at http://{{ ansible_default_ipv4.address }}:81"
-  when: deploy_npm and (stack_creation.status | default(0)) == 200
-
-- name: Display NPM access information
-  debug:
-    msg:
-      - "NPM Admin Interface: http://{{ ansible_default_ipv4.address }}:81"
-      - "HTTP Proxy Traffic: http://{{ ansible_default_ipv4.address }}:8080"
-      - "HTTPS Proxy Traffic: https://{{ ansible_default_ipv4.address }}:8443"
-      - "Note: Update your proxy host backends to point to dev environment IPs"
-  when: deploy_npm and (stack_creation.status | default(0)) == 200
+    msg: "NPM deployed successfully - Access at http://{{ ansible_default_ipv4.address }}:81 (admin@example.com / changeme)"
+  when: deploy_npm and (npm_health.status | default(0)) == 200
