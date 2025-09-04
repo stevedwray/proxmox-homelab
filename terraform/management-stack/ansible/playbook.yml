@@ -19,6 +19,7 @@
     portainer_port_https: 9443
   roles:
     - portainer_server
+  ignore_errors: yes  # Allow playbook to continue if Portainer admin already exists
 
 - name: Deploy Harbor Container Registry
   hosts: portainer_server
@@ -26,7 +27,6 @@
   become: false
   gather_facts: yes
   vars:
-
     enable_harbor: "{{ lookup('env', 'TF_VAR_enable_harbor') == 'true' }}"
   
   pre_tasks:
@@ -54,17 +54,29 @@
       vars:
         portainer_server_ip: "{{ ansible_default_ipv4.address }}"
 
+- name: Deploy Nginx Proxy Manager
+  hosts: portainer_server
+  remote_user: root
+  become: true
+  gather_facts: yes
+  vars:
+    enable_npm: "{{ lookup('env', 'ENABLE_NPM') == 'true' }}"
+
+  pre_tasks:
+    - name: Check if NPM is enabled
+      ansible.builtin.debug:
+        msg: "NPM deployment: {{ 'Enabled' if enable_npm else 'Disabled' }}"
+
+  roles:
+    - role: ../../ansible/shared-roles/nginx_proxy_manager
+      when: enable_npm | bool
+
   post_tasks:
-    - name: Display deployment summary
+    - name: Display final deployment summary
       ansible.builtin.debug:
         msg:
           - "Management Stack Deployment Complete!"
           - "- Portainer: http://{{ ansible_default_ipv4.address }}:9000"
-          - "- Harbor: http://{{ ansible_default_ipv4.address }}:80 ({{ 'Enabled' if enable_harbor else 'Disabled' }})"
-          - "- Harbor Admin: admin / [from HARBOR_ADMIN_PASSWORD env var]"
-      when: enable_harbor | bool
-
-    - name: Display Harbor disabled message
-      ansible.builtin.debug:
-        msg: "Harbor deployment skipped (TF_VAR_enable_harbor={{ enable_harbor }})"
-      when: not (enable_harbor | bool)
+          - "- Harbor: http://{{ ansible_default_ipv4.address }}:80 ({{ 'Enabled' if (lookup('env', 'TF_VAR_enable_harbor') == 'true') else 'Disabled' }})"
+          - "- Nginx Proxy Manager: http://{{ ansible_default_ipv4.address }}:81 ({{ 'Enabled' if enable_npm else 'Disabled' }})"
+          - "{{ '- NPM Admin: Use existing credentials if migrated, or admin/changeme for fresh install' if enable_npm else '' }}"

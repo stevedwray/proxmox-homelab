@@ -1,0 +1,200 @@
+---
+# terraform/ansible/shared-roles/nginx_proxy_manager/tasks/main.yml
+
+- name: Check if NPM deployment is enabled
+  set_fact:
+    deploy_npm: "{{ lookup('env', 'ENABLE_NPM') | default('false') | bool }}"
+
+- name: Display NPM deployment status
+  debug:
+    msg: "NPM deployment: {{ 'Enabled' if deploy_npm else 'Disabled' }}"
+
+- name: Set NPM configuration variables
+  set_fact:
+    npm_data_source: "{{ lookup('env', 'NPM_DATA_SOURCE') | default('/srv/npm/data') }}"
+    npm_letsencrypt_source: "{{ lookup('env', 'NPM_LETSENCRYPT_SOURCE') | default('/srv/npm/letsencrypt') }}"
+    npm_data_target: "{{ lookup('env', 'NPM_DATA_TARGET') | default('/srv/npm/data') }}"
+    npm_letsencrypt_target: "{{ lookup('env', 'NPM_LETSENCRYPT_TARGET') | default('/srv/npm/letsencrypt') }}"
+    portainer_server_ip: "{{ ansible_default_ipv4.address }}"
+    portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
+  when: deploy_npm
+
+- name: Create NPM data directories in container
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+  loop:
+    - "{{ npm_data_target }}"
+    - "{{ npm_letsencrypt_target }}"
+  when: deploy_npm
+
+- name: Check if source data exists on host
+  stat:
+    path: "{{ item }}"
+  register: npm_source_checks
+  loop:
+    - "{{ npm_data_source }}"
+    - "{{ npm_letsencrypt_source }}"
+  when: deploy_npm
+  ignore_errors: yes
+
+- name: Set source data availability facts
+  set_fact:
+    npm_data_exists: "{{ npm_source_checks.results[0].stat.exists | default(false) }}"
+    npm_letsencrypt_exists: "{{ npm_source_checks.results[1].stat.exists | default(false) }}"
+  when: deploy_npm
+
+- name: Display source data status
+  debug:
+    msg: 
+      - "NPM data source: {{ npm_data_source }} - {{ 'Found' if npm_data_exists else 'Not found' }}"
+      - "NPM letsencrypt source: {{ npm_letsencrypt_source }} - {{ 'Found' if npm_letsencrypt_exists else 'Not found' }}"
+      - "{{ 'Will copy existing data' if (npm_data_exists or npm_letsencrypt_exists) else 'Will start with fresh NPM installation' }}"
+  when: deploy_npm
+
+- name: Copy NPM data from host (if exists)
+  synchronize:
+    src: "{{ npm_data_source }}/"
+    dest: "{{ npm_data_target }}/"
+    recursive: yes
+    delete: no
+    perms: yes
+    times: yes
+  when: deploy_npm and npm_data_exists
+  ignore_errors: yes
+
+- name: Copy NPM letsencrypt data from host (if exists)  
+  synchronize:
+    src: "{{ npm_letsencrypt_source }}/"
+    dest: "{{ npm_letsencrypt_target }}/"
+    recursive: yes
+    delete: no
+    perms: yes
+    times: yes
+  when: deploy_npm and npm_letsencrypt_exists
+  ignore_errors: yes
+
+- name: Create initial NPM data structure (fresh installation)
+  file:
+    path: "{{ item }}"
+    state: directory
+    mode: '0755'
+    owner: root
+    group: root
+  loop:
+    - "{{ npm_data_target }}/logs"
+    - "{{ npm_data_target }}/nginx"
+    - "{{ npm_data_target }}/custom_ssl"
+  when: deploy_npm and not npm_data_exists
+
+- name: Wait for Portainer to be ready
+  wait_for:
+    port: 9000
+    host: localhost
+    timeout: 120
+  when: deploy_npm
+
+# Authenticate with Portainer API
+- name: Authenticate with Portainer
+  uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/auth"
+    method: POST
+    body_format: json
+    body:
+      Username: "admin"
+      Password: "{{ portainer_admin_password }}"
+    headers:
+      Content-Type: "application/json"
+    timeout: 30
+  register: auth_response
+  when: deploy_npm
+
+- name: Set JWT token
+  set_fact:
+    jwt_token: "{{ auth_response.json.jwt }}"
+  when: deploy_npm
+
+# Create NPM stack via Portainer API
+- name: Create NPM Docker Compose stack
+  uri:
+    url: "http://{{ portainer_server_ip }}:9000/api/stacks/create/standalone/string?endpointId=1"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ jwt_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      method: "string"
+      type: "standalone"
+      Name: "nginx-proxy-manager"
+      StackFileContent: |
+        version: '3.8'
+        services:
+          nginx-proxy-manager:
+            image: jc21/nginx-proxy-manager:latest
+            container_name: nginx-proxy-manager
+            restart: unless-stopped
+            ports:
+              - "80:80"     # HTTP proxy - standard port for client traffic
+              - "81:81"     # Admin interface
+              - "443:443"   # HTTPS proxy - standard port for client traffic
+            volumes:
+              - {{ npm_data_target }}:/data
+              - {{ npm_letsencrypt_target }}:/etc/letsencrypt
+            environment:
+              DISABLE_IPV6: "true"
+              LOG_LEVEL: "info"
+            networks:
+              - npm_network
+            healthcheck:
+              test: ["CMD-SHELL", "curl -f http://localhost:81 || exit 1"]
+              interval: 30s
+              timeout: 10s
+              retries: 3
+              start_period: 30s
+        networks:
+          npm_network:
+            driver: bridge
+      Env: []
+    timeout: 60
+  register: stack_creation
+  when: deploy_npm
+  ignore_errors: yes
+
+- name: Display stack creation result
+  debug:
+    msg: "NPM stack creation: {{ 'Success' if stack_creation.status == 200 else 'Failed - ' + (stack_creation.json.message | default('Unknown error')) }}"
+  when: deploy_npm
+
+- name: Wait for NPM to be responsive
+  wait_for:
+    port: 81
+    host: localhost
+    timeout: 180
+    delay: 10
+  when: deploy_npm and (stack_creation.status | default(0)) == 200
+
+- name: Verify NPM is running
+  uri:
+    url: "http://localhost:81"
+    method: GET
+    timeout: 10
+  register: npm_health
+  retries: 5
+  delay: 10
+  when: deploy_npm and (stack_creation.status | default(0)) == 200
+
+- name: Display NPM status
+  debug:
+    msg: "NPM is {{ 'running' if (npm_health.status | default(0)) == 200 else 'not responding' }} - Access at http://{{ ansible_default_ipv4.address }}:81"
+  when: deploy_npm and (stack_creation.status | default(0)) == 200
+
+- name: Display NPM access information
+  debug:
+    msg:
+      - "NPM Admin Interface: http://{{ ansible_default_ipv4.address }}:81"
+      - "HTTP Proxy Traffic: http://{{ ansible_default_ipv4.address }}:8080"
+      - "HTTPS Proxy Traffic: https://{{ ansible_default_ipv4.address }}:8443"
+      - "Note: Update your proxy host backends to point to dev environment IPs"
+  when: deploy_npm and (stack_creation.status | default(0)) == 200

@@ -135,7 +135,7 @@
 - name: Wait for Harbor services to be healthy
   ansible.builtin.wait_for:
     host: "{{ ansible_host | default(inventory_hostname) }}"
-    port: 80
+    port: 5000  # Changed from port 80 to 5000
     timeout: 120
     delay: 30
   ignore_errors: true
@@ -144,8 +144,9 @@
   ansible.builtin.debug:
     msg: 
       - "Harbor has been deployed successfully!"
-      - "Access Harbor at: http://{{ ansible_host | default(inventory_hostname) }}:80"
-      - "Default admin credentials: admin / [from HARBOR_ADMIN_PASSWORD]"
+      - "Registry: http://{{ ansible_host | default(inventory_hostname) }}:5000 (pull-through cache)"
+      - "Registry UI: http://{{ ansible_host | default(inventory_hostname) }}:5001"
+      - "Trivy Scanner: http://{{ ansible_host | default(inventory_hostname) }}:4954"
       - "Stack ID: {{ harbor_stack_result.json.Id | default('Unknown') }}"
 
 - name: Clean up temporary files

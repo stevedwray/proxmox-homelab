@@ -34,9 +34,9 @@ module "portainer_server" {
   swap          = 1024
   rootfs_size   = "15G"
   
-  lxc_password  = var.lxc_password
+  lxc_password    = var.lxc_password
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
-  tags          = "portainer,server,management"
+  tags            = "portainer,server,management"
 }
 
 # Generate dynamic Ansible inventory
@@ -61,6 +61,14 @@ resource "null_resource" "run_ansible" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
+      # Portainer API credentials (needed for NPM deployment)
+      PORTAINER_ADMIN_PASSWORD  = var.lxc_password  # Should be separate variable
+      # NPM configuration (only if NPM variables are defined)
+      ENABLE_NPM                = var.enable_npm
+      NPM_DATA_SOURCE          = var.npm_data_source
+      NPM_LETSENCRYPT_SOURCE   = var.npm_letsencrypt_source
+      NPM_DATA_TARGET          = var.npm_data_target
+      NPM_LETSENCRYPT_TARGET   = var.npm_letsencrypt_target
     }
   }
 
@@ -75,4 +83,10 @@ output "portainer_server_ip" {
 output "portainer_server_url" {
   description = "URL to access Portainer"
   value = "http://${replace(module.portainer_server.ip_address, "/24", "")}:9000"
+}
+
+# New NPM output (only if NPM is enabled)
+output "npm_url" {
+  description = "URL to access Nginx Proxy Manager"
+  value = var.enable_npm ? "http://${replace(module.portainer_server.ip_address, "/24", "")}:81" : "NPM disabled"
 }
