@@ -1,5 +1,4 @@
 # terraform/ansible/shared-roles/harbor/tasks/main.yml
-
 ---
 - name: Set Harbor stack name
   ansible.builtin.set_fact:
@@ -132,21 +131,21 @@
   register: harbor_stack_result
   delegate_to: localhost
 
-- name: Wait for Harbor services to be healthy
+- name: Wait for Harbor registry port to be open
   ansible.builtin.wait_for:
     host: "{{ ansible_host | default(inventory_hostname) }}"
-    port: 5000  # Changed from port 80 to 5000
+    port: "{{ harbor_registry_port | int }}"
     timeout: 120
     delay: 30
   ignore_errors: true
 
 - name: Display Harbor access information
   ansible.builtin.debug:
-    msg: 
+    msg:
       - "Harbor has been deployed successfully!"
-      - "Registry: http://{{ ansible_host | default(inventory_hostname) }}:5000 (pull-through cache)"
-      - "Registry UI: http://{{ ansible_host | default(inventory_hostname) }}:5001"
-      - "Trivy Scanner: http://{{ ansible_host | default(inventory_hostname) }}:4954"
+      - "Registry:     http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_registry_port }} (pull-through cache)"
+      - "Registry UI:  http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_ui_port }}"
+      - "Trivy Server: http://{{ ansible_host | default(inventory_hostname) }}:{{ trivy_port }}"
       - "Stack ID: {{ harbor_stack_result.json.Id | default('Unknown') }}"
 
 - name: Clean up temporary files
