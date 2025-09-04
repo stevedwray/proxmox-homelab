@@ -82,3 +82,4 @@
   debug:
     msg: "Registry connectivity: {{ 'Success' if registry_test.status == 200 else 'Failed' }}"
   when: configure_mirror | bool
+  
