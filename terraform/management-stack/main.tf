@@ -52,7 +52,7 @@ resource "local_file" "ansible_inventory" {
 resource "null_resource" "run_ansible" {
   triggers = {
     inventory_content = local_file.ansible_inventory.content
-    container_id = module.portainer_server.container_id
+    container_id      = module.portainer_server.container_id
   }
 
   provisioner "local-exec" {
@@ -61,20 +61,22 @@ resource "null_resource" "run_ansible" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
-      # Portainer API credentials (needed for NPM deployment)
-      PORTAINER_ADMIN_PASSWORD  = var.lxc_password  # Should be separate variable
-      # NPM configuration (only if NPM variables are defined)
-      ENABLE_NPM                = var.enable_npm
-      NPM_DATA_SOURCE          = var.npm_data_source
-      NPM_LETSENCRYPT_SOURCE   = var.npm_letsencrypt_source
-      NPM_DATA_TARGET          = var.npm_data_target
-      NPM_LETSENCRYPT_TARGET   = var.npm_letsencrypt_target
+
+      # Portainer admin (existing)
+      PORTAINER_ADMIN_PASSWORD  = var.lxc_password
+
+      # NPM paths (existing)
+      NPM_DATA_SOURCE           = var.npm_data_source
+      NPM_LETSENCRYPT_SOURCE    = var.npm_letsencrypt_source
+      NPM_DATA_TARGET           = var.npm_data_target
+      NPM_LETSENCRYPT_TARGET    = var.npm_letsencrypt_target
     }
   }
 
   depends_on = [module.portainer_server, local_file.ansible_inventory]
 }
 
+# Outputs
 output "portainer_server_ip" {
   description = "IP address of the Portainer server"
   value = replace(module.portainer_server.ip_address, "/24", "")
@@ -85,8 +87,7 @@ output "portainer_server_url" {
   value = "http://${replace(module.portainer_server.ip_address, "/24", "")}:9000"
 }
 
-# New NPM output (only if NPM is enabled)
 output "npm_url" {
   description = "URL to access Nginx Proxy Manager"
-  value = var.enable_npm ? "http://${replace(module.portainer_server.ip_address, "/24", "")}:81" : "NPM disabled"
+  value = "http://${replace(module.portainer_server.ip_address, "/24", "")}:81"
 }

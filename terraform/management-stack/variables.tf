@@ -65,20 +65,6 @@ variable "portainer_rootfs_size" {
   default     = "15G"
 }
 
-# Registry variables
-variable "enable_harbor" {
-  description = "Enable Harbor registry deployment"
-  type        = bool
-  default     = true
-}
-
-# Add these to your existing variables.tf
-variable "enable_npm" {
-  description = "Enable Nginx Proxy Manager deployment"
-  type        = bool
-  default     = false
-}
-
 variable "npm_data_source" {
   description = "Source path for NPM data directory on Proxmox host"
   type        = string

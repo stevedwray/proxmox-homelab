@@ -1,12 +1,13 @@
 ---
 # FILE: ansible/01-base-system/base-config.yml
 # Purpose: Base post-install configuration for Proxmox VE 9 (Debian 13 / trixie)
-# Behavior:
-#   - Prefer HTTPS for Proxmox/CEPH repos; AUTO-FALLBACK to HTTP if TLS SAN mismatch (probe)
-#   - Remove enterprise repos; keep deb822 sources authoritative
-#   - Optional Ceph repo; optional network and IPv6 tuning
-#   - Disable subscription nag (optional)
-#   - Non-fatal apt cache refresh to avoid run aborts on mirror hiccups
+# - Switch to no-subscription repos (deb822)
+# - Remove/disable enterprise repos (deb822 + legacy .list)
+# - Optional Ceph no-subscription
+# - Disable subscription nag popup in Web UI
+# - IPv6 host tuning for SLAAC (safe; does NOT touch LXCs)
+# - Setup Terraform automation user and API token
+# - Idempotent verification that repos are correct
 
 - name: Proxmox VE 9 base configuration
   hosts: proxmox
@@ -15,33 +16,34 @@
 
   vars:
     # --- Repository controls ---
-    pmx_enable_ceph_repo: true
-    pmx_repo_suite: "{{ ansible_distribution_release }}"   # 'trixie' on PVE 9
-    pmx_ceph_release: squid                                # e.g., squid
-
-    # Prefer HTTPS; probe may switch to HTTP if the presented cert is wrong
-    pmx_probe_https: true
-    pmx_proxmox_repo_scheme_default: "https"
-    pmx_ceph_repo_scheme_default: "https"
-
-    # (Optional) If IPv6 path is flaky/slow, force APT to use IPv4
-    pmx_apt_force_ipv4: false
+    pmx_enable_ceph_repo: true                 # set false if you do not use Ceph on this node
+    pmx_repo_suite: "{{ ansible_distribution_release }}"  # should be 'trixie' on PVE 9
 
     # --- Nag screen controls ---
     pmx_disable_subscription_nag: true
 
     # --- IPv6 host tuning ---
-    pmx_ipv6_tune: true
-    pmx_ipv6_use_tempaddr: 0
-    pmx_ipv6_accept_ra: 2
-    pmx_ipv6_autoconf: 1
+    pmx_ipv6_tune: true                        # controls sysctl tuning below
+    pmx_ipv6_use_tempaddr: 0                   # 0 = stable EUI-64; 2 = prefer temporary
+    pmx_ipv6_accept_ra: 2                      # 2 = accept RAs even if forwarding toggles
+    pmx_ipv6_autoconf: 1                       # enable SLAAC on host interfaces by default
 
     # --- Network interface management (SAFE DEFAULT OFF) ---
+    # If you want this playbook to write /etc/network/interfaces, set to true and
+    # define the variables for your environment. Otherwise nothing is changed.
     pmx_manage_network: false
     pmx_interfaces_path: /etc/network/interfaces
+
+    # Example host network variables (ONLY used when pmx_manage_network: true)
     pmx_primary_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
     pmx_ipv4_addr: "192.168.1.10/24"
     pmx_ipv4_gw: "192.168.1.1"
+
+    # --- Terraform automation setup ---
+    pmx_setup_terraform_user: true            # set false to skip automation user setup
+    pmx_terraform_user: "automation@pve"
+    pmx_terraform_token_id: "terraform"
+    pmx_terraform_rotate_token: true          # always create fresh token
 
   pre_tasks:
     - name: Assert Debian 13 (trixie) and Proxmox environment
@@ -51,67 +53,6 @@
           - ansible_distribution_major_version | int >= 13
         fail_msg: "This playbook targets Debian 13 (Proxmox VE 9)."
         success_msg: "Debian {{ ansible_distribution_version }} detected; proceeding."
-
-    - name: Check if ifreload exists
-      ansible.builtin.stat:
-        path: /usr/sbin/ifreload
-      register: ifreload_bin
-      tags: [network]
-
-    # ----- HTTPS probe (optional, prefers HTTPS but can fall back) -----
-    - name: (IPv4 only) Resolve IPv4 for download.proxmox.com when forcing IPv4
-      ansible.builtin.shell: getent ahostsv4 download.proxmox.com | awk 'NR==1{print $1}'
-      register: pmx_v4
-      changed_when: false
-      failed_when: false
-      when: pmx_apt_force_ipv4
-      tags: [verify, repos]
-
-    - name: Choose probe target host (IP if forcing IPv4, else hostname)
-      ansible.builtin.set_fact:
-        pmx_probe_target: "{{ (pmx_apt_force_ipv4 and (pmx_v4.stdout | default('') | length > 0)) | ternary(pmx_v4.stdout, 'download.proxmox.com') }}"
-      tags: [verify, repos]
-
-    - name: Probe TLS cert SAN for download.proxmox.com (prefer HTTPS, fallback if mismatch)
-      ansible.builtin.shell: |
-        timeout 5 openssl s_client -connect {{ pmx_probe_target }}:443 -servername download.proxmox.com < /dev/null 2>/dev/null \
-        | openssl x509 -noout -text
-      args:
-        executable: /bin/bash
-      register: pmx_tls_probe
-      changed_when: false
-      failed_when: false
-      when: pmx_probe_https
-      tags: [verify, repos]
-
-    - name: Initialize repo schemes from defaults
-      ansible.builtin.set_fact:
-        pmx_proxmox_repo_scheme: "{{ pmx_proxmox_repo_scheme_default }}"
-        pmx_ceph_repo_scheme: "{{ pmx_ceph_repo_scheme_default }}"
-      tags: [verify, repos]
-
-    - name: Determine if TLS probe SAN looks correct
-      ansible.builtin.set_fact:
-        pmx_tls_san_ok: "{{ (pmx_tls_probe.rc | default(1)) == 0 and ('DNS:download.proxmox.com' in (pmx_tls_probe.stdout | default('')) or 'Subject: CN=download.proxmox.com' in (pmx_tls_probe.stdout | default(''))) }}"
-      when: pmx_probe_https
-      tags: [verify, repos]
-
-    - name: Fallback to HTTP for Proxmox/CEPH repos if SAN mismatch
-      ansible.builtin.set_fact:
-        pmx_proxmox_repo_scheme: "http"
-        pmx_ceph_repo_scheme: "http"
-      when:
-        - pmx_probe_https
-        - not (pmx_tls_san_ok | default(false) | bool)
-      tags: [verify, repos]
-
-    - name: Report probe decision (informational)
-      ansible.builtin.debug:
-        msg:
-          - "TLS probe for download.proxmox.com: {{ 'OK' if (pmx_tls_san_ok | default(false)) else 'MISMATCH/FAILED or probe disabled' }}"
-          - "Using scheme for Proxmox repo: {{ pmx_proxmox_repo_scheme }}"
-          - "Using scheme for Ceph repo: {{ pmx_ceph_repo_scheme }}"
-      tags: [verify, repos]
 
   tasks:
     # ------------------------------
@@ -124,18 +65,17 @@
         mode: "0644"
         content: |
           Types: deb deb-src
-          URIs: https://deb.debian.org/debian/
+          URIs: http://deb.debian.org/debian/
           Suites: {{ pmx_repo_suite }} {{ pmx_repo_suite }}-updates
           Components: main non-free-firmware
           Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
           Types: deb deb-src
-          URIs: https://security.debian.org/debian-security/
+          URIs: http://security.debian.org/debian-security/
           Suites: {{ pmx_repo_suite }}-security
           Components: main non-free-firmware
           Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
       notify: apt-update
-      tags: [repos, debian]
 
     - name: Configure Proxmox no-subscription repo (deb822)
       ansible.builtin.copy:
@@ -143,12 +83,11 @@
         mode: "0644"
         content: |
           Types: deb
-          URIs: {{ pmx_proxmox_repo_scheme }}://download.proxmox.com/debian/pve
+          URIs: http://download.proxmox.com/debian/pve
           Suites: {{ pmx_repo_suite }}
           Components: pve-no-subscription
           Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
       notify: apt-update
-      tags: [repos, proxmox]
 
     - name: Configure Ceph no-subscription repo (deb822)
       ansible.builtin.copy:
@@ -156,28 +95,25 @@
         mode: "0644"
         content: |
           Types: deb
-          URIs: {{ pmx_ceph_repo_scheme }}://download.proxmox.com/debian/ceph-{{ pmx_ceph_release }}
+          URIs: http://download.proxmox.com/debian/ceph-squid
           Suites: {{ pmx_repo_suite }}
           Components: no-subscription
           Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
       when: pmx_enable_ceph_repo
       notify: apt-update
-      tags: [repos, ceph]
 
     - name: Remove Ceph repo when disabled
       ansible.builtin.file:
         path: /etc/apt/sources.list.d/ceph.sources
         state: absent
       when: not pmx_enable_ceph_repo
-      tags: [repos, ceph]
 
     - name: Remove PVE enterprise repo (deb822) if present
       ansible.builtin.file:
         path: /etc/apt/sources.list.d/pve-enterprise.sources
         state: absent
-      tags: [repos, cleanup]
 
-    - name: Find legacy .list files
+    - name: Comment out enterprise entries in legacy .list files on remote
       ansible.builtin.find:
         paths:
           - /etc/apt
@@ -185,7 +121,6 @@
         patterns: "*.list"
         file_type: file
       register: apt_list_files
-      tags: [repos, cleanup]
 
     - name: Comment enterprise lines in .list files (cleanup)
       ansible.builtin.replace:
@@ -195,7 +130,6 @@
       loop: "{{ apt_list_files.files }}"
       when: apt_list_files.matched | int > 0
       failed_when: false
-      tags: [repos, cleanup]
 
     - name: Remove legacy .list repo files
       ansible.builtin.file:
@@ -204,28 +138,11 @@
       loop:
         - /etc/apt/sources.list.d/pve-no-subscription.list
         - /etc/apt/sources.list.d/ceph-no-subscription.list
-      tags: [repos, cleanup]
 
-    # (Optional) Force APT to use IPv4 to avoid slow v6 fallbacks
-    - name: Write APT config to force IPv4 (optional)
-      ansible.builtin.copy:
-        dest: /etc/apt/apt.conf.d/99force-ipv4
-        mode: "0644"
-        content: |
-          Acquire::ForceIPv4 "{{ 'true' if pmx_apt_force_ipv4 else 'false' }}";
-      tags: [repos, debian]
-
-    # ------------------------------
-    # Cache refresh & verification
-    # ------------------------------
-
-    - name: Ensure apt cache is up to date (verification, non-fatal)
+    - name: Ensure apt cache is up to date after repo changes
       ansible.builtin.apt:
         update_cache: yes
-      register: apt_update_nonfatal
       changed_when: false
-      failed_when: false
-      tags: [verify]
 
     # ------------------------------
     # Disable subscription nag (optional)
@@ -238,7 +155,6 @@
       changed_when: false
       failed_when: false
       when: pmx_disable_subscription_nag
-      tags: [ui, nag]
 
     - name: Disable subscription nag screen (surgical replace)
       ansible.builtin.replace:
@@ -250,7 +166,77 @@
         - pmx_disable_subscription_nag
         - nag_check is defined and nag_check.rc == 0
       notify: restart pveproxy
-      tags: [ui, nag]
+
+    # ------------------------------
+    # Terraform automation user setup
+    # ------------------------------
+
+    - name: Create Terraform automation user
+      ansible.builtin.command: >
+        pveum user add {{ pmx_terraform_user }} --comment "Terraform automation account"
+      register: _terraform_user_add
+      failed_when: _terraform_user_add.rc not in [0,2]
+      changed_when: _terraform_user_add.rc == 0
+      when: pmx_setup_terraform_user
+
+    - name: Grant Administrator role to Terraform user
+      ansible.builtin.command: >
+        pveum aclmod / -user {{ pmx_terraform_user }} -role Administrator
+      register: _terraform_user_acl
+      failed_when: _terraform_user_acl.rc != 0
+      changed_when: false
+      when: pmx_setup_terraform_user
+
+    - name: List existing tokens for Terraform user
+      ansible.builtin.command: >
+        pveum user token list {{ pmx_terraform_user }} --output-format json
+      register: _terraform_token_list
+      when: pmx_setup_terraform_user
+
+    - name: Check if Terraform token exists
+      ansible.builtin.set_fact:
+        terraform_token_exists: "{{ (_terraform_token_list.stdout | from_json) | selectattr('tokenid','equalto', pmx_terraform_token_id) | list | length > 0 }}"
+      when: pmx_setup_terraform_user
+
+    - name: Remove existing Terraform token (rotation enabled)
+      ansible.builtin.command: >
+        pveum user token remove {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+      register: _terraform_token_rm
+      failed_when: _terraform_token_rm.rc not in [0,2]
+      changed_when: _terraform_token_rm.rc == 0
+      when:
+        - pmx_setup_terraform_user
+        - terraform_token_exists
+        - pmx_terraform_rotate_token
+
+    - name: Create Terraform API token (privsep=0)
+      ansible.builtin.command: >
+        pveum user token add {{ pmx_terraform_user }} {{ pmx_terraform_token_id }} --privsep 0 --output-format json
+      register: _terraform_token_add
+      changed_when: true
+      when:
+        - pmx_setup_terraform_user
+        - (not terraform_token_exists) or pmx_terraform_rotate_token
+
+    - name: Parse Terraform token details
+      ansible.builtin.set_fact:
+        terraform_api_token_id: "{{ pmx_terraform_user }}!{{ pmx_terraform_token_id }}"
+        terraform_api_token_secret: "{{ (_terraform_token_add.stdout | from_json).value | default('') }}"
+      when:
+        - pmx_setup_terraform_user
+        - _terraform_token_add is defined
+        - _terraform_token_add.stdout is defined
+
+    - name: Display Terraform API token information
+      ansible.builtin.debug:
+        msg:
+          - "Terraform API Token ID: {{ terraform_api_token_id | default('Not created') }}"
+          - "Terraform API Token Secret: {{ terraform_api_token_secret | default('Not available') }}"
+          - ""
+          - "Add these to your Terraform configuration:"
+          - "TF_VAR_pm_api_token_id={{ terraform_api_token_id | default('') }}"
+          - "TF_VAR_pm_api_token_secret={{ terraform_api_token_secret | default('') }}"
+      when: pmx_setup_terraform_user
 
     # ------------------------------
     # IPv6 host tuning for SLAAC (does not touch LXCs)
@@ -262,6 +248,7 @@
         mode: "0644"
         content: |
           # FILE: /etc/sysctl.d/99-proxmox-ipv6-slaac.conf
+          # Purpose: Ensure host accepts Router Advertisements and uses SLAAC
           net.ipv6.conf.all.accept_ra = {{ pmx_ipv6_accept_ra }}
           net.ipv6.conf.default.accept_ra = {{ pmx_ipv6_accept_ra }}
           net.ipv6.conf.all.autoconf = {{ pmx_ipv6_autoconf }}
@@ -269,13 +256,11 @@
           net.ipv6.conf.all.use_tempaddr = {{ pmx_ipv6_use_tempaddr }}
           net.ipv6.conf.default.use_tempaddr = {{ pmx_ipv6_use_tempaddr }}
       when: pmx_ipv6_tune
-      tags: [network, ipv6]
 
     - name: Reload sysctl settings
       ansible.builtin.command: sysctl --system
       when: pmx_ipv6_tune
       changed_when: false
-      tags: [network, ipv6]
 
     # ------------------------------
     # Optional: manage /etc/network/interfaces (SAFE DEFAULT OFF)
@@ -287,6 +272,9 @@
         mode: "0644"
         content: |
           # FILE: {{ pmx_interfaces_path }}
+          # Managed by Ansible — static IPv4, SLAAC IPv6
+          source /etc/network/interfaces.d/*
+
           auto lo
           iface lo inet loopback
 
@@ -294,50 +282,43 @@
           iface {{ pmx_primary_iface }} inet static
             address {{ pmx_ipv4_addr }}
             gateway {{ pmx_ipv4_gw }}
-          iface {{ pmx_primary_iface }} inet6 auto
 
-          auto vmbr0
-          iface vmbr0 inet manual
-            bridge-ports none
-            bridge-stp off
-            bridge-fd 0
-          iface vmbr0 inet6 manual
+          iface {{ pmx_primary_iface }} inet6 auto
+            accept_ra {{ pmx_ipv6_accept_ra }}
+            autoconf {{ pmx_ipv6_autoconf }}
+            # use_tempaddr {{ pmx_ipv6_use_tempaddr }}
       when: pmx_manage_network
       notify: ifreload
-      tags: [network, ipv4, ipv6]
 
     # ------------------------------
-    # Repository verification
+    # Verification (fail loud if wrong)
     # ------------------------------
+
+    - name: Ensure apt cache is up to date (verification)
+      ansible.builtin.apt:
+        update_cache: yes
+      changed_when: false
 
     - name: Verify PVE repository configuration
       ansible.builtin.command: apt-cache policy proxmox-ve
       register: apt_policy_pve
       changed_when: false
       failed_when: false
-      tags: [verify]
 
     - name: Verify Ceph repository configuration (ceph-common)
       ansible.builtin.command: apt-cache policy ceph-common
       register: apt_policy_ceph
       changed_when: false
       failed_when: false
-      tags: [verify]
 
     - name: Search for active enterprise repo references (ignore commented lines, skip backups)
       ansible.builtin.shell: |
-        set -Eeuo pipefail
-        # Recursive grep with include/exclude instead of xargs to avoid rc=123
-        grep -R -Hn -E --binary-files=without-match \
-          --include='*.list' --include='*.sources' \
-          --exclude='*~' --exclude='*@????-*' \
-          '^[[:space:]]*[^#].*enterprise\.proxmox\.com' /etc/apt || true
-      args:
-        executable: /bin/bash
+        set -euo pipefail
+        find /etc/apt -type f \( -name '*.list' -o -name '*.sources' \) \
+          ! -regex '.*(~|@[0-9]{4}-.*)$' -print0 \
+        | xargs -0 grep -Hn -E '^[[:space:]]*[^#].*enterprise\.proxmox\.com' || true
       register: enterprise_refs
       changed_when: false
-      failed_when: false
-      tags: [verify]
 
     - name: Repository status summary
       ansible.builtin.debug:
@@ -345,7 +326,6 @@
           - "PVE policy:\n{{ apt_policy_pve.stdout | default('') }}"
           - "Ceph policy:\n{{ apt_policy_ceph.stdout | default('') }}"
           - "Enterprise refs (should be empty):\n{{ enterprise_refs.stdout | default('') }}"
-      tags: [verify]
 
     - name: Assert PVE no-subscription is active
       ansible.builtin.assert:
@@ -353,7 +333,6 @@
           - "'download.proxmox.com' in (apt_policy_pve.stdout | default(''))"
         fail_msg: "PVE repo is not pointing at download.proxmox.com (no-subscription)!"
         success_msg: "PVE repo OK (download.proxmox.com detected)."
-      tags: [verify]
 
     - name: Assert Ceph no-subscription is active (skip if ceph-common unknown)
       ansible.builtin.assert:
@@ -361,15 +340,30 @@
           - "apt_policy_ceph.rc != 0 or 'download.proxmox.com' in (apt_policy_ceph.stdout | default(''))"
         fail_msg: "Ceph repo not pointing at download.proxmox.com (no-subscription)!"
         success_msg: "Ceph repo OK or Ceph not configured."
-      tags: [verify]
 
-    - name: Assert no enterprise repository references remain
+    - name: Assert enterprise repos are gone
       ansible.builtin.assert:
         that:
           - "(enterprise_refs.stdout | default('')) == ''"
-        fail_msg: "Enterprise repository references still present in apt sources!"
+        fail_msg: "Enterprise repository references still present!"
         success_msg: "No enterprise repository references found."
-      tags: [verify]
+
+    - name: Verify Terraform user permissions (when enabled)
+      ansible.builtin.command: >
+        pveum user token permissions {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+      register: _terraform_perms_check
+      changed_when: false
+      failed_when: false
+      when: pmx_setup_terraform_user
+
+    - name: Assert Terraform user has proper permissions
+      ansible.builtin.assert:
+        that:
+          - "'VM.Allocate' in (_terraform_perms_check.stdout | default(''))"
+          - "'Datastore.AllocateSpace' in (_terraform_perms_check.stdout | default(''))"
+        fail_msg: "Terraform user missing required permissions!"
+        success_msg: "Terraform user permissions verified."
+      when: pmx_setup_terraform_user
 
   handlers:
     - name: apt-update
@@ -383,4 +377,3 @@
 
     - name: ifreload
       ansible.builtin.command: ifreload -a
-      when: ifreload_bin.stat.exists
