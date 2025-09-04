@@ -26,15 +26,12 @@
   remote_user: root
   become: false
   gather_facts: yes
-  vars:
-    enable_harbor: "{{ lookup('env', 'TF_VAR_enable_harbor') == 'true' }}"
-  
+
   pre_tasks:
     - name: Verify required environment variables for Harbor
       ansible.builtin.fail:
         msg: "Required environment variable {{ item }} is not set"
       when: 
-        - enable_harbor | bool
         - lookup('env', item) == ''
       loop:
         - 'HARBOR_ADMIN_PASSWORD'
@@ -50,7 +47,6 @@
 
   roles:
     - role: ../../ansible/shared-roles/harbor
-      when: enable_harbor | bool
       vars:
         portainer_server_ip: "{{ ansible_default_ipv4.address }}"
 
@@ -59,24 +55,20 @@
   remote_user: root
   become: true
   gather_facts: yes
-  vars:
-    enable_npm: "{{ lookup('env', 'ENABLE_NPM') == 'true' }}"
-
-  pre_tasks:
-    - name: Check if NPM is enabled
-      ansible.builtin.debug:
-        msg: "NPM deployment: {{ 'Enabled' if enable_npm else 'Disabled' }}"
 
   roles:
     - role: ../../ansible/shared-roles/nginx_proxy_manager
-      when: enable_npm | bool
 
-  post_tasks:
+- name: Deployment Summary
+  hosts: localhost
+  gather_facts: no
+  vars:
+    mgmt_host: "{{ hostvars['management-stack'].ansible_host | default('management-stack') }}"
+  tasks:
     - name: Display final deployment summary
       ansible.builtin.debug:
         msg:
           - "Management Stack Deployment Complete!"
-          - "- Portainer: http://{{ ansible_default_ipv4.address }}:9000"
-          - "- Harbor: http://{{ ansible_default_ipv4.address }}:80 ({{ 'Enabled' if (lookup('env', 'TF_VAR_enable_harbor') == 'true') else 'Disabled' }})"
-          - "- Nginx Proxy Manager: http://{{ ansible_default_ipv4.address }}:81 ({{ 'Enabled' if enable_npm else 'Disabled' }})"
-          - "{{ '- NPM Admin: Use existing credentials if migrated, or admin/changeme for fresh install' if enable_npm else '' }}"
+          - "- Portainer: http://{{ mgmt_host }}:9000"
+          - "- Harbor (Registry UI): http://{{ mgmt_host }}:5001  | Registry: http://{{ mgmt_host }}:5000  | Trivy: http://{{ mgmt_host }}:4954"
+          - "- Nginx Proxy Manager: http://{{ mgmt_host }}:81"
