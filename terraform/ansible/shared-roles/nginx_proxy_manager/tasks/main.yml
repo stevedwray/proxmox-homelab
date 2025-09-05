@@ -73,7 +73,7 @@
 # Create/Update NPM stack via Portainer API
 - name: Create NPM Docker Compose stack
   uri:
-    url: "http://{{ portainer_server_ip }}:9000/api/stacks/create/standalone/string?endpointId={{ npm_local_endpoint_id }}"
+    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ npm_local_endpoint_id }}"
     method: POST
     headers:
       Authorization: "Bearer {{ jwt_token }}"
@@ -124,7 +124,7 @@
 
 - name: Verify NPM is running
   uri:
-    url: "http://localhost:{{ npm_admin_port_i }}"
+    url: "http://{{ ansible_default_ipv4.address }}:{{ npm_admin_port_i }}"
     method: GET
     timeout: 10
   register: npm_health

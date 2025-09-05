@@ -15,8 +15,6 @@
   vars:
     portainer_container_name: "portainer"
     portainer_image: "portainer/portainer-ce:latest"
-    portainer_port_http: 9000
-    portainer_port_https: 9443
   roles:
     - portainer_server
   ignore_errors: yes  # Allow playbook to continue if Portainer admin already exists
