@@ -1,6 +1,23 @@
 # terraform/management-stack/ansible/playbook.yml
 
 ---
+- name: Prepare SSH known_hosts for management node
+  hosts: localhost
+  gather_facts: no
+  vars:
+    known_hosts_path: "~/.ssh/known_hosts"
+    mgmt_host_ip: "{{ hostvars['management-stack'].ansible_host | default('192.168.1.70') }}"
+  tasks:
+    - name: Remove stale key (ignore if it's not there)
+      ansible.builtin.command: "ssh-keygen -R {{ mgmt_host_ip }} -f {{ known_hosts_path }}"
+      register: rm_key
+      failed_when: false
+      changed_when: rm_key.rc == 0
+
+    - name: Scan and add current host key
+      ansible.builtin.shell: "ssh-keyscan -T 5 -H {{ mgmt_host_ip }} >> {{ known_hosts_path }}"
+      changed_when: true
+
 - name: Apply base Docker configuration to all hosts
   hosts: all
   remote_user: root
@@ -17,13 +34,13 @@
     portainer_image: "portainer/portainer-ce:latest"
   roles:
     - portainer_server
-  ignore_errors: yes  # Allow playbook to continue if Portainer admin already exists
+  ignore_errors: true  # Allow playbook to continue if Portainer admin already exists
 
 - name: Deploy Harbor Container Registry
   hosts: portainer_server
   remote_user: root
   become: false
-  gather_facts: yes
+  gather_facts: true
 
   pre_tasks:
     - name: Verify required environment variables for Harbor
@@ -52,7 +69,7 @@
   hosts: portainer_server
   remote_user: root
   become: true
-  gather_facts: yes
+  gather_facts: true
 
   roles:
     - role: ../../ansible/shared-roles/nginx_proxy_manager

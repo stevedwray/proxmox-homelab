@@ -53,11 +53,6 @@ resource "proxmox_lxc" "portainer_server" {
   provisioner "local-exec" {
     command     = "ansible-playbook -i inventory.yml deploy-server.yml --limit portainer-server"
     working_dir = "${path.root}/ansible"
-
-    # Add extra environment variables for Ansible if needed
-    # environment = {
-    #   ANSIBLE_HOST_KEY_CHECKING = "False"
-    # }
   }
 }
 output "portainer_server_ip" {

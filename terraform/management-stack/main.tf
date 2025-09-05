@@ -60,8 +60,6 @@ resource "null_resource" "run_ansible" {
     working_dir = "${path.module}/ansible"
 
     environment = {
-      ANSIBLE_HOST_KEY_CHECKING = "False"
-
       # Portainer admin (existing)
       PORTAINER_ADMIN_PASSWORD  = var.lxc_password
 
