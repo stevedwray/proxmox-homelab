@@ -1,5 +1,4 @@
 ---
-# Host ports (left side of "host:container" mappings)
 npm_http_port:  "{{ lookup('env','NPM_HTTP_PORT')  | default('80',  true) }}"
 npm_admin_port: "{{ lookup('env','NPM_ADMIN_PORT') | default('81',  true) }}"
 npm_https_port: "{{ lookup('env','NPM_HTTPS_PORT') | default('443', true) }}"

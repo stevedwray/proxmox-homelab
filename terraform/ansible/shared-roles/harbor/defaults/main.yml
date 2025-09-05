@@ -1,5 +1,4 @@
 ---
-# Host ports (left side of "host:container" mappings)
 harbor_registry_port: "{{ lookup('env','HARBOR_REGISTRY_PORT') | default('5000', true) }}"
 harbor_ui_port:       "{{ lookup('env','HARBOR_UI_PORT')       | default('5001', true) }}"
 trivy_port:           "{{ lookup('env','TRIVY_PORT')           | default('4954', true) }}"

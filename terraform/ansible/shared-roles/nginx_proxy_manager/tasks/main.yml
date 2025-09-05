@@ -1,11 +1,9 @@
-# terraform/ansible/shared-roles/nginx_proxy_manager/tasks/main.yml
 ---
 # Set NPM configuration variables (paths + auth); ports come from defaults/
 - name: Set NPM configuration variables
   set_fact:
     npm_data_target: "{{ lookup('env', 'NPM_DATA_TARGET') | default('/srv/npm/data') }}"
     npm_letsencrypt_target: "{{ lookup('env', 'NPM_LETSENCRYPT_TARGET') | default('/srv/npm/letsencrypt') }}"
-    portainer_server_ip: "{{ ansible_default_ipv4.address }}"
     portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
 
 # Normalize ports to integers (handles empty env values safely)
@@ -26,14 +24,14 @@
 
 - name: Wait for Portainer to be ready
   wait_for:
-    port: 9000
-    host: localhost
+    port: "{{ portainer_port_http }}"
+    host: "{{ portainer_api_host }}"
     timeout: 120
 
 # Authenticate with Portainer API
 - name: Authenticate with Portainer
   uri:
-    url: "http://{{ portainer_server_ip }}:9000/api/auth"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/auth"
     method: POST
     body_format: json
     body:
@@ -51,7 +49,7 @@
 # Discover endpoint ID (do NOT assume 1)
 - name: Get Portainer endpoints
   uri:
-    url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
     method: GET
     headers:
       Authorization: "Bearer {{ jwt_token }}"
@@ -73,7 +71,7 @@
 # Create/Update NPM stack via Portainer API
 - name: Create NPM Docker Compose stack
   uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ npm_local_endpoint_id }}"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ npm_local_endpoint_id }}"
     method: POST
     headers:
       Authorization: "Bearer {{ jwt_token }}"
@@ -124,7 +122,7 @@
 
 - name: Verify NPM is running
   uri:
-    url: "http://{{ ansible_default_ipv4.address }}:{{ npm_admin_port_i }}"
+    url: "http://localhost:{{ npm_admin_port_i }}"
     method: GET
     timeout: 10
   register: npm_health

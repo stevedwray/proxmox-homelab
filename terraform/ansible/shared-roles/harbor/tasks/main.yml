@@ -15,7 +15,7 @@
 
 - name: Debug Harbor deployment
   ansible.builtin.debug:
-    msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_server_ip }}"
+    msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_api_host }}:{{ portainer_port_http }}"
 
 - name: Generate Harbor Docker Compose content
   ansible.builtin.template:
@@ -31,7 +31,7 @@
 
 - name: Authenticate with Portainer API
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/auth"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/auth"
     method: POST
     body_format: json
     body:
@@ -45,7 +45,7 @@
 
 - name: Get Portainer endpoints
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/endpoints"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
     method: GET
     headers:
       Authorization: "Bearer {{ portainer_auth.json.jwt }}"
@@ -61,7 +61,7 @@
 
 - name: Create local Docker endpoint if none exists
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/endpoints"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
     method: POST
     body_format: form-urlencoded
     body:
@@ -92,7 +92,7 @@
 
 - name: Get existing stacks
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/stacks"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks"
     method: GET
     headers:
       Authorization: "Bearer {{ portainer_auth.json.jwt }}"
@@ -102,7 +102,7 @@
 
 - name: Remove existing Harbor stack if present
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
     method: DELETE
     headers:
       Authorization: "Bearer {{ portainer_auth.json.jwt }}"
@@ -114,7 +114,7 @@
 
 - name: Deploy Harbor stack via Portainer API
   ansible.builtin.uri:
-    url: "http://{{ portainer_server_ip }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
     method: POST
     body_format: json
     body:

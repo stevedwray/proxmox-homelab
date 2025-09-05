@@ -60,22 +60,13 @@
 - name: Deployment Summary
   hosts: localhost
   gather_facts: no
-  vars:
-    mgmt_host: "{{ hostvars['management-stack'].ansible_host | default('management-stack') }}"
-    portainer_port_http:  "{{ lookup('env','PORTAINER_PORT_HTTP')  | default('9000') }}"
-    harbor_registry_port: "{{ lookup('env','HARBOR_REGISTRY_PORT') | default('5000') }}"
-    harbor_ui_port:       "{{ lookup('env','HARBOR_UI_PORT')       | default('5001') }}"
-    trivy_port:           "{{ lookup('env','TRIVY_PORT')           | default('4954') }}"
-    npm_admin_port:       "{{ lookup('env','NPM_ADMIN_PORT')       | default('81') }}"
-    npm_http_port:        "{{ lookup('env','NPM_HTTP_PORT')        | default('80') }}"
-    npm_https_port:       "{{ lookup('env','NPM_HTTPS_PORT')       | default('443') }}"
   tasks:
     - name: Display final deployment summary
       ansible.builtin.debug:
         msg:
           - "Management Stack Deployment Complete!"
-          - "- Portainer: http://{{ mgmt_host }}:{{ portainer_port_http }}"
-          - "- Harbor Registry: http://{{ mgmt_host }}:{{ harbor_registry_port }}"
-          - "- Harbor UI:       http://{{ mgmt_host }}:{{ harbor_ui_port }}"
-          - "- Trivy Server:    http://{{ mgmt_host }}:{{ trivy_port }}"
-          - "- Nginx Proxy Manager: http://{{ mgmt_host }}:{{ npm_admin_port }} (admin UI), HTTP={{ npm_http_port }}, HTTPS={{ npm_https_port }}"
+          - "- Portainer:           http://{{ portainer_fqdn }}:{{ portainer_port_http }}"
+          - "- Harbor Registry:     http://{{ registry_fqdn }}"
+          - "- Harbor UI:           http://{{ registry_ui_fqdn }}"
+          - "- Trivy Server:        http://{{ trivy_fqdn }}"
+          - "- Nginx Proxy Manager: http://{{ npm_fqdn }}"
