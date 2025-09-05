@@ -1,20 +1,21 @@
+# terraform/ansible/shared-roles/nginx_proxy_manager/tasks/main.yml
 ---
 # Set NPM configuration variables (paths + auth); ports come from defaults/
 - name: Set NPM configuration variables
-  set_fact:
+  ansible.builtin.set_fact:
     npm_data_target: "{{ lookup('env', 'NPM_DATA_TARGET') | default('/srv/npm/data') }}"
     npm_letsencrypt_target: "{{ lookup('env', 'NPM_LETSENCRYPT_TARGET') | default('/srv/npm/letsencrypt') }}"
     portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
 
 # Normalize ports to integers (handles empty env values safely)
 - name: Normalize NPM ports
-  set_fact:
+  ansible.builtin.set_fact:
     npm_http_port_i:  "{{ (npm_http_port  | default('80',  true)) | int }}"
     npm_admin_port_i: "{{ (npm_admin_port | default('81',  true)) | int }}"
     npm_https_port_i: "{{ (npm_https_port | default('443', true)) | int }}"
 
 - name: Ensure NPM data directories in container
-  file:
+  ansible.builtin.file:
     path: "{{ item }}"
     state: directory
     mode: '0755'
@@ -22,106 +23,61 @@
     - "{{ npm_data_target }}"
     - "{{ npm_letsencrypt_target }}"
 
-- name: Wait for Portainer to be ready
-  wait_for:
-    port: "{{ portainer_port_http }}"
-    host: "{{ portainer_api_host }}"
-    timeout: 120
+# Build compose content as a string variable
+- name: Build NPM docker-compose content
+  ansible.builtin.set_fact:
+    npm_compose: |
+      version: '3.8'
+      services:
+        nginx-proxy-manager:
+          image: jc21/nginx-proxy-manager:latest
+          container_name: nginx-proxy-manager
+          restart: unless-stopped
+          ports:
+            - "{{ npm_http_port_i }}:80"
+            - "{{ npm_admin_port_i }}:81"
+            - "{{ npm_https_port_i }}:443"
+          volumes:
+            - {{ npm_data_target }}:/data
+            - {{ npm_letsencrypt_target }}:/etc/letsencrypt
+          environment:
+            DISABLE_IPV6: "true"
+            LOG_LEVEL: "info"
+          networks:
+            - npm_network
+          healthcheck:
+            test: ["CMD-SHELL", "curl -f http://localhost:81 || exit 1"]
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 30s
+      networks:
+        npm_network:
+          driver: bridge
 
-# Authenticate with Portainer API
-- name: Authenticate with Portainer
-  uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/auth"
-    method: POST
-    body_format: json
-    body:
-      Username: "admin"
-      Password: "{{ portainer_admin_password }}"
-    headers:
-      Content-Type: "application/json"
-    timeout: 30
-  register: auth_response
+# === shared: auth + endpoint discovery
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: endpoint.yml
 
-- name: Set JWT token
-  set_fact:
-    jwt_token: "{{ auth_response.json.jwt }}"
-
-# Discover endpoint ID (do NOT assume 1)
-- name: Get Portainer endpoints
-  uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ jwt_token }}"
-    status_code: 200
-    timeout: 30
-  register: npm_portainer_endpoints
-
-- name: Find local endpoint ID
-  set_fact:
-    npm_local_endpoint_id: "{{ item.Id }}"
-  loop: "{{ npm_portainer_endpoints.json }}"
-  when: item.Name == 'local'
-
-- name: Fail if no local endpoint found
-  fail:
-    msg: "No 'local' endpoint found. Available: {{ npm_portainer_endpoints.json | map(attribute='Name') | list }}"
-  when: npm_local_endpoint_id is not defined
-
-# Create/Update NPM stack via Portainer API
-- name: Create NPM Docker Compose stack
-  uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ npm_local_endpoint_id }}"
-    method: POST
-    headers:
-      Authorization: "Bearer {{ jwt_token }}"
-      Content-Type: "application/json"
-    body_format: json
-    body:
-      method: "string"
-      type: "standalone"
-      Name: "nginx-proxy-manager"
-      StackFileContent: |
-        version: '3.8'
-        services:
-          nginx-proxy-manager:
-            image: jc21/nginx-proxy-manager:latest
-            container_name: nginx-proxy-manager
-            restart: unless-stopped
-            ports:
-              - "{{ npm_http_port_i }}:80"
-              - "{{ npm_admin_port_i }}:81"
-              - "{{ npm_https_port_i }}:443"
-            volumes:
-              - {{ npm_data_target }}:/data
-              - {{ npm_letsencrypt_target }}:/etc/letsencrypt
-            environment:
-              DISABLE_IPV6: "true"
-              LOG_LEVEL: "info"
-            networks:
-              - npm_network
-            healthcheck:
-              test: ["CMD-SHELL", "curl -f http://localhost:81 || exit 1"]
-              interval: 30s
-              timeout: 10s
-              retries: 3
-              start_period: 30s
-        networks:
-          npm_network:
-            driver: bridge
-      Env: []
-    timeout: 60
-  register: stack_creation
+# === shared: idempotent stack ensure
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: stack_present.yml
+  vars:
+    stack_name: "nginx-proxy-manager"
+    stackfile_content: "{{ npm_compose }}"
+    prune_on_update: true
 
 - name: Wait for NPM admin UI to be responsive
-  wait_for:
+  ansible.builtin.wait_for:
     port: "{{ npm_admin_port_i }}"
     host: localhost
     timeout: 180
     delay: 10
 
 - name: Verify NPM is running
-  uri:
+  ansible.builtin.uri:
     url: "http://localhost:{{ npm_admin_port_i }}"
     method: GET
     timeout: 10
@@ -130,5 +86,5 @@
   delay: 10
 
 - name: Display NPM status
-  debug:
-    msg: "NPM deployed successfully - Access at http://{{ ansible_default_ipv4.address }}:{{ npm_admin_port_i }}"
+  ansible.builtin.debug:
+    msg: "NPM ensured successfully — http://{{ ansible_default_ipv4.address }}:{{ npm_admin_port_i }}"

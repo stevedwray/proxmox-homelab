@@ -15,7 +15,7 @@
 
 - name: Debug Harbor deployment
   ansible.builtin.debug:
-    msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_api_host }}:{{ portainer_port_http }}"
+    msg: "Ensuring Harbor stack '{{ harbor_stack_name }}' via Portainer at {{ portainer_api_host }}:{{ portainer_port_http }}"
 
 - name: Generate Harbor Docker Compose content
   ansible.builtin.template:
@@ -29,107 +29,19 @@
   delegate_to: localhost
   register: harbor_compose_content
 
-- name: Authenticate with Portainer API
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/auth"
-    method: POST
-    body_format: json
-    body:
-      Username: "admin"
-      Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
-    headers:
-      Content-Type: "application/json"
-    status_code: 200
-  register: portainer_auth
-  delegate_to: localhost
+# === shared: auth + endpoint discovery
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: endpoint.yml
 
-- name: Get Portainer endpoints
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
-    status_code: 200
-  register: portainer_endpoints
-  delegate_to: localhost
-
-- name: Find local endpoint ID
-  ansible.builtin.set_fact:
-    local_endpoint_id: "{{ item.Id }}"
-  loop: "{{ portainer_endpoints.json }}"
-  when: item.Name == "local"
-
-- name: Create local Docker endpoint if none exists
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
-    method: POST
-    body_format: form-urlencoded
-    body:
-      Name: "local"
-      URL: "unix:///var/run/docker.sock"
-      EndpointCreationType: "1"
-    headers:
-      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
-    status_code: 200
-  register: created_endpoint
-  when: portainer_endpoints.json | length == 0
-  delegate_to: localhost
-
-- name: Set endpoint ID from created endpoint
-  ansible.builtin.set_fact:
-    local_endpoint_id: "{{ created_endpoint.json.Id }}"
-  when: portainer_endpoints.json | length == 0
-
-- name: Debug available endpoints if local not found
-  ansible.builtin.debug:
-    msg: "Available endpoints: {{ portainer_endpoints.json | map(attribute='Name') | list }}"
-  when: local_endpoint_id is not defined
-
-- name: Fail if no local endpoint found
-  ansible.builtin.fail:
-    msg: "No 'local' endpoint found. Available endpoints: {{ portainer_endpoints.json | map(attribute='Name') | list }}"
-  when: local_endpoint_id is not defined
-
-- name: Get existing stacks
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks"
-    method: GET
-    headers:
-      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
-    status_code: 200
-  register: existing_stacks
-  delegate_to: localhost
-
-- name: Remove existing Harbor stack if present
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
-    method: DELETE
-    headers:
-      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
-    status_code: [200, 204, 404]
-  loop: "{{ existing_stacks.json | default([]) }}"
-  when: item.Name == harbor_stack_name
-  ignore_errors: true
-  delegate_to: localhost
-
-- name: Deploy Harbor stack via Portainer API
-  ansible.builtin.uri:
-    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
-    method: POST
-    body_format: json
-    body:
-      method: "string"
-      type: "standalone"
-      Name: "{{ harbor_stack_name }}"
-      StackFileContent: "{{ harbor_compose_content.content | b64decode }}"
-      Env: []
-    headers:
-      Authorization: "Bearer {{ portainer_auth.json.jwt }}"
-      Content-Type: "application/json"
-    status_code: 200
-    timeout: 120
-  register: harbor_stack_result
-  delegate_to: localhost
+# === shared: idempotent stack ensure
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: stack_present.yml
+  vars:
+    stack_name: "{{ harbor_stack_name }}"
+    stackfile_content: "{{ harbor_compose_content.content | b64decode }}"
+    prune_on_update: true
 
 - name: Wait for Harbor registry port to be open
   ansible.builtin.wait_for:
@@ -142,11 +54,10 @@
 - name: Display Harbor access information
   ansible.builtin.debug:
     msg:
-      - "Harbor has been deployed successfully!"
+      - "Harbor ensured successfully."
       - "Registry:     http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_registry_port }} (pull-through cache)"
       - "Registry UI:  http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_ui_port }}"
       - "Trivy Server: http://{{ ansible_host | default(inventory_hostname) }}:{{ trivy_port }}"
-      - "Stack ID: {{ harbor_stack_result.json.Id | default('Unknown') }}"
 
 - name: Clean up temporary files
   ansible.builtin.file:
