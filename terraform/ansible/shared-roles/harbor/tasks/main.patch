@@ -1,0 +1,20 @@
+- msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_server_ip }}"
++ msg: "Deploying Harbor stack '{{ harbor_stack_name }}' to Portainer at {{ portainer_api_host }}:{{ portainer_port_http }}"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/auth"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/auth"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/endpoints"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/endpoints"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/stacks"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/{{ item.Id }}?endpointId={{ local_endpoint_id }}"
+
+- url: "http://{{ portainer_server_ip }}:9000/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
++ url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ local_endpoint_id }}"
