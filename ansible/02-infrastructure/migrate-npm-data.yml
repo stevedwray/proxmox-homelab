@@ -25,7 +25,7 @@
       private: false
       
     - name: confirm_migration
-      prompt: "This will replace NPM data on {{ ansible_host }}. Continue? (yes/no)"
+      prompt: "This will replace NPM data on 192.168.1.70. Continue? (yes/no)"
       default: "no"
       private: false
 
@@ -39,14 +39,14 @@
       docker_container_info:
         name: nginx-proxy-manager
       register: npm_container_info
-      failed_when: not npm_container_info.exists or not npm_container_info.container.State.Running
+      failed_when: not npm_container_info.exists
 
     - name: Display current NPM status
       debug:
         msg:
           - "NPM container status: {{ 'Running' if npm_container_info.container.State.Running else 'Stopped' }}"
           - "Migration source: {{ source_host }}:{{ source_path }}"
-          - "Target: {{ ansible_host }}:/srv/npm/data"
+          - "Target: 192.168.1.70:/srv/npm/data"
 
   tasks:
     - name: Test connectivity to source host
@@ -55,6 +55,7 @@
         port: 22
         timeout: 10
       delegate_to: localhost
+      become: false
 
     - name: Verify source data exists
       stat:
@@ -77,7 +78,7 @@
       debug:
         msg:
           - "Source database size: {{ (source_db_stat.stat.size / 1024) | round(1) }}KB"
-          - "Source database modified: {{ source_db_stat.stat.mtime | to_datetime }}"
+          - "Source database modified: {{ source_db_stat.stat.mtime }}"
 
     - name: Stop NPM container for data replacement
       docker_container:
@@ -96,34 +97,21 @@
         state: directory
         mode: '0755'
 
-    - name: Copy production database from source
-      copy:
+
+    - name: Fetch production database from source
+      fetch:
         src: "{{ source_path }}/database.sqlite"
         dest: /tmp/npm-migration/database.sqlite
-        mode: '0644'
+        flat: yes
       delegate_to: "{{ source_host }}"
 
-    - name: Copy production keys file from source
-      copy:
+    - name: Fetch production keys from source
+      fetch:
         src: "{{ source_path }}/keys.json"
         dest: /tmp/npm-migration/keys.json
-        mode: '0644'
+        flat: yes
       delegate_to: "{{ source_host }}"
       ignore_errors: yes
-
-    - name: Check if certificates directory exists on source
-      stat:
-        path: "{{ source_certs_path }}"
-      register: source_certs_check
-      delegate_to: "{{ source_host }}"
-
-    - name: Copy SSL certificates if they exist
-      synchronize:
-        src: "{{ source_certs_path }}/"
-        dest: /tmp/npm-migration/certs/
-        recursive: yes
-      delegate_to: "{{ source_host }}"
-      when: source_certs_check.stat.exists and source_certs_check.stat.isdir
 
     - name: Replace current database with production database
       copy:
@@ -132,7 +120,6 @@
         owner: root
         group: root
         mode: '0644'
-        remote_src: yes
 
     - name: Replace current keys with production keys
       copy:
@@ -141,16 +128,7 @@
         owner: root
         group: root
         mode: '0644'
-        remote_src: yes
       ignore_errors: yes
-
-    - name: Copy SSL certificates to letsencrypt directory
-      synchronize:
-        src: /tmp/npm-migration/certs/
-        dest: /srv/npm/letsencrypt/
-        recursive: yes
-        delete: no
-      when: source_certs_check.stat.exists and source_certs_check.stat.isdir
 
     - name: Start NPM container with production data
       docker_container:
@@ -164,40 +142,15 @@
         timeout: 60
         delay: 5
 
-    - name: Verify NPM is accessible
-      uri:
-        url: "http://localhost:81"
-        method: GET
-        timeout: 10
-      register: npm_health_check
-      retries: 3
-      delay: 10
-
-    - name: Get final database information
-      stat:
-        path: /srv/npm/data/database.sqlite
-      register: final_db_stat
-
     - name: Display migration results
       debug:
         msg:
           - "Migration completed successfully!"
-          - "Final database size: {{ (final_db_stat.stat.size / 1024) | round(1) }}KB"
-          - "NPM accessible at: http://{{ ansible_host }}:81"
-          - "SSL certificates: {{ 'Migrated' if source_certs_check.stat.exists else 'None found' }}"
-          - "Backup saved to: /tmp/npm-backup-{{ ansible_date_time.epoch }}.tar.gz"
+          - "NPM accessible at: http://192.168.1.70:81"
 
-  post_tasks:
     - name: Clean up temporary files
-      file:
-        path: "{{ item }}"
-        state: absent
-      loop:
-        - /tmp/npm-migration
-      ignore_errors: yes
-
-  handlers:
-    - name: cleanup on failure
       file:
         path: /tmp/npm-migration
         state: absent
+      delegate_to: localhost
+      ignore_errors: yes
