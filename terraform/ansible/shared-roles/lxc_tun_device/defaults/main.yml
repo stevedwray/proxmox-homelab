@@ -1,0 +1,10 @@
+---
+# Default values for LXC tun device configuration
+# These can be overridden in playbooks as needed
+
+# Proxmox host for SSH access (used for file system operations)
+proxmox_host: "pvetest.gibbsgreatly.xyz"
+
+# Container VMID - should be provided via environment variable from Terraform
+# This is passed from Terraform's module output to avoid API lookups
+container_vmid: "{{ lookup('env', 'CONTAINER_VMID') }}"
