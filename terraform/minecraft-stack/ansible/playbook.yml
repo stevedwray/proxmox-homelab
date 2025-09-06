@@ -1,0 +1,98 @@
+# terraform/minecraft-stack/ansible/playbook.yml
+
+---
+- name: Apply base Docker configuration with registry mirror
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  vars:
+    docker_registry_mirror: "{{ lookup('env', 'REGISTRY_MIRROR_IP') | default('192.168.1.70') }}"
+    enable_registry_mirror: "{{ lookup('env', 'ENABLE_REGISTRY_MIRROR') | default('true') | bool }}"
+  roles:
+    - ../../ansible/shared-roles/docker_base
+
+- name: Configure Portainer Agent
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  vars:
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+  roles:
+    - ../../ansible/shared-roles/portainer_agent
+
+- name: Register Agent with Portainer Server
+  hosts: portainer_agents
+  vars:
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+    portainer_endpoint_name: "{{ inventory_hostname }}"
+  roles:
+    - ../../ansible/shared-roles/portainer_api
+
+- name: Create required directories for minecraft stack
+  hosts: portainer_agents
+  remote_user: root
+  become: true
+  tasks:
+    - name: Create minecraft application directories
+      file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: '1000'
+        group: '1000'
+      loop:
+        - /config/minecraft
+        - /config/minecraft/foreverworld
+
+- name: Deploy Minecraft Server Stack
+  hosts: portainer_agents
+  vars:
+    portainer_server_ip: "{{ hostvars['localhost']['portainer_server_ip'] | default('192.168.1.70') }}"
+    app_stack_name: "minecraft-{{ inventory_hostname }}"
+    app_stack_endpoint_name: "{{ inventory_hostname }}"
+    app_stack_compose_content: |
+      version: '3.8'
+      services:
+        mc:
+          image: itzg/minecraft-server:latest
+          container_name: minecraft-foreverworld
+          tty: true
+          stdin_open: true
+          ports:
+            - "25566:25566"
+          environment:
+            SERVER_PORT: "25566"
+            EULA: "TRUE"
+            TYPE: "FORGE"
+            VERSION: "1.20.1"
+            FORGE_VERSION: "47.4.0"
+            MEMORY: "14G"
+            OVERRIDE_SERVER_PROPERTIES: "true"
+            MAX_PLAYERS: "2"
+            DIFFICULTY: "3"
+            ENABLE_COMMAND_BLOCK: "true"
+            GENERATE_STRUCTURES: "true"
+            SNOOPER_ENABLED: "false"
+            SPAWN_ANIMALS: "true"
+            SPAWN_MONSTERS: "true"
+            SPAWN_NPCS: "true"
+            SPAWN_PROTECTION: 0
+            MODE: "0"
+            PVP: "false"
+            WHITELIST: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a,3e9e78a4-6b43-4dd2-88c8-a854850da8f7"
+            OPS: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a"
+            JVM_OPTS: "-Xms14G -Xmx14G -XX:+UseG1GC -XX:+ParallelRefProcEnabled -XX:MaxGCPauseMillis=150 -XX:+UnlockExperimentalVMOptions -XX:+DisableExplicitGC -XX:+AlwaysPreTouch -XX:G1HeapRegionSize=16M -XX:G1ReservePercent=20 -XX:G1HeapWastePercent=10 -XX:InitiatingHeapOccupancyPercent=15 -XX:SurvivorRatio=32 -XX:MaxTenuringThreshold=1 -XX:+UseStringDeduplication -XX:+UseCompressedOops -XX:+PerfDisableSharedMem"
+            SERVER_NAME: "foreverworld"
+            SEED: "-6488730426440253575"
+            MAX_TICK_TIME: "600000"
+            RCON_CMDS_STARTUP: |-
+              gamerule doFireTick false
+              gamerule doDaylightCycle true
+              gamerule doWeatherCycle true
+              gamerule keepInventory true
+              time set 0
+          volumes:
+            - "/config/minecraft/foreverworld:/data"
+          restart: unless-stopped
+  roles:
+    - ../../ansible/shared-roles/app_stack
