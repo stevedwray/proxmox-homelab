@@ -1,0 +1,182 @@
+---
+# ansible/migrate-torrent-data.yml
+# Migrate torrent stack application data using corrected tar commands
+
+- name: Migrate Torrent Stack Production Data
+  hosts: torrent-stack
+  remote_user: root
+  become: true
+  gather_facts: yes
+  
+  vars_prompt:
+    - name: source_host
+      prompt: "Enter the source host/container IP for torrent data"
+      default: "192.168.1.5"
+      private: false
+      
+    - name: source_base_path
+      prompt: "Enter the source base path for torrent configs"
+      default: "/config/torrents"
+      private: false
+      
+    - name: confirm_migration
+      prompt: "This will replace torrent application data on the target host. Continue? (yes/no)"
+      default: "no"
+      private: false
+
+  vars:
+    torrent_apps:
+      - gluetun
+      - qbittorrent
+      - prowlarr
+      - radarr
+      - sonarr
+      - lidarr
+    target_base_path: "/config/torrents"
+
+  pre_tasks:
+    - name: Abort if not confirmed
+      fail:
+        msg: "Migration aborted by user"
+      when: confirm_migration != "yes"
+
+  tasks:
+    - name: Test connectivity to source host
+      wait_for:
+        host: "{{ source_host }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+      become: false
+
+    - name: Verify source application configs exist
+      stat:
+        path: "{{ source_base_path }}/{{ item }}"
+      register: source_config_check
+      delegate_to: "{{ source_host }}"
+      loop: "{{ torrent_apps }}"
+
+    - name: Display source config status
+      debug:
+        msg: "{{ item.item }}: {{ 'Found' if item.stat.exists else 'Missing' }} ({{ (item.stat.size / 1024 / 1024) | round(1) if item.stat.exists else 0 }}MB)"
+      loop: "{{ source_config_check.results }}"
+
+    - name: Stop all torrent stack containers
+      command: docker stop {{ item }}
+      loop:
+        - gluetun
+        - qbittorrent
+        - prowlarr
+        - radarr
+        - sonarr
+        - lidarr
+        - flaresolverr
+      ignore_errors: true
+
+    - name: Create backup of current config data
+      archive:
+        path: "{{ target_base_path }}"
+        dest: "/tmp/torrent-backup-{{ ansible_date_time.epoch }}.tar.gz"
+        format: gz
+        
+    - name: Create temporary migration directory
+      file:
+        path: /tmp/torrent-migration
+        state: directory
+        mode: '0755'
+
+    # Fixed tar command - excludes come before the directory
+    - name: Create archive of each app config on source
+      shell: |
+        cd {{ source_base_path }}
+        tar --exclude='*.lock' --exclude='logs/' --exclude='*.log*' -czf /tmp/{{ item.item }}-config.tar.gz {{ item.item }}/
+      delegate_to: "{{ source_host }}"
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+
+    - name: Fetch config archives from source to control machine
+      fetch:
+        src: "/tmp/{{ item.item }}-config.tar.gz"
+        dest: "/tmp/torrent-migration-{{ item.item }}.tar.gz"
+        flat: yes
+      delegate_to: "{{ source_host }}"
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+    - name: Copy config archives from control machine to target
+      copy:
+        src: "/tmp/torrent-migration-{{ item.item }}.tar.gz"
+        dest: "/tmp/torrent-migration/{{ item.item }}-config.tar.gz"
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+    - name: Extract config archives to target directories
+      shell: |
+        cd {{ target_base_path }}
+        tar -xzf /tmp/torrent-migration/{{ item.item }}-config.tar.gz
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+    - name: Set proper ownership on migrated configs
+      file:
+        path: "{{ target_base_path }}/{{ item.item }}"
+        owner: "1000"
+        group: "1000"
+        recurse: true
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+    - name: Clean up source archives
+      file:
+        path: "/tmp/{{ item.item }}-config.tar.gz"
+        state: absent
+      delegate_to: "{{ source_host }}"
+      loop: "{{ source_config_check.results }}"
+      when: item.stat.exists
+
+    - name: Restart torrent stack via docker compose
+      shell: |
+        cd /opt/portainer
+        docker compose up -d
+      ignore_errors: true
+
+    - name: Wait for services to start
+      pause:
+        seconds: 30
+
+    - name: Verify services are accessible
+      uri:
+        url: "http://{{ ansible_host }}:{{ item.port }}"
+        method: GET
+        timeout: 10
+        status_code: [200, 302, 401]
+      loop:
+        - { name: "prowlarr", port: 9696 }
+        - { name: "radarr", port: 7878 }
+        - { name: "sonarr", port: 8989 }
+        - { name: "lidarr", port: 8686 }
+        - { name: "qbittorrent", port: 8080 }
+      register: service_checks
+      ignore_errors: true
+
+    - name: Display service status
+      debug:
+        msg: "{{ item.item.name }}: {{ 'Accessible' if item.status in [200, 302, 401] else 'Failed' }}"
+      loop: "{{ service_checks.results }}"
+
+    - name: Display migration results
+      debug:
+        msg:
+          - "Migration completed!"
+          - "Services:"
+          - "  Prowlarr: http://{{ ansible_host }}:9696"
+          - "  Radarr: http://{{ ansible_host }}:7878"
+          - "  Sonarr: http://{{ ansible_host }}:8989"
+          - "  Lidarr: http://{{ ansible_host }}:8686"
+          - "  qBittorrent: http://{{ ansible_host }}:8080"
+
+    - name: Clean up temporary files
+      file:
+        path: /tmp/torrent-migration
+        state: absent
