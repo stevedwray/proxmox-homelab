@@ -1,6 +1,6 @@
----
 # terraform/ansible/shared-roles/docker_base/tasks/main.yml
 
+---
 - name: Ensure Docker service is running
   systemd:
     name: docker
@@ -71,7 +71,7 @@
 
 - name: Test registry connectivity
   uri:
-    url: "http://{{ docker_registry_mirror }}/v2/"
+    url: "http://{{ docker_registry_mirror }}:5001/v2/"
     method: GET
     timeout: 10
   register: registry_test
@@ -82,4 +82,3 @@
   debug:
     msg: "Registry connectivity: {{ 'Success' if registry_test.status == 200 else 'Failed' }}"
   when: configure_mirror | bool
-  
