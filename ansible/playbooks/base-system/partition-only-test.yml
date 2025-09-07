@@ -1,0 +1,47 @@
+---
+- name: Partition creation only test
+  hosts: proxmox_testbed
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Show hot_storage variable
+      debug:
+        var: hot_storage
+
+    - name: Check partition table
+      command: parted /dev/sda print
+      register: partition_check
+      changed_when: false
+
+    - name: Show partition table
+      debug:
+        var: partition_check.stdout_lines
+
+    - name: Check if partition 4 exists with regex
+      set_fact:
+        partition_4_exists: "{{ partition_check.stdout | regex_search('^ +4 +', multiline=True) is not none }}"
+
+    - name: Show all condition checks
+      debug:
+        msg:
+          - "hot_storage.enabled: {{ hot_storage.enabled }}"
+          - "partition_4_exists: {{ partition_4_exists }}"
+          - "Condition result: {{ hot_storage.enabled and not partition_4_exists }}"
+
+    - name: Create partition if conditions met
+      parted:
+        device: /dev/sda
+        number: 4
+        part_start: "40GB"
+        part_end: "100%"
+        state: present
+      when: 
+        - hot_storage.enabled
+        - not partition_4_exists
+      register: partition_result
+
+    - name: Show partition creation result
+      debug:
+        var: partition_result
+      when: partition_result is defined

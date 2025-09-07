@@ -1,0 +1,63 @@
+---
+# FILE: partition-test.yml
+# Focused test for partition creation logic
+
+- name: Test partition creation
+  hosts: proxmox_testbed
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Show current partition table
+      command: parted /dev/sda print
+      register: current_partitions
+      changed_when: false
+
+    - name: Display partition table
+      debug:
+        var: current_partitions.stdout_lines
+
+    - name: Check hot_storage variable
+      debug:
+        var: hot_storage
+
+    - name: Test regex for partition 4
+      set_fact:
+        partition_4_exists: "{{ current_partitions.stdout | regex_search('^ +4 +', multiline=True) is not none }}"
+
+    - name: Show partition 4 detection result
+      debug:
+        msg: "Partition 4 exists: {{ partition_4_exists }}"
+
+    - name: Test simple string check too
+      debug:
+        msg: "Simple '4' check: {{ '4' in current_partitions.stdout }}"
+
+    - name: Actually create partition 4
+      parted:
+        device: /dev/sda
+        number: 4
+        part_start: "40GB"
+        part_end: "100%"
+        state: present
+      when: 
+        - hot_storage.enabled | default(false)
+        - not partition_4_exists
+
+    - name: Show partition table after creation attempt
+      command: parted /dev/sda print
+      register: after_partitions
+      changed_when: false
+
+    - name: Display updated partition table
+      debug:
+        var: after_partitions.stdout_lines
+
+    - name: Check if /dev/sda4 exists now
+      stat:
+        path: /dev/sda4
+      register: sda4_check
+
+    - name: Show device status
+      debug:
+        msg: "/dev/sda4 exists: {{ sda4_check.stat.exists }}"

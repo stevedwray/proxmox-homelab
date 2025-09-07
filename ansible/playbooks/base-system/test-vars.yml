@@ -1,0 +1,34 @@
+---
+# FILE: test-vars.yml
+# Test if group_vars are loading correctly
+
+- name: Test variable loading
+  hosts: proxmox_testbed
+  gather_facts: false
+
+  tasks:
+    - name: Show all group names for this host
+      debug:
+        var: group_names
+
+    - name: Show inventory groups
+      debug:
+        var: groups
+
+    - name: Test if proxmox_testbed variables exist
+      debug:
+        msg: "storage_devices is {{ 'defined' if storage_devices is defined else 'NOT DEFINED' }}"
+
+    - name: Test if common proxmox variables exist  
+      debug:
+        msg: "required_packages is {{ 'defined' if required_packages is defined else 'NOT DEFINED' }}"
+
+    - name: Show current working directory structure
+      command: find . -name "*.yml" -type f
+      delegate_to: localhost
+      register: file_structure
+      changed_when: false
+
+    - name: Display file structure
+      debug:
+        var: file_structure.stdout_lines

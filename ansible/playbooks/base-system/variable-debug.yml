@@ -1,0 +1,22 @@
+---
+- name: Debug all variables
+  hosts: proxmox_testbed
+  gather_facts: false
+
+  tasks:
+    - name: Show all hostvars
+      debug:
+        var: hostvars[inventory_hostname]
+
+    - name: Show group names
+      debug:
+        var: group_names
+
+    - name: Check if hot_storage exists in hostvars
+      debug:
+        msg: "hot_storage in hostvars: {{ 'hot_storage' in hostvars[inventory_hostname] }}"
+
+    - name: Try to access hot_storage directly
+      debug:
+        var: hostvars[inventory_hostname]['hot_storage']
+      ignore_errors: true
