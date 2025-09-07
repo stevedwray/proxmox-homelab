@@ -1,4 +1,5 @@
 # Environment files
+storage-audit
 .env
 .env.local
 *.env
