@@ -1,0 +1,287 @@
+---
+# FILE: playbooks/base-system/storage-setup.yml
+# Purpose: Configure storage pools on testbed environment
+# Testbed layout: 100GB boot + 4x 20GB data drives
+#
+# Usage: ansible-playbook -i inventory/storage-test.yml playbooks/base-system/storage-setup.yml
+
+- name: Testbed storage configuration
+  hosts: proxmox_testbed
+  become: true
+  gather_facts: true
+
+  pre_tasks:
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages for storage management
+      package:
+        name: "{{ required_packages }}"
+        state: present
+
+    - name: Verify parted is available
+      command: which parted
+      register: parted_check
+      changed_when: false
+
+    - name: Display parted location
+      debug:
+        msg: "parted found at: {{ parted_check.stdout }}"
+
+    - name: Check if devices exist
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ storage_devices.security_device }}"
+        - "{{ storage_devices.gaming_device }}"
+        - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.temporary_device }}"
+      register: device_check
+
+    - name: Verify all devices are available
+      assert:
+        that: device_check.results | selectattr('stat.exists') | list | length == 4
+        fail_msg: "Not all required devices are available"
+
+  tasks:
+    # =====================================
+    # Hot storage partition (simulate Samsung split)
+    # =====================================
+    
+    - name: Check current partition table on boot drive
+      command: parted {{ storage_devices.boot_device }} print
+      register: partition_info
+      changed_when: false
+
+    - name: Debug partition table output
+      debug:
+        var: partition_info.stdout_lines
+
+    - name: Check if partition 4 exists (proper detection)
+      set_fact:
+        partition_4_exists: "{{ partition_info.stdout | regex_search('^ +4 +', multiline=True) is not none }}"
+
+    - name: Debug partition 4 detection
+      debug:
+        msg: "Partition 4 exists: {{ partition_4_exists }}"
+
+    - name: Show hot_storage variable status
+      debug:
+        msg: "hot_storage.enabled: {{ hot_storage.enabled }}"
+
+    - name: Create hot storage partition
+      shell: |
+        parted {{ storage_devices.boot_device }} --script print
+        parted {{ storage_devices.boot_device }} --script mkpart primary 43GB 100%
+      when: 
+        - hot_storage.enabled
+        - not partition_4_exists
+      register: partition_result
+      failed_when: partition_result.rc != 0 and "unable to inform the kernel" not in partition_result.stderr
+
+    - name: Inform kernel of partition table changes
+      command: partprobe {{ storage_devices.boot_device }}
+      when: 
+        - hot_storage.enabled
+        - not partition_4_exists
+
+    - name: Show partition creation result
+      debug:
+        var: partition_result
+      when: partition_result is defined
+
+    - name: Wait for partition device to appear
+      wait_for:
+        path: "{{ storage_devices.boot_device }}{{ hot_storage.partition_number }}"
+        timeout: 10
+      when: hot_storage.enabled
+
+    - name: Format hot storage partition
+      filesystem:
+        fstype: ext4
+        dev: "{{ storage_devices.boot_device }}{{ hot_storage.partition_number }}"
+        opts: "-L {{ hot_storage.filesystem_label }}"
+      when: hot_storage.enabled
+
+    - name: Create hot storage mount point
+      file:
+        path: "{{ hot_storage.mount_point }}"
+        state: directory
+        mode: '0755'
+      when: hot_storage.enabled
+
+    - name: Mount hot storage partition
+      mount:
+        path: "{{ hot_storage.mount_point }}"
+        src: "LABEL={{ hot_storage.filesystem_label }}"
+        fstype: ext4
+        opts: "{{ hot_storage.mount_options }}"
+        state: mounted
+      when: hot_storage.enabled
+
+    # =====================================
+    # ZFS pool creation
+    # =====================================
+
+    - name: Check existing ZFS pools
+      command: zpool list -H -o name
+      register: existing_pools
+      changed_when: false
+      failed_when: false
+
+    - name: Create ZFS pools
+      command: >
+        zpool create -f
+        -o ashift={{ item.value.properties.ashift }}
+        -o autotrim={{ item.value.properties.autotrim }}
+        -O compression={{ item.value.properties.compression }}
+        -O atime={{ item.value.properties.atime }}
+        -O xattr=sa
+        -O acltype=posix
+        {{ item.key }} {{ item.value.device }}
+      loop: "{{ zfs_pools | dict2items }}"
+      when: item.key not in (existing_pools.stdout_lines | default([]))
+
+    # =====================================
+    # Temporary storage (ext4)
+    # =====================================
+
+    - name: Format temporary storage device
+      filesystem:
+        fstype: "{{ temporary_storage.filesystem }}"
+        dev: "{{ temporary_storage.device }}"
+        opts: "-L {{ temporary_storage.filesystem_label }}"
+        force: true
+
+    - name: Create temporary storage mount point
+      file:
+        path: "{{ temporary_storage.mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Mount temporary storage (using device path as fallback)
+      mount:
+        path: "{{ temporary_storage.mount_point }}"
+        src: "{{ temporary_storage.device }}"
+        fstype: "{{ temporary_storage.filesystem }}"
+        opts: "{{ temporary_storage.mount_options }}"
+        state: mounted
+
+    # =====================================
+    # ZFS datasets with workload-specific tuning
+    # =====================================
+
+    - name: Create security application datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ security_datasets }}"
+
+    - name: Create gaming datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ gaming_datasets }}"
+
+    - name: Create monitoring datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ monitoring_datasets }}"
+
+    # =====================================
+    # Hot storage directories
+    # =====================================
+
+    - name: Create hot storage directories
+      file:
+        path: "{{ hot_storage.mount_point }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ hot_storage_directories }}"
+      when: hot_storage.enabled
+
+    # =====================================
+    # Proxmox storage configuration
+    # =====================================
+
+    - name: Configure Proxmox ZFS storage pools
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED ZFS POOLS"
+        block: |
+          # ZFS pools for virtual machines
+          zfspool: security-vms
+                  pool security
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+
+          zfspool: gaming-vms
+                  pool gaming
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+
+          zfspool: monitoring-vms
+                  pool monitoring
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+
+          # ZFS pools for containers
+          zfspool: security-containers
+                  pool security
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+
+          zfspool: gaming-containers
+                  pool gaming
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+
+          zfspool: monitoring-containers
+                  pool monitoring
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+
+    - name: Configure directory storage
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED DIRECTORY STORAGE"
+        block: |
+          # Hot storage for templates and ISOs
+          dir: hot-storage
+                  path {{ hot_storage.mount_point }}
+                  content iso,vztmpl,backup
+                  nodes {{ ansible_hostname }}
+
+          # Temporary storage for scratch data
+          dir: temp-storage
+                  path {{ temporary_storage.mount_point }}
+                  content backup
+                  nodes {{ ansible_hostname }}
+      when: hot_storage.enabled
+
+  post_tasks:
+    - name: Display storage configuration summary
+      debug:
+        msg:
+          - "=== STORAGE CONFIGURATION COMPLETE ==="
+          - "ZFS Pools:"
+          - "  security:    {{ storage_devices.security_device }} (20GB)"
+          - "  gaming:      {{ storage_devices.gaming_device }} (20GB)"  
+          - "  monitoring:  {{ storage_devices.monitoring_device }} (20GB)"
+          - "Directory Storage:"
+          - "  hot storage:       {{ hot_storage.mount_point }} (60GB)"
+          - "  temporary storage: {{ temporary_storage.mount_point }} (20GB)"
+          - ""
+          - "Next steps:"
+          - "  - Verify pools: zpool status"
+          - "  - Check mounts: df -h"
+          - "  - View Proxmox storage: pvesm status"
