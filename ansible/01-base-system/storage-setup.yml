@@ -173,6 +173,7 @@
     # ZFS pools (idempotent)
     # =====================================
 
+
     - name: Create ZFS pools
       community.general.zpool:
         name: "{{ item.key }}"
@@ -182,9 +183,32 @@
               - "{{ item.value.device }}"
         pool_properties:
           ashift: "{{ item.value.properties.ashift }}"
-          autotrim: "{{ item.value.properties.autotrim }}"
       loop: "{{ zfs_pools | dict2items }}"
 
+    - name: Check current autotrim setting
+      shell: "zpool get -H -o value autotrim {{ item.key }}"
+      loop: "{{ zfs_pools | dict2items }}"
+      register: current_autotrim
+      changed_when: false
+
+    - name: Enable autotrim on ZFS pools (if not already enabled)
+      command: "zpool set autotrim=on {{ item.item.key }}"
+      loop: "{{ current_autotrim.results }}"
+      when: item.stdout != "on"
+      register: autotrim_result
+
+    ###############################################
+
+    - name: Set ZFS pool root dataset properties
+      community.general.zfs:
+        name: "{{ item.key }}"
+        state: present
+        extra_zfs_properties:
+          compression: "{{ item.value.properties.compression }}"
+          atime: "{{ item.value.properties.atime }}"
+          xattr: "sa"
+          acltype: "posix"
+      loop: "{{ zfs_pools | dict2items }}"
 
     - name: Set ZFS pool root dataset properties
       community.general.zfs:
@@ -344,4 +368,11 @@
           - "  - Verify pools: zpool status"
           - "  - Check mounts: df -h"
           - "  - View Proxmox storage: pvesm status"
-          
+
+# When run on a system that has already been configured, this shows up, 
+# [WARNING]: zpool add only supports 'ashift', ignoring: ['autotrim']
+# Which suggests:
+# The autotrim property should be set at pool creation time, not as a pool property. 
+# Since the pools already exist, this warning is harmless, 
+# but for future runs you might want to move autotrim to a separate task 
+# that runs zpool set autotrim=on poolname after creation.

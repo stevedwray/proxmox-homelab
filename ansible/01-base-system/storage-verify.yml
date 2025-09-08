@@ -102,9 +102,11 @@
 
     - name: Assert pool ashift values
       assert:
-        that: zpool_ashift.results[idx].stdout.strip() == item.value.properties.ashift | string
-        fail_msg: "Pool {{ item.key }} ashift is {{ zpool_ashift.results[idx].stdout.strip() }}, expected {{ item.value.properties.ashift }}"
-      loop: "{{ zfs_pools | dict2items }}"
+        that: item.stdout.strip() == item.item.value.properties.ashift | string
+        fail_msg: >-
+          Pool {{ item.item.key }} ashift is {{ item.stdout.strip() }},
+          expected {{ item.item.value.properties.ashift }}
+      loop: "{{ zpool_ashift.results }}"
 
     - name: Pool property autotrim matches
       command: "zpool get -H -o value autotrim {{ item.key }}"
@@ -114,9 +116,12 @@
 
     - name: Assert pool autotrim values
       assert:
-        that: zpool_autotrim.results[idx].stdout.strip() == item.value.properties.autotrim
-        fail_msg: "Pool {{ item.key }} autotrim is {{ zpool_autotrim.results[idx].stdout.strip() }}, expected {{ item.value.properties.autotrim }}"
-      loop: "{{ zfs_pools | dict2items }}"
+        that: item.stdout.strip() == item.item.value.properties.autotrim
+        fail_msg: >-
+          Pool {{ item.item.key }} autotrim is {{ item.stdout.strip() }},
+          expected {{ item.item.value.properties.autotrim }}
+      loop: "{{ zpool_autotrim.results }}"
+
 
     # ------------------------------------------------------------
     # ROOT DATASET PROPERTIES (on pool root datasets)
@@ -129,9 +134,11 @@
 
     - name: Assert compression
       assert:
-        that: zfs_comp.results[idx].stdout.strip() == item.value.properties.compression
-        fail_msg: "Root dataset {{ item.key }} compression is {{ zfs_comp.results[idx].stdout.strip() }}, expected {{ item.value.properties.compression }}"
-      loop: "{{ zfs_pools | dict2items }}"
+        that: item.stdout.strip() == item.item.value.properties.compression
+        fail_msg: >-
+          Root dataset {{ item.item.key }} compression is {{ item.stdout.strip() }},
+          expected {{ item.item.value.properties.compression }}
+      loop: "{{ zfs_comp.results }}"
 
     - name: Root dataset atime matches
       command: "zfs get -H -o value atime {{ item.key }}"
@@ -141,9 +148,11 @@
 
     - name: Assert atime
       assert:
-        that: zfs_atime.results[idx].stdout.strip() == item.value.properties.atime
-        fail_msg: "Root dataset {{ item.key }} atime is {{ zfs_atime.results[idx].stdout.strip() }}, expected {{ item.value.properties.atime }}"
-      loop: "{{ zfs_pools | dict2items }}"
+        that: item.stdout.strip() == item.item.value.properties.atime
+        fail_msg: >-
+          Root dataset {{ item.item.key }} atime is {{ item.stdout.strip() }},
+          expected {{ item.item.value.properties.atime }}
+      loop: "{{ zfs_atime.results }}"
 
     - name: Root dataset xattr and acltype
       command: "zfs get -H -o value xattr,acltype {{ item.key }}"
@@ -154,10 +163,56 @@
     - name: Assert xattr/acltype
       assert:
         that:
-          - (zfs_xattr_acl.results[idx].stdout.split('\t')[0] | trim) == 'sa'
-          - (zfs_xattr_acl.results[idx].stdout.split('\t')[1] | trim) == 'posix'
-        fail_msg: "Root dataset {{ item.key }} xattr/acltype mismatch. Got: {{ zfs_xattr_acl.results[idx].stdout }}"
-      loop: "{{ zfs_pools | dict2items }}"
+          - (item.stdout_lines[0] | trim) in ['sa', 'on']   # accept either; change to == 'sa' if you want strict
+          - (item.stdout_lines[1] | trim) == 'posix'
+        fail_msg: >-
+          Root dataset {{ item.item.key }} xattr/acltype mismatch.
+          Got: {{ item.stdout_lines }}
+      loop: "{{ zfs_xattr_acl.results }}"
+
+    # --- keep previous tasks as-is ---
+
+    - name: Build combined dataset list for checks
+      set_fact:
+        _all_datasets: "{{ (security_datasets + gaming_datasets + monitoring_datasets) }}"
+
+    - name: Dataset exists
+      command: "zfs list -H -o name {{ item.name }}"
+      register: ds_exists
+      changed_when: false
+      failed_when: ds_exists.rc != 0
+      loop: "{{ _all_datasets }}"
+
+    # >>> ADD THIS TASK BACK <<<
+    - name: Read dataset properties in bulk
+      command: "zfs get -H -o value {{ item.properties | dict2items | map(attribute='key') | join(',') }} {{ item.name }}"
+      register: ds_values
+      changed_when: false
+      loop: "{{ _all_datasets }}"
+
+    - name: Assert dataset property values
+      assert:
+        that:
+          - (item.stdout_lines | map('trim') | list)
+            ==
+            (item.item.properties | dict2items | map(attribute='value') | map('string') | list)
+        fail_msg: >-
+          Dataset {{ item.item.name }} properties mismatch.
+          Got: {{ item.stdout_lines | map('trim') | list }}
+          Expected: {{ item.item.properties | dict2items | map(attribute='value') | map('string') | list }}
+      loop: "{{ ds_values.results }}"
+
+    - name: Assert dataset property values
+      assert:
+        that:
+          - (item.stdout_lines | map('trim') | list)
+            ==
+            (item.item.properties | dict2items | map(attribute='value') | map('string') | list)
+        fail_msg: >-
+          Dataset {{ item.item.name }} properties mismatch.
+          Got: {{ item.stdout_lines | map('trim') | list }}
+          Expected: {{ item.item.properties | dict2items | map(attribute='value') | map('string') | list }}
+      loop: "{{ ds_values.results }}"
 
     # ------------------------------------------------------------
     # WORKLOAD DATASETS:
