@@ -6,8 +6,9 @@ This repository contains Ansible playbooks for automating Proxmox VE 9 setup and
 
 The playbooks provide:
 1. **Base Proxmox Configuration** - Post-installation setup for Proxmox VE 9
-2. **Debian LXC Template Builder** - Creates customized Debian-based LXC templates
-3. **Alpine LXC Template Builder** - Creates lightweight Alpine-based LXC templates
+2. **Storage Setup** - Automated storage configuration with ZFS pools and hot storage
+3. **Debian LXC Template Builder** - Creates customized Debian-based LXC templates
+4. **Alpine LXC Template Builder** - Creates lightweight Alpine-based LXC templates
 
 ## Quick Start
 
@@ -21,17 +22,22 @@ The playbooks provide:
 
 1. **Configure Proxmox base system:**
    ```bash
-   ansible-playbook -i inventory proxmox-initial-setup.yml
+   ansible-playbook -i inventory/test-lab.yml 01-base-system/proxmox-initial-setup.yml
    ```
 
-2. **Build Debian template:**
+2. **Configure storage layout:**
    ```bash
-   ansible-playbook -i inventory build-debian-template.yml
+   ansible-playbook -i inventory/storage-test.yml 01-base-system/storage-setup.yml
    ```
 
-3. **Build Alpine template:**
+3. **Build Debian template:**
    ```bash
-   ansible-playbook -i inventory build-alpine-template.yml
+   ansible-playbook -i inventory/test-lab.yml 01-base-system/build-debian-template.yml
+   ```
+
+4. **Build Alpine template:**
+   ```bash
+   ansible-playbook -i inventory/test-lab.yml 01-base-system/build-alpine-template.yml
    ```
 
 ## Inventory Configuration
@@ -41,6 +47,9 @@ Create an Ansible inventory file with your Proxmox hosts:
 ```ini
 [proxmox]
 proxmox-host ansible_host=192.168.1.100 ansible_user=root
+
+[proxmox_testbed]
+pvetest02.gibbsgreatly.xyz ansible_host=192.168.1.102 ansible_user=root
 
 [debian_template_builder]
 192.168.1.50 ansible_user=automation
@@ -89,7 +98,72 @@ When `pmx_manage_network: true`, configure these variables:
 | `pmx_ipv4_addr` | `192.168.1.10/24` | Static IPv4 address |
 | `pmx_ipv4_gw` | `192.168.1.1` | IPv4 gateway |
 
-### 2. Debian Template Builder (`build-debian-template.yml`)
+### 2. Storage Setup (`playbooks/base-system/storage-setup.yml`)
+
+Configures ZFS pools, hot storage partitions, and temporary storage for Proxmox testbed environments.
+
+#### Features
+- Creates multiple ZFS pools for different workloads (security, gaming, monitoring)
+- Sets up hot storage partition on boot device for fast access
+- Configures temporary storage for backups and transfers
+- Validates system state before making changes
+- Automatically configures Proxmox storage entries
+- Fully idempotent with comprehensive safety checks
+
+#### Usage
+```bash
+ansible-playbook -i inventory playbooks/base-system/storage-setup.yml
+```
+
+#### Configuration
+The playbook uses variables from:
+- `group_vars/proxmox.yml` - General Proxmox configuration
+- `group_vars/proxmox_testbed.yml` - Testbed-specific storage layout
+
+#### Example Storage Configuration
+```yaml
+# Example storage device mapping
+storage_devices:
+  boot_device: "/dev/nvme0n1"      # 100GB+ boot device
+  security_device: "/dev/sdb"     # ZFS pool for security apps
+  gaming_device: "/dev/sdc"       # ZFS pool for game servers
+  monitoring_device: "/dev/sdd"   # ZFS pool for monitoring stack
+  temporary_device: "/dev/sde"    # Fast temporary storage
+
+# Hot storage on boot device
+hot_storage:
+  enabled: true
+  partition_number: 4
+  mount_point: "/mnt/hot-storage"
+  filesystem_label: "hot-storage"
+  mount_options: "defaults,noatime"
+
+# ZFS pool configuration
+zfs_pools:
+  security:
+    device: "/dev/sdb"
+    properties:
+      ashift: "12"
+      autotrim: "on"
+      compression: "lz4"
+      atime: "off"
+  gaming:
+    device: "/dev/sdc"
+    properties:
+      ashift: "12"
+      autotrim: "on"
+      compression: "lz4"
+      atime: "off"
+  monitoring:
+    device: "/dev/sdd"
+    properties:
+      ashift: "12"
+      autotrim: "on"
+      compression: "lz4"
+      atime: "off"
+```
+
+### 3. Debian Template Builder (`build-debian-template.yml`)
 
 Creates a customized Debian 12 LXC template with Docker and development tools.
 
@@ -128,7 +202,7 @@ Creates a customized Debian 12 LXC template with Docker and development tools.
 | `lxc_vzdump_mode` | `stop` | Dump mode (stop/suspend) |
 | `lxc_vzdump_compress` | `gzip` | Compression method |
 
-### 3. Alpine Template Builder (`build-alpine-template.yml`)
+### 4. Alpine Template Builder (`build-alpine-template.yml`)
 
 Creates a lightweight Alpine Linux LXC template optimized for minimal resource usage.
 
@@ -214,6 +288,129 @@ pct create 102 local:vztmpl/alpine-docker-template.tar.gz \
   --start
 ```
 
+## Storage Setup Details
+
+### How the Storage Playbook Works
+
+The storage setup playbook (`playbooks/base-system/storage-setup.yml`) provides automated configuration of storage for Proxmox testbed environments. It's designed to be completely idempotent and safe to run multiple times.
+
+#### Pre-flight Safety Checks
+
+Before making any changes, the playbook performs comprehensive validation:
+
+1. **Hardware Verification**: Confirms the boot device exists and meets size requirements (90GB minimum)
+2. **ZFS Pool Status**: Checks if pools already exist to avoid destructive operations
+3. **Device State**: Verifies storage devices are clean and available for use
+4. **Running Workloads**: Warns if containers or VMs are running that might be affected
+5. **System Validation**: Confirms the target is actually a Proxmox system
+
+#### Storage Layout Created
+
+The playbook creates a sophisticated storage layout optimized for different workloads:
+
+**Hot Storage Partition**
+- Located on the boot device (typically NVMe for speed)
+- Uses remaining space after OS installation (typically 43GB+)
+- Formatted as ext4 with optimized mount options
+- Used for ISOs, templates, and frequently accessed data
+- Handles both traditional (`/dev/sda`) and NVMe (`/dev/nvme0n1p`) device naming
+
+**ZFS Pools**
+- **Security Pool** (`/dev/sdb`): Optimized for security applications like Wazuh, Graylog
+- **Gaming Pool** (`/dev/sdc`): Configured for game servers (Minecraft, AzerothCore, ARK)
+- **Monitoring Pool** (`/dev/sdd`): Tuned for time-series data (Grafana, Prometheus, TimescaleDB)
+
+Each ZFS pool includes:
+- Optimal `ashift` settings for device alignment
+- LZ4 compression for space efficiency
+- Disabled `atime` for performance
+- Automatic TRIM support for SSDs
+
+**Temporary Storage**
+- Dedicated fast storage device for backups and transfers
+- Separate from main pools to avoid I/O contention
+- Formatted as ext4 for maximum compatibility
+
+#### ZFS Dataset Organization
+
+The playbook creates specialized datasets for different application types:
+
+**Security Datasets**
+```
+security/wazuh-data     - WAZUH SIEM data with high compression
+security/graylog-data   - Graylog logs with recordsize optimization
+security/elasticsearch  - Elasticsearch indices with custom tuning
+```
+
+**Gaming Datasets**
+```
+gaming/minecraft-worlds - Minecraft world data with sync=disabled
+gaming/azerothcore-db   - Database files with recordsize=16K
+gaming/ark-saves        - ARK server saves with compression
+```
+
+**Monitoring Datasets**
+```
+monitoring/grafana-data    - Grafana configuration and dashboards
+monitoring/timescaledb     - TimescaleDB hypertables (recordsize=32K)
+monitoring/prometheus      - Prometheus TSDB with custom tuning
+```
+
+#### Proxmox Integration
+
+The playbook automatically configures Proxmox storage entries:
+
+- **ZFS Storage**: Each pool gets VM image and container storage entries
+- **Directory Storage**: Hot storage and temporary storage are configured as directory stores
+- **Node-Specific**: All storage is properly tagged for the specific Proxmox node
+- **Content Types**: Appropriate content types assigned (images, containers, ISOs, backups)
+
+#### Safety Features
+
+**Idempotent Operations**
+- Safe to run multiple times without causing damage
+- Checks existing state before making changes
+- Only creates resources that don't already exist
+
+**Device Protection**
+- Refuses to operate on devices that already contain data
+- Validates device paths before attempting operations
+- Provides clear error messages for common issues
+
+**State Reporting**
+- Comprehensive summary of what was created vs. what already existed
+- Clear indication of system readiness status
+- Detailed logging for troubleshooting
+
+#### Performance Optimizations
+
+**ZFS Tuning**
+- `ashift=12`: Optimal for 4K sector devices
+- `compression=lz4`: Fast compression with good ratios
+- `atime=off`: Eliminates access time updates for better performance
+- `autotrim=on`: Automatic SSD optimization
+
+**Application-Specific Settings**
+- Database workloads get optimized recordsize settings
+- Log storage uses appropriate compression levels
+- Game servers get tuning for frequent small writes
+
+**Mount Options**
+- `noatime`: Prevents access time updates on traditional filesystems
+- `defaults`: Standard reliability options
+- Optimized for the specific use case of each mount point
+
+#### Error Handling
+
+The playbook includes robust error handling:
+
+- **Pre-validation**: Stops before making changes if requirements aren't met
+- **Graceful Failures**: Clear error messages for common configuration issues
+- **Cleanup**: Automatic cleanup of partial configurations on failure
+- **Recovery**: Provides guidance for manual intervention when needed
+
+This storage configuration creates a production-ready foundation for running diverse workloads on Proxmox while maintaining optimal performance and data safety.
+
 ## Hardcoded Values That Should Be Configurable
 
 The following hardcoded values should be made configurable through variables:
@@ -242,6 +439,11 @@ The following hardcoded values should be made configurable through variables:
 - **Docker repository**: Uses official Docker repository, no alternative options
 - **Docker Compose installation method**: Hardcoded to GitHub releases
 
+### Storage Setup
+- **Hot storage partition start**: `43GiB` (should be `hot_storage_partition_start`)
+- **Package requirements**: Hardcoded package list (should be `required_packages`)
+- **Mount point permissions**: Hardcoded to `0755` (should be configurable)
+
 ## Error Handling
 
 The playbooks include comprehensive error handling:
@@ -258,6 +460,7 @@ The playbooks include comprehensive error handling:
 2. **Template Download Failures**: Check internet connectivity and Proxmox template availability
 3. **Storage Issues**: Verify specified storage pools exist and have sufficient space
 4. **Network Configuration**: Ensure IP addresses don't conflict with existing infrastructure
+5. **ZFS Pool Creation**: Ensure devices are clean and not already part of other pools
 
 ### Debug Mode
 
@@ -277,12 +480,28 @@ pct enter <container_id>
 ssh automation@<container_ip>
 ```
 
+### Storage Verification
+
+Verify storage configuration after setup:
+```bash
+# Check ZFS pools
+zpool status
+zfs list
+
+# Check mount points
+df -h
+
+# Check Proxmox storage
+pvesm status
+```
+
 ## Security Considerations
 
 - The automation user has NOPASSWD sudo access - restrict as needed for your environment
 - SSH keys are used for authentication - ensure proper key management
 - Terraform API tokens have Administrator privileges - consider role-based restrictions
 - Docker daemon access grants significant system privileges
+- ZFS pools are created with default permissions - review for security requirements
 
 ## Contributing
 
@@ -292,3 +511,4 @@ When modifying these playbooks:
 3. Add appropriate error handling
 4. Update documentation for new variables
 5. Consider backward compatibility
+6. Test storage operations thoroughly before deploying
