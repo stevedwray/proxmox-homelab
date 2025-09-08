@@ -1,0 +1,163 @@
+---
+# FILE: 01-base-system/storage-verify.yml
+# Purpose: Verify storage state after the storage-setup playbook and a reboot.
+# Behavior: Read-only checks; fails with precise messages if mismatches are found.
+
+- name: Verify testbed storage configuration post-reboot
+  hosts: proxmox_testbed
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/proxmox.yml
+    - ../group_vars/proxmox_testbed.yml
+
+  tasks:
+    # ------------------------------------------------------------
+    # HOT STORAGE: mounted + fstab + options + directories
+    # ------------------------------------------------------------
+    - name: Check hot storage mount is present
+      command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ hot_storage.mount_point }}"
+      register: hot_findmnt
+      changed_when: false
+      failed_when: hot_findmnt.rc != 0
+      when: hot_storage.enabled | default(false)
+
+    - name: Validate hot storage fstype/options from findmnt
+      assert:
+        that:
+          - "'ext4' in hot_findmnt.stdout"
+          - "'noatime' in hot_findmnt.stdout"
+        fail_msg: "Hot storage mount incorrect. Got: {{ hot_findmnt.stdout }}"
+        success_msg: "Hot storage mount looks correct."
+      when: hot_storage.enabled | default(false)
+
+
+    - name: Hot storage fstab line exists
+      shell: "grep -E '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]' /etc/fstab"
+      register: hot_fstab
+      changed_when: false
+      failed_when: hot_fstab.rc != 0
+      when: hot_storage.enabled | default(false)
+
+    - name: Ensure hot storage subdirectories exist
+      stat:
+        path: "{{ hot_storage.mount_point }}/{{ item }}"
+      loop: "{{ hot_storage_directories }}"
+      register: hot_dir_stats
+      when: hot_storage.enabled | default(false)
+
+    - name: Assert hot storage subdirectories
+      assert:
+        that: item.stat.exists and item.stat.isdir
+        fail_msg: "Missing or not a directory: {{ item.stat.path }}"
+      loop: "{{ hot_dir_stats.results | list }}"
+      when: hot_storage.enabled | default(false)
+
+    # ------------------------------------------------------------
+    # TEMPORARY STORAGE: mounted + fstab + options
+    # ------------------------------------------------------------
+    - name: Check temporary storage mount is present
+      command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ temporary_storage.mount_point }}"
+      register: temp_findmnt
+      changed_when: false
+      failed_when: temp_findmnt.rc != 0
+
+    - name: Validate temporary storage fstype/options from findmnt
+      assert:
+        that:
+          - "'{{ temporary_storage.filesystem }}' in temp_findmnt.stdout"
+          - "'noatime' in temp_findmnt.stdout"
+        fail_msg: "Temporary storage mount incorrect. Got: {{ temp_findmnt.stdout }}"
+        success_msg: "Temporary storage mount looks correct."
+
+
+    - name: Temporary storage fstab line exists
+      shell: "grep -E '^LABEL={{ temporary_storage.filesystem_label }}[[:space:]]+{{ temporary_storage.mount_point }}[[:space:]]+{{ temporary_storage.filesystem }}[[:space:]]' /etc/fstab"
+      register: temp_fstab
+      changed_when: false
+      failed_when: temp_fstab.rc != 0
+
+    # ------------------------------------------------------------
+    # ZFS POOLS: exist, online, and pool properties
+    # ------------------------------------------------------------
+    - name: Check ZFS pools exist
+      command: "zpool list -H -o name {{ item.key }}"
+      register: zpool_list
+      changed_when: false
+      failed_when: zpool_list.rc != 0
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Pools are ONLINE
+      shell: "zpool status {{ item.key }} | grep -E 'state:[[:space:]]+ONLINE'"
+      register: zpool_status
+      changed_when: false
+      failed_when: zpool_status.rc != 0
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Pool property ashift matches
+      command: "zpool get -H -o value ashift {{ item.key }}"
+      register: zpool_ashift
+      changed_when: false
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Assert pool ashift values
+      assert:
+        that: zpool_ashift.results[idx].stdout.strip() == item.value.properties.ashift | string
+        fail_msg: "Pool {{ item.key }} ashift is {{ zpool_ashift.results[idx].stdout.strip() }}, expected {{ item.value.properties.ashift }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Pool property autotrim matches
+      command: "zpool get -H -o value autotrim {{ item.key }}"
+      register: zpool_autotrim
+      changed_when: false
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Assert pool autotrim values
+      assert:
+        that: zpool_autotrim.results[idx].stdout.strip() == item.value.properties.autotrim
+        fail_msg: "Pool {{ item.key }} autotrim is {{ zpool_autotrim.results[idx].stdout.strip() }}, expected {{ item.value.properties.autotrim }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    # ------------------------------------------------------------
+    # ROOT DATASET PROPERTIES (on pool root datasets)
+    # ------------------------------------------------------------
+    - name: Root dataset compression matches
+      command: "zfs get -H -o value compression {{ item.key }}"
+      register: zfs_comp
+      changed_when: false
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Assert compression
+      assert:
+        that: zfs_comp.results[idx].stdout.strip() == item.value.properties.compression
+        fail_msg: "Root dataset {{ item.key }} compression is {{ zfs_comp.results[idx].stdout.strip() }}, expected {{ item.value.properties.compression }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Root dataset atime matches
+      command: "zfs get -H -o value atime {{ item.key }}"
+      register: zfs_atime
+      changed_when: false
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Assert atime
+      assert:
+        that: zfs_atime.results[idx].stdout.strip() == item.value.properties.atime
+        fail_msg: "Root dataset {{ item.key }} atime is {{ zfs_atime.results[idx].stdout.strip() }}, expected {{ item.value.properties.atime }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Root dataset xattr and acltype
+      command: "zfs get -H -o value xattr,acltype {{ item.key }}"
+      register: zfs_xattr_acl
+      changed_when: false
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Assert xattr/acltype
+      assert:
+        that:
+          - (zfs_xattr_acl.results[idx].stdout.split('\t')[0] | trim) == 'sa'
+          - (zfs_xattr_acl.results[idx].stdout.split('\t')[1] | trim) == 'posix'
+        fail_msg: "Root dataset {{ item.key }} xattr/acltype mismatch. Got: {{ zfs_xattr_acl.results[idx].stdout }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    # ------------------------------------------------------------
+    # WORKLOAD DATASETS:
