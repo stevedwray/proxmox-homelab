@@ -1,0 +1,357 @@
+---
+# FILE: playbooks/base-system/storage-setup.yml
+# Improved version incorporating the review feedback
+# Add this as the first task in pre_tasks
+
+- name: Testbed storage configuration
+  hosts: proxmox_testbed
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/proxmox.yml
+    - ../group_vars/proxmox_testbed.yml
+
+  pre_tasks:
+    # =====================================
+    # System validation and safety checks
+    # =====================================
+    - name: Validate target system hardware layout
+      block:
+        - name: Check boot device exists and is correct size
+          stat:
+            path: "{{ storage_devices.boot_device }}"
+          register: boot_device_check
+          failed_when: not boot_device_check.stat.exists
+
+        - name: Get boot device size
+          shell: "lsblk -bno SIZE {{ storage_devices.boot_device }} | head -1"
+          register: boot_device_size
+          
+        - name: Validate boot device size (expecting ~100GB for testbed)
+          assert:
+            that: boot_device_size.stdout | int > 90000000000  # 90GB minimum
+            fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
+
+        - name: Check if ZFS pools already exist or devices are clean
+          shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
+          register: pool_status
+          loop: "{{ zfs_pools | dict2items }}"
+          failed_when: false
+
+        - name: Check device state for pools that need setup
+          shell: "lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l"
+          register: device_usage
+          loop: "{{ pool_status.results }}"
+          when: item.stdout == 'needs_setup'
+          failed_when: device_usage.stdout | int > 0
+
+    - name: Check for running containers/VMs
+      shell: "pct list 2>/dev/null | grep -c running || true"
+      register: running_containers
+      
+    - name: Check for running VMs
+      shell: "qm list 2>/dev/null | grep -c running || true"
+      register: running_vms
+
+    - name: Warn about active workloads
+      pause:
+        prompt: |
+          WARNING: Found {{ running_containers.stdout }} running containers and {{ running_vms.stdout }} running VMs.
+          Storage operations may disrupt running services.
+          Press ENTER to continue or Ctrl+C to abort.
+      when: (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
+
+  # Continue with the rest of pre_tasks...
+
+    - name: Validate system is Proxmox
+      stat:
+        path: /etc/pve
+      register: proxmox_check
+      failed_when: not proxmox_check.stat.exists
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages for storage management
+      package:
+        name: "{{ required_packages }}"
+        state: present
+
+    - name: Verify all devices exist
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ storage_devices.security_device }}"
+        - "{{ storage_devices.gaming_device }}"
+        - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.temporary_device }}"
+      register: device_check
+
+    - name: Verify all devices are available
+      assert:
+        that: device_check.results | selectattr('stat.exists') | list | length == 4
+        fail_msg: "Not all required devices are available"
+
+  tasks:
+    # =====================================
+    # Hot storage partition (NVMe-safe)
+    # =====================================
+
+    - name: Detect NVMe-style partition suffix
+      set_fact:
+        partition_suffix: "{{ 'p' if (storage_devices.boot_device | basename) is match('^nvme') else '' }}"
+
+    - name: Read existing partition table
+      community.general.parted:
+        device: "{{ storage_devices.boot_device }}"
+        unit: GiB
+        state: info
+      register: boot_parted
+
+    - name: Determine if hot partition exists
+      set_fact:
+        hot_partition_path: "{{ storage_devices.boot_device }}{{ partition_suffix }}{{ hot_storage.partition_number }}"
+        hot_partition_exists: "{{ (boot_parted.partitions | selectattr('num','equalto', hot_storage.partition_number | int) | list | length) > 0 }}"
+      when: hot_storage.enabled | default(false)
+
+    - name: Create hot storage partition
+      community.general.parted:
+        device: "{{ storage_devices.boot_device }}"
+        number: "{{ hot_storage.partition_number }}"
+        label: gpt
+        name: hot-storage
+        part_start: 43GiB
+        part_end: 100%
+        state: present
+      when:
+        - hot_storage.enabled | default(false)
+        - not hot_partition_exists
+
+    - name: Check if hot partition needs formatting
+      command: "blkid -s LABEL -o value {{ hot_partition_path }}"
+      register: hot_label_check
+      changed_when: false
+      failed_when: false
+      when: hot_storage.enabled | default(false)
+
+    - name: Format hot storage partition (if missing or wrong label)
+      filesystem:
+        fstype: ext4
+        dev: "{{ hot_partition_path }}"
+        opts: "-L {{ hot_storage.filesystem_label }}"
+      when:
+        - hot_storage.enabled | default(false)
+        - hot_label_check.rc != 0 or hot_label_check.stdout != hot_storage.filesystem_label
+
+    - name: Create hot storage mount point
+      file:
+        path: "{{ hot_storage.mount_point }}"
+        state: directory
+        mode: '0755'
+      when: hot_storage.enabled | default(false)
+
+    - name: Add hot storage to fstab
+      mount:
+        path: "{{ hot_storage.mount_point }}"
+        src: "LABEL={{ hot_storage.filesystem_label }}"
+        fstype: ext4
+        opts: "{{ hot_storage.mount_options }}"
+        state: present
+      when: hot_storage.enabled | default(false)
+
+    - name: Mount hot storage
+      mount:
+        path: "{{ hot_storage.mount_point }}"
+        src: "LABEL={{ hot_storage.filesystem_label }}"
+        fstype: ext4
+        opts: "{{ hot_storage.mount_options }}"
+        state: mounted
+      when: hot_storage.enabled | default(false)
+
+    # =====================================
+    # ZFS pools (idempotent)
+    # =====================================
+
+    - name: Create ZFS pools
+      community.general.zpool:
+        name: "{{ item.key }}"
+        state: present
+        vdevs:
+          - disks:
+              - "{{ item.value.device }}"
+        pool_properties:
+          ashift: "{{ item.value.properties.ashift }}"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    - name: Check current autotrim setting
+      shell: "zpool get -H -o value autotrim {{ item.key }}"
+      loop: "{{ zfs_pools | dict2items }}"
+      register: current_autotrim
+      changed_when: false
+
+    - name: Enable autotrim on ZFS pools (if not already enabled)
+      command: "zpool set autotrim=on {{ item.item.key }}"
+      loop: "{{ current_autotrim.results }}"
+      when: item.stdout != "on"
+      register: autotrim_result
+
+    - name: Set ZFS pool root dataset properties
+      community.general.zfs:
+        name: "{{ item.key }}"
+        state: present
+        extra_zfs_properties:
+          compression: "{{ item.value.properties.compression }}"
+          atime: "{{ item.value.properties.atime }}"
+          xattr: "sa"
+          acltype: "posix"
+      loop: "{{ zfs_pools | dict2items }}"
+
+    # =====================================
+    # Temporary storage (idempotent)
+    # =====================================
+
+# =====================================
+# Temporary storage (idempotent)
+# =====================================
+
+    - name: Check if temporary device needs formatting
+      command: "blkid -o value -s TYPE {{ storage_devices.temporary_device }}"
+      register: temp_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format temporary storage device (only if needed)
+      filesystem:
+        fstype: "{{ temporary_storage.filesystem }}"
+        dev: "{{ temporary_storage.device }}"
+        opts: "-L {{ temporary_storage.filesystem_label }}"
+      when: temp_fs_check.rc != 0
+
+    - name: Create temporary storage mount point
+      file:
+        path: "{{ temporary_storage.mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add temporary storage to fstab
+      mount:
+        path: "{{ temporary_storage.mount_point }}"
+        src: "LABEL={{ temporary_storage.filesystem_label }}"
+        fstype: "{{ temporary_storage.filesystem }}"
+        opts: "{{ temporary_storage.mount_options }}"
+        state: present
+
+    - name: Mount temporary storage
+      mount:
+        path: "{{ temporary_storage.mount_point }}"
+        src: "LABEL={{ temporary_storage.filesystem_label }}"
+        fstype: "{{ temporary_storage.filesystem }}"
+        opts: "{{ temporary_storage.mount_options }}"
+        state: mounted
+
+    # =====================================
+    # ZFS datasets with workload-specific tuning
+    # =====================================
+
+    - name: Create security application datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ security_datasets }}"
+
+    - name: Create gaming datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ gaming_datasets }}"
+
+    - name: Create monitoring datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ monitoring_datasets }}"
+
+    # =====================================
+    # Hot storage directories
+    # =====================================
+
+    - name: Create hot storage directories
+      file:
+        path: "{{ hot_storage.mount_point }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop: "{{ hot_storage_directories }}"
+      when: hot_storage.enabled | default(false)
+
+    # =====================================
+    # Proxmox storage configuration (safer blockinfile)
+    # =====================================
+
+    - name: Configure Proxmox ZFS storage in single managed block
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED STORAGE POOLS"
+        block: |
+          {% for pool_name in zfs_pools.keys() %}
+          # {{ pool_name | title }} pool storage
+          zfspool: {{ pool_name }}-vms
+                  pool {{ pool_name }}
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+
+          zfspool: {{ pool_name }}-containers
+                  pool {{ pool_name }}
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+
+          {% endfor %}
+          {% if hot_storage.enabled | default(false) %}
+          # Hot storage directory
+          dir: hot-storage
+                  path {{ hot_storage.mount_point }}
+                  content iso,vztmpl,backup
+                  nodes {{ ansible_hostname }}
+
+          {% endif %}
+          # Temporary storage directory
+          dir: temp-storage
+                  path {{ temporary_storage.mount_point }}
+                  content backup
+                  nodes {{ ansible_hostname }}
+
+  post_tasks:
+    - name: Analyze configuration state for summary
+      set_fact:
+        pools_existed: "{{ pool_status.results | selectattr('stdout', 'match', '.*configured$') | list | length }}"
+        total_pools: "{{ zfs_pools | length }}"
+        hot_partition_existed: "{{ hot_partition_exists | default(false) }}"
+        changes_made: "{{ ansible_play_batch | length > 0 and (ansible_play_recap[inventory_hostname].changed | default(0)) > 5 }}"
+
+    - name: Display configuration state summary
+      debug:
+        msg:
+          - "=== STORAGE CONFIGURATION ANALYSIS ==="
+          - "System validation: PASSED"
+          - "ZFS pools found: {{ pools_existed }}/{{ total_pools }} already configured"
+          - "Hot storage partition: {{ 'EXISTS' if hot_partition_existed else 'CREATED' }}"
+          - "Configuration state: {{ 'MAINTAINED (no changes needed)' if not changes_made else 'UPDATED (changes applied)' }}"
+          - ""
+          - "=== CURRENT STORAGE LAYOUT ==="
+          - "ZFS Pools: {{ zfs_pools.keys() | list }}"
+          - "Hot storage: {{ hot_storage.mount_point }} ({{ 'active' if hot_storage.enabled else 'disabled' }})"
+          - "Temporary storage: {{ temporary_storage.mount_point }}"
+          - ""
+          - "=== SYSTEM STATUS ==="
+          - "Storage automation: COMPLETED SUCCESSFULLY"
+          - "System ready for: {{ 'continued operation' if not changes_made else 'application deployment' }}"
+          - ""
+          - "Next steps:"
+          - "  - Verify pools: zpool status"
+          - "  - Check mounts: df -h"
+          - "  - View Proxmox storage: pvesm status"
+
