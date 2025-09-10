@@ -1,4 +1,3 @@
----
 # FILE: playbooks/base-system/storage-setup.yml
 # Updated for LVM infrastructure storage on boot disk
 # ZFS pools for dedicated storage drives
@@ -23,10 +22,11 @@
           register: boot_device_check
           failed_when: not boot_device_check.stat.exists
 
-        - name: Get boot device size
+        - name: Get boot device size (bytes)
           shell: "lsblk -bno SIZE {{ storage_devices.boot_device }} | head -1"
           register: boot_device_size
-          
+          changed_when: false
+
         - name: Validate boot device size (expecting ~100GB for testbed)
           assert:
             that: boot_device_size.stdout | int > 90000000000  # 90GB minimum
@@ -37,21 +37,31 @@
           register: pool_status
           loop: "{{ zfs_pools | dict2items }}"
           failed_when: false
+          changed_when: false
 
         - name: Check device state for pools that need setup
           shell: "lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l"
           register: device_usage
           loop: "{{ pool_status.results }}"
           when: item.stdout == 'needs_setup'
-          failed_when: device_usage.stdout | int > 0
+          changed_when: false
+
+        - name: Assert clean devices for pools that need setup
+          assert:
+            that: (item.stdout | int) == 0
+            fail_msg: "Device {{ item.item.item.value.device }} has existing filesystem signatures."
+          loop: "{{ device_usage.results }}"
+          when: item.skipped is not defined
 
     - name: Check for running containers/VMs
       shell: "pct list 2>/dev/null | grep -c running || true"
       register: running_containers
-      
+      changed_when: false
+
     - name: Check for running VMs
       shell: "qm list 2>/dev/null | grep -c running || true"
       register: running_vms
+      changed_when: false
 
     - name: Warn about active workloads
       pause:
@@ -59,7 +69,10 @@
           WARNING: Found {{ running_containers.stdout }} running containers and {{ running_vms.stdout }} running VMs.
           Storage operations may disrupt running services.
           Press ENTER to continue or Ctrl+C to abort.
-      when: (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
+      when:
+        - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
+        - ansible_check_mode | default(false) == false
+        - ansible_env.TERM is defined
 
     - name: Validate system is Proxmox
       stat:
@@ -74,7 +87,7 @@
 
     - name: Install required packages for storage management
       package:
-        name: "{{ required_packages }}"
+        name: "{{ required_packages | default(['zfsutils-linux','parted','lvm2']) }}"
         state: present
 
     - name: Verify ZFS storage devices exist
@@ -100,7 +113,8 @@
       shell: "vgdisplay -c | grep -E '^[[:space:]]*[^:]+:' | head -1 | cut -d: -f1"
       register: vg_name_result
       failed_when: vg_name_result.stdout == ""
-      
+      changed_when: false
+
     - name: Set volume group name fact
       set_fact:
         volume_group: "{{ vg_name_result.stdout.strip() }}"
@@ -114,6 +128,7 @@
       shell: "vgdisplay {{ volume_group }} | grep 'Free' | awk '{print $7}' | sed 's/[<>]//g'"
       register: vg_free_space
       when: infrastructure_lv_check.stdout == 'missing'
+      changed_when: false
 
     - name: Create infrastructure logical volume
       community.general.lvol:
@@ -159,63 +174,118 @@
         state: mounted
 
     # =====================================
-    # Hot storage partition (NVMe-safe)
+    # Hot storage as an LVM logical volume (replaces separate sda4)
     # =====================================
 
-    - name: Detect NVMe-style partition suffix
+    - name: Set PV/LV path facts for boot disk
       set_fact:
-        partition_suffix: "{{ 'p' if (storage_devices.boot_device | basename) is match('^nvme') else '' }}"
-
-    - name: Read existing partition table
-      community.general.parted:
-        device: "{{ storage_devices.boot_device }}"
-        unit: GiB
-        state: info
-      register: boot_parted
-
-    - name: Determine if hot partition exists
-      set_fact:
-        hot_partition_path: "{{ storage_devices.boot_device }}{{ partition_suffix }}{{ hot_storage.partition_number }}"
-        hot_partition_exists: "{{ (boot_parted.partitions | selectattr('num','equalto', hot_storage.partition_number | int) | list | length) > 0 }}"
+        _pv_part_num: 3
+        _pv_path: "{{ storage_devices.boot_device }}3"
+        _hot_lv_name: "{{ hot_storage.lv_name | default('hot') }}"
       when: hot_storage.enabled | default(false)
 
-    - name: Create hot storage partition
+    - name: Check if partition 4 exists (old hot partition)
+      shell: "lsblk -no NAME {{ storage_devices.boot_device }} | grep -E '^{{ (storage_devices.boot_device | basename) }}4$' || true"
+      register: part4_exists
+      changed_when: false
+      when: hot_storage.enabled | default(false)
+
+    - name: Unmount old hot mount if mounted
+      mount:
+        path: "{{ hot_storage.mount_point }}"
+        state: unmounted
+      when: hot_storage.enabled | default(false)
+
+    - name: Remove old hot fstab line (LABEL=hot), if present
+      lineinfile:
+        path: /etc/fstab
+        regexp: '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]'
+        state: absent
+        backrefs: no
+      when: hot_storage.enabled | default(false)
+
+    - name: Delete partition 4 if it exists
       community.general.parted:
         device: "{{ storage_devices.boot_device }}"
-        number: "{{ hot_storage.partition_number }}"
-        label: gpt
-        name: hot-storage
-        part_start: 43GiB
-        part_end: 100%
-        state: present
+        number: 4
+        state: absent
       when:
         - hot_storage.enabled | default(false)
-        - not hot_partition_exists
+        - part4_exists.stdout | length > 0
 
-    - name: Check if hot partition needs formatting
-      command: "blkid -s LABEL -o value {{ hot_partition_path }}"
-      register: hot_label_check
+    # --- Grow PV partition to end of disk using growpart, then pvresize ---
+
+    - name: Install growpart (cloud-guest-utils) for online partition growth
+      apt:
+        name: cloud-guest-utils
+        state: present
+        update_cache: yes
+      when: hot_storage.enabled | default(false)
+
+    - name: Grow partition {{ _pv_part_num }} to end of disk (growpart)
+      command: "growpart {{ storage_devices.boot_device }} {{ _pv_part_num }}"
+      register: growpart_out
+      changed_when: growpart_out.rc == 0
+      when: hot_storage.enabled | default(false)
+
+    - name: Re-read partition table after growpart
+      command: "partprobe {{ storage_devices.boot_device }}"
+      changed_when: false
+      when: hot_storage.enabled | default(false)
+
+    - name: Wait for udev to settle new partition size
+      command: "udevadm settle"
+      changed_when: false
+      when: hot_storage.enabled | default(false)
+
+    - name: Resize PV to use full partition
+      command: "pvresize {{ _pv_path }}"
+      register: pvresize_out
+      changed_when: "'No change' not in pvresize_out.stdout"
+      when: hot_storage.enabled | default(false)
+
+    # --- Create/format/mount the hot LV on the VG ---
+
+    - name: Normalize hot LV size for LVM
+      set_fact:
+        _hot_lv_size: "{{ hot_storage.size
+                          | regex_replace('Gi?B$', 'G')
+                          | regex_replace('Mi?B$', 'M')
+                          | regex_replace('Ki?B$', 'K') }}"
+      when: hot_storage.enabled | default(false)
+
+    - name: Create hot LV if missing
+      community.general.lvol:
+        vg: "{{ volume_group }}"
+        lv: "{{ _hot_lv_name }}"
+        size: "{{ _hot_lv_size }}"
+        state: present
+      when: hot_storage.enabled | default(false)
+
+    - name: Check if hot LV needs formatting
+      command: "blkid -s TYPE -o value /dev/{{ volume_group }}/{{ _hot_lv_name }}"
+      register: hot_lv_fs_check
       changed_when: false
       failed_when: false
       when: hot_storage.enabled | default(false)
 
-    - name: Format hot storage partition (if missing or wrong label)
+    - name: Format hot LV (ext4 with label)
       filesystem:
         fstype: ext4
-        dev: "{{ hot_partition_path }}"
+        dev: "/dev/{{ volume_group }}/{{ _hot_lv_name }}"
         opts: "-L {{ hot_storage.filesystem_label }}"
       when:
         - hot_storage.enabled | default(false)
-        - hot_label_check.rc != 0 or hot_label_check.stdout != hot_storage.filesystem_label
+        - hot_lv_fs_check.rc != 0
 
-    - name: Create hot storage mount point
+    - name: Ensure hot mountpoint exists
       file:
         path: "{{ hot_storage.mount_point }}"
         state: directory
         mode: '0755'
       when: hot_storage.enabled | default(false)
 
-    - name: Add hot storage to fstab
+    - name: Add hot LV to fstab (by LABEL)
       mount:
         path: "{{ hot_storage.mount_point }}"
         src: "LABEL={{ hot_storage.filesystem_label }}"
@@ -224,7 +294,7 @@
         state: present
       when: hot_storage.enabled | default(false)
 
-    - name: Mount hot storage
+    - name: Mount hot LV
       mount:
         path: "{{ hot_storage.mount_point }}"
         src: "LABEL={{ hot_storage.filesystem_label }}"
@@ -247,7 +317,7 @@
     - name: Wipe filesystem signatures from devices (if pool missing)
       command: "wipefs -a {{ item.item.value.device }}"
       loop: "{{ pool_existence_check.results }}"
-      when: 
+      when:
         - item.stdout == 'missing'
         - item.item.value.enabled | default(true)
 
@@ -258,11 +328,11 @@
         vdevs:
           - disks:
               - "{{ item.item.value.device }}"
-        pool_properties:
-          ashift: "{{ item.item.value.properties.ashift }}"
-          autotrim: "on"
+        pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
+                             | combine( (item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {}) ) }}"
       loop: "{{ pool_existence_check.results }}"
-      when: 
+      when:
         - item.stdout == 'missing'
         - item.item.value.enabled | default(true)
 
@@ -275,10 +345,10 @@
       changed_when: false
 
     - name: Enable autotrim on existing pools (if not already enabled)
-      command: "zpool set autotrim=on {{ item.item.item.key }}"
+      command: "zpool set autotrim=on {{ item.item.key }}"
       loop: "{{ current_autotrim.results }}"
-      when: 
-        - item is not skipped
+      when:
+        - item.skipped is not defined
         - item.stdout != "on"
 
     - name: Set ZFS pool root dataset properties
@@ -289,7 +359,7 @@
           compression: "{{ item.value.properties.compression }}"
           atime: "{{ item.value.properties.atime }}"
           xattr: "sa"
-          acltype: "posix"
+          acltype: "posixacl"
       loop: "{{ zfs_pools | dict2items }}"
       when: item.value.enabled | default(true)
 
@@ -427,7 +497,7 @@
           {% endif %}
           {% endfor %}
 
-    - name: Configure Proxmox CIFS storage  
+    - name: Configure Proxmox CIFS storage
       blockinfile:
         path: /etc/pve/storage.cfg
         marker: "# {mark} ANSIBLE MANAGED CIFS STORAGE"
@@ -459,12 +529,16 @@
           {% endif %}
           {% endfor %}
 
+    - name: Refresh Proxmox storage state
+      command: "pvesm status"
+      changed_when: false
+
   post_tasks:
     - name: Analyze configuration state for summary
       set_fact:
         pools_existed: "{{ pool_status.results | selectattr('stdout', 'match', '.*configured$') | list | length }}"
         total_pools: "{{ zfs_pools | length }}"
-        hot_partition_existed: "{{ hot_partition_exists | default(false) }}"
+        hot_partition_existed: false
         infrastructure_lv_existed: "{{ infrastructure_lv_check.stdout == 'exists' }}"
         changes_made: "{{ ansible_play_batch | length > 0 and (ansible_play_recap[inventory_hostname].changed | default(0)) > 5 }}"
 
@@ -474,14 +548,14 @@
           - "=== STORAGE CONFIGURATION ANALYSIS ==="
           - "System validation: PASSED"
           - "ZFS pools found: {{ pools_existed }}/{{ total_pools }} already configured"
-          - "Hot storage partition: {{ 'EXISTS' if hot_partition_existed else 'CREATED' }}"
+          - "Hot storage: LVM LV '{{ _hot_lv_name | default('hot') }}' on VG {{ volume_group }} → {{ hot_storage.mount_point }}"
           - "Infrastructure LV: {{ 'EXISTS' if infrastructure_lv_existed else 'CREATED' }}"
           - "Configuration state: {{ 'MAINTAINED (no changes needed)' if not changes_made else 'UPDATED (changes applied)' }}"
           - ""
           - "=== STORAGE LAYOUT ==="
-          - "Boot disk (/dev/sda):"
+          - "Boot disk ({{ storage_devices.boot_device }}):"
           - "  - LVM: {{ volume_group }}/{{ infrastructure_storage.lv_name }} → {{ infrastructure_storage.mount_point }}"
-          - "  - Hot storage: {{ hot_storage.mount_point }} ({{ 'active' if hot_storage.enabled else 'disabled' }})"
+          - "  - Hot storage (LV): /dev/{{ volume_group }}/{{ _hot_lv_name | default('hot') }} → {{ hot_storage.mount_point }}"
           - "ZFS Pools:"
           - "  - {{ zfs_pools.keys() | list | join(', ') }}"
           - ""
