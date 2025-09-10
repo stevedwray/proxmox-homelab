@@ -1,4 +1,3 @@
----
 # FILE: 01-base-system/storage-verify.yml
 # Purpose: Verify storage state after the storage-setup playbook and a reboot.
 # Behavior: Read-only checks; fails with precise messages if mismatches are found.
@@ -31,7 +30,6 @@
         success_msg: "Hot storage mount looks correct."
       when: hot_storage.enabled | default(false)
 
-
     - name: Hot storage fstab line exists
       shell: "grep -E '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]' /etc/fstab"
       register: hot_fstab
@@ -55,12 +53,16 @@
 
     # ------------------------------------------------------------
     # TEMPORARY STORAGE: mounted + fstab + options
+    # (Only if temporary_storage is defined and enabled)
     # ------------------------------------------------------------
     - name: Check temporary storage mount is present
       command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ temporary_storage.mount_point }}"
       register: temp_findmnt
       changed_when: false
       failed_when: temp_findmnt.rc != 0
+      when:
+        - temporary_storage is defined
+        - temporary_storage.enabled | default(false)
 
     - name: Validate temporary storage fstype/options from findmnt
       assert:
@@ -69,13 +71,18 @@
           - "'noatime' in temp_findmnt.stdout"
         fail_msg: "Temporary storage mount incorrect. Got: {{ temp_findmnt.stdout }}"
         success_msg: "Temporary storage mount looks correct."
-
+      when:
+        - temporary_storage is defined
+        - temporary_storage.enabled | default(false)
 
     - name: Temporary storage fstab line exists
       shell: "grep -E '^LABEL={{ temporary_storage.filesystem_label }}[[:space:]]+{{ temporary_storage.mount_point }}[[:space:]]+{{ temporary_storage.filesystem }}[[:space:]]' /etc/fstab"
       register: temp_fstab
       changed_when: false
       failed_when: temp_fstab.rc != 0
+      when:
+        - temporary_storage is defined
+        - temporary_storage.enabled | default(false)
 
     # ------------------------------------------------------------
     # ZFS POOLS: exist, online, and pool properties
@@ -116,12 +123,11 @@
 
     - name: Assert pool autotrim values
       assert:
-        that: item.stdout.strip() == item.item.value.properties.autotrim
+        that: item.stdout.strip() == (zfs_pool_defaults.autotrim | default('on'))
         fail_msg: >-
           Pool {{ item.item.key }} autotrim is {{ item.stdout.strip() }},
-          expected {{ item.item.value.properties.autotrim }}
+          expected {{ zfs_pool_defaults.autotrim | default('on') }}
       loop: "{{ zpool_autotrim.results }}"
-
 
     # ------------------------------------------------------------
     # ROOT DATASET PROPERTIES (on pool root datasets)
@@ -163,15 +169,17 @@
     - name: Assert xattr/acltype
       assert:
         that:
-          - (item.stdout_lines[0] | trim) in ['sa', 'on']   # accept either; change to == 'sa' if you want strict
-          - (item.stdout_lines[1] | trim) == 'posix'
+          - (item.stdout_lines[0] | trim) in ['sa', 'on']   # keep lenient xattr
+          - (item.stdout_lines[1] | trim) in ['posixacl', 'posix']   # accept both spellings
         fail_msg: >-
           Root dataset {{ item.item.key }} xattr/acltype mismatch.
           Got: {{ item.stdout_lines }}
       loop: "{{ zfs_xattr_acl.results }}"
 
-    # --- keep previous tasks as-is ---
 
+    # ------------------------------------------------------------
+    # WORKLOAD DATASETS (exist + property checks)
+    # ------------------------------------------------------------
     - name: Build combined dataset list for checks
       set_fact:
         _all_datasets: "{{ (security_datasets + gaming_datasets + monitoring_datasets) }}"
@@ -183,7 +191,6 @@
       failed_when: ds_exists.rc != 0
       loop: "{{ _all_datasets }}"
 
-    # >>> ADD THIS TASK BACK <<<
     - name: Read dataset properties in bulk
       command: "zfs get -H -o value {{ item.properties | dict2items | map(attribute='key') | join(',') }} {{ item.name }}"
       register: ds_values
@@ -201,18 +208,3 @@
           Got: {{ item.stdout_lines | map('trim') | list }}
           Expected: {{ item.item.properties | dict2items | map(attribute='value') | map('string') | list }}
       loop: "{{ ds_values.results }}"
-
-    - name: Assert dataset property values
-      assert:
-        that:
-          - (item.stdout_lines | map('trim') | list)
-            ==
-            (item.item.properties | dict2items | map(attribute='value') | map('string') | list)
-        fail_msg: >-
-          Dataset {{ item.item.name }} properties mismatch.
-          Got: {{ item.stdout_lines | map('trim') | list }}
-          Expected: {{ item.item.properties | dict2items | map(attribute='value') | map('string') | list }}
-      loop: "{{ ds_values.results }}"
-
-    # ------------------------------------------------------------
-    # WORKLOAD DATASETS:
