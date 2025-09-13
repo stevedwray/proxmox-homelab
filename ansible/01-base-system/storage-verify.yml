@@ -2,13 +2,14 @@
 # Purpose: Verify storage state after the storage-setup playbook and a reboot.
 # Behavior: Read-only checks; fails with precise messages if mismatches are found.
 
+
 - name: Verify testbed storage configuration post-reboot
-  hosts: proxmox_testbed
+  hosts: proxmox_production
   become: true
   gather_facts: true
   vars_files:
     - ../group_vars/proxmox.yml
-    - ../group_vars/proxmox_testbed.yml
+    - ../group_vars/proxmox_production.yml  # Changed from proxmox_testbed.yml
 
   tasks:
     # ------------------------------------------------------------

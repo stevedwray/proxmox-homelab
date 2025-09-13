@@ -10,7 +10,7 @@
 # - Idempotent verification that repos are correct
 
 - name: Proxmox VE 9 base configuration
-  hosts: proxmox
+  hosts: proxmox_production  # Run only on production
   become: true
   gather_facts: true
 

@@ -1,0 +1,249 @@
+# FILE: playbooks/base-system/storage-validation.yml
+# Pre-flight validation for ZFS storage setup - safe to run multiple times
+# REPLACES ENTIRE CONTENT of existing storage-prevalidation.yml
+
+- name: Storage setup validation and environment check
+  hosts: proxmox_production
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/proxmox.yml
+    - ../group_vars/proxmox_production.yml
+
+  tasks:
+    # =====================================
+    # Device existence and basic validation
+    # =====================================
+    - name: Check if storage devices exist
+      stat:
+        path: "{{ item }}"
+      register: device_existence
+      loop:
+        - "{{ storage_devices.boot_device }}"
+        - "{{ storage_devices.security_device }}"
+        - "{{ storage_devices.gaming_device }}"
+        - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.storage_device }}"
+      failed_when: false
+
+    - name: Report device existence
+      debug:
+        msg: |
+          Device: {{ item.item }}
+          Exists: {{ item.stat.exists }}
+          Block device: {{ item.stat.isblk | default('N/A') }}
+      loop: "{{ device_existence.results }}"
+
+    - name: Check boot device size
+      shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+      register: boot_device_size_check
+      changed_when: false
+
+    - name: Display boot device information
+      debug:
+        msg: |
+          Boot device: {{ storage_devices.boot_device }}
+          Raw size (bytes): {{ boot_device_size_check.stdout }}
+          Size (GB): {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}
+
+    - name: Validate boot device size for production
+      assert:
+        that: boot_device_size_check.stdout | int > 200000000000  # 200GB minimum
+        fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB"
+        success_msg: "Boot device validation passed: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB"
+
+    # =====================================
+    # ZFS storage device validation
+    # =====================================
+    - name: Check ZFS device sizes and cleanliness
+      block:
+        - name: Get ZFS device information
+          shell: |
+            echo "=== {{ item }} ==="
+            if [ -b "{{ item }}" ]; then
+              echo "Device exists: YES"
+              echo "Size: $(lsblk -bno SIZE {{ item }} | head -1 | tr -d ' ') bytes"
+              echo "Size (GB): $(echo "scale=1; $(lsblk -bno SIZE {{ item }} | head -1 | tr -d ' ') / 1000000000" | bc)"
+              echo "Filesystem signatures:"
+              lsblk -f {{ item }} || echo "No partitions"
+              echo "Wipefs check:"
+              wipefs {{ item }} 2>/dev/null || echo "Clean"
+            else
+              echo "Device exists: NO"
+            fi
+          register: zfs_device_info
+          loop:
+            - "{{ storage_devices.security_device }}"
+            - "{{ storage_devices.gaming_device }}"
+            - "{{ storage_devices.monitoring_device }}"
+            - "{{ storage_devices.storage_device }}"
+          changed_when: false
+          failed_when: false
+
+        - name: Display ZFS device status
+          debug:
+            msg: "{{ item.stdout_lines }}"
+          loop: "{{ zfs_device_info.results }}"
+
+    # =====================================
+    # Root ZFS pool validation (replaces LVM checks)
+    # =====================================
+    - name: Check root ZFS pool status
+      block:
+        - name: Get root ZFS pool name
+          shell: "zpool list -H -o name | grep -E '^(rpool|tank)$' | head -1"
+          register: root_pool_name_check
+          changed_when: false
+          failed_when: false
+
+        - name: Validate root pool exists
+          assert:
+            that: root_pool_name_check.stdout != ""
+            fail_msg: "No root ZFS pool found (expected 'rpool' or 'tank')"
+            success_msg: "Root ZFS pool found: {{ root_pool_name_check.stdout }}"
+
+        - name: Get root pool details
+          shell: |
+            pool_name="{{ root_pool_name_check.stdout }}"
+            echo "=== Root ZFS Pool Status ==="
+            echo "Pool Name: $pool_name"
+            echo "Pool Size: $(zpool get -H -o value size $pool_name)"
+            echo "Pool Free: $(zpool get -H -o value free $pool_name)"
+            echo "Pool Health: $(zpool get -H -o value health $pool_name)"
+            echo ""
+            echo "=== Current Datasets ==="
+            zfs list -t filesystem | grep "^$pool_name"
+            echo ""
+            echo "=== Pool Properties ==="
+            zpool get all $pool_name | grep -E '(ashift|autotrim|version)'
+          register: root_pool_status
+          changed_when: false
+          when: root_pool_name_check.stdout != ""
+
+        - name: Display root pool status
+          debug:
+            msg: "{{ root_pool_status.stdout_lines }}"
+          when: root_pool_name_check.stdout != ""
+
+        - name: Check if infrastructure dataset already exists
+          shell: "zfs list {{ infrastructure_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+          register: infrastructure_dataset_exists
+          changed_when: false
+          when: root_pool_name_check.stdout != ""
+
+        - name: Check if hot storage dataset already exists
+          shell: "zfs list {{ hot_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+          register: hot_dataset_exists
+          changed_when: false
+          when: 
+            - root_pool_name_check.stdout != ""
+            - hot_storage.enabled | default(true)
+
+        - name: Display dataset existence status
+          debug:
+            msg: |
+              Infrastructure dataset ({{ infrastructure_storage.dataset }}): {{ infrastructure_dataset_exists.stdout | default('N/A') }}
+              Hot storage dataset ({{ hot_storage.dataset }}): {{ hot_dataset_exists.stdout | default('N/A') }}
+
+    # =====================================
+    # Boot disk partition analysis (informational only)
+    # =====================================
+    - name: Analyze boot disk partitioning (informational)
+      block:
+        - name: Get boot disk partition layout
+          shell: "parted {{ storage_devices.boot_device }} print free"
+          register: boot_partition_layout
+          changed_when: false
+
+        - name: Display boot disk layout
+          debug:
+            msg: "{{ boot_partition_layout.stdout_lines }}"
+
+    # =====================================
+    # ZFS pools status
+    # =====================================
+    - name: Check existing ZFS pools
+      block:
+        - name: List current ZFS pools
+          shell: "zpool list 2>/dev/null || echo 'No pools found'"
+          register: current_pools
+          changed_when: false
+
+        - name: Check for existing pool names that would conflict
+          shell: |
+            for pool in security gaming monitoring apps; do
+              zpool status $pool 2>/dev/null && echo "$pool: EXISTS" || echo "$pool: AVAILABLE"
+            done
+          register: pool_name_conflicts
+          changed_when: false
+
+        - name: Display ZFS pool status
+          debug:
+            msg: |
+              Current pools: {{ current_pools.stdout }}
+              Pool name availability: {{ pool_name_conflicts.stdout_lines }}
+
+    # =====================================
+    # Root pool space analysis
+    # =====================================
+    - name: Analyze root pool space requirements
+      block:
+        - name: Get root pool available space in bytes
+          shell: "zfs get -H -p -o value available {{ root_pool_name_check.stdout }}"
+          register: root_pool_available_bytes
+          changed_when: false
+          when: root_pool_name_check.stdout != ""
+
+        - name: Calculate space requirements
+          set_fact:
+            infrastructure_quota_bytes: "{{ (infrastructure_storage.quota | regex_replace('G$', '') | int * 1000000000) }}"
+            hot_quota_bytes: "{{ (hot_storage.quota | regex_replace('G$', '') | int * 1000000000) if hot_storage.enabled else 0 }}"
+            total_required_bytes: "{{ ((infrastructure_storage.quota | regex_replace('G$', '') | int) + (hot_storage.quota | regex_replace('G$', '') | int if hot_storage.enabled else 0)) * 1000000000 }}"
+            available_bytes: "{{ root_pool_available_bytes.stdout | int }}"
+          when: root_pool_name_check.stdout != ""
+
+        - name: Display space analysis
+          debug:
+            msg: |
+              Root pool available: {{ (available_bytes | int / 1000000000) | round(1) }}GB
+              Infrastructure quota: {{ infrastructure_storage.quota }}
+              Hot storage quota: {{ hot_storage.quota if hot_storage.enabled else 'Disabled' }}
+              Total required: {{ (total_required_bytes | int / 1000000000) | round(1) }}GB
+              Space sufficient: {{ 'YES' if (available_bytes | int > total_required_bytes | int) else 'NO' }}
+          when: root_pool_name_check.stdout != ""
+
+    # =====================================
+    # System readiness summary
+    # =====================================
+    - name: Generate readiness summary
+      debug:
+        msg: |
+          =======================================================
+          ZFS STORAGE SETUP READINESS REPORT
+          =======================================================
+          
+          BOOT DEVICE STATUS:
+          - Device: {{ storage_devices.boot_device }}
+          - Size: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB
+          - Status: {{ 'READY' if (boot_device_size_check.stdout | int > 200000000000) else 'TOO SMALL' }}
+          
+          ROOT ZFS POOL STATUS:
+          - Pool Name: {{ root_pool_name_check.stdout | default('NOT FOUND') }}
+          - Infrastructure Dataset: {{ infrastructure_dataset_exists.stdout | default('N/A') | upper }}
+          - Hot Storage Dataset: {{ hot_dataset_exists.stdout | default('N/A') | upper }}
+          - Available Space: {{ (available_bytes | int / 1000000000) | round(1) if root_pool_name_check.stdout != "" else 'N/A' }}GB
+          - Space Sufficient: {{ 'YES' if (root_pool_name_check.stdout != "" and available_bytes | int > total_required_bytes | int) else 'NO/UNKNOWN' }}
+          
+          ZFS DEDICATED DEVICES:
+          - Security: {{ storage_devices.security_device }}
+          - Gaming: {{ storage_devices.gaming_device }}  
+          - Monitoring: {{ storage_devices.monitoring_device }}
+          - Apps: {{ storage_devices.storage_device }}
+          
+          POOL NAME CONFLICTS:
+          {{ pool_name_conflicts.stdout_lines | join('\n          ') }}
+          
+          SYSTEM STATUS:
+          {{ 'READY FOR ZFS STORAGE SETUP' if (boot_device_size_check.stdout | int > 200000000000 and root_pool_name_check.stdout != "") else 'NEEDS ATTENTION - Check above for issues' }}
+          
+          =======================================================

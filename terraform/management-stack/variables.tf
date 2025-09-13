@@ -26,7 +26,7 @@ variable "pm_api_token_secret" {
 variable "proxmox_node" {
   description = "Proxmox node name"
   type        = string
-  default     = "pvetest"
+  default     = "pve"
 }
 
 variable "portainer_vmid" {
@@ -65,18 +65,6 @@ variable "portainer_rootfs_size" {
   default     = "15G"
 }
 
-variable "npm_data_source" {
-  description = "Source path for NPM data directory on Proxmox host"
-  type        = string
-  default     = "/srv/npm/data"
-}
-
-variable "npm_letsencrypt_source" {
-  description = "Source path for NPM letsencrypt directory on Proxmox host" 
-  type        = string
-  default     = "/srv/npm/letsencrypt"
-}
-
 variable "npm_data_target" {
   description = "Target mount path for NPM data in container"
   type        = string
@@ -87,4 +75,17 @@ variable "npm_letsencrypt_target" {
   description = "Target mount path for NPM letsencrypt in container"
   type        = string
   default     = "/srv/npm/letsencrypt"
+}
+
+variable "rootfs_storage" {
+  description = "Proxmox storage ID for the LXC rootfs and default extra volumes"
+  type        = string
+  default     = "local-zfs"
+}
+
+# NEW: storage ID for heavy registry caches (apps pool)
+variable "registry_storage" {
+  description = "Proxmox storage ID for registry cache volumes"
+  type        = string
+  default     = "apps-containers"
 }

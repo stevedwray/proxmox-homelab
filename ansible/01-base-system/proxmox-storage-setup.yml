@@ -1,0 +1,411 @@
+# FILE: playbooks/base-system/storage-setup-simple-zfs.yml
+# Updated for simple ZFS infrastructure storage on boot disk
+# ZFS pools for dedicated storage drives
+# REPLACES: storage-setup-02.yml completely
+
+- name: Production storage configuration - Simple ZFS Infrastructure + ZFS Pools
+  hosts: proxmox_production
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/proxmox.yml
+    - ../group_vars/proxmox_production.yml
+    
+  pre_tasks:
+    # =====================================
+    # System validation and safety checks
+    # =====================================
+    - name: Validate target system hardware layout
+      block:
+        - name: Check boot device exists and is correct size
+          stat:
+            path: "{{ storage_devices.boot_device }}"
+          register: boot_device_check
+          failed_when: not boot_device_check.stat.exists
+
+        - name: Get boot device size (bytes)
+          shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+          register: boot_device_size
+          changed_when: false
+
+        - name: Validate boot device size (expecting ~200GB for production)
+          assert:
+            that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
+            fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
+            
+        - name: Check if ZFS pools already exist or devices are clean
+          shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
+          register: pool_status
+          loop: "{{ zfs_pools | dict2items }}"
+          failed_when: false
+          changed_when: false
+
+        - name: Check device state for pools that need setup
+          shell: "lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l"
+          register: device_usage
+          loop: "{{ pool_status.results }}"
+          when: item.stdout == 'needs_setup'
+          changed_when: false
+
+        - name: Assert clean devices for pools that need setup
+          assert:
+            that: (item.stdout | int) == 0
+            fail_msg: "Device {{ item.item.item.value.device }} has existing filesystem signatures."
+          loop: "{{ device_usage.results }}"
+          when: item.skipped is not defined
+
+    - name: Check for running containers/VMs
+      shell: "pct list 2>/dev/null | grep -c running || true"
+      register: running_containers
+      changed_when: false
+
+    - name: Check for running VMs
+      shell: "qm list 2>/dev/null | grep -c running || true"
+      register: running_vms
+      changed_when: false
+
+    - name: Warn about active workloads
+      pause:
+        prompt: |
+          WARNING: Found {{ running_containers.stdout }} running containers and {{ running_vms.stdout }} running VMs.
+          Storage operations may disrupt running services.
+          Press ENTER to continue or Ctrl+C to abort.
+      when:
+        - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
+        - ansible_check_mode | default(false) == false
+        - ansible_env.TERM is defined
+
+    - name: Validate system is Proxmox
+      stat:
+        path: /etc/pve
+      register: proxmox_check
+      failed_when: not proxmox_check.stat.exists
+
+    - name: Update package cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages for storage management
+      package:
+        name: "{{ required_packages | default(['zfsutils-linux','parted']) }}"
+        state: present
+
+    - name: Verify ZFS storage devices exist
+      stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ storage_devices.security_device }}"
+        - "{{ storage_devices.gaming_device }}"
+        - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.storage_device }}"
+      register: device_check
+
+    - name: Verify required ZFS devices are available
+      assert:
+        that: device_check.results | selectattr('stat.exists') | list | length == 4
+        fail_msg: "Not all required ZFS devices are available"
+
+    - name: Verify root ZFS pool exists
+      shell: "zpool status rpool >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      register: root_pool_check
+      failed_when: root_pool_check.stdout == 'missing'
+      changed_when: false
+
+  tasks:
+    # =====================================
+    # ZFS datasets on existing root pool
+    # =====================================
+
+    - name: Check if infrastructure dataset exists
+      shell: "zfs list rpool/data/infrastructure >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      register: infrastructure_dataset_check
+      changed_when: false
+
+    - name: Create infrastructure dataset on root pool
+      community.general.zfs:
+        name: "rpool/data/infrastructure"
+        state: present
+        extra_zfs_properties:
+          mountpoint: "/infrastructure"
+          quota: "15G"
+          compression: "lz4"
+          atime: "off"
+          recordsize: "16K"
+      when: infrastructure_dataset_check.stdout == 'missing'
+
+    - name: Check if hot storage dataset exists
+      shell: "zfs list rpool/data/hot >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      register: hot_dataset_check
+      changed_when: false
+
+    - name: Create hot storage dataset on root pool
+      community.general.zfs:
+        name: "rpool/data/hot"
+        state: present
+        extra_zfs_properties:
+          mountpoint: "/hot"
+          quota: "80G"
+          compression: "lz4"
+          atime: "off"
+          recordsize: "128K"
+      when: hot_dataset_check.stdout == 'missing'
+
+    - name: Create infrastructure directories
+      file:
+        path: "/infrastructure/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "containers"
+        - "config"
+        - "data"
+        - "backups"
+
+    - name: Create hot storage directories
+      file:
+        path: "/hot/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - "templates"
+        - "iso"
+        - "container-layers"
+        - "cache"
+
+    # =====================================
+    # ZFS pools (idempotent) - Dedicated drives only
+    # =====================================
+
+    - name: Check if ZFS pools exist
+      shell: "zpool status {{ item.key }} 2>/dev/null && echo 'exists' || echo 'missing'"
+      register: pool_existence_check
+      loop: "{{ zfs_pools | dict2items }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Wipe filesystem signatures from devices (if pool missing)
+      command: "wipefs -a {{ item.item.value.device }}"
+      loop: "{{ pool_existence_check.results }}"
+      when:
+        - item.stdout == 'missing'
+        - item.item.value.enabled | default(true)
+
+    - name: Create ZFS pools (only if missing)
+      community.general.zpool:
+        name: "{{ item.item.key }}"
+        state: present
+        vdevs:
+          - disks:
+              - "{{ item.item.value.device }}"
+        pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
+                             | combine( (item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {}) ) }}"
+      loop: "{{ pool_existence_check.results }}"
+      when:
+        - item.stdout == 'missing'
+        - item.item.value.enabled | default(true)
+
+    # Handle existing pools - only set autotrim if not already on
+    - name: Check current autotrim setting for existing pools
+      shell: "zpool get -H -o value autotrim {{ item.item.key }}"
+      loop: "{{ pool_existence_check.results }}"
+      when: item.stdout == 'exists'
+      register: current_autotrim
+      changed_when: false
+
+    - name: Enable autotrim on existing pools (if not already enabled)
+      command: "zpool set autotrim=on {{ item.item.key }}"
+      loop: "{{ current_autotrim.results }}"
+      when:
+        - item.skipped is not defined
+        - item.stdout != "on"
+
+    - name: Set ZFS pool root dataset properties
+      community.general.zfs:
+        name: "{{ item.key }}"
+        state: present
+        extra_zfs_properties:
+          compression: "{{ item.value.properties.compression }}"
+          atime: "{{ item.value.properties.atime }}"
+          xattr: "sa"
+          acltype: "posixacl"
+      loop: "{{ zfs_pools | dict2items }}"
+      when: item.value.enabled | default(true)
+
+    # =====================================
+    # ZFS datasets with workload-specific tuning
+    # =====================================
+
+    - name: Create Security datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ security_datasets }}"
+
+    - name: Create Gaming datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ gaming_datasets }}"
+
+    - name: Create Monitoring datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ monitoring_datasets }}"
+
+    - name: Create App datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ apps_datasets | default([]) }}"
+
+    # =====================================
+    # Simple Proxmox storage additions
+    # =====================================
+
+    - name: Check if infrastructure container storage exists in Proxmox
+      shell: "grep -q 'infrastructure-containers' /etc/pve/storage.cfg"
+      register: infra_storage_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Add infrastructure container storage to Proxmox
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} Infrastructure Container Storage"
+        block: |
+          zfspool: infrastructure-containers
+                  pool rpool
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+        insertafter: EOF
+      when: infra_storage_exists.rc != 0
+
+    - name: Check if hot directory storage exists in Proxmox
+      shell: "grep -q 'hot-storage' /etc/pve/storage.cfg"
+      register: hot_storage_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Add hot directory storage to Proxmox
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} Hot Directory Storage"
+        block: |
+          dir: hot-storage
+                  path /hot
+                  content iso,vztmpl,backup
+                  nodes {{ ansible_hostname }}
+        insertafter: EOF
+      when: hot_storage_exists.rc != 0
+
+    - name: Configure Proxmox ZFS storage pools for dedicated drives
+      blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED ZFS STORAGE POOLS"
+        block: |
+          # Security VM storage
+          zfspool: security-vms
+                  pool security
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+          
+          # Security container storage  
+          zfspool: security-containers
+                  pool security
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+          
+          # Gaming VM storage
+          zfspool: gaming-vms
+                  pool gaming
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+          
+          # Gaming container storage
+          zfspool: gaming-containers
+                  pool gaming
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+          
+          # Monitoring VM storage
+          zfspool: monitoring-vms
+                  pool monitoring
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+          
+          # Monitoring container storage
+          zfspool: monitoring-containers
+                  pool monitoring
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+          
+          # Apps VM storage
+          zfspool: apps-vms
+                  pool apps
+                  content images
+                  nodes {{ ansible_hostname }}
+                  sparse 1
+          
+          # Apps container storage
+          zfspool: apps-containers
+                  pool apps
+                  content rootdir
+                  nodes {{ ansible_hostname }}
+        insertafter: EOF
+
+    - name: Refresh Proxmox storage state
+      command: "pvesm status"
+      changed_when: false
+
+  post_tasks:
+    - name: Analyze configuration state for summary
+      set_fact:
+        pools_existed: "{{ pool_status.results | selectattr('stdout', 'match', '.*configured$') | list | length }}"
+        total_pools: "{{ zfs_pools | length }}"
+        infrastructure_dataset_existed: "{{ infrastructure_dataset_check.stdout == 'exists' }}"
+        hot_dataset_existed: "{{ hot_dataset_check.stdout == 'exists' }}"
+        changes_made: "{{ ansible_play_batch | length > 0 and (ansible_play_recap[inventory_hostname].changed | default(0)) > 5 }}"
+
+    - name: Display configuration state summary
+      debug:
+        msg:
+          - "=== STORAGE CONFIGURATION ANALYSIS ==="
+          - "System validation: PASSED"
+          - "Root ZFS pool: rpool (confirmed)"
+          - "ZFS pools found: {{ pools_existed }}/{{ total_pools }} already configured"
+          - "Infrastructure dataset: {{ 'EXISTS' if infrastructure_dataset_existed else 'CREATED' }}"
+          - "Hot storage dataset: {{ 'EXISTS' if hot_dataset_existed else 'CREATED' }}"
+          - "Configuration state: {{ 'MAINTAINED (no changes needed)' if not changes_made else 'UPDATED (changes applied)' }}"
+          - ""
+          - "=== STORAGE LAYOUT ==="
+          - "Boot disk ({{ storage_devices.boot_device }}) - ZFS Pool: rpool"
+          - "  - Infrastructure: rpool/data/infrastructure → /infrastructure"
+          - "  - Hot storage: rpool/data/hot → /hot"
+          - "Dedicated ZFS Pools:"
+          - "  - {{ zfs_pools.keys() | list | join(', ') }}"
+          - ""
+          - "=== PROXMOX STORAGE ==="
+          - "Infrastructure: infrastructure-containers (ZFS pool storage)"
+          - "Hot storage: hot-storage (directory storage)"
+          - "Workload pools: {{ zfs_pools.keys() | list | join('-containers, ') }}-containers"
+          - ""
+          - "=== SYSTEM STATUS ==="
+          - "Storage automation: COMPLETED SUCCESSFULLY"
+          - "System ready for: {{ 'continued operation' if not changes_made else 'tiered application deployment' }}"
+          - ""
+          - "Next steps:"
+          - "  - Deploy infrastructure containers: Use infrastructure-containers storage"
+          - "  - Deploy workload containers: Use *-containers storage"
+          - "  - Verify pools: zpool status"
+          - "  - Check datasets: zfs list"
+          - "  - View Proxmox storage: pvesm status"

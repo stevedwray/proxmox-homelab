@@ -1,0 +1,118 @@
+---
+# FILE: playbooks/base-system/terraform-token-management.yml
+# Purpose: Manage Terraform automation user and API tokens for Proxmox
+# Can be run independently and repeatedly to regenerate tokens
+
+- name: Terraform API Token Management
+  hosts: proxmox_production
+  become: true
+  gather_facts: false
+
+  vars:
+    # --- Terraform automation setup ---
+    pmx_terraform_user: "automation@pve"
+    pmx_terraform_token_id: "terraform"
+    pmx_terraform_rotate_token: true          # set false to only create if missing
+    pmx_terraform_force_recreate: false       # set true to always recreate user
+
+  tasks:
+    - name: Create Terraform automation user
+      ansible.builtin.command: >
+        pveum user add {{ pmx_terraform_user }} --comment "Terraform automation account"
+      register: _terraform_user_add
+      failed_when: _terraform_user_add.rc not in [0,2]
+      changed_when: _terraform_user_add.rc == 0
+
+    - name: Grant Administrator role to Terraform user
+      ansible.builtin.command: >
+        pveum aclmod / -user {{ pmx_terraform_user }} -role Administrator
+      register: _terraform_user_acl
+      failed_when: _terraform_user_acl.rc != 0
+      changed_when: false
+
+    - name: List existing tokens for Terraform user
+      ansible.builtin.command: >
+        pveum user token list {{ pmx_terraform_user }} --output-format json
+      register: _terraform_token_list
+
+    - name: Check if Terraform token exists
+      ansible.builtin.set_fact:
+        terraform_token_exists: "{{ (_terraform_token_list.stdout | from_json) | selectattr('tokenid','equalto', pmx_terraform_token_id) | list | length > 0 }}"
+
+    - name: Display existing token status
+      ansible.builtin.debug:
+        msg: |
+          Token {{ pmx_terraform_token_id }} for user {{ pmx_terraform_user }}: {{ 'EXISTS' if terraform_token_exists else 'MISSING' }}
+          Rotation enabled: {{ pmx_terraform_rotate_token }}
+          Action: {{ 'RECREATE' if (terraform_token_exists and pmx_terraform_rotate_token) else ('CREATE' if not terraform_token_exists else 'SKIP') }}
+
+    - name: Remove existing Terraform token (rotation enabled)
+      ansible.builtin.command: >
+        pveum user token remove {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+      register: _terraform_token_rm
+      failed_when: _terraform_token_rm.rc not in [0,2]
+      changed_when: _terraform_token_rm.rc == 0
+      when:
+        - terraform_token_exists
+        - pmx_terraform_rotate_token
+
+    - name: Create Terraform API token (privsep=0)
+      ansible.builtin.command: >
+        pveum user token add {{ pmx_terraform_user }} {{ pmx_terraform_token_id }} --privsep 0 --output-format json
+      register: _terraform_token_add
+      changed_when: true
+      when: (not terraform_token_exists) or pmx_terraform_rotate_token
+
+    - name: Parse Terraform token details
+      ansible.builtin.set_fact:
+        terraform_api_token_id: "{{ pmx_terraform_user }}!{{ pmx_terraform_token_id }}"
+        terraform_api_token_secret: "{{ (_terraform_token_add.stdout | from_json).value | default('') }}"
+      when:
+        - _terraform_token_add is defined
+        - _terraform_token_add.stdout is defined
+
+    - name: Display Terraform API token information
+      ansible.builtin.debug:
+        msg:
+          - "==============================================="
+          - "TERRAFORM API TOKEN CREDENTIALS"
+          - "==============================================="
+          - "Token ID: {{ terraform_api_token_id | default('Not created') }}"
+          - "Token Secret: {{ terraform_api_token_secret | default('Not available') }}"
+          - ""
+          - "Environment Variables for Terraform:"
+          - "export TF_VAR_pm_api_token_id='{{ terraform_api_token_id | default('') }}'"
+          - "export TF_VAR_pm_api_token_secret='{{ terraform_api_token_secret | default('') }}'"
+          - ""
+          - "Or add to your Terraform configuration:"
+          - "pm_api_token_id = \"{{ terraform_api_token_id | default('') }}\""
+          - "pm_api_token_secret = \"{{ terraform_api_token_secret | default('') }}\""
+          - "==============================================="
+
+    - name: Verify Terraform user has proper permissions
+      ansible.builtin.command: >
+        pveum user token permissions {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+      register: _terraform_perms_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert Terraform user has proper permissions
+      ansible.builtin.assert:
+        that:
+          - "'VM.Allocate' in (_terraform_perms_check.stdout | default(''))"
+          - "'Datastore.AllocateSpace' in (_terraform_perms_check.stdout | default(''))"
+        fail_msg: "Terraform user missing required permissions!"
+        success_msg: "Terraform user permissions verified."
+
+  post_tasks:
+    - name: Token management summary
+      ansible.builtin.debug:
+        msg:
+          - "==============================================="
+          - "TOKEN MANAGEMENT COMPLETED"
+          - "==============================================="
+          - "User: {{ pmx_terraform_user }}"
+          - "Token ID: {{ pmx_terraform_token_id }}"
+          - "Status: {{ 'CREATED/UPDATED' if (_terraform_token_add is defined and _terraform_token_add.changed) else 'EXISTING' }}"
+          - ""
+          - "==============================================="

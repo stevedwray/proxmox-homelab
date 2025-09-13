@@ -26,13 +26,15 @@ module "portainer_server" {
   target_node   = var.proxmox_node
   hostname      = var.portainer_hostname
   vmid          = var.portainer_vmid  # Use the variable instead of hardcoded value
-  ip_address    = "192.168.1.70/24"
+  ip_address    = var.portainer_ip_address
   gateway       = "192.168.1.1"
-  
-  cores         = 2
-  memory        = 3072
+
+  cores         = var.portainer_cores
+  memory        = var.portainer_memory
   swap          = 1024
-  rootfs_size   = "15G"
+  rootfs_size   = var.portainer_rootfs_size
+  rootfs_storage  = var.rootfs_storage
+  registry_storage = var.registry_storage
   
   lxc_password    = var.lxc_password
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
@@ -64,8 +66,6 @@ resource "null_resource" "run_ansible" {
       PORTAINER_ADMIN_PASSWORD  = var.lxc_password
 
       # NPM paths (existing)
-      NPM_DATA_SOURCE           = var.npm_data_source
-      NPM_LETSENCRYPT_SOURCE    = var.npm_letsencrypt_source
       NPM_DATA_TARGET           = var.npm_data_target
       NPM_LETSENCRYPT_TARGET    = var.npm_letsencrypt_target
     }

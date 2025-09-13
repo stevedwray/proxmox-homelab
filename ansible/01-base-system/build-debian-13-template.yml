@@ -24,7 +24,7 @@
     storage_pool: "{{ debian_template.storage_pool | default('infrastructure-storage') }}"
     
     # Base template and network settings
-    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-12-standard_12.12-1_amd64.tar.zst') }}"
+    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-12-standard_12.7-1_amd64.tar.zst') }}"
     network_bridge: "{{ proxmox_network.bridge | default('vmbr0') }}"
     gateway_ip: "{{ proxmox_network.gateway | default('192.168.1.1') }}"
     
@@ -71,10 +71,6 @@
       failed_when: false
       changed_when: false
 
-    - name: Refresh Proxmox appliance catalog
-      command: pveam update
-      changed_when: false
-
     - name: Check if base template is available
       shell: pveam list local | grep -q "debian-12-standard"
       register: template_available
@@ -82,7 +78,7 @@
       changed_when: false
 
     - name: Download Debian 12 template if not present
-      shell: "pveam download local {{ base_template | regex_replace('local:vztmpl/', '') }}"
+      shell: pveam download local debian-12-standard_12.7-1_amd64.tar.zst
       when: 
         - container_exists.rc != 0
         - template_available.rc != 0
@@ -153,13 +149,7 @@
   hosts: debian_template_builder
   become: true
   gather_facts: true
-  vars_files:
-    - ../group_vars/proxmox.yml
-    - ../group_vars/proxmox_production.yml
   vars:
-    install_docker: "{{ debian_template.install_docker | default(true) }}"
-    install_portainer_agent: "{{ debian_template.install_portainer_agent | default(true) }}"
-    cleanup_template: "{{ debian_template.cleanup_template | default(true) }}"
     template_packages:
       # Core system tools
       - curl
@@ -558,7 +548,7 @@
         mode: '0755'
 
     - name: Create linked clone for packaging
-      command: "pct clone {{ template_id }} {{ clone_id }} --hostname {{ clone_hostname }} --full 1"
+      command: "pct clone {{ template_id }} {{ clone_id }} --hostname {{ clone_hostname }} --full 0"
       args:
         creates: "/etc/pve/lxc/{{ clone_id }}.conf"
 
