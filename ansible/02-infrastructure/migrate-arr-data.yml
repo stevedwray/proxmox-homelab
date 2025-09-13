@@ -1,30 +1,17 @@
----
-# ansible/migrate-torrent-data.yml
-# Migrate torrent stack application data using corrected tar commands
+# ansible/migrate-torrent-production-data.yml
+# Migrate torrent stack production data from Proxmox host backup
 
-- name: Migrate Torrent Stack Production Data
+---
+- name: Migrate Torrent Production Data from Backup
   hosts: torrent-stack
   remote_user: root
   become: true
   gather_facts: yes
   
-  vars_prompt:
-    - name: source_host
-      prompt: "Enter the source host/container IP for torrent data"
-      default: "192.168.1.5"
-      private: false
-      
-    - name: source_base_path
-      prompt: "Enter the source base path for torrent configs"
-      default: "/config/torrents"
-      private: false
-      
-    - name: confirm_migration
-      prompt: "This will replace torrent application data on the target host. Continue? (yes/no)"
-      default: "no"
-      private: false
-
   vars:
+    source_host: "192.168.1.2"  # Proxmox host
+    source_base_path: "/mnt/usb/c/pve/ssd01/apps/torrents"
+    target_base_path: "/config/torrents"
     torrent_apps:
       - gluetun
       - qbittorrent
@@ -32,16 +19,9 @@
       - radarr
       - sonarr
       - lidarr
-    target_base_path: "/config/torrents"
-
-  pre_tasks:
-    - name: Abort if not confirmed
-      fail:
-        msg: "Migration aborted by user"
-      when: confirm_migration != "yes"
 
   tasks:
-    - name: Test connectivity to source host
+    - name: Test connectivity to Proxmox host
       wait_for:
         host: "{{ source_host }}"
         port: 22
@@ -49,17 +29,25 @@
       delegate_to: localhost
       become: false
 
-    - name: Verify source application configs exist
+    - name: Verify source backup data exists on Proxmox host
       stat:
         path: "{{ source_base_path }}/{{ item }}"
-      register: source_config_check
+      register: source_backup_check
       delegate_to: "{{ source_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       loop: "{{ torrent_apps }}"
 
-    - name: Display source config status
+    - name: Display source backup status
       debug:
         msg: "{{ item.item }}: {{ 'Found' if item.stat.exists else 'Missing' }} ({{ (item.stat.size / 1024 / 1024) | round(1) if item.stat.exists else 0 }}MB)"
-      loop: "{{ source_config_check.results }}"
+      loop: "{{ source_backup_check.results }}"
+
+    - name: Confirm migration proceed
+      pause:
+        prompt: "This will replace current torrent application data. Press Enter to continue or Ctrl+C to abort"
 
     - name: Stop all torrent stack containers
       command: docker stop {{ item }}
@@ -85,37 +73,50 @@
         state: directory
         mode: '0755'
 
-    # Fixed tar command - excludes come before the directory
-    - name: Create archive of each app config on source
+    - name: Create archive of each app config from Proxmox backup
       shell: |
         cd {{ source_base_path }}
         tar --exclude='*.lock' --exclude='logs/' --exclude='*.log*' -czf /tmp/{{ item.item }}-config.tar.gz {{ item.item }}/
       delegate_to: "{{ source_host }}"
-      loop: "{{ source_config_check.results }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
-
-    - name: Fetch config archives from source to control machine
+    - name: Fetch config archives from Proxmox to control machine
       fetch:
         src: "/tmp/{{ item.item }}-config.tar.gz"
         dest: "/tmp/torrent-migration-{{ item.item }}.tar.gz"
         flat: yes
       delegate_to: "{{ source_host }}"
-      loop: "{{ source_config_check.results }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
     - name: Copy config archives from control machine to target
       copy:
         src: "/tmp/torrent-migration-{{ item.item }}.tar.gz"
         dest: "/tmp/torrent-migration/{{ item.item }}-config.tar.gz"
-      loop: "{{ source_config_check.results }}"
+      loop: "{{ source_backup_check.results }}"
+      when: item.stat.exists
+
+    - name: Remove existing application directories
+      file:
+        path: "{{ target_base_path }}/{{ item.item }}"
+        state: absent
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
     - name: Extract config archives to target directories
       shell: |
         cd {{ target_base_path }}
         tar -xzf /tmp/torrent-migration/{{ item.item }}-config.tar.gz
-      loop: "{{ source_config_check.results }}"
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
     - name: Set proper ownership on migrated configs
@@ -124,26 +125,49 @@
         owner: "1000"
         group: "1000"
         recurse: true
-      loop: "{{ source_config_check.results }}"
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
-    - name: Clean up source archives
+    - name: Clean up Proxmox temporary archives
       file:
         path: "/tmp/{{ item.item }}-config.tar.gz"
         state: absent
       delegate_to: "{{ source_host }}"
-      loop: "{{ source_config_check.results }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ source_backup_check.results }}"
       when: item.stat.exists
 
-    - name: Restart torrent stack via docker compose
-      shell: |
-        cd /opt/portainer
-        docker compose up -d
+    - name: Clean up local temporary files
+      file:
+        path: /tmp/torrent-migration
+        state: absent
+
+    - name: Clean up control machine temporary files
+      file:
+        path: "/tmp/torrent-migration-{{ item.item }}.tar.gz"
+        state: absent
+      delegate_to: localhost
+      loop: "{{ source_backup_check.results }}"
+      when: item.stat.exists
+
+    - name: Start torrent stack containers
+      command: docker start {{ item }}
+      loop:
+        - gluetun
+        - qbittorrent
+        - prowlarr
+        - radarr
+        - sonarr
+        - lidarr
+        - flaresolverr
       ignore_errors: true
 
     - name: Wait for services to start
       pause:
-        seconds: 30
+        seconds: 45
 
     - name: Verify services are accessible
       uri:
@@ -168,15 +192,16 @@
     - name: Display migration results
       debug:
         msg:
-          - "Migration completed!"
-          - "Services:"
+          - "Production data migration completed!"
+          - "Services (should retain all previous configurations):"
           - "  Prowlarr: http://{{ ansible_host }}:9696"
           - "  Radarr: http://{{ ansible_host }}:7878"
           - "  Sonarr: http://{{ ansible_host }}:8989"
           - "  Lidarr: http://{{ ansible_host }}:8686"
           - "  qBittorrent: http://{{ ansible_host }}:8080"
-
-    - name: Clean up temporary files
-      file:
-        path: /tmp/torrent-migration
-        state: absent
+          - ""
+          - "Next steps:"
+          - "1. Check qBittorrent for any path corrections needed"
+          - "2. Verify Prowlarr indexers are working"
+          - "3. Test Radarr/Sonarr can see qBittorrent as download client"
+          - "4. Copy WireGuard config to /config/torrents/gluetun/wireguard/"
