@@ -2,14 +2,14 @@
 # Updated for LVM infrastructure storage on boot disk
 # ZFS pools for dedicated storage drives
 
-- name: Testbed storage configuration - LVM Infrastructure + ZFS Pools
-  hosts: proxmox_testbed
+- name: Production storage configuration - LVM Infrastructure + ZFS Pools
+  hosts: proxmox_production
   become: true
   gather_facts: true
   vars_files:
     - ../group_vars/proxmox.yml
-    - ../group_vars/proxmox_testbed.yml
-
+    - ../group_vars/proxmox_production.yml  # Changed from proxmox_testbed.yml
+    
   pre_tasks:
     # =====================================
     # System validation and safety checks
@@ -23,15 +23,15 @@
           failed_when: not boot_device_check.stat.exists
 
         - name: Get boot device size (bytes)
-          shell: "lsblk -bno SIZE {{ storage_devices.boot_device }} | head -1"
+          shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
           register: boot_device_size
           changed_when: false
 
-        - name: Validate boot device size (expecting ~100GB for testbed)
+        - name: Validate boot device size (expecting ~200GB for production)
           assert:
-            that: boot_device_size.stdout | int > 90000000000  # 90GB minimum
+            that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
             fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
-
+            
         - name: Check if ZFS pools already exist or devices are clean
           shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
           register: pool_status
@@ -97,12 +97,14 @@
         - "{{ storage_devices.security_device }}"
         - "{{ storage_devices.gaming_device }}"
         - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.storage_device }}"     # <— add media pool device
       register: device_check
 
     - name: Verify required ZFS devices are available
       assert:
-        that: device_check.results | selectattr('stat.exists') | list | length == 3
+        that: device_check.results | selectattr('stat.exists') | list | length == 4
         fail_msg: "Not all required ZFS devices are available"
+
 
   tasks:
     # =====================================
@@ -177,72 +179,67 @@
     # Hot storage as an LVM logical volume (replaces separate sda4)
     # =====================================
 
-    - name: Set PV/LV path facts for boot disk
+    # --- Grow PV partition to end or to a specific size, then pvresize (parameterised) ---
+
+    - name: Set PV/LV path facts for boot disk (parameterised)
       set_fact:
-        _pv_part_num: 3
-        _pv_path: "{{ storage_devices.boot_device }}3"
+        _pv_part_num: "{{ boot_pv.partition_number | default(3) }}"
+        # Handle nvme vs sd naming (nvme uses 'p' before the partition number)
+        _pv_path: >-
+          {{
+            storage_devices.boot_device
+            ~ ( (storage_devices.boot_device | basename) is match('^nvme') | ternary('p','') )
+            ~ (boot_pv.partition_number | default(3))
+          }}
         _hot_lv_name: "{{ hot_storage.lv_name | default('hot') }}"
-      when: hot_storage.enabled | default(false)
+      when: hot_storage.enabled | default(true)
 
-    - name: Check if partition 4 exists (old hot partition)
-      shell: "lsblk -no NAME {{ storage_devices.boot_device }} | grep -E '^{{ (storage_devices.boot_device | basename) }}4$' || true"
-      register: part4_exists
-      changed_when: false
-      when: hot_storage.enabled | default(false)
-
-    - name: Unmount old hot mount if mounted
-      mount:
-        path: "{{ hot_storage.mount_point }}"
-        state: unmounted
-      when: hot_storage.enabled | default(false)
-
-    - name: Remove old hot fstab line (LABEL=hot), if present
-      lineinfile:
-        path: /etc/fstab
-        regexp: '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]'
-        state: absent
-        backrefs: no
-      when: hot_storage.enabled | default(false)
-
-    - name: Delete partition 4 if it exists
-      community.general.parted:
-        device: "{{ storage_devices.boot_device }}"
-        number: 4
-        state: absent
-      when:
-        - hot_storage.enabled | default(false)
-        - part4_exists.stdout | length > 0
-
-    # --- Grow PV partition to end of disk using growpart, then pvresize ---
-
-    - name: Install growpart (cloud-guest-utils) for online partition growth
+    - name: Ensure growpart is available (for end-of-disk growth)
       apt:
         name: cloud-guest-utils
         state: present
         update_cache: yes
-      when: hot_storage.enabled | default(false)
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is not defined
 
-    - name: Grow partition {{ _pv_part_num }} to end of disk (growpart)
+    - name: Grow PV partition to a specific size (GiB) with parted
+      command: "parted -s {{ storage_devices.boot_device }} resizepart {{ _pv_part_num }} {{ boot_pv.target_size_gib }}GiB"
+      register: resizepart_out_specific
+      changed_when: resizepart_out_specific.rc == 0
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is defined
+
+    - name: Grow PV partition to end-of-disk with growpart
       command: "growpart {{ storage_devices.boot_device }} {{ _pv_part_num }}"
       register: growpart_out
       changed_when: growpart_out.rc == 0
-      when: hot_storage.enabled | default(false)
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is not defined
 
-    - name: Re-read partition table after growpart
+    - name: Re-read partition table after growth
       command: "partprobe {{ storage_devices.boot_device }}"
       changed_when: false
-      when: hot_storage.enabled | default(false)
+      when: hot_storage.enabled | default(true)
 
     - name: Wait for udev to settle new partition size
       command: "udevadm settle"
       changed_when: false
-      when: hot_storage.enabled | default(false)
+      when: hot_storage.enabled | default(true)
 
     - name: Resize PV to use full partition
       command: "pvresize {{ _pv_path }}"
       register: pvresize_out
       changed_when: "'No change' not in pvresize_out.stdout"
-      when: hot_storage.enabled | default(false)
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+
 
     # --- Create/format/mount the hot LV on the VG ---
 
@@ -388,9 +385,12 @@
         extra_zfs_properties: "{{ item.properties }}"
       loop: "{{ monitoring_datasets }}"
 
-    # =====================================
-    # Infrastructure directories (LVM mount)
-    # =====================================
+    - name: Create App datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ apps_datasets | default([]) }}"
 
     - name: Create infrastructure storage directories
       file:

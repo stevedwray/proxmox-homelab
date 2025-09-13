@@ -1,0 +1,31 @@
+all:
+  children:
+    proxmox:
+      children:
+        proxmox_production:
+          hosts:
+            pve.gibbsgreatly.xyz:
+              ansible_host: 192.168.1.2
+              ansible_user: root
+              ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              
+        proxmox_testbed:
+          hosts:
+            pvetest.gibbsgreatly.xyz:
+              ansible_host: pvetest.gibbsgreatly.xyz
+              ansible_user: root
+              ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              
+      vars:
+        # Common Proxmox variables (apply to ALL Proxmox hosts)
+        ansible_python_interpreter: /usr/bin/python3
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+
+    # Debian template builder containers
+    debian_template_builder:
+      hosts:
+        debian_builder:
+          ansible_host: 192.168.1.50
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

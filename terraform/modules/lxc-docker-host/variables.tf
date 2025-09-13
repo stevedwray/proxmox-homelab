@@ -115,3 +115,20 @@ variable "vmid" {
   type        = number
   default     = "301"
 }
+
+variable "mp0" {
+  description = "Bind mount string for mp0 (e.g. /host/path,mp=/container/path)"
+  type        = string
+  default     = ""
+}
+
+variable "mp1" {
+  description = "Bind mount string for mp1"
+  type        = string
+  default     = ""
+}
+
+variable "registry_storage" {
+  description = "Proxmox storage ID for registry cache volumes"
+  type        = string
+}
