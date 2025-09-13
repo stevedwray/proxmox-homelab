@@ -127,8 +127,3 @@ variable "mp1" {
   type        = string
   default     = ""
 }
-
-variable "registry_storage" {
-  description = "Proxmox storage ID for registry cache volumes"
-  type        = string
-}

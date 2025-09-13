@@ -37,6 +37,8 @@ module "torrent_stack_host" {
   lxc_password    = var.lxc_password
   ssh_public_keys = file("~/.ssh/id_rsa.pub")
   tags            = "torrent,media"
+  
+  rootfs_storage = "apps-containers"
 }
 
 # Generate dynamic Ansible inventory
@@ -56,7 +58,7 @@ resource "null_resource" "run_ansible" {
   }
 
   provisioner "local-exec" {
-    command     = "sleep 15 && ansible-playbook -i inventory.yml playbook.yml"
+    command     = "sleep 30 && until ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no root@192.168.1.5 'echo connected' 2>/dev/null; do echo 'Waiting for SSH...'; sleep 5; done && ansible-playbook -i inventory.yml playbook.yml"
     working_dir = "${path.module}/ansible"
 
     environment = {
@@ -64,7 +66,7 @@ resource "null_resource" "run_ansible" {
       REGISTRY_MIRROR_IP        = var.registry_mirror_ip
       ENABLE_REGISTRY_MIRROR    = var.enable_registry_mirror
       CONTAINER_VMID           = module.torrent_stack_host.container_id
-      PROXMOX_HOST             = "pvetest.gibbsgreatly.xyz"
+      PROXMOX_HOST             = "pve.gibbsgreatly.xyz"
     }
   }
 
@@ -75,7 +77,7 @@ resource "null_resource" "run_ansible" {
 resource "null_resource" "agent_cleanup" {
   triggers = {
     agent_hostname = var.agent_hostname
-    portainer_server_ip = var.portainer_server_ip
+    portainer_server_ip = "192.168.1.4"
     working_dir = "${path.module}/ansible"
   }
   

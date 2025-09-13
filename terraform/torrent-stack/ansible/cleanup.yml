@@ -6,7 +6,7 @@
   connection: local
   gather_facts: false
   vars:
-    portainer_server_ip: "{{ lookup('env', 'PORTAINER_SERVER_IP') | default('192.168.1.70') }}"
+    portainer_server_ip: "{{ lookup('env', 'PORTAINER_SERVER_IP') | default('192.168.1.4') }}"
     portainer_server_port: "9000" 
     portainer_admin_user: "admin"
     portainer_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"

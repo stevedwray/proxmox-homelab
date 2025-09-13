@@ -5,7 +5,7 @@ all:
     portainer_agents:
       hosts:
         torrent-stack:
-          ansible_host: 192.168.1.72
+          ansible_host: 192.168.1.5
           ansible_user: root
           ansible_ssh_private_key_file: ~/.ssh/id_rsa
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

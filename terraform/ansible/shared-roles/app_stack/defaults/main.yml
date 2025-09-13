@@ -2,7 +2,7 @@
 
 ---
 # Portainer Server connection details
-portainer_server_ip: "192.168.1.70"
+portainer_server_ip: "192.168.1.4"
 portainer_server_port: "9000"
 
 # Authentication credentials
