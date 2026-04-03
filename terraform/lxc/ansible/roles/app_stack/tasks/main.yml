@@ -1,0 +1,160 @@
+# app_stack — idempotent Docker Compose stack deployment via Portainer API
+# Creates stack if missing, updates only if compose content has changed (SHA256).
+
+---
+- name: Get Portainer authentication token
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/auth"
+    method: POST
+    body_format: json
+    body:
+      Username: "{{ app_stack_admin_user }}"
+      Password: "{{ app_stack_admin_password }}"
+    status_code: 200
+  register: app_stack_auth_response
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Set auth token fact
+  ansible.builtin.set_fact:
+    app_stack_token: "{{ app_stack_auth_response.json.jwt }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Get list of endpoints
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/endpoints"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+    status_code: 200
+  register: app_stack_endpoints_response
+  delegate_to: localhost
+  run_once: true
+
+- name: Find target endpoint ID by name
+  ansible.builtin.set_fact:
+    app_stack_target_endpoint_id: "{{ item.Id }}"
+  loop: "{{ app_stack_endpoints_response.json }}"
+  when: item.Name == app_stack_endpoint_name
+  delegate_to: localhost
+
+- name: Fail if endpoint not found
+  ansible.builtin.fail:
+    msg: "Endpoint '{{ app_stack_endpoint_name }}' not found in Portainer"
+  when: app_stack_target_endpoint_id is not defined
+  delegate_to: localhost
+
+- name: Wait for endpoint to be ready
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/endpoints/{{ app_stack_target_endpoint_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+    status_code: 200
+  register: app_stack_endpoint_status
+  retries: 10
+  delay: 5
+  until: app_stack_endpoint_status.json.Status == 1
+  delegate_to: localhost
+
+- name: Get existing stacks
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+    status_code: 200
+  register: app_stack_existing_stacks_response
+  delegate_to: localhost
+
+- name: Find existing stack ID
+  ansible.builtin.set_fact:
+    app_stack_existing_id: "{{ item.Id }}"
+  loop: "{{ app_stack_existing_stacks_response.json }}"
+  when:
+    - item.Name == app_stack_name
+    - item.EndpointId == (app_stack_target_endpoint_id | int)
+  delegate_to: localhost
+
+# --- Create stack if it doesn't exist ---
+
+- name: Create stack (new deployment)
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks/create/standalone/string?endpointId={{ app_stack_target_endpoint_id }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      method: "string"
+      type: "standalone"
+      Name: "{{ app_stack_name }}"
+      StackFileContent: "{{ app_stack_compose_content }}"
+      Env: []
+    status_code: 200
+    timeout: 180
+  register: app_stack_create_result
+  when: app_stack_existing_id is not defined
+  delegate_to: localhost
+
+- name: Display create result
+  ansible.builtin.debug:
+    msg: "Stack '{{ app_stack_name }}' created with ID {{ app_stack_create_result.json.Id }} on endpoint '{{ app_stack_endpoint_name }}'"
+  when: app_stack_existing_id is not defined
+  delegate_to: localhost
+
+# --- Update stack if it exists and content has changed ---
+
+- name: Get current stack file
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks/{{ app_stack_existing_id }}/file"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+    status_code: 200
+  register: app_stack_current_file
+  when: app_stack_existing_id is defined
+  delegate_to: localhost
+
+- name: Compare compose content hashes
+  ansible.builtin.set_fact:
+    app_stack_current_sha: "{{ (app_stack_current_file.json.StackFileContent | default('')) | hash('sha256') }}"
+    app_stack_desired_sha: "{{ app_stack_compose_content | hash('sha256') }}"
+  when: app_stack_existing_id is defined
+
+- name: Determine if update needed
+  ansible.builtin.set_fact:
+    app_stack_needs_update: "{{ app_stack_current_sha != app_stack_desired_sha }}"
+  when: app_stack_existing_id is defined
+
+- name: Update stack (content changed)
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks/{{ app_stack_existing_id }}?endpointId={{ app_stack_target_endpoint_id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      StackFileContent: "{{ app_stack_compose_content }}"
+      Prune: "{{ app_stack_prune_on_update }}"
+    status_code: 200
+    timeout: 180
+  when: app_stack_existing_id is defined and app_stack_needs_update | bool
+  delegate_to: localhost
+
+- name: Display update result
+  ansible.builtin.debug:
+    msg: "Stack '{{ app_stack_name }}' updated (compose content changed)"
+  when: app_stack_existing_id is defined and app_stack_needs_update | default(false) | bool
+  delegate_to: localhost
+
+- name: Display no-change result
+  ansible.builtin.debug:
+    msg: "Stack '{{ app_stack_name }}' is up-to-date (no changes needed)"
+  when: app_stack_existing_id is defined and not (app_stack_needs_update | default(false) | bool)
+  delegate_to: localhost

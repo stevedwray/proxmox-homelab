@@ -1,0 +1,11 @@
+# Torrent/media automation stack
+hostname: torrent-stack
+ip_address: "192.168.1.72/24"
+cores: 2
+memory: 4096
+rootfs_size: "50G"
+rootfs_storage: "apps-containers"
+docker_storage_size: "30G"
+tags: "torrent,media,docker"
+ansible_playbook: "docker-base"
+portainer_agent: true

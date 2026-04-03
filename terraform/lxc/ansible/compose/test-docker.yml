@@ -1,0 +1,7 @@
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: test-docker-nginx
+    ports:
+      - "80:80"
+    restart: unless-stopped

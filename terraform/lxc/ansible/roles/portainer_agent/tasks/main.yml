@@ -1,0 +1,60 @@
+# terraform/ansible/shared-roles/portainer_agent/tasks/main.yml
+
+---
+- name: Ensure compose dir exists
+  ansible.builtin.file:
+    path: "{{ portainer_agent_compose_dir }}"
+    state: directory
+    mode: '0755'
+
+- name: Write docker-compose.yml (NO AGENT_HOST)
+  ansible.builtin.copy:
+    dest: "{{ portainer_agent_compose_path }}"
+    mode: '0644'
+    content: |
+      services:
+        portainer-agent:
+          image: "{{ portainer_agent_image }}"
+          container_name: portainer-agent
+          hostname: "{{ portainer_agent_fqdn }}"
+          restart: unless-stopped
+          ports:
+            - "{{ portainer_agent_port }}:{{ portainer_agent_port }}"
+          volumes:
+            - /var/run/docker.sock:/var/run/docker.sock
+            - /var/lib/docker/volumes:/var/lib/docker/volumes
+
+- name: Validate compose
+  ansible.builtin.command:
+    cmd: docker compose -f "{{ portainer_agent_compose_path }}" config -q
+    chdir: "{{ portainer_agent_compose_dir }}"
+  register: portainer_agent_compose_validate
+  changed_when: false
+
+- name: Fail if compose invalid
+  ansible.builtin.fail:
+    msg: "docker compose config failed: {{ portainer_agent_compose_validate.stderr | default(portainer_agent_compose_validate.stdout) }}"
+  when: portainer_agent_compose_validate.rc != 0
+
+- name: Ensure any pre-existing agent container is removed
+  community.docker.docker_container:
+    name: "portainer-agent"
+    state: absent
+
+- name: Restart Portainer Agent via systemd
+  ansible.builtin.systemd:
+    name: "{{ portainer_agent_service_unit }}"
+    state: restarted
+    enabled: true
+    daemon_reload: true
+
+- name: Wait for Agent HTTPS ping (self-signed OK)
+  ansible.builtin.uri:
+    url: "https://{{ ansible_host }}:{{ portainer_agent_port }}/ping"
+    method: GET
+    status_code: 204
+    validate_certs: false
+  register: portainer_agent_ping
+  retries: 15
+  delay: 2
+  until: portainer_agent_ping.status == 204

@@ -1,0 +1,29 @@
+# Full lifecycle playbook: Docker base → Portainer Agent → Register → Deploy stack
+# Expects host vars: compose_file, app_stack_name, portainer_server_ip, stack_name
+
+---
+- name: Configure Docker base and Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - docker_base
+    - portainer_agent
+
+- name: Register endpoint and deploy stack via Portainer API
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    app_stack_compose_content: "{{ lookup('file', '../compose/' + compose_file) }}"
+    app_stack_name: "{{ stack_name }}"
+    app_stack_endpoint_name: "{{ inventory_hostname }}"
+    app_stack_server_ip: "{{ portainer_server_ip }}"
+    portainer_api_server_ip: "{{ portainer_server_ip }}"
+    portainer_api_endpoint_name: "{{ inventory_hostname }}"
+    portainer_api_agent_ip: "{{ ansible_host }}"
+
+  roles:
+    - portainer_api
+    - app_stack

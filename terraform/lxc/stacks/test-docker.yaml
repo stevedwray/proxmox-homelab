@@ -1,0 +1,14 @@
+# test-docker — Nginx test stack deployed via Portainer API
+hostname: test-docker
+ip_address: "192.168.1.52/24"
+vmid: 131
+cores: 2
+memory: 2048
+rootfs_size: 8
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+
+# Deployment
+ansible_playbook: "deploy-stack"
+portainer_agent: true
+compose_file: "test-docker.yml"
+app_stack_name: "test-docker"

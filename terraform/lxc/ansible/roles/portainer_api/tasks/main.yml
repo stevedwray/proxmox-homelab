@@ -1,0 +1,72 @@
+# portainer_api — idempotent agent endpoint registration via Portainer API
+# Registers agent if not already present; skips if endpoint name exists.
+
+---
+- name: Get Portainer authentication token
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/auth"
+    method: POST
+    body_format: json
+    body:
+      Username: "{{ portainer_api_admin_user }}"
+      Password: "{{ portainer_api_admin_password }}"
+    status_code: 200
+  register: portainer_api_auth_response
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Set auth token fact
+  ansible.builtin.set_fact:
+    portainer_api_token: "{{ portainer_api_auth_response.json.jwt }}"
+  delegate_to: localhost
+  run_once: true
+  no_log: true
+
+- name: Get existing endpoints
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ portainer_api_token }}"
+    status_code: 200
+  register: portainer_api_endpoints_response
+  delegate_to: localhost
+
+- name: Check if endpoint already exists
+  ansible.builtin.set_fact:
+    portainer_api_existing_endpoint_id: "{{ item.Id }}"
+  loop: "{{ portainer_api_endpoints_response.json }}"
+  when: item.Name == portainer_api_endpoint_name
+  delegate_to: localhost
+
+- name: Register agent with Portainer Server
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ portainer_api_token }}"
+    body_format: form-urlencoded
+    body:
+      Name: "{{ portainer_api_endpoint_name }}"
+      URL: "tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
+      EndpointCreationType: 2
+      TLS: "true"
+      TLSSkipVerify: "true"
+      TLSSkipClientVerify: "true"
+    status_code: 200
+  register: portainer_api_registration_result
+  when: portainer_api_existing_endpoint_id is not defined
+  delegate_to: localhost
+
+- name: Display registration result
+  ansible.builtin.debug:
+    msg: "Agent '{{ portainer_api_endpoint_name }}' registered with ID: {{ portainer_api_registration_result.json.Id }}"
+  when: portainer_api_existing_endpoint_id is not defined
+  delegate_to: localhost
+
+- name: Display existing endpoint
+  ansible.builtin.debug:
+    msg: "Agent '{{ portainer_api_endpoint_name }}' already registered (ID: {{ portainer_api_existing_endpoint_id }})"
+  when: portainer_api_existing_endpoint_id is defined
+  delegate_to: localhost
