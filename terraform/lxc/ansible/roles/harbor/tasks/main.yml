@@ -1,0 +1,66 @@
+# terraform/ansible/shared-roles/harbor/tasks/main.yml
+---
+- name: Set Harbor stack name
+  ansible.builtin.set_fact:
+    harbor_stack_name: "harbor"
+
+- name: Verify required environment variables
+  ansible.builtin.fail:
+    msg: "Required environment variable {{ item }} is not set"
+  when: lookup('env', item) == ''
+  loop:
+    - 'HARBOR_ADMIN_PASSWORD'
+    - 'PORTAINER_ADMIN_PASSWORD'
+  delegate_to: localhost
+
+- name: Debug Harbor deployment
+  ansible.builtin.debug:
+    msg: "Ensuring Harbor stack '{{ harbor_stack_name }}' via Portainer at {{ portainer_api_host }}:{{ portainer_port_http }}"
+
+- name: Generate Harbor Docker Compose content
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: /tmp/harbor-compose.yml
+  delegate_to: localhost
+
+- name: Read Harbor Docker Compose content
+  ansible.builtin.slurp:
+    src: /tmp/harbor-compose.yml
+  delegate_to: localhost
+  register: harbor_compose_content
+
+# === shared: auth + endpoint discovery
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: endpoint.yml
+
+# === shared: idempotent stack ensure
+- import_role:
+    name: ../../ansible/shared-roles/portainer_common
+    tasks_from: stack_present.yml
+  vars:
+    stack_name: "{{ harbor_stack_name }}"
+    stackfile_content: "{{ harbor_compose_content.content | b64decode }}"
+    prune_on_update: true
+
+- name: Wait for Harbor registry port to be open
+  ansible.builtin.wait_for:
+    host: "{{ ansible_host | default(inventory_hostname) }}"
+    port: "{{ harbor_registry_port | int }}"
+    timeout: 120
+    delay: 30
+  ignore_errors: true
+
+- name: Display Harbor access information
+  ansible.builtin.debug:
+    msg:
+      - "Harbor ensured successfully."
+      - "Registry:     http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_registry_port }} (pull-through cache)"
+      - "Registry UI:  http://{{ ansible_host | default(inventory_hostname) }}:{{ harbor_ui_port }}"
+      - "Trivy Server: http://{{ ansible_host | default(inventory_hostname) }}:{{ trivy_port }}"
+
+- name: Clean up temporary files
+  ansible.builtin.file:
+    path: /tmp/harbor-compose.yml
+    state: absent
+  delegate_to: localhost

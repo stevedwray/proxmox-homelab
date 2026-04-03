@@ -1,0 +1,10 @@
+# Management stack — runs central Portainer server
+hostname: management-server
+ip_address: "192.168.1.70/24"
+vmid: 101
+cores: 2
+memory: 3072
+rootfs_size: "8G"
+docker_storage_size: "20G"
+tags: "management,portainer,docker"
+ansible_playbook: "docker-base"

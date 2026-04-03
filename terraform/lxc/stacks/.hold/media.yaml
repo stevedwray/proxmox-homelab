@@ -1,0 +1,11 @@
+# Media services stack
+hostname: media-stack
+ip_address: "192.168.1.80/24"
+vmid: 800
+cores: 4
+memory: 8192
+rootfs_size: "50G"
+docker_storage_size: "200G"
+tags: "media,docker"
+ansible_playbook: "docker-base"
+portainer_agent: true

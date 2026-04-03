@@ -1,0 +1,10 @@
+# Minecraft server stack
+hostname: minecraft-server
+ip_address: "192.168.1.73/24"
+cores: 4
+memory: 16384
+rootfs_size: "100G"
+docker_storage_size: "50G"
+tags: "minecraft,gaming,docker"
+ansible_playbook: "docker-base"
+portainer_agent: true

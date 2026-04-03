@@ -1,0 +1,91 @@
+# terraform/ansible/shared-roles/portainer_common/tasks/stack_present.yml
+---
+# Expects:
+# - portainer_api_host, portainer_port_http, portainer_jwt, portainer_local_endpoint_id
+# - stack_name (string), stackfile_content (string)
+# Optional:
+# - prune_on_update (bool, default true)
+
+- name: Get existing stacks
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ portainer_jwt }}"
+    status_code: 200
+  register: _pc_stacks
+  delegate_to: localhost
+  become: false
+
+- name: Set current stack id if present
+  ansible.builtin.set_fact:
+    _pc_stack_id: "{{ item.Id }}"
+  loop: "{{ _pc_stacks.json }}"
+  when: item.Name == stack_name
+
+- name: Create stack if missing
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/create/standalone/string?endpointId={{ portainer_local_endpoint_id }}"
+    method: POST
+    headers:
+      Authorization: "Bearer {{ portainer_jwt }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      method: "string"
+      type: "standalone"
+      Name: "{{ stack_name }}"
+      StackFileContent: "{{ stackfile_content }}"
+      Env: []
+    status_code: 200
+    timeout: 180
+  register: _pc_create
+  when: _pc_stack_id is not defined
+  delegate_to: localhost
+  become: false
+
+- name: Get current stack file (if exists)
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/{{ _pc_stack_id }}/file"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ portainer_jwt }}"
+    status_code: 200
+  register: _pc_current_file
+  when: _pc_stack_id is defined
+  delegate_to: localhost
+  become: false
+
+# Compute hashes separately
+- name: Compute compose hashes
+  ansible.builtin.set_fact:
+    _pc_current_sha: "{{ (_pc_current_file.json.StackFileContent | default('')) | hash('sha256') }}"
+    _pc_desired_sha: "{{ (stackfile_content | default('')) | hash('sha256') }}"
+  when: _pc_stack_id is defined
+  delegate_to: localhost
+  become: false
+
+# Now compare them
+- name: Determine if stack needs update
+  ansible.builtin.set_fact:
+    _pc_needs_update: "{{ _pc_current_sha != _pc_desired_sha }}"
+  when: _pc_stack_id is defined
+  delegate_to: localhost
+  become: false
+
+- name: Update stack if changed
+  ansible.builtin.uri:
+    url: "http://{{ portainer_api_host }}:{{ portainer_port_http }}/api/stacks/{{ _pc_stack_id }}?endpointId={{ portainer_local_endpoint_id }}"
+    method: PUT
+    headers:
+      Authorization: "Bearer {{ portainer_jwt }}"
+      Content-Type: "application/json"
+    body_format: json
+    body:
+      StackFileContent: "{{ stackfile_content }}"
+      Prune: "{{ prune_on_update | default(true) }}"
+    status_code: 200
+    timeout: 180
+  when: _pc_stack_id is defined and _pc_needs_update | bool
+  delegate_to: localhost
+  become: false

@@ -1,0 +1,9 @@
+---
+# Base playbook: ensures Docker is running on a freshly provisioned LXC
+- name: Configure Docker base on LXC host
+  hosts: all
+  become: true
+  gather_facts: true
+
+  roles:
+    - docker_base

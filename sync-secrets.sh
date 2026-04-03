@@ -1,15 +1,26 @@
 #!/bin/bash
-# sync-secrets.sh (working version + optional auto-source)
+# sync-secrets.sh — Pull secrets from Bitwarden into .env
+set -euo pipefail
 
 ORG_ID="03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 
 ENV_VARS=(
-    "PROXMOX_TOKEN_ID"
     "PROXMOX_TOKEN_SECRET"
     "ANSIBLE_VAULT_PASSWORD"
     "SERVICE_PASSWORD"
     "ANTHROPIC_API_KEY"
 )
+
+# Check that bw is available and unlocked
+if ! command -v bw &>/dev/null; then
+    echo "❌ Bitwarden CLI (bw) is not installed."
+    exit 1
+fi
+
+if ! bw status 2>/dev/null | grep -q '"status":"unlocked"'; then
+    echo "❌ Bitwarden vault is locked. Run: export BW_SESSION=\$(bw unlock --raw)"
+    exit 1
+fi
 
 # Start with the template
 if [ -f ".env.template" ]; then
@@ -23,28 +34,27 @@ fi
 echo "Syncing secrets from Bitwarden..."
 
 for env_var in "${ENV_VARS[@]}"; do
-    value=$(bw get password "$env_var" --organizationid $ORG_ID 2>/dev/null)
-    if [ ! -z "$value" ] && [ "$value" != "null" ]; then
+    value=$(bw get password "$env_var" --organizationid "$ORG_ID" 2>/dev/null)
+    if [ -n "$value" ] && [ "$value" != "null" ]; then
         echo "Processing $env_var..."
-        
-        # More robust replacement - handle different quote styles
-        if grep -q "$env_var.*__FROM_BITWARDEN__" .env; then
-            # Replace the placeholder, preserving the line structure
-            sed -i "s|${env_var}='__FROM_BITWARDEN__'|${env_var}='${value}'|g" .env
-            sed -i "s|${env_var}=\"__FROM_BITWARDEN__\"|${env_var}=\"${value}\"|g" .env
-            sed -i "s|${env_var}=__FROM_BITWARDEN__|${env_var}='${value}'|g" .env
+
+        # Escape sed special characters in the value
+        escaped_value=$(printf '%s\n' "$value" | sed 's/[&/\]/\\&/g')
+
+        if grep -q "${env_var}=.*__FROM_BITWARDEN__" .env; then
+            # Replace the placeholder line entirely with single-quoted value
+            sed -i "s|${env_var}=.*__FROM_BITWARDEN__.*|${env_var}='${escaped_value}'|" .env
             echo "✅ Replaced $env_var in template"
         else
             # If not found in template, append it
-            echo "export $env_var='$value'" >> .env
+            echo "export ${env_var}='${escaped_value}'" >> .env
             echo "✅ Added $env_var to end of file"
         fi
     else
-        echo "⚠️  Missing: $env_var"
+        echo "⚠️  Missing: $env_var (not found in Bitwarden)"
     fi
 done
 
+echo ""
 echo "Environment synced to .env"
-#echo "Current .env content:"
-#echo "===================="
-#cat .env
+echo "Run: source .env"

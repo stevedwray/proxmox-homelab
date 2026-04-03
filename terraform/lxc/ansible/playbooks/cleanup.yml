@@ -1,0 +1,82 @@
+---
+# Cleanup playbook: remove stacks and deregister agent from Portainer on destroy
+- name: Cleanup Portainer endpoint and stacks
+  hosts: localhost
+  become: false
+  gather_facts: false
+  connection: local
+
+  vars:
+    portainer_url: "http://{{ lookup('env', 'PORTAINER_SERVER_IP') }}:9000"
+    agent_hostname: "{{ lookup('env', 'AGENT_HOSTNAME') }}"
+    stack_name: "{{ lookup('env', 'STACK_NAME') }}"
+
+  tasks:
+    - name: Authenticate with Portainer
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/auth"
+        method: POST
+        body_format: json
+        body:
+          Username: "admin"
+          Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
+        status_code: 200
+      register: auth_response
+      no_log: true
+
+    - name: Set auth token
+      ansible.builtin.set_fact:
+        auth_header:
+          Authorization: "Bearer {{ auth_response.json.jwt }}"
+      no_log: true
+
+    - name: Get endpoints
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/endpoints"
+        method: GET
+        headers: "{{ auth_header }}"
+        status_code: 200
+      register: endpoints
+
+    - name: Find target endpoint
+      ansible.builtin.set_fact:
+        target_endpoint: "{{ endpoints.json | selectattr('Name', 'equalto', agent_hostname) | list | first | default(None) }}"
+
+    - name: Get stacks for endpoint
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/stacks"
+        method: GET
+        headers: "{{ auth_header }}"
+        status_code: 200
+      register: stacks_response
+      when: target_endpoint is not none
+
+    - name: Delete stacks belonging to this endpoint
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/stacks/{{ item.Id }}?endpointId={{ target_endpoint.Id }}"
+        method: DELETE
+        headers: "{{ auth_header }}"
+        status_code: [200, 204, 404]
+      loop: "{{ stacks_response.json | default([]) }}"
+      loop_control:
+        label: "{{ item.Name }} (ID: {{ item.Id }})"
+      when:
+        - target_endpoint is not none
+        - item.EndpointId == target_endpoint.Id
+
+    - name: Delete endpoint
+      ansible.builtin.uri:
+        url: "{{ portainer_url }}/api/endpoints/{{ target_endpoint.Id }}"
+        method: DELETE
+        headers: "{{ auth_header }}"
+        status_code: [204, 404]
+      when: target_endpoint is not none
+
+    - name: Report cleanup result
+      ansible.builtin.debug:
+        msg: >-
+          {% if target_endpoint is not none %}
+          Cleaned up endpoint '{{ agent_hostname }}' (ID: {{ target_endpoint.Id }})
+          {% else %}
+          No endpoint found for '{{ agent_hostname }}' — nothing to clean up
+          {% endif %}
