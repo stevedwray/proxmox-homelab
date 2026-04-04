@@ -96,7 +96,7 @@
       type: "standalone"
       Name: "{{ app_stack_name }}"
       StackFileContent: "{{ app_stack_compose_content }}"
-      Env: []
+      Env: "{{ app_stack_env }}"
     status_code: 200
     timeout: 600
   register: app_stack_create_result
@@ -122,15 +122,30 @@
   when: app_stack_existing_id is defined
   delegate_to: localhost
 
-- name: Compare compose content hashes
+- name: Compare compose content and env hashes
   ansible.builtin.set_fact:
     app_stack_current_sha: "{{ (app_stack_current_file.json.StackFileContent | default('')) | hash('sha256') }}"
     app_stack_desired_sha: "{{ app_stack_compose_content | hash('sha256') }}"
+    app_stack_env_sha: "{{ app_stack_env | to_json | hash('sha256') }}"
   when: app_stack_existing_id is defined
+
+- name: Get current stack env
+  ansible.builtin.uri:
+    url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks/{{ app_stack_existing_id }}"
+    method: GET
+    headers:
+      Authorization: "Bearer {{ app_stack_token }}"
+    status_code: 200
+  register: app_stack_current_info
+  when: app_stack_existing_id is defined
+  delegate_to: localhost
+  no_log: true
 
 - name: Determine if update needed
   ansible.builtin.set_fact:
-    app_stack_needs_update: "{{ app_stack_current_sha != app_stack_desired_sha }}"
+    app_stack_needs_update: >-
+      {{ (app_stack_current_sha != app_stack_desired_sha) or
+         (app_stack_current_info.json.Env | default([]) | to_json | hash('sha256') != app_stack_env_sha) }}
   when: app_stack_existing_id is defined
 
 - name: Update stack (content changed)
@@ -143,6 +158,7 @@
     body_format: json
     body:
       StackFileContent: "{{ app_stack_compose_content }}"
+      Env: "{{ app_stack_env }}"
       Prune: "{{ app_stack_prune_on_update }}"
     status_code: 200
     timeout: 180

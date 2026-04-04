@@ -24,23 +24,23 @@ services:
       DB_HOST: postgres
       DB_NAME: netbox
       DB_USER: netbox
-      DB_PASSWORD: "6I5gwQ0y8SxRLMysTSwR9MQyRzxoJ9ljfC5pbb2cSrI"
+      DB_PASSWORD: "${NETBOX_DB_PASSWORD}"
       # Redis (task queue)
       REDIS_HOST: redis
-      REDIS_PASSWORD: "gg4fzYzz6Zv7YOJ-rIyHSUJL5d12MtWshs5HPYXBNB4"
+      REDIS_PASSWORD: "${NETBOX_REDIS_PASSWORD}"
       REDIS_DATABASE: "0"
       REDIS_SSL: "false"
       REDIS_INSECURE_SKIP_TLS_VERIFY: "false"
       # Redis (cache)
       REDIS_CACHE_HOST: redis-cache
-      REDIS_CACHE_PASSWORD: "pfKLwmtSth9gjHnNIyJs286RzXeiPZyCDefcc4ehY3o"
+      REDIS_CACHE_PASSWORD: "${NETBOX_REDIS_CACHE_PASSWORD}"
       REDIS_CACHE_DATABASE: "1"
       REDIS_CACHE_SSL: "false"
       REDIS_CACHE_INSECURE_SKIP_TLS_VERIFY: "false"
       # NetBox core
       ALLOWED_HOSTS: "*"
-      SECRET_KEY: "yijx6oOCbq6zQWMYZ2X8jpBzgHcnIGTt4jGrN3qmBfs9CbQmRf-bIC0Jyd0sqoSSA2k"
-      API_TOKEN_PEPPER_1: "GYDRyBf3-TvCRwCc7IINfIbGJPnh286EYkafFNqSwGTudRn-D_URqkUdk2upoU-oyvk"
+      SECRET_KEY: "${NETBOX_SECRET_KEY}"
+      API_TOKEN_PEPPER_1: "${NETBOX_API_TOKEN_PEPPER}"
       # Application
       CORS_ORIGIN_ALLOW_ALL: "True"
       GRAPHQL_ENABLED: "true"
@@ -115,7 +115,7 @@ services:
     environment:
       POSTGRES_DB: netbox
       POSTGRES_USER: netbox
-      POSTGRES_PASSWORD: "6I5gwQ0y8SxRLMysTSwR9MQyRzxoJ9ljfC5pbb2cSrI"
+      POSTGRES_PASSWORD: "${NETBOX_DB_PASSWORD}"
     volumes:
       - netbox-postgres:/var/lib/postgresql
     restart: unless-stopped
@@ -133,7 +133,7 @@ services:
       interval: 1s
       retries: 5
     environment:
-      REDIS_PASSWORD: "gg4fzYzz6Zv7YOJ-rIyHSUJL5d12MtWshs5HPYXBNB4"
+      REDIS_PASSWORD: "${NETBOX_REDIS_PASSWORD}"
     volumes:
       - netbox-redis-data:/data
     restart: unless-stopped
@@ -146,7 +146,7 @@ services:
       - valkey-server --requirepass $$REDIS_PASSWORD
     healthcheck: *redis-healthcheck
     environment:
-      REDIS_PASSWORD: "pfKLwmtSth9gjHnNIyJs286RzXeiPZyCDefcc4ehY3o"
+      REDIS_PASSWORD: "${NETBOX_REDIS_CACHE_PASSWORD}"
     volumes:
       - netbox-redis-cache-data:/data
     restart: unless-stopped

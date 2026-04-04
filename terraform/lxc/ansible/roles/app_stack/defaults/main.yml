@@ -14,6 +14,10 @@ app_stack_name: "nginx-test"
 app_stack_endpoint_name: "{{ inventory_hostname }}"
 app_stack_prune_on_update: true
 
+# Stack environment variables passed to Portainer (list of {name, value} dicts)
+# These are resolved as ${VAR} in the compose file by Portainer.
+app_stack_env: []
+
 # Default nginx stack compose content
 app_stack_compose_content: |
   version: '3.8'
