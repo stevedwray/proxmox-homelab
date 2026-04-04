@@ -18,7 +18,8 @@
         "terminal.integrated.defaultProfile.linux": "bash",
         "terminal.integrated.env.linux": {
             "ANSIBLE_CONFIG": "${workspaceFolder}/ansible/ansible.cfg"
-        }
+        },
+        "ansible.executionEnvironment.enabled": false
     },
     "extensions": {
         "recommendations": [
