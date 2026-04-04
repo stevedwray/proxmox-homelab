@@ -31,7 +31,7 @@ Based on [netbox-docker](https://github.com/netbox-community/netbox-docker) rele
 ```
 netbox-stack/
 ├── stack.yaml              # LXC definition and deployment config
-├── docker-compose.yml      # Six-service compose (inlined env vars for Portainer API)
+├── docker-compose.yml      # Six-service compose (env var placeholders resolved by Portainer Env array)
 ├── configuration/          # NetBox config files bind-mounted to /etc/netbox/config
 │   ├── configuration.py    # Core settings (DB, Redis, auth — reads env vars)
 │   ├── extra.py            # Custom overrides
