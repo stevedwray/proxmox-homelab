@@ -21,7 +21,7 @@ services:
       - registry
 
   registry-ui:
-    image: joxit/docker-registry-ui:latest
+    image: joxit/docker-registry-ui:2.6.0
     container_name: registry-ui
     restart: always
     ports:
@@ -41,7 +41,7 @@ services:
       - registry
 
   trivy-server:
-    image: aquasec/trivy:latest
+    image: aquasec/trivy:0.69.3
     container_name: trivy-scanner
     restart: always
     ports:
