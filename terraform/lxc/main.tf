@@ -118,7 +118,6 @@ resource "null_resource" "ansible_provision" {
 
   provisioner "local-exec" {
     command     = <<-EOT
-      sleep 15
       ansible-playbook \
         -i ../stacks/${each.key}/inventory.yml \
         playbooks/${each.value.ansible_playbook}.yml
