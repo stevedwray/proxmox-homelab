@@ -18,6 +18,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Generated inventory (Terraform output)
+**/stacks/*/inventory.yml
+
 # Ansible
 *.retry
 .vault_pass

@@ -17,10 +17,10 @@ provider "proxmox" {
 # Load stack definitions from YAML files
 # ---------------------------------------------------------------------------
 locals {
-  stack_files = fileset("${path.module}/stacks", "*.yaml")
+  stack_dirs = fileset("${path.module}/stacks", "*/stack.yaml")
   stacks = {
-    for f in local.stack_files :
-    trimsuffix(f, ".yaml") => yamldecode(file("${path.module}/stacks/${f}"))
+    for f in local.stack_dirs :
+    dirname(f) => yamldecode(file("${path.module}/stacks/${f}"))
   }
 }
 
@@ -56,7 +56,7 @@ module "lxc" {
 resource "local_file" "ansible_inventory" {
   for_each = local.stacks
 
-  filename = "${path.module}/ansible/inventory/${each.key}.yml"
+  filename = "${path.module}/stacks/${each.key}/inventory.yml"
   content = templatefile("${path.module}/templates/inventory.tpl", {
     stack_name = each.key
     hostname   = module.lxc[each.key].hostname
@@ -64,7 +64,6 @@ resource "local_file" "ansible_inventory" {
     ssh_key    = var.ssh_private_key_path
     ansible_playbook    = try(each.value.ansible_playbook, "")
     portainer_server_ip = try(each.value.portainer_server_ip, var.portainer_server_ip)
-    compose_file        = try(each.value.compose_file, "")
     app_stack_name      = try(each.value.app_stack_name, each.key)
   })
 }
@@ -88,7 +87,7 @@ resource "null_resource" "ansible_provision" {
     command     = <<-EOT
       sleep 15
       ansible-playbook \
-        -i inventory/${each.key}.yml \
+        -i ../stacks/${each.key}/inventory.yml \
         playbooks/${each.value.ansible_playbook}.yml
     EOT
     working_dir = "${path.module}/ansible"
