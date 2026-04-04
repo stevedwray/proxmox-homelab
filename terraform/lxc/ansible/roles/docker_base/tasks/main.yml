@@ -1,6 +1,11 @@
 # terraform/ansible/shared-roles/docker_base/tasks/main.yml
 
 ---
+- name: Wait for host to be reachable
+  ansible.builtin.wait_for_connection:
+    delay: 5
+    timeout: 120
+
 - name: Ensure Docker service is running
   ansible.builtin.systemd:
     name: docker
