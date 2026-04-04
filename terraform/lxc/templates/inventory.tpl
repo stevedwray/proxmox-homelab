@@ -9,9 +9,6 @@ all:
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           portainer_server_ip: ${portainer_server_ip}
           stack_name: ${stack_name}
-%{ if compose_file != "" ~}
-          compose_file: ${compose_file}
-%{ endif ~}
 %{ if app_stack_name != "" ~}
           app_stack_name: ${app_stack_name}
 %{ endif ~}

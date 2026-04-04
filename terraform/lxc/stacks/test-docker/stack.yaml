@@ -10,5 +10,4 @@ ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 # Deployment
 ansible_playbook: "deploy-stack"
 portainer_agent: true
-compose_file: "test-docker.yml"
 app_stack_name: "test-docker"
