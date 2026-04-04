@@ -75,13 +75,7 @@ variable "portainer_admin_password" {
 }
 
 variable "proxmox_host" {
-  description = "Proxmox host for SSH access (used to set features that require root@pam)"
+  description = "Proxmox host for SSH access (used by Ansible delegate_to for features that require root@pam)"
   type        = string
   default     = "pve.gibbsgreatly.xyz"
-}
-
-variable "ssh_pve_user" {
-  description = "SSH user for the Proxmox host"
-  type        = string
-  default     = "root"
 }

@@ -51,9 +51,11 @@ module "lxc" {
 }
 
 # ---------------------------------------------------------------------------
-# Set keyctl feature flag via PVE CLI (requires root@pam, not available via API token)
+# Configure keyctl feature flag via Ansible (requires root@pam on PVE host)
+# Uses delegate_to instead of raw SSH for idempotency and wait_for_connection.
+# Triggered automatically for any stack with keyctl: true in stack.yaml.
 # ---------------------------------------------------------------------------
-resource "null_resource" "set_keyctl" {
+resource "null_resource" "configure_keyctl" {
   for_each = {
     for k, v in local.stacks : k => v
     if try(v.keyctl, false)
@@ -63,22 +65,20 @@ resource "null_resource" "set_keyctl" {
     container_id = module.lxc[each.key].container_id
   }
 
-  provisioner "remote-exec" {
-    inline = [
-      "pct set ${module.lxc[each.key].container_id} -features nesting=1,keyctl=1",
-      "pct reboot ${module.lxc[each.key].container_id}",
-      "sleep 10",
-    ]
+  provisioner "local-exec" {
+    command     = <<-EOT
+      ansible-playbook \
+        -i ../stacks/${each.key}/inventory.yml \
+        playbooks/configure-keyctl.yml
+    EOT
+    working_dir = "${path.module}/ansible"
 
-    connection {
-      type        = "ssh"
-      host        = var.proxmox_host
-      user        = var.ssh_pve_user
-      private_key = file(pathexpand(var.ssh_private_key_path))
+    environment = {
+      ANSIBLE_HOST_KEY_CHECKING = "False"
     }
   }
 
-  depends_on = [module.lxc]
+  depends_on = [local_file.ansible_inventory]
 }
 
 # ---------------------------------------------------------------------------
@@ -96,6 +96,8 @@ resource "local_file" "ansible_inventory" {
     ansible_playbook    = try(each.value.ansible_playbook, "")
     portainer_server_ip = try(each.value.portainer_server_ip, var.portainer_server_ip)
     app_stack_name      = try(each.value.app_stack_name, each.key)
+    vmid                = module.lxc[each.key].container_id
+    pve_host            = var.proxmox_host
   })
 }
 
@@ -129,7 +131,7 @@ resource "null_resource" "ansible_provision" {
     }
   }
 
-  depends_on = [local_file.ansible_inventory, null_resource.set_keyctl]
+  depends_on = [local_file.ansible_inventory, null_resource.configure_keyctl]
 }
 
 # ---------------------------------------------------------------------------
