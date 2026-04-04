@@ -51,6 +51,37 @@ module "lxc" {
 }
 
 # ---------------------------------------------------------------------------
+# Set keyctl feature flag via PVE CLI (requires root@pam, not available via API token)
+# ---------------------------------------------------------------------------
+resource "null_resource" "set_keyctl" {
+  for_each = {
+    for k, v in local.stacks : k => v
+    if try(v.keyctl, false)
+  }
+
+  triggers = {
+    container_id = module.lxc[each.key].container_id
+  }
+
+  provisioner "remote-exec" {
+    inline = [
+      "pct set ${module.lxc[each.key].container_id} -features nesting=1,keyctl=1",
+      "pct reboot ${module.lxc[each.key].container_id}",
+      "sleep 10",
+    ]
+
+    connection {
+      type        = "ssh"
+      host        = var.proxmox_host
+      user        = var.ssh_pve_user
+      private_key = file(pathexpand(var.ssh_private_key_path))
+    }
+  }
+
+  depends_on = [module.lxc]
+}
+
+# ---------------------------------------------------------------------------
 # Generate per-stack Ansible inventory
 # ---------------------------------------------------------------------------
 resource "local_file" "ansible_inventory" {
@@ -98,7 +129,7 @@ resource "null_resource" "ansible_provision" {
     }
   }
 
-  depends_on = [local_file.ansible_inventory]
+  depends_on = [local_file.ansible_inventory, null_resource.set_keyctl]
 }
 
 # ---------------------------------------------------------------------------

@@ -74,6 +74,8 @@
   ansible.builtin.set_fact:
     app_stack_existing_id: "{{ item.Id }}"
   loop: "{{ app_stack_existing_stacks_response.json }}"
+  loop_control:
+    label: "{{ item.Name }} (ID: {{ item.Id }}, Endpoint: {{ item.EndpointId }})"
   when:
     - item.Name == app_stack_name
     - item.EndpointId == (app_stack_target_endpoint_id | int)
@@ -96,7 +98,7 @@
       StackFileContent: "{{ app_stack_compose_content }}"
       Env: []
     status_code: 200
-    timeout: 180
+    timeout: 600
   register: app_stack_create_result
   when: app_stack_existing_id is not defined
   delegate_to: localhost

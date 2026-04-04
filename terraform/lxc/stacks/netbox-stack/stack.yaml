@@ -1,0 +1,21 @@
+# NetBox IPAM/DCIM stack — stock netbox-docker six-service compose
+hostname: netbox-stack
+ip_address: "192.168.1.30/24"
+vmid: 119
+cores: 2
+memory: 4096
+swap: 4096
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "32G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - netbox
+  - infrastructure
+  - docker
+keyctl: true
+
+# Deployment
+ansible_playbook: "deploy-netbox-stack"
+portainer_agent: true
+app_stack_name: "netbox"
