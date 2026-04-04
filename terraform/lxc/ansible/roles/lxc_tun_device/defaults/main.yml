@@ -1,10 +1,8 @@
 ---
 # Default values for LXC tun device configuration
-# These can be overridden in playbooks as needed
+# pve_host and ansible_ssh_private_key_file should come from inventory.
+# container_vmid is also available from inventory (set by Terraform).
 
-# Proxmox host for SSH access (used for file system operations)
-proxmox_host: "pve.gibbsgreatly.xyz"
-
-# Container VMID - should be provided via environment variable from Terraform
-# This is passed from Terraform's module output to avoid API lookups
-container_vmid: "{{ lookup('env', 'CONTAINER_VMID') }}"
+# Container VMID - prefer the inventory variable set by Terraform;
+# falls back to env var for backward compatibility.
+container_vmid: "{{ vmid | default(lookup('env', 'CONTAINER_VMID')) }}"

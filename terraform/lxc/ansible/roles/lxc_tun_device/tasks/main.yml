@@ -4,10 +4,10 @@
 - name: Get container VMID via SSH command
   command: pct list
   register: pct_list
-  delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+  delegate_to: "{{ pve_host }}"
   vars:
-    ansible_user: root
-    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    ansible_user: "{{ pve_ssh_user | default('root') }}"
+    ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
 - name: Find container VMID by hostname
@@ -36,10 +36,10 @@
     path: "/etc/pve/lxc/{{ container_vmid }}.conf"
     line: "lxc.cgroup2.devices.allow: c 10:200 rwm"
     state: present
-  delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+  delegate_to: "{{ pve_host }}"
   vars:
-    ansible_user: root
-    ansible_ssh_private_key_file: ~/.ssh/id_rsa
+    ansible_user: "{{ pve_ssh_user | default('root') }}"
+    ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
     ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
   check_mode: yes
   register: tun_config_check
@@ -53,17 +53,20 @@
   block:
     - name: Stop container for configuration
       command: pct stop {{ container_vmid }}
-      delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+      delegate_to: "{{ pve_host }}"
       vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       register: stop_result
       failed_when: stop_result.rc != 0 and "not running" not in stop_result.stderr
 
     - name: Wait for container to stop
-      pause:
-        seconds: 5
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        state: stopped
+        timeout: 30
 
     - name: Configure /dev/net/tun in LXC config
       lineinfile:
@@ -73,30 +76,31 @@
       loop:
         - "lxc.cgroup2.devices.allow: c 10:200 rwm"
         - "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file"
-      delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+      delegate_to: "{{ pve_host }}"
       vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
     - name: Start container
       command: pct start {{ container_vmid }}
-      delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+      delegate_to: "{{ pve_host }}"
       vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
-    - name: Wait for container to start and become ready
-      pause:
-        seconds: 15
+    - name: Wait for container to come back online
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
 
     - name: Verify tun device exists
       command: pct exec {{ container_vmid }} -- ls -la /dev/net/tun
-      delegate_to: "{{ proxmox_host | default('pvetest.gibbsgreatly.xyz') }}"
+      delegate_to: "{{ pve_host }}"
       vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_rsa
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       register: tun_verify
       failed_when: false

@@ -8,10 +8,10 @@ NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service
 |----------|-------|
 | Hostname | `netbox-stack` |
 | VMID | 119 |
-| IP | 192.168.1.30 |
+| IP | 192.168.1.30 (see `stack.yaml`) |
 | Cores / RAM | 2 / 4 GB |
 | Storage | `infrastructure-containers` (8 GB rootfs) |
-| Web UI | http://192.168.1.30:8080 |
+| Web UI | http://192.168.1.30:8080 (derives from IP above) |
 
 ## Services
 
@@ -46,7 +46,7 @@ netbox-stack/
 Terraform orchestrates the full lifecycle:
 
 1. **LXC creation** — Terraform creates VMID 119 on Proxmox via the `lxc-docker-host` module
-2. **keyctl feature flag** — Set via SSH to PVE host (`pct set 119 -features nesting=1,keyctl=1`) because the API token cannot set feature flags beyond nesting
+2. **keyctl feature flag** — Set via Ansible `configure-keyctl.yml` playbook (delegates `pct set` to the PVE host) because the API token cannot set feature flags beyond nesting
 3. **Ansible provisioning** — Runs `deploy-netbox-stack.yml` which:
    - Installs Docker and configures registry mirror (`docker_base` role)
    - Deploys Portainer Agent (`portainer_agent` role)
@@ -77,7 +77,7 @@ To destroy and recreate from scratch:
 ```bash
 source ../../.env
 terraform destroy -target='module.lxc["netbox-stack"]' \
-  -target='null_resource.set_keyctl["netbox-stack"]' \
+  -target='null_resource.configure_keyctl["netbox-stack"]' \
   -target='null_resource.ansible_provision["netbox-stack"]' \
   -target='local_file.ansible_inventory["netbox-stack"]' \
   -target='null_resource.stack_cleanup["netbox-stack"]' \
@@ -87,17 +87,19 @@ terraform apply -auto-approve
 
 ## Configuration
 
-Secrets are inlined in `docker-compose.yml` (required for Portainer API string-based deployment). The configuration files under `configuration/` are stock upstream from netbox-docker — they read values from environment variables set in the compose.
+Secrets (DB password, Redis passwords, SECRET_KEY, API_TOKEN_PEPPER) are stored in the top-level `.env` file (gitignored) and passed to the stack via Portainer's Env array at deploy time. The `docker-compose.yml` uses `${VAR}` placeholders — no secrets are committed to Git. See `.env.template` for the required variables.
+
+The configuration files under `configuration/` are stock upstream from netbox-docker — they read values from environment variables set in the compose.
 
 To customise NetBox behaviour, edit `configuration/extra.py` on the host at `/srv/docker/netbox/configuration/extra.py` and restart the stack, or update the file in this repo and re-run the Ansible provisioning.
 
 ## Superuser
 
-After a fresh deploy, create a superuser:
+After a fresh deploy, create a superuser (replace `<IP>` with the container's IP from `stack.yaml`):
 
 ```bash
-ssh root@192.168.1.30 \
+ssh root@<IP> \
   "docker exec -e DJANGO_SUPERUSER_PASSWORD=<password> netbox-netbox-1 \
    /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py createsuperuser \
-   --no-input --username admin --email admin@gibbsgreatly.xyz"
+   --no-input --username admin --email admin@example.com"
 ```

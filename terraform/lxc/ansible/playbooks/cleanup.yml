@@ -10,6 +10,7 @@
     portainer_url: "http://{{ lookup('env', 'PORTAINER_SERVER_IP') }}:9000"
     agent_hostname: "{{ lookup('env', 'AGENT_HOSTNAME') }}"
     stack_name: "{{ lookup('env', 'STACK_NAME') }}"
+    portainer_admin_user: "{{ lookup('env', 'PORTAINER_ADMIN_USER') | default('admin', true) }}"
 
   tasks:
     - name: Authenticate with Portainer
@@ -18,7 +19,7 @@
         method: POST
         body_format: json
         body:
-          Username: "admin"
+          Username: "{{ portainer_admin_user }}"
           Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}"
         status_code: 200
       register: auth_response

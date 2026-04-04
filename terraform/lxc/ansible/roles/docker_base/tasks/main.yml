@@ -75,7 +75,7 @@
 
 - name: Test registry connectivity
   ansible.builtin.uri:
-    url: "http://{{ docker_registry_mirror }}:5001/v2/"
+    url: "http://{{ docker_registry_mirror }}:{{ docker_registry_mirror_port | default(5000) }}/v2/"
     method: GET
     timeout: 10
   register: docker_base_registry_test

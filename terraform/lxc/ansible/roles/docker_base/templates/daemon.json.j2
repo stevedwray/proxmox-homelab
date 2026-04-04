@@ -1,6 +1,6 @@
 {
-  "registry-mirrors": ["http://{{ docker_registry_mirror }}:5000"],
-  "insecure-registries": ["{{ docker_registry_mirror }}:5000"],
+  "registry-mirrors": ["http://{{ docker_registry_mirror }}:{{ docker_registry_mirror_port | default(5000) }}"],
+  "insecure-registries": ["{{ docker_registry_mirror }}:{{ docker_registry_mirror_port | default(5000) }}"],
   "log-driver": "json-file",
   "log-opts": {
     "max-size": "10m",

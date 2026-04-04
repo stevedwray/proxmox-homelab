@@ -18,7 +18,7 @@
     method: POST
     body_format: json
     body:
-      Username: "admin"
+      Username: "{{ portainer_admin_user | default('admin') }}"
       Password: "{{ portainer_admin_password | default(lookup('env','PORTAINER_ADMIN_PASSWORD')) }}"
     headers:
       Content-Type: "application/json"
