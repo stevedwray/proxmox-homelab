@@ -1,4 +1,4 @@
-# NetBox stack lifecycle: Docker base → Portainer Agent → provision config → register → deploy
+# NetBox stack lifecycle: Docker base → Portainer Agent → provision config → register → deploy → superuser + API token
 # Extends the standard deploy-stack.yml with NetBox-specific host preparation.
 
 ---
@@ -60,3 +60,74 @@
   roles:
     - portainer_api
     - app_stack
+
+- name: Create NetBox superuser and API token
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    netbox_container: netbox-netbox-1
+    netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
+    netbox_superuser_username: admin
+    netbox_superuser_email: "admin@gibbsgreatly.xyz"
+    netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | mandatory('NETBOX_SUPERUSER_PASSWORD env var is not set') }}"
+    netbox_api_token: "{{ lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | mandatory('NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
+
+  tasks:
+    - name: Wait for NetBox to be healthy
+      ansible.builtin.command:
+        cmd: docker inspect --format '{{ '{{' }} .State.Health.Status {{ '}}' }}' {{ netbox_container }}
+      register: netbox_health
+      retries: 40
+      delay: 10
+      until: netbox_health.stdout == 'healthy'
+      changed_when: false
+
+    - name: Create superuser if not exists
+      ansible.builtin.command:
+        cmd: >-
+          docker exec
+          -e DJANGO_SUPERUSER_PASSWORD={{ netbox_superuser_password }}
+          {{ netbox_container }}
+          {{ netbox_manage }} createsuperuser
+          --no-input
+          --username {{ netbox_superuser_username }}
+          --email {{ netbox_superuser_email }}
+      register: netbox_superuser_result
+      changed_when: "'Superuser created' in netbox_superuser_result.stderr"
+      failed_when:
+        - netbox_superuser_result.rc != 0
+        - "'already taken' not in netbox_superuser_result.stderr"
+      no_log: true
+
+    - name: Provision API token (idempotent)
+      ansible.builtin.shell:
+        cmd: |
+          docker exec -i \
+            -e NB_USER='{{ netbox_superuser_username }}' \
+            -e NB_TOKEN='{{ netbox_api_token }}' \
+            {{ netbox_container }} \
+            {{ netbox_manage }} shell <<'PYEOF'
+          import os
+          from django.contrib.auth import get_user_model
+          from users.models import Token
+          User = get_user_model()
+          u = User.objects.get(username=os.environ['NB_USER'])
+          if Token.objects.filter(user=u, description='automation').exists():
+              print('EXISTS')
+          else:
+              t = Token(user=u, version=1, description='automation', write_enabled=True)
+              t.token = os.environ['NB_TOKEN']
+              t.save()
+              print('CREATED')
+          PYEOF
+      register: netbox_token_result
+      changed_when: "'CREATED' in netbox_token_result.stdout"
+      failed_when:
+        - netbox_token_result.rc != 0
+      no_log: true
+
+    - name: Display token status
+      ansible.builtin.debug:
+        msg: "API token: {{ 'created' if 'CREATED' in netbox_token_result.stdout else 'already exists' }}"
