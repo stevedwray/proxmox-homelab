@@ -53,6 +53,7 @@ Terraform orchestrates the full lifecycle:
    - Creates `/srv/docker/netbox/configuration/` (mode 0750) and copies config files (mode 0640)
    - Registers the LXC as a Portainer endpoint (`portainer_api` role)
    - Deploys the compose stack via Portainer API (`app_stack` role)
+   - Waits for NetBox to be healthy, then creates the superuser and API token
 4. **Destroy cleanup** — Removes the Portainer stack and endpoint before deleting the LXC
 
 ## Deploy / Redeploy
@@ -87,19 +88,19 @@ terraform apply -auto-approve
 
 ## Configuration
 
-Secrets (DB password, Redis passwords, SECRET_KEY, API_TOKEN_PEPPER) are stored in the top-level `.env` file (gitignored) and passed to the stack via Portainer's Env array at deploy time. The `docker-compose.yml` uses `${VAR}` placeholders — no secrets are committed to Git. See `.env.template` for the required variables.
+Secrets (DB password, Redis passwords, SECRET_KEY, API_TOKEN_PEPPER, superuser password, API token) are stored in the top-level `.env` file (gitignored) and passed to the stack via Portainer's Env array or used by Ansible at deploy time. The `docker-compose.yml` uses `${VAR}` placeholders — no secrets are committed to Git. See `.env.template` for the required variables.
 
 The configuration files under `configuration/` are stock upstream from netbox-docker — they read values from environment variables set in the compose.
 
 To customise NetBox behaviour, edit `configuration/extra.py` on the host at `/srv/docker/netbox/configuration/extra.py` and restart the stack, or update the file in this repo and re-run the Ansible provisioning.
 
-## Superuser
+## Superuser & API Token
 
-After a fresh deploy, create a superuser (replace `<IP>` with the container's IP from `stack.yaml`):
+Both are created automatically during deployment by the `deploy-netbox-stack.yml` playbook:
 
-```bash
-ssh root@<IP> \
-  "docker exec -e DJANGO_SUPERUSER_PASSWORD=<password> netbox-netbox-1 \
-   /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py createsuperuser \
-   --no-input --username admin --email admin@example.com"
-```
+- **Superuser** — `admin` / `admin@gibbsgreatly.xyz`, password from `NETBOX_SUPERUSER_PASSWORD` in `.env`
+- **API Token** — v1 token with description `automation`, value from `NETBOX_SUPERUSER_API_TOKEN` in `.env`
+
+The API token is used with: `Authorization: Token <NETBOX_SUPERUSER_API_TOKEN>`
+
+Both tasks are idempotent — they skip creation if the user/token already exists.
