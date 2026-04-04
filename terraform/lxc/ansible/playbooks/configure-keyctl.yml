@@ -1,0 +1,36 @@
+# Generic playbook: enable keyctl feature flag on an LXC container.
+# Delegates pct commands to the Proxmox host, then waits for the
+# container to come back online after reboot.
+#
+# Required inventory vars: vmid, pve_host
+# Optional inventory vars: pve_ssh_user (default: root)
+---
+- name: Configure keyctl feature flag on LXC container
+  hosts: all
+  gather_facts: false
+
+  tasks:
+    - name: Set keyctl feature flag via pct
+      ansible.builtin.command:
+        cmd: "pct set {{ vmid }} -features nesting=1,keyctl=1"
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Reboot container to apply feature flags
+      ansible.builtin.command:
+        cmd: "pct reboot {{ vmid }}"
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Wait for container to come back online
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
