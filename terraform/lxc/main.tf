@@ -85,7 +85,7 @@ resource "null_resource" "configure_keyctl" {
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i ${local.stack_dir}/inventory.yml \
+        -i '${local.stack_dir}/inventory.yml' \
         playbooks/configure-keyctl.yml
     EOT
     working_dir = local.ansible_dir
@@ -113,8 +113,8 @@ resource "null_resource" "ansible_provision" {
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i ${local.stack_dir}/inventory.yml \
-        playbooks/${try(local.stack.ansible_playbook, "noop")}.yml
+        -i '${local.stack_dir}/inventory.yml' \
+        'playbooks/${try(local.stack.ansible_playbook, "noop")}.yml'
     EOT
     working_dir = local.ansible_dir
 
