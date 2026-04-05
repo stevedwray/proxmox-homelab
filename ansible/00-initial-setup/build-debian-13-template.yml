@@ -396,7 +396,7 @@
           ansible.builtin.file:
             path: /opt/portainer
             state: directory
-            mode: "0755"
+            mode: "0750"
 
         - name: Create Portainer Agent docker-compose file
           ansible.builtin.copy:
@@ -643,7 +643,7 @@
       ansible.builtin.file:
         path: "{{ template_dumpdir }}"
         state: directory
-        mode: "0755"
+        mode: "0700"
 
     - name: Create linked clone for packaging
       ansible.builtin.command: "pct clone {{ template_id }} {{ clone_id }} --hostname {{ clone_hostname }} --full 0"
