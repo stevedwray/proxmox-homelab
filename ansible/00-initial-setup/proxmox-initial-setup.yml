@@ -75,7 +75,7 @@
           Suites: {{ pmx_repo_suite }}-security
           Components: main non-free-firmware
           Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
-      notify: apt-update
+      notify: Apt-update
 
     - name: Configure Proxmox no-subscription repo (deb822)
       ansible.builtin.copy:
@@ -87,7 +87,7 @@
           Suites: {{ pmx_repo_suite }}
           Components: pve-no-subscription
           Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
-      notify: apt-update
+      notify: Apt-update
 
     - name: Configure Ceph no-subscription repo (deb822)
       ansible.builtin.copy:
@@ -100,7 +100,7 @@
           Components: no-subscription
           Signed-By: /usr/share/keyrings/proxmox-archive-keyring.gpg
       when: pmx_enable_ceph_repo
-      notify: apt-update
+      notify: Apt-update
 
     - name: Remove Ceph repo when disabled
       ansible.builtin.file:
@@ -141,7 +141,7 @@
 
     - name: Ensure apt cache is up to date after repo changes
       ansible.builtin.apt:
-        update_cache: yes
+        update_cache: true
       changed_when: false
 
     # ------------------------------
@@ -161,11 +161,11 @@
         path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
         regexp: "if \\(res\\.data\\.status !== 'active'\\)"
         replace: "if (false)"
-        backup: yes
+        backup: true
       when:
         - pmx_disable_subscription_nag
         - nag_check is defined and nag_check.rc == 0
-      notify: restart pveproxy
+      notify: Restart pveproxy
 
     # ------------------------------
     # Terraform automation user setup
@@ -175,7 +175,7 @@
       ansible.builtin.command: >
         pveum user add {{ pmx_terraform_user }} --comment "Terraform automation account"
       register: _terraform_user_add
-      failed_when: _terraform_user_add.rc not in [0,2]
+      failed_when: _terraform_user_add.rc not in [0, 2]
       changed_when: _terraform_user_add.rc == 0
       when: pmx_setup_terraform_user
 
@@ -196,14 +196,15 @@
 
     - name: Check if Terraform token exists
       ansible.builtin.set_fact:
-        terraform_token_exists: "{{ (_terraform_token_list.stdout | from_json) | selectattr('tokenid','equalto', pmx_terraform_token_id) | list | length > 0 }}"
+        terraform_token_exists: >-
+          {{ (_terraform_token_list.stdout | from_json) | selectattr('tokenid', 'equalto', pmx_terraform_token_id) | list | length > 0 }}
       when: pmx_setup_terraform_user
 
     - name: Remove existing Terraform token (rotation enabled)
       ansible.builtin.command: >
         pveum user token remove {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
       register: _terraform_token_rm
-      failed_when: _terraform_token_rm.rc not in [0,2]
+      failed_when: _terraform_token_rm.rc not in [0, 2]
       changed_when: _terraform_token_rm.rc == 0
       when:
         - pmx_setup_terraform_user
@@ -289,7 +290,7 @@
             autoconf {{ pmx_ipv6_autoconf }}
             # use_tempaddr {{ pmx_ipv6_use_tempaddr }}
       when: pmx_manage_network
-      notify: ifreload
+      notify: Ifreload
 
     # ------------------------------
     # Verification (fail loud if wrong)
@@ -297,7 +298,7 @@
 
     - name: Ensure apt cache is up to date (verification)
       ansible.builtin.apt:
-        update_cache: yes
+        update_cache: true
       changed_when: false
 
     - name: Verify PVE repository configuration
@@ -367,15 +368,15 @@
       when: pmx_setup_terraform_user
 
   handlers:
-    - name: apt-update
+    - name: Apt-update
       ansible.builtin.apt:
-        update_cache: yes
+        update_cache: true
 
-    - name: restart pveproxy
+    - name: Restart pveproxy
       ansible.builtin.systemd:
         name: pveproxy
         state: restarted
 
-    - name: ifreload
+    - name: Ifreload
       ansible.builtin.command: ifreload -a
       changed_when: true

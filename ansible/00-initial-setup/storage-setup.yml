@@ -79,7 +79,7 @@
           Press ENTER to continue or Ctrl+C to abort.
       when:
         - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
-        - ansible_check_mode | default(false) == false
+        - not (ansible_check_mode | default(false))
         - ansible_env.TERM is defined
 
     - name: Validate system is Proxmox
@@ -90,12 +90,12 @@
 
     - name: Update package cache
       apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
 
     - name: Install required packages for storage management
       package:
-        name: "{{ required_packages | default(['zfsutils-linux','parted','lvm2']) }}"
+        name: "{{ required_packages | default(['zfsutils-linux', 'parted', 'lvm2']) }}"
         state: present
 
     - name: Verify ZFS storage devices exist
@@ -215,7 +215,7 @@
         path: /etc/fstab
         regexp: '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]'
         state: absent
-        backrefs: no
+        backrefs: false
       when: hot_storage.enabled | default(false)
 
     - name: Delete partition 4 if it exists
@@ -233,10 +233,10 @@
       apt:
         name: cloud-guest-utils
         state: present
-        update_cache: yes
+        update_cache: true
       when: hot_storage.enabled | default(false)
 
-    - name: Grow partition {{ _pv_part_num }} to end of disk (growpart)
+    - name: Grow partition to end of disk (growpart) - {{ _pv_part_num }}
       command: "growpart {{ storage_devices.boot_device }} {{ _pv_part_num }}"
       register: growpart_out
       changed_when: growpart_out.rc == 0
@@ -344,8 +344,8 @@
           - disks:
               - "{{ item.item.value.device }}"
         pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
-                             | combine( (item.item.value.properties.mountpoint is defined)
-                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {}) ) }}"
+                             | combine((item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {})) }}"
       loop: "{{ pool_existence_check.results }}"
       when:
         - item.stdout == 'missing'
@@ -353,7 +353,7 @@
 
     # Handle existing pools - only set autotrim if not already on
     - name: Check current autotrim setting for existing pools
-      shell: "zpool get -H -o value autotrim {{ item.item.key }}"
+      command: "zpool get -H -o value autotrim {{ item.item.key }}"
       loop: "{{ pool_existence_check.results }}"
       when: item.stdout == 'exists'
       register: current_autotrim

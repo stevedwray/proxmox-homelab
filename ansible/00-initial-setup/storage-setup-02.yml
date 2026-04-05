@@ -9,7 +9,7 @@
   vars_files:
     - ../group_vars/proxmox.yml
     - ../group_vars/proxmox_production.yml  # Changed from proxmox_testbed.yml
-    
+
   pre_tasks:
     # =====================================
     # System validation and safety checks
@@ -23,7 +23,7 @@
           failed_when: not boot_device_check.stat.exists
 
         - name: Get boot device size (bytes)
-          shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+          command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
           register: boot_device_size
           changed_when: false
 
@@ -31,7 +31,7 @@
           assert:
             that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
             fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
-            
+
         - name: Check if ZFS pools already exist or devices are clean
           shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
           register: pool_status
@@ -77,7 +77,7 @@
           Press ENTER to continue or Ctrl+C to abort.
       when:
         - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
-        - ansible_check_mode | default(false) == false
+        - not (ansible_check_mode | default(false))
         - ansible_env.TERM is defined
 
     - name: Validate system is Proxmox
@@ -88,12 +88,12 @@
 
     - name: Update package cache
       apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
 
     - name: Install required packages for storage management
       package:
-        name: "{{ required_packages | default(['zfsutils-linux','parted','lvm2']) }}"
+        name: "{{ required_packages | default(['zfsutils-linux', 'parted', 'lvm2']) }}"
         state: present
 
     - name: Verify ZFS storage devices exist
@@ -208,7 +208,7 @@
       apt:
         name: cloud-guest-utils
         state: present
-        update_cache: yes
+        update_cache: true
       when:
         - hot_storage.enabled | default(true)
         - boot_pv.expand | default(true)
@@ -337,8 +337,8 @@
           - disks:
               - "{{ item.item.value.device }}"
         pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
-                             | combine( (item.item.value.properties.mountpoint is defined)
-                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {}) ) }}"
+                             | combine((item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {})) }}"
       loop: "{{ pool_existence_check.results }}"
       when:
         - item.stdout == 'missing'
@@ -346,7 +346,7 @@
 
     # Handle existing pools - only set autotrim if not already on
     - name: Check current autotrim setting for existing pools
-      shell: "zpool get -H -o value autotrim {{ item.item.key }}"
+      command: "zpool get -H -o value autotrim {{ item.item.key }}"
       loop: "{{ pool_existence_check.results }}"
       when: item.stdout == 'exists'
       register: current_autotrim

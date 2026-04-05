@@ -10,7 +10,7 @@
   vars_files:
     - ../group_vars/proxmox.yml
     - ../group_vars/proxmox_production.yml
-    
+
   pre_tasks:
     # =====================================
     # System validation and safety checks
@@ -24,7 +24,7 @@
           failed_when: not boot_device_check.stat.exists
 
         - name: Get boot device size (bytes)
-          shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+          command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
           register: boot_device_size
           changed_when: false
 
@@ -32,7 +32,7 @@
           assert:
             that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
             fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
-            
+
         - name: Check if ZFS pools already exist or devices are clean
           shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
           register: pool_status
@@ -78,7 +78,7 @@
           Press ENTER to continue or Ctrl+C to abort.
       when:
         - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
-        - ansible_check_mode | default(false) == false
+        - not (ansible_check_mode | default(false))
         - ansible_env.TERM is defined
 
     - name: Validate system is Proxmox
@@ -89,12 +89,12 @@
 
     - name: Update package cache
       apt:
-        update_cache: yes
+        update_cache: true
         cache_valid_time: 3600
 
     - name: Install required packages for storage management
       package:
-        name: "{{ required_packages | default(['zfsutils-linux','parted']) }}"
+        name: "{{ required_packages | default(['zfsutils-linux', 'parted']) }}"
         state: present
 
     - name: Verify ZFS storage devices exist
@@ -206,8 +206,8 @@
           - disks:
               - "{{ item.item.value.device }}"
         pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
-                             | combine( (item.item.value.properties.mountpoint is defined)
-                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {}) ) }}"
+                             | combine((item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {})) }}"
       loop: "{{ pool_existence_check.results }}"
       when:
         - item.stdout == 'missing'
@@ -215,7 +215,7 @@
 
     # Handle existing pools - only set autotrim if not already on
     - name: Check current autotrim setting for existing pools
-      shell: "zpool get -H -o value autotrim {{ item.item.key }}"
+      command: "zpool get -H -o value autotrim {{ item.item.key }}"
       loop: "{{ pool_existence_check.results }}"
       when: item.stdout == 'exists'
       register: current_autotrim
@@ -278,7 +278,7 @@
     # =====================================
 
     - name: Check if infrastructure container storage exists in Proxmox
-      shell: "grep -q 'infrastructure-containers' /etc/pve/storage.cfg"
+      command: "grep -q 'infrastructure-containers' /etc/pve/storage.cfg"
       register: infra_storage_exists
       failed_when: false
       changed_when: false
@@ -296,7 +296,7 @@
       when: infra_storage_exists.rc != 0
 
     - name: Check if hot directory storage exists in Proxmox
-      shell: "grep -q 'hot-storage' /etc/pve/storage.cfg"
+      command: "grep -q 'hot-storage' /etc/pve/storage.cfg"
       register: hot_storage_exists
       failed_when: false
       changed_when: false
@@ -324,46 +324,46 @@
                   content images
                   nodes {{ ansible_hostname }}
                   sparse 1
-          
-          # Security container storage  
+
+          # Security container storage
           zfspool: security-containers
                   pool security
                   content rootdir
                   nodes {{ ansible_hostname }}
-          
+
           # Gaming VM storage
           zfspool: gaming-vms
                   pool gaming
                   content images
                   nodes {{ ansible_hostname }}
                   sparse 1
-          
+
           # Gaming container storage
           zfspool: gaming-containers
                   pool gaming
                   content rootdir
                   nodes {{ ansible_hostname }}
-          
+
           # Monitoring VM storage
           zfspool: monitoring-vms
                   pool monitoring
                   content images
                   nodes {{ ansible_hostname }}
                   sparse 1
-          
+
           # Monitoring container storage
           zfspool: monitoring-containers
                   pool monitoring
                   content rootdir
                   nodes {{ ansible_hostname }}
-          
+
           # Apps VM storage
           zfspool: apps-vms
                   pool apps
                   content images
                   nodes {{ ansible_hostname }}
                   sparse 1
-          
+
           # Apps container storage
           zfspool: apps-containers
                   pool apps

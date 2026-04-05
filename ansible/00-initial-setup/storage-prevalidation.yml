@@ -35,7 +35,7 @@
       loop: "{{ device_existence.results }}"
 
     - name: Check boot device size
-      shell: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+      command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
       register: boot_device_size_check
       changed_when: false
 
@@ -139,7 +139,7 @@
           shell: "zfs list {{ hot_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
           register: hot_dataset_exists
           changed_when: false
-          when: 
+          when:
             - root_pool_name_check.stdout != ""
             - hot_storage.enabled | default(true)
 
@@ -155,7 +155,7 @@
     - name: Analyze boot disk partitioning (informational)
       block:
         - name: Get boot disk partition layout
-          shell: "parted {{ storage_devices.boot_device }} print free"
+          command: "parted {{ storage_devices.boot_device }} print free"
           register: boot_partition_layout
           changed_when: false
 
@@ -193,7 +193,7 @@
     - name: Analyze root pool space requirements
       block:
         - name: Get root pool available space in bytes
-          shell: "zfs get -H -p -o value available {{ root_pool_name_check.stdout }}"
+          command: "zfs get -H -p -o value available {{ root_pool_name_check.stdout }}"
           register: root_pool_available_bytes
           changed_when: false
           when: root_pool_name_check.stdout != ""
@@ -202,7 +202,9 @@
           set_fact:
             infrastructure_quota_bytes: "{{ (infrastructure_storage.quota | regex_replace('G$', '') | int * 1000000000) }}"
             hot_quota_bytes: "{{ (hot_storage.quota | regex_replace('G$', '') | int * 1000000000) if hot_storage.enabled else 0 }}"
-            total_required_bytes: "{{ ((infrastructure_storage.quota | regex_replace('G$', '') | int) + (hot_storage.quota | regex_replace('G$', '') | int if hot_storage.enabled else 0)) * 1000000000 }}"
+            total_required_bytes: >-
+              {{ ((infrastructure_storage.quota | regex_replace('G$', '') | int) +
+                (hot_storage.quota | regex_replace('G$', '') | int if hot_storage.enabled else 0)) * 1000000000 }}
             available_bytes: "{{ root_pool_available_bytes.stdout | int }}"
           when: root_pool_name_check.stdout != ""
 
@@ -225,29 +227,32 @@
           =======================================================
           ZFS STORAGE SETUP READINESS REPORT
           =======================================================
-          
+
           BOOT DEVICE STATUS:
           - Device: {{ storage_devices.boot_device }}
           - Size: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB
           - Status: {{ 'READY' if (boot_device_size_check.stdout | int > 200000000000) else 'TOO SMALL' }}
-          
+
           ROOT ZFS POOL STATUS:
           - Pool Name: {{ root_pool_name_check.stdout | default('NOT FOUND') }}
           - Infrastructure Dataset: {{ infrastructure_dataset_exists.stdout | default('N/A') | upper }}
           - Hot Storage Dataset: {{ hot_dataset_exists.stdout | default('N/A') | upper }}
           - Available Space: {{ (available_bytes | int / 1000000000) | round(1) if root_pool_name_check.stdout != "" else 'N/A' }}GB
           - Space Sufficient: {{ 'YES' if (root_pool_name_check.stdout != "" and available_bytes | int > total_required_bytes | int) else 'NO/UNKNOWN' }}
-          
+
           ZFS DEDICATED DEVICES:
           - Security: {{ storage_devices.security_device }}
-          - Gaming: {{ storage_devices.gaming_device }}  
+          - Gaming: {{ storage_devices.gaming_device }}
           - Monitoring: {{ storage_devices.monitoring_device }}
           - Apps: {{ storage_devices.storage_device }}
-          
+
           POOL NAME CONFLICTS:
           {{ pool_name_conflicts.stdout_lines | join('\n          ') }}
-          
+
           SYSTEM STATUS:
-          {{ 'READY FOR ZFS STORAGE SETUP' if (boot_device_size_check.stdout | int > 200000000000 and root_pool_name_check.stdout != "") else 'NEEDS ATTENTION - Check above for issues' }}
-          
+          {{ 'READY FOR ZFS STORAGE SETUP'
+          if (boot_device_size_check.stdout | int > 200000000000
+          and root_pool_name_check.stdout != "")
+          else 'NEEDS ATTENTION - Check above for issues' }}
+
           =======================================================
