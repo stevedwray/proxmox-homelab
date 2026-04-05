@@ -1,0 +1,197 @@
+---
+# harbor_postconfigure — idempotent post-install configuration via Harbor API.
+# Creates: Docker Hub proxy cache endpoint, dockerhub project, CI robot account.
+# All tasks delegate to localhost (Ansible controller calls Harbor API directly).
+
+- name: Authenticate with Harbor API
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/current"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_auth_check
+  delegate_to: localhost
+  no_log: true
+
+# -----------------------------------------------------------------------
+# Docker Hub proxy cache registry endpoint
+# -----------------------------------------------------------------------
+
+- name: Get existing registry endpoints
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_registries
+  delegate_to: localhost
+
+- name: Check if Docker Hub endpoint already exists
+  ansible.builtin.set_fact:
+    harbor_postconfigure_dockerhub_endpoint_id: "{{ item.id }}"
+  loop: "{{ harbor_postconfigure_registries.json }}"
+  when: item.name == harbor_postconfigure_dockerhub_endpoint_name
+  delegate_to: localhost
+
+- name: Build Docker Hub endpoint credential block
+  ansible.builtin.set_fact:
+    harbor_postconfigure_dockerhub_credential: >-
+      {{
+        {
+          'access_key': harbor_postconfigure_dockerhub_username,
+          'access_secret': harbor_postconfigure_dockerhub_password,
+          'type': 'basic'
+        }
+        if harbor_postconfigure_dockerhub_username != ''
+        else omit
+      }}
+  delegate_to: localhost
+
+- name: Create Docker Hub proxy cache endpoint
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ harbor_postconfigure_dockerhub_endpoint_name }}"
+      type: "docker-hub"
+      url: "{{ harbor_postconfigure_dockerhub_url }}"
+      credential: "{{ harbor_postconfigure_dockerhub_credential | default(omit) }}"
+      insecure: false
+    status_code: 201
+  register: harbor_postconfigure_endpoint_result
+  when: harbor_postconfigure_dockerhub_endpoint_id is not defined
+  delegate_to: localhost
+  no_log: "{{ harbor_postconfigure_dockerhub_password != '' }}"
+
+- name: Set endpoint ID from create result
+  ansible.builtin.set_fact:
+    harbor_postconfigure_dockerhub_endpoint_id: "{{ harbor_postconfigure_endpoint_result.json.id }}"
+  when: harbor_postconfigure_endpoint_result is not skipped
+  delegate_to: localhost
+
+- name: Display Docker Hub endpoint status
+  ansible.builtin.debug:
+    msg: >-
+      Docker Hub proxy endpoint '{{ harbor_postconfigure_dockerhub_endpoint_name }}'
+      {{ 'created (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' if harbor_postconfigure_endpoint_result is not skipped else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' }}
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
+# Docker Hub proxy cache project
+# -----------------------------------------------------------------------
+
+- name: Get existing projects
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects?name={{ harbor_postconfigure_proxy_project_name }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_projects
+  delegate_to: localhost
+
+- name: Check if proxy project already exists
+  ansible.builtin.set_fact:
+    harbor_postconfigure_proxy_project_exists: true
+  when: harbor_postconfigure_projects.json | selectattr('name', 'equalto', harbor_postconfigure_proxy_project_name) | list | length > 0
+  delegate_to: localhost
+
+- name: Create dockerhub proxy cache project
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ harbor_postconfigure_proxy_project_name }}"
+      public: true
+      registry_id: "{{ harbor_postconfigure_dockerhub_endpoint_id | int }}"
+    status_code: 201
+  when: harbor_postconfigure_proxy_project_exists is not defined
+  delegate_to: localhost
+
+- name: Display proxy project status
+  ansible.builtin.debug:
+    msg: >-
+      Proxy cache project '{{ harbor_postconfigure_proxy_project_name }}'
+      {{ 'created' if harbor_postconfigure_proxy_project_exists is not defined else 'already exists' }}
+      (pulls from Docker Hub via {{ harbor_postconfigure_dockerhub_endpoint_name }})
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
+# CI robot account (system-level push/pull)
+# -----------------------------------------------------------------------
+
+- name: Get existing robot accounts
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/robots"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_robots
+  delegate_to: localhost
+
+- name: Check if CI robot already exists
+  ansible.builtin.set_fact:
+    harbor_postconfigure_robot_exists: true
+  when: harbor_postconfigure_robots.json | selectattr('name', 'equalto', 'robot$' + harbor_postconfigure_robot_name) | list | length > 0
+  delegate_to: localhost
+
+- name: Create CI robot account
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/robots"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ harbor_postconfigure_robot_name }}"
+      description: "{{ harbor_postconfigure_robot_description }}"
+      duration: "{{ harbor_postconfigure_robot_expiry }}"
+      level: "system"
+      permissions:
+        - kind: "project"
+          namespace: "*"
+          access:
+            - resource: "repository"
+              action: "pull"
+            - resource: "repository"
+              action: "push"
+    status_code: 201
+  register: harbor_postconfigure_robot_result
+  when: harbor_postconfigure_robot_exists is not defined
+  delegate_to: localhost
+  no_log: true
+
+- name: Display robot account credentials
+  ansible.builtin.debug:
+    msg:
+      - "================================================================"
+      - "CI Robot Account Created — save these credentials to Bitwarden!"
+      - "================================================================"
+      - "Name:   {{ harbor_postconfigure_robot_result.json.name }}"
+      - "Secret: {{ harbor_postconfigure_robot_result.json.secret }}"
+      - "Login:  docker login {{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }} -u '{{ harbor_postconfigure_robot_result.json.name }}' -p '<secret>'"
+      - "================================================================"
+  when: harbor_postconfigure_robot_exists is not defined
+  delegate_to: localhost
+
+- name: Display robot already exists notice
+  ansible.builtin.debug:
+    msg: "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists — credentials were set on first run"
+  when: harbor_postconfigure_robot_exists is defined
+  delegate_to: localhost

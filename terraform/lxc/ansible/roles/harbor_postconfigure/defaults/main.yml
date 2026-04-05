@@ -1,0 +1,22 @@
+---
+harbor_postconfigure_host: "{{ ansible_host }}"
+harbor_postconfigure_port: "{{ harbor_http_port | default(80) }}"
+harbor_postconfigure_admin_user: "admin"
+harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+
+# Docker Hub proxy cache endpoint
+harbor_postconfigure_dockerhub_endpoint_name: "docker-hub"
+harbor_postconfigure_dockerhub_url: "https://hub.docker.com"
+# Optional Docker Hub credentials (recommended to avoid rate limits).
+# Set HARBOR_DOCKERHUB_USERNAME / HARBOR_DOCKERHUB_PASSWORD in .env.
+harbor_postconfigure_dockerhub_username: "{{ lookup('env', 'HARBOR_DOCKERHUB_USERNAME') }}"
+harbor_postconfigure_dockerhub_password: "{{ lookup('env', 'HARBOR_DOCKERHUB_PASSWORD') }}"
+
+# Docker Hub proxy cache project
+harbor_postconfigure_proxy_project_name: "dockerhub"
+
+# CI robot account (system-level, push/pull across all projects)
+harbor_postconfigure_robot_name: "ci-robot"
+harbor_postconfigure_robot_description: "CI/CD robot account for automated push and pull"
+# Expiry in days; -1 = never expires
+harbor_postconfigure_robot_expiry: -1

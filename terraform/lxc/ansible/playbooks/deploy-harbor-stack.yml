@@ -1,6 +1,8 @@
-# Harbor registry stack deployment
-# Phase 1: Docker base + Portainer agent registration
-# Phase 2 (TODO): harbor_installer + harbor_postconfigure roles
+# Harbor registry stack — full deployment playbook.
+# Play 1: Docker base + Portainer agent (standard)
+# Play 2: Register endpoint with Portainer (visibility only; Harbor manages its own compose)
+# Play 3: Download, configure, and start Harbor via harbor_installer role
+# Play 4: Post-install configuration via Harbor API (proxy cache, robot account)
 
 ---
 - name: Configure Docker base and Portainer Agent
@@ -21,3 +23,21 @@
     portainer_api_agent_ip: "{{ ansible_host }}"
   roles:
     - portainer_api
+
+- name: Install and start Harbor
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    harbor_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
+  roles:
+    - harbor_installer
+
+- name: Configure Harbor (proxy cache, robot account)
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    harbor_postconfigure_host: "{{ ansible_host }}"
+  roles:
+    - harbor_postconfigure
