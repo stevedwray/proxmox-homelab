@@ -9,6 +9,7 @@ storage-audit
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+terraform/lxc/.terraform-plugin-cache/
 crash.log
 crash.*.log
 *.tfvars
