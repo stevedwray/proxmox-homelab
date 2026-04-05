@@ -1,8 +1,0 @@
-proxmox_api_url = "https://192.168.1.100:8006/api2/json"
-proxmox_user    = "root@pam"
-proxmox_node    = "pve"
-lxc_password    = "your-secure-password"
-
-test_container_count = 3
-storage_pool         = "local-zfs"
-network_bridge       = "vmbr0"

@@ -60,13 +60,8 @@ terraform/lxc/
         ├── docker_base/             # Ensure Docker running, install SDK, registry mirror
         ├── portainer_agent/         # Deploy Portainer Agent via compose + systemd
         ├── portainer_api/           # Register endpoint with central Portainer (idempotent)
-        ├── portainer_common/        # Shared Portainer auth helpers
-        ├── app_stack/               # Deploy/update compose stack via Portainer API
-        ├── lxc_tun_device/          # Create /dev/net/tun in LXC (delegates to PVE host)
-        ├── harbor/                  # Docker registry + UI + Trivy scanner
-        └── nginx_proxy_manager/     # Nginx Proxy Manager deployment
-```
-
+    ├── app_stack/               # Deploy/update compose stack via Portainer API
+    ├── lxc_tun_device/          # Create /dev/net/tun in LXC (delegates to PVE host)
 ## How to Add a New Stack
 
 1. Create a directory under `stacks/`:
@@ -159,16 +154,38 @@ Authenticates with the central Portainer server, checks if an endpoint with the 
 Deploys a Docker Compose stack via the Portainer API. Checks for an existing stack on the target endpoint. If the stack exists, compares SHA256 hashes of the current and desired compose content and environment variables — only updates if either has changed. Creates a new stack if none exists. Supports passing secrets via Portainer's Env array (`app_stack_env` variable) so that `${VAR}` placeholders in the compose file are resolved at deploy time without committing secrets to Git.
 
 ### lxc_tun_device
-Creates `/dev/net/tun` inside an LXC container by delegating `pct set` commands to the PVE host. Used by stacks that need TUN/TAP networking (e.g., VPN containers).
+Creates `/dev/net/tun` inside an LXC container by delegating `pct set` commands to the PVE host. This role updates the container config with TUN permissions and bind-mounts `/dev/net/tun`, making it suitable for VPN containers such as `gluetun` or any workload requiring TUN/TAP access.
 
-### portainer_common
-Shared authentication helpers used by other Portainer roles.
+> Note: This is an optional, special-purpose role for VPN/TUN-enabled LXC stacks and is not part of the default `deploy-stack` flow unless explicitly included in a stack configuration.
 
-### harbor
-Deploys a Docker registry with `joxit/docker-registry-ui` and `aquasec/trivy` scanner.
+### VPN / TUN stack support
+Some stacks require a container-visible `/dev/net/tun` device, which standard LXC containers do not expose by default. The `lxc_tun_device` role preserves the documented VPN/TUN pattern from `main` by automating the exact LXC config changes needed for stacks such as a gluetun-based torrent stack.
 
-### nginx_proxy_manager
-Deploys Nginx Proxy Manager for reverse-proxy management.
+The role performs these steps:
+- determines the container VMID from `pct list`
+- stops the container if needed
+- updates `/etc/pve/lxc/{{ container_vmid }}.conf`
+- applies the required device entries
+- restarts the container
+- verifies `/dev/net/tun` exists inside the container
+
+Required LXC config lines:
+```bash
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+```
+
+Equivalent manual workflow:
+```bash
+CONTAINER_ID=$(pct list | grep torrent-stack | awk '{print $1}')
+pct stop "$CONTAINER_ID"
+echo "lxc.cgroup2.devices.allow: c 10:200 rwm" >> /etc/pve/lxc/${CONTAINER_ID}.conf
+echo "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file" >> /etc/pve/lxc/${CONTAINER_ID}.conf
+pct start "$CONTAINER_ID"
+pct exec "$CONTAINER_ID" -- ls -la /dev/net/tun
+```
+
+This preserves the VPN/TUN implementation guidance from the main branch while keeping the cleanup branch focused on the primary LXC/Portainer provisioning flow.
 
 ## Playbooks
 
