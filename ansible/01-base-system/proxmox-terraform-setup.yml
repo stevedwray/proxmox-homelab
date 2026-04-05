@@ -16,7 +16,7 @@
     - name: Ensure automation user exists
       command: pveum user add {{ pve_user }} --comment "Terraform automation account"
       register: _user_add
-      failed_when: _user_add.rc not in [0,2]
+      failed_when: _user_add.rc not in [0, 2]
       changed_when: _user_add.rc == 0
 
     - name: Grant Administrator role to user
@@ -32,13 +32,13 @@
 
     - name: Decide if token exists
       set_fact:
-        token_exists: "{{ (_token_list.stdout | from_json) | selectattr('tokenid','equalto', token_id) | list | length > 0 }}"
+        token_exists: "{{ (_token_list.stdout | from_json) | selectattr('tokenid', 'equalto', token_id) | list | length > 0 }}"
 
     - name: Remove existing token (rotation enabled)
       when: token_exists and rotate_token
       command: pveum user token remove {{ pve_user }} {{ token_id }}
       register: _token_rm
-      failed_when: _token_rm.rc not in [0,2]
+      failed_when: _token_rm.rc not in [0, 2]
       changed_when: _token_rm.rc == 0
 
     - name: Create token (privsep=0) and capture secret

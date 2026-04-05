@@ -77,7 +77,9 @@
         - temporary_storage.enabled | default(false)
 
     - name: Temporary storage fstab line exists
-      shell: "grep -E '^LABEL={{ temporary_storage.filesystem_label }}[[:space:]]+{{ temporary_storage.mount_point }}[[:space:]]+{{ temporary_storage.filesystem }}[[:space:]]' /etc/fstab"
+      shell: >-
+        grep -E '^LABEL={{ temporary_storage.filesystem_label }}[[:space:]]+{{ temporary_storage.mount_point
+        }}[[:space:]]+{{ temporary_storage.filesystem }}[[:space:]]' /etc/fstab
       register: temp_fstab
       changed_when: false
       failed_when: temp_fstab.rc != 0

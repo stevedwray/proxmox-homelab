@@ -5,8 +5,8 @@
 
 - name: Validate Proxmox Server Configuration (Read-Only)
   hosts: proxmox
-  become: yes
-  gather_facts: yes
+  become: true
+  gather_facts: true
   vars:
     automation_user: automation
 
