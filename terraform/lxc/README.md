@@ -158,6 +158,35 @@ Creates `/dev/net/tun` inside an LXC container by delegating `pct set` commands 
 
 > Note: This is an optional, special-purpose role for VPN/TUN-enabled LXC stacks and is not part of the default `deploy-stack` flow unless explicitly included in a stack configuration.
 
+### VPN / TUN stack support
+Some stacks require a container-visible `/dev/net/tun` device, which standard LXC containers do not expose by default. The `lxc_tun_device` role preserves the documented VPN/TUN pattern from `main` by automating the exact LXC config changes needed for stacks such as a gluetun-based torrent stack.
+
+The role performs these steps:
+- determines the container VMID from `pct list`
+- stops the container if needed
+- updates `/etc/pve/lxc/{{ container_vmid }}.conf`
+- applies the required device entries
+- restarts the container
+- verifies `/dev/net/tun` exists inside the container
+
+Required LXC config lines:
+```bash
+lxc.cgroup2.devices.allow: c 10:200 rwm
+lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file
+```
+
+Equivalent manual workflow:
+```bash
+CONTAINER_ID=$(pct list | grep torrent-stack | awk '{print $1}')
+pct stop "$CONTAINER_ID"
+echo "lxc.cgroup2.devices.allow: c 10:200 rwm" >> /etc/pve/lxc/${CONTAINER_ID}.conf
+echo "lxc.mount.entry: /dev/net/tun dev/net/tun none bind,create=file" >> /etc/pve/lxc/${CONTAINER_ID}.conf
+pct start "$CONTAINER_ID"
+pct exec "$CONTAINER_ID" -- ls -la /dev/net/tun
+```
+
+This preserves the VPN/TUN implementation guidance from the main branch while keeping the cleanup branch focused on the primary LXC/Portainer provisioning flow.
+
 ## Playbooks
 
 | Playbook | Trigger | Runs on | What it does |
