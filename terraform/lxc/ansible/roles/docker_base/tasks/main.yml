@@ -42,20 +42,6 @@
   notify: restart docker
   when: docker_base_configure_mirror | bool
 
-- name: Restart Docker service if configuration changed
-  ansible.builtin.systemd:
-    name: docker
-    state: restarted
-  when: docker_base_configure_mirror | bool
-
-- name: Wait for Docker daemon to restart
-  ansible.builtin.wait_for:
-    port: 2375
-    host: localhost
-    timeout: 30
-  failed_when: false
-  when: docker_base_configure_mirror | bool
-
 - name: Verify Docker daemon is responsive
   ansible.builtin.command: docker info
   register: docker_base_docker_info
