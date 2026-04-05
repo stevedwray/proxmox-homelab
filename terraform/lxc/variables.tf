@@ -1,4 +1,17 @@
 # ---------------------------------------------------------------------------
+# Stack identity — provided by Terragrunt from the stack's directory
+# ---------------------------------------------------------------------------
+variable "stack_name" {
+  description = "Name of the stack (matches the stacks/<name>/ directory)"
+  type        = string
+}
+
+variable "stack_yaml_path" {
+  description = "Absolute path to the stack's stack.yaml file"
+  type        = string
+}
+
+# ---------------------------------------------------------------------------
 # Proxmox connection
 # ---------------------------------------------------------------------------
 variable "proxmox_api_url" {

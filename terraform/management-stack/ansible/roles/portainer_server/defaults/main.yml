@@ -1,4 +1,0 @@
-# terraform/management-stack/ansible/roles/portainer_server/defaults/main.yml
----
-portainer_port_http:  "{{ lookup('env','PORTAINER_PORT_HTTP')  | default('9000') }}"
-portainer_port_https: "{{ lookup('env','PORTAINER_PORT_HTTPS') | default('9443') }}"

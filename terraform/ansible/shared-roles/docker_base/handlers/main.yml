@@ -1,9 +1,0 @@
----
-# terraform/ansible/shared-roles/docker_base/handlers/main.yml
-
-- name: restart docker
-  systemd:
-    name: docker
-    state: restarted
-    daemon_reload: yes
-  listen: "restart docker"

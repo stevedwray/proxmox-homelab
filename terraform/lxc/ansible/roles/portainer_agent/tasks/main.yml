@@ -41,6 +41,19 @@
     name: "portainer-agent"
     state: absent
 
+# The systemd unit must be pre-installed in the LXC OS template.
+# It should run: docker compose -f {{ portainer_agent_compose_path }} up -d
+- name: Gather service facts to verify portainer-agent.service is present
+  ansible.builtin.service_facts:
+
+- name: Fail with helpful message if service unit is missing
+  ansible.builtin.fail:
+    msg: >
+      systemd unit '{{ portainer_agent_service_unit }}' was not found.
+      This role requires the unit to be pre-installed in the LXC OS template
+      (expected: a compose-up service for {{ portainer_agent_compose_path }}).
+  when: portainer_agent_service_unit not in ansible_facts.services
+
 - name: Restart Portainer Agent via systemd
   ansible.builtin.systemd:
     name: "{{ portainer_agent_service_unit }}"

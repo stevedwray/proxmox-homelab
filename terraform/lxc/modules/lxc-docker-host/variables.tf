@@ -92,12 +92,6 @@ variable "docker_storage_size" {
   default     = "20G"
 }
 
-variable "keyctl" {
-  description = "Enable keyctl for Docker-in-LXC (required for some workloads in unprivileged containers)"
-  type        = bool
-  default     = false
-}
-
 variable "network_bridge" {
   description = "Network bridge for the LXC container"
   type        = string

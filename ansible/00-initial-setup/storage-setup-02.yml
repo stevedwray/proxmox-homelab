@@ -1,0 +1,587 @@
+# FILE: playbooks/base-system/storage-setup.yml
+# Updated for LVM infrastructure storage on boot disk
+# ZFS pools for dedicated storage drives
+
+- name: Production storage configuration - LVM Infrastructure + ZFS Pools
+  hosts: proxmox_production
+  become: true
+  gather_facts: true
+  vars_files:
+    - ../group_vars/proxmox.yml
+    - ../group_vars/proxmox_production.yml  # Changed from proxmox_testbed.yml
+
+  pre_tasks:
+    # =====================================
+    # System validation and safety checks
+    # =====================================
+    - name: Validate target system hardware layout
+      block:
+        - name: Check boot device exists and is correct size
+          ansible.builtin.stat:
+            path: "{{ storage_devices.boot_device }}"
+          register: boot_device_check
+          failed_when: not boot_device_check.stat.exists
+
+        - name: Get boot device size (bytes)
+          ansible.builtin.command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+          register: boot_device_size
+          changed_when: false
+
+        - name: Validate boot device size (expecting ~200GB for production)
+          ansible.builtin.assert:
+            that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
+            fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
+
+        - name: Check if ZFS pools already exist or devices are clean
+          ansible.builtin.shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
+          register: pool_status
+          loop: "{{ zfs_pools | dict2items }}"
+          failed_when: false
+          changed_when: false
+
+        - name: Check device state for pools that need setup
+          ansible.builtin.shell: |
+            set -o pipefail
+            lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l
+          register: device_usage
+          loop: "{{ pool_status.results }}"
+          when: item.stdout == 'needs_setup'
+          changed_when: false
+
+        - name: Assert clean devices for pools that need setup
+          ansible.builtin.assert:
+            that: (item.stdout | int) == 0
+            fail_msg: "Device {{ item.item.item.value.device }} has existing filesystem signatures."
+          loop: "{{ device_usage.results }}"
+          when: item.skipped is not defined
+
+    - name: Check for running containers/VMs
+      ansible.builtin.shell: |
+        set -o pipefail
+        pct list 2>/dev/null | grep -c running || true
+      register: running_containers
+      changed_when: false
+
+    - name: Check for running VMs
+      ansible.builtin.shell: |
+        set -o pipefail
+        qm list 2>/dev/null | grep -c running || true
+      register: running_vms
+      changed_when: false
+
+    - name: Warn about active workloads
+      ansible.builtin.pause:
+        prompt: |
+          WARNING: Found {{ running_containers.stdout }} running containers and {{ running_vms.stdout }} running VMs.
+          Storage operations may disrupt running services.
+          Press ENTER to continue or Ctrl+C to abort.
+      when:
+        - (running_containers.stdout | int > 0) or (running_vms.stdout | int > 0)
+        - not (ansible_check_mode | default(false))
+        - ansible_env.TERM is defined
+
+    - name: Validate system is Proxmox
+      ansible.builtin.stat:
+        path: /etc/pve
+      register: proxmox_check
+      failed_when: not proxmox_check.stat.exists
+
+    - name: Update package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages for storage management
+      ansible.builtin.package:
+        name: "{{ required_packages | default(['zfsutils-linux', 'parted', 'lvm2']) }}"
+        state: present
+
+    - name: Verify ZFS storage devices exist
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ storage_devices.security_device }}"
+        - "{{ storage_devices.gaming_device }}"
+        - "{{ storage_devices.monitoring_device }}"
+        - "{{ storage_devices.storage_device }}"     # <— add media pool device
+      register: device_check
+
+    - name: Verify required ZFS devices are available
+      ansible.builtin.assert:
+        that: device_check.results | selectattr('stat.exists') | list | length == 4
+        fail_msg: "Not all required ZFS devices are available"
+
+
+  tasks:
+    # =====================================
+    # LVM Infrastructure Storage (Boot disk)
+    # =====================================
+
+    - name: Get current LVM volume group info
+      ansible.builtin.shell: |
+        set -o pipefail
+        vgdisplay -c | grep -E '^[[:space:]]*[^:]+:' | head -1 | cut -d: -f1
+      register: vg_name_result
+      failed_when: vg_name_result.stdout == ""
+      changed_when: false
+
+    - name: Set volume group name fact
+      ansible.builtin.set_fact:
+        volume_group: "{{ vg_name_result.stdout.strip() }}"
+
+    - name: Check if infrastructure logical volume exists
+      ansible.builtin.shell: "lvdisplay {{ volume_group }}/{{ infrastructure_storage.lv_name }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      register: infrastructure_lv_check
+      changed_when: false
+
+    - name: Get volume group free space
+      ansible.builtin.shell: |
+        set -o pipefail
+        vgdisplay {{ volume_group }} | grep 'Free' | awk '{print $7}' | sed 's/[<>]//g'
+      register: vg_free_space
+      when: infrastructure_lv_check.stdout == 'missing'
+      changed_when: false
+
+    - name: Create infrastructure logical volume
+      community.general.lvol:
+        vg: "{{ volume_group }}"
+        lv: "{{ infrastructure_storage.lv_name }}"
+        size: "{{ infrastructure_storage.size }}"
+        state: present
+      when: infrastructure_lv_check.stdout == 'missing'
+
+    - name: Check if infrastructure LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ volume_group }}/{{ infrastructure_storage.lv_name }}"
+      register: infrastructure_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format infrastructure logical volume
+      community.general.filesystem:
+        fstype: "{{ infrastructure_storage.filesystem }}"
+        dev: "/dev/{{ volume_group }}/{{ infrastructure_storage.lv_name }}"
+        opts: "-L {{ infrastructure_storage.filesystem_label }}"
+      when: infrastructure_fs_check.rc != 0
+
+    - name: Create infrastructure mount point
+      ansible.builtin.file:
+        path: "{{ infrastructure_storage.mount_point }}"
+        state: directory
+        mode: '0750'
+
+    - name: Add infrastructure storage to fstab
+      ansible.posix.mount:
+        path: "{{ infrastructure_storage.mount_point }}"
+        src: "/dev/{{ volume_group }}/{{ infrastructure_storage.lv_name }}"
+        fstype: "{{ infrastructure_storage.filesystem }}"
+        opts: "{{ infrastructure_storage.mount_options }}"
+        state: present
+
+    - name: Mount infrastructure storage
+      ansible.posix.mount:
+        path: "{{ infrastructure_storage.mount_point }}"
+        src: "/dev/{{ volume_group }}/{{ infrastructure_storage.lv_name }}"
+        fstype: "{{ infrastructure_storage.filesystem }}"
+        opts: "{{ infrastructure_storage.mount_options }}"
+        state: mounted
+
+    # =====================================
+    # Hot storage as an LVM logical volume (replaces separate sda4)
+    # =====================================
+
+    # --- Grow PV partition to end or to a specific size, then pvresize (parameterised) ---
+
+    - name: Set PV/LV path facts for boot disk (parameterised)
+      ansible.builtin.set_fact:
+        _pv_part_num: "{{ boot_pv.partition_number | default(3) }}"
+        # Handle nvme vs sd naming (nvme uses 'p' before the partition number)
+        _pv_path: >-
+          {{
+            storage_devices.boot_device
+            ~ ( (storage_devices.boot_device | basename) is match('^nvme') | ternary('p','') )
+            ~ (boot_pv.partition_number | default(3))
+          }}
+        _hot_lv_name: "{{ hot_storage.lv_name | default('hot') }}"
+      when: hot_storage.enabled | default(true)
+
+    - name: Ensure growpart is available (for end-of-disk growth)
+      ansible.builtin.apt:
+        name: cloud-guest-utils
+        state: present
+        update_cache: true
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is not defined
+
+    - name: Grow PV partition to a specific size (GiB) with parted
+      ansible.builtin.command: "parted -s {{ storage_devices.boot_device }} resizepart {{ _pv_part_num }} {{ boot_pv.target_size_gib }}GiB"
+      register: resizepart_out_specific
+      changed_when: resizepart_out_specific.rc == 0
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is defined
+
+    - name: Grow PV partition to end-of-disk with growpart
+      ansible.builtin.command: "growpart {{ storage_devices.boot_device }} {{ _pv_part_num }}"
+      register: growpart_out
+      changed_when: growpart_out.rc == 0
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+        - boot_pv.target_size_gib is not defined
+
+    - name: Re-read partition table after growth
+      ansible.builtin.command: "partprobe {{ storage_devices.boot_device }}"
+      changed_when: false
+      when: hot_storage.enabled | default(true)
+
+    - name: Wait for udev to settle new partition size
+      ansible.builtin.command: "udevadm settle"
+      changed_when: false
+      when: hot_storage.enabled | default(true)
+
+    - name: Resize PV to use full partition
+      ansible.builtin.command: "pvresize {{ _pv_path }}"
+      register: pvresize_out
+      changed_when: "'No change' not in pvresize_out.stdout"
+      when:
+        - hot_storage.enabled | default(true)
+        - boot_pv.expand | default(true)
+
+
+    # --- Create/format/mount the hot LV on the VG ---
+
+    - name: Normalize hot LV size for LVM
+      ansible.builtin.set_fact:
+        _hot_lv_size: "{{ hot_storage.size
+                          | regex_replace('Gi?B$', 'G')
+                          | regex_replace('Mi?B$', 'M')
+                          | regex_replace('Ki?B$', 'K') }}"
+      when: hot_storage.enabled | default(false)
+
+    - name: Create hot LV if missing
+      community.general.lvol:
+        vg: "{{ volume_group }}"
+        lv: "{{ _hot_lv_name }}"
+        size: "{{ _hot_lv_size }}"
+        state: present
+      when: hot_storage.enabled | default(false)
+
+    - name: Check if hot LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ volume_group }}/{{ _hot_lv_name }}"
+      register: hot_lv_fs_check
+      changed_when: false
+      failed_when: false
+      when: hot_storage.enabled | default(false)
+
+    - name: Format hot LV (ext4 with label)
+      community.general.filesystem:
+        fstype: ext4
+        dev: "/dev/{{ volume_group }}/{{ _hot_lv_name }}"
+        opts: "-L {{ hot_storage.filesystem_label }}"
+      when:
+        - hot_storage.enabled | default(false)
+        - hot_lv_fs_check.rc != 0
+
+    - name: Ensure hot mountpoint exists
+      ansible.builtin.file:
+        path: "{{ hot_storage.mount_point }}"
+        state: directory
+        mode: '0750'
+      when: hot_storage.enabled | default(false)
+
+    - name: Add hot LV to fstab (by LABEL)
+      ansible.posix.mount:
+        path: "{{ hot_storage.mount_point }}"
+        src: "LABEL={{ hot_storage.filesystem_label }}"
+        fstype: ext4
+        opts: "{{ hot_storage.mount_options }}"
+        state: present
+      when: hot_storage.enabled | default(false)
+
+    - name: Mount hot LV
+      ansible.posix.mount:
+        path: "{{ hot_storage.mount_point }}"
+        src: "LABEL={{ hot_storage.filesystem_label }}"
+        fstype: ext4
+        opts: "{{ hot_storage.mount_options }}"
+        state: mounted
+      when: hot_storage.enabled | default(false)
+
+    # =====================================
+    # ZFS pools (idempotent) - Dedicated drives only
+    # =====================================
+
+    - name: Check if ZFS pools exist
+      ansible.builtin.shell: "zpool status {{ item.key }} 2>/dev/null && echo 'exists' || echo 'missing'"
+      register: pool_existence_check
+      loop: "{{ zfs_pools | dict2items }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Wipe filesystem signatures from devices (if pool missing)
+      ansible.builtin.command: "wipefs -a {{ item.item.value.device }}"
+      loop: "{{ pool_existence_check.results }}"
+      changed_when: true
+      when:
+        - item.stdout == 'missing'
+        - item.item.value.enabled | default(true)
+
+    - name: Create ZFS pools (only if missing)
+      community.general.zpool:
+        name: "{{ item.item.key }}"
+        state: present
+        vdevs:
+          - disks:
+              - "{{ item.item.value.device }}"
+        pool_properties: "{{ {'ashift': item.item.value.properties.ashift, 'autotrim': 'on'}
+                             | combine((item.item.value.properties.mountpoint is defined)
+                                        | ternary({'mountpoint': item.item.value.properties.mountpoint}, {})) }}"
+      loop: "{{ pool_existence_check.results }}"
+      when:
+        - item.stdout == 'missing'
+        - item.item.value.enabled | default(true)
+
+    # Handle existing pools - only set autotrim if not already on
+    - name: Check current autotrim setting for existing pools
+      ansible.builtin.command: "zpool get -H -o value autotrim {{ item.item.key }}"
+      loop: "{{ pool_existence_check.results }}"
+      when: item.stdout == 'exists'
+      register: current_autotrim
+      changed_when: false
+
+    - name: Enable autotrim on existing pools (if not already enabled)
+      ansible.builtin.command: "zpool set autotrim=on {{ item.item.key }}"
+      loop: "{{ current_autotrim.results }}"
+      changed_when: true
+      when:
+        - item.skipped is not defined
+        - item.stdout != "on"
+
+    - name: Set ZFS pool root dataset properties
+      community.general.zfs:
+        name: "{{ item.key }}"
+        state: present
+        extra_zfs_properties:
+          compression: "{{ item.value.properties.compression }}"
+          atime: "{{ item.value.properties.atime }}"
+          xattr: "sa"
+          acltype: "posixacl"
+      loop: "{{ zfs_pools | dict2items }}"
+      when: item.value.enabled | default(true)
+
+    # =====================================
+    # ZFS datasets with workload-specific tuning
+    # =====================================
+
+    - name: Create Security datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ security_datasets }}"
+
+    - name: Create Gaming datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ gaming_datasets }}"
+
+    - name: Create Monitoring datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ monitoring_datasets }}"
+
+    - name: Create App datasets
+      community.general.zfs:
+        name: "{{ item.name }}"
+        state: present
+        extra_zfs_properties: "{{ item.properties }}"
+      loop: "{{ apps_datasets | default([]) }}"
+
+    - name: Create infrastructure storage directories
+      ansible.builtin.file:
+        path: "{{ infrastructure_storage.mount_point }}/{{ item }}"
+        state: directory
+        mode: '0750'
+      loop: "{{ infrastructure_directories }}"
+
+    # =====================================
+    # Hot storage directories
+    # =====================================
+
+    - name: Create hot storage directories
+      ansible.builtin.file:
+        path: "{{ hot_storage.mount_point }}/{{ item }}"
+        state: directory
+        mode: '0750'
+      loop: "{{ hot_storage_directories }}"
+      when: hot_storage.enabled | default(false)
+
+    # =====================================
+    # Proxmox storage configuration (Mixed ZFS + Directory)
+    # =====================================
+
+    - name: Configure Proxmox ZFS storage pools
+      ansible.builtin.blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED ZFS STORAGE POOLS"
+        block: |
+          {% for storage in proxmox_zfs_storage %}
+          {% if storage.enabled | default(true) %}
+          # {{ storage.description | default(storage.name) }}
+          zfspool: {{ storage.name }}
+                  pool {{ storage.pool }}
+                  content {{ storage.content | join(',') }}
+                  nodes {{ storage.nodes | default([ansible_hostname]) | join(',') }}
+          {% if storage.sparse is defined %}
+                  sparse {{ storage.sparse | ternary('1', '0') }}
+          {% endif %}
+          {% if storage.krbd is defined %}
+                  krbd {{ storage.krbd | ternary('1', '0') }}
+          {% endif %}
+          {% if storage.preallocation is defined %}
+                  preallocation {{ storage.preallocation }}
+          {% endif %}
+          {% if storage.blocksize is defined %}
+                  blocksize {{ storage.blocksize }}
+          {% endif %}
+          {% if storage.maxfiles is defined %}
+                  maxfiles {{ storage.maxfiles }}
+          {% endif %}
+
+          {% endif %}
+          {% endfor %}
+
+    - name: Configure Proxmox directory storage
+      ansible.builtin.blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED DIRECTORY STORAGE"
+        block: |
+          {% for storage in proxmox_directory_storage %}
+          {% if storage.enabled | default(true) %}
+          # {{ storage.description | default(storage.name) }}
+          dir: {{ storage.name }}
+                  path {{ storage.path }}
+                  content {{ storage.content | join(',') }}
+                  nodes {{ storage.nodes | default([ansible_hostname]) | join(',') }}
+          {% if storage.shared is defined %}
+                  shared {{ storage.shared | ternary('1', '0') }}
+          {% endif %}
+          {% if storage.maxfiles is defined %}
+                  maxfiles {{ storage.maxfiles }}
+          {% endif %}
+          {% if storage.preallocate is defined %}
+                  preallocate {{ storage.preallocate | ternary('1', '0') }}
+          {% endif %}
+          {% if storage.format is defined %}
+                  format {{ storage.format }}
+          {% endif %}
+
+          {% endif %}
+          {% endfor %}
+
+    - name: Configure Proxmox NFS storage
+      ansible.builtin.blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED NFS STORAGE"
+        block: |
+          {% for storage in proxmox_nfs_storage | default([]) %}
+          {% if storage.enabled | default(true) %}
+          # {{ storage.description | default(storage.name) }}
+          nfs: {{ storage.name }}
+                  server {{ storage.server }}
+                  export {{ storage.export }}
+                  content {{ storage.content | join(',') }}
+                  nodes {{ storage.nodes | default([ansible_hostname]) | join(',') }}
+          {% if storage.options is defined %}
+                  options {{ storage.options }}
+          {% endif %}
+          {% if storage.maxfiles is defined %}
+                  maxfiles {{ storage.maxfiles }}
+          {% endif %}
+
+          {% endif %}
+          {% endfor %}
+
+    - name: Configure Proxmox CIFS storage
+      ansible.builtin.blockinfile:
+        path: /etc/pve/storage.cfg
+        marker: "# {mark} ANSIBLE MANAGED CIFS STORAGE"
+        block: |
+          {% for storage in proxmox_cifs_storage | default([]) %}
+          {% if storage.enabled | default(true) %}
+          # {{ storage.description | default(storage.name) }}
+          cifs: {{ storage.name }}
+                  server {{ storage.server }}
+                  share {{ storage.share }}
+                  content {{ storage.content | join(',') }}
+                  nodes {{ storage.nodes | default([ansible_hostname]) | join(',') }}
+          {% if storage.username is defined %}
+                  username {{ storage.username }}
+          {% endif %}
+          {% if storage.password is defined %}
+                  password {{ storage.password }}
+          {% endif %}
+          {% if storage.domain is defined %}
+                  domain {{ storage.domain }}
+          {% endif %}
+          {% if storage.options is defined %}
+                  options {{ storage.options }}
+          {% endif %}
+          {% if storage.maxfiles is defined %}
+                  maxfiles {{ storage.maxfiles }}
+          {% endif %}
+
+          {% endif %}
+          {% endfor %}
+
+    - name: Refresh Proxmox storage state
+      ansible.builtin.command: "pvesm status"
+      changed_when: false
+
+  post_tasks:
+    - name: Analyze configuration state for summary
+      ansible.builtin.set_fact:
+        pools_existed: "{{ pool_status.results | selectattr('stdout', 'match', '.*configured$') | list | length }}"
+        total_pools: "{{ zfs_pools | length }}"
+        hot_partition_existed: false
+        infrastructure_lv_existed: "{{ infrastructure_lv_check.stdout == 'exists' }}"
+        changes_made: "{{ ansible_play_batch | length > 0 and (ansible_play_recap[inventory_hostname].changed | default(0)) > 5 }}"
+
+    - name: Display configuration state summary
+      ansible.builtin.debug:
+        msg:
+          - "=== STORAGE CONFIGURATION ANALYSIS ==="
+          - "System validation: PASSED"
+          - "ZFS pools found: {{ pools_existed }}/{{ total_pools }} already configured"
+          - "Hot storage: LVM LV '{{ _hot_lv_name | default('hot') }}' on VG {{ volume_group }} → {{ hot_storage.mount_point }}"
+          - "Infrastructure LV: {{ 'EXISTS' if infrastructure_lv_existed else 'CREATED' }}"
+          - "Configuration state: {{ 'MAINTAINED (no changes needed)' if not changes_made else 'UPDATED (changes applied)' }}"
+          - ""
+          - "=== STORAGE LAYOUT ==="
+          - "Boot disk ({{ storage_devices.boot_device }}):"
+          - "  - LVM: {{ volume_group }}/{{ infrastructure_storage.lv_name }} → {{ infrastructure_storage.mount_point }}"
+          - "  - Hot storage (LV): /dev/{{ volume_group }}/{{ _hot_lv_name | default('hot') }} → {{ hot_storage.mount_point }}"
+          - "ZFS Pools:"
+          - "  - {{ zfs_pools.keys() | list | join(', ') }}"
+          - ""
+          - "=== PROXMOX STORAGE ==="
+          - "Infrastructure: {{ infrastructure_storage.mount_point }} (directory storage)"
+          - "ZFS pools: {{ zfs_pools.keys() | list | join('-containers, ') }}-containers"
+          - ""
+          - "=== SYSTEM STATUS ==="
+          - "Storage automation: COMPLETED SUCCESSFULLY"
+          - "System ready for: {{ 'continued operation' if not changes_made else 'tiered application deployment' }}"
+          - ""
+          - "Next steps:"
+          - "  - Deploy infrastructure containers: Use infrastructure-storage"
+          - "  - Deploy workload containers: Use *-containers storage"
+          - "  - Verify pools: zpool status"
+          - "  - Check mounts: df -h"
+          - "  - View Proxmox storage: pvesm status"

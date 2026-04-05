@@ -14,64 +14,65 @@
 
   tasks:
     - name: Ensure automation user exists
-      command: pveum user add {{ pve_user }} --comment "Terraform automation account"
+      ansible.builtin.command: pveum user add {{ pve_user }} --comment "Terraform automation account"
       register: _user_add
-      failed_when: _user_add.rc not in [0,2]
+      failed_when: _user_add.rc not in [0, 2]
       changed_when: _user_add.rc == 0
 
     - name: Grant Administrator role to user
-      command: pveum aclmod / -user {{ pve_user }} -role Administrator
+      ansible.builtin.command: pveum aclmod / -user {{ pve_user }} -role Administrator
       register: _acl_user
       failed_when: _acl_user.rc != 0
       changed_when: false
 
     - name: List existing tokens for {{ pve_user }}
-      command: pveum user token list {{ pve_user }} --output-format json
+      ansible.builtin.command: pveum user token list {{ pve_user }} --output-format json
       register: _token_list
+      changed_when: false
 
     - name: Decide if token exists
-      set_fact:
-        token_exists: "{{ (_token_list.stdout | from_json) | selectattr('tokenid','equalto', token_id) | list | length > 0 }}"
+      ansible.builtin.set_fact:
+        token_exists: "{{ (_token_list.stdout | from_json) | selectattr('tokenid', 'equalto', token_id) | list | length > 0 }}"
 
     - name: Remove existing token (rotation enabled)
       when: token_exists and rotate_token
-      command: pveum user token remove {{ pve_user }} {{ token_id }}
+      ansible.builtin.command: pveum user token remove {{ pve_user }} {{ token_id }}
       register: _token_rm
-      failed_when: _token_rm.rc not in [0,2]
+      failed_when: _token_rm.rc not in [0, 2]
       changed_when: _token_rm.rc == 0
 
     - name: Create token (privsep=0) and capture secret
       when: (not token_exists) or rotate_token
-      command: pveum user token add {{ pve_user }} {{ token_id }} --privsep 0 --output-format json
+      ansible.builtin.command: pveum user token add {{ pve_user }} {{ token_id }} --privsep 0 --output-format json
       register: _token_add
       changed_when: true
 
     - name: Parse token secret (only available on creation)
       when: (not token_exists) or rotate_token
-      set_fact:
+      ansible.builtin.set_fact:
         pm_api_token_id: "{{ pve_user }}!{{ token_id }}"
         pm_api_token_secret: "{{ (_token_add.stdout | from_json).value | default('') }}"
 
     - name: Ensure pm_api_token_id fact exists (when not rotating)
       when: token_exists and not rotate_token
-      set_fact:
+      ansible.builtin.set_fact:
         pm_api_token_id: "{{ pve_user }}!{{ token_id }}"
 
     # Output the token info
     - name: Show token ID
-      debug:
+      ansible.builtin.debug:
         msg: "pm_api_token_id={{ pm_api_token_id }}"
 
     - name: Show token secret (only if newly created/rotated)
       when: pm_api_token_secret is defined and pm_api_token_secret | length > 0
-      debug:
+      ansible.builtin.debug:
         msg: "pm_api_token_secret={{ pm_api_token_secret }}"
 
     - name: Verify token permissions
-      command: pveum user token permissions {{ pve_user }} {{ token_id }}
+      ansible.builtin.command: pveum user token permissions {{ pve_user }} {{ token_id }}
       register: _token_perms
       changed_when: false
 
     - name: Display permission verification
-      debug:
+      ansible.builtin.debug:
         msg: "Token has been created with Administrator privileges via privsep=0"
