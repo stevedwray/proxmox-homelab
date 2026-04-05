@@ -1,0 +1,23 @@
+# Harbor registry stack deployment
+# Phase 1: Docker base + Portainer agent registration
+# Phase 2 (TODO): harbor_installer + harbor_postconfigure roles
+
+---
+- name: Configure Docker base and Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - docker_base
+    - portainer_agent
+
+- name: Register endpoint with Portainer
+  hosts: all
+  become: false
+  gather_facts: false
+  vars:
+    portainer_api_server_ip: "{{ portainer_server_ip }}"
+    portainer_api_endpoint_name: "{{ inventory_hostname }}"
+    portainer_api_agent_ip: "{{ ansible_host }}"
+  roles:
+    - portainer_api

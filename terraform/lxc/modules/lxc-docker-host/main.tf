@@ -39,6 +39,15 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     path   = "/var/lib/docker"
   }
 
+  dynamic "mount_point" {
+    for_each = var.extra_mount_path != null ? [1] : []
+    content {
+      volume = coalesce(var.extra_mount_storage, var.rootfs_storage)
+      size   = var.extra_mount_size
+      path   = var.extra_mount_path
+    }
+  }
+
   operating_system {
     template_file_id = var.ostemplate
     type             = var.ostype
