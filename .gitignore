@@ -18,6 +18,9 @@ override.tf.json
 *_override.tf
 *_override.tf.json
 
+# Terragrunt
+.terragrunt-cache/
+
 # Generated inventory (Terraform output)
 **/stacks/*/inventory.yml
 
