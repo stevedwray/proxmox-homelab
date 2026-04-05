@@ -65,13 +65,13 @@
         mode: "0644"
         content: |
           Types: deb deb-src
-          URIs: http://deb.debian.org/debian/
+          URIs: https://deb.debian.org/debian/
           Suites: {{ pmx_repo_suite }} {{ pmx_repo_suite }}-updates
           Components: main non-free-firmware
           Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 
           Types: deb deb-src
-          URIs: http://security.debian.org/debian-security/
+          URIs: https://security.debian.org/debian-security/
           Suites: {{ pmx_repo_suite }}-security
           Components: main non-free-firmware
           Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
