@@ -15,7 +15,7 @@
     # Device existence and basic validation
     # =====================================
     - name: Check if storage devices exist
-      stat:
+      ansible.builtin.stat:
         path: "{{ item }}"
       register: device_existence
       loop:
@@ -27,7 +27,7 @@
       failed_when: false
 
     - name: Report device existence
-      debug:
+      ansible.builtin.debug:
         msg: |
           Device: {{ item.item }}
           Exists: {{ item.stat.exists }}
@@ -35,19 +35,19 @@
       loop: "{{ device_existence.results }}"
 
     - name: Check boot device size
-      command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+      ansible.builtin.command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
       register: boot_device_size_check
       changed_when: false
 
     - name: Display boot device information
-      debug:
+      ansible.builtin.debug:
         msg: |
           Boot device: {{ storage_devices.boot_device }}
           Raw size (bytes): {{ boot_device_size_check.stdout }}
           Size (GB): {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}
 
     - name: Validate boot device size for production
-      assert:
+      ansible.builtin.assert:
         that: boot_device_size_check.stdout | int > 200000000000  # 200GB minimum
         fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB"
         success_msg: "Boot device validation passed: {{ (boot_device_size_check.stdout | int / 1000000000) | round(1) }}GB"
@@ -58,7 +58,7 @@
     - name: Check ZFS device sizes and cleanliness
       block:
         - name: Get ZFS device information
-          shell: |
+          ansible.builtin.shell: |
             set -o pipefail
             echo "=== {{ item }} ==="
             if [ -b "{{ item }}" ]; then
@@ -82,7 +82,7 @@
           failed_when: false
 
         - name: Display ZFS device status
-          debug:
+          ansible.builtin.debug:
             msg: "{{ item.stdout_lines }}"
           loop: "{{ zfs_device_info.results }}"
 
@@ -92,7 +92,7 @@
     - name: Check root ZFS pool status
       block:
         - name: Get root ZFS pool name
-          shell: |
+          ansible.builtin.shell: |
             set -o pipefail
             zpool list -H -o name | grep -E '^(rpool|tank)$' | head -1
           register: root_pool_name_check
@@ -100,13 +100,13 @@
           failed_when: false
 
         - name: Validate root pool exists
-          assert:
+          ansible.builtin.assert:
             that: root_pool_name_check.stdout != ""
             fail_msg: "No root ZFS pool found (expected 'rpool' or 'tank')"
             success_msg: "Root ZFS pool found: {{ root_pool_name_check.stdout }}"
 
         - name: Get root pool details
-          shell: |
+          ansible.builtin.shell: |
             set -o pipefail
             pool_name="{{ root_pool_name_check.stdout }}"
             echo "=== Root ZFS Pool Status ==="
@@ -125,18 +125,18 @@
           when: root_pool_name_check.stdout != ""
 
         - name: Display root pool status
-          debug:
+          ansible.builtin.debug:
             msg: "{{ root_pool_status.stdout_lines }}"
           when: root_pool_name_check.stdout != ""
 
         - name: Check if infrastructure dataset already exists
-          shell: "zfs list {{ infrastructure_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+          ansible.builtin.shell: "zfs list {{ infrastructure_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
           register: infrastructure_dataset_exists
           changed_when: false
           when: root_pool_name_check.stdout != ""
 
         - name: Check if hot storage dataset already exists
-          shell: "zfs list {{ hot_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+          ansible.builtin.shell: "zfs list {{ hot_storage.dataset }} >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
           register: hot_dataset_exists
           changed_when: false
           when:
@@ -144,7 +144,7 @@
             - hot_storage.enabled | default(true)
 
         - name: Display dataset existence status
-          debug:
+          ansible.builtin.debug:
             msg: |
               Infrastructure dataset ({{ infrastructure_storage.dataset }}): {{ infrastructure_dataset_exists.stdout | default('N/A') }}
               Hot storage dataset ({{ hot_storage.dataset }}): {{ hot_dataset_exists.stdout | default('N/A') }}
@@ -155,12 +155,12 @@
     - name: Analyze boot disk partitioning (informational)
       block:
         - name: Get boot disk partition layout
-          command: "parted {{ storage_devices.boot_device }} print free"
+          ansible.builtin.command: "parted {{ storage_devices.boot_device }} print free"
           register: boot_partition_layout
           changed_when: false
 
         - name: Display boot disk layout
-          debug:
+          ansible.builtin.debug:
             msg: "{{ boot_partition_layout.stdout_lines }}"
 
     # =====================================
@@ -169,12 +169,12 @@
     - name: Check existing ZFS pools
       block:
         - name: List current ZFS pools
-          shell: "zpool list 2>/dev/null || echo 'No pools found'"
+          ansible.builtin.shell: "zpool list 2>/dev/null || echo 'No pools found'"
           register: current_pools
           changed_when: false
 
         - name: Check for existing pool names that would conflict
-          shell: |
+          ansible.builtin.shell: |
             for pool in security gaming monitoring apps; do
               zpool status $pool 2>/dev/null && echo "$pool: EXISTS" || echo "$pool: AVAILABLE"
             done
@@ -182,7 +182,7 @@
           changed_when: false
 
         - name: Display ZFS pool status
-          debug:
+          ansible.builtin.debug:
             msg: |
               Current pools: {{ current_pools.stdout }}
               Pool name availability: {{ pool_name_conflicts.stdout_lines }}
@@ -193,13 +193,13 @@
     - name: Analyze root pool space requirements
       block:
         - name: Get root pool available space in bytes
-          command: "zfs get -H -p -o value available {{ root_pool_name_check.stdout }}"
+          ansible.builtin.command: "zfs get -H -p -o value available {{ root_pool_name_check.stdout }}"
           register: root_pool_available_bytes
           changed_when: false
           when: root_pool_name_check.stdout != ""
 
         - name: Calculate space requirements
-          set_fact:
+          ansible.builtin.set_fact:
             infrastructure_quota_bytes: "{{ (infrastructure_storage.quota | regex_replace('G$', '') | int * 1000000000) }}"
             hot_quota_bytes: "{{ (hot_storage.quota | regex_replace('G$', '') | int * 1000000000) if hot_storage.enabled else 0 }}"
             total_required_bytes: >-
@@ -209,7 +209,7 @@
           when: root_pool_name_check.stdout != ""
 
         - name: Display space analysis
-          debug:
+          ansible.builtin.debug:
             msg: |
               Root pool available: {{ (available_bytes | int / 1000000000) | round(1) }}GB
               Infrastructure quota: {{ infrastructure_storage.quota }}
@@ -222,7 +222,7 @@
     # System readiness summary
     # =====================================
     - name: Generate readiness summary
-      debug:
+      ansible.builtin.debug:
         msg: |
           =======================================================
           ZFS STORAGE SETUP READINESS REPORT

@@ -16,14 +16,14 @@
     # HOT STORAGE: mounted + fstab + options + directories
     # ------------------------------------------------------------
     - name: Check hot storage mount is present
-      command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ hot_storage.mount_point }}"
+      ansible.builtin.command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ hot_storage.mount_point }}"
       register: hot_findmnt
       changed_when: false
       failed_when: hot_findmnt.rc != 0
       when: hot_storage.enabled | default(false)
 
     - name: Validate hot storage fstype/options from findmnt
-      assert:
+      ansible.builtin.assert:
         that:
           - "'ext4' in hot_findmnt.stdout"
           - "'noatime' in hot_findmnt.stdout"
@@ -32,21 +32,23 @@
       when: hot_storage.enabled | default(false)
 
     - name: Hot storage fstab line exists
-      shell: "grep -E '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point }}[[:space:]]+ext4[[:space:]]' /etc/fstab"
+      ansible.builtin.shell: >-
+        grep -E '^LABEL={{ hot_storage.filesystem_label }}[[:space:]]+{{ hot_storage.mount_point
+        }}[[:space:]]+ext4[[:space:]]' /etc/fstab
       register: hot_fstab
       changed_when: false
       failed_when: hot_fstab.rc != 0
       when: hot_storage.enabled | default(false)
 
     - name: Ensure hot storage subdirectories exist
-      stat:
+      ansible.builtin.stat:
         path: "{{ hot_storage.mount_point }}/{{ item }}"
       loop: "{{ hot_storage_directories }}"
       register: hot_dir_stats
       when: hot_storage.enabled | default(false)
 
     - name: Assert hot storage subdirectories
-      assert:
+      ansible.builtin.assert:
         that: item.stat.exists and item.stat.isdir
         fail_msg: "Missing or not a directory: {{ item.stat.path }}"
       loop: "{{ hot_dir_stats.results | list }}"
@@ -57,7 +59,7 @@
     # (Only if temporary_storage is defined and enabled)
     # ------------------------------------------------------------
     - name: Check temporary storage mount is present
-      command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ temporary_storage.mount_point }}"
+      ansible.builtin.command: "findmnt -no SOURCE,FSTYPE,OPTIONS {{ temporary_storage.mount_point }}"
       register: temp_findmnt
       changed_when: false
       failed_when: temp_findmnt.rc != 0
@@ -66,7 +68,7 @@
         - temporary_storage.enabled | default(false)
 
     - name: Validate temporary storage fstype/options from findmnt
-      assert:
+      ansible.builtin.assert:
         that:
           - "'{{ temporary_storage.filesystem }}' in temp_findmnt.stdout"
           - "'noatime' in temp_findmnt.stdout"
@@ -77,7 +79,7 @@
         - temporary_storage.enabled | default(false)
 
     - name: Temporary storage fstab line exists
-      shell: >-
+      ansible.builtin.shell: >-
         grep -E '^LABEL={{ temporary_storage.filesystem_label }}[[:space:]]+{{ temporary_storage.mount_point
         }}[[:space:]]+{{ temporary_storage.filesystem }}[[:space:]]' /etc/fstab
       register: temp_fstab
@@ -91,14 +93,14 @@
     # ZFS POOLS: exist, online, and pool properties
     # ------------------------------------------------------------
     - name: Check ZFS pools exist
-      command: "zpool list -H -o name {{ item.key }}"
+      ansible.builtin.command: "zpool list -H -o name {{ item.key }}"
       register: zpool_list
       changed_when: false
       failed_when: zpool_list.rc != 0
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Pools are ONLINE
-      shell: |
+      ansible.builtin.shell: |
         set -o pipefail
         zpool status {{ item.key }} | grep -E 'state:[[:space:]]+ONLINE'
       register: zpool_status
@@ -107,13 +109,13 @@
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Pool property ashift matches
-      command: "zpool get -H -o value ashift {{ item.key }}"
+      ansible.builtin.command: "zpool get -H -o value ashift {{ item.key }}"
       register: zpool_ashift
       changed_when: false
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Assert pool ashift values
-      assert:
+      ansible.builtin.assert:
         that: item.stdout.strip() == item.item.value.properties.ashift | string
         fail_msg: >-
           Pool {{ item.item.key }} ashift is {{ item.stdout.strip() }},
@@ -121,13 +123,13 @@
       loop: "{{ zpool_ashift.results }}"
 
     - name: Pool property autotrim matches
-      command: "zpool get -H -o value autotrim {{ item.key }}"
+      ansible.builtin.command: "zpool get -H -o value autotrim {{ item.key }}"
       register: zpool_autotrim
       changed_when: false
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Assert pool autotrim values
-      assert:
+      ansible.builtin.assert:
         that: item.stdout.strip() == (zfs_pool_defaults.autotrim | default('on'))
         fail_msg: >-
           Pool {{ item.item.key }} autotrim is {{ item.stdout.strip() }},
@@ -138,13 +140,13 @@
     # ROOT DATASET PROPERTIES (on pool root datasets)
     # ------------------------------------------------------------
     - name: Root dataset compression matches
-      command: "zfs get -H -o value compression {{ item.key }}"
+      ansible.builtin.command: "zfs get -H -o value compression {{ item.key }}"
       register: zfs_comp
       changed_when: false
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Assert compression
-      assert:
+      ansible.builtin.assert:
         that: item.stdout.strip() == item.item.value.properties.compression
         fail_msg: >-
           Root dataset {{ item.item.key }} compression is {{ item.stdout.strip() }},
@@ -152,13 +154,13 @@
       loop: "{{ zfs_comp.results }}"
 
     - name: Root dataset atime matches
-      command: "zfs get -H -o value atime {{ item.key }}"
+      ansible.builtin.command: "zfs get -H -o value atime {{ item.key }}"
       register: zfs_atime
       changed_when: false
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Assert atime
-      assert:
+      ansible.builtin.assert:
         that: item.stdout.strip() == item.item.value.properties.atime
         fail_msg: >-
           Root dataset {{ item.item.key }} atime is {{ item.stdout.strip() }},
@@ -166,13 +168,13 @@
       loop: "{{ zfs_atime.results }}"
 
     - name: Root dataset xattr and acltype
-      command: "zfs get -H -o value xattr,acltype {{ item.key }}"
+      ansible.builtin.command: "zfs get -H -o value xattr,acltype {{ item.key }}"
       register: zfs_xattr_acl
       changed_when: false
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Assert xattr/acltype
-      assert:
+      ansible.builtin.assert:
         that:
           - (item.stdout_lines[0] | trim) in ['sa', 'on']   # keep lenient xattr
           - (item.stdout_lines[1] | trim) in ['posixacl', 'posix']   # accept both spellings
@@ -186,24 +188,24 @@
     # WORKLOAD DATASETS (exist + property checks)
     # ------------------------------------------------------------
     - name: Build combined dataset list for checks
-      set_fact:
+      ansible.builtin.set_fact:
         _all_datasets: "{{ (security_datasets + gaming_datasets + monitoring_datasets) }}"
 
     - name: Dataset exists
-      command: "zfs list -H -o name {{ item.name }}"
+      ansible.builtin.command: "zfs list -H -o name {{ item.name }}"
       register: ds_exists
       changed_when: false
       failed_when: ds_exists.rc != 0
       loop: "{{ _all_datasets }}"
 
     - name: Read dataset properties in bulk
-      command: "zfs get -H -o value {{ item.properties | dict2items | map(attribute='key') | join(',') }} {{ item.name }}"
+      ansible.builtin.command: "zfs get -H -o value {{ item.properties | dict2items | map(attribute='key') | join(',') }} {{ item.name }}"
       register: ds_values
       changed_when: false
       loop: "{{ _all_datasets }}"
 
     - name: Assert dataset property values
-      assert:
+      ansible.builtin.assert:
         that:
           - (item.stdout_lines | map('trim') | list)
             ==
