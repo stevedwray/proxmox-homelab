@@ -1,4 +1,4 @@
-"""Discover homelab topology from Proxmox, stack.yaml files, and Portainer API."""
+"""Discover homelab topology from Proxmox, Portainer, and Mikrotik."""
 
 import glob
 import json
@@ -8,6 +8,7 @@ import urllib.error
 
 import yaml
 
+from mikrotik_client import discover_from_mikrotik
 from proxmox_client import discover_from_proxmox
 
 
@@ -261,8 +262,48 @@ def build_topology():
     return vms
 
 
+def build_network_topology():
+    """Build router and network topology from Mikrotik.
+
+    Returns a dict with router metadata, interfaces, VLANs, and IP addresses.
+    If Mikrotik credentials are not configured, returns an empty topology.
+    """
+    if not (os.environ.get("MIKROTIK_USER") and os.environ.get("MIKROTIK_PASSWORD")):
+        return {
+            "router": None,
+            "interfaces": [],
+            "vlans": [],
+            "ip_addresses": [],
+        }
+
+    data = discover_from_mikrotik()
+    return {
+        "router": data.get("router"),
+        "interfaces": data.get("interfaces", []),
+        "vlans": data.get("vlans", []),
+        "ip_addresses": data.get("ip_addresses", []),
+    }
+
+
+def build_full_topology():
+    """Build the full homelab topology payload.
+
+    Returns:
+    {
+        "vms": [...],
+        "network": {...}
+    }
+    """
+    return {
+        "vms": build_topology(),
+        "network": build_network_topology(),
+    }
+
+
 if __name__ == "__main__":
-    vms = build_topology()
+    full = build_full_topology()
+    vms = full["vms"]
+    network = full["network"]
     print(f"Discovered {len(vms)} VMs:\n")
     for vm in vms:
         svcs = ", ".join(f"{s['name']}:{s['port']}" for s in vm["services"])
@@ -271,3 +312,11 @@ if __name__ == "__main__":
               f"vcpus={vm['vcpus']} mem={vm['memory']}  [{tags}]")
         if svcs:
             print(f"    services: {svcs}")
+
+    router = network.get("router")
+    if router:
+        print("\nNetwork Discovery:")
+        print(f"  router: {router.get('identity', 'Mikrotik')} @ {router.get('host', '')}")
+        print(f"  interfaces: {len(network.get('interfaces', []))}")
+        print(f"  vlans: {len(network.get('vlans', []))}")
+        print(f"  router IPs: {len(network.get('ip_addresses', []))}")

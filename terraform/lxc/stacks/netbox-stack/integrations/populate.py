@@ -12,7 +12,7 @@ Usage:
 """
 
 from client import NetBoxClient
-from discover import build_topology
+from discover import build_full_topology
 
 # ---------------------------------------------------------------------------
 # Static definitions (things not discovered automatically)
@@ -37,6 +37,7 @@ DEVICE_ROLES = [
 
 DEVICE_TYPES = [
     {"manufacturer": "Generic", "model": "Proxmox Server", "slug": "proxmox-server"},
+    {"manufacturer": "Generic", "model": "Mikrotik Router", "slug": "mikrotik-router"},
 ]
 
 DEVICES = [
@@ -127,6 +128,86 @@ def populate_physical(nb, site):
         nb.ensure("/virtualization/clusters/", {"name": cl_def["name"]}, {
             "type": ctype["id"], "site": site["id"], "description": cl_def["description"],
         })
+
+
+def populate_network(nb, site, network):
+    """Create router device, interfaces, VLANs, and router IPs from Mikrotik discovery."""
+    print("\n=== Network Infrastructure ===")
+
+    router = network.get("router")
+    if not router:
+        print("  skip: Mikrotik credentials not configured; no router data discovered")
+        return
+
+    role = nb.get("/dcim/device-roles/", name="Network")["results"][0]
+    dtype = nb.get("/dcim/device-types/", model="Mikrotik Router")["results"][0]
+
+    router_name = router.get("identity", "mikrotik-router")
+    router_device = nb.ensure("/dcim/devices/", {"name": router_name}, {
+        "role": role["id"],
+        "device_type": dtype["id"],
+        "site": site["id"],
+        "status": "active",
+        "description": f"Discovered via Mikrotik API ({router.get('host', '')})",
+    })
+
+    # Create router interfaces.
+    for iface_def in network.get("interfaces", []):
+        name = iface_def.get("name")
+        if not name:
+            continue
+        nb.ensure("/dcim/interfaces/", {
+            "device_id": router_device["id"], "name": name,
+        }, {
+            "device": router_device["id"],
+            "name": name,
+            "type": "virtual",
+            "enabled": not iface_def.get("disabled", False),
+            "description": iface_def.get("type", "") or "",
+        })
+
+    # Create VLAN group for router and VLANs discovered on it.
+    vlan_group = nb.ensure("/ipam/vlan-groups/", {"name": f"{router_name}-vlans"}, {
+        "slug": f"{router_name.lower().replace(' ', '-')}-vlans",
+        "scope_type": "dcim.site",
+        "scope_id": site["id"],
+    })
+
+    for vlan in network.get("vlans", []):
+        vid_raw = vlan.get("vlan-id")
+        if vid_raw is None:
+            continue
+        try:
+            vid = int(vid_raw)
+        except (TypeError, ValueError):
+            continue
+        name = vlan.get("name") or f"vlan-{vid}"
+        nb.ensure("/ipam/vlans/", {"group_id": vlan_group["id"], "vid": vid}, {
+            "group": vlan_group["id"],
+            "name": name,
+            "vid": vid,
+            "status": "active",
+        })
+
+    # Assign router interface IPs.
+    for ip_def in network.get("ip_addresses", []):
+        address = ip_def.get("address")
+        iface_name = ip_def.get("interface")
+        if not address or not iface_name:
+            continue
+        iface_results = nb.get("/dcim/interfaces/", device_id=router_device["id"], name=iface_name)["results"]
+        if not iface_results:
+            continue
+        iface = iface_results[0]
+        ip_obj = nb.ensure("/ipam/ip-addresses/", {"address": address}, {
+            "assigned_object_type": "dcim.interface",
+            "assigned_object_id": iface["id"],
+            "status": "active",
+            "description": f"{router_name}:{iface_name}",
+        })
+        if not router_device.get("primary_ip4") and "." in address:
+            nb.patch(f"/dcim/devices/{router_device['id']}/", {"primary_ip4": ip_obj["id"]})
+            print(f"  updated: primary_ip4 for {router_name}")
 
 
 def populate_virtual(nb, vms):
@@ -225,6 +306,8 @@ def populate_ipam(nb, site, vms):
 WIPE_ORDER = [
     "/ipam/services/",
     "/ipam/ip-addresses/",
+    "/ipam/vlans/",
+    "/ipam/vlan-groups/",
     "/ipam/prefixes/",
     "/virtualization/interfaces/",
     "/virtualization/virtual-machines/",
@@ -279,12 +362,21 @@ def main():
 
     print(f"NetBox: {nb.url}")
 
-    # Discover VMs from stack.yaml + Portainer
-    vms = build_topology()
-    print(f"Discovered {len(vms)} VMs from stack.yaml + Portainer")
+    # Discover full topology (VM + network).
+    topology = build_full_topology()
+    vms = topology["vms"]
+    network = topology["network"]
+    print(f"Discovered {len(vms)} VMs from Proxmox + Portainer")
+    if network.get("router"):
+        print(
+            f"Discovered router {network['router'].get('identity', 'Mikrotik')} "
+            f"with {len(network.get('interfaces', []))} interfaces and "
+            f"{len(network.get('vlans', []))} VLANs"
+        )
 
     site = populate_foundation(nb)
     populate_physical(nb, site)
+    populate_network(nb, site, network)
     populate_virtual(nb, vms)
     populate_ipam(nb, site, vms)
 
