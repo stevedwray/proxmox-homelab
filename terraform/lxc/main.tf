@@ -14,64 +14,81 @@ provider "proxmox" {
 }
 
 # ---------------------------------------------------------------------------
-# Load stack definitions from YAML files
+# Stack configuration — loaded from the stack's own stack.yaml via Terragrunt.
+# Absolute paths are derived from var.stack_yaml_path so they remain correct
+# regardless of Terragrunt's working directory.
 # ---------------------------------------------------------------------------
 locals {
-  stack_dirs = fileset("${path.module}/stacks", "*/stack.yaml")
-  stacks = {
-    for f in local.stack_dirs :
-    dirname(f) => yamldecode(file("${path.module}/stacks/${f}"))
-  }
+  stack_name = var.stack_name
+  stack      = yamldecode(file(var.stack_yaml_path))
+
+  # Derive stable absolute paths from the stack_yaml_path input.
+  stack_dir   = dirname(var.stack_yaml_path)          # …/stacks/<name>
+  lxc_root    = dirname(dirname(local.stack_dir))     # …/terraform/lxc
+  ansible_dir = "${local.lxc_root}/ansible"
 }
 
 # ---------------------------------------------------------------------------
-# Create one LXC container per stack definition
+# LXC container
 # ---------------------------------------------------------------------------
 module "lxc" {
-  source   = "./modules/lxc-docker-host"
-  for_each = local.stacks
+  source = "./modules/lxc-docker-host"
 
-  target_node  = try(each.value.target_node, var.proxmox_node)
-  hostname     = each.value.hostname
-  vmid         = try(each.value.vmid, null)
-  ip_address   = each.value.ip_address
-  gateway      = try(each.value.gateway, var.default_gateway)
-  lxc_password = var.lxc_password
+  target_node         = try(local.stack.target_node, var.proxmox_node)
+  hostname            = local.stack.hostname
+  vmid                = try(local.stack.vmid, null)
+  ip_address          = local.stack.ip_address
+  gateway             = try(local.stack.gateway, var.default_gateway)
+  lxc_password        = var.lxc_password
 
-  cores              = try(each.value.cores, 2)
-  memory             = try(each.value.memory, 2048)
-  swap               = try(each.value.swap, 512)
-  rootfs_size        = try(each.value.rootfs_size, 8)
-  rootfs_storage     = try(each.value.rootfs_storage, var.default_storage)
-  docker_storage_size = try(each.value.docker_storage_size, "20G")
+  cores               = try(local.stack.cores, 2)
+  memory              = try(local.stack.memory, 2048)
+  swap                = try(local.stack.swap, 512)
+  rootfs_size         = try(local.stack.rootfs_size, 8)
+  rootfs_storage      = try(local.stack.rootfs_storage, var.default_storage)
+  docker_storage_size = try(local.stack.docker_storage_size, "20G")
 
-  ostemplate      = try(each.value.ostemplate, "local:vztmpl/debian-docker-template.tar.gz")
+  ostemplate      = try(local.stack.ostemplate, "local:vztmpl/debian-docker-template.tar.gz")
   ssh_public_keys = file(pathexpand(var.ssh_public_key_path))
-  tags            = try(each.value.tags, [each.key])
+  tags            = try(local.stack.tags, [local.stack_name])
 }
 
 # ---------------------------------------------------------------------------
-# Configure keyctl feature flag via Ansible (requires root@pam on PVE host)
-# Uses delegate_to instead of raw SSH for idempotency and wait_for_connection.
-# Triggered automatically for any stack with keyctl: true in stack.yaml.
+# Ansible inventory (always generated)
+# ---------------------------------------------------------------------------
+resource "local_file" "ansible_inventory" {
+  filename = "${local.stack_dir}/inventory.yml"
+  content = templatefile("${local.lxc_root}/templates/inventory.tpl", {
+    stack_name          = local.stack_name
+    hostname            = module.lxc.hostname
+    ip_address          = replace(module.lxc.ip_address, "/24", "")
+    ssh_key             = var.ssh_private_key_path
+    ansible_playbook    = try(local.stack.ansible_playbook, "")
+    portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
+    app_stack_name      = try(local.stack.app_stack_name, local.stack_name)
+    vmid                = module.lxc.container_id
+    pve_host            = var.proxmox_host
+  })
+}
+
+# ---------------------------------------------------------------------------
+# keyctl feature flag via Ansible (only if keyctl: true in stack.yaml)
+# Requires root@pam — cannot be set via API token.
 # ---------------------------------------------------------------------------
 resource "null_resource" "configure_keyctl" {
-  for_each = {
-    for k, v in local.stacks : k => v
-    if try(v.keyctl, false)
-  }
+  count = try(local.stack.keyctl, false) ? 1 : 0
 
   triggers = {
-    container_id = module.lxc[each.key].container_id
+    container_id = module.lxc.container_id
   }
 
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i ../stacks/${each.key}/inventory.yml \
+        -i ${local.stack_dir}/inventory.yml \
         playbooks/configure-keyctl.yml
     EOT
-    working_dir = "${path.module}/ansible"
+    working_dir = local.ansible_dir
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
@@ -82,47 +99,24 @@ resource "null_resource" "configure_keyctl" {
 }
 
 # ---------------------------------------------------------------------------
-# Generate per-stack Ansible inventory
-# ---------------------------------------------------------------------------
-resource "local_file" "ansible_inventory" {
-  for_each = local.stacks
-
-  filename = "${path.module}/stacks/${each.key}/inventory.yml"
-  content = templatefile("${path.module}/templates/inventory.tpl", {
-    stack_name = each.key
-    hostname   = module.lxc[each.key].hostname
-    ip_address = replace(module.lxc[each.key].ip_address, "/24", "")
-    ssh_key    = var.ssh_private_key_path
-    ansible_playbook    = try(each.value.ansible_playbook, "")
-    portainer_server_ip = try(each.value.portainer_server_ip, var.portainer_server_ip)
-    app_stack_name      = try(each.value.app_stack_name, each.key)
-    vmid                = module.lxc[each.key].container_id
-    pve_host            = var.proxmox_host
-  })
-}
-
-# ---------------------------------------------------------------------------
-# Run Ansible provisioning per stack (only if ansible_playbook is defined)
+# Ansible provisioning (only if ansible_playbook is set in stack.yaml)
 # ---------------------------------------------------------------------------
 resource "null_resource" "ansible_provision" {
-  for_each = {
-    for k, v in local.stacks : k => v
-    if try(v.ansible_playbook, "") != ""
-  }
+  count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0
 
   triggers = {
-    container_id      = module.lxc[each.key].container_id
-    inventory_content = local_file.ansible_inventory[each.key].content
-    playbook          = each.value.ansible_playbook
+    container_id      = module.lxc.container_id
+    inventory_content = local_file.ansible_inventory.content
+    playbook          = try(local.stack.ansible_playbook, "")
   }
 
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i ../stacks/${each.key}/inventory.yml \
-        playbooks/${each.value.ansible_playbook}.yml
+        -i ${local.stack_dir}/inventory.yml \
+        playbooks/${try(local.stack.ansible_playbook, "noop")}.yml
     EOT
-    working_dir = "${path.module}/ansible"
+    working_dir = local.ansible_dir
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
@@ -134,19 +128,17 @@ resource "null_resource" "ansible_provision" {
 }
 
 # ---------------------------------------------------------------------------
-# Cleanup on destroy: deregister from Portainer if applicable
+# Portainer cleanup on destroy (only if portainer_agent: true in stack.yaml)
 # ---------------------------------------------------------------------------
 resource "null_resource" "stack_cleanup" {
-  for_each = {
-    for k, v in local.stacks : k => v
-    if try(v.portainer_agent, false)
-  }
+  count = try(local.stack.portainer_agent, false) ? 1 : 0
 
   triggers = {
-    stack_name          = each.key
-    hostname            = each.value.hostname
-    portainer_server_ip = try(each.value.portainer_server_ip, var.portainer_server_ip)
-    working_dir         = "${path.module}/ansible"
+    stack_name          = local.stack_name
+    hostname            = local.stack.hostname
+    portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
+    # Stored as a trigger so destroy provisioner has a stable absolute path.
+    ansible_dir         = local.ansible_dir
   }
 
   provisioner "local-exec" {
@@ -158,7 +150,7 @@ resource "null_resource" "stack_cleanup" {
       export ANSIBLE_HOST_KEY_CHECKING="False"
       ansible-playbook -i localhost, playbooks/cleanup.yml
     EOT
-    working_dir = self.triggers.working_dir
+    working_dir = self.triggers.ansible_dir
     on_failure  = continue
   }
 
