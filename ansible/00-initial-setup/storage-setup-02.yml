@@ -167,7 +167,7 @@
       ansible.builtin.file:
         path: "{{ infrastructure_storage.mount_point }}"
         state: directory
-        mode: '0755'
+        mode: '0750'
 
     - name: Add infrastructure storage to fstab
       ansible.posix.mount:
@@ -289,7 +289,7 @@
       ansible.builtin.file:
         path: "{{ hot_storage.mount_point }}"
         state: directory
-        mode: '0755'
+        mode: '0750'
       when: hot_storage.enabled | default(false)
 
     - name: Add hot LV to fstab (by LABEL)
@@ -408,7 +408,7 @@
       ansible.builtin.file:
         path: "{{ infrastructure_storage.mount_point }}/{{ item }}"
         state: directory
-        mode: '0755'
+        mode: '0750'
       loop: "{{ infrastructure_directories }}"
 
     # =====================================
@@ -419,7 +419,7 @@
       ansible.builtin.file:
         path: "{{ hot_storage.mount_point }}/{{ item }}"
         state: directory
-        mode: '0755'
+        mode: '0750'
       loop: "{{ hot_storage_directories }}"
       when: hot_storage.enabled | default(false)
 
