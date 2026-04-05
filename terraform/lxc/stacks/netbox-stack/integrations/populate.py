@@ -142,14 +142,15 @@ def populate_virtual(nb, vms):
             tag = nb.ensure("/extras/tags/", {"name": tag_name}, {"slug": tag_name})
             tag_ids.append({"name": tag_name, "slug": tag_name})
 
+        # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
         vm = nb.ensure("/virtualization/virtual-machines/", {"name": vm_def["name"]}, {
             "cluster": cluster["id"],
             "platform": platform["id"],
-            "status": vm_def["status"],
+            "status": "active",  # NetBox only accepts 'active' for VMs
             "vcpus": vm_def.get("vcpus"),
             "memory": vm_def.get("memory"),
             "disk": vm_def.get("disk"),
-            "description": vm_def.get("description", ""),
+            "description": f"{vm_def.get('description', '')} [Status: {vm_def['status']}]",
             "tags": tag_ids,
         })
 
