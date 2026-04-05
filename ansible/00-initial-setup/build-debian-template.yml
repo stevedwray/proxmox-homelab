@@ -66,7 +66,9 @@
     # =====================================
     
     - name: Check if template container already exists
-      shell: pct list | grep -q "^{{ template_id }}\s"
+      shell: |
+        set -o pipefail
+        pct list | grep -q "^{{ template_id }}\s"
       register: container_exists
       failed_when: false
       changed_when: false
@@ -76,18 +78,22 @@
       changed_when: false
 
     - name: Check if base template is available
-      shell: pveam list local | grep -q "debian-12-standard"
+      shell: |
+        set -o pipefail
+        pveam list local | grep -q "debian-12-standard"
       register: template_available
       failed_when: false
       changed_when: false
 
     - name: Download Debian 12 template if not present
       shell: "pveam download local {{ base_template | regex_replace('local:vztmpl/', '') }}"
+      changed_when: true
       when: 
         - container_exists.rc != 0
         - template_available.rc != 0
 
     - name: Create base LXC container
+      changed_when: true
       shell: >
         pct create {{ template_id }} {{ base_template }}
         --hostname {{ template_hostname }}
@@ -109,6 +115,7 @@
       until: "'running' in container_status.stdout"
       retries: 10
       delay: 5
+      changed_when: false
       when: container_exists.rc != 0
 
     - name: Wait for SSH to be available
@@ -124,6 +131,7 @@
     # =====================================
     
     - name: Configure SSH and create automation user via pct exec
+      changed_when: true
       shell: |
         pct exec {{ template_id }} -- bash -c "
         apt update && apt install -y openssh-server sudo curl wget
@@ -267,7 +275,9 @@
             mode: '0755'
 
         - name: Download and install Docker GPG key
+          changed_when: true
           shell: |
+            set -o pipefail
             curl -fsSL https://download.docker.com/linux/debian/gpg | gpg --dearmor -o /etc/apt/keyrings/docker.gpg
             chmod 644 /etc/apt/keyrings/docker.gpg
 
@@ -480,6 +490,7 @@
             autoremove: true
 
         - name: Clear bash history for all users
+          changed_when: true
           shell: |
             find /home -name ".bash_history" -delete
             find /root -name ".bash_history" -delete
@@ -487,6 +498,7 @@
           failed_when: false
 
         - name: Clear temporary files and logs
+          changed_when: true
           shell: |
             find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
             find /var/log -type f -name "*.log.*" -delete
@@ -508,6 +520,7 @@
             - /etc/ssh/ssh_host_ed25519_key.pub
 
         - name: Clear machine-id (will be regenerated)
+          changed_when: true
           shell: |
             truncate -s 0 /etc/machine-id
             rm -f /var/lib/dbus/machine-id
@@ -534,9 +547,11 @@
     - name: Stop the container
       shell: pct stop {{ template_id }}
       failed_when: false
+      changed_when: true
 
     - name: Convert container to template
       shell: pct template {{ template_id }}
+      changed_when: true
 
     - name: Display template creation success
       debug:
@@ -572,10 +587,12 @@
       command: "pct set {{ clone_id }} -net0 none"
       when: del_net.rc != 0
       failed_when: false
+      changed_when: true
 
     - name: Create vzdump archive
       command: "vzdump {{ clone_id }} --mode stop --compress gzip --dumpdir {{ template_dumpdir }}"
       register: vzdump_run
+      changed_when: true
 
     - name: Parse vzdump output for archive path
       set_fact:
@@ -600,6 +617,7 @@
 
     - name: Rename vzdump archive to final template name
       command: "mv {{ vzdump_archive_path }} {{ template_dumpdir }}/{{ final_template_filename }}"
+      changed_when: true
 
     - name: Set correct permissions on template archive
       file:

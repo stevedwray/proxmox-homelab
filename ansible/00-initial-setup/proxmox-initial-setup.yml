@@ -191,6 +191,7 @@
       ansible.builtin.command: >
         pveum user token list {{ pmx_terraform_user }} --output-format json
       register: _terraform_token_list
+      changed_when: false
       when: pmx_setup_terraform_user
 
     - name: Check if Terraform token exists
@@ -377,3 +378,4 @@
 
     - name: ifreload
       ansible.builtin.command: ifreload -a
+      changed_when: true

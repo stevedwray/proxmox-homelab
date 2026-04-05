@@ -76,7 +76,9 @@
       when: not automation_user_check.failed
 
     - name: Check if PVE automation user exists
-      shell: pveum user list | grep -q "automation@pve"
+      shell: |
+        set -o pipefail
+        pveum user list | grep -q "automation@pve"
       register: pve_user_check
       failed_when: false
       changed_when: false

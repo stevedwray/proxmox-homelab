@@ -41,7 +41,9 @@
           changed_when: false
 
         - name: Check device state for pools that need setup
-          shell: "lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l"
+          shell: |
+            set -o pipefail
+            lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l
           register: device_usage
           loop: "{{ pool_status.results }}"
           when: item.stdout == 'needs_setup'
@@ -55,12 +57,16 @@
           when: item.skipped is not defined
 
     - name: Check for running containers/VMs
-      shell: "pct list 2>/dev/null | grep -c running || true"
+      shell: |
+        set -o pipefail
+        pct list 2>/dev/null | grep -c running || true
       register: running_containers
       changed_when: false
 
     - name: Check for running VMs
-      shell: "qm list 2>/dev/null | grep -c running || true"
+      shell: |
+        set -o pipefail
+        qm list 2>/dev/null | grep -c running || true
       register: running_vms
       changed_when: false
 
@@ -187,6 +193,7 @@
     - name: Wipe filesystem signatures from devices (if pool missing)
       command: "wipefs -a {{ item.item.value.device }}"
       loop: "{{ pool_existence_check.results }}"
+      changed_when: true
       when:
         - item.stdout == 'missing'
         - item.item.value.enabled | default(true)
@@ -217,6 +224,7 @@
     - name: Enable autotrim on existing pools (if not already enabled)
       command: "zpool set autotrim=on {{ item.item.key }}"
       loop: "{{ current_autotrim.results }}"
+      changed_when: true
       when:
         - item.skipped is not defined
         - item.stdout != "on"

@@ -28,6 +28,7 @@
     - name: List existing tokens for {{ pve_user }}
       command: pveum user token list {{ pve_user }} --output-format json
       register: _token_list
+      changed_when: false
 
     - name: Decide if token exists
       set_fact:

@@ -18,6 +18,7 @@
   tasks:
     - name: Clean up existing container if present
       shell: |
+        set -o pipefail
         if pct list | grep -q "^\s*{{ template_id }}\s"; then
           pct destroy {{ template_id }} --purge --force || true
           sleep 2
@@ -33,6 +34,7 @@
         --ssh-public-keys ~/.ssh/id_rsa.pub
         --features nesting=1,keyctl=1
         --start
+      changed_when: true
 
     - name: Wait for container to be running
       shell: pct status {{ template_id }}
@@ -40,9 +42,12 @@
       until: "'running' in container_status.stdout"
       retries: 10
       delay: 3
+      changed_when: false
 
     - name: Bootstrap essential packages and basic security hardening via pct exec
+      changed_when: true
       shell: |
+        set -o pipefail
         pct exec {{ template_id }} -- ash -c '
         # Update and install available packages
         apk update
@@ -111,6 +116,7 @@
       delegate_to: localhost
       shell: ssh-keygen -f "{{ ansible_env.HOME }}/.ssh/known_hosts" -R "{{ template_ip }}"
       failed_when: false
+      changed_when: true
       become: no
 
 - name: Configure hardened Alpine container via SSH
@@ -122,6 +128,7 @@
 
   tasks:
     - name: Configure Docker and basic firewall
+      changed_when: true
       raw: |
         # Docker configuration
         mkdir -p /etc/docker
@@ -157,6 +164,7 @@
         chmod +x /etc/local.d/firewall.start
 
     - name: Create basic management scripts
+      changed_when: true
       raw: |
         # Create security check script
         cat > /usr/local/bin/security-check << 'EOF'
@@ -177,6 +185,7 @@
         chmod 755 /usr/local/bin/security-check
 
     - name: Create Portainer setup with security
+      changed_when: true
       raw: |
         mkdir -p /opt/portainer
         cat > /opt/portainer/docker-compose.yml << 'EOF'
@@ -244,6 +253,7 @@
         chmod 755 /usr/local/bin/portainer-agent
 
     - name: Create security monitoring script
+      changed_when: true
       raw: |
         cat > /usr/local/bin/security-check << 'EOF'
         #!/bin/ash
@@ -261,11 +271,12 @@
         docker info --format '{{json .SecurityOptions}}'
         echo ""
         echo "Running Containers:"
-        docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+        docker ps --format "table {{ '{{' }}.Names{{ '}}' }}\t{{ '{{' }}.Status{{ '}}' }}\t{{ '{{' }}.Ports{{ '}}' }}"
         EOF
         chmod 755 /usr/local/bin/security-check
 
     - name: Clean up for template conversion
+      changed_when: true
       raw: |
         # Clear caches and logs
         apk cache clean
@@ -288,6 +299,7 @@
       shell: |
         pct stop {{ template_id }}
         pct template {{ template_id }}
+      changed_when: true
 
     - name: Display success message
       debug:

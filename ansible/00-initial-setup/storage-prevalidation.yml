@@ -59,6 +59,7 @@
       block:
         - name: Get ZFS device information
           shell: |
+            set -o pipefail
             echo "=== {{ item }} ==="
             if [ -b "{{ item }}" ]; then
               echo "Device exists: YES"
@@ -91,7 +92,9 @@
     - name: Check root ZFS pool status
       block:
         - name: Get root ZFS pool name
-          shell: "zpool list -H -o name | grep -E '^(rpool|tank)$' | head -1"
+          shell: |
+            set -o pipefail
+            zpool list -H -o name | grep -E '^(rpool|tank)$' | head -1
           register: root_pool_name_check
           changed_when: false
           failed_when: false
@@ -104,6 +107,7 @@
 
         - name: Get root pool details
           shell: |
+            set -o pipefail
             pool_name="{{ root_pool_name_check.stdout }}"
             echo "=== Root ZFS Pool Status ==="
             echo "Pool Name: $pool_name"
