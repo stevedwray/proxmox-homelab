@@ -13,7 +13,7 @@
   tasks:
     # Phase 1: System Information
     - name: Display Proxmox system information
-      debug:
+      ansible.builtin.debug:
         msg:
           - "Proxmox VE Version: {{ ansible_distribution }} {{ ansible_distribution_version }}"
           - "Kernel: {{ ansible_kernel }}"
@@ -24,7 +24,7 @@
           - "FQDN: {{ ansible_fqdn }}"
 
     - name: Validate this is a Proxmox VE system
-      assert:
+      ansible.builtin.assert:
         that:
           - "'pve' in ansible_kernel"
         fail_msg: "This does not appear to be a Proxmox VE system. Expected PVE kernel but found: {{ ansible_kernel }}"
@@ -32,13 +32,13 @@
 
     # Phase 2: Repository Configuration Check
     - name: Check repository files
-      find:
+      ansible.builtin.find:
         paths: /etc/apt/sources.list.d/
         patterns: "*.sources"
       register: current_repos
 
     - name: Check enterprise repository status
-      shell: |
+      ansible.builtin.shell: |
         if ls /etc/apt/sources.list.d/pve-enterprise.sources 2>/dev/null; then
           if grep -q "^Types:" /etc/apt/sources.list.d/pve-enterprise.sources; then
             echo "enabled"
@@ -52,7 +52,7 @@
       changed_when: false
 
     - name: Check no-subscription repository status
-      shell: |
+      ansible.builtin.shell: |
         if ls /etc/apt/sources.list.d/*no-subscription* /etc/apt/sources.list.d/proxmox.sources 2>/dev/null; then
           echo "present"
         else
@@ -63,20 +63,20 @@
 
     # Phase 3: User Configuration Check
     - name: Check if automation user exists
-      getent:
+      ansible.builtin.getent:
         database: passwd
         key: "{{ automation_user }}"
       register: automation_user_check
       failed_when: false
 
     - name: Check automation user sudo configuration
-      stat:
+      ansible.builtin.stat:
         path: "/etc/sudoers.d/{{ automation_user }}"
       register: automation_sudo_check
       when: not automation_user_check.failed
 
     - name: Check if PVE automation user exists
-      shell: |
+      ansible.builtin.shell: |
         set -o pipefail
         pveum user list | grep -q "automation@pve"
       register: pve_user_check
@@ -85,7 +85,7 @@
 
     # Phase 4: Service and Security Check
     - name: Check subscription nag status
-      shell: |
+      ansible.builtin.shell: |
         if [ -f /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js ]; then
           if grep -q "res.data.status.toLowerCase() !== 'active'" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; then
             echo "present"
@@ -99,12 +99,12 @@
       changed_when: false
 
     - name: Check required packages
-      package_facts:
+      ansible.builtin.package_facts:
         manager: apt
 
     # Phase 5: Generate Validation Report
     - name: Generate validation summary
-      debug:
+      ansible.builtin.debug:
         msg:
           - "================================================"
           - "         PROXMOX SERVER VALIDATION REPORT"

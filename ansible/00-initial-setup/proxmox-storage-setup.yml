@@ -18,30 +18,30 @@
     - name: Validate target system hardware layout
       block:
         - name: Check boot device exists and is correct size
-          stat:
+          ansible.builtin.stat:
             path: "{{ storage_devices.boot_device }}"
           register: boot_device_check
           failed_when: not boot_device_check.stat.exists
 
         - name: Get boot device size (bytes)
-          command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
+          ansible.builtin.command: "blockdev --getsize64 {{ storage_devices.boot_device }}"
           register: boot_device_size
           changed_when: false
 
         - name: Validate boot device size (expecting ~200GB for production)
-          assert:
+          ansible.builtin.assert:
             that: boot_device_size.stdout | int > 200000000000  # 200GB minimum
             fail_msg: "Boot device {{ storage_devices.boot_device }} is too small: {{ (boot_device_size.stdout | int / 1000000000) | round(1) }}GB"
 
         - name: Check if ZFS pools already exist or devices are clean
-          shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
+          ansible.builtin.shell: "zpool status {{ item.key }} 2>/dev/null && echo 'configured' || echo 'needs_setup'"
           register: pool_status
           loop: "{{ zfs_pools | dict2items }}"
           failed_when: false
           changed_when: false
 
         - name: Check device state for pools that need setup
-          shell: |
+          ansible.builtin.shell: |
             set -o pipefail
             lsblk -no FSTYPE {{ item.item.value.device }} | grep -v '^$' | wc -l
           register: device_usage
@@ -50,28 +50,28 @@
           changed_when: false
 
         - name: Assert clean devices for pools that need setup
-          assert:
+          ansible.builtin.assert:
             that: (item.stdout | int) == 0
             fail_msg: "Device {{ item.item.item.value.device }} has existing filesystem signatures."
           loop: "{{ device_usage.results }}"
           when: item.skipped is not defined
 
     - name: Check for running containers/VMs
-      shell: |
+      ansible.builtin.shell: |
         set -o pipefail
         pct list 2>/dev/null | grep -c running || true
       register: running_containers
       changed_when: false
 
     - name: Check for running VMs
-      shell: |
+      ansible.builtin.shell: |
         set -o pipefail
         qm list 2>/dev/null | grep -c running || true
       register: running_vms
       changed_when: false
 
     - name: Warn about active workloads
-      pause:
+      ansible.builtin.pause:
         prompt: |
           WARNING: Found {{ running_containers.stdout }} running containers and {{ running_vms.stdout }} running VMs.
           Storage operations may disrupt running services.
@@ -82,23 +82,23 @@
         - ansible_env.TERM is defined
 
     - name: Validate system is Proxmox
-      stat:
+      ansible.builtin.stat:
         path: /etc/pve
       register: proxmox_check
       failed_when: not proxmox_check.stat.exists
 
     - name: Update package cache
-      apt:
+      ansible.builtin.apt:
         update_cache: true
         cache_valid_time: 3600
 
     - name: Install required packages for storage management
-      package:
+      ansible.builtin.package:
         name: "{{ required_packages | default(['zfsutils-linux', 'parted']) }}"
         state: present
 
     - name: Verify ZFS storage devices exist
-      stat:
+      ansible.builtin.stat:
         path: "{{ item }}"
       loop:
         - "{{ storage_devices.security_device }}"
@@ -108,12 +108,12 @@
       register: device_check
 
     - name: Verify required ZFS devices are available
-      assert:
+      ansible.builtin.assert:
         that: device_check.results | selectattr('stat.exists') | list | length == 4
         fail_msg: "Not all required ZFS devices are available"
 
     - name: Verify root ZFS pool exists
-      shell: "zpool status rpool >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      ansible.builtin.shell: "zpool status rpool >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
       register: root_pool_check
       failed_when: root_pool_check.stdout == 'missing'
       changed_when: false
@@ -124,7 +124,7 @@
     # =====================================
 
     - name: Check if infrastructure dataset exists
-      shell: "zfs list rpool/data/infrastructure >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      ansible.builtin.shell: "zfs list rpool/data/infrastructure >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
       register: infrastructure_dataset_check
       changed_when: false
 
@@ -141,7 +141,7 @@
       when: infrastructure_dataset_check.stdout == 'missing'
 
     - name: Check if hot storage dataset exists
-      shell: "zfs list rpool/data/hot >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
+      ansible.builtin.shell: "zfs list rpool/data/hot >/dev/null 2>&1 && echo 'exists' || echo 'missing'"
       register: hot_dataset_check
       changed_when: false
 
@@ -158,7 +158,7 @@
       when: hot_dataset_check.stdout == 'missing'
 
     - name: Create infrastructure directories
-      file:
+      ansible.builtin.file:
         path: "/infrastructure/{{ item }}"
         state: directory
         mode: '0755'
@@ -169,7 +169,7 @@
         - "backups"
 
     - name: Create hot storage directories
-      file:
+      ansible.builtin.file:
         path: "/hot/{{ item }}"
         state: directory
         mode: '0755'
@@ -184,14 +184,14 @@
     # =====================================
 
     - name: Check if ZFS pools exist
-      shell: "zpool status {{ item.key }} 2>/dev/null && echo 'exists' || echo 'missing'"
+      ansible.builtin.shell: "zpool status {{ item.key }} 2>/dev/null && echo 'exists' || echo 'missing'"
       register: pool_existence_check
       loop: "{{ zfs_pools | dict2items }}"
       failed_when: false
       changed_when: false
 
     - name: Wipe filesystem signatures from devices (if pool missing)
-      command: "wipefs -a {{ item.item.value.device }}"
+      ansible.builtin.command: "wipefs -a {{ item.item.value.device }}"
       loop: "{{ pool_existence_check.results }}"
       changed_when: true
       when:
@@ -215,14 +215,14 @@
 
     # Handle existing pools - only set autotrim if not already on
     - name: Check current autotrim setting for existing pools
-      command: "zpool get -H -o value autotrim {{ item.item.key }}"
+      ansible.builtin.command: "zpool get -H -o value autotrim {{ item.item.key }}"
       loop: "{{ pool_existence_check.results }}"
       when: item.stdout == 'exists'
       register: current_autotrim
       changed_when: false
 
     - name: Enable autotrim on existing pools (if not already enabled)
-      command: "zpool set autotrim=on {{ item.item.key }}"
+      ansible.builtin.command: "zpool set autotrim=on {{ item.item.key }}"
       loop: "{{ current_autotrim.results }}"
       changed_when: true
       when:
@@ -278,13 +278,13 @@
     # =====================================
 
     - name: Check if infrastructure container storage exists in Proxmox
-      command: "grep -q 'infrastructure-containers' /etc/pve/storage.cfg"
+      ansible.builtin.command: "grep -q 'infrastructure-containers' /etc/pve/storage.cfg"
       register: infra_storage_exists
       failed_when: false
       changed_when: false
 
     - name: Add infrastructure container storage to Proxmox
-      blockinfile:
+      ansible.builtin.blockinfile:
         path: /etc/pve/storage.cfg
         marker: "# {mark} Infrastructure Container Storage"
         block: |
@@ -296,13 +296,13 @@
       when: infra_storage_exists.rc != 0
 
     - name: Check if hot directory storage exists in Proxmox
-      command: "grep -q 'hot-storage' /etc/pve/storage.cfg"
+      ansible.builtin.command: "grep -q 'hot-storage' /etc/pve/storage.cfg"
       register: hot_storage_exists
       failed_when: false
       changed_when: false
 
     - name: Add hot directory storage to Proxmox
-      blockinfile:
+      ansible.builtin.blockinfile:
         path: /etc/pve/storage.cfg
         marker: "# {mark} Hot Directory Storage"
         block: |
@@ -314,7 +314,7 @@
       when: hot_storage_exists.rc != 0
 
     - name: Configure Proxmox ZFS storage pools for dedicated drives
-      blockinfile:
+      ansible.builtin.blockinfile:
         path: /etc/pve/storage.cfg
         marker: "# {mark} ANSIBLE MANAGED ZFS STORAGE POOLS"
         block: |
@@ -372,12 +372,12 @@
         insertafter: EOF
 
     - name: Refresh Proxmox storage state
-      command: "pvesm status"
+      ansible.builtin.command: "pvesm status"
       changed_when: false
 
   post_tasks:
     - name: Analyze configuration state for summary
-      set_fact:
+      ansible.builtin.set_fact:
         pools_existed: "{{ pool_status.results | selectattr('stdout', 'match', '.*configured$') | list | length }}"
         total_pools: "{{ zfs_pools | length }}"
         infrastructure_dataset_existed: "{{ infrastructure_dataset_check.stdout == 'exists' }}"
@@ -385,7 +385,7 @@
         changes_made: "{{ ansible_play_batch | length > 0 and (ansible_play_recap[inventory_hostname].changed | default(0)) > 5 }}"
 
     - name: Display configuration state summary
-      debug:
+      ansible.builtin.debug:
         msg:
           - "=== STORAGE CONFIGURATION ANALYSIS ==="
           - "System validation: PASSED"
