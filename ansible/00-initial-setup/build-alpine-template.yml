@@ -17,7 +17,9 @@
 
   tasks:
     - name: Check if template container already exists
-      shell: pct list | grep -q "^\s*{{ template_id }}\s"
+      shell: |
+        set -o pipefail
+        pct list | grep -q "^\s*{{ template_id }}\s"
       register: container_exists
       failed_when: false
       changed_when: false
@@ -30,6 +32,7 @@
       shell: pct destroy {{ template_id }} --purge --force
       when: container_exists.rc == 0
       failed_when: false
+      changed_when: true
 
     - name: Wait a moment for cleanup
       pause:
@@ -39,9 +42,11 @@
     - name: Download Alpine template if not present
       shell: pveam download local alpine-3.22-default_20250617_amd64.tar.xz
       failed_when: false
+      changed_when: true
       when: container_exists.rc != 0
 
     - name: Create base LXC container
+      changed_when: true
       shell: >
         pct create {{ template_id }} {{ base_template }}
         --hostname {{ template_hostname }}
@@ -55,6 +60,7 @@
 
     - name: Start the container
       shell: pct start {{ template_id }}
+      changed_when: true
       when: container_exists.rc != 0
 
     - name: Wait for container to be running
@@ -63,9 +69,12 @@
       until: "'running' in container_status.stdout"
       retries: 10
       delay: 5
+      changed_when: false
 
     - name: Install and configure SSH via pct exec
+      changed_when: true
       shell: |
+        set -o pipefail
         pct exec {{ template_id }} -- ash -c "
         set -e
         echo 'Starting package installation...'
@@ -106,9 +115,12 @@
         var: ssh_install_result.stdout_lines
 
     - name: Verify SSH is actually listening
-      shell: pct exec {{ template_id }} -- netstat -tlnp | grep :22
+      shell: |
+        set -o pipefail
+        pct exec {{ template_id }} -- netstat -tlnp | grep :22
       register: ssh_port_check
       failed_when: false
+      changed_when: false
 
     - name: Show SSH port status
       debug:
@@ -126,6 +138,7 @@
       delegate_to: localhost
       shell: ssh-keygen -f "{{ ansible_env.HOME }}/.ssh/known_hosts" -R "{{ template_ip }}"
       failed_when: false
+      changed_when: true
       become: no
 
 - name: Initial container setup via pct exec
@@ -137,7 +150,9 @@
 
   tasks:
     - name: Configure automation user via pct exec
+      changed_when: true
       shell: |
+        set -o pipefail
         pct exec {{ template_id }} -- ash -c "
         echo 'Creating automation user...'
         adduser -D -s /bin/ash -G wheel automation
@@ -280,6 +295,7 @@
     - name: Install Docker (optional)
       block:
         - name: Add Docker repository
+          changed_when: true
           shell: |
             echo "https://dl-cdn.alpinelinux.org/alpine/edge/community" >> /etc/apk/repositories
             apk update
@@ -306,6 +322,7 @@
 
         - name: Add docker to boot runlevel
           shell: rc-update add docker boot
+          changed_when: true
 
         - name: Install Docker Compose (latest version)
           get_url:
@@ -325,6 +342,7 @@
           command: docker-compose --version
           register: compose_version
           failed_when: false
+          changed_when: false
 
       when: install_docker | default(true)
 
@@ -400,6 +418,7 @@
 
         - name: Add Portainer Agent to default runlevel (but don't start in template)
           shell: rc-update add portainer-agent default
+          changed_when: true
 
         - name: Create Portainer Agent management script
           copy:
@@ -441,6 +460,7 @@
     - name: Clean up for template creation
       block:
         - name: Clear package cache
+          changed_when: true
           shell: |
             apk cache clean
             rm -rf /var/cache/apk/*
@@ -448,12 +468,14 @@
             rm -rf /var/tmp/*
 
         - name: Clear bash/ash history
+          changed_when: true
           shell: |
             history -c 2>/dev/null || true
             rm -f /root/.ash_history /home/*/.ash_history /home/*/.bash_history
           failed_when: false
 
         - name: Clear log files
+          changed_when: true
           shell: |
             find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
             rm -rf /tmp/*
@@ -482,9 +504,11 @@
     - name: Stop the container
       shell: pct stop {{ template_id }}
       failed_when: false # Don't fail if already stopped
+      changed_when: true
 
     - name: Convert container to template
       shell: pct template {{ template_id }}
+      changed_when: true
 
     # ---------------------------------------------------------------------------
     # Packaging: make a linked clone -> strip NIC -> vzdump -> rename -> cleanup
@@ -516,6 +540,7 @@
     - name: Run vzdump to produce gzipped template archive
       command: "vzdump {{ lxc_clone_id | default(801) }} --mode {{ lxc_vzdump_mode | default('stop') }} --compress {{ lxc_vzdump_compress | default('gzip') }} --dumpdir {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}"
       register: vzdump_run
+      changed_when: true
 
     - name: Combine stdout/stderr for parsing
       set_fact:
@@ -554,6 +579,7 @@
 
     - name: Rename vzdump tarball to final template name
       command: "mv {{ vzdump_archive_path }} {{ lxc_dumpdir | default('/var/lib/vz/template/cache') }}/{{ lxc_final_template_filename | default('alpine-docker-template.tar.gz') }}"
+      changed_when: true
 
     - name: Ensure final template archive has sane perms
       file:

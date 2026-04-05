@@ -96,7 +96,9 @@
       loop: "{{ zfs_pools | dict2items }}"
 
     - name: Pools are ONLINE
-      shell: "zpool status {{ item.key }} | grep -E 'state:[[:space:]]+ONLINE'"
+      shell: |
+        set -o pipefail
+        zpool status {{ item.key }} | grep -E 'state:[[:space:]]+ONLINE'
       register: zpool_status
       changed_when: false
       failed_when: zpool_status.rc != 0

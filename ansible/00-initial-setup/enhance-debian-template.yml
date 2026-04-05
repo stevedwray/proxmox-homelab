@@ -52,6 +52,7 @@
 
         - name: Add Trivy GPG key
           shell: gpg --dearmor < /tmp/trivy.key > /usr/share/keyrings/trivy.gpg
+          changed_when: true
 
         - name: Add Trivy repository
           apt_repository:
@@ -372,6 +373,7 @@
             autoremove: yes
 
         - name: Clear logs
+          changed_when: true
           shell: |
             find /var/log -type f -name "*.log" -exec truncate -s 0 {} \;
             journalctl --vacuum-time=1s
@@ -381,6 +383,7 @@
 
         - name: Clear bash history
           shell: history -c
+          changed_when: true
           failed_when: false
 
     - name: Display enhancement summary
