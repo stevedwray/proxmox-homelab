@@ -119,3 +119,21 @@ variable "tags" {
   type        = list(string)
   default     = []
 }
+
+variable "extra_mount_path" {
+  description = "Path for an optional extra data mount point (e.g. /var/lib/harbor)"
+  type        = string
+  default     = null
+}
+
+variable "extra_mount_size" {
+  description = "Size of the optional extra data mount point (e.g. '100G')"
+  type        = string
+  default     = null
+}
+
+variable "extra_mount_storage" {
+  description = "Storage backend for the optional extra data mount point; defaults to rootfs_storage if null"
+  type        = string
+  default     = null
+}

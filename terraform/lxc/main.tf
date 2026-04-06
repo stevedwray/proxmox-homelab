@@ -51,6 +51,10 @@ module "lxc" {
   ostemplate      = try(local.stack.ostemplate, "local:vztmpl/debian-docker-template.tar.gz")
   ssh_public_keys = file(pathexpand(var.ssh_public_key_path))
   tags            = try(local.stack.tags, [local.stack_name])
+
+  extra_mount_path    = try(local.stack.extra_mount_path, null)
+  extra_mount_size    = try(local.stack.extra_mount_size, null)
+  extra_mount_storage = try(local.stack.extra_mount_storage, null)
 }
 
 # ---------------------------------------------------------------------------
