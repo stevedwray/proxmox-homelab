@@ -1,6 +1,6 @@
 all:
   children:
-    ${stack_name}:
+    ${replace(stack_name, "-", "_")}:
       hosts:
         ${hostname}:
           ansible_host: ${ip_address}
