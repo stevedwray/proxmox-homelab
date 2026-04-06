@@ -14,6 +14,16 @@ harbor_postconfigure_dockerhub_url: "https://hub.docker.com"
 # Docker Hub proxy cache project
 harbor_postconfigure_proxy_project_name: "dockerhub"
 
+# Additional proxy cache registries (docker-registry type, unauthenticated)
+# Each entry creates one endpoint and one proxy project.
+harbor_postconfigure_proxy_registries:
+  - name: ghcr
+    url: https://ghcr.io
+  - name: quay
+    url: https://quay.io
+  - name: lscr
+    url: https://lscr.io
+
 # CI robot account (system-level, push/pull across all projects)
 harbor_postconfigure_robot_name: "ci-robot"
 harbor_postconfigure_robot_description: "CI/CD robot account for automated push and pull"
