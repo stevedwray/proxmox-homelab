@@ -30,6 +30,12 @@ harbor_postconfigure_robot_description: "CI/CD robot account for automated push 
 # Expiry in days; -1 = never expires
 harbor_postconfigure_robot_expiry: -1
 
+# Bitwarden — where to persist the CI robot secret after creation.
+# Matches the org/collection used by populate-bitwarden.sh.
+harbor_postconfigure_bw_org_id: "03cd75dc-3db4-4b2e-8ecc-af86014151a7"
+harbor_postconfigure_bw_collection_id: "fa8ec932-22d8-4b7e-b13f-b349013d627b"
+harbor_postconfigure_bw_item_name: "Harbor CI Robot"
+
 # Vulnerability scanning
 harbor_postconfigure_scan_on_push: true
 # Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
