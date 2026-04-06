@@ -267,3 +267,48 @@
     msg: "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists — credentials were set on first run"
   when: harbor_postconfigure_robot_exists is defined
   delegate_to: localhost
+
+# -----------------------------------------------------------------------
+# Vulnerability scanning (Trivy)
+# -----------------------------------------------------------------------
+
+- name: Enable scan on push
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      scan_all_policy:
+        type: "schedule"
+        parameter:
+          schedule:
+            type: "Custom"
+            cron: "{{ harbor_postconfigure_scan_schedule }}"
+      scan_on_push_enabled: "{{ harbor_postconfigure_scan_on_push }}"
+    status_code: 200
+  delegate_to: localhost
+
+- name: Trigger immediate full scan of all cached artifacts
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/system/scanAll/schedule"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      schedule:
+        type: "Manual"
+    status_code: [200, 201, 409]
+  register: harbor_postconfigure_scan_result
+  delegate_to: localhost
+
+- name: Display scan status
+  ansible.builtin.debug:
+    msg: >-
+      Vulnerability scan triggered (scan-on-push enabled, nightly schedule: {{ harbor_postconfigure_scan_schedule }}).
+      {{ 'Scan already running.' if harbor_postconfigure_scan_result.status == 409 else 'Full scan started.' }}
+  delegate_to: localhost
