@@ -29,3 +29,8 @@ harbor_postconfigure_robot_name: "ci-robot"
 harbor_postconfigure_robot_description: "CI/CD robot account for automated push and pull"
 # Expiry in days; -1 = never expires
 harbor_postconfigure_robot_expiry: -1
+
+# Vulnerability scanning
+harbor_postconfigure_scan_on_push: true
+# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
+harbor_postconfigure_scan_schedule: "0 2 * * *"
