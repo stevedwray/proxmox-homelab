@@ -1,0 +1,42 @@
+---
+harbor_postconfigure_host: "{{ ansible_host }}"
+harbor_postconfigure_port: "{{ harbor_http_port | default(80) }}"
+harbor_postconfigure_admin_user: "admin"
+harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+
+# Docker Hub proxy cache endpoint
+# Created without credentials: Harbor's health check for authenticated docker-hub
+# endpoints calls auth.docker.io which Cloudflare blocks. Unauthenticated works
+# for all public images and keeps the endpoint healthy.
+harbor_postconfigure_dockerhub_endpoint_name: "docker-hub"
+harbor_postconfigure_dockerhub_url: "https://hub.docker.com"
+
+# Docker Hub proxy cache project
+harbor_postconfigure_proxy_project_name: "dockerhub"
+
+# Additional proxy cache registries (docker-registry type, unauthenticated)
+# Each entry creates one endpoint and one proxy project.
+harbor_postconfigure_proxy_registries:
+  - name: ghcr
+    url: https://ghcr.io
+  - name: quay
+    url: https://quay.io
+  - name: lscr
+    url: https://lscr.io
+
+# CI robot account (system-level, push/pull across all projects)
+harbor_postconfigure_robot_name: "ci-robot"
+harbor_postconfigure_robot_description: "CI/CD robot account for automated push and pull"
+# Expiry in days; -1 = never expires
+harbor_postconfigure_robot_expiry: -1
+
+# Bitwarden — where to persist the CI robot secret after creation.
+# Matches the org/collection used by populate-bitwarden.sh.
+harbor_postconfigure_bw_org_id: "03cd75dc-3db4-4b2e-8ecc-af86014151a7"
+harbor_postconfigure_bw_collection_id: "fa8ec932-22d8-4b7e-b13f-b349013d627b"
+harbor_postconfigure_bw_item_name: "Harbor CI Robot"
+
+# Vulnerability scanning
+harbor_postconfigure_scan_on_push: true
+# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
+harbor_postconfigure_scan_schedule: "0 2 * * *"

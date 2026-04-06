@@ -1,0 +1,25 @@
+# Harbor container registry stack
+hostname: harbor-stack
+ip_address: "192.168.1.10/24"
+vmid: 121
+cores: 4
+memory: 8192
+swap: 2048
+rootfs_size: 16
+rootfs_storage: infrastructure-containers
+docker_storage_size: "20G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - harbor
+  - registry
+  - infrastructure
+  - docker
+
+# Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
+extra_mount_path: "/var/lib/harbor"
+extra_mount_size: "100G"
+extra_mount_storage: infrastructure-containers
+
+# Deployment
+ansible_playbook: "deploy-harbor-stack"
+portainer_agent: true
