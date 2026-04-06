@@ -5,12 +5,11 @@ harbor_postconfigure_admin_user: "admin"
 harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
 
 # Docker Hub proxy cache endpoint
+# Created without credentials: Harbor's health check for authenticated docker-hub
+# endpoints calls auth.docker.io which Cloudflare blocks. Unauthenticated works
+# for all public images and keeps the endpoint healthy.
 harbor_postconfigure_dockerhub_endpoint_name: "docker-hub"
 harbor_postconfigure_dockerhub_url: "https://hub.docker.com"
-# Optional Docker Hub credentials (recommended to avoid rate limits).
-# Set HARBOR_DOCKERHUB_USERNAME / HARBOR_DOCKERHUB_PASSWORD in .env.
-harbor_postconfigure_dockerhub_username: "{{ lookup('env', 'HARBOR_DOCKERHUB_USERNAME') }}"
-harbor_postconfigure_dockerhub_password: "{{ lookup('env', 'HARBOR_DOCKERHUB_PASSWORD') }}"
 
 # Docker Hub proxy cache project
 harbor_postconfigure_proxy_project_name: "dockerhub"

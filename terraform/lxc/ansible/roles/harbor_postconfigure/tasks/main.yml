@@ -37,7 +37,11 @@
   when: item.name == harbor_postconfigure_dockerhub_endpoint_name
   delegate_to: localhost
 
-- name: Create Docker Hub proxy cache endpoint (authenticated)
+- name: Create Docker Hub proxy cache endpoint
+  # Always created without credentials: Harbor's health check for authenticated
+  # docker-hub endpoints calls auth.docker.io, which Cloudflare blocks for
+  # Harbor's Go HTTP client. Unauthenticated endpoints skip that check and
+  # work fine for all public Docker Hub images.
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
     method: POST
@@ -49,45 +53,16 @@
       name: "{{ harbor_postconfigure_dockerhub_endpoint_name }}"
       type: "docker-hub"
       url: "{{ harbor_postconfigure_dockerhub_url }}"
-      credential:
-        access_key: "{{ harbor_postconfigure_dockerhub_username }}"
-        access_secret: "{{ harbor_postconfigure_dockerhub_password }}"
-        type: "basic"
       insecure: false
     status_code: 201
   register: harbor_postconfigure_endpoint_result
-  when: harbor_postconfigure_dockerhub_endpoint_id is not defined and harbor_postconfigure_dockerhub_username != ''
-  delegate_to: localhost
-  no_log: true
-
-- name: Create Docker Hub proxy cache endpoint (unauthenticated)
-  ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
-    method: POST
-    url_username: "{{ harbor_postconfigure_admin_user }}"
-    url_password: "{{ harbor_postconfigure_admin_password }}"
-    force_basic_auth: true
-    body_format: json
-    body:
-      name: "{{ harbor_postconfigure_dockerhub_endpoint_name }}"
-      type: "docker-hub"
-      url: "{{ harbor_postconfigure_dockerhub_url }}"
-      insecure: false
-    status_code: 201
-  register: harbor_postconfigure_endpoint_result_unauth
-  when: harbor_postconfigure_dockerhub_endpoint_id is not defined and harbor_postconfigure_dockerhub_username == ''
+  when: harbor_postconfigure_dockerhub_endpoint_id is not defined
   delegate_to: localhost
 
-- name: Set endpoint ID from authenticated create
+- name: Set endpoint ID from create
   ansible.builtin.set_fact:
     harbor_postconfigure_dockerhub_endpoint_id: "{{ harbor_postconfigure_endpoint_result.json.id }}"
   when: harbor_postconfigure_endpoint_result is not skipped
-  delegate_to: localhost
-
-- name: Set endpoint ID from unauthenticated create
-  ansible.builtin.set_fact:
-    harbor_postconfigure_dockerhub_endpoint_id: "{{ harbor_postconfigure_endpoint_result_unauth.json.id }}"
-  when: harbor_postconfigure_endpoint_result_unauth is not skipped
   delegate_to: localhost
 
 - name: Display Docker Hub endpoint status
