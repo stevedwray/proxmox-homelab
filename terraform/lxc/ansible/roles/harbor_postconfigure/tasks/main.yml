@@ -118,6 +118,90 @@
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
+# Additional proxy cache registries (ghcr, quay, lscr, ...)
+# -----------------------------------------------------------------------
+
+- name: Get existing registry endpoints (for idempotency check)
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_all_registries
+  delegate_to: localhost
+
+- name: Create additional proxy cache endpoint
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      name: "{{ item.name }}"
+      type: "docker-registry"
+      url: "{{ item.url }}"
+      insecure: false
+    status_code: 201
+  loop: "{{ harbor_postconfigure_proxy_registries }}"
+  when: >
+    harbor_postconfigure_all_registries.json
+    | selectattr('name', 'equalto', item.name) | list | length == 0
+  delegate_to: localhost
+
+- name: Get registry endpoints (to resolve IDs for project creation)
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_all_registries_updated
+  delegate_to: localhost
+
+- name: Get existing projects (for idempotency check)
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects?page_size=100"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_all_projects
+  delegate_to: localhost
+
+- name: Create additional proxy cache project
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ item.name }}"
+      public: true
+      registry_id: >-
+        {{ (harbor_postconfigure_all_registries_updated.json
+            | selectattr('name', 'equalto', item.name) | list | first).id | int }}
+    status_code: 201
+  loop: "{{ harbor_postconfigure_proxy_registries }}"
+  when: >
+    harbor_postconfigure_all_projects.json
+    | selectattr('name', 'equalto', item.name) | list | length == 0
+  delegate_to: localhost
+
+- name: Display additional proxy registry status
+  ansible.builtin.debug:
+    msg: "Proxy cache registry '{{ item.name }}' ({{ item.url }}) configured"
+  loop: "{{ harbor_postconfigure_proxy_registries }}"
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
 # CI robot account (system-level push/pull)
 # -----------------------------------------------------------------------
 
