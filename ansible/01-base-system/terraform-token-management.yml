@@ -4,7 +4,7 @@
 # Can be run independently and repeatedly to regenerate tokens
 
 - name: Terraform API Token Management
-  hosts: proxmox_production
+  hosts: "{{ proxmox_target | default('proxmox_production') }}"
   become: true
   gather_facts: false
 
