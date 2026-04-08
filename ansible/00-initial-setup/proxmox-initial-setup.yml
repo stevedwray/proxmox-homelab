@@ -387,4 +387,4 @@
 
     - name: Ifreload
       ansible.builtin.command: ifreload -a
-      changed_when: true
+      changed_when: false
