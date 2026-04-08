@@ -1,0 +1,156 @@
+---
+# ansible/migrate-npm-data.yml
+# Migrate NPM production data to management-stack after clean deployment
+
+- name: Migrate NPM Production Data
+  hosts: management_stack
+  remote_user: root
+  become: true
+  gather_facts: yes
+  
+  vars_prompt:
+    - name: source_host
+      prompt: "Enter the source host/container IP for NPM data"
+      default: "192.168.1.4"
+      private: false
+      
+    - name: source_path
+      prompt: "Enter the source path for NPM data"
+      default: "/nginx/data"
+      private: false
+      
+    - name: source_certs_path
+      prompt: "Enter the source path for NPM certificates" 
+      default: "/nginx/certs"
+      private: false
+      
+    - name: confirm_migration
+      prompt: "This will replace NPM data on 192.168.1.70. Continue? (yes/no)"
+      default: "no"
+      private: false
+
+  pre_tasks:
+    - name: Abort if not confirmed
+      fail:
+        msg: "Migration aborted by user"
+      when: confirm_migration != "yes"
+      
+    - name: Verify NPM container is running
+      docker_container_info:
+        name: nginx-proxy-manager
+      register: npm_container_info
+      failed_when: not npm_container_info.exists
+
+    - name: Display current NPM status
+      debug:
+        msg:
+          - "NPM container status: {{ 'Running' if npm_container_info.container.State.Running else 'Stopped' }}"
+          - "Migration source: {{ source_host }}:{{ source_path }}"
+          - "Target: 192.168.1.70:/srv/npm/data"
+
+  tasks:
+    - name: Test connectivity to source host
+      wait_for:
+        host: "{{ source_host }}"
+        port: 22
+        timeout: 10
+      delegate_to: localhost
+      become: false
+
+    - name: Verify source data exists
+      stat:
+        path: "{{ source_path }}/database.sqlite"
+      register: source_db_check
+      delegate_to: "{{ source_host }}"
+
+    - name: Fail if source database not found
+      fail:
+        msg: "Source database not found at {{ source_host }}:{{ source_path }}/database.sqlite"
+      when: not source_db_check.stat.exists
+
+    - name: Get source database information
+      stat:
+        path: "{{ source_path }}/database.sqlite"
+      register: source_db_stat
+      delegate_to: "{{ source_host }}"
+
+    - name: Display source database info
+      debug:
+        msg:
+          - "Source database size: {{ (source_db_stat.stat.size / 1024) | round(1) }}KB"
+          - "Source database modified: {{ source_db_stat.stat.mtime }}"
+
+    - name: Stop NPM container for data replacement
+      docker_container:
+        name: nginx-proxy-manager
+        state: stopped
+        
+    - name: Create backup of current NPM data
+      archive:
+        path: /srv/npm/data
+        dest: "/tmp/npm-backup-{{ ansible_date_time.epoch }}.tar.gz"
+        format: gz
+        
+    - name: Create temporary migration directory
+      file:
+        path: /tmp/npm-migration
+        state: directory
+        mode: '0755'
+
+
+    - name: Fetch production database from source
+      fetch:
+        src: "{{ source_path }}/database.sqlite"
+        dest: /tmp/npm-migration/database.sqlite
+        flat: yes
+      delegate_to: "{{ source_host }}"
+
+    - name: Fetch production keys from source
+      fetch:
+        src: "{{ source_path }}/keys.json"
+        dest: /tmp/npm-migration/keys.json
+        flat: yes
+      delegate_to: "{{ source_host }}"
+      ignore_errors: yes
+
+    - name: Replace current database with production database
+      copy:
+        src: /tmp/npm-migration/database.sqlite
+        dest: /srv/npm/data/database.sqlite
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Replace current keys with production keys
+      copy:
+        src: /tmp/npm-migration/keys.json
+        dest: /srv/npm/data/keys.json
+        owner: root
+        group: root
+        mode: '0644'
+      ignore_errors: yes
+
+    - name: Start NPM container with production data
+      docker_container:
+        name: nginx-proxy-manager
+        state: started
+
+    - name: Wait for NPM to be responsive
+      wait_for:
+        port: 81
+        host: localhost
+        timeout: 60
+        delay: 5
+
+    - name: Display migration results
+      debug:
+        msg:
+          - "Migration completed successfully!"
+          - "NPM accessible at: http://192.168.1.70:81"
+
+    - name: Clean up temporary files
+      file:
+        path: /tmp/npm-migration
+        state: absent
+      delegate_to: localhost
+      ignore_errors: yes

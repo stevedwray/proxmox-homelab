@@ -1,0 +1,93 @@
+---
+- name: Deploy/ensure Portainer Server with tlsskipverify (with housekeeping)
+  hosts: portainer_server
+  remote_user: root
+  become: true
+  vars:
+    portainer_container_name: "portainer"
+    portainer_image: "portainer/portainer-ce:latest"
+    port_http: "9000"
+    port_https: "9443"
+  tasks:
+    - name: Ensure Docker SDK for Python present (for docker_* modules)
+      package:
+        name: python3-docker
+        state: present
+      ignore_errors: yes
+
+    - name: Ensure portainer_data volume exists
+      community.docker.docker_volume:
+        name: portainer_data
+        state: present
+
+    # --- Housekeeping: find containers binding 9000/9443
+    - name: Find containers binding 0.0.0.0:{{ port_http }}
+      ansible.builtin.shell: >
+        docker ps --format '{{"{{"}}.ID{{"}}"}} {{"{{"}}.Ports{{"}}"}}' |
+        grep -E '(^|,| )0\.0\.0\.0:{{ port_http }}->' | awk '{print $1}' || true
+      args: { executable: /bin/bash }
+      register: port9000_ids
+      changed_when: false
+
+    - name: Find containers binding 0.0.0.0:{{ port_https }}
+      ansible.builtin.shell: >
+        docker ps --format '{{"{{"}}.ID{{"}}"}} {{"{{"}}.Ports{{"}}"}}' |
+        grep -E '(^|,| )0\.0\.0\.0:{{ port_https }}->' | awk '{print $1}' || true
+      args: { executable: /bin/bash }
+      register: port9443_ids
+      changed_when: false
+
+    - name: Combine container IDs occupying 9000/9443
+      ansible.builtin.set_fact:
+        occupied_ids: "{{ (port9000_ids.stdout_lines + port9443_ids.stdout_lines) | select('string') | select('ne','') | list | unique }}"
+
+    # --- Translate IDs to names (docker_container removes by name)
+    - name: Lookup container names for occupied IDs
+      ansible.builtin.shell: "docker ps -a --filter 'id={{ item }}' --format '{{'{{'}}.Names{{'}}'}}'"
+      args: { executable: /bin/bash }
+      loop: "{{ occupied_ids }}"
+      register: occupied_name_cmds
+      changed_when: false
+      when: occupied_ids | length > 0
+
+    - name: Build list of occupied container names
+      ansible.builtin.set_fact:
+        occupied_names: "{{ occupied_name_cmds.results | map(attribute='stdout') | reject('equalto','') | list | unique }}"
+      when: occupied_ids | length > 0
+
+    - name: Stop/remove any containers occupying 9000/9443
+      community.docker.docker_container:
+        name: "{{ item }}"
+        state: absent
+        force_kill: true
+      loop: "{{ occupied_names | default([]) }}"
+      when: (occupied_names | default([])) | length > 0
+
+    # --- Remove any prior 'portainer' container to guarantee new flags take effect
+    - name: Remove existing Portainer container (if present)
+      community.docker.docker_container:
+        name: "{{ portainer_container_name }}"
+        state: absent
+        force_kill: true
+
+    # --- Launch fresh Portainer with --tlsskipverify
+    - name: Launch Portainer Server container (tlsskipverify)
+      community.docker.docker_container:
+        name: "{{ portainer_container_name }}"
+        image: "{{ portainer_image }}"
+        restart_policy: always
+        published_ports:
+          - "{{ port_http }}:9000"
+          - "{{ port_https }}:9443"
+        volumes:
+          - /var/run/docker.sock:/var/run/docker.sock
+          - portainer_data:/data
+        command: "--tlsskipverify"
+        state: started
+        recreate: true
+
+    - name: Wait for Portainer API TCP {{ port_http }}
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host | default(inventory_hostname) }}"
+        port: "{{ port_http }}"
+        timeout: 60
