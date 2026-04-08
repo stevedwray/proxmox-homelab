@@ -239,7 +239,7 @@ def populate_virtual(nb, vms):
     for vm_def in vms:
         tag_ids = []
         for tag_name in vm_def.get("tags", []):
-            tag = nb.ensure("/extras/tags/", {"name": tag_name}, {"slug": tag_name})
+            nb.ensure("/extras/tags/", {"name": tag_name}, {"slug": tag_name})
             tag_ids.append({"name": tag_name, "slug": tag_name})
 
         # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
