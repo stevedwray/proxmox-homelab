@@ -71,9 +71,10 @@
       changed_when: false
 
     # Phase 3: Pending Upgrades Check
-    - name: Check for pending package upgrades
+    - name: Check for pending package upgrades  # noqa: command-instead-of-module
       ansible.builtin.shell: |
-        apt-get -s upgrade 2>/dev/null | grep -c '^Inst ' || true
+        set -o pipefail
+        apt-get -s upgrade 2>/dev/null | grep -c '^Inst ' || echo 0
       register: pending_upgrades
       changed_when: false
 
