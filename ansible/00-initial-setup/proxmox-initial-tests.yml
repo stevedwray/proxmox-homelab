@@ -1,0 +1,179 @@
+---
+# File: ansible/00-initial-setup/proxmox-initial-tests.yml
+# Read-only validation playbook for Proxmox server configuration
+# This playbook only checks and reports - it does NOT make changes
+# Run before proxmox-initial-setup.yml to assess state, and after to verify results
+
+- name: Validate Proxmox Server Configuration (Read-Only)
+  hosts: proxmox
+  become: true
+  gather_facts: true
+
+  tasks:
+    # Phase 1: System Information
+    - name: Display Proxmox system information
+      ansible.builtin.debug:
+        msg:
+          - "Proxmox VE Version: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - "Architecture: {{ ansible_architecture }}"
+          - "Memory: {{ ansible_memtotal_mb }}MB"
+          - "CPU Cores: {{ ansible_processor_vcpus }}"
+          - "Hostname: {{ ansible_hostname }}"
+          - "FQDN: {{ ansible_fqdn }}"
+
+    - name: Validate this is a Proxmox VE system
+      ansible.builtin.assert:
+        that:
+          - "'pve' in ansible_kernel"
+        fail_msg: "This does not appear to be a Proxmox VE system. Expected PVE kernel but found: {{ ansible_kernel }}"
+        success_msg: "Confirmed Proxmox VE system with kernel: {{ ansible_kernel }}"
+
+    # Phase 2: Repository Configuration Check
+    - name: Check enterprise repository status
+      ansible.builtin.shell: |
+        if [ -f /etc/apt/sources.list.d/pve-enterprise.sources ]; then
+          if grep -q "^Types:" /etc/apt/sources.list.d/pve-enterprise.sources; then
+            echo "enabled"
+          else
+            echo "disabled"
+          fi
+        else
+          echo "missing"
+        fi
+      register: enterprise_repo_status
+      changed_when: false
+
+    - name: Check no-subscription repository status
+      ansible.builtin.shell: |
+        if ls /etc/apt/sources.list.d/proxmox.sources 2>/dev/null; then
+          echo "present"
+        else
+          echo "missing"
+        fi
+      register: nosubscription_repo_status
+      changed_when: false
+
+    - name: Check for enterprise repo references in root sources.list
+      ansible.builtin.shell: |
+        set -euo pipefail
+        grep -En '^[[:space:]]*[^#].*enterprise\.proxmox\.com' /etc/apt/sources.list || true
+      register: root_sources_enterprise
+      changed_when: false
+
+    - name: Check for enterprise repo references in sources.list.d
+      ansible.builtin.shell: |
+        set -euo pipefail
+        find /etc/apt/sources.list.d -type f \( -name '*.list' -o -name '*.sources' \) \
+          ! -regex '.*(~|@[0-9]{4}-.*)$' -print0 \
+        | xargs -0 grep -Hn -E '^[[:space:]]*[^#].*enterprise\.proxmox\.com' || true
+      register: sourced_enterprise
+      changed_when: false
+
+    # Phase 3: Pending Upgrades Check
+    - name: Check for pending package upgrades
+      ansible.builtin.shell: |
+        apt-get -s upgrade 2>/dev/null | grep -c '^Inst ' || true
+      register: pending_upgrades
+      changed_when: false
+
+    # Phase 4: PVE User Configuration Check
+    - name: Check if PVE Terraform automation user exists
+      ansible.builtin.shell: |
+        set -o pipefail
+        pveum user list --output-format json | python3 -c \
+          "import sys, json; users = json.load(sys.stdin); \
+          print('exists' if any(u['userid'] == 'automation@pve' for u in users) else 'missing')"
+      register: pve_user_check
+      failed_when: false
+      changed_when: false
+
+    - name: Check if Terraform API token exists
+      ansible.builtin.shell: |
+        set -o pipefail
+        pveum user token list automation@pve --output-format json 2>/dev/null \
+          | python3 -c \
+          "import sys, json; tokens = json.load(sys.stdin); \
+          print('exists' if any(t['tokenid'] == 'terraform' for t in tokens) else 'missing')" \
+          2>/dev/null || echo "missing"
+      register: terraform_token_check
+      failed_when: false
+      changed_when: false
+
+    # Phase 5: Subscription Nag Check (PVE 8/9 JS pattern)
+    - name: Check subscription nag status
+      ansible.builtin.shell: |
+        if [ -f /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js ]; then
+          if grep -q "res.data.status.toLowerCase() !== 'active'" \
+              /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js; then
+            echo "present"
+          else
+            echo "removed"
+          fi
+        else
+          echo "file_missing"
+        fi
+      register: subscription_nag_status
+      changed_when: false
+
+    # Phase 6: Package Check
+    - name: Gather package facts
+      ansible.builtin.package_facts:
+        manager: apt
+
+    # Phase 7: Collect Issues
+    - name: Collect validation issues
+      ansible.builtin.set_fact:
+        validation_issues: >-
+          {{
+            ([] if enterprise_repo_status.stdout == 'missing'
+                else ['WARN: pve-enterprise.sources is ' + enterprise_repo_status.stdout])
+            + ([] if (root_sources_enterprise.stdout | default('')) == ''
+                else ['WARN: enterprise refs in /etc/apt/sources.list: ' + root_sources_enterprise.stdout])
+            + ([] if (sourced_enterprise.stdout | default('')) == ''
+                else ['WARN: enterprise refs in sources.list.d: ' + sourced_enterprise.stdout])
+            + ([] if nosubscription_repo_status.stdout == 'present'
+                else ['WARN: no-subscription repo (proxmox.sources) not found'])
+            + ([] if (pending_upgrades.stdout | int) == 0
+                else ['INFO: ' + pending_upgrades.stdout + ' package(s) pending upgrade'])
+            + ([] if pve_user_check.stdout == 'exists'
+                else ['WARN: PVE user automation@pve not found'])
+            + ([] if terraform_token_check.stdout == 'exists'
+                else ['INFO: Terraform API token not found (run proxmox-initial-setup.yml)'])
+            + ([] if subscription_nag_status.stdout == 'removed'
+                else ['INFO: subscription nag still present'])
+          }}
+
+    # Phase 8: Generate Validation Report
+    - name: Generate validation summary
+      ansible.builtin.debug:
+        msg:
+          - "================================================"
+          - "         PROXMOX SERVER VALIDATION REPORT"
+          - "================================================"
+          - ""
+          - "Server: {{ ansible_fqdn }} ({{ ansible_default_ipv4.address }})"
+          - "Version: {{ ansible_distribution }} {{ ansible_distribution_version }}"
+          - "Kernel: {{ ansible_kernel }}"
+          - ""
+          - "Repository Configuration:"
+          - "  Enterprise repo (sources.list.d): {{ enterprise_repo_status.stdout }}"
+          - "  Enterprise refs in /etc/apt/sources.list: {{ 'CLEAN' if (root_sources_enterprise.stdout | default('')) == '' else 'PRESENT' }}"
+          - "  No-subscription repo: {{ nosubscription_repo_status.stdout }}"
+          - "  Pending upgrades: {{ pending_upgrades.stdout }} package(s)"
+          - ""
+          - "PVE User Configuration:"
+          - "  PVE user 'automation@pve': {{ pve_user_check.stdout | default('unknown') }}"
+          - "  Terraform API token: {{ terraform_token_check.stdout | default('unknown') }}"
+          - ""
+          - "Security Configuration:"
+          - "  Subscription nag: {{ subscription_nag_status.stdout }}"
+          - "  sudo package: {{ 'INSTALLED' if 'sudo' in ansible_facts.packages else 'MISSING' }}"
+          - ""
+          - "Storage and Network:"
+          - "  Available mounts: {{ ansible_mounts | selectattr('mount', 'match', '^/.*') | list | length }}"
+          - "  Network interfaces: {{ ansible_interfaces | length }}"
+          - ""
+          - "Issues Found:"
+          - "{{ validation_issues | join('\n') if validation_issues | length > 0 else 'None detected' }}"
+          - "================================================"
