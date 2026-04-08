@@ -1,6 +1,7 @@
 #!/bin/bash
 # sync-secrets.sh — Pull secrets from Bitwarden into .env
 set -euo pipefail
+export NODE_NO_WARNINGS=1
 
 ORG_ID="03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 
@@ -38,7 +39,7 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Start with the template
-if [ -f ".env.template" ]; then
+if [[ -f ".env.template" ]]; then
     cp .env.template .env
     echo "Starting with .env.template..."
 else
@@ -64,7 +65,7 @@ for env_var in "${ENV_VARS[@]}"; do
             ' \
             | head -n1
     )
-    if [ -n "$value" ] && [ "$value" != "null" ]; then
+    if [[ -n "$value" && "$value" != "null" ]]; then
         echo "Processing $env_var..."
 
         quoted_value=$(shell_single_quote "$value")

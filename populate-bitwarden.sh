@@ -1,6 +1,7 @@
 #!/bin/bash
 # populate-bitwarden.sh — Push secrets from .env into Bitwarden
 set -euo pipefail
+export NODE_NO_WARNINGS=1
 
 ORG_ID="03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 COLLECTION_ID="fa8ec932-22d8-4b7e-b13f-b349013d627b"
@@ -38,7 +39,7 @@ if ! bw status 2>/dev/null | grep -q '"status":"unlocked"'; then
     exit 1
 fi
 
-if [ ! -f ".env" ]; then
+if [[ ! -f ".env" ]]; then
     echo "❌ No .env file found. Create one first."
     exit 1
 fi
@@ -55,7 +56,7 @@ moved_count=0
 for env_var in "${ENV_VARS[@]}"; do
     value="${!env_var:-}"
 
-    if [ -z "$value" ]; then
+    if [[ -z "$value" ]]; then
         echo "⚠️  Skipping $env_var - not set"
         skipped_count=$((skipped_count + 1))
         continue
@@ -81,7 +82,7 @@ for env_var in "${ENV_VARS[@]}"; do
     existing_id=$(printf '%s\n' "$existing_item" | cut -f1)
     existing_org_id=$(printf '%s\n' "$existing_item" | cut -f2)
 
-    if [ -n "$existing_id" ]; then
+    if [[ -n "$existing_id" ]]; then
         echo "🔄 Updating: $env_var"
         echo "$json" | bw encode | bw edit item "$existing_id" --quiet
         updated_count=$((updated_count + 1))
@@ -93,18 +94,14 @@ for env_var in "${ENV_VARS[@]}"; do
         created_count=$((created_count + 1))
     fi
 
-    if [ "${existing_org_id:-}" != "$ORG_ID" ]; then
+    if [[ "${existing_org_id:-}" != "$ORG_ID" ]]; then
         echo "📦 Moving to organization: $env_var"
         move_payload=$(jq -nc --arg coll "$COLLECTION_ID" '[$coll]')
         echo "$move_payload" | bw encode | bw move "$existing_id" "$ORG_ID" --quiet
         moved_count=$((moved_count + 1))
     fi
 
-    if [ $? -eq 0 ]; then
-        echo "   ✅ Done"
-    else
-        echo "   ❌ Failed"
-    fi
+    echo "   ✅ Done"
 done
 
 echo ""
