@@ -353,7 +353,7 @@
 
     - name: Verify Terraform user permissions (when enabled)
       ansible.builtin.command: >
-        pveum user token permissions {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+        pveum user permissions {{ pmx_terraform_user }} --output-format json
       register: _terraform_perms_check
       changed_when: false
       failed_when: false
