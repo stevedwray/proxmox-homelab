@@ -1,0 +1,9 @@
+---
+- name: Setup Docker in LXC containers
+  hosts: test_containers
+  become: yes
+
+  tasks:
+    - name: Placeholder for Docker setup
+      debug:
+        msg: "Docker container setup will be implemented here"
