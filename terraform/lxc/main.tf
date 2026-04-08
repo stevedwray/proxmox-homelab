@@ -71,7 +71,7 @@ resource "local_file" "ansible_inventory" {
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     app_stack_name      = try(local.stack.app_stack_name, local.stack_name)
     vmid                = module.lxc.container_id
-    pve_host            = var.proxmox_host
+    pve_host            = try(local.stack.proxmox_host, var.proxmox_host)
   })
 }
 
