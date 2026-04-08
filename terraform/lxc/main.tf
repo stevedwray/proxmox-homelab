@@ -139,7 +139,7 @@ resource "null_resource" "stack_cleanup" {
 
   triggers = {
     stack_name          = local.stack_name
-    hostname            = local.stack.hostname
+    hostname            = coalesce(var.stack_hostname, local.stack.hostname)
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     # Stored as a trigger so destroy provisioner has a stable absolute path.
     ansible_dir = local.ansible_dir
