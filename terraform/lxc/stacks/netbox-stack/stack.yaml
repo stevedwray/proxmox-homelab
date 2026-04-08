@@ -2,6 +2,8 @@
 hostname: netbox-stack
 ip_address: "192.168.1.30/24"
 vmid: 119
+target_node: pve
+proxmox_host: pve.gibbsgreatly.xyz
 cores: 2
 memory: 4096
 swap: 4096
