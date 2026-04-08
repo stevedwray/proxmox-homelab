@@ -190,7 +190,7 @@
         pveum aclmod / -user {{ pmx_terraform_user }} -role Administrator
       register: _terraform_user_acl
       failed_when: _terraform_user_acl.rc != 0
-      changed_when: false
+      changed_when: true  # pveum aclmod does not signal no-op; assume changed
       when: pmx_setup_terraform_user
 
     - name: List existing tokens for Terraform user
