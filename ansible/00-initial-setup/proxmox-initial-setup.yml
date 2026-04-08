@@ -10,7 +10,7 @@
 # - Idempotent verification that repos are correct
 
 - name: Proxmox VE 9 base configuration
-  hosts: proxmox_production  # Run only on production
+  hosts: "{{ target_hosts | default('proxmox_production') }}"
   become: true
   gather_facts: true
 
@@ -144,13 +144,19 @@
         update_cache: true
       changed_when: false
 
+    - name: Upgrade all packages after repo switch
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
     # ------------------------------
     # Disable subscription nag (optional)
     # ------------------------------
 
-    - name: Check for subscription nag marker
+    - name: Check for subscription nag marker (PVE 8/9 JS pattern)
       ansible.builtin.shell: >
-        grep -q "No valid subscription" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+        grep -q "res.data.status.toLowerCase() !== 'active'"
+        /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
       register: nag_check
       changed_when: false
       failed_when: false
@@ -159,8 +165,8 @@
     - name: Disable subscription nag screen (surgical replace)
       ansible.builtin.replace:
         path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-        regexp: "if \\(res\\.data\\.status !== 'active'\\)"
-        replace: "if (false)"
+        regexp: "res\\.data\\.status\\.toLowerCase\\(\\) !== 'active'"
+        replace: "false"
         backup: true
       when:
         - pmx_disable_subscription_nag
@@ -184,7 +190,7 @@
         pveum aclmod / -user {{ pmx_terraform_user }} -role Administrator
       register: _terraform_user_acl
       failed_when: _terraform_user_acl.rc != 0
-      changed_when: false
+      changed_when: true  # pveum aclmod does not signal no-op; assume changed
       when: pmx_setup_terraform_user
 
     - name: List existing tokens for Terraform user
@@ -224,6 +230,7 @@
       ansible.builtin.set_fact:
         terraform_api_token_id: "{{ pmx_terraform_user }}!{{ pmx_terraform_token_id }}"
         terraform_api_token_secret: "{{ (_terraform_token_add.stdout | from_json).value | default('') }}"
+      no_log: true
       when:
         - pmx_setup_terraform_user
         - _terraform_token_add is defined
@@ -232,10 +239,11 @@
     - name: Display Terraform API token information
       ansible.builtin.debug:
         msg:
+          - "*** SAVE THIS SECRET NOW - it cannot be retrieved again ***"
           - "Terraform API Token ID: {{ terraform_api_token_id | default('Not created') }}"
           - "Terraform API Token Secret: {{ terraform_api_token_secret | default('Not available') }}"
           - ""
-          - "Add these to your Terraform configuration:"
+          - "Add these to your Terraform configuration or Bitwarden:"
           - "TF_VAR_pm_api_token_id={{ terraform_api_token_id | default('') }}"
           - "TF_VAR_pm_api_token_secret={{ terraform_api_token_secret | default('') }}"
       when: pmx_setup_terraform_user
@@ -352,7 +360,7 @@
 
     - name: Verify Terraform user permissions (when enabled)
       ansible.builtin.command: >
-        pveum user token permissions {{ pmx_terraform_user }} {{ pmx_terraform_token_id }}
+        pveum user permissions {{ pmx_terraform_user }} --output-format json
       register: _terraform_perms_check
       changed_when: false
       failed_when: false
@@ -379,4 +387,4 @@
 
     - name: Ifreload
       ansible.builtin.command: ifreload -a
-      changed_when: true
+      changed_when: false
