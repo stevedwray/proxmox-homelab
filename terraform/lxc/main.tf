@@ -35,7 +35,7 @@ module "lxc" {
   source = "./modules/lxc-docker-host"
 
   target_node  = try(local.stack.target_node, var.proxmox_node)
-  hostname     = local.stack.hostname
+  hostname     = coalesce(var.stack_hostname, local.stack.hostname)
   vmid         = try(local.stack.vmid, null)
   ip_address   = local.stack.ip_address
   gateway      = try(local.stack.gateway, var.default_gateway)
@@ -69,7 +69,7 @@ resource "local_file" "ansible_inventory" {
     ssh_key             = var.ssh_private_key_path
     ansible_playbook    = try(local.stack.ansible_playbook, "")
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
-    app_stack_name      = try(local.stack.app_stack_name, local.stack_name)
+    app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = try(local.stack.proxmox_host, var.proxmox_host)
   })
