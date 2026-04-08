@@ -10,7 +10,7 @@
 # - Idempotent verification that repos are correct
 
 - name: Proxmox VE 9 base configuration
-  hosts: proxmox_production  # Run only on production
+  hosts: "{{ target_hosts | default('proxmox_production') }}"
   become: true
   gather_facts: true
 
@@ -148,9 +148,10 @@
     # Disable subscription nag (optional)
     # ------------------------------
 
-    - name: Check for subscription nag marker
+    - name: Check for subscription nag marker (PVE 8/9 JS pattern)
       ansible.builtin.shell: >
-        grep -q "No valid subscription" /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
+        grep -q "res.data.status.toLowerCase() !== 'active'"
+        /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
       register: nag_check
       changed_when: false
       failed_when: false
@@ -159,8 +160,8 @@
     - name: Disable subscription nag screen (surgical replace)
       ansible.builtin.replace:
         path: /usr/share/javascript/proxmox-widget-toolkit/proxmoxlib.js
-        regexp: "if \\(res\\.data\\.status !== 'active'\\)"
-        replace: "if (false)"
+        regexp: "res\\.data\\.status\\.toLowerCase\\(\\) !== 'active'"
+        replace: "false"
         backup: true
       when:
         - pmx_disable_subscription_nag
