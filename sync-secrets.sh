@@ -18,6 +18,7 @@ ENV_VARS=(
     "NETBOX_SUPERUSER_API_TOKEN"
     "MIKROTIK_USER"
     "MIKROTIK_PASSWORD"
+    "SONAR_TOKEN"
 )
 
 # Check that bw is available and unlocked
