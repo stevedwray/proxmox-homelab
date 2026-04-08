@@ -30,6 +30,7 @@ override.tf.json
 .vault_pass
 host_vars/
 group_vars/
+ansible/_legacy/
 
 # Python
 __pycache__/
