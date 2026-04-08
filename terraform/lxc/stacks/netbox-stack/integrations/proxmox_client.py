@@ -259,7 +259,7 @@ if __name__ == "__main__":
         if len(data['storage']) > 5:
             print(f"  ... and {len(data['storage']) - 5} more")
         
-        print(f"\nNetworks by node:")
+        print("\nNetworks by node:")
         for node_name, ifaces in data["networks"].items():
             print(f"  {node_name}: {len(ifaces)} interfaces")
             for iface in ifaces:
