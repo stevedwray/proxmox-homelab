@@ -57,6 +57,12 @@ variable "stack_app_name" {
   default     = null
 }
 
+variable "stack_ip_address" {
+  description = "Override LXC IP address (CIDR). Defaults to stack.yaml ip_address."
+  type        = string
+  default     = null
+}
+
 variable "lxc_password" {
   description = "Root password for LXC containers"
   type        = string

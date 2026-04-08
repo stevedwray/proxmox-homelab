@@ -37,7 +37,7 @@ module "lxc" {
   target_node  = try(local.stack.target_node, var.proxmox_node)
   hostname     = coalesce(var.stack_hostname, local.stack.hostname)
   vmid         = try(local.stack.vmid, null)
-  ip_address   = local.stack.ip_address
+  ip_address   = coalesce(var.stack_ip_address, local.stack.ip_address)
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
 
