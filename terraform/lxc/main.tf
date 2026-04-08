@@ -23,8 +23,8 @@ locals {
   stack      = yamldecode(file(var.stack_yaml_path))
 
   # Derive stable absolute paths from the stack_yaml_path input.
-  stack_dir   = dirname(var.stack_yaml_path)          # …/stacks/<name>
-  lxc_root    = dirname(dirname(local.stack_dir))     # …/terraform/lxc
+  stack_dir   = dirname(var.stack_yaml_path)      # …/stacks/<name>
+  lxc_root    = dirname(dirname(local.stack_dir)) # …/terraform/lxc
   ansible_dir = "${local.lxc_root}/ansible"
 }
 
@@ -34,12 +34,12 @@ locals {
 module "lxc" {
   source = "./modules/lxc-docker-host"
 
-  target_node         = try(local.stack.target_node, var.proxmox_node)
-  hostname            = local.stack.hostname
-  vmid                = try(local.stack.vmid, null)
-  ip_address          = local.stack.ip_address
-  gateway             = try(local.stack.gateway, var.default_gateway)
-  lxc_password        = var.lxc_password
+  target_node  = try(local.stack.target_node, var.proxmox_node)
+  hostname     = coalesce(var.stack_hostname, local.stack.hostname)
+  vmid         = try(local.stack.vmid, null)
+  ip_address   = coalesce(var.stack_ip_address, local.stack.ip_address)
+  gateway      = try(local.stack.gateway, var.default_gateway)
+  lxc_password = var.lxc_password
 
   cores               = try(local.stack.cores, 2)
   memory              = try(local.stack.memory, 2048)
@@ -69,9 +69,9 @@ resource "local_file" "ansible_inventory" {
     ssh_key             = var.ssh_private_key_path
     ansible_playbook    = try(local.stack.ansible_playbook, "")
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
-    app_stack_name      = try(local.stack.app_stack_name, local.stack_name)
+    app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
-    pve_host            = var.proxmox_host
+    pve_host            = try(local.stack.proxmox_host, var.proxmox_host)
   })
 }
 
@@ -139,15 +139,15 @@ resource "null_resource" "stack_cleanup" {
 
   triggers = {
     stack_name          = local.stack_name
-    hostname            = local.stack.hostname
+    hostname            = coalesce(var.stack_hostname, local.stack.hostname)
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     # Stored as a trigger so destroy provisioner has a stable absolute path.
-    ansible_dir         = local.ansible_dir
+    ansible_dir = local.ansible_dir
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    command     = <<-EOT
       export STACK_NAME="${self.triggers.stack_name}"
       export AGENT_HOSTNAME="${self.triggers.hostname}"
       export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"

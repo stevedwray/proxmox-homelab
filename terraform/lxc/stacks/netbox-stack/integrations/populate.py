@@ -64,6 +64,25 @@ PREFIX = {"prefix": "192.168.1.0/24", "description": "Homelab LAN"}
 
 
 # ---------------------------------------------------------------------------
+# NetBox API path constants
+# ---------------------------------------------------------------------------
+
+NB_DCIM_SITES = "/dcim/sites/"
+NB_DCIM_MANUFACTURERS = "/dcim/manufacturers/"
+NB_DCIM_PLATFORMS = "/dcim/platforms/"
+NB_DCIM_DEVICE_ROLES = "/dcim/device-roles/"
+NB_DCIM_DEVICE_TYPES = "/dcim/device-types/"
+NB_DCIM_DEVICES = "/dcim/devices/"
+NB_DCIM_INTERFACES = "/dcim/interfaces/"
+NB_VIRT_CLUSTER_TYPES = "/virtualization/cluster-types/"
+NB_VIRT_CLUSTERS = "/virtualization/clusters/"
+NB_VIRT_VIRTUAL_MACHINES = "/virtualization/virtual-machines/"
+NB_VIRT_INTERFACES = "/virtualization/interfaces/"
+NB_IPAM_IP_ADDRESSES = "/ipam/ip-addresses/"
+NB_IPAM_SERVICES = "/ipam/services/"
+
+
+# ---------------------------------------------------------------------------
 # Population functions
 # ---------------------------------------------------------------------------
 
@@ -72,27 +91,27 @@ def populate_foundation(nb):
     """Create site, manufacturers, platforms, cluster types, device roles, device types."""
     print("\n=== Foundation ===")
 
-    site = nb.ensure("/dcim/sites/", {"name": SITE["name"]}, {
+    site = nb.ensure(NB_DCIM_SITES, {"name": SITE["name"]}, {
         "slug": SITE["slug"], "status": SITE["status"], "description": SITE["description"],
     })
 
     for m in MANUFACTURERS:
-        nb.ensure("/dcim/manufacturers/", {"name": m["name"]}, {"slug": m["slug"]})
+        nb.ensure(NB_DCIM_MANUFACTURERS, {"name": m["name"]}, {"slug": m["slug"]})
 
     for p in PLATFORMS:
-        nb.ensure("/dcim/platforms/", {"name": p["name"]}, {"slug": p["slug"]})
+        nb.ensure(NB_DCIM_PLATFORMS, {"name": p["name"]}, {"slug": p["slug"]})
 
     for ct in CLUSTER_TYPES:
-        nb.ensure("/virtualization/cluster-types/", {"name": ct["name"]}, {"slug": ct["slug"]})
+        nb.ensure(NB_VIRT_CLUSTER_TYPES, {"name": ct["name"]}, {"slug": ct["slug"]})
 
     for dr in DEVICE_ROLES:
-        nb.ensure("/dcim/device-roles/", {"name": dr["name"]}, {
+        nb.ensure(NB_DCIM_DEVICE_ROLES, {"name": dr["name"]}, {
             "slug": dr["slug"], "color": dr["color"],
         })
 
     for dt in DEVICE_TYPES:
-        mfg = nb.get("/dcim/manufacturers/", name=dt["manufacturer"])["results"][0]
-        nb.ensure("/dcim/device-types/", {"model": dt["model"]}, {
+        mfg = nb.get(NB_DCIM_MANUFACTURERS, name=dt["manufacturer"])["results"][0]
+        nb.ensure(NB_DCIM_DEVICE_TYPES, {"model": dt["model"]}, {
             "slug": dt["slug"], "manufacturer": mfg["id"],
         })
 
@@ -104,18 +123,18 @@ def populate_physical(nb, site):
     print("\n=== Physical Infrastructure ===")
 
     for dev_def in DEVICES:
-        role = nb.get("/dcim/device-roles/", name=dev_def["role"])["results"][0]
-        dtype = nb.get("/dcim/device-types/", model=dev_def["device_type"])["results"][0]
-        platform = nb.get("/dcim/platforms/", name=dev_def["platform"])["results"][0]
+        role = nb.get(NB_DCIM_DEVICE_ROLES, name=dev_def["role"])["results"][0]
+        dtype = nb.get(NB_DCIM_DEVICE_TYPES, model=dev_def["device_type"])["results"][0]
+        platform = nb.get(NB_DCIM_PLATFORMS, name=dev_def["platform"])["results"][0]
 
-        device = nb.ensure("/dcim/devices/", {"name": dev_def["name"]}, {
+        device = nb.ensure(NB_DCIM_DEVICES, {"name": dev_def["name"]}, {
             "role": role["id"], "device_type": dtype["id"], "platform": platform["id"],
             "site": site["id"], "status": dev_def["status"],
             "description": dev_def["description"],
         })
 
         for iface_def in dev_def.get("interfaces", []):
-            nb.ensure("/dcim/interfaces/", {
+            nb.ensure(NB_DCIM_INTERFACES, {
                 "device_id": device["id"], "name": iface_def["name"],
             }, {
                 "device": device["id"], "name": iface_def["name"],
@@ -124,8 +143,8 @@ def populate_physical(nb, site):
             })
 
     for cl_def in CLUSTERS:
-        ctype = nb.get("/virtualization/cluster-types/", name=cl_def["type"])["results"][0]
-        nb.ensure("/virtualization/clusters/", {"name": cl_def["name"]}, {
+        ctype = nb.get(NB_VIRT_CLUSTER_TYPES, name=cl_def["type"])["results"][0]
+        nb.ensure(NB_VIRT_CLUSTERS, {"name": cl_def["name"]}, {
             "type": ctype["id"], "site": site["id"], "description": cl_def["description"],
         })
 
@@ -139,11 +158,11 @@ def populate_network(nb, site, network):
         print("  skip: Mikrotik credentials not configured; no router data discovered")
         return
 
-    role = nb.get("/dcim/device-roles/", name="Network")["results"][0]
-    dtype = nb.get("/dcim/device-types/", model="Mikrotik Router")["results"][0]
+    role = nb.get(NB_DCIM_DEVICE_ROLES, name="Network")["results"][0]
+    dtype = nb.get(NB_DCIM_DEVICE_TYPES, model="Mikrotik Router")["results"][0]
 
     router_name = router.get("identity", "mikrotik-router")
-    router_device = nb.ensure("/dcim/devices/", {"name": router_name}, {
+    router_device = nb.ensure(NB_DCIM_DEVICES, {"name": router_name}, {
         "role": role["id"],
         "device_type": dtype["id"],
         "site": site["id"],
@@ -156,7 +175,7 @@ def populate_network(nb, site, network):
         name = iface_def.get("name")
         if not name:
             continue
-        nb.ensure("/dcim/interfaces/", {
+        nb.ensure(NB_DCIM_INTERFACES, {
             "device_id": router_device["id"], "name": name,
         }, {
             "device": router_device["id"],
@@ -195,11 +214,11 @@ def populate_network(nb, site, network):
         iface_name = ip_def.get("interface")
         if not address or not iface_name:
             continue
-        iface_results = nb.get("/dcim/interfaces/", device_id=router_device["id"], name=iface_name)["results"]
+        iface_results = nb.get(NB_DCIM_INTERFACES, device_id=router_device["id"], name=iface_name)["results"]
         if not iface_results:
             continue
         iface = iface_results[0]
-        ip_obj = nb.ensure("/ipam/ip-addresses/", {"address": address}, {
+        ip_obj = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
             "assigned_object_type": "dcim.interface",
             "assigned_object_id": iface["id"],
             "status": "active",
@@ -214,17 +233,17 @@ def populate_virtual(nb, vms):
     """Create VMs, their interfaces, and tags from discovered data."""
     print("\n=== Virtual Infrastructure ===")
 
-    cluster = nb.get("/virtualization/clusters/", name="pve-cluster")["results"][0]
-    platform = nb.get("/dcim/platforms/", name="Debian 13")["results"][0]
+    cluster = nb.get(NB_VIRT_CLUSTERS, name="pve-cluster")["results"][0]
+    platform = nb.get(NB_DCIM_PLATFORMS, name="Debian 13")["results"][0]
 
     for vm_def in vms:
         tag_ids = []
         for tag_name in vm_def.get("tags", []):
-            tag = nb.ensure("/extras/tags/", {"name": tag_name}, {"slug": tag_name})
+            nb.ensure("/extras/tags/", {"name": tag_name}, {"slug": tag_name})
             tag_ids.append({"name": tag_name, "slug": tag_name})
 
         # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
-        vm = nb.ensure("/virtualization/virtual-machines/", {"name": vm_def["name"]}, {
+        vm = nb.ensure(NB_VIRT_VIRTUAL_MACHINES, {"name": vm_def["name"]}, {
             "cluster": cluster["id"],
             "platform": platform["id"],
             "status": "active",  # NetBox only accepts 'active' for VMs
@@ -235,7 +254,7 @@ def populate_virtual(nb, vms):
             "tags": tag_ids,
         })
 
-        nb.ensure("/virtualization/interfaces/", {
+        nb.ensure(NB_VIRT_INTERFACES, {
             "virtual_machine_id": vm["id"], "name": "eth0",
         }, {
             "virtual_machine": vm["id"], "name": "eth0", "type": "virtual",
@@ -254,11 +273,11 @@ def populate_ipam(nb, site, vms):
     for dev_def in DEVICES:
         if not dev_def.get("ip"):
             continue
-        device = nb.get("/dcim/devices/", name=dev_def["name"])["results"][0]
-        iface = nb.get("/dcim/interfaces/", device_id=device["id"],
+        device = nb.get(NB_DCIM_DEVICES, name=dev_def["name"])["results"][0]
+        iface = nb.get(NB_DCIM_INTERFACES, device_id=device["id"],
                        name=dev_def["interfaces"][0]["name"])["results"][0]
 
-        ip = nb.ensure("/ipam/ip-addresses/", {"address": dev_def["ip"]}, {
+        ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": dev_def["ip"]}, {
             "assigned_object_type": "dcim.interface",
             "assigned_object_id": iface["id"],
             "status": "active", "description": dev_def["name"],
@@ -271,11 +290,11 @@ def populate_ipam(nb, site, vms):
     for vm_def in vms:
         if not vm_def.get("ip"):
             continue
-        vm = nb.get("/virtualization/virtual-machines/", name=vm_def["name"])["results"][0]
-        iface = nb.get("/virtualization/interfaces/",
+        vm = nb.get(NB_VIRT_VIRTUAL_MACHINES, name=vm_def["name"])["results"][0]
+        iface = nb.get(NB_VIRT_INTERFACES,
                        virtual_machine_id=vm["id"], name="eth0")["results"][0]
 
-        ip = nb.ensure("/ipam/ip-addresses/", {"address": vm_def["ip"]}, {
+        ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": vm_def["ip"]}, {
             "assigned_object_type": "virtualization.vminterface",
             "assigned_object_id": iface["id"],
             "status": "active", "description": vm_def["name"],
@@ -286,7 +305,7 @@ def populate_ipam(nb, site, vms):
             print(f"  updated: primary_ip4 for {vm_def['name']}")
 
         for svc_def in vm_def.get("services", []):
-            nb.ensure("/ipam/services/", {
+            nb.ensure(NB_IPAM_SERVICES, {
                 "name": svc_def["name"],
                 "parent_object_type": "virtualization.virtualmachine",
                 "parent_object_id": vm["id"],
@@ -304,22 +323,22 @@ def populate_ipam(nb, site, vms):
 # ---------------------------------------------------------------------------
 
 WIPE_ORDER = [
-    "/ipam/services/",
-    "/ipam/ip-addresses/",
+    NB_IPAM_SERVICES,
+    NB_IPAM_IP_ADDRESSES,
     "/ipam/vlans/",
     "/ipam/vlan-groups/",
     "/ipam/prefixes/",
-    "/virtualization/interfaces/",
-    "/virtualization/virtual-machines/",
-    "/virtualization/clusters/",
-    "/virtualization/cluster-types/",
-    "/dcim/interfaces/",
-    "/dcim/devices/",
-    "/dcim/device-types/",
-    "/dcim/device-roles/",
-    "/dcim/platforms/",
-    "/dcim/manufacturers/",
-    "/dcim/sites/",
+    NB_VIRT_INTERFACES,
+    NB_VIRT_VIRTUAL_MACHINES,
+    NB_VIRT_CLUSTERS,
+    NB_VIRT_CLUSTER_TYPES,
+    NB_DCIM_INTERFACES,
+    NB_DCIM_DEVICES,
+    NB_DCIM_DEVICE_TYPES,
+    NB_DCIM_DEVICE_ROLES,
+    NB_DCIM_PLATFORMS,
+    NB_DCIM_MANUFACTURERS,
+    NB_DCIM_SITES,
     "/extras/tags/",
 ]
 
@@ -381,9 +400,9 @@ def main():
     populate_ipam(nb, site, vms)
 
     print("\n=== Done ===")
-    vm_count = nb.get("/virtualization/virtual-machines/")["count"]
-    ip_count = nb.get("/ipam/ip-addresses/")["count"]
-    svc_count = nb.get("/ipam/services/")["count"]
+    vm_count = nb.get(NB_VIRT_VIRTUAL_MACHINES)["count"]
+    ip_count = nb.get(NB_IPAM_IP_ADDRESSES)["count"]
+    svc_count = nb.get(NB_IPAM_SERVICES)["count"]
     print(f"VMs: {vm_count}, IPs: {ip_count}, Services: {svc_count}")
 
 

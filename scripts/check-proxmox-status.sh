@@ -292,6 +292,11 @@ case "${1:-}" in
         # Override test_api_connectivity to do nothing
         test_api_connectivity() { :; }
         ;;
+    *)
+        echo "Unknown option: ${1}" >&2
+        echo "Run '$0 --help' for usage." >&2
+        exit 1
+        ;;
 esac
 
 # Run main function

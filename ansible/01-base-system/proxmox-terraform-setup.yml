@@ -1,6 +1,6 @@
 ---
 - name: Provision Proxmox user + token + ACLs for Terraform
-  hosts: proxmox
+  hosts: "{{ proxmox_target | default('proxmox_production') }}"
   gather_facts: false
   become: true
 

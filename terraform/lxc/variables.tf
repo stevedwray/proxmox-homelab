@@ -45,6 +45,24 @@ variable "proxmox_node" {
   default     = "pve"
 }
 
+variable "stack_hostname" {
+  description = "Override LXC hostname (and Portainer endpoint name). Defaults to stack.yaml hostname."
+  type        = string
+  default     = null
+}
+
+variable "stack_app_name" {
+  description = "Override Portainer stack name. Defaults to stack.yaml app_stack_name or stack directory name."
+  type        = string
+  default     = null
+}
+
+variable "stack_ip_address" {
+  description = "Override LXC IP address (CIDR). Defaults to stack.yaml ip_address."
+  type        = string
+  default     = null
+}
+
 variable "lxc_password" {
   description = "Root password for LXC containers"
   type        = string

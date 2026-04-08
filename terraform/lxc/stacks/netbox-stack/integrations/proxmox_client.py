@@ -160,7 +160,7 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
         # Get LXC containers
         for lxc in client.get_lxc_containers(node_name):
             vmid = lxc["vmid"]
-            config, vm_type = client.get_node_config(node_name, vmid)
+            config, _ = client.get_node_config(node_name, vmid)
             status = client.get_node_status(node_name, vmid, "lxc")
             
             # Parse mounts from config
@@ -194,7 +194,7 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
         # Get QEMU VMs
         for qemu in client.get_qemu_vms(node_name):
             vmid = qemu["vmid"]
-            config, vm_type = client.get_node_config(node_name, vmid)
+            config, _ = client.get_node_config(node_name, vmid)
             status = client.get_node_status(node_name, vmid, "qemu")
             
             # Parse mounts from QEMU config (disks are listed differently)
@@ -259,7 +259,7 @@ if __name__ == "__main__":
         if len(data['storage']) > 5:
             print(f"  ... and {len(data['storage']) - 5} more")
         
-        print(f"\nNetworks by node:")
+        print("\nNetworks by node:")
         for node_name, ifaces in data["networks"].items():
             print(f"  {node_name}: {len(ifaces)} interfaces")
             for iface in ifaces:
