@@ -298,6 +298,11 @@ case "${1:-}" in
         # Override update_system to do nothing
         update_system() { log_info "Skipping system updates"; }
         ;;
+    *)
+        echo "Unknown option: ${1}" >&2
+        echo "Run '$0 --help' for usage." >&2
+        exit 1
+        ;;
 esac
 
 # Run main function
