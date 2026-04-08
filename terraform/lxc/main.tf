@@ -23,8 +23,8 @@ locals {
   stack      = yamldecode(file(var.stack_yaml_path))
 
   # Derive stable absolute paths from the stack_yaml_path input.
-  stack_dir   = dirname(var.stack_yaml_path)          # …/stacks/<name>
-  lxc_root    = dirname(dirname(local.stack_dir))     # …/terraform/lxc
+  stack_dir   = dirname(var.stack_yaml_path)      # …/stacks/<name>
+  lxc_root    = dirname(dirname(local.stack_dir)) # …/terraform/lxc
   ansible_dir = "${local.lxc_root}/ansible"
 }
 
@@ -34,12 +34,12 @@ locals {
 module "lxc" {
   source = "./modules/lxc-docker-host"
 
-  target_node         = try(local.stack.target_node, var.proxmox_node)
-  hostname            = local.stack.hostname
-  vmid                = try(local.stack.vmid, null)
-  ip_address          = local.stack.ip_address
-  gateway             = try(local.stack.gateway, var.default_gateway)
-  lxc_password        = var.lxc_password
+  target_node  = try(local.stack.target_node, var.proxmox_node)
+  hostname     = local.stack.hostname
+  vmid         = try(local.stack.vmid, null)
+  ip_address   = local.stack.ip_address
+  gateway      = try(local.stack.gateway, var.default_gateway)
+  lxc_password = var.lxc_password
 
   cores               = try(local.stack.cores, 2)
   memory              = try(local.stack.memory, 2048)
@@ -142,12 +142,12 @@ resource "null_resource" "stack_cleanup" {
     hostname            = local.stack.hostname
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     # Stored as a trigger so destroy provisioner has a stable absolute path.
-    ansible_dir         = local.ansible_dir
+    ansible_dir = local.ansible_dir
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    command     = <<-EOT
       export STACK_NAME="${self.triggers.stack_name}"
       export AGENT_HOSTNAME="${self.triggers.hostname}"
       export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"
