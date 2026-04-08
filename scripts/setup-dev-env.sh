@@ -12,7 +12,7 @@ NC='\033[0m' # No Color
 log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
 
 # Update system packages
 update_system() {
@@ -297,6 +297,11 @@ case "${1:-}" in
     --no-update)
         # Override update_system to do nothing
         update_system() { log_info "Skipping system updates"; }
+        ;;
+    *)
+        echo "Unknown option: ${1}" >&2
+        echo "Run '$0 --help' for usage." >&2
+        exit 1
         ;;
 esac
 

@@ -426,7 +426,7 @@
                 portainer-agent:
                   external: false
             dest: /opt/portainer/docker-compose.yml
-            mode: "0644"
+            mode: "0640"
 
         - name: Create Portainer Agent systemd service
           ansible.builtin.copy:
@@ -694,7 +694,7 @@
     - name: Set correct permissions on template archive
       ansible.builtin.file:
         path: "{{ template_dumpdir }}/{{ final_template_filename }}"
-        mode: "0644"
+        mode: "0640"
 
     - name: Clean up temporary clone
       ansible.builtin.command: "pct destroy {{ clone_id }} --purge 1"

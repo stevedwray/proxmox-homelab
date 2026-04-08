@@ -3,6 +3,8 @@ storage-audit
 .env
 .env.local
 *.env
+.env.*
+!.env.template
 
 # Terraform
 *.tfstate

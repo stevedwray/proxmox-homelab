@@ -67,7 +67,7 @@
   gather_facts: false
 
   vars:
-    netbox_container: netbox-netbox-1
+    netbox_container: "{{ app_stack_name }}-netbox-1"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
     netbox_superuser_username: admin
     netbox_superuser_email: "admin@gibbsgreatly.xyz"

@@ -68,9 +68,23 @@
       when: portainer_api_existing_endpoint_id is not defined
       delegate_to: localhost
 
+    - name: Update existing endpoint URL to current agent IP
+      ansible.builtin.uri:
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints/{{ portainer_api_existing_endpoint_id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_api_token }}"
+        body_format: form-urlencoded
+        body:
+          Name: "{{ portainer_api_endpoint_name }}"
+          URL: "tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
+        status_code: 200
+      when: portainer_api_existing_endpoint_id is defined
+      delegate_to: localhost
+
     - name: Display existing endpoint
       ansible.builtin.debug:
-        msg: "Agent '{{ portainer_api_endpoint_name }}' already registered (ID: {{ portainer_api_existing_endpoint_id }})"
+        msg: "Agent '{{ portainer_api_endpoint_name }}' already registered (ID: {{ portainer_api_existing_endpoint_id }}) — URL updated to tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
       when: portainer_api_existing_endpoint_id is defined
       delegate_to: localhost
 
