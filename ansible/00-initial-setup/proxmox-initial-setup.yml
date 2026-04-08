@@ -225,6 +225,7 @@
       ansible.builtin.set_fact:
         terraform_api_token_id: "{{ pmx_terraform_user }}!{{ pmx_terraform_token_id }}"
         terraform_api_token_secret: "{{ (_terraform_token_add.stdout | from_json).value | default('') }}"
+      no_log: true
       when:
         - pmx_setup_terraform_user
         - _terraform_token_add is defined
@@ -233,10 +234,11 @@
     - name: Display Terraform API token information
       ansible.builtin.debug:
         msg:
+          - "*** SAVE THIS SECRET NOW - it cannot be retrieved again ***"
           - "Terraform API Token ID: {{ terraform_api_token_id | default('Not created') }}"
           - "Terraform API Token Secret: {{ terraform_api_token_secret | default('Not available') }}"
           - ""
-          - "Add these to your Terraform configuration:"
+          - "Add these to your Terraform configuration or Bitwarden:"
           - "TF_VAR_pm_api_token_id={{ terraform_api_token_id | default('') }}"
           - "TF_VAR_pm_api_token_secret={{ terraform_api_token_secret | default('') }}"
       when: pmx_setup_terraform_user
