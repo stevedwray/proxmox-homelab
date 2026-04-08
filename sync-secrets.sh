@@ -1,6 +1,7 @@
 #!/bin/bash
 # sync-secrets.sh — Pull secrets from Bitwarden into .env
 set -euo pipefail
+export NODE_NO_WARNINGS=1
 
 ORG_ID="03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 

@@ -1,6 +1,7 @@
 #!/bin/bash
 # populate-bitwarden.sh — Push secrets from .env into Bitwarden
 set -euo pipefail
+export NODE_NO_WARNINGS=1
 
 ORG_ID="03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 COLLECTION_ID="fa8ec932-22d8-4b7e-b13f-b349013d627b"
