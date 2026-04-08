@@ -144,6 +144,11 @@
         update_cache: true
       changed_when: false
 
+    - name: Upgrade all packages after repo switch
+      ansible.builtin.apt:
+        upgrade: dist
+        autoremove: true
+
     # ------------------------------
     # Disable subscription nag (optional)
     # ------------------------------
