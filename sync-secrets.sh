@@ -38,7 +38,7 @@ if ! command -v jq &>/dev/null; then
 fi
 
 # Start with the template
-if [ -f ".env.template" ]; then
+if [[ -f ".env.template" ]]; then
     cp .env.template .env
     echo "Starting with .env.template..."
 else
@@ -64,7 +64,7 @@ for env_var in "${ENV_VARS[@]}"; do
             ' \
             | head -n1
     )
-    if [ -n "$value" ] && [ "$value" != "null" ]; then
+    if [[ -n "$value" && "$value" != "null" ]]; then
         echo "Processing $env_var..."
 
         quoted_value=$(shell_single_quote "$value")
