@@ -37,6 +37,18 @@ attachments:
         - pve-test
       vnet: tvnetb
       alias: pve-test network layer 2
+  seg_c:
+    description: Third SDN VNet attachment for artifact flow validation on pve-test
+    type: sdn_vnet
+    bridge: tvnetc
+    firewall: true
+    sdn:
+      zone: tvsegc
+      zone_type: simple
+      nodes:
+        - pve-test
+      vnet: tvnetc
+      alias: pve-test network layer 3
 
 zones:
   apps:
@@ -60,6 +72,12 @@ zones:
   observe_seg:
     description: Service endpoint zone on the second SDN VNet
     attachment: seg_b
+  build_seg:
+    description: Build workload zone on the third SDN VNet
+    attachment: seg_c
+  artifacts_seg:
+    description: Artifact service zone on the third SDN VNet
+    attachment: seg_c
 
 policies:
   - from: apps
@@ -77,3 +95,8 @@ policies:
     protocol: tcp
     ports: [8080]
     description: media_seg can reach observe_seg on tcp/8080
+  - from: build_seg
+    to: artifacts_seg
+    protocol: tcp
+    ports: [5000, 8081]
+    description: build_seg can reach artifacts_seg on tcp/5000 and tcp/8081
