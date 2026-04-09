@@ -1,0 +1,100 @@
+---
+- name: Validate network-layer policy via pct exec on pve-test
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    network_validation_allowed_port_value: "{{ network_validation_allowed_port | default(8080) | int }}"
+    network_validation_denied_port_value: "{{ network_validation_denied_port | default(8081) | int }}"
+    network_validation_service_ip: "{{ hostvars[network_validation_service_host].ansible_host }}"
+    network_validation_service_vmid: "{{ hostvars[network_validation_service_host].vmid }}"
+    network_validation_client_vmid: "{{ hostvars[network_validation_client_host].vmid }}"
+    network_validation_pve_host: "{{ hostvars[network_validation_service_host].pve_host }}"
+    network_validation_ssh_key: "{{ hostvars[network_validation_service_host].ansible_ssh_private_key_file }}"
+
+  tasks:
+    - name: Start temporary HTTP listeners inside the service validation LXC
+      ansible.builtin.shell: |
+        if [ -f /tmp/net-layer-{{ item }}.hostpid ] && kill -0 "$(cat /tmp/net-layer-{{ item }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/net-layer-{{ item }}.hostpid)" || true
+          sleep 1
+        fi
+
+        nohup pct exec {{ network_validation_service_vmid }} -- \
+          python3 -m http.server {{ item }} --bind 0.0.0.0 --directory /tmp \
+          >/tmp/net-layer-{{ item }}.log 2>&1 &
+        echo $! > /tmp/net-layer-{{ item }}.hostpid
+      args:
+        executable: /bin/bash
+      loop:
+        - "{{ network_validation_allowed_port_value }}"
+        - "{{ network_validation_denied_port_value }}"
+      delegate_to: "{{ network_validation_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Give the temporary listeners a moment to bind
+      ansible.builtin.pause:
+        seconds: 2
+
+    - name: Confirm allowed port is reachable from the client validation LXC
+      ansible.builtin.command:
+        cmd: >-
+          pct exec {{ network_validation_client_vmid }} -- bash -lc
+          "timeout 3 bash -lc 'cat </dev/null >/dev/tcp/{{ network_validation_service_ip }}/{{ network_validation_allowed_port_value }}'"
+      delegate_to: "{{ network_validation_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_validation_allowed_result
+      changed_when: false
+
+    - name: Confirm denied port is blocked from the client validation LXC
+      ansible.builtin.command:
+        cmd: >-
+          pct exec {{ network_validation_client_vmid }} -- bash -lc
+          "timeout 3 bash -lc 'cat </dev/null >/dev/tcp/{{ network_validation_service_ip }}/{{ network_validation_denied_port_value }}'"
+      delegate_to: "{{ network_validation_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_validation_denied_result
+      ignore_errors: true
+      changed_when: false
+
+    - name: Assert expected firewall behavior
+      ansible.builtin.assert:
+        that:
+          - network_validation_allowed_result.rc == 0
+          - network_validation_denied_result is failed
+        fail_msg: >-
+          Expected tcp/{{ network_validation_allowed_port_value }} to be allowed and
+          tcp/{{ network_validation_denied_port_value }} to be denied from
+          {{ network_validation_client_host }} to {{ network_validation_service_host }}.
+        success_msg: >-
+          Validated tcp/{{ network_validation_allowed_port_value }} allowed and
+          tcp/{{ network_validation_denied_port_value }} denied from
+          {{ network_validation_client_host }} to {{ network_validation_service_host }}.
+
+    - name: Stop temporary HTTP listeners inside the service validation LXC
+      ansible.builtin.shell: |
+        if [ -f /tmp/net-layer-{{ item }}.hostpid ] && kill -0 "$(cat /tmp/net-layer-{{ item }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/net-layer-{{ item }}.hostpid)" || true
+        fi
+        rm -f /tmp/net-layer-{{ item }}.hostpid
+      args:
+        executable: /bin/bash
+      loop:
+        - "{{ network_validation_allowed_port_value }}"
+        - "{{ network_validation_denied_port_value }}"
+      delegate_to: "{{ network_validation_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
