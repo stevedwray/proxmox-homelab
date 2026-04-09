@@ -1,0 +1,49 @@
+# Proxmox-only network intent for the pve-test environment.
+# This file is declarative only for now; later steps will wire it into
+# Terraform NIC attachment and Proxmox firewall policy generation.
+
+proxmox:
+  target_node: pve-test
+  pve_host: pve-test.gibbsgreatly.xyz
+
+attachments:
+  default_lan:
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: true
+  sdn_microseg:
+    type: sdn_vnet
+    bridge: ptsv0
+    firewall: true
+    sdn:
+      zone: pts0
+      zone_type: simple
+      nodes:
+        - pve-test
+      vnet: ptsv0
+      alias: pve-test network layer
+
+zones:
+  app:
+    attachment: default_lan
+  services:
+    attachment: default_lan
+  app_test:
+    attachment: sdn_microseg
+  services_test:
+    attachment: sdn_microseg
+  isolated:
+    attachment: default_lan
+
+policies:
+  - from: app
+    to: services
+    protocol: tcp
+    ports: [8080]
+    description: app can reach test services on tcp/8080
+  - from: app_test
+    to: services_test
+    protocol: tcp
+    ports: [8080]
+    description: app_test can reach services_test on tcp/8080

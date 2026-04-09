@@ -1,0 +1,9 @@
+[OPTIONS]
+enable: {{ 1 if network_firewall_enable else 0 }}
+policy_in: {{ network_firewall_policy_in }}
+policy_out: {{ network_firewall_policy_out }}
+
+[RULES]
+{% for rule in network_firewall_rules %}
+{{ rule.type | upper }} {{ rule.action | upper }} -source {{ rule.source }} -p {{ rule.protocol }} -dport {{ rule.destination }}
+{% endfor %}

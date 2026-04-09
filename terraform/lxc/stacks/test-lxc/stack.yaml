@@ -6,3 +6,6 @@ cores: 2
 memory: 2048
 rootfs_size: 8
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+
+network:
+  zone: app
