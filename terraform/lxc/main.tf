@@ -97,7 +97,7 @@ locals {
         source      = member.ip_address
         protocol    = lower(policy.protocol)
         destination = join(",", [for port in try(policy.ports, []) : tostring(port)])
-        comment     = "${policy.from}-to-${policy.to}:${member.description}"
+        comment     = "${try(local.network_intent.zones[policy.from].description, policy.from)} -> ${try(local.network_intent.zones[policy.to].description, policy.to)} (${member.description})"
       }
     ]
   ])) : tolist([])
@@ -176,7 +176,7 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet)
+    network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
     network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
   })
 }
