@@ -84,27 +84,27 @@ validate_env() {
 }
 
 verify_destroy() {
-  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
+  if ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
     "pct list | grep -E 'net-(app|svc|client|service|isolated)'" >/dev/null; then
     printf 'Validation LXCs still exist on %s\n' "${PVE_TEST_HOST}" >&2
     exit 1
   fi
 
-  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
+  if ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
     "pvesh get /cluster/sdn/vnets --output-format json" \
     | python3 -c 'import json,sys; v=[item["vnet"] for item in json.load(sys.stdin) if item["vnet"] in ("tvn1","tvn2")]; raise SystemExit(0 if v else 1)'; then
     printf 'Validation VNets still exist on %s\n' "${PVE_TEST_HOST}" >&2
     exit 1
   fi
 
-  if ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
+  if ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
     "pvesh get /cluster/sdn/zones --output-format json" \
     | python3 -c 'import json,sys; z=[item["zone"] for item in json.load(sys.stdin) if item["zone"] in ("tvz1","tvz2")]; raise SystemExit(0 if z else 1)'; then
     printf 'Validation zones still exist on %s\n' "${PVE_TEST_HOST}" >&2
     exit 1
   fi
 
-  ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
+  ssh -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "root@${PVE_TEST_HOST}" \
     "/usr/libexec/proxmox/proxmox-firewall compile" >/dev/null
 }
 
