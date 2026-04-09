@@ -8,11 +8,13 @@ proxmox:
 
 attachments:
   default_lan:
+    description: Default LAN bridge for bridge-based validation zones on pve-test
     type: bridge
     bridge: vmbr0
     vlan_tag: null
     firewall: true
-  sdn_microseg:
+  vnet1:
+    description: First SDN VNet attachment for microsegmentation validation on pve-test
     type: sdn_vnet
     bridge: ptsv0
     firewall: true
@@ -23,7 +25,8 @@ attachments:
         - pve-test
       vnet: ptsv0
       alias: pve-test network layer
-  sdn_microseg_2:
+  vnet2:
+    description: Second SDN VNet attachment for independent microsegmentation validation
     type: sdn_vnet
     bridge: ptsv1
     firewall: true
@@ -37,19 +40,26 @@ attachments:
 
 zones:
   app:
+    description: Application workload zone on the default LAN bridge
     attachment: default_lan
   services:
+    description: Service endpoint zone on the default LAN bridge
     attachment: default_lan
   isolated:
+    description: Bridge-attached isolated zone with no inbound policy overrides
     attachment: default_lan
-  app_test:
-    attachment: sdn_microseg
-  services_test:
-    attachment: sdn_microseg
-  app_test2:
-    attachment: sdn_microseg_2
-  services_test2:
-    attachment: sdn_microseg_2
+  app_vnet1:
+    description: Application workload zone on the first SDN VNet
+    attachment: vnet1
+  svc_vnet1:
+    description: Service endpoint zone on the first SDN VNet
+    attachment: vnet1
+  app_vnet2:
+    description: Application workload zone on the second SDN VNet
+    attachment: vnet2
+  svc_vnet2:
+    description: Service endpoint zone on the second SDN VNet
+    attachment: vnet2
 
 policies:
   - from: app
@@ -57,13 +67,13 @@ policies:
     protocol: tcp
     ports: [8080, 9000]
     description: app can reach services on tcp/8080 and tcp/9000
-  - from: app_test
-    to: services_test
+  - from: app_vnet1
+    to: svc_vnet1
     protocol: tcp
     ports: [8080]
-    description: app_test can reach services_test on tcp/8080
-  - from: app_test2
-    to: services_test2
+    description: app_vnet1 can reach svc_vnet1 on tcp/8080
+  - from: app_vnet2
+    to: svc_vnet2
     protocol: tcp
     ports: [8080]
-    description: app_test2 can reach services_test2 on tcp/8080
+    description: app_vnet2 can reach svc_vnet2 on tcp/8080

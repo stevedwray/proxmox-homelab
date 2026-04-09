@@ -11,4 +11,4 @@ docker_storage_size: "4G"
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 
 network:
-  zone: services_test2
+  zone: svc_vnet2
