@@ -15,6 +15,8 @@ INVENTORIES=(
   "${SCRIPT_DIR}/stacks/net-service-01/inventory.yml"
   "${SCRIPT_DIR}/stacks/net-client-02/inventory.yml"
   "${SCRIPT_DIR}/stacks/net-service-02/inventory.yml"
+  "${SCRIPT_DIR}/stacks/net-build-01/inventory.yml"
+  "${SCRIPT_DIR}/stacks/net-artifacts-01/inventory.yml"
   "${SCRIPT_DIR}/stacks/net-isolated-01/inventory.yml"
 )
 
@@ -35,4 +37,6 @@ ansible-playbook \
   -i "${INVENTORIES[4]}" \
   -i "${INVENTORIES[5]}" \
   -i "${INVENTORIES[6]}" \
+  -i "${INVENTORIES[7]}" \
+  -i "${INVENTORIES[8]}" \
   "${PLAYBOOK_PATH}"
