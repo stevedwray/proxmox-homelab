@@ -1,0 +1,323 @@
+---
+- name: Start network matrix listeners on pve-test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars: &network_matrix_vars
+    ansible_remote_tmp: /tmp/.ansible/tmp
+    network_matrix_required_hosts:
+      - net-app-01
+      - net-svc-01
+      - net-client-01
+      - net-service-01
+      - net-client-02
+      - net-service-02
+      - net-isolated-01
+    network_matrix_reference_host: net-service-01
+    network_matrix_pve_host: "{{ hostvars[network_matrix_reference_host].pve_host }}"
+    network_matrix_ssh_key: >-
+      {{
+        hostvars[network_matrix_reference_host].ansible_ssh_private_key_file
+        | regex_replace('^~', lookup('env', 'HOME'))
+      }}
+    network_matrix_listener_targets:
+      - host: net-svc-01
+        port: 8080
+      - host: net-svc-01
+        port: 9000
+      - host: net-service-01
+        port: 8080
+      - host: net-service-02
+        port: 8080
+    network_matrix_test_cases:
+      - description: bridge allow net-app-01 to net-svc-01 tcp/8080
+        from_host: net-app-01
+        from_vmid: "{{ hostvars['net-app-01'].vmid }}"
+        to_host: net-svc-01
+        to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
+        port: 8080
+        expected: allow
+      - description: bridge allow net-app-01 to net-svc-01 tcp/9000
+        from_host: net-app-01
+        from_vmid: "{{ hostvars['net-app-01'].vmid }}"
+        to_host: net-svc-01
+        to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
+        port: 9000
+        expected: allow
+      - description: sdn1 allow net-client-01 to net-service-01 tcp/8080
+        from_host: net-client-01
+        from_vmid: "{{ hostvars['net-client-01'].vmid }}"
+        to_host: net-service-01
+        to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
+        port: 8080
+        expected: allow
+      - description: sdn2 allow net-client-02 to net-service-02 tcp/8080
+        from_host: net-client-02
+        from_vmid: "{{ hostvars['net-client-02'].vmid }}"
+        to_host: net-service-02
+        to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
+        port: 8080
+        expected: allow
+      - description: bridge deny reverse net-svc-01 to net-app-01 tcp/8080
+        from_host: net-svc-01
+        from_vmid: "{{ hostvars['net-svc-01'].vmid }}"
+        to_host: net-app-01
+        to_ip: "{{ hostvars['net-app-01'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: sdn1 deny reverse net-service-01 to net-client-01 tcp/8080
+        from_host: net-service-01
+        from_vmid: "{{ hostvars['net-service-01'].vmid }}"
+        to_host: net-client-01
+        to_ip: "{{ hostvars['net-client-01'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: sdn2 deny reverse net-service-02 to net-client-02 tcp/8080
+        from_host: net-service-02
+        from_vmid: "{{ hostvars['net-service-02'].vmid }}"
+        to_host: net-client-02
+        to_ip: "{{ hostvars['net-client-02'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: cross-vnet deny net-client-01 to net-service-02 tcp/8080
+        from_host: net-client-01
+        from_vmid: "{{ hostvars['net-client-01'].vmid }}"
+        to_host: net-service-02
+        to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: cross-vnet deny net-client-02 to net-service-01 tcp/8080
+        from_host: net-client-02
+        from_vmid: "{{ hostvars['net-client-02'].vmid }}"
+        to_host: net-service-01
+        to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: isolated deny net-app-01 to net-isolated-01 tcp/8080
+        from_host: net-app-01
+        from_vmid: "{{ hostvars['net-app-01'].vmid }}"
+        to_host: net-isolated-01
+        to_ip: "{{ hostvars['net-isolated-01'].ansible_host }}"
+        port: 8080
+        expected: deny
+      - description: isolated deny net-isolated-01 to net-svc-01 tcp/8080
+        from_host: net-isolated-01
+        from_vmid: "{{ hostvars['net-isolated-01'].vmid }}"
+        to_host: net-svc-01
+        to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
+        port: 8080
+        expected: deny
+
+  pre_tasks:
+    - name: Assert required hosts are present in inventory
+      ansible.builtin.assert:
+        that:
+          - item in hostvars
+        fail_msg: >-
+          Missing required host {{ item }} in inventory for validate-network-matrix.yml.
+          Deploy the dependent disposable test stacks and include their inventory.yml files.
+      loop: "{{ network_matrix_required_hosts }}"
+
+  tasks:
+    - name: Clear stale matrix listeners inside target containers
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ network_matrix_ssh_key }}"
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - LogLevel=ERROR
+          - "root@{{ network_matrix_pve_host }}"
+          - pct
+          - exec
+          - "{{ hostvars[item.host].vmid }}"
+          - --
+          - sh
+          - -lc
+          - pkill -f nc >/dev/null 2>&1 || true
+      loop: "{{ network_matrix_listener_targets }}"
+      loop_control:
+        label: "{{ item.host }}:{{ item.port }}"
+      ignore_errors: true
+      changed_when: false
+
+    - name: Start listener processes for matrix targets
+      ansible.builtin.shell: |
+        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" || true
+          sleep 1
+        fi
+
+        nohup ssh -F /dev/null \
+          -i {{ network_matrix_ssh_key | quote }} \
+          -o StrictHostKeyChecking=no \
+          -o UserKnownHostsFile=/dev/null \
+          -o LogLevel=ERROR \
+          root@{{ network_matrix_pve_host }} \
+          pct exec {{ hostvars[item.host].vmid }} -- bash -lc \
+          {{ ("while true; do nc -l -p " ~ item.port ~ " >/dev/null; done") | quote }} \
+          >/tmp/network-matrix-{{ item.host }}-{{ item.port }}.log 2>&1 &
+        echo $! > /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid
+      args:
+        executable: /bin/bash
+      loop: "{{ network_matrix_listener_targets }}"
+      loop_control:
+        label: "{{ item.host }}:{{ item.port }}"
+      changed_when: true
+
+    - name: Give matrix listeners a moment to bind
+      ansible.builtin.pause:
+        seconds: 2
+
+- name: Run network matrix test cases on pve-test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars: *network_matrix_vars
+
+  pre_tasks:
+    - name: Assert required hosts are present in inventory
+      ansible.builtin.assert:
+        that:
+          - item in hostvars
+      loop: "{{ network_matrix_required_hosts }}"
+
+  tasks:
+    - name: Execute network matrix test cases
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ network_matrix_ssh_key }}"
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - LogLevel=ERROR
+          - "root@{{ network_matrix_pve_host }}"
+          - pct
+          - exec
+          - "{{ item.from_vmid }}"
+          - --
+          - nc
+          - -z
+          - -w2
+          - "{{ item.to_ip }}"
+          - "{{ item.port | string }}"
+      loop: "{{ network_matrix_test_cases }}"
+      loop_control:
+        label: "{{ item.description }}"
+      register: network_matrix_case_commands
+      ignore_errors: true
+      changed_when: false
+
+    - name: Persist network matrix results for later plays
+      ansible.builtin.set_fact:
+        network_matrix_results: >-
+          {%- set results = [] -%}
+          {%- for result in network_matrix_case_commands.results -%}
+          {%- set passed = (result.item.expected == 'allow' and result.rc == 0) or (result.item.expected == 'deny' and result.rc != 0) -%}
+          {%- set _ = results.append({
+            'description': result.item.description,
+            'from_host': result.item.from_host,
+            'to_host': result.item.to_host,
+            'to_ip': result.item.to_ip,
+            'port': result.item.port,
+            'expected': result.item.expected,
+            'rc': result.rc,
+            'passed': passed
+          }) -%}
+          {%- endfor -%}
+          {{ results }}
+
+- name: Stop network matrix listeners on pve-test
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  vars: *network_matrix_vars
+
+  tasks:
+    - name: Stop listener processes inside target containers
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ network_matrix_ssh_key }}"
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - LogLevel=ERROR
+          - "root@{{ network_matrix_pve_host }}"
+          - pct
+          - exec
+          - "{{ hostvars[item.host].vmid }}"
+          - --
+          - sh
+          - -lc
+          - pkill -f nc >/dev/null 2>&1 || true
+      loop: "{{ network_matrix_listener_targets }}"
+      loop_control:
+        label: "{{ item.host }}:{{ item.port }}"
+      ignore_errors: true
+      changed_when: true
+
+    - name: Stop host-side ssh wrapper processes
+      ansible.builtin.shell: |
+        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" || true
+        fi
+        rm -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid
+      args:
+        executable: /bin/bash
+      loop: "{{ network_matrix_listener_targets }}"
+      loop_control:
+        label: "{{ item.host }}:{{ item.port }}"
+      changed_when: true
+
+- name: Report network matrix results
+  hosts: localhost
+  connection: local
+  gather_facts: false
+
+  tasks:
+    - name: Print per-case matrix results
+      ansible.builtin.debug:
+        msg: >-
+          [{{ 'PASS' if item.passed else 'FAIL' }}]
+          {{ item.description }}
+          ({{ item.from_host }} -> {{ item.to_host }}:{{ item.port }},
+          expected={{ item.expected }}, rc={{ item.rc }})
+      loop: "{{ hostvars['localhost'].network_matrix_results | default([]) }}"
+
+    - name: Assert all matrix cases passed
+      ansible.builtin.assert:
+        that:
+          - (hostvars['localhost'].network_matrix_results | rejectattr('passed', 'equalto', true) | list | length) == 0
+        fail_msg: >-
+          Network matrix validation failed for:
+          {{
+            hostvars['localhost'].network_matrix_results
+            | rejectattr('passed', 'equalto', true)
+            | map(attribute='description')
+            | join('; ')
+          }}
+        success_msg: >-
+          Validated {{
+            hostvars['localhost'].network_matrix_results | length
+          }} network matrix cases on pve-test.
