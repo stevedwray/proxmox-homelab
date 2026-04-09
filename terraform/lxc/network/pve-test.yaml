@@ -16,27 +16,31 @@ attachments:
   vnet1:
     description: First SDN VNet attachment for microsegmentation validation on pve-test
     type: sdn_vnet
-    bridge: ptsv0
+    bridge: tvn1
     firewall: true
     sdn:
-      zone: pts0
+      zone: tvz1
       zone_type: simple
       nodes:
         - pve-test
-      vnet: ptsv0
+      vnet: tvn1
       alias: pve-test network layer
+      legacy_zone: pts0
+      legacy_vnet: ptsv0
   vnet2:
     description: Second SDN VNet attachment for independent microsegmentation validation
     type: sdn_vnet
-    bridge: ptsv1
+    bridge: tvn2
     firewall: true
     sdn:
-      zone: pts1
+      zone: tvz2
       zone_type: simple
       nodes:
         - pve-test
-      vnet: ptsv1
+      vnet: tvn2
       alias: pve-test network layer 2
+      legacy_zone: pts1
+      legacy_vnet: ptsv1
 
 zones:
   app:
