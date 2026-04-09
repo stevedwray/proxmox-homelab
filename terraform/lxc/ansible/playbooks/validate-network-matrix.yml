@@ -31,77 +31,77 @@
       - host: net-service-02
         port: 8080
     network_matrix_test_cases:
-      - description: "policy: app -> services tcp/8080 ALLOW"
+      - description: "policy: apps -> infra tcp/8080 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: "policy: app -> services tcp/9000 ALLOW"
+      - description: "policy: apps -> infra tcp/9000 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 9000
         expected: allow
-      - description: "policy: app_vnet1 -> svc_vnet1 tcp/8080 ALLOW"
+      - description: "policy: apps_seg -> infra_seg tcp/8080 ALLOW"
         from_host: net-client-01
         from_vmid: "{{ hostvars['net-client-01'].vmid }}"
         to_host: net-service-01
         to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: "policy: app_vnet2 -> svc_vnet2 tcp/8080 ALLOW"
+      - description: "policy: media_seg -> observe_seg tcp/8080 ALLOW"
         from_host: net-client-02
         from_vmid: "{{ hostvars['net-client-02'].vmid }}"
         to_host: net-service-02
         to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: "policy: services -> app tcp/8080 DENY (no return rule)"
+      - description: "policy: infra -> apps tcp/8080 DENY (no return rule)"
         from_host: net-svc-01
         from_vmid: "{{ hostvars['net-svc-01'].vmid }}"
         to_host: net-app-01
         to_ip: "{{ hostvars['net-app-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: svc_vnet1 -> app_vnet1 tcp/8080 DENY (no return rule)"
+      - description: "policy: infra_seg -> apps_seg tcp/8080 DENY (no return rule)"
         from_host: net-service-01
         from_vmid: "{{ hostvars['net-service-01'].vmid }}"
         to_host: net-client-01
         to_ip: "{{ hostvars['net-client-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: svc_vnet2 -> app_vnet2 tcp/8080 DENY (no return rule)"
+      - description: "policy: observe_seg -> media_seg tcp/8080 DENY (no return rule)"
         from_host: net-service-02
         from_vmid: "{{ hostvars['net-service-02'].vmid }}"
         to_host: net-client-02
         to_ip: "{{ hostvars['net-client-02'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: app_vnet1 -> svc_vnet2 tcp/8080 DENY (no cross-vnet rule)"
+      - description: "policy: apps_seg -> observe_seg tcp/8080 DENY (no cross-vnet rule)"
         from_host: net-client-01
         from_vmid: "{{ hostvars['net-client-01'].vmid }}"
         to_host: net-service-02
         to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: app_vnet2 -> svc_vnet1 tcp/8080 DENY (no cross-vnet rule)"
+      - description: "policy: media_seg -> infra_seg tcp/8080 DENY (no cross-vnet rule)"
         from_host: net-client-02
         from_vmid: "{{ hostvars['net-client-02'].vmid }}"
         to_host: net-service-01
         to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: app -> isolated tcp/8080 DENY (no isolated allow rule)"
+      - description: "policy: apps -> isolated tcp/8080 DENY (no isolated allow rule)"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-isolated-01
         to_ip: "{{ hostvars['net-isolated-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: isolated -> services tcp/8080 DENY (no isolated allow rule)"
+      - description: "policy: isolated -> infra tcp/8080 DENY (no isolated allow rule)"
         from_host: net-isolated-01
         from_vmid: "{{ hostvars['net-isolated-01'].vmid }}"
         to_host: net-svc-01
