@@ -15,6 +15,7 @@ all:
               ansible_host: 192.168.1.40
               ansible_user: root
               ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              pmx_enable_nftables_firewall: true
 
       vars:
         # Common Proxmox variables (apply to ALL Proxmox hosts)

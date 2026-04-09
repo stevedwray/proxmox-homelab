@@ -1,0 +1,8 @@
+[OPTIONS]
+enable: {{ 1 if network_vnet_firewall_enable else 0 }}
+policy_forward: {{ network_vnet_firewall_policy_forward }}
+
+[RULES]
+{% for rule in network_vnet_firewall_rules %}
+FORWARD {{ rule.action | upper }} -source {{ rule.source }} -dest {{ rule.destination }} -p {{ rule.protocol }} -{{ rule.port_direction }}port {{ rule.port }}
+{% endfor %}

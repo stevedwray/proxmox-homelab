@@ -240,6 +240,29 @@ terraform destroy -target='module.lxc["test-docker"]' \
 terraform destroy
 ```
 
+## Validation
+
+Use the disposable validation stacks on `pve-test` to exercise the network layer end to end.
+
+```bash
+# Single client/service check for the first SDN slice
+./validate-network.sh
+
+# Full 11-case bridge + SDN + isolated matrix
+./validate-network-matrix.sh
+```
+
+`validate-network-matrix.sh` expects generated inventory files for:
+- `net-app-01`
+- `net-svc-01`
+- `net-client-01`
+- `net-service-01`
+- `net-client-02`
+- `net-service-02`
+- `net-isolated-01`
+
+If one of those inventories is missing, apply the corresponding disposable test stack on `pve-test` first.
+
 ## Conventions
 
 - Stack directory name = Terraform map key = Portainer endpoint name
