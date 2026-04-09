@@ -209,8 +209,9 @@ resource "null_resource" "configure_network_sdn_attachment" {
   }
 
   provisioner "local-exec" {
-    when    = destroy
-    command = <<-EOT
+    when        = destroy
+    working_dir = self.triggers.ansible_dir
+    command     = <<-EOT
       tmp_vars_file="$(mktemp)"
       trap 'rm -f "$tmp_vars_file"' EXIT
       cat >"$tmp_vars_file" <<'EOF'
@@ -218,7 +219,7 @@ ${self.triggers.sdn_vars}
 EOF
       ansible-playbook \
         -i localhost, \
-        ansible/playbooks/destroy-network-sdn-vnet.yml \
+        playbooks/destroy-network-sdn-vnet.yml \
         -e "@$tmp_vars_file"
     EOT
 
