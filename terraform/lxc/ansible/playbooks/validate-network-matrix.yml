@@ -31,77 +31,77 @@
       - host: net-service-02
         port: 8080
     network_matrix_test_cases:
-      - description: bridge allow net-app-01 to net-svc-01 tcp/8080
+      - description: "policy: app -> services tcp/8080 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: bridge allow net-app-01 to net-svc-01 tcp/9000
+      - description: "policy: app -> services tcp/9000 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 9000
         expected: allow
-      - description: sdn1 allow net-client-01 to net-service-01 tcp/8080
+      - description: "policy: app_vnet1 -> svc_vnet1 tcp/8080 ALLOW"
         from_host: net-client-01
         from_vmid: "{{ hostvars['net-client-01'].vmid }}"
         to_host: net-service-01
         to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: sdn2 allow net-client-02 to net-service-02 tcp/8080
+      - description: "policy: app_vnet2 -> svc_vnet2 tcp/8080 ALLOW"
         from_host: net-client-02
         from_vmid: "{{ hostvars['net-client-02'].vmid }}"
         to_host: net-service-02
         to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: bridge deny reverse net-svc-01 to net-app-01 tcp/8080
+      - description: "policy: services -> app tcp/8080 DENY (no return rule)"
         from_host: net-svc-01
         from_vmid: "{{ hostvars['net-svc-01'].vmid }}"
         to_host: net-app-01
         to_ip: "{{ hostvars['net-app-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: sdn1 deny reverse net-service-01 to net-client-01 tcp/8080
+      - description: "policy: svc_vnet1 -> app_vnet1 tcp/8080 DENY (no return rule)"
         from_host: net-service-01
         from_vmid: "{{ hostvars['net-service-01'].vmid }}"
         to_host: net-client-01
         to_ip: "{{ hostvars['net-client-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: sdn2 deny reverse net-service-02 to net-client-02 tcp/8080
+      - description: "policy: svc_vnet2 -> app_vnet2 tcp/8080 DENY (no return rule)"
         from_host: net-service-02
         from_vmid: "{{ hostvars['net-service-02'].vmid }}"
         to_host: net-client-02
         to_ip: "{{ hostvars['net-client-02'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: cross-vnet deny net-client-01 to net-service-02 tcp/8080
+      - description: "policy: app_vnet1 -> svc_vnet2 tcp/8080 DENY (no cross-vnet rule)"
         from_host: net-client-01
         from_vmid: "{{ hostvars['net-client-01'].vmid }}"
         to_host: net-service-02
         to_ip: "{{ hostvars['net-service-02'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: cross-vnet deny net-client-02 to net-service-01 tcp/8080
+      - description: "policy: app_vnet2 -> svc_vnet1 tcp/8080 DENY (no cross-vnet rule)"
         from_host: net-client-02
         from_vmid: "{{ hostvars['net-client-02'].vmid }}"
         to_host: net-service-01
         to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: isolated deny net-app-01 to net-isolated-01 tcp/8080
+      - description: "policy: app -> isolated tcp/8080 DENY (no isolated allow rule)"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-isolated-01
         to_ip: "{{ hostvars['net-isolated-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: isolated deny net-isolated-01 to net-svc-01 tcp/8080
+      - description: "policy: isolated -> services tcp/8080 DENY (no isolated allow rule)"
         from_host: net-isolated-01
         from_vmid: "{{ hostvars['net-isolated-01'].vmid }}"
         to_host: net-svc-01
