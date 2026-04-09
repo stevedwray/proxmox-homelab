@@ -1,0 +1,58 @@
+---
+- name: Configure Proxmox firewall policy for an LXC container
+  hosts: all
+  gather_facts: false
+
+  vars:
+    network_firewall_rendered_config: "{{ lookup('template', playbook_dir + '/../templates/lxc-container-firewall.fw.j2') }}"
+
+  tasks:
+    - name: Assert pve-test-only execution
+      ansible.builtin.assert:
+        that:
+          - network_firewall_enable | bool
+          - network_firewall_target == 'pve-test'
+          - network_firewall_pve_host == 'pve-test.gibbsgreatly.xyz'
+          - pve_host == 'pve-test.gibbsgreatly.xyz'
+        fail_msg: "Network-layer firewall automation is restricted to pve-test and must not run on pve."
+        success_msg: "Firewall automation is pinned to pve-test."
+
+    - name: Enable cluster firewall options on pve-test
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/cluster.fw <<'EOF'
+        [OPTIONS]
+        enable: 1
+        EOF
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ network_firewall_pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Write container firewall config on pve-test
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/{{ network_firewall_vmid }}.fw <<'EOF'
+        {{ network_firewall_rendered_config }}
+        EOF
+        chmod 0640 /etc/pve/firewall/{{ network_firewall_vmid }}.fw
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ network_firewall_pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Validate Proxmox firewall compilation on pve-test
+      ansible.builtin.command:
+        cmd: pve-firewall compile
+      delegate_to: "{{ network_firewall_pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: false

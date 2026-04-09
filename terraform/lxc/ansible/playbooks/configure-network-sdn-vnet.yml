@@ -1,0 +1,114 @@
+---
+- name: Ensure the pve-test SDN VNet attachment exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    network_sdn_nodes_csv: "{{ network_sdn_nodes | join(',') }}"
+
+  tasks:
+    - name: Assert pve-test-only execution
+      ansible.builtin.assert:
+        that:
+          - network_sdn_enable | bool
+          - network_sdn_target == 'pve-test'
+          - network_sdn_pve_host == 'pve-test.gibbsgreatly.xyz'
+          - network_sdn_zone_type == 'simple'
+          - network_sdn_nodes | length > 0
+        fail_msg: "SDN attachment automation is restricted to pve-test simple zones and must not run on pve."
+        success_msg: "SDN attachment automation is pinned to pve-test."
+
+    - name: Read current SDN zones
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_zones_result
+      changed_when: false
+
+    - name: Create simple SDN zone when missing
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/sdn/zones
+          - --zone
+          - "{{ network_sdn_zone }}"
+          - --type
+          - "{{ network_sdn_zone_type }}"
+          - --nodes
+          - "{{ network_sdn_nodes_csv }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_zones_result.stdout | from_json
+        | selectattr('zone', 'equalto', network_sdn_zone)
+        | list | length) == 0
+      changed_when: true
+
+    - name: Read current SDN VNets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_vnets_result
+      changed_when: false
+
+    - name: Create SDN VNet when missing
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/sdn/vnets
+          - --vnet
+          - "{{ network_sdn_vnet }}"
+          - --zone
+          - "{{ network_sdn_zone }}"
+          - --alias
+          - "{{ network_sdn_vnet_alias }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_vnets_result.stdout | from_json
+        | selectattr('vnet', 'equalto', network_sdn_vnet)
+        | list | length) == 0
+      changed_when: true
+
+    - name: Apply pending SDN changes on pve-test
+      ansible.builtin.command:
+        cmd: pvesh set /cluster/sdn
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: >-
+        (network_sdn_zones_result.stdout | from_json
+        | selectattr('zone', 'equalto', network_sdn_zone)
+        | list | length) == 0
+        or
+        (network_sdn_vnets_result.stdout | from_json
+        | selectattr('vnet', 'equalto', network_sdn_vnet)
+        | list | length) == 0
+
+    - name: Validate proxmox-firewall compilation on pve-test
+      ansible.builtin.command:
+        cmd: /usr/libexec/proxmox/proxmox-firewall compile
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: false

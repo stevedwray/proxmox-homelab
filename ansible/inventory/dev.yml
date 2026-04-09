@@ -2,13 +2,18 @@ all:
   children:
     # Proxmox dev/test server
     proxmox:
-      hosts:
-        pve-test.gibbsgreatly.xyz:
-          ansible_host: 192.168.1.40
-          ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
-          ansible_python_interpreter: /usr/bin/python3
-          ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
+      children:
+        proxmox_testbed:
+          hosts:
+            pve-test.gibbsgreatly.xyz:
+              ansible_host: 192.168.1.40
+              ansible_user: root
+              ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              pmx_enable_nftables_firewall: true
+
+      vars:
+        ansible_python_interpreter: /usr/bin/python3
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no'
 
     # Debian template builder containers
     debian_template_builder:

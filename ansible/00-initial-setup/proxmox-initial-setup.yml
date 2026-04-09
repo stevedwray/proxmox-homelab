@@ -10,7 +10,7 @@
 # - Idempotent verification that repos are correct
 
 - name: Proxmox VE 9 base configuration
-  hosts: "{{ target_hosts | default('proxmox_production') }}"
+  hosts: "{{ target_hosts | default('proxmox_testbed') }}"
   become: true
   gather_facts: true
 
@@ -44,6 +44,10 @@
     pmx_terraform_user: "automation@pve"
     pmx_terraform_token_id: "terraform"
     pmx_terraform_rotate_token: true          # always create fresh token
+
+    # --- Proxmox firewall backend ---
+    pmx_enable_nftables_firewall_default: false
+    pmx_host_firewall_options_path: "/etc/pve/nodes/{{ ansible_facts['hostname'] }}/host.fw"
 
   pre_tasks:
     - name: Assert Debian 13 (trixie) and Proxmox environment
@@ -247,6 +251,15 @@
           - "TF_VAR_pm_api_token_id={{ terraform_api_token_id | default('') }}"
           - "TF_VAR_pm_api_token_secret={{ terraform_api_token_secret | default('') }}"
       when: pmx_setup_terraform_user
+
+    # ------------------------------
+    # Proxmox firewall backend (host capability)
+    # ------------------------------
+
+    - name: Configure host-level Proxmox firewall backend
+      ansible.builtin.import_tasks: tasks/proxmox-host-firewall-backend.yml
+      tags:
+        - pmx_host_firewall_backend
 
     # ------------------------------
     # IPv6 host tuning for SLAAC (does not touch LXCs)

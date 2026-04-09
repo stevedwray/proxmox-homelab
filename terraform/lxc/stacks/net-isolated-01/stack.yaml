@@ -1,0 +1,14 @@
+# Disposable validation container for the isolated zone (bridge, no inbound policy)
+hostname: net-isolated-01
+ip_address: "192.168.1.73/24"
+gateway: "192.168.1.1"
+vmid: 136
+cores: 1
+memory: 512
+rootfs_size: 4
+rootfs_storage: "storage-containers"
+docker_storage_size: "4G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+
+network:
+  zone: isolated
