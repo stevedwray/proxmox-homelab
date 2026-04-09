@@ -23,27 +23,47 @@ attachments:
         - pve-test
       vnet: ptsv0
       alias: pve-test network layer
+  sdn_microseg_2:
+    type: sdn_vnet
+    bridge: ptsv1
+    firewall: true
+    sdn:
+      zone: pts1
+      zone_type: simple
+      nodes:
+        - pve-test
+      vnet: ptsv1
+      alias: pve-test network layer 2
 
 zones:
   app:
     attachment: default_lan
   services:
     attachment: default_lan
+  isolated:
+    attachment: default_lan
   app_test:
     attachment: sdn_microseg
   services_test:
     attachment: sdn_microseg
-  isolated:
-    attachment: default_lan
+  app_test2:
+    attachment: sdn_microseg_2
+  services_test2:
+    attachment: sdn_microseg_2
 
 policies:
   - from: app
     to: services
     protocol: tcp
-    ports: [8080]
-    description: app can reach test services on tcp/8080
+    ports: [8080, 9000]
+    description: app can reach services on tcp/8080 and tcp/9000
   - from: app_test
     to: services_test
     protocol: tcp
     ports: [8080]
     description: app_test can reach services_test on tcp/8080
+  - from: app_test2
+    to: services_test2
+    protocol: tcp
+    ports: [8080]
+    description: app_test2 can reach services_test2 on tcp/8080
