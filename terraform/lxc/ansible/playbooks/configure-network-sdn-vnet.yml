@@ -5,8 +5,6 @@
 
   vars:
     network_sdn_nodes_csv: "{{ network_sdn_nodes | join(',') }}"
-    network_sdn_legacy_zone_effective: "{{ network_sdn_legacy_zone | default('') }}"
-    network_sdn_legacy_vnet_effective: "{{ network_sdn_legacy_vnet | default('') }}"
 
   tasks:
     - name: Assert pve-test-only execution
@@ -88,89 +86,6 @@
         | list | length) == 0
       changed_when: true
 
-    - name: Inspect pve-test LXC configs for legacy VNet bridge usage
-      ansible.builtin.shell: |
-        grep -R "bridge={{ network_sdn_legacy_vnet_effective }}\\([, ]\\|$\\)" /etc/pve/lxc/*.conf || true
-      args:
-        executable: /bin/bash
-      delegate_to: "{{ network_sdn_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
-        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      register: network_sdn_legacy_bridge_usage
-      when: network_sdn_legacy_vnet_effective | length > 0
-      changed_when: false
-
-    - name: Remove legacy SDN VNet when no guests still use it
-      ansible.builtin.command:
-        argv:
-          - pvesh
-          - delete
-          - "/cluster/sdn/vnets/{{ network_sdn_legacy_vnet_effective }}"
-      delegate_to: "{{ network_sdn_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
-        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      when: >-
-        network_sdn_legacy_vnet_effective | length > 0 and
-        network_sdn_legacy_vnet_effective != network_sdn_vnet and
-        (network_sdn_vnets_result.stdout | from_json
-        | selectattr('vnet', 'equalto', network_sdn_legacy_vnet_effective)
-        | list | length) > 0 and
-        (network_sdn_legacy_bridge_usage.stdout | trim) == ''
-      register: network_sdn_legacy_vnet_delete
-      changed_when: true
-
-    - name: Remove legacy VNet firewall config file when VNet is deleted
-      ansible.builtin.command:
-        cmd: rm -f /etc/pve/sdn/firewall/{{ network_sdn_legacy_vnet_effective }}.fw
-      delegate_to: "{{ network_sdn_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
-        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      when: network_sdn_legacy_vnet_delete is changed
-      changed_when: true
-
-    - name: Refresh SDN VNets after legacy cleanup
-      ansible.builtin.command:
-        cmd: pvesh get /cluster/sdn/vnets --output-format json
-      delegate_to: "{{ network_sdn_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
-        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      register: network_sdn_vnets_after_cleanup_result
-      when: network_sdn_legacy_vnet_effective | length > 0
-      changed_when: false
-
-    - name: Remove legacy SDN zone when no VNets still reference it
-      ansible.builtin.command:
-        argv:
-          - pvesh
-          - delete
-          - "/cluster/sdn/zones/{{ network_sdn_legacy_zone_effective }}"
-      delegate_to: "{{ network_sdn_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
-        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      when: >-
-        network_sdn_legacy_zone_effective | length > 0 and
-        network_sdn_legacy_zone_effective != network_sdn_zone and
-        (network_sdn_zones_result.stdout | from_json
-        | selectattr('zone', 'equalto', network_sdn_legacy_zone_effective)
-        | list | length) > 0 and
-        (
-          (network_sdn_vnets_after_cleanup_result.stdout | default(network_sdn_vnets_result.stdout) | from_json)
-          | selectattr('zone', 'equalto', network_sdn_legacy_zone_effective)
-          | list | length
-        ) == 0
-      register: network_sdn_legacy_zone_delete
-      changed_when: true
-
     - name: Apply pending SDN changes on pve-test
       ansible.builtin.command:
         cmd: pvesh set /cluster/sdn
@@ -187,10 +102,6 @@
         (network_sdn_vnets_result.stdout | from_json
         | selectattr('vnet', 'equalto', network_sdn_vnet)
         | list | length) == 0
-        or
-        (network_sdn_legacy_vnet_delete is defined and network_sdn_legacy_vnet_delete is changed)
-        or
-        (network_sdn_legacy_zone_delete is defined and network_sdn_legacy_zone_delete is changed)
 
     - name: Validate proxmox-firewall compilation on pve-test
       ansible.builtin.command:

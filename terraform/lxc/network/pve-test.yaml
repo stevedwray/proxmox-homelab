@@ -25,8 +25,6 @@ attachments:
         - pve-test
       vnet: tvn1
       alias: pve-test network layer
-      legacy_zone: pts0
-      legacy_vnet: ptsv0
   vnet2:
     description: Second SDN VNet attachment for independent microsegmentation validation
     type: sdn_vnet
@@ -39,8 +37,6 @@ attachments:
         - pve-test
       vnet: tvn2
       alias: pve-test network layer 2
-      legacy_zone: pts1
-      legacy_vnet: ptsv1
 
 zones:
   app:
