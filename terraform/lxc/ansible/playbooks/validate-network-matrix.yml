@@ -161,8 +161,7 @@
           -o UserKnownHostsFile=/dev/null \
           -o LogLevel=ERROR \
           root@{{ network_matrix_pve_host }} \
-          pct exec {{ hostvars[item.host].vmid }} -- bash -lc \
-          {{ ("while true; do nc -l -p " ~ item.port ~ " >/dev/null; done") | quote }} \
+          "pct exec {{ hostvars[item.host].vmid }} -- sh -lc 'while true; do nc -l -p {{ item.port }} >/dev/null; done'" \
           >/tmp/network-matrix-{{ item.host }}-{{ item.port }}.log 2>&1 &
         echo $! > /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid
       args:
@@ -219,8 +218,8 @@
       loop_control:
         label: "{{ item.description }}"
       register: network_matrix_case_commands
-      ignore_errors: true
       changed_when: false
+      failed_when: false
 
     - name: Persist network matrix results for later plays
       ansible.builtin.set_fact:
