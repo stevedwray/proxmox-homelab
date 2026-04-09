@@ -172,6 +172,7 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_enable     = true
     network_sdn_target     = local.effective_target_node
     network_sdn_pve_host   = local.effective_pve_host
+    network_sdn_vmid       = try(local.stack.vmid, null)
     network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
@@ -185,7 +186,10 @@ resource "null_resource" "configure_network_sdn_attachment" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
 
   triggers = {
-    sdn_vars = local_file.network_sdn_vars[0].content
+    ansible_dir   = local.ansible_dir
+    sdn_vars      = local_file.network_sdn_vars[0].content
+    sdn_vars_file = local_file.network_sdn_vars[0].filename
+    vmid          = tostring(try(local.stack.vmid, ""))
   }
 
   provisioner "local-exec" {
@@ -196,6 +200,28 @@ resource "null_resource" "configure_network_sdn_attachment" {
         -e '@${local.stack_dir}/network-sdn-vars.yml'
     EOT
     working_dir = local.ansible_dir
+
+    environment = {
+      ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
+      ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
+    }
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    working_dir = self.triggers.ansible_dir
+    command     = <<-EOT
+      tmp_vars_file="$(mktemp)"
+      trap 'rm -f "$tmp_vars_file"' EXIT
+      cat >"$tmp_vars_file" <<'EOF'
+${self.triggers.sdn_vars}
+EOF
+      ansible-playbook \
+        -i localhost, \
+        playbooks/destroy-network-sdn-vnet.yml \
+        -e "@$tmp_vars_file"
+    EOT
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
