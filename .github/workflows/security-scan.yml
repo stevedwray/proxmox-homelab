@@ -36,4 +36,3 @@ jobs:
   # Removed terraform-security job (tfsec build fails in CI due to Go toolchain)
   # IaC scanning is now consolidated into the `sast-scan` job via Trivy.
 
-      uses: hashicorp/setup-terraform@v3
