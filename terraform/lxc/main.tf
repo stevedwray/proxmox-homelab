@@ -169,17 +169,15 @@ resource "local_file" "network_sdn_vars" {
 
   filename = "${local.stack_dir}/network-sdn-vars.yml"
   content = yamlencode({
-    network_sdn_enable      = true
-    network_sdn_target      = local.effective_target_node
-    network_sdn_pve_host    = local.effective_pve_host
-    network_sdn_zone        = try(local.resolved_sdn_attachment.zone, null)
-    network_sdn_legacy_zone = try(local.resolved_sdn_attachment.legacy_zone, null)
-    network_sdn_zone_type   = try(local.resolved_sdn_attachment.zone_type, null)
-    network_sdn_nodes       = try(local.resolved_sdn_attachment.nodes, [])
-    network_sdn_vnet        = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_legacy_vnet = try(local.resolved_sdn_attachment.legacy_vnet, null)
-    network_sdn_vnet_alias  = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
-    network_sdn_ssh_key     = pathexpand(var.ssh_private_key_path)
+    network_sdn_enable     = true
+    network_sdn_target     = local.effective_target_node
+    network_sdn_pve_host   = local.effective_pve_host
+    network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
+    network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
+    network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
+    network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
+    network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
   })
 }
 
@@ -207,36 +205,6 @@ resource "null_resource" "configure_network_sdn_attachment" {
   }
 
   depends_on = [local_file.network_sdn_vars]
-}
-
-resource "null_resource" "cleanup_network_sdn_attachment_legacy" {
-  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
-
-  triggers = {
-    container_id = module.lxc.container_id
-    sdn_vars     = local_file.network_sdn_vars[0].content
-  }
-
-  provisioner "local-exec" {
-    command     = <<-EOT
-      ansible-playbook \
-        -i localhost, \
-        playbooks/configure-network-sdn-vnet.yml \
-        -e '@${local.stack_dir}/network-sdn-vars.yml'
-    EOT
-    working_dir = local.ansible_dir
-
-    environment = {
-      ANSIBLE_HOST_KEY_CHECKING    = "False"
-      ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
-      ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
-    }
-  }
-
-  depends_on = [
-    local_file.network_sdn_vars,
-    module.lxc,
-  ]
 }
 
 # ---------------------------------------------------------------------------
@@ -450,7 +418,6 @@ resource "null_resource" "configure_network_vnet_firewall" {
   }
 
   depends_on = [
-    null_resource.cleanup_network_sdn_attachment_legacy,
     local_file.network_vnet_firewall_vars,
     null_resource.configure_keyctl,
     null_resource.ansible_provision,
