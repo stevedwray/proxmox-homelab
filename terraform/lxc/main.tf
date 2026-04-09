@@ -91,7 +91,7 @@ locals {
 
   effective_firewall_rules = local.stack_network_zone != null && local.effective_firewall == true ? tolist(flatten([
     for policy in local.inbound_zone_policies : [
-      for member in lookup(local.zone_members, policy.from, []) : {
+      for member in try(local.zone_members[policy.from], []) : {
         type        = "in"
         action      = "ACCEPT"
         source      = member.ip_address
@@ -104,8 +104,8 @@ locals {
 
   effective_vnet_firewall_rules = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && local.effective_firewall == true ? tolist(flatten([
     for policy in local.vnet_policy_candidates : flatten([
-      for source_member in lookup(local.zone_members, policy.from, []) : [
-        for dest_member in lookup(local.zone_members, policy.to, []) : [
+      for source_member in try(local.zone_members[policy.from], []) : [
+        for dest_member in try(local.zone_members[policy.to], []) : [
           for port in try(policy.ports, []) : [
             {
               action         = "ACCEPT"
