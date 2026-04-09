@@ -9,6 +9,7 @@ storage-audit
 # Terraform
 *.tfstate
 *.tfstate.*
+terraform.tfstate.d/
 .terraform/
 .terraform.lock.hcl
 terraform/lxc/.terraform-plugin-cache/
@@ -67,4 +68,3 @@ id_rsa.pub
 .continue/config.json
 *~
 .scannerwork/
-
