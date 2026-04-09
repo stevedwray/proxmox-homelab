@@ -2,45 +2,37 @@ name: Security Scan
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - 'dev/pve-test'
+      - 'dev/**'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - 'dev/pve-test'
 
 jobs:
   sast-scan:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
     steps:
     - uses: actions/checkout@v4
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
+    - name: Run Trivy vulnerability + IaC + secret scanner
+      uses: aquasecurity/trivy-action@v0.35.0
       with:
         scan-type: 'fs'
         scan-ref: '.'
+        scanners: 'vuln,secret,misconfig'
         format: 'sarif'
         output: 'trivy-results.sarif'
 
-    - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+    - name: Upload Trivy SARIF results
+      uses: github/codeql-action/upload-sarif@v3
       with:
         sarif_file: 'trivy-results.sarif'
 
-  terraform-security:
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v4
+  # Removed terraform-security job (tfsec build fails in CI due to Go toolchain)
+  # IaC scanning is now consolidated into the `sast-scan` job via Trivy.
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-
-    - name: Terraform Security Scan
-      uses: triat/terraform-security-scan@v3.1.0
-      with:
-        tfsec_actions_comment: true
-        tfsec_output_format: sarif
-        tfsec_output_file: tfsec.sarif
-
-    - name: Upload tfsec scan results
-      uses: github/codeql-action/upload-sarif@v2
-      with:
-        sarif_file: tfsec.sarif
