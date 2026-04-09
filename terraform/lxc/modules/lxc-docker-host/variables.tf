@@ -98,6 +98,12 @@ variable "network_bridge" {
   default     = "vmbr0"
 }
 
+variable "network_firewall" {
+  description = "Enable the Proxmox firewall flag on the LXC network interface"
+  type        = bool
+  default     = false
+}
+
 variable "ip_address" {
   description = "Static IP address with CIDR notation (e.g., 192.168.1.100/24)"
   type        = string

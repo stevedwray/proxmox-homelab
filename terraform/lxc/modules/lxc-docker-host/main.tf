@@ -70,7 +70,8 @@ resource "proxmox_virtual_environment_container" "docker_host" {
   }
 
   network_interface {
-    name   = "eth0"
-    bridge = var.network_bridge
+    name     = "eth0"
+    bridge   = var.network_bridge
+    firewall = var.network_firewall
   }
 }

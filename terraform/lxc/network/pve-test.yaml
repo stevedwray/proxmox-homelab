@@ -1,0 +1,79 @@
+# Proxmox-only network intent for the pve-test environment.
+# This file is declarative only for now; later steps will wire it into
+# Terraform NIC attachment and Proxmox firewall policy generation.
+
+proxmox:
+  target_node: pve-test
+  pve_host: pve-test.gibbsgreatly.xyz
+
+attachments:
+  default_lan:
+    description: Default LAN bridge for bridge-based validation zones on pve-test
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: true
+  vnet1:
+    description: First SDN VNet attachment for microsegmentation validation on pve-test
+    type: sdn_vnet
+    bridge: tvn1
+    firewall: true
+    sdn:
+      zone: tvz1
+      zone_type: simple
+      nodes:
+        - pve-test
+      vnet: tvn1
+      alias: pve-test network layer
+  vnet2:
+    description: Second SDN VNet attachment for independent microsegmentation validation
+    type: sdn_vnet
+    bridge: tvn2
+    firewall: true
+    sdn:
+      zone: tvz2
+      zone_type: simple
+      nodes:
+        - pve-test
+      vnet: tvn2
+      alias: pve-test network layer 2
+
+zones:
+  app:
+    description: Application workload zone on the default LAN bridge
+    attachment: default_lan
+  services:
+    description: Service endpoint zone on the default LAN bridge
+    attachment: default_lan
+  isolated:
+    description: Bridge-attached isolated zone with no inbound policy overrides
+    attachment: default_lan
+  app_vnet1:
+    description: Application workload zone on the first SDN VNet
+    attachment: vnet1
+  svc_vnet1:
+    description: Service endpoint zone on the first SDN VNet
+    attachment: vnet1
+  app_vnet2:
+    description: Application workload zone on the second SDN VNet
+    attachment: vnet2
+  svc_vnet2:
+    description: Service endpoint zone on the second SDN VNet
+    attachment: vnet2
+
+policies:
+  - from: app
+    to: services
+    protocol: tcp
+    ports: [8080, 9000]
+    description: app can reach services on tcp/8080 and tcp/9000
+  - from: app_vnet1
+    to: svc_vnet1
+    protocol: tcp
+    ports: [8080]
+    description: app_vnet1 can reach svc_vnet1 on tcp/8080
+  - from: app_vnet2
+    to: svc_vnet2
+    protocol: tcp
+    ports: [8080]
+    description: app_vnet2 can reach svc_vnet2 on tcp/8080
