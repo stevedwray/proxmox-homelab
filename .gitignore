@@ -24,8 +24,9 @@ override.tf.json
 # Terragrunt
 .terragrunt-cache/
 
-# Generated inventory (Terraform output)
+# Generated Terraform outputs in stack dirs
 **/stacks/*/inventory.yml
+**/stacks/*/network-*-vars.yml
 
 # Ansible
 *.retry

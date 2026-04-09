@@ -11,6 +11,12 @@ variable "stack_yaml_path" {
   type        = string
 }
 
+variable "network_intent_path" {
+  description = "Optional override path for the shared network intent YAML file"
+  type        = string
+  default     = null
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox connection
 # ---------------------------------------------------------------------------

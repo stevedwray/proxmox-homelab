@@ -1,0 +1,33 @@
+---
+# Host-level Proxmox firewall backend capability.
+# This enables the nftables-backed firewall on the Proxmox host so
+# higher-level network automation can rely on forwarded-traffic policy.
+
+- name: Ensure proxmox-firewall package is installed
+  ansible.builtin.apt:
+    name: proxmox-firewall
+    state: present
+  when: (pmx_enable_nftables_firewall | default(pmx_enable_nftables_firewall_default)) | bool
+
+- name: Enable nftables-backed Proxmox firewall on this host
+  ansible.builtin.shell: |
+    cat > {{ pmx_host_firewall_options_path }} <<'EOF'
+    [OPTIONS]
+    nftables: 1
+    EOF
+  args:
+    executable: /bin/bash
+  when: (pmx_enable_nftables_firewall | default(pmx_enable_nftables_firewall_default)) | bool
+  changed_when: true
+
+- name: Ensure proxmox-firewall service is enabled and running
+  ansible.builtin.systemd:
+    name: proxmox-firewall
+    enabled: true
+    state: started
+  when: (pmx_enable_nftables_firewall | default(pmx_enable_nftables_firewall_default)) | bool
+
+- name: Validate proxmox-firewall compilation
+  ansible.builtin.command: /usr/libexec/proxmox/proxmox-firewall compile
+  when: (pmx_enable_nftables_firewall | default(pmx_enable_nftables_firewall_default)) | bool
+  changed_when: false
