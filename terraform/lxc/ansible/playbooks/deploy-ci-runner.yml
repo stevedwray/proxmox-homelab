@@ -16,6 +16,7 @@
       ansible.builtin.apt:
         name:
           - curl
+          - nodejs
           - tar
           - libicu-dev
           - libssl-dev
