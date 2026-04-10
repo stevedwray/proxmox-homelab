@@ -21,7 +21,7 @@ The `validate.yml` CI workflow already has `terraform-validate` and `ansible-lin
 - Runner `ci-runner-pve-test` is **online** with labels `self-hosted`, `pve-test`, `build`, `linux`, `x64`
 - `terraform-validate` and `ansible-lint` jobs are executing on the self-hosted runner
 - `Validate` workflow was restored to green in commit `49663c8` (`fix(ci): satisfy validate lint checks`)
-- SDN egress on `build_seg` is working (SNAT applied on the Proxmox host); automation of this is tracked in issue [#77](https://github.com/stevedwray/proxmox-homelab/issues/77)
+- SDN egress on `build_seg` is now codified in Terraform + Ansible automation for pve-test
 - Issue [#66](https://github.com/stevedwray/proxmox-homelab/issues/66) closed
 
 > **Historical:** As of 2026-04-10, no runner was registered and Validate jobs were queuing indefinitely. The LXC was deployed via Terragrunt and the playbook run that same session. Several bootstrap failures were encountered and resolved; see [`phase-01-ci-runner-problems.md`](phase-01-ci-runner-problems.md) for detail.
