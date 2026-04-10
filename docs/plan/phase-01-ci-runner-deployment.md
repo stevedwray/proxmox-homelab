@@ -56,9 +56,12 @@ terragrunt apply
 
 Confirm the plan shows: 1 LXC resource to create, VMID 141, hostname `ci-runner-01`, memory 4096.
 
-### Step A2 — Generate a runner registration token
+### Step A2 — Optional: generate a runner registration token manually
 
-Tokens expire after 1 hour — generate immediately before running the playbook.
+The playbook now generates a token automatically when one is not provided.
+Only use this step if you want to override the automatic behavior.
+If you do generate one manually, remember that tokens expire after 1 hour and
+should be created immediately before running the playbook.
 
 ```bash
 RUNNER_TOKEN=$(gh api \
@@ -70,7 +73,8 @@ echo "Token acquired: ${RUNNER_TOKEN:0:4}..."  # partial print only
 
 ### Step A3 — Get the runner LXC IP and run the playbook
 
-The LXC IP is `10.57.0.63`. Get the inventory file path from the stack:
+The LXC IP is `10.57.0.63`. Run the playbook directly; it will mint a runner
+registration token automatically unless you pass one explicitly:
 
 ```bash
 cd /home/steve/git/proxmox-homelab
@@ -81,8 +85,11 @@ RUNNER_VERSION="2.323.0"   # update to latest stable at time of deployment
 ansible-playbook \
   -i "10.57.0.63," \
   terraform/lxc/ansible/playbooks/deploy-ci-runner.yml \
-  --extra-vars "runner_registration_token=${RUNNER_TOKEN} runner_version=${RUNNER_VERSION}"
+  --extra-vars "runner_version=${RUNNER_VERSION}"
 ```
+
+To override the automatic token generation, add
+`runner_registration_token=${RUNNER_TOKEN}` to `--extra-vars`.
 
 `no_log: true` is set on the configure task — the token will not appear in output.
 

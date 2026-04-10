@@ -110,15 +110,29 @@
           }}
       when: (network_sdn_subnet | default('', true)) | length > 0
 
-    - name: Assert the existing SDN subnet matches the desired egress config
-      ansible.builtin.assert:
-        that:
-          - network_sdn_existing_subnet | length == 0 or (network_sdn_existing_subnet.gateway | default('')) == network_sdn_gateway
-          - network_sdn_existing_subnet | length == 0 or (network_sdn_existing_subnet.snat | default(false) | bool) == (network_sdn_snat | bool)
-        fail_msg: >-
-          Existing subnet {{ network_sdn_subnet }} on {{ network_sdn_vnet }} does not match the desired
-          gateway/SNAT settings.
-      when: (network_sdn_subnet | default('', true)) | length > 0 and network_sdn_existing_subnet | length > 0
+    - name: Update SDN subnet when existing egress config differs from desired state
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - set
+          - /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets/{{ network_sdn_existing_subnet.subnet }}
+          - --gateway
+          - "{{ network_sdn_gateway }}"
+          - --snat
+          - "{{ (network_sdn_snat | bool) | ternary('1', '0') }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_subnet | default('', true)) | length > 0
+        and network_sdn_existing_subnet | length > 0
+        and (
+          (network_sdn_existing_subnet.gateway | default('')) != network_sdn_gateway
+          or (network_sdn_existing_subnet.snat | default(false) | bool) != (network_sdn_snat | bool)
+        )
+      changed_when: true
 
     - name: Create SDN subnet when missing
       ansible.builtin.command:
@@ -161,9 +175,19 @@
         or
         (
           (network_sdn_subnet | default('', true)) | length > 0 and
-          (network_sdn_subnets_result.stdout | default('[]') | from_json
-          | selectattr('subnet', 'equalto', network_sdn_subnet)
-          | list | length) == 0
+          (
+            (network_sdn_subnets_result.stdout | default('[]') | from_json
+            | selectattr('subnet', 'equalto', network_sdn_subnet)
+            | list | length) == 0
+            or
+            (
+              network_sdn_existing_subnet | length > 0 and
+              (
+                (network_sdn_existing_subnet.gateway | default('')) != network_sdn_gateway
+                or (network_sdn_existing_subnet.snat | default(false) | bool) != (network_sdn_snat | bool)
+              )
+            )
+          )
         )
 
     - name: Validate proxmox-firewall compilation on pve-test
