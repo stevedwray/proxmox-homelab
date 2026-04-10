@@ -31,7 +31,7 @@ locals {
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network               = try(local.stack.network, null)
   stack_network_zone          = try(local.stack.network.zone, null)
-  network_intent_default_path = "${local.lxc_root}/network/pve-test.yaml"
+  network_intent_default_path = "${local.lxc_root}/network/${var.proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
     local.network_intent_default_path
@@ -130,13 +130,10 @@ locals {
   ])) : tolist([])
 }
 
-check "network_layer_runs_only_on_pve_test" {
+check "network_intent_node_matches_proxmox_node" {
   assert {
-    condition = local.stack_network_zone == null || (
-      local.effective_target_node == "pve-test" &&
-      local.effective_pve_host == "pve-test.gibbsgreatly.xyz"
-    )
-    error_message = "Stacks using stack.network.zone must target pve-test (node pve-test, host pve-test.gibbsgreatly.xyz) and must not run on pve."
+    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == var.proxmox_node
+    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but var.proxmox_node is '${var.proxmox_node}'. Ensure the correct intent file exists for this environment."
   }
 }
 
