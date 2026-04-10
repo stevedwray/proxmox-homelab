@@ -15,6 +15,13 @@ The following already exist in the repo and are ready to apply:
 
 The `validate.yml` CI workflow already has `terraform-validate` and `ansible-lint` jobs pointing at `runs-on: [self-hosted, pve-test, build]`. **These jobs are currently queuing indefinitely because no runner with those labels is online.** Deploying the runner fixes this.
 
+## Current status (2026-04-10)
+
+- `gh api repos/stevedwray/proxmox-homelab/actions/runners` returns `{"total_count":0,"runners":[]}` — no runner registered
+- Multiple `Validate` workflow runs are sitting queued in GitHub Actions; they will remain there until a runner comes online
+- The `Security Scan` workflow is unaffected (all its jobs use `ubuntu-latest`)
+- **Scheduled for next session** — see issue [#66](https://github.com/stevedwray/proxmox-homelab/issues/66)
+
 ## Prerequisites
 
 - Phase 00 (housekeeping) complete
