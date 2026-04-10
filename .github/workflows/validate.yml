@@ -51,4 +51,13 @@ jobs:
 
       - name: Validate
         working-directory: terraform/lxc
-        run: terraform validate -var-file=ci-validate.tfvars
+        # terraform validate does not accept -var-file; supply required
+        # variables via TF_VAR_ environment variables instead.
+        env:
+          TF_VAR_stack_name: ci-validate
+          TF_VAR_stack_yaml_path: /dev/null
+          TF_VAR_proxmox_api_url: https://localhost:8006
+          TF_VAR_pm_api_token_id: ci@pve!token
+          TF_VAR_pm_api_token_secret: dummy-secret-for-ci-validate-only
+          TF_VAR_lxc_password: dummy-password-for-ci-validate-only
+        run: terraform validate
