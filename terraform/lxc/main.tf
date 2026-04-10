@@ -43,6 +43,9 @@ locals {
   resolved_zone_attachment      = local.resolved_zone_attachment_name != null ? local.network_intent.attachments[local.resolved_zone_attachment_name] : null
   resolved_attachment_type      = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.type, "bridge") : "bridge"
   resolved_sdn_attachment       = local.resolved_attachment_type == "sdn_vnet" ? try(local.resolved_zone_attachment.sdn, null) : null
+  resolved_sdn_subnet           = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.subnet, null) : null
+  resolved_sdn_gateway          = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.gateway, null) : null
+  resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
 
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, var.proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
@@ -157,6 +160,23 @@ check "network_layer_sdn_attachment_is_complete" {
   }
 }
 
+check "network_layer_sdn_attachment_egress_is_complete" {
+  assert {
+    condition = local.stack_network_zone == null || local.resolved_attachment_type != "sdn_vnet" || (
+      !anytrue([
+        local.resolved_sdn_subnet != null && local.resolved_sdn_subnet != "",
+        local.resolved_sdn_gateway != null && local.resolved_sdn_gateway != "",
+        try(local.resolved_sdn_snat, null) != null,
+        ]) || alltrue([
+        local.resolved_sdn_subnet != null && local.resolved_sdn_subnet != "",
+        local.resolved_sdn_gateway != null && local.resolved_sdn_gateway != "",
+        try(local.resolved_sdn_snat, null) != null,
+      ])
+    )
+    error_message = "SDN attachments that define egress must set subnet, gateway, and snat together."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
 # Ensures the attachment exists on pve-test before the LXC is created.
@@ -175,6 +195,9 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
     network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
+    network_sdn_subnet     = local.resolved_sdn_subnet
+    network_sdn_gateway    = local.resolved_sdn_gateway
+    network_sdn_snat       = local.resolved_sdn_snat
     network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
   })
 }
