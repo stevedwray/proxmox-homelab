@@ -1,0 +1,75 @@
+---
+- name: Deploy GitHub Actions self-hosted runner
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    runner_version: "2.333.1"
+    runner_user: runner
+    runner_home: /opt/actions-runner
+    runner_repo: "https://github.com/stevedwray/proxmox-homelab"
+    runner_labels: "self-hosted,pve-test,build,linux,x64"
+    runner_name: "ci-runner-pve-test"
+
+  tasks:
+    - name: Install runner dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - tar
+          - libicu-dev
+          - libssl-dev
+        state: present
+        update_cache: true
+
+    - name: Create runner user
+      ansible.builtin.user:
+        name: "{{ runner_user }}"
+        system: true
+        home: "{{ runner_home }}"
+        shell: /bin/bash
+        create_home: true
+
+    - name: Create runner directory
+      ansible.builtin.file:
+        path: "{{ runner_home }}"
+        state: directory
+        owner: "{{ runner_user }}"
+        mode: '0755'
+
+    - name: Download runner package
+      ansible.builtin.get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner.tar.gz"
+        mode: '0644'
+
+    - name: Extract runner
+      ansible.builtin.unarchive:
+        src: /tmp/actions-runner.tar.gz
+        dest: "{{ runner_home }}"
+        remote_src: true
+        owner: "{{ runner_user }}"
+
+    - name: Configure runner
+      ansible.builtin.command:
+        cmd: >
+          ./config.sh
+          --url {{ runner_repo }}
+          --token {{ runner_registration_token }}
+          --name {{ runner_name }}
+          --labels {{ runner_labels }}
+          --unattended
+          --replace
+        chdir: "{{ runner_home }}"
+      become_user: "{{ runner_user }}"
+      no_log: true
+
+    - name: Install runner as systemd service
+      ansible.builtin.command:
+        cmd: ./svc.sh install {{ runner_user }}
+        chdir: "{{ runner_home }}"
+
+    - name: Start runner service
+      ansible.builtin.command:
+        cmd: ./svc.sh start
+        chdir: "{{ runner_home }}"
