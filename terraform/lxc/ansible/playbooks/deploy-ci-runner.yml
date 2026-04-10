@@ -2,7 +2,7 @@
 - name: Deploy GitHub Actions self-hosted runner
   hosts: all
   become: true
-  gather_facts: true
+  gather_facts: false
   vars:
     runner_version: "2.333.1"
     runner_user: runner
@@ -10,6 +10,16 @@
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
     runner_labels: "self-hosted,pve-test,build,linux,x64"
     runner_name: "ci-runner-pve-test"
+
+  pre_tasks:
+    - name: Wait for SSH to become available after container creation
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 2
+        sleep: 3
+
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
 
   tasks:
     - name: Install runner dependencies
