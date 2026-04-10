@@ -193,7 +193,7 @@
       loop: "{{ network_matrix_listener_targets }}"
       loop_control:
         label: "{{ item.host }}:{{ item.port }}"
-      ignore_errors: true
+      failed_when: false
       changed_when: false
 
     - name: Start listener processes for matrix targets
@@ -321,7 +321,7 @@
       loop: "{{ network_matrix_listener_targets }}"
       loop_control:
         label: "{{ item.host }}:{{ item.port }}"
-      ignore_errors: true
+      failed_when: false
       changed_when: true
 
     - name: Stop host-side ssh wrapper processes

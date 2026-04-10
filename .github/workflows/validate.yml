@@ -61,3 +61,34 @@ jobs:
           TF_VAR_pm_api_token_secret: dummy-secret-for-ci-validate-only
           TF_VAR_lxc_password: dummy-password-for-ci-validate-only
         run: terraform validate
+
+  ansible-lint:
+    name: Ansible lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Cache pip packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-ansible-lint-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-ansible-lint-
+
+      - name: Install ansible-lint
+        run: pip install ansible-lint
+
+      - name: Install Ansible collections
+        working-directory: terraform/lxc/ansible
+        run: ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint
+        # Run from the ansible directory so ansible.cfg is discovered,
+        # which sets roles_path = roles (relative to this directory).
+        working-directory: terraform/lxc/ansible
+        run: ansible-lint playbooks/

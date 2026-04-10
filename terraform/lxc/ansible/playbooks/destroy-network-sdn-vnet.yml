@@ -20,6 +20,7 @@
 
     - name: Inspect pve-test LXC configs for remaining VNet bridge usage
       ansible.builtin.shell: |
+        set -o pipefail
         grep -R "bridge={{ network_sdn_vnet }}\([, ]\|$\)" /etc/pve/lxc/*.conf 2>/dev/null \
           | grep -v "^/etc/pve/lxc/{{ network_sdn_vmid_exclude_effective }}.conf:" || true
       args:
@@ -62,7 +63,7 @@
       register: network_sdn_vnet_delete
       changed_when: true
 
-    - name: Remove VNet firewall config file when VNet is deleted
+    - name: Remove VNet firewall config file when VNet is deleted # noqa: no-handler
       ansible.builtin.command:
         cmd: rm -f /etc/pve/sdn/firewall/{{ network_sdn_vnet }}.fw
       delegate_to: "{{ network_sdn_pve_host }}"
@@ -73,7 +74,7 @@
       when: network_sdn_vnet_delete is changed
       changed_when: true
 
-    - name: Refresh SDN VNets after VNet deletion
+    - name: Refresh SDN VNets after VNet deletion # noqa: no-handler
       ansible.builtin.command:
         cmd: pvesh get /cluster/sdn/vnets --output-format json
       delegate_to: "{{ network_sdn_pve_host }}"
