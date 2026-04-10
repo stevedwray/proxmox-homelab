@@ -198,8 +198,10 @@
 
     - name: Start listener processes for matrix targets
       ansible.builtin.shell: |
-        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
-          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" || true
+        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] \
+          && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" \
+            || true
           sleep 1
         fi
 
@@ -326,8 +328,10 @@
 
     - name: Stop host-side ssh wrapper processes
       ansible.builtin.shell: |
-        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
-          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" || true
+        if [ -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid ] \
+          && kill -0 "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" 2>/dev/null; then
+          kill "$(cat /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid)" \
+            || true
         fi
         rm -f /tmp/network-matrix-{{ item.host }}-{{ item.port }}.hostpid
       args:
