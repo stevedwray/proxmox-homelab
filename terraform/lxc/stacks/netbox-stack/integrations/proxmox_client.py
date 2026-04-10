@@ -42,8 +42,8 @@ class ProxmoxClient:
         
         # Disable SSL cert verification for self-signed homelab certs
         ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx.check_hostname = False  # NOSONAR: intentional - homelab self-signed cert
+        ctx.verify_mode = ssl.CERT_NONE  # NOSONAR: intentional - homelab self-signed cert
         
         try:
             with urllib.request.urlopen(req, context=ctx) as resp:

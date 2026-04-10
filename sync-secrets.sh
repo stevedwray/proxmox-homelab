@@ -54,7 +54,9 @@ echo "Syncing secrets from Bitwarden..."
 bw sync >/dev/null
 
 shell_single_quote() {
-    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+    local value="$1"
+    printf "'%s'" "$(printf '%s' "$value" | sed "s/'/'\\\\''/g")"
+    return 0
 }
 
 for env_var in "${ENV_VARS[@]}"; do

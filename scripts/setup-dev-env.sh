@@ -9,10 +9,29 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Logging functions
-log_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
-log_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
-log_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
-log_error() { echo -e "${RED}[ERROR]${NC} $1" >&2; }
+log_info() {
+    local message="$1"
+    echo -e "${BLUE}[INFO]${NC} $message"
+    return 0
+}
+
+log_success() {
+    local message="$1"
+    echo -e "${GREEN}[SUCCESS]${NC} $message"
+    return 0
+}
+
+log_warning() {
+    local message="$1"
+    echo -e "${YELLOW}[WARNING]${NC} $message"
+    return 0
+}
+
+log_error() {
+    local message="$1"
+    echo -e "${RED}[ERROR]${NC} $message" >&2
+    return 0
+}
 
 # Update system packages
 update_system() {
@@ -21,6 +40,7 @@ update_system() {
     sudo apt-get install -y curl wget unzip git python3 python3-pip python3-venv \
         software-properties-common apt-transport-https ca-certificates gnupg lsb-release jq
     log_success "System packages updated"
+    return 0
 }
 
 # Install Terraform
@@ -30,7 +50,7 @@ install_terraform() {
     # Check if Terraform is already installed
     if command -v terraform >/dev/null 2>&1; then
         log_info "Terraform already installed: $(terraform version -json | python3 -c "import sys, json; print(json.load(sys.stdin)['terraform_version'])" 2>/dev/null || terraform version)"
-        return
+        return 0
     fi
 
     # Get latest Terraform version
@@ -49,6 +69,7 @@ install_terraform() {
         log_error "Terraform installation failed"
         exit 1
     fi
+    return 0
 }
 
 # Install Ansible
@@ -87,6 +108,7 @@ EOF
 
     log_success "Ansible installed in virtual environment"
     log_info "Note: Run 'source ~/.activate-ansible' or restart your shell to activate"
+    return 0
 }
 
 # Configure Git
@@ -98,7 +120,7 @@ configure_git() {
         log_success "Git already configured:"
         echo "  Name: $(git config --global user.name)"
         echo "  Email: $(git config --global user.email)"
-        return
+        return 0
     fi
 
     # Prompt for Git configuration
@@ -112,6 +134,7 @@ configure_git() {
     git config --global pull.rebase false
 
     log_success "Git configured with username: $git_username"
+    return 0
 }
 
 # Generate SSH keys
@@ -122,7 +145,7 @@ setup_ssh_keys() {
         log_success "SSH key already exists"
         echo "Public key:"
         cat ~/.ssh/id_rsa.pub
-        return
+        return 0
     fi
 
     echo "SSH key generation:"
@@ -149,6 +172,7 @@ setup_ssh_keys() {
     log_info "Add this public key to:"
     echo "  - Your Proxmox server (for SSH access)"
     echo "  - Your GitHub account (for repository access)"
+    return 0
 }
 
 # Install pre-commit
@@ -168,6 +192,7 @@ install_precommit() {
     else
         log_warning "No .pre-commit-config.yaml found - hooks not installed"
     fi
+    return 0
 }
 
 # Create environment file if it doesn't exist
@@ -176,7 +201,7 @@ setup_environment() {
 
     if [[ -f .env ]]; then
         log_success ".env file already exists"
-        return
+        return 0
     fi
 
     if [[ -f .env.template ]]; then
@@ -186,6 +211,7 @@ setup_environment() {
     else
         log_warning "No .env.template found"
     fi
+    return 0
 }
 
 # Test installations
@@ -220,6 +246,7 @@ test_installations() {
     else
         log_error "Git not working"
     fi
+    return 0
 }
 
 # Display completion message
@@ -252,6 +279,7 @@ show_completion() {
     echo "   source ~/.activate-ansible"
     echo
     log_success "Happy automating! 🚀"
+    return 0
 }
 
 # Main execution
@@ -273,6 +301,7 @@ main() {
     setup_environment
     test_installations
     show_completion
+    return 0
 }
 
 # Handle script arguments
