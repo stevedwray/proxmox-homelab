@@ -98,3 +98,26 @@
         ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       changed_when: true
+
+    - name: Confirm internet egress is reachable from the client LXC (routing, no SNAT)
+      ansible.builtin.command:
+        cmd: >-
+          pct exec {{ network_validation_client_vmid }} -- bash -lc
+          "timeout 5 bash -lc 'cat </dev/null >/dev/tcp/8.8.8.8/53'"
+      delegate_to: "{{ network_validation_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_validation_ssh_key }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: network_validation_test_egress | default(false) | bool
+      register: network_validation_egress_result
+      changed_when: false
+
+    - name: Assert internet egress succeeded
+      ansible.builtin.assert:
+        that:
+          - network_validation_egress_result.rc == 0
+        fail_msg: >-
+          Internet egress from {{ network_validation_client_host }} failed.
+          Check the MikroTik static route for the SDN subnet.
+      when: network_validation_test_egress | default(false) | bool
