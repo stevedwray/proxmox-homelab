@@ -1,0 +1,21 @@
+# GitHub Actions self-hosted runner — build_seg zone
+hostname: ci-runner-01
+ip_address: "10.57.0.63/24"
+gateway: "10.57.0.1"
+vmid: 141
+cores: 2
+memory: 4096
+swap: 1024
+rootfs_size: 20
+rootfs_storage: infrastructure-containers
+docker_storage_size: "10G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - ci
+  - runner
+  - infrastructure
+
+network:
+  zone: build_seg
+
+ansible_playbook: "deploy-ci-runner"
