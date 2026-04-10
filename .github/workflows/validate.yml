@@ -1,0 +1,54 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+      - 'dev/pve-test'
+      - 'dev/**'
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+      - 'dev/pve-test'
+
+jobs:
+  terraform-fmt:
+    name: Terraform format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform/
+
+  terraform-validate:
+    name: Terraform validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Cache Terraform providers
+        uses: actions/cache@v4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/lxc/.terraform.lock.hcl') }}
+          restore-keys: terraform-providers-${{ runner.os }}-
+
+      - name: Init (no backend)
+        working-directory: terraform/lxc
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          TF_PLUGIN_CACHE_DIR=~/.terraform.d/plugin-cache \
+            terraform init -backend=false
+
+      - name: Validate
+        working-directory: terraform/lxc
+        run: terraform validate -var-file=ci-validate.tfvars
