@@ -4,6 +4,7 @@
 
 - `dev/pve-test` is the long-running integration branch tracking the test server state
 - Cut short-lived branches from `dev/pve-test` (e.g. `fix/terraform-fmt`, `feat/harbor-deployment`)
+- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging
 - Merge short-lived branches → `dev/pve-test`, not `main`
 - PR `dev/pve-test` → `main` only when stable and tested on the test server
 - After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync
