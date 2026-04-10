@@ -7,8 +7,8 @@ Push all unpushed local commits to `origin/dev/pve-test`, commit the new `GreenF
 ## Repository context
 
 - Working branch: `dev/pve-test`
-- 6 commits are ahead of `origin/dev/pve-test` — none have been pushed
-- `docs/plans/GreenField.md` is untracked (not yet committed)
+- Check whether `dev/pve-test` is ahead of `origin/dev/pve-test` before pushing
+- `docs/plans/GreenField.md` is untracked and should be committed
 - Several local branches remain from already-merged PRs
 
 ## Prerequisites
@@ -48,16 +48,20 @@ git log origin/dev/pve-test..HEAD --oneline
 
 ## Step 3 — Delete stale local branches
 
-These branches have already been merged into `dev/pve-test` and their remote refs have been removed or are no longer active:
+These branches have already been merged into `dev/pve-test` and should be removed locally and from `origin`:
 
 ```bash
 git branch -d dev/pve-test-network-layer-01
 git branch -d feat/pve-test-validation-teardown-55
 git branch -d feature/ci-test-ignore
 git branch -d fix/pin-setup-terraform-v3
+git push origin --delete dev/pve-test-network-layer-01
+git push origin --delete feat/pve-test-validation-teardown-55
+git push origin --delete feature/ci-test-ignore
+git push origin --delete fix/pin-setup-terraform-v3
 ```
 
-If any refuse with "not fully merged", inspect with `git log <branch> --oneline` before force-deleting. All of these should merge cleanly.
+If any refuse with "not fully merged", inspect with `git log <branch> --oneline` before force-deleting locally. If any remote delete fails, confirm the branch is merged before removing it from `origin`.
 
 Also prune remote tracking refs that no longer exist upstream:
 
@@ -84,5 +88,6 @@ Expected state:
 - [ ] `docs/plans/GreenField.md` committed and pushed
 - [ ] `git log origin/dev/pve-test..HEAD --oneline` returns nothing
 - [ ] All 4 stale branches deleted locally
+- [ ] All 4 stale branches deleted from `origin`
 - [ ] `git fetch --prune` removes stale remote-tracking refs
 - [ ] `git status` shows clean working tree
