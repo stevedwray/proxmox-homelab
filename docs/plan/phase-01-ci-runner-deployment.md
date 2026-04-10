@@ -3,7 +3,7 @@
 ## Goal
 
 1. Actually deploy the `ci-runner-01` LXC on pve-test so that the self-hosted GitHub Actions runner comes online (the Terraform stack and Ansible playbook already exist in code — this phase applies them).
-2. Pin all remaining GitHub Actions to specific versions to reduce supply-chain risk.
+2. Pin all remaining GitHub Actions to release tags to reduce supply-chain risk. *(Note: release-tag pins such as `@v4` are mutable and do not fully prevent supply-chain attacks; commit-SHA pinning is required for that guarantee. This phase pins to stable release tags, which is an improvement over unpinned or `@master` refs.)*
 
 ## Repository context
 
@@ -13,14 +13,18 @@ The following already exist in the repo and are ready to apply:
 - `terraform/lxc/stacks/ci-runner-01/terragrunt.hcl` — Terragrunt config
 - `terraform/lxc/ansible/playbooks/deploy-ci-runner.yml` — Ansible playbook to install and register the runner
 
-The `validate.yml` CI workflow already has `terraform-validate` and `ansible-lint` jobs pointing at `runs-on: [self-hosted, pve-test, build]`. **These jobs are currently queuing indefinitely because no runner with those labels is online.** Deploying the runner fixes this.
+The `validate.yml` CI workflow already has `terraform-validate` and `ansible-lint` jobs pointing at `runs-on: [self-hosted, pve-test, build]`.
 
-## Current status (2026-04-10)
+## Current status (2026-04-11) — COMPLETE
 
-- `gh api repos/stevedwray/proxmox-homelab/actions/runners` returns `{"total_count":0,"runners":[]}` — no runner registered
-- Multiple `Validate` workflow runs are sitting queued in GitHub Actions; they will remain there until a runner comes online
-- The `Security Scan` workflow is unaffected (all its jobs use `ubuntu-latest`)
-- **Scheduled for next session** — see issue [#66](https://github.com/stevedwray/proxmox-homelab/issues/66)
+- `ci-runner-01` LXC is running on pve-test (VMID 141, IP `10.57.0.63`)
+- Runner `ci-runner-pve-test` is **online** with labels `self-hosted`, `pve-test`, `build`, `linux`, `x64`
+- `terraform-validate` and `ansible-lint` jobs are executing on the self-hosted runner
+- `Validate` workflow was restored to green in commit `49663c8` (`fix(ci): satisfy validate lint checks`)
+- SDN egress on `build_seg` is working (SNAT applied on the Proxmox host); automation of this is tracked in issue [#77](https://github.com/stevedwray/proxmox-homelab/issues/77)
+- Issue [#66](https://github.com/stevedwray/proxmox-homelab/issues/66) closed
+
+> **Historical:** As of 2026-04-10, no runner was registered and Validate jobs were queuing indefinitely. The LXC was deployed via Terragrunt and the playbook run that same session. Several bootstrap failures were encountered and resolved; see [`phase-01-ci-runner-problems.md`](phase-01-ci-runner-problems.md) for detail.
 
 ## Prerequisites
 
@@ -134,14 +138,16 @@ Check `.github/workflows/security-scan.yml` and `validate.yml` for any unpinned 
 
 | Action | Current pin | Status |
 |---|---|---|
-| `actions/checkout` | `@v4` | ✓ Pinned |
-| `hashicorp/setup-terraform` | `@v3` | ✓ Pinned |
-| `actions/setup-python` | `@v5` | ✓ Pinned |
-| `actions/cache` | `@v4` | ✓ Pinned |
-| `aquasecurity/trivy-action` | `@v0.35.0` | ✓ Pinned |
-| `github/codeql-action/upload-sarif` | `@v3` | ✓ Pinned |
-| `snyk/actions/iac` | `@v1.0.0` | ✓ Pinned |
-| `trufflesecurity/trufflehog` | `@v3.94.3` | ✓ Pinned |
+| `actions/checkout` | `@v4` | ✓ Release-tag pinned |
+| `hashicorp/setup-terraform` | `@v3` | ✓ Release-tag pinned |
+| `actions/setup-python` | `@v5` | ✓ Release-tag pinned |
+| `actions/cache` | `@v4` | ✓ Release-tag pinned |
+| `aquasecurity/trivy-action` | `@v0.35.0` | ✓ Release-tag pinned |
+| `github/codeql-action/upload-sarif` | `@v3` | ✓ Release-tag pinned |
+| `snyk/actions/iac` | `@v1.0.0` | ✓ Release-tag pinned |
+| `trufflesecurity/trufflehog` | `@v3.94.3` | ✓ Release-tag pinned |
+
+> **Supply-chain note:** Release tags (`@v4`, `@v3`, etc.) are mutable — a tag can be force-pushed to a different commit. For full supply-chain hardening, pins should be commit SHAs (e.g. `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`). The current state is an improvement over `@master` or unpinned refs but does not meet full SHA-pinning standards.
 
 If all are already pinned, this step is verification-only. If any `@master` or unpinned refs are found, pin them to the latest stable tag in a commit on a short-lived branch.
 
@@ -164,10 +170,14 @@ If findings exist, create a branch `fix/pin-github-actions-<date>`, update the w
 ```bash
 cd /home/steve/git/proxmox-homelab
 # (No files changed by the deployment steps — they are infra apply operations)
-# If workflow files were updated for pinning:
+# If workflow files were updated for pinning, commit only when there are staged changes:
 git add .github/workflows/
-git commit -m "chore(ci): verify and pin all GitHub Actions versions (Closes #71)"
-git push origin dev/pve-test
+if git diff --cached --quiet; then
+  echo "No workflow changes staged — verification-only path, skipping commit"
+else
+  git commit -m "chore(ci): verify and pin all GitHub Actions versions (Closes #71)"
+  git push origin dev/pve-test
+fi
 gh issue close 66 --comment "ci-runner-01 deployed and online. Runner picked up terraform-validate and ansible-lint jobs."
 gh issue close 71 --comment "All GitHub Actions verified pinned to stable tags. No unpinned refs found."
 ```
@@ -176,13 +186,14 @@ gh issue close 71 --comment "All GitHub Actions verified pinned to stable tags. 
 
 ## Acceptance criteria
 
-- [ ] VMID 141 (`ci-runner-01`) exists on pve-test and is reachable via SSH at `10.57.0.63`
-- [ ] `systemctl status actions.runner.*` shows active/running inside the LXC
-- [ ] Runner appears as **online** in GitHub repo Settings → Actions → Runners with labels `self-hosted, pve-test, build`
-- [ ] `terraform-validate` CI job log header shows `ci-runner-pve-test`
-- [ ] `ansible-lint` CI job log header shows `ci-runner-pve-test`
-- [ ] `sast-scan`, `trufflehog`, `snyk-iac` still run on `ubuntu-latest`
-- [ ] Runner comes back online after LXC reboot
-- [ ] No `@master` or unpinned action refs exist in any workflow file
-- [ ] Issue #66 closed with commit reference
-- [ ] Issue #71 closed
+- [x] VMID 141 (`ci-runner-01`) exists on pve-test and is reachable via SSH at `10.57.0.63`
+- [x] `systemctl status actions.runner.*` shows active/running inside the LXC
+- [x] Runner appears as **online** in GitHub repo Settings → Actions → Runners with labels `self-hosted, pve-test, build`
+- [x] `terraform-validate` CI job log header shows `ci-runner-pve-test`
+- [x] `ansible-lint` CI job log header shows `ci-runner-pve-test`
+- [x] `sast-scan`, `trufflehog`, `snyk-iac` still run on `ubuntu-latest`
+- [ ] Runner comes back online after LXC reboot *(not yet verified)*
+- [x] No `@master` or unpinned action refs exist in any workflow file
+- [x] Issue #66 closed
+- [x] Issue #71 closed
+- [ ] SDN egress codified in automation — tracked in issue [#77](https://github.com/stevedwray/proxmox-homelab/issues/77)
