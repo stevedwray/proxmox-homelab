@@ -1,0 +1,376 @@
+# Phase 05 — Supply Chain Security (Trivy, Syft, Cosign, Chainloop)
+
+## Goal
+
+Implement a software supply chain security pipeline so that every container image used in the lab:
+
+1. Has been scanned for vulnerabilities (Trivy)
+2. Has a Software Bill of Materials (Syft)
+3. Is cryptographically signed (Cosign)
+4. Has build evidence recorded and policy-gated in Chainloop
+5. Is pulled only from Harbor (never directly from Docker Hub at runtime)
+
+This phase adds the tooling and CI pipeline stages. It does **not** yet migrate application stacks to pull from Harbor — that happens in Phase 06.
+
+## Prerequisites
+
+- Phase 01 (ci-runner-01) complete — self-hosted runner must be online
+- **Phase 03b complete** — Harbor has Trivy scanner enabled, projects created, proxy cache configured, and robot account ready
+- Phase 04 (core shared services) complete — monitoring stack running so scan results are visible in dashboards
+
+## Related GreenField sections
+
+- GreenField §5 (Supply chain: Harbor + Chainloop + signing)
+- GreenField §7 (Policy-as-code: OPA/Conftest, Trivy IaC)
+
+---
+
+## Part A — Trivy CI image scanning (extends Phase 03b Harbor scanning)
+
+Harbor already scans every image on push (configured in Phase 03b). This part adds a second Trivy scan gate in CI that runs against the specific image digest produced by a build job, before Chainloop will attest and promote it. The Harbor scan catches vulnerabilities at cache time; this CI scan catches them at build/promote time.
+
+Trivy also currently runs in the `sast-scan` CI job on `ubuntu-latest` for filesystem, secrets, and IaC misfigurations. That job remains unchanged.
+
+### Add Trivy image scan job to CI
+
+When Harbor stores a newly built image (Phase 06), add a CI job to scan that specific image digest via Trivy:
+
+```yaml
+  trivy-image-scan:
+    name: Trivy image scan
+    runs-on: [self-hosted, pve-test, build]
+    needs: [build-image]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to Harbor
+        run: |
+          echo "$HARBOR_ROBOT_PASSWORD" | \
+            docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@v0.35.0
+        with:
+          scan-type: image
+          image-ref: "192.168.1.10/<project>/<image>:<tag>"
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"         # fail CI on CRITICAL/HIGH
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+```
+
+`HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` were added as GitHub Actions secrets in Phase 03b.
+
+---
+
+## Part B — Syft (SBOM generation)
+
+### Install Syft on the CI runner
+
+Add a task to `deploy-ci-runner.yml` to install Syft:
+
+```yaml
+- name: Install Syft
+  ansible.builtin.shell: |
+    curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | \
+      sh -s -- -b /usr/local/bin v<SYFT_VERSION>
+  args:
+    creates: /usr/local/bin/syft
+```
+
+Pin to a specific version (e.g., `v1.19.0`). Check [Syft releases](https://github.com/anchore/syft/releases) for the latest stable.
+
+### Add SBOM generation to CI
+
+Add a `generate-sbom` job after each image build:
+
+```yaml
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: [self-hosted, pve-test, build]
+    needs: [build-image]
+    steps:
+      - name: Generate SBOM (SPDX)
+        run: |
+          syft 192.168.1.10/<project>/<image>:<tag> \
+            --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.spdx.json
+          retention-days: 90
+```
+
+The SBOM is also passed to Chainloop in Part D.
+
+---
+
+## Part C — Cosign (image signing)
+
+### Install Cosign on the CI runner
+
+Add to `deploy-ci-runner.yml`:
+
+```yaml
+- name: Install Cosign
+  ansible.builtin.shell: |
+    curl -sSfL "https://github.com/sigstore/cosign/releases/download/v<VERSION>/cosign-linux-amd64" \
+      -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
+  args:
+    creates: /usr/local/bin/cosign
+```
+
+Pin the Cosign version.
+
+### Generate signing keys
+
+Generate a key pair for signing. Store the private key encrypted with a passphrase:
+
+```bash
+# On the workstation (not in CI):
+cosign generate-key-pair
+
+# This creates cosign.key (private, encrypted) and cosign.pub (public)
+```
+
+- `cosign.key` → encrypt with SOPS+age (see `terraform/secrets.enc.yaml` pattern) and commit to the repo, or store as a GitHub Actions secret
+- `cosign.pub` → commit to the repo unencrypted (it is a public key)
+- `COSIGN_PASSWORD` → GitHub Actions secret (passphrase protecting the private key)
+
+**Never commit the unencrypted `cosign.key`.**
+
+### Sign images in CI
+
+After image build and push to Harbor:
+
+```yaml
+  sign-image:
+    name: Sign image with Cosign
+    runs-on: [self-hosted, pve-test, build]
+    needs: [build-image, trivy-image-scan]  # only sign after scan passes
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Sign image
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}   # or read from SOPS-decrypted file
+        run: |
+          echo "$COSIGN_KEY" > /tmp/cosign.key
+          cosign sign --key /tmp/cosign.key \
+            192.168.1.10/<project>/<image>@<digest>
+          rm /tmp/cosign.key
+```
+
+### Verify signatures at deploy time
+
+In Ansible playbooks that pull images, add a pre-pull verification step:
+
+```yaml
+- name: Verify image signature
+  ansible.builtin.command:
+    cmd: >
+      cosign verify
+      --key /etc/cosign/cosign.pub
+      192.168.1.10/<project>/<image>@<digest>
+  changed_when: false
+```
+
+Store `cosign.pub` on each LXC under `/etc/cosign/` via the base Ansible role.
+
+---
+
+## Part D — Chainloop (evidence and policy gates)
+
+### Overview
+
+Chainloop records build attestations (evidence) and enforces policy contracts before an image is promoted. If a required piece of evidence is missing or a policy is violated, the pipeline is blocked.
+
+Reference: [Chainloop docs](https://docs.chainloop.dev)
+
+### Deployment
+
+Chainloop server can be self-hosted (Docker Compose) or used as a SaaS. For the homelab, start with the self-hosted Docker Compose option to maintain full sovereignty.
+
+> **Note on timing:** All services deployed in Phases 03b–05 are *pulled and cached*, not locally built. There are no local build artefacts for Chainloop to attest during this phase. The server is deployed here so the infrastructure is ready, but **workflow contracts remain inactive until Phase 06** — the first phase that produces real local image builds. Activate Chainloop contracts at the start of Phase 06.
+
+Create `terraform/lxc/stacks/chainloop-stack/stack.yaml`:
+
+```yaml
+# Chainloop attestation and policy server — management zone
+hostname: chainloop-stack
+ip_address: "192.168.1.45/24"
+gateway: "192.168.1.1"
+vmid: 155
+cores: 2
+memory: 2048
+swap: 512
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "20G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - chainloop
+  - supply-chain
+  - infrastructure
+  - docker
+
+ansible_playbook: "deploy-chainloop-stack"
+```
+
+Follow the [Chainloop self-hosting guide](https://docs.chainloop.dev/getting-started/self-hosted) for the compose file.
+
+### Define a workflow contract
+
+A Chainloop workflow contract specifies what evidence a CI run must produce. Example contract for an image build:
+
+```yaml
+# chainloop-contract.yaml
+schemaVersion: v1
+materials:
+  - name: trivy-scan
+    type: SARIF
+    required: true
+  - name: sbom
+    type: SBOM_SPDX_JSON
+    required: true
+  - name: cosign-signature
+    type: STRING
+    required: true
+policies:
+  - name: no-critical-vulns
+    # OPA/Rego policy that fails if trivy-scan contains CRITICAL findings
+```
+
+### Add Chainloop attestation to CI
+
+```yaml
+  chainloop-attest:
+    name: Record build attestation
+    runs-on: [self-hosted, pve-test, build]
+    needs: [trivy-image-scan, generate-sbom, sign-image]
+    steps:
+      - name: Initialize attestation
+        run: chainloop attestation init --workflow my-image-build
+
+      - name: Add Trivy SARIF evidence
+        run: chainloop attestation add --name trivy-scan --value trivy-image.sarif
+
+      - name: Add SBOM evidence
+        run: chainloop attestation add --name sbom --value sbom.spdx.json
+
+      - name: Push and evaluate policy
+        run: chainloop attestation push
+        # Chainloop evaluates policy contract here.
+        # Job fails (and image is not promoted) if policy is not satisfied.
+```
+
+Install the Chainloop CLI on the self-hosted runner (add to `deploy-ci-runner.yml`).
+
+---
+
+## Part E — Harbor-only image policy (enforcement in CI)
+
+### Goal
+
+Harbor proxy cache and project policies were configured in Phase 03b. This part adds a **CI enforcement check** so that any compose file accidentally referencing an upstream registry directly (rather than the Harbor proxy) fails the pipeline.
+
+### Add a compose image reference lint check
+
+Add a CI step (can go in `validate.yml`) that fails if any compose file references `docker.io`, `ghcr.io`, or `quay.io` directly:
+
+```yaml
+  harbor-image-policy:
+    name: Enforce Harbor-only image references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check compose files use Harbor proxy
+        run: |
+          # Fail if any image: line references an upstream registry directly
+          if grep -r "^\s*image:.*\(docker\.io\|ghcr\.io\|quay\.io\|registry\.k8s\.io\)" \
+               terraform/lxc/stacks/ --include="*.yml" --include="*.yaml"; then
+            echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+            exit 1
+          fi
+          echo "OK — all image references use Harbor proxy."
+```
+
+Add this job to the `validate.yml` workflow alongside the existing Terraform and Ansible lint jobs.
+
+---
+
+## GitHub Actions secrets required
+
+Add these to the repository (Settings → Secrets → Actions):
+
+| Secret | Description |
+|---|---|
+| `HARBOR_ROBOT_USER` | Harbor robot account username for CI |
+| `HARBOR_ROBOT_PASSWORD` | Harbor robot account password |
+| `COSIGN_KEY` | PEM-encoded encrypted cosign private key |
+| `COSIGN_PASSWORD` | Passphrase for the cosign private key |
+| `CHAINLOOP_TOKEN` | Chainloop API token for CI |
+
+---
+
+## Commit and push
+
+```bash
+git checkout -b feat/supply-chain-pipeline dev/pve-test
+
+# After all changes:
+git add .github/workflows/ \
+        terraform/lxc/ansible/playbooks/deploy-ci-runner.yml \
+        terraform/lxc/stacks/chainloop-stack/ \
+        cosign.pub
+
+git commit -m "feat(ci): add supply chain pipeline — Trivy image scan, Syft SBOM, Cosign signing, Chainloop attestation"
+git push origin feat/supply-chain-pipeline
+# Merge to dev/pve-test via PR
+```
+
+---
+
+## Acceptance criteria
+
+> Harbor Trivy scanner, projects, proxy cache, and robot account are verified in Phase 03b — not repeated here.
+
+### Trivy CI gate
+- [ ] Trivy image scan CI job runs on self-hosted runner after image build
+- [ ] CRITICAL/HIGH findings fail CI (exit-code: 1)
+- [ ] SARIF results uploaded to GitHub Security tab
+
+### Syft
+- [ ] Syft installed on ci-runner-01 (pinned version)
+- [ ] SBOM is generated for each image build as a CI artifact
+- [ ] SBOM is in SPDX-JSON format
+
+### Cosign
+- [ ] `cosign.pub` committed to repo
+- [ ] `cosign.key` stored as encrypted GitHub Actions secret (never committed unencrypted)
+- [ ] Images are signed in CI after scan pass
+- [ ] `cosign verify --key cosign.pub` passes for at least one signed image in Harbor
+
+### Chainloop
+- [ ] Chainloop server running at `192.168.1.45`
+- [ ] Chainloop CLI installed on ci-runner-01
+- [ ] Workflow contract *defined* requiring Trivy SARIF + SBOM + signature (but not yet activated — see Phase 06)
+- [ ] Server accessible from ci-runner-01 (connectivity verified)
+- [ ] **Contracts activate in Phase 06** — do not block the Phase 05 milestone on end-to-end attestation
+
+### Harbor-only policy (enforcement)
+- [ ] All compose files for Phase 06+ stacks reference `192.168.1.10/<project>/` only
+- [ ] CI check added that flags any compose file referencing `docker.io/` or `ghcr.io/` directly
+- [ ] Content trust / Cosign signature verification enabled in at least one Harbor project
