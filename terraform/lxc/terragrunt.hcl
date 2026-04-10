@@ -27,4 +27,13 @@ terraform {
       TF_PLUGIN_CACHE_DIR = "${get_repo_root()}/terraform/lxc/.terraform-plugin-cache"
     }
   }
+
+  # Re-initialise the working directory before every destroy so that provider
+  # schema loading never fails when the Terragrunt cache directory has been
+  # re-created since the last explicit init (e.g. after a cache wipe or a
+  # source-hash change).
+  before_hook "init_before_destroy" {
+    commands = ["destroy"]
+    execute  = ["tofu", "init", "-reconfigure"]
+  }
 }
