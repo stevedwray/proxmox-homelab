@@ -7,6 +7,18 @@ proxmox:
   pve_host: pve-test.gibbsgreatly.xyz
 
 attachments:
+  # Out-of-band prerequisite: for any SDN subnet with a gateway defined below,
+  # the home router must have a static route pointing that subnet back to
+  # pve-test (192.168.1.40) as the next hop.
+  #
+  # Current required route:
+  #   10.57.0.0/24 via 192.168.1.40   (seg_c: build_seg / artifacts_seg)
+  #
+  # MikroTik command:
+  #   /ip route add dst-address=<subnet> gateway=192.168.1.40 comment="pve-test SDN <seg>"
+  #
+  # Without these routes, LAN -> SDN container ingress will not work, and
+  # container traffic bound for the internet will have no SNAT fallback.
   lan:
     description: Default LAN bridge for bridge-based validation zones on pve-test
     type: bridge
