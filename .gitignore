@@ -6,6 +6,10 @@ storage-audit
 .env.*
 !.env.template
 
+# SOPS — never commit decrypted/plaintext versions
+*.dec.yaml
+*.dec.env
+
 # Terraform
 *.tfstate
 *.tfstate.*

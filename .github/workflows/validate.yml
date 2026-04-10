@@ -92,3 +92,24 @@ jobs:
         # which sets roles_path = roles (relative to this directory).
         working-directory: terraform/lxc/ansible
         run: ansible-lint playbooks/
+
+  sops-decrypt-check:
+    name: SOPS decrypt verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install sops
+        env:
+          SOPS_VERSION: "3.10.2"
+        run: |
+          curl -Lo /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          chmod +x /usr/local/bin/sops
+
+      - name: Verify decryption succeeds
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          sops --decrypt terraform/secrets.enc.yaml > /dev/null
+          echo "Decryption successful"
