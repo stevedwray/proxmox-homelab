@@ -156,6 +156,7 @@
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 8080
         expected: deny
+    network_matrix_test_egress: true
 
   pre_tasks:
     - name: Assert required hosts are present in inventory
@@ -290,6 +291,37 @@
           {%- endfor -%}
           {{ results }}
 
+    - name: Test build_seg internet egress (routing, no SNAT)
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -i
+          - "{{ network_matrix_ssh_key }}"
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - -o
+          - LogLevel=ERROR
+          - "root@{{ network_matrix_pve_host }}"
+          - pct
+          - exec
+          - "{{ hostvars['net-build-01'].vmid }}"
+          - --
+          - bash
+          - -lc
+          - "timeout 5 bash -lc 'cat </dev/null >/dev/tcp/8.8.8.8/53'"
+      register: network_matrix_egress_result
+      changed_when: false
+      when: network_matrix_test_egress | default(true) | bool
+
+    - name: Persist build_seg egress result for reporting
+      ansible.builtin.set_fact:
+        network_matrix_egress_passed: "{{ network_matrix_egress_result.rc == 0 }}"
+      when: network_matrix_test_egress | default(true) | bool
+
 - name: Stop network matrix listeners on pve-test
   hosts: localhost
   connection: local
@@ -372,3 +404,14 @@
           Validated {{
             hostvars['localhost'].network_matrix_results | length
           }} network matrix cases on pve-test.
+
+    - name: Assert build_seg internet egress passed
+      ansible.builtin.assert:
+        that:
+          - hostvars['localhost'].network_matrix_egress_passed | bool
+        fail_msg: >-
+          Internet egress from build_seg (net-build-01) failed.
+          Check the MikroTik static route for the SDN subnet.
+        success_msg: >-
+          Validated build_seg internet egress (8.8.8.8:53 reachable, no SNAT).
+      when: hostvars['localhost'].network_matrix_egress_passed is defined
