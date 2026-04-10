@@ -36,6 +36,28 @@ jobs:
   # Removed terraform-security job (tfsec build fails in CI due to Go toolchain)
   # IaC scanning is now consolidated into the `sast-scan` job via Trivy.
 
+  snyk-iac:
+    name: Snyk IaC scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run Snyk IaC scan
+        uses: snyk/actions/iac@v1.0.0
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          file: terraform/
+          args: --severity-threshold=high --report
+
+      - name: Upload Snyk results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v3
+        if: always()
+        with:
+          sarif_file: snyk.sarif
+
   trufflehog:
     name: TruffleHog secret scan
     runs-on: ubuntu-latest
