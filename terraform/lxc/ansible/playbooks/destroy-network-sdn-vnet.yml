@@ -44,6 +44,35 @@
       register: network_sdn_vnets_result
       changed_when: false
 
+    - name: Read current SDN subnets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_subnets_result
+      changed_when: false
+
+    - name: Delete SDN subnets when present
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - delete
+          - "/cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets/{{ item.subnet }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ network_sdn_subnets_result.stdout | from_json }}"
+      loop_control:
+        label: "{{ item.subnet }}"
+      when: (network_sdn_subnets_result.stdout | from_json | length) > 0
+      register: network_sdn_subnet_delete
+      changed_when: true
+
     - name: Delete SDN VNet when no other containers reference it
       ansible.builtin.command:
         argv:
@@ -131,6 +160,8 @@
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       when: >-
         (network_sdn_vnet_delete is defined and network_sdn_vnet_delete is changed)
+        or
+        (network_sdn_subnet_delete is defined and network_sdn_subnet_delete is changed)
         or
         (network_sdn_zone_delete is defined and network_sdn_zone_delete is changed)
       changed_when: true
