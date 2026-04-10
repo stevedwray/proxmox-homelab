@@ -12,6 +12,11 @@
     runner_name: "ci-runner-pve-test"
 
   pre_tasks:
+    - name: Derive the GitHub repository slug for runner registration
+      ansible.builtin.set_fact:
+        runner_repo_slug: "{{ runner_repo | regex_replace('^https://github.com/', '') }}"
+      run_once: true
+
     - name: Wait for SSH to become available after container creation
       ansible.builtin.wait_for_connection:
         timeout: 300
@@ -20,6 +25,35 @@
 
     - name: Gather facts after the guest is reachable
       ansible.builtin.setup:
+
+    - name: Generate runner registration token when one is not provided
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - --method
+          - POST
+          - repos/{{ runner_repo_slug }}/actions/runners/registration-token
+          - --jq
+          - .token
+      delegate_to: localhost
+      become: false
+      register: runner_registration_token_generated
+      run_once: true
+      changed_when: false
+      when: runner_registration_token is not defined or (runner_registration_token | length) == 0
+      no_log: true
+
+    - name: Select the effective runner registration token
+      ansible.builtin.set_fact:
+        runner_registration_token_effective: >-
+          {{
+            runner_registration_token
+            if runner_registration_token is defined and (runner_registration_token | length) > 0
+            else runner_registration_token_generated.stdout
+          }}
+      run_once: true
+      no_log: true
 
   tasks:
     - name: Install runner dependencies
@@ -66,7 +100,7 @@
         cmd: >
           ./config.sh
           --url {{ runner_repo }}
-          --token {{ runner_registration_token }}
+          --token {{ runner_registration_token_effective }}
           --name {{ runner_name }}
           --labels {{ runner_labels }}
           --unattended

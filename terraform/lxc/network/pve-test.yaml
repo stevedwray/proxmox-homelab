@@ -63,7 +63,7 @@ attachments:
       alias: pve-test network layer 3
       subnet: "10.57.0.0/24"
       gateway: "10.57.0.1"
-      snat: true
+      snat: false
 
 zones:
   apps:
