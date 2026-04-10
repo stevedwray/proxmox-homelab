@@ -95,6 +95,39 @@
         remote_src: true
         owner: "{{ runner_user }}"
 
+    - name: Check if runner is already configured
+      ansible.builtin.stat:
+        path: "{{ runner_home }}/.runner"
+      become: true
+      become_user: "{{ runner_user }}"
+      register: runner_config_stat
+
+    - name: Generate removal token for clean deregistration
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - --method
+          - POST
+          - repos/{{ runner_repo_slug }}/actions/runners/remove-token
+          - --jq
+          - .token
+      delegate_to: localhost
+      become: false
+      register: runner_removal_token_result
+      changed_when: false
+      when: runner_config_stat.stat.exists
+      no_log: true
+
+    - name: Deregister existing runner before reconfiguring
+      ansible.builtin.command:
+        cmd: ./config.sh remove --token {{ runner_removal_token_result.stdout }}
+        chdir: "{{ runner_home }}"
+      become: true
+      become_user: "{{ runner_user }}"
+      when: runner_config_stat.stat.exists
+      no_log: true
+
     - name: Configure runner
       ansible.builtin.command:
         cmd: >
@@ -110,12 +143,35 @@
       become_user: "{{ runner_user }}"
       no_log: true
 
+    - name: Find installed runner systemd service file
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns: "actions.runner.*.{{ runner_name }}.service"
+      register: runner_service_files
+
     - name: Install runner as systemd service
       ansible.builtin.command:
         cmd: ./svc.sh install {{ runner_user }}
         chdir: "{{ runner_home }}"
+      when: runner_service_files.matched == 0
 
     - name: Start runner service
       ansible.builtin.command:
         cmd: ./svc.sh start
         chdir: "{{ runner_home }}"
+
+    - name: Verify runner is registered and online via GitHub API
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - repos/{{ runner_repo_slug }}/actions/runners
+          - --jq
+          - "[.runners[] | select(.name == \"{{ runner_name }}\") | .status][0]"
+      delegate_to: localhost
+      become: false
+      register: runner_online_check
+      until: runner_online_check.stdout == "online"
+      retries: 18
+      delay: 10
+      changed_when: false
