@@ -21,6 +21,7 @@ ENV_VARS=(
     "MIKROTIK_USER"
     "MIKROTIK_PASSWORD"
     "SONAR_TOKEN"
+    "SOPS_AGE_KEY"
 )
 
 # Check that bw is available and unlocked

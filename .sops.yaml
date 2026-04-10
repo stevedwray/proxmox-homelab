@@ -1,0 +1,7 @@
+creation_rules:
+  - path_regex: '\.enc\.ya?ml$'
+    age: >-
+      age1fzhfgtun0jczh6z2ksswmf4mw90p7mg5nhmhpasny6ypesxucf5sctxqpe
+  - path_regex: '\.enc\.env$'
+    age: >-
+      age1fzhfgtun0jczh6z2ksswmf4mw90p7mg5nhmhpasny6ypesxucf5sctxqpe
