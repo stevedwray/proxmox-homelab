@@ -75,3 +75,10 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     firewall = var.network_firewall
   }
 }
+
+# Produces a new random ID each time the container is replaced (including
+# out-of-band deletions detected on the next plan). Expose this as
+# container_epoch_id so callers can use it as a Ansible provisioner trigger.
+resource "terraform_data" "container_epoch" {
+  triggers_replace = [proxmox_virtual_environment_container.docker_host.id]
+}
