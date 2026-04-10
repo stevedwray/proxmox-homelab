@@ -17,3 +17,8 @@ output "target_node" {
   description = "Proxmox node where the container was created"
   value       = proxmox_virtual_environment_container.docker_host.node_name
 }
+
+output "container_epoch_id" {
+  description = "Opaque ID that changes each time the container is replaced; use as an Ansible provisioner trigger to force re-runs after out-of-band rebuilds."
+  value       = terraform_data.container_epoch.id
+}

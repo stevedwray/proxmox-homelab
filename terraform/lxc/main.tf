@@ -360,9 +360,10 @@ resource "null_resource" "ansible_provision" {
   count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0
 
   triggers = {
-    container_id      = module.lxc.container_id
-    inventory_content = local_file.ansible_inventory.content
-    playbook          = try(local.stack.ansible_playbook, "")
+    container_id       = module.lxc.container_id
+    container_epoch_id = module.lxc.container_epoch_id
+    inventory_content  = local_file.ansible_inventory.content
+    playbook           = try(local.stack.ansible_playbook, "")
   }
 
   provisioner "local-exec" {
