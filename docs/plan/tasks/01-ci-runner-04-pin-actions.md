@@ -15,7 +15,7 @@ Phase 01 — CI Runner Deployment and Actions Pinning
 
 ## Prerequisites
 
-- Task 01-01 complete: repository is in a clean state
+- Task 01-03 complete: runner verification is done
 
 ## Objective
 
@@ -24,8 +24,8 @@ All `uses:` lines in `.github/workflows/` reference a pinned release tag or comm
 ## Scope
 
 - Audit `.github/workflows/security-scan.yml` and `validate.yml` for unpinned refs
-- Pin any `@master` or bare refs to the latest stable release tag
-- Verify with grep
+- Pin any `@master` or bare remote refs to the latest stable release tag
+- Verify the workflow files do not contain unpinned remote action refs
 
 ## Out of Scope
 
@@ -45,10 +45,11 @@ All `uses:` lines in `.github/workflows/` reference a pinned release tag or comm
 
 - Release-tag pins (`@v4`) are mutable but acceptable here; commit-SHA pins are the gold standard
 - Any pin change must be tested by triggering the workflow
+- Verification greps should focus on remote `uses:` refs, not local reusable workflow paths such as `./.github/...`
 
 ## Acceptance Criteria
 
-- [x] `grep -r 'uses:' .github/workflows/ | grep -v '@'` returns no output
+- [x] A targeted grep for remote `uses:` refs returns no unpinned entries
 - [x] `grep -r 'uses:' .github/workflows/ | grep '@master'` returns no output
 - [x] All actions verified pinned to stable release tags
 
@@ -59,8 +60,8 @@ This task is COMPLETE. All GitHub Actions in .github/workflows/ are already pinn
 stable release tags. No action needed.
 
 To verify:
-  grep -r 'uses:' .github/workflows/ | grep -v '@' | grep -v '#'
-  # Expected: no output
+  grep -r 'uses:' .github/workflows/ | grep -E 'uses: (actions|hashicorp|aquasecurity|github|snyk|trufflesecurity|[^./])' | grep -v '@'
+  # Expected: no output for remote actions without a version pin
 
   grep -r 'uses:' .github/workflows/ | grep '@master'
   # Expected: no output
