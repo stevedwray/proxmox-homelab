@@ -8,7 +8,6 @@ Phases must be completed in order. Each phase lists its prerequisites explicitly
 
 | Phase | Document | Status | Gate |
 |---|---|---|---|
-| 00 | [Housekeeping](phase-00-housekeeping.md) | **Do first** | None |
 | 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Before Phase 03b** | Phase 00 complete |
 | 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00 | Phase 00 complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Hard gate for Phase 04** | Phase 01 complete |
@@ -45,10 +44,9 @@ except where noted.
 | Portainer (production) | `192.168.1.4` | — | pve | existing |
 | Portainer (pve-test) | `192.168.1.20` | 120 | pve-test | 00b |
 | NetBox (IPAM) | `192.168.1.30` | 119 | pve | existing |
-| NetBox (pve-test) | `192.168.1.31` | 142 | pve-test | existing |
 | Harbor (registry) | `192.168.1.10` | 121 | pve | existing |
 | ci-runner-01 | `10.57.0.63` | 141 | pve-test | 01 |
-| apt-cacher-ng | `192.168.1.35` | 142 | pve-test → pve | 03c |
+| apt-cacher-ng | `192.168.1.35` | 143 | pve-test → pve | 03c |
 
 ### Core shared services (Phase 04)
 
