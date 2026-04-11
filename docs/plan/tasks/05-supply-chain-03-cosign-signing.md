@@ -4,6 +4,10 @@
 
 PENDING
 
+## GitHub Issue
+
+https://github.com/stevedwray/proxmox-homelab/issues/110
+
 ## Phase
 
 Phase 05 — Supply Chain Security

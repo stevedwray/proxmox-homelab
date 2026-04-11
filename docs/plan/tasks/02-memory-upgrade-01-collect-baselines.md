@@ -4,6 +4,10 @@
 
 PENDING
 
+## GitHub Issue
+
+https://github.com/stevedwray/proxmox-homelab/issues/87
+
 ## Phase
 
 Phase 02 — pve-test Memory Upgrade (32 GB)

@@ -4,6 +4,10 @@
 
 PENDING
 
+## GitHub Issue
+
+https://github.com/stevedwray/proxmox-homelab/issues/96
+
 ## Phase
 
 Phase 03b — Harbor Configuration: Projects, Image Caching, and CI Robot
