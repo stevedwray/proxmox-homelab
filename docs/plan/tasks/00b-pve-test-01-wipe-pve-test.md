@@ -26,6 +26,13 @@ All LXC containers are destroyed on pve-test and `pvesh get /nodes/pve-test/lxc`
 - Manually destroy any VMIDs not tracked in Terraform state
 - Verify pve-test is empty via `pvesh`
 
+> **SDN side effect — expected and correct**: Destroying `ci-runner-01` also removes its
+> `build_seg` SDN zone (`tvsegc`) and VNet (`tvnetc`) from pve-test. The `destroy`
+> provisioner in `null_resource.configure_network_sdn_attachment` (in `main.tf`) runs
+> `destroy-network-sdn-vnet.yml`, which checks no other containers still reference the VNet
+> before deleting it. This is stack-scoped teardown, not a global SDN reset. The zone and
+> VNet are automatically recreated when ci-runner-01 is redeployed in task 00b-05.
+
 ## Out of Scope
 
 - Any changes to production `pve` node

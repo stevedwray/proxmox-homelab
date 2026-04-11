@@ -318,16 +318,48 @@ running stacks will be deployed fresh in the following order. Each deploy will a
 register its Portainer agent with the new server at `192.168.1.20` because
 `TF_VAR_portainer_server_ip=192.168.1.20` is set in `.env.pve-test`.
 
-| Order | Stack | Phase | VMID | Notes |
+| Order | Stack | Phase | VMID | Task |
 |---|---|---|---|---|
-| 1 | `portainer-stack` | 00b (this phase) | 120 | Already done above |
-| 2 | `ci-runner-01` | 01 | 141 | Redeploy via `deploy-ci-runner.yml` |
-| 3 | `harbor-stack` | 03b | 121 | Redeploy via `deploy-harbor-stack.yml` |
-| 4 | `apt-cacher-ng` | 03c | 143 | New deployment |
+| 1 | `portainer-stack` | 00b (this phase) | 120 | 00b-03 (already done above) |
+| 2 | `ci-runner-01` | 00b (this phase) | 141 | 00b-05 — see below |
+| 3 | `harbor-stack` | 03b | 121 | 03b-01 |
+| 4 | `apt-cacher-ng` | 03c | 143 | 03c-01 |
 | 5+ | Phase 04 stacks | 04 | 150+ | Authentik, Traefik, Headscale, Monitoring |
 
 Do not skip steps or deploy out of order. Harbor (Step 3) must be running and configured
 before Phase 04 stacks are deployed, since they pull images via Harbor.
+
+### Step 2 — Redeploy ci-runner-01 (task 00b-05)
+
+Destroying `ci-runner-01` in Part 0 also removed its `build_seg` SDN zone (`tvsegc`) and
+VNet (`tvnetc`) from pve-test. This is expected — the destroy provisioner in
+`null_resource.configure_network_sdn_attachment` runs `destroy-network-sdn-vnet.yml`,
+which removes the zone once no containers reference it. Reapplying recreates everything
+automatically via `configure-network-sdn-vnet.yml`.
+
+The `deploy-ci-runner.yml` playbook auto-generates the runner registration token via
+`gh api` — no manual token step needed, but `gh` must be authenticated on the workstation.
+
+```bash
+source /home/steve/git/proxmox-homelab/.env
+source /home/steve/git/proxmox-homelab/.env.pve-test
+
+# Three-way safety check — stop immediately if any value is wrong:
+echo "Node target     : $TF_VAR_proxmox_node"       # must print: pve-test
+echo "TF workspace    : $TF_WORKSPACE"               # must print: pve-test
+echo "Portainer server: $TF_VAR_portainer_server_ip" # must print: 192.168.1.20
+
+cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/ci-runner-01
+terragrunt apply
+
+cd /home/steve/git/proxmox-homelab
+ansible-playbook \
+  -i terraform/lxc/stacks/ci-runner-01/inventory.yml \
+  terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
+```
+
+This apply is the first live proof of isolation: Terraform will register ci-runner-01 as a
+Portainer agent at `192.168.1.20`, not `192.168.1.4`. No commit is needed — no files change.
 
 ---
 
@@ -363,6 +395,13 @@ in their `stack.yaml` files. This matches what is already working on pve-test.
 - [ ] `TF_VAR_portainer_server_ip=192.168.1.20` uncommented in `.env.pve-test`
 - [ ] Subsequent `terragrunt apply` on pve-test registers new LXC agents at `192.168.1.20`
 - [ ] Production Portainer at `192.168.1.4:9000` **not** required for any pve-test operation
+
+**CI runner redeploy (Part E / task 00b-05)**
+- [ ] `TF_VAR_portainer_server_ip` prints `192.168.1.20` before apply
+- [ ] `terragrunt apply` exits 0 with VMID 141 running on pve-test at `10.57.0.63`
+- [ ] `tvsegc` zone and `tvnetc` VNet visible in Proxmox SDN on pve-test
+- [ ] ci-runner-01 registered as environment in Portainer at `192.168.1.20`
+- [ ] GitHub Actions runner `ci-runner-pve-test` shows status `online`
 
 ---
 
