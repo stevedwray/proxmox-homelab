@@ -49,6 +49,70 @@ curl -s -H "Authorization: Token ${NETBOX_SUPERUSER_API_TOKEN}" \
 
 ---
 
+## Part 0 — Wipe pve-test
+
+Before deploying the new standalone stack, remove all existing containers from pve-test.
+Starting clean eliminates VMID conflicts and ensures every subsequent stack registers with
+the correct Portainer server from the first apply.
+
+> **Safety guard — do not wipe pve (production)**
+> `.env.pve-test` sets `TF_VAR_proxmox_node=pve-test` and `TF_WORKSPACE=pve-test`.
+> Sourcing it **after** `.env` is what makes operations safe. Always verify below before
+> running any destroy.
+
+### Known containers on pve-test
+
+| Stack | VMID | IP | Terraform state |
+|---|---|---|---|
+| ci-runner-01 | 141 | `10.57.0.63` | `stacks/ci-runner-01/terraform.tfstate.d/pve-test/` |
+| netbox-stack-test | 142 | `192.168.1.31` | `stacks/netbox-stack-test/terraform.tfstate.d/pve-test/` |
+
+### Safety check (mandatory — run before every destroy)
+
+```bash
+source /home/steve/git/proxmox-homelab/.env
+source /home/steve/git/proxmox-homelab/.env.pve-test
+
+# Stop immediately if either value is wrong:
+echo "Node target  : $TF_VAR_proxmox_node"   # must print: pve-test
+echo "TF workspace : $TF_WORKSPACE"           # must print: pve-test
+```
+
+### Destroy in reverse deploy order
+
+```bash
+cd /home/steve/git/proxmox-homelab
+# env must be sourced — see safety check above
+
+# Destroy netbox-stack-test (VMID 142):
+cd terraform/lxc/stacks/netbox-stack-test
+terragrunt destroy
+
+# Destroy ci-runner-01 (VMID 141):
+cd ../ci-runner-01
+terragrunt destroy
+```
+
+Terragrunt runs `tofu init -reconfigure` automatically before each destroy (via the
+`before_hook` in the root `terragrunt.hcl`), so no manual init step is needed.
+
+### Verify pve-test is empty
+
+```bash
+# Should return an empty JSON array: []
+ssh root@pve-test.gibbsgreatly.xyz \
+  "pvesh get /nodes/pve-test/lxc --output-format json | jq '.[].vmid'"
+```
+
+If `pvesh` returns VMIDs not listed in the table above, they are not tracked in Terraform
+state. Destroy them manually:
+
+```bash
+ssh root@pve-test.gibbsgreatly.xyz "pct stop <vmid> ; pct destroy <vmid>"
+```
+
+---
+
 ## Part A — Stack definition
 
 Create `terraform/lxc/stacks/portainer-stack/stack.yaml`:
@@ -78,61 +142,126 @@ ansible_playbook: "deploy-portainer-stack"
 portainer_agent: false    # this IS the Portainer server — no agent registration
 ```
 
-Copy `terraform/lxc/stacks/harbor-stack/terragrunt.hcl` to
-`terraform/lxc/stacks/portainer-stack/terragrunt.hcl` unchanged.
+**File: `terraform/lxc/stacks/portainer-stack/terragrunt.hcl`**
+
+Identical to every other stack's `terragrunt.hcl`:
+
+```hcl
+include "root" {
+  path = find_in_parent_folders()
+}
+
+terraform {
+  source = "${get_repo_root()}/terraform/lxc//"
+}
+
+inputs = {
+  stack_name      = basename(get_terragrunt_dir())
+  stack_yaml_path = "${get_terragrunt_dir()}/stack.yaml"
+}
+```
 
 ---
 
 ## Part B — Ansible playbook
 
-Create `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml`:
+Create `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml` with the following
+content:
 
-The playbook has two plays:
-
-**Play 1 — Docker base**
-
-Use the `docker_base` role (standard, as all Docker LXCs). Do **not** use `portainer_api`
-or `portainer_agent` roles — those are for clients registering with a server, not the
-server itself.
-
-**Play 2 — Deploy Portainer server**
-
-Deploy Portainer CE in server mode via Docker Compose:
-
-```yaml
-services:
-  portainer:
-    image: portainer/portainer-ce:2.27.3    # pin version — do not use latest
-    restart: unless-stopped
-    ports:
-      - "9000:9000"     # UI and HTTP API
-      - "9443:9443"     # HTTPS UI (optional, self-signed)
-      - "8000:8000"     # Edge agent tunnel (needed if edge agents are used later)
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
-      - /var/lib/portainer:/data
-```
-
-> **Note on image source:** This stack is deployed as part of the bootstrap sequence,
-> before Harbor is fully configured (Phase 03b). It is one of **two permitted exceptions**
-> to the Harbor-only pull rule (the other being Harbor itself). Pull `portainer-ce` directly
-> from Docker Hub for this initial bootstrap. Once Harbor's `dockerhub` proxy project is
-> configured in Phase 03b, update the image reference to
+> **Note on image source:** This stack is deployed before Harbor is configured (Phase 03b).
+> It is one of **two permitted exceptions** to the Harbor-only pull rule (the other being
+> Harbor itself). Pull `portainer-ce` directly from Docker Hub for this bootstrap. Once
+> Phase 03b is complete, update the image reference to
 > `192.168.1.10/dockerhub/portainer/portainer-ce:2.27.3` and redeploy.
 
-**Play 3 — Initialise admin account**
+```yaml
+---
+# Portainer CE server — bootstrap play for pve-test standalone management.
+# Do NOT include portainer_agent or portainer_api roles — this IS the server.
 
-Bootstrap the Portainer admin user via the API (only runs if not already initialised):
+- name: Install Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - docker_base
 
-```bash
-curl -s -X POST http://192.168.1.20:9000/api/users/admin/init \
-  -H "Content-Type: application/json" \
-  -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}"
-# Returns 200 on success, 409 if already initialised (idempotent)
+- name: Deploy Portainer CE server
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    portainer_compose_dir: /opt/portainer
+    portainer_version: "2.27.3"    # pin version — update deliberately, never use 'latest'
+
+  tasks:
+    - name: Create Portainer compose directory
+      ansible.builtin.file:
+        path: "{{ portainer_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ portainer_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            portainer:
+              image: portainer/portainer-ce:{{ portainer_version }}
+              restart: unless-stopped
+              ports:
+                - "9000:9000"     # UI and HTTP API
+                - "9443:9443"     # HTTPS UI (self-signed)
+                - "8000:8000"     # Edge agent tunnel
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /var/lib/portainer:/data
+
+    - name: Pull Portainer image
+      community.docker.docker_image:
+        name: "portainer/portainer-ce:{{ portainer_version }}"
+        source: pull
+
+    - name: Start Portainer via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ portainer_compose_dir }}"
+        state: present
+
+- name: Initialise Portainer admin account
+  hosts: all
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Wait for Portainer API to become available
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/system/status"
+        status_code: 200
+      register: portainer_status
+      until: portainer_status.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Initialise admin credentials (200 = created, 409 = already exists)
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users/admin/init"
+        method: POST
+        body_format: json
+        body:
+          Username: "admin"
+          Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+        status_code: [200, 409]
+      register: portainer_init_result
+      no_log: true
+
+    - name: Report init outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer admin account initialised.' if portainer_init_result.status == 200
+             else 'Portainer admin account already exists (idempotent).' }}
 ```
-
-The Ansible task should use `uri` module with `status_code: [200, 409]` to be idempotent.
-The admin password comes from `{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') }}`.
 
 ---
 
@@ -143,7 +272,10 @@ cd /home/steve/git/proxmox-homelab
 
 # Source pve-test credentials (must be last to ensure pve-test wins):
 source .env && source .env.pve-test
-echo "Target node: $TF_VAR_proxmox_node"   # must print: pve-test
+
+# Safety check — stop if either value is wrong:
+echo "Node target  : $TF_VAR_proxmox_node"   # must print: pve-test
+echo "TF workspace : $TF_WORKSPACE"           # must print: pve-test
 
 # Provision the LXC:
 cd terraform/lxc/stacks/portainer-stack
@@ -179,31 +311,23 @@ Also add the placeholder to `.env.template`:
 
 ---
 
-## Part E — Re-register existing pve-test stacks
+## Part E — Redeploy order after wipe
 
-Once the pve-test Portainer is running, existing pve-test stacks that registered with the
-production Portainer should be re-registered. Run the Ansible playbook for each affected
-stack (the `portainer_api` play is idempotent and will create the endpoint on the new
-server):
+Because pve-test was wiped in Part 0, there is nothing to re-register. All previously
+running stacks will be deployed fresh in the following order. Each deploy will automatically
+register its Portainer agent with the new server at `192.168.1.20` because
+`TF_VAR_portainer_server_ip=192.168.1.20` is set in `.env.pve-test`.
 
-```bash
-source .env && source .env.pve-test
+| Order | Stack | Phase | VMID | Notes |
+|---|---|---|---|---|
+| 1 | `portainer-stack` | 00b (this phase) | 120 | Already done above |
+| 2 | `ci-runner-01` | 01 | 141 | Redeploy via `deploy-ci-runner.yml` |
+| 3 | `harbor-stack` | 03b | 121 | Redeploy via `deploy-harbor-stack.yml` |
+| 4 | `apt-cacher-ng` | 03c | 143 | New deployment |
+| 5+ | Phase 04 stacks | 04 | 150+ | Authentik, Traefik, Headscale, Monitoring |
 
-# Re-register the CI runner:
-ansible-playbook \
-  -i terraform/lxc/stacks/ci-runner-01/inventory.yml \
-  terraform/lxc/ansible/playbooks/deploy-ci-runner.yml \
-  --tags portainer
-
-# Re-register netbox-stack-test:
-ansible-playbook \
-  -i terraform/lxc/stacks/netbox-stack-test/inventory.yml \
-  terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml \
-  --tags portainer
-```
-
-If the playbooks do not have a `portainer` tag, run the full playbook — the `portainer_api`
-role is idempotent (it checks for an existing endpoint before creating one).
+Do not skip steps or deploy out of order. Harbor (Step 3) must be running and configured
+before Phase 04 stacks are deployed, since they pull images via Harbor.
 
 ---
 
@@ -223,13 +347,20 @@ in their `stack.yaml` files. This matches what is already working on pve-test.
 
 ## Acceptance criteria
 
+**Wipe (Part 0)**
+- [ ] `TF_VAR_proxmox_node=pve-test` and `TF_WORKSPACE=pve-test` confirmed before any destroy
+- [ ] `netbox-stack-test` (VMID 142) destroyed via `terragrunt destroy`
+- [ ] `ci-runner-01` (VMID 141) destroyed via `terragrunt destroy`
+- [ ] `pvesh get /nodes/pve-test/lxc` returns an empty list
+
+**Portainer deployment (Parts A–C)**
 - [ ] LXC VMID 120 (`portainer-stack`) running on pve-test at `192.168.1.20`
 - [ ] Portainer UI accessible at `http://192.168.1.20:9000`
 - [ ] Admin login works with `PORTAINER_ADMIN_PASSWORD` from `.env.pve-test`
-- [ ] Local Docker environment shows as an endpoint (`unix:///var/run/docker.sock`)
-- [ ] `TF_VAR_portainer_server_ip=192.168.1.20` added to `.env.pve-test`
-- [ ] ci-runner-01 endpoint visible in pve-test Portainer (re-registered)
-- [ ] netbox-stack-test endpoint visible in pve-test Portainer (re-registered)
+- [ ] Local Docker environment shows as an endpoint in Portainer
+
+**Environment configuration (Part D)**
+- [ ] `TF_VAR_portainer_server_ip=192.168.1.20` uncommented in `.env.pve-test`
 - [ ] Subsequent `terragrunt apply` on pve-test registers new LXC agents at `192.168.1.20`
 - [ ] Production Portainer at `192.168.1.4:9000` **not** required for any pve-test operation
 
@@ -241,14 +372,16 @@ in their `stack.yaml` files. This matches what is already working on pve-test.
 cd /home/steve/git/proxmox-homelab
 git checkout -b feat/pve-test-portainer dev/pve-test
 
-git add terraform/lxc/stacks/portainer-stack/
+git add terraform/lxc/stacks/portainer-stack/stack.yaml
+git add terraform/lxc/stacks/portainer-stack/terragrunt.hcl
 git add terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml
 git add .env.pve-test .env.template
 
 git commit -m "feat(pve-test): deploy standalone Portainer server at 192.168.1.20
 
-- portainer-stack LXC (VMID 120) on pve-test
-- deploy-portainer-stack.yml playbook with idempotent admin init
+- portainer-stack LXC (VMID 120) on pve-test at 192.168.1.20
+- stack.yaml and terragrunt.hcl for portainer-stack
+- deploy-portainer-stack.yml: docker_base + compose deploy + admin init
 - TF_VAR_portainer_server_ip=192.168.1.20 in .env.pve-test
 - pve-test no longer depends on production Portainer at 192.168.1.4"
 
