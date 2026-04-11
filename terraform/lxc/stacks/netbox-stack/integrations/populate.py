@@ -83,6 +83,38 @@ NB_IPAM_SERVICES = "/ipam/services/"
 
 
 # ---------------------------------------------------------------------------
+# Address helpers
+# ---------------------------------------------------------------------------
+
+_INTERNAL_PREFIXES = (
+    "192.168.",
+    "10.",
+    "172.16.",
+    "172.17.",
+    "172.18.",
+    "172.19.",
+    "172.20.",
+    "172.21.",
+    "172.22.",
+    "172.23.",
+    "172.24.",
+    "172.25.",
+    "172.26.",
+    "172.27.",
+    "172.28.",
+    "172.29.",
+    "172.30.",
+    "172.31.",
+)
+
+
+def _is_internal_ip(address: str) -> bool:
+    """Return True if address is an RFC 1918 private IP."""
+    host = address.split("/")[0]
+    return host.startswith(_INTERNAL_PREFIXES)
+
+
+# ---------------------------------------------------------------------------
 # Population functions
 # ---------------------------------------------------------------------------
 
@@ -224,7 +256,7 @@ def populate_network(nb, site, network):
             "status": "active",
             "description": f"{router_name}:{iface_name}",
         })
-        if not router_device.get("primary_ip4") and "." in address:
+        if not router_device.get("primary_ip4") and _is_internal_ip(address):
             nb.patch(f"/dcim/devices/{router_device['id']}/", {"primary_ip4": ip_obj["id"]})
             print(f"  updated: primary_ip4 for {router_name}")
 
@@ -309,6 +341,7 @@ def populate_ipam(nb, site, vms):
                 "name": svc_def["name"],
                 "parent_object_type": "virtualization.virtualmachine",
                 "parent_object_id": vm["id"],
+                "protocol": svc_def["protocol"],
             }, {
                 "name": svc_def["name"],
                 "parent_object_type": "virtualization.virtualmachine",

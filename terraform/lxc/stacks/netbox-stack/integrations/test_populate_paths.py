@@ -66,6 +66,23 @@ SAMPLE_VMS = [
     }
 ]
 
+SAMPLE_VMS_WITH_PROTOCOL_VARIANTS = [
+    {
+        "name": "gluetun-stack",
+        "status": "active",
+        "vcpus": 2,
+        "memory": 2048,
+        "disk": 20,
+        "description": "Gluetun",
+        "tags": ["vpn"],
+        "ip": "192.168.1.20/24",
+        "services": [
+            {"name": "gluetun-6881", "port": 6881, "protocol": "tcp"},
+            {"name": "gluetun-6881", "port": 6881, "protocol": "udp"},
+        ],
+    }
+]
+
 SAMPLE_NETWORK = {
     "router": {"identity": "mikrotik", "host": "192.168.1.1"},
     "interfaces": [{"name": "ether1", "type": "ether", "disabled": False}],
@@ -249,6 +266,11 @@ class TestPopulateNetworkPaths(unittest.TestCase):
     def test_looks_up_device_types(self):
         self.assertIn("/dcim/device-types/", get_paths(self.nb))
 
+    def test_sets_primary_ip4_for_private_router_ip(self):
+        nb = make_nb()
+        populate.populate_network(nb, SITE, SAMPLE_NETWORK)
+        self.assertTrue(nb.patch.called)
+
 
 class TestPopulateNetworkSkipsWithoutRouter(unittest.TestCase):
 
@@ -274,6 +296,15 @@ class TestPopulateNetworkSkipsWithoutRouter(unittest.TestCase):
         network = {**SAMPLE_NETWORK, "vlans": [{"name": "no-id"}]}
         populate.populate_network(nb, SITE, network)
         self.assertNotIn("/ipam/vlans/", ensure_paths(nb))
+
+    def test_does_not_set_primary_ip4_for_public_router_ip(self):
+        nb = make_nb()
+        network = {
+            **SAMPLE_NETWORK,
+            "ip_addresses": [{"address": "121.99.1.1/24", "interface": "ether1"}],
+        }
+        populate.populate_network(nb, SITE, network)
+        self.assertFalse(nb.patch.called)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +368,23 @@ class TestClean(unittest.TestCase):
         nb.get.return_value = {"results": []}
         populate.clean(nb)
         nb.delete.assert_not_called()
+
+
+class TestPopulateIpamServiceLookup(unittest.TestCase):
+
+    def test_service_lookup_includes_protocol(self):
+        nb = make_nb()
+        populate.populate_ipam(nb, SITE, SAMPLE_VMS_WITH_PROTOCOL_VARIANTS)
+        service_calls = [
+            call.args[1]
+            for call in nb.ensure.call_args_list
+            if call.args[0] == "/ipam/services/"
+        ]
+        self.assertEqual(len(service_calls), 2)
+        self.assertCountEqual(
+            [call["protocol"] for call in service_calls],
+            ["tcp", "udp"],
+        )
 
 
 if __name__ == "__main__":

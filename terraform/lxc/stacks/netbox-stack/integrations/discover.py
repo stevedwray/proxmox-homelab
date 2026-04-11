@@ -98,6 +98,73 @@ class PortainerClient:
 SKIP_CONTAINERS = {"portainer-agent"}
 
 
+def _extract_ip_from_net0(net0_str: str) -> str | None:
+    """Parse Proxmox net0 config string and return the IP with prefix."""
+    for part in net0_str.split(","):
+        if part.startswith("ip="):
+            return part.split("=", 1)[1]
+    return None
+
+
+def _get_container_ip(container: dict, yml: dict) -> str | None:
+    """Return the container's IP (with prefix), using Proxmox first."""
+    config = container.get("config", {})
+    net0 = config.get("net0")
+    if net0:
+        ip = _extract_ip_from_net0(net0)
+        if ip:
+            return ip
+
+    ip_raw = yml.get("ip_address", "")
+    if ip_raw:
+        return ip_raw if "/" in ip_raw else f"{ip_raw}/24"
+    return None
+
+
+def _get_container_disk(container: dict, yml: dict) -> int:
+    """Return disk size in GB from mounts or stack.yaml."""
+    disk = yml.get("rootfs_size", 8)
+    for mount in container.get("mounts", []):
+        if mount.get("type") == "rootfs" and "size" in mount:
+            # Parse "8G" to 8.
+            return int(mount["size"].rstrip("GT"))
+    return disk
+
+
+def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
+    """Query Portainer for running containers and return a deduplicated service list."""
+    try:
+        containers = portainer.get_containers(portainer_ep["id"])
+    except Exception:
+        containers = []
+
+    services = []
+    for c in containers:
+        cname = c["Names"][0].lstrip("/")
+        if cname in SKIP_CONTAINERS:
+            continue
+        for p in c.get("Ports", []):
+            pub = p.get("PublicPort")
+            if not pub:
+                continue
+            proto = p.get("Type", "tcp")
+            svc_name = f"{cname}-{pub}" if pub != 9001 else cname
+            services.append({
+                "name": svc_name,
+                "port": pub,
+                "protocol": proto,
+            })
+
+    seen = set()
+    deduped = []
+    for svc in services:
+        key = (svc["name"], svc["port"], svc["protocol"])
+        if key not in seen:
+            seen.add(key)
+            deduped.append(svc)
+    return deduped
+
+
 def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
     """Merge Proxmox (primary), stack.yaml, and Portainer (services) data.
     
@@ -130,39 +197,16 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
         pve_name = container["name"]
         yml = yamls.get(pve_name, {})
         portainer_ep = portainer_endpoints.get(pve_name, {})
-        
-        # Get IP from Proxmox config (eth0)
-        ip = None
+
         config = container.get("config", {})
-        if "net0" in config:
-            # Format: name=eth0,bridge=vmbr0,ip=192.168.1.30/24,...
-            net0_parts = config["net0"].split(",")
-            for part in net0_parts:
-                if part.startswith("ip="):
-                    ip = part.split("=", 1)[1]
-                    break
-        
-        if not ip:
-            # Fallback to stack.yaml
-            ip_raw = yml.get("ip_address", "")
-            if ip_raw:
-                ip = ip_raw if "/" in ip_raw else f"{ip_raw}/24"
-        
+        ip = _get_container_ip(container, yml)
         if not ip:
             # Skip containers without IPs
             continue
 
-        # Get vCPU and memory from Proxmox config or stack.yaml
         vcpus = int(config.get("cores", yml.get("cores", 2)))
         memory = int(config.get("memory", yml.get("memory", 2048)))
-        
-        # Get disk size from rootfs
-        disk = yml.get("rootfs_size", 8)
-        for mount in container.get("mounts", []):
-            if mount.get("type") == "rootfs" and "size" in mount:
-                # Parse "8G" to 8
-                disk = int(mount["size"].rstrip("GT"))
-                break
+        disk = _get_container_disk(container, yml)
         
         vm = {
             "name": pve_name,
@@ -182,36 +226,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
 
         # Discover services from Portainer containers (if this stack has an agent endpoint)
         if portainer and portainer_ep:
-            try:
-                containers = portainer.get_containers(portainer_ep["id"])
-            except Exception:
-                containers = []
-            
-            for c in containers:
-                cname = c["Names"][0].lstrip("/")
-                if cname in SKIP_CONTAINERS:
-                    continue
-                # Extract public ports
-                for p in c.get("Ports", []):
-                    pub = p.get("PublicPort")
-                    if pub:
-                        proto = p.get("Type", "tcp")
-                        svc_name = f"{cname}-{pub}" if pub != 9001 else cname
-                        vm["services"].append({
-                            "name": svc_name,
-                            "port": pub,
-                            "protocol": proto,
-                        })
-            
-            # Deduplicate services by (name, port, protocol)
-            seen = set()
-            deduped = []
-            for s in vm["services"]:
-                key = (s["name"], s["port"], s["protocol"])
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(s)
-            vm["services"] = deduped
+            vm["services"] = _build_portainer_services(portainer, portainer_ep)
 
         vms.append(vm)
 

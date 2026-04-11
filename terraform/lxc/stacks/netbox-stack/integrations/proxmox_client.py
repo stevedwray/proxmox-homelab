@@ -120,6 +120,82 @@ class ProxmoxClient:
         return resp.get("data", []) if resp else []
 
 
+def _parse_storage_spec(spec):
+    """Parse Proxmox storage spec format: pool:id,mp=/path,size=XG."""
+    if not spec:
+        return None
+    parts = spec.split(",")
+    pool_id = parts[0].split(":")
+    result = {"pool": pool_id[0], "id": pool_id[1] if len(pool_id) > 1 else None}
+    for part in parts[1:]:
+        if "=" in part:
+            k, v = part.split("=", 1)
+            result[k] = v
+    return result
+
+
+def _parse_lxc_container(client, node_name: str, lxc: dict) -> dict:
+    """Fetch config, status and parse mounts for one LXC container."""
+    vmid = lxc["vmid"]
+    config, _ = client.get_node_config(node_name, vmid)
+    status = client.get_node_status(node_name, vmid, "lxc")
+
+    mounts = []
+    if "rootfs" in config:
+        rootfs_spec = _parse_storage_spec(config["rootfs"])
+        if rootfs_spec:
+            rootfs_spec["type"] = "rootfs"
+            mounts.append(rootfs_spec)
+
+    for key in config:
+        if key.startswith("mp") and key[2:].isdigit():
+            mp_spec = _parse_storage_spec(config[key])
+            if mp_spec:
+                mp_spec["type"] = "mountpoint"
+                mounts.append(mp_spec)
+
+    return {
+        "type": "lxc",
+        "node": node_name,
+        "vmid": vmid,
+        "name": lxc.get("name"),
+        "status": status.get("status"),
+        "uptime": status.get("uptime"),
+        "config": config,
+        "mounts": mounts,
+        "storage": lxc.get("storage"),
+    }
+
+
+def _parse_qemu_vm(client, node_name: str, qemu: dict) -> dict:
+    """Fetch config, status and parse mounts for one QEMU VM."""
+    vmid = qemu["vmid"]
+    config, _ = client.get_node_config(node_name, vmid)
+    status = client.get_node_status(node_name, vmid, "qemu")
+
+    mounts = []
+    for key in config:
+        if key in ["scsi0", "scsi1", "ide0", "ide1", "ide2", "virtio0", "virtio1"] or key.startswith(("scsi", "ide", "virtio", "sata")):
+            # QEMU disk format: storage:size,format=qcow2 or file
+            if ":" in config[key]:
+                disk_spec = _parse_storage_spec(config[key])
+                if disk_spec:
+                    disk_spec["type"] = key
+                    mounts.append(disk_spec)
+
+    return {
+        "type": "qemu",
+        "node": node_name,
+        "vmid": vmid,
+        "name": qemu.get("name"),
+        "status": status.get("status"),
+        "uptime": status.get("uptime"),
+        "config": config,
+        "mounts": mounts,
+        "storage": qemu.get("storage"),
+    }
+
+
 def discover_from_proxmox(url=None, token_id=None, token_secret=None):
     """Discover all infrastructure from Proxmox API.
     
@@ -137,88 +213,18 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
     containers = []
     storage = client.get_storage()
     networks = {}
-    
-    def parse_storage_spec(spec):
-        """Parse Proxmox storage spec format: pool:id,mp=/path,size=XG
-        Returns dict with: pool, id, mountpoint, size
-        """
-        if not spec:
-            return None
-        parts = spec.split(",")
-        pool_id = parts[0].split(":")
-        result = {"pool": pool_id[0], "id": pool_id[1] if len(pool_id) > 1 else None}
-        for part in parts[1:]:
-            if "=" in part:
-                k, v = part.split("=", 1)
-                result[k] = v
-        return result
-    
+
     # Collect all containers and VMs from each node
     for node in nodes:
         node_name = node["node"]
         
         # Get LXC containers
         for lxc in client.get_lxc_containers(node_name):
-            vmid = lxc["vmid"]
-            config, _ = client.get_node_config(node_name, vmid)
-            status = client.get_node_status(node_name, vmid, "lxc")
-            
-            # Parse mounts from config
-            mounts = []
-            if "rootfs" in config:
-                rootfs_spec = parse_storage_spec(config["rootfs"])
-                if rootfs_spec:
-                    rootfs_spec["type"] = "rootfs"
-                    mounts.append(rootfs_spec)
-            
-            # Parse mp0, mp1, mp2, etc.
-            for key in config:
-                if key.startswith("mp") and key[2:].isdigit():
-                    mp_spec = parse_storage_spec(config[key])
-                    if mp_spec:
-                        mp_spec["type"] = "mountpoint"
-                        mounts.append(mp_spec)
-            
-            containers.append({
-                "type": "lxc",
-                "node": node_name,
-                "vmid": vmid,
-                "name": lxc.get("name"),
-                "status": status.get("status"),
-                "uptime": status.get("uptime"),
-                "config": config,
-                "mounts": mounts,
-                "storage": lxc.get("storage"),
-            })
+            containers.append(_parse_lxc_container(client, node_name, lxc))
         
         # Get QEMU VMs
         for qemu in client.get_qemu_vms(node_name):
-            vmid = qemu["vmid"]
-            config, _ = client.get_node_config(node_name, vmid)
-            status = client.get_node_status(node_name, vmid, "qemu")
-            
-            # Parse mounts from QEMU config (disks are listed differently)
-            mounts = []
-            for key in config:
-                if key in ["scsi0", "scsi1", "ide0", "ide1", "ide2", "virtio0", "virtio1"] or key.startswith(("scsi", "ide", "virtio", "sata")):
-                    # QEMU disk format: storage:size,format=qcow2 or file
-                    if ":" in config[key]:
-                        disk_spec = parse_storage_spec(config[key])
-                        if disk_spec:
-                            disk_spec["type"] = key
-                            mounts.append(disk_spec)
-            
-            containers.append({
-                "type": "qemu",
-                "node": node_name,
-                "vmid": vmid,
-                "name": qemu.get("name"),
-                "status": status.get("status"),
-                "uptime": status.get("uptime"),
-                "config": config,
-                "mounts": mounts,
-                "storage": qemu.get("storage"),
-            })
+            containers.append(_parse_qemu_vm(client, node_name, qemu))
         
         # Get network config for this node
         networks[node_name] = client.get_node_networks(node_name)
