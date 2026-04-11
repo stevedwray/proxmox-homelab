@@ -41,7 +41,34 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 ## Phase 01 — CI Runner Deployment
 
-<!-- Observations from deploying ci-runner-01, runner registration, SDN bootstrapping -->
+1. **SonarCloud is not integrated into GitHub Actions.** `sonar-scanner` is documented as
+   a manual pre-merge step (CLAUDE.md) but is not invoked in any workflow. The project is
+   already configured (`sonar-project.properties` present, SonarCloud project exists) — the
+   only missing piece is a `sonar-scanner` job in `security-scan.yml` and a `SONAR_TOKEN`
+   Actions secret. Without CI integration, SonarCloud analysis only runs when explicitly
+   remembered, and PRs have no automatic quality gate.
+
+   Recommended addition to `security-scan.yml`:
+   - Use `SonarSource/sonarcloud-github-action`
+   - Pass `fetch-depth: 0` on checkout (required for blame/new-issue detection)
+   - Replace the hardcoded `sonar.branch.name=main` in `sonar-project.properties` with
+     `-Dsonar.branch.name=${{ github.ref_name }}` as a runtime arg
+
+2. **Shell scripts have no CI lint coverage.** `scripts/`, `populate-bitwarden.sh`,
+   `sync-secrets.sh`, and several scripts inside `terraform/lxc/` are not checked by any
+   workflow. ShellCheck runs on `ubuntu-latest` with no secrets or self-hosted runner
+   required — low cost, no infrastructure dependency.
+
+   Recommended addition to `validate.yml`:
+   ```
+   find . -name '*.sh' -not -path './.git/*' | xargs shellcheck
+   ```
+
+3. **Ansible lint only covers `terraform/lxc/ansible/playbooks/`.** The playbooks under
+   `ansible/` (initial setup, storage configuration, Proxmox host setup) are not linted in
+   CI. These are higher-risk than the stack playbooks — mistakes there affect physical hosts,
+   not containers. A second lint step targeting `ansible/` with `ansible/ansible.cfg` as the
+   config file would close this gap.
 
 ---
 
