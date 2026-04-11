@@ -143,9 +143,15 @@ STEP 9 — Complete initial setup wizard at http://192.168.1.40:9000/if/flow/ini
 STEP 10 — Commit and merge:
   git add terraform/lxc/stacks/authentik-stack/ terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml .env.template
   git commit -m "feat(authentik): deploy Authentik identity provider stack (VMID 150)"
+  git push origin feat/authentik-stack
+
+SECURITY SCAN (run before merging — stop and present options if new issues are found):
+  /home/steve/.local/bin/snyk iac test terraform/
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git checkout dev/pve-test && git merge feat/authentik-stack
   git push origin dev/pve-test
 
-DONE WHEN: Both health endpoints return 204 and admin UI is accessible.
+DONE WHEN: Both health endpoints return 204, admin UI accessible, and security scan clean.
 Task 04-02 (Headscale) is now unblocked.
 ```

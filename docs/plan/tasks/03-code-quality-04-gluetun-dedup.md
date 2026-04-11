@@ -115,6 +115,9 @@ COMMIT:
 gluetun-6881 was registered twice due to merged Proxmox+Portainer discovery.
 Added _dedup_services() dedup on (vm_id, name, port, protocol)."
 
+SECURITY SCAN (run before pushing — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git push origin dev/pve-test
   gh issue close 49 --comment "Fixed — services deduplicated on (vm_id, name, port, protocol)."
 

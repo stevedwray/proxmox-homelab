@@ -120,6 +120,10 @@ STEP 6 — Commit .env.template changes:
 - GitHub Actions secrets set for CI harbor pulls"
 
   git push origin feat/harbor-config
+
+SECURITY SCAN (run before merging — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git checkout dev/pve-test && git merge feat/harbor-config
   git push origin dev/pve-test
 

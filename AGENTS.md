@@ -4,7 +4,7 @@
 
 - `dev/pve-test` is the long-running integration branch tracking the test server state
 - Cut short-lived branches from `dev/pve-test` (e.g. `fix/terraform-fmt`, `feat/harbor-deployment`)
-- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging
+- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging, if issues are encountered in validation stop and offer options.
 - Merge short-lived branches → `dev/pve-test`, not `main`
 - PR `dev/pve-test` → `main` only when stable and tested on the test server
 - After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync
@@ -19,5 +19,11 @@
 
 ## Security Scanning
 
-- **snyk**: `/home/steve/.local/bin/snyk iac test terraform/` — Terraform IaC only, not Ansible
-- **sonar-scanner**: `source .env && sonar-scanner` — config in `sonar-project.properties`
+Run the appropriate scan(s) before merging any branch, based on what changed:
+
+| Change type | Command |
+|---|---|
+| Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
+| Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
+
+If a scan returns new issues, **stop and present options** — do not merge until the issues are resolved or explicitly accepted by the user.

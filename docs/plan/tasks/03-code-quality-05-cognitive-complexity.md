@@ -120,6 +120,9 @@ populate.py: extract complex sub-section if needed (20 → <20)
 
 Idempotency verified: populate → re-run yields 0 new objects."
 
+SECURITY SCAN (run before pushing — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git push origin dev/pve-test
   gh issue close 28 --comment "Refactored. Complexity reduced in all three files. Idempotency preserved."
 

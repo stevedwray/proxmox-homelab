@@ -29,10 +29,21 @@ see [docs/reference/sdn-segment-routing.md](../reference/sdn-segment-routing.md)
 
 - Branch from `dev/pve-test` for each phase or individual fix
 - Short-lived branches follow the naming: `feat/<name>`, `fix/<name>`, `chore/<name>`
+- Validate in the short-lived branch before merging — if issues are found, **stop and present options**, do not push through
 - Merge to `dev/pve-test`, never directly to `main`
 - PR `dev/pve-test` → `main` only when the phase is stable and tested on pve-test
+- After merging to `main`, pull `main` back into `dev/pve-test`: `git checkout dev/pve-test && git merge main && git push origin dev/pve-test`
 - Close GitHub issues with `Closes #N` in the commit message
-- Run `gh issue close N --comment "..."` after each commit
+- Run `gh issue close N --comment "Fixed in commit <sha>"` after committing — do both before reporting back
+
+### Security scanning (run before merging any branch)
+
+| Change type | Command |
+|---|---|
+| Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
+| Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
+
+If a scan returns new issues, **stop and present options** — do not merge until resolved or explicitly accepted.
 
 ## Key infrastructure addresses
 

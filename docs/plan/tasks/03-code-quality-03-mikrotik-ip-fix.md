@@ -107,6 +107,9 @@ COMMIT:
 Only set primary_ip4 for the first RFC 1918 address found.
 Previously the last interface processed (WAN ip 121.99.x.x) won the assignment."
 
+SECURITY SCAN (run before pushing — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git push origin dev/pve-test
   gh issue close 48 --comment "Fixed — primary_ip4 now set to first RFC 1918 IP (192.168.1.1)."
 

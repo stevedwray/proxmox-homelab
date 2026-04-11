@@ -140,5 +140,10 @@ COMMIT:
   git commit -m "feat(infra): deploy apt-cacher-ng proxy and add apt proxy config to base role"
   git push origin feat/apt-cacher-terraform-mirror
 
-DONE WHEN: Stats page accessible and ansible-lint passes. Proceed to task 03c-02.
+SECURITY SCAN (run after pushing feature branch — stop and present options if new issues are found):
+  /home/steve/.local/bin/snyk iac test terraform/
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
+DONE WHEN: Stats page accessible, ansible-lint passes, and security scan is clean.
+Proceed to task 03c-02. The branch is merged to dev/pve-test in task 03c-03.
 ```

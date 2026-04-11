@@ -91,6 +91,9 @@ COMMIT:
 Self-signed cert in homelab — certificate verification disabled intentionally.
 Suppression comments added for python:S5527, S4423, S4830."
 
+SECURITY SCAN (run before pushing — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git push origin dev/pve-test
   gh issue close 35 --comment "Acknowledged — homelab self-signed cert. Suppression comment added."
 

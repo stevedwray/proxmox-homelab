@@ -87,11 +87,17 @@ STEP 5 — Verify cache hit:
   curl http://192.168.1.35:3142/acng-report.html | grep -i "hit\|transfer"
   # Hit count should have increased
 
-STEP 6 — Merge and push:
+STEP 6 — Security scan and merge:
+  # Terraform files were created in task 03c-01 — run Snyk:
+  /home/steve/.local/bin/snyk iac test terraform/
+  # Ansible and YAML files were changed in tasks 03c-01 and 03c-02 — run sonar-scanner:
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+  # If either scan returns new issues: stop and present options — do not merge.
+
   git checkout dev/pve-test
   git merge feat/apt-cacher-terraform-mirror
   git push origin dev/pve-test
 
-DONE WHEN: apt proxy and .terraformrc confirmed on ci-runner-01, branch merged.
+DONE WHEN: apt proxy and .terraformrc confirmed on ci-runner-01, both scans clean, branch merged.
 Phase 03c is complete. Phase 04 deployment is unblocked.
 ```

@@ -110,6 +110,10 @@ COMMIT AND CLOSE:
 - Extract repeated SSH opts and separator to variables (shelldre:S1192) (Closes #31)"
 
   git push origin fix/shell-maintainability
+
+SECURITY SCAN (run before merging — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git checkout dev/pve-test && git merge fix/shell-maintainability
   git push origin dev/pve-test
 

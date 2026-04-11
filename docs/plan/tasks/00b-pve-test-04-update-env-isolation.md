@@ -109,6 +109,11 @@ COMMIT:
 - pve-test no longer depends on production Portainer at 192.168.1.4"
 
   git push origin feat/pve-test-portainer
+
+SECURITY SCAN (run before merging — stop and present options if new issues are found):
+  /home/steve/.local/bin/snyk iac test terraform/
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git checkout dev/pve-test
   git merge feat/pve-test-portainer
   git push origin dev/pve-test

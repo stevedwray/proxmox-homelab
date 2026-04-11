@@ -124,8 +124,11 @@ ENV TEMPLATE:
 - Add PORTAINER_ADMIN_PASSWORD to .env.template if not already present:
   PORTAINER_ADMIN_PASSWORD=   # __FROM_BITWARDEN__
 
-DONE WHEN: All three files exist, ansible-lint passes at 0 violations (run:
-  ansible-lint terraform/lxc/ansible/), and .env.template has PORTAINER_ADMIN_PASSWORD.
+SECURITY SCAN (run before committing — stop and present options if new issues are found):
+  /home/steve/.local/bin/snyk iac test terraform/
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
 
-Then commit to a branch feat/pve-test-portainer off dev/pve-test.
+DONE WHEN: All three files exist, ansible-lint passes at 0 violations, and security scan
+is clean. The commit is bundled in task 00b-04 (portainer-stack files + .env.pve-test +
+.env.template in a single commit on feat/pve-test-portainer → dev/pve-test).
 ```

@@ -128,6 +128,9 @@ STEP 6 — Commit:
   git commit -m "feat(infra): add Terraform provider filesystem mirror for hermetic CI"
   git push origin feat/apt-cacher-terraform-mirror
 
-DONE WHEN: terraform init works offline, mirror directory committed, and task added to
-ci-runner playbook. Proceed to task 03c-03 to apply the apt proxy to existing LXCs.
+SECURITY SCAN (run after pushing feature branch — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
+DONE WHEN: terraform init works offline, mirror committed, scan clean, and task added to
+ci-runner playbook. The branch is merged to dev/pve-test in task 03c-03.
 ```

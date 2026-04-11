@@ -94,8 +94,13 @@ STEP 3 — Commit:
   git checkout -b feat/trivy-image-scan
   git add .github/workflows/
   git commit -m "feat(ci): add Trivy image scan job with SARIF upload"
+  git push origin feat/trivy-image-scan
+
+SECURITY SCAN (run before merging — stop and present options if new issues are found):
+  cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
+
   git checkout dev/pve-test && git merge feat/trivy-image-scan
   git push origin dev/pve-test
 
-DONE WHEN: Job present in workflow file, HARBOR_ROBOT_* secret usage confirmed, commit pushed.
+DONE WHEN: Job present in workflow file, HARBOR_ROBOT_* secret usage confirmed, scan clean, commit merged.
 ```
