@@ -53,7 +53,7 @@ attachments:
     description: Third SDN VNet attachment for artifact flow validation on pve-test
     type: sdn_vnet
     bridge: tvnetc
-    firewall: true
+    firewall: false
     sdn:
       zone: tvsegc
       zone_type: simple
@@ -63,7 +63,7 @@ attachments:
       alias: pve-test network layer 3
       subnet: "10.57.0.0/24"
       gateway: "10.57.0.1"
-      snat: false
+      snat: true
 
 zones:
   apps:
