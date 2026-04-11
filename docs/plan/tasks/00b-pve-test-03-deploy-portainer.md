@@ -14,7 +14,7 @@ Phase 00b — pve-test Management Bootstrap
 - Task 00b-02 complete: `portainer-stack/stack.yaml`, `portainer-stack/terragrunt.hcl`, and `deploy-portainer-stack.yml` all exist
 - `.env` is sourced with `PM_API_TOKEN_ID`, `PM_API_TOKEN_SECRET`, `PM_API_URL`, `LXC_PASSWORD`, `PORTAINER_ADMIN_PASSWORD`
 - `.env.pve-test` is sourced (sets `TF_VAR_proxmox_node=pve-test`, `TF_WORKSPACE=pve-test`)
-- `192.168.1.20` is unallocated (verify in NetBox before applying)
+- `192.168.1.20` is unallocated (verify in NetBox before applying; the NetBox API is on `http://192.168.1.30:8080`)
 - Docker Hub is reachable from pve-test (required for the Portainer image pull)
 
 ## Objective
@@ -121,6 +121,7 @@ STEP 7 — Verify LAN reachability (run this from your workstation, not from pve
   Confirm at least one endpoint (local Docker environment) appears in Environments.
 
 TROUBLESHOOTING:
+- If the Portainer image pull times out against Docker Hub, re-run `terragrunt apply`; the image pull is the only flaky part of the bootstrap and the LXC itself is safe to keep.
 - If Terraform creates the LXC but Docker isn't starting, SSH in and check:
     ssh root@192.168.1.20 "systemctl status docker"
 - If the Portainer UI is not reachable, check:

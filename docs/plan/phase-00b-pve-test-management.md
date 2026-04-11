@@ -43,9 +43,11 @@ Verify `192.168.1.20` is free before assigning:
 ```bash
 source /home/steve/git/proxmox-homelab/.env && source .env.pve-test
 curl -s -H "Authorization: Token ${NETBOX_SUPERUSER_API_TOKEN}" \
-  "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.20" | jq .count
+  "http://192.168.1.30:8080/api/ipam/ip-addresses/?address=192.168.1.20" | jq .count
 # Expected: 0
 ```
+
+Note: NetBox in this repository is accessed on port `8080`, not `80`.
 
 ---
 
