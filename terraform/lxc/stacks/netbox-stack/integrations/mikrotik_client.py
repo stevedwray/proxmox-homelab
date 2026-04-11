@@ -75,52 +75,92 @@ class MikrotikClient:
     def get_interfaces(self):
         """Get all network interfaces."""
         resp = self.get("/interface")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_vlans(self):
         """Get VLAN configuration."""
         resp = self.get("/interface/vlan")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_bridges(self):
         """Get bridge configuration."""
         resp = self.get("/interface/bridge")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_ip_addresses(self):
         """Get all configured IP addresses."""
         resp = self.get("/ip/address")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_routes(self):
         """Get routing table."""
         resp = self.get("/ip/route")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_firewall_rules(self):
         """Get firewall filter rules."""
         resp = self.get("/ip/firewall/filter")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_nat_rules(self):
         """Get NAT rules."""
         resp = self.get("/ip/firewall/nat")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_dhcp_servers(self):
         """Get DHCP server configuration."""
         resp = self.get("/ip/dhcp-server")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_dhcp_networks(self):
         """Get DHCP network pools."""
         resp = self.get("/ip/dhcp-server/network")
-        return resp if isinstance(resp, list) else (resp.get("response", []) if resp else [])
+        if isinstance(resp, list):
+            return resp
+        if resp:
+            return resp.get("response", [])
+        return []
 
     def get_system_identity(self):
         """Get router system identity/name."""
         resp = self.get("/system/identity")
-        return resp if isinstance(resp, dict) else (resp.get("response", {}) if resp else {})
+        if isinstance(resp, dict):
+            return resp
+        if resp:
+            return resp.get("response", {})
+        return {}
 
 
 def discover_from_mikrotik(host=None, port=None, user=None, password=None):
