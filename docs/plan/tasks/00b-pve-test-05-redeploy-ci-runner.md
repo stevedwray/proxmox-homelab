@@ -33,7 +33,6 @@ fully isolated from production Portainer.
 
 - Modifying `ci-runner-01/stack.yaml` or `terragrunt.hcl`
 - Any Phase 03b/03c/04 deployments
-- Firewall or network policy changes
 
 ## Inputs
 
@@ -56,7 +55,104 @@ fully isolated from production Portainer.
   and recreates the SDN zone and VNet; no manual Proxmox SDN steps needed
 - The `deploy-ci-runner.yml` playbook auto-generates the runner registration token via
   `gh api` — no manual token generation required, but `gh` must be authenticated
-- No code changes and no commit needed for this task
+- This task now requires code changes (see Blockers section below) and a commit
+
+## Blockers — Network fixes required before playbook can succeed
+
+Three issues in `terraform/lxc/network/pve-test.yaml` prevent the playbook from completing.
+Fix all three, then re-run `terragrunt apply` followed by `deploy-ci-runner.yml`.
+
+### Fix 1 — Disable VNet firewall on `seg_c`
+
+**File:** `terraform/lxc/network/pve-test.yaml`
+
+The `seg_c` attachment has `firewall: true`. When only `build_seg` is deployed (no
+`artifacts_seg` members yet), the firewall rule generator produces zero ACCEPT rules.
+`configure_network_vnet_firewall` then writes `/etc/pve/sdn/firewall/tvnetc.fw` with
+`policy_forward: DROP` and an empty `[RULES]` section, which blocks all traffic through
+the `tvnetc` bridge — including SSH from `pve-test` to `10.57.0.63`.
+
+Change:
+
+```yaml
+  seg_c:
+    description: Third SDN VNet attachment for artifact flow validation on pve-test
+    type: sdn_vnet
+    bridge: tvnetc
+    firewall: false    # was: true — re-enable when artifacts_seg has members deployed
+```
+
+This sets `network_firewall = false` on the LXC NIC and skips`configure_network_vnet_firewall`
+entirely (count = 0). Any previously written `tvnetc.fw` will be left stale on disk but
+harmless — the firewall is not loaded if the NIC flag is off.
+
+### Fix 2 — Enable SNAT on the `10.57.0.0/24` subnet
+
+**File:** `terraform/lxc/network/pve-test.yaml`
+
+The `seg_c` SDN attachment has `snat: false`. The runner registration step
+(`./config.sh --url https://github.com/... --token ...`) requires outbound internet
+access from `10.57.0.63`. Without SNAT, packets from the `10.57.0.0/24` SDN subnet have
+no masquerade rule and cannot reach the internet.
+
+Change:
+
+```yaml
+      snat: true    # was: false
+```
+
+`configure-network-sdn-vnet.yml` will update the existing subnet entry on re-apply via the
+`pvesh set /cluster/sdn/vnets/tvnetc/subnets/...` task (it diffs current vs desired state).
+
+### Fix 3 — Add router static route (out-of-band, MikroTik)
+
+The `wait_for_connection` task in `deploy-ci-runner.yml` runs on the workstation (no
+`delegate_to`), so the workstation needs a route to `10.57.0.0/24` via pve-test.
+
+Run on the MikroTik router before executing the playbook:
+
+```
+/ip route add dst-address=10.57.0.0/24 gateway=192.168.1.40 comment="pve-test SDN seg_c"
+```
+
+This is documented as a prerequisite in `pve-test.yaml` (`attachments.seg_c` comment block)
+but was not in place when the initial apply ran. Verify it exists before re-running:
+
+```bash
+ssh admin@192.168.1.1 "/ip route print where dst-address=10.57.0.0/24"
+```
+
+### Re-apply sequence after fixes
+
+```bash
+# 1. Source env (order matters)
+source /home/steve/git/proxmox-homelab/.env
+source /home/steve/git/proxmox-homelab/.env.pve-test
+
+# 2. Confirm targets
+echo "node=$TF_VAR_proxmox_node"   # must print: pve-test
+
+# 3. Re-apply to push snat change and drop the VNet firewall resource
+cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/ci-runner-01
+terragrunt apply
+
+# 4. Confirm SSH from pve-test to container works
+ssh root@pve-test.gibbsgreatly.xyz "nc -zv 10.57.0.63 22"
+
+# 5. Confirm outbound internet from container works
+ssh root@pve-test.gibbsgreatly.xyz "lxc-attach -n 141 -- curl -s --max-time 5 https://github.com"
+
+# 6. Run the playbook
+cd /home/steve/git/proxmox-homelab
+ansible-playbook \
+  -i terraform/lxc/stacks/ci-runner-01/inventory.yml \
+  terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
+```
+
+> **Note on VNet firewall re-enablement:** Re-enable `firewall: true` on `seg_c` when
+> `artifacts_seg` gains its first deployed member. At that point the rule generator will
+> produce valid FORWARD ACCEPT rules for TCP 5000/8081 between the two zones and the
+> DROP default becomes meaningful.
 
 ## Acceptance Criteria
 
