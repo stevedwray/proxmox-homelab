@@ -5,7 +5,7 @@ warn_list:
   # paths with Jinja2 template vars). Downgrade to warning rather than error.
   - yaml[line-length]
 
-  # harbor_installer role vars use harbor_ prefix rather than harbor_installer_
-  # prefix. Renaming requires updating defaults, tasks, templates, and all
-  # calling playbooks — tracked as a separate refactor issue.
+  # Pre-existing roles (lxc_tun_device) use non-prefixed vars and are out of
+  # scope for refactoring. harbor_installer vars were fixed in issue #75.
   - var-naming[no-role-prefix]
+

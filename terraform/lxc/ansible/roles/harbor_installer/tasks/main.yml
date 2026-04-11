@@ -3,53 +3,53 @@
 # Idempotent: skips download/extract if already present; re-runs prepare
 # and restarts the service only when harbor.yml content changes.
 
-- name: Validate required variable harbor_hostname is set
+- name: Validate required variable harbor_installer_hostname is set
   ansible.builtin.fail:
-    msg: "harbor_hostname must be set (IP or FQDN clients use for docker login)"
-  when: harbor_hostname is not defined or harbor_hostname == ''
+    msg: "harbor_installer_hostname must be set (IP or FQDN clients use for docker login)"
+  when: harbor_installer_hostname is not defined or harbor_installer_hostname == ''
 
 - name: Create Harbor install directory
   ansible.builtin.file:
-    path: "{{ harbor_install_dir }}"
+    path: "{{ harbor_installer_install_dir }}"
     state: directory
     mode: '0750'
 
 - name: Create Harbor data directory
   ansible.builtin.file:
-    path: "{{ harbor_data_volume }}"
+    path: "{{ harbor_installer_data_volume }}"
     state: directory
     mode: '0750'
 
 - name: Check if Harbor installer has already been extracted
   ansible.builtin.stat:
-    path: "{{ harbor_install_dir }}/harbor/install.sh"
+    path: "{{ harbor_installer_install_dir }}/harbor/install.sh"
   register: harbor_installer_stat
 
 - name: Download Harbor md5sum file
   ansible.builtin.get_url:
-    url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_version }}/md5sum"
-    dest: "{{ harbor_install_dir }}/md5sum-v{{ harbor_version }}"
+    url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_installer_version }}/md5sum"
+    dest: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
     mode: '0640'
   when: not harbor_installer_stat.stat.exists
 
 - name: Read Harbor md5sum file
   ansible.builtin.slurp:
-    src: "{{ harbor_install_dir }}/md5sum-v{{ harbor_version }}"
-  register: harbor_checksum_file
+    src: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
+  register: harbor_installer_checksum_file
   when: not harbor_installer_stat.stat.exists
 
 - name: Extract online installer MD5 checksum
   ansible.builtin.set_fact:
     harbor_installer_checksum: >-
-      md5:{{ (harbor_checksum_file.content | b64decode).splitlines()
-        | select('search', 'harbor-online-installer-v' + harbor_version + '.tgz')
+      md5:{{ (harbor_installer_checksum_file.content | b64decode).splitlines()
+        | select('search', 'harbor-online-installer-v' + harbor_installer_version + '.tgz')
         | first | split() | first }}
   when: not harbor_installer_stat.stat.exists
 
 - name: Download Harbor online installer
   ansible.builtin.get_url:
-    url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_version }}/harbor-online-installer-v{{ harbor_version }}.tgz"
-    dest: "{{ harbor_install_dir }}/harbor-online-installer-v{{ harbor_version }}.tgz"
+    url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_installer_version }}/harbor-online-installer-v{{ harbor_installer_version }}.tgz"
+    dest: "{{ harbor_installer_install_dir }}/harbor-online-installer-v{{ harbor_installer_version }}.tgz"
     checksum: "{{ harbor_installer_checksum }}"
     mode: '0640'
     timeout: 120
@@ -57,30 +57,30 @@
 
 - name: Unpack Harbor installer
   ansible.builtin.unarchive:
-    src: "{{ harbor_install_dir }}/harbor-online-installer-v{{ harbor_version }}.tgz"
-    dest: "{{ harbor_install_dir }}/"
+    src: "{{ harbor_installer_install_dir }}/harbor-online-installer-v{{ harbor_installer_version }}.tgz"
+    dest: "{{ harbor_installer_install_dir }}/"
     remote_src: true
   when: not harbor_installer_stat.stat.exists
 
 - name: Template harbor.yml configuration
   ansible.builtin.template:
     src: harbor.yml.j2
-    dest: "{{ harbor_install_dir }}/harbor/harbor.yml"
+    dest: "{{ harbor_installer_install_dir }}/harbor/harbor.yml"
     mode: '0640'
-  register: harbor_config_result
+  register: harbor_installer_config_result
   no_log: true
 
 - name: Check if Harbor docker-compose.yml exists (first run detection)
   ansible.builtin.stat:
-    path: "{{ harbor_install_dir }}/harbor/docker-compose.yml"
-  register: harbor_compose_stat
+    path: "{{ harbor_installer_install_dir }}/harbor/docker-compose.yml"
+  register: harbor_installer_compose_stat
 
 - name: Run Harbor prepare script
   ansible.builtin.command:
-    cmd: "./prepare{{ ' --with-trivy' if harbor_with_trivy else '' }}"
-    chdir: "{{ harbor_install_dir }}/harbor"
-  when: harbor_config_result.changed or not harbor_compose_stat.stat.exists
-  register: harbor_prepare_result
+    cmd: "./prepare{{ ' --with-trivy' if harbor_installer_with_trivy else '' }}"
+    chdir: "{{ harbor_installer_install_dir }}/harbor"
+  when: harbor_installer_config_result.changed or not harbor_installer_compose_stat.stat.exists
+  register: harbor_installer_prepare_result
   changed_when: true
 
 - name: Install Harbor systemd service unit
@@ -88,12 +88,12 @@
     src: harbor.service.j2
     dest: /etc/systemd/system/harbor.service
     mode: '0640'
-  register: harbor_service_file_result
+  register: harbor_installer_service_file_result
 
 - name: Reload systemd daemon
   ansible.builtin.systemd:
     daemon_reload: true
-  when: harbor_service_file_result.changed
+  when: harbor_installer_service_file_result.changed
 
 - name: Enable Harbor service
   ansible.builtin.systemd:
@@ -104,24 +104,24 @@
   ansible.builtin.systemd:
     name: harbor
     state: started
-  when: harbor_prepare_result is skipped
+  when: harbor_installer_prepare_result is skipped
 
 - name: Restart Harbor service (config changed)
   ansible.builtin.systemd:
     name: harbor
     state: restarted
-  when: harbor_prepare_result is not skipped
+  when: harbor_installer_prepare_result is not skipped
 
 - name: Wait for Harbor API to be healthy
   ansible.builtin.uri:
-    url: "http://{{ ansible_host }}:{{ harbor_http_port }}/api/v2.0/health"
+    url: "http://{{ ansible_host }}:{{ harbor_installer_http_port }}/api/v2.0/health"
     method: GET
     status_code: 200
-  register: harbor_health_check
+  register: harbor_installer_health_check
   retries: 30
   delay: 10
-  until: harbor_health_check.json.status is defined and harbor_health_check.json.status == 'healthy'
+  until: harbor_installer_health_check.json.status is defined and harbor_installer_health_check.json.status == 'healthy'
 
 - name: Display Harbor status
   ansible.builtin.debug:
-    msg: "Harbor v{{ harbor_version }} is healthy at http://{{ harbor_hostname }}:{{ harbor_http_port }}"
+    msg: "Harbor v{{ harbor_installer_version }} is healthy at http://{{ harbor_installer_hostname }}:{{ harbor_installer_http_port }}"

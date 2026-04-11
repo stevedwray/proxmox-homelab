@@ -1,17 +1,17 @@
 ---
-harbor_version: "2.14.3"
-harbor_install_dir: "/opt/harbor"
-harbor_data_volume: "/var/lib/harbor"
-harbor_http_port: 80
-harbor_log_level: "info"
-harbor_jobservice_workers: 10
-harbor_with_trivy: true
+harbor_installer_version: "2.14.3"
+harbor_installer_install_dir: "/opt/harbor"
+harbor_installer_data_volume: "/var/lib/harbor"
+harbor_installer_http_port: 80
+harbor_installer_log_level: "info"
+harbor_installer_jobservice_workers: 10
+harbor_installer_with_trivy: true
 
 # External hostname or IP that clients use for docker login / push / pull.
-# Set harbor_hostname in the playbook vars or via inventory; no default
+# Set harbor_installer_hostname in the playbook vars or via inventory; no default
 # because a wrong value silently produces a broken registry.
-# harbor_hostname: "192.168.1.10"
+# harbor_installer_hostname: "192.168.1.10"
 
 # Secrets — resolved from environment variables by default.
-harbor_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
-harbor_db_password: "{{ lookup('env', 'HARBOR_DB_PASSWORD') | mandatory('HARBOR_DB_PASSWORD env var not set') }}"
+harbor_installer_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+harbor_installer_db_password: "{{ lookup('env', 'HARBOR_DB_PASSWORD') | mandatory('HARBOR_DB_PASSWORD env var not set') }}"

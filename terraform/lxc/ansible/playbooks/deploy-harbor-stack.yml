@@ -29,7 +29,7 @@
   become: true
   gather_facts: false
   vars:
-    harbor_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
+    harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
   roles:
     - harbor_installer
 
