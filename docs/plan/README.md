@@ -22,6 +22,9 @@ Phases must be completed in order. Each phase lists its prerequisites explicitly
 
 See [docs/plans/GreenField.md](../plans/GreenField.md) for the full architecture rationale and technology selection.
 
+For SDN segment subnet/egress routing pattern (adding subnets to seg_a, seg_b, seg_c),
+see [docs/reference/sdn-segment-routing.md](../reference/sdn-segment-routing.md).
+
 ## Repository conventions
 
 - Branch from `dev/pve-test` for each phase or individual fix
