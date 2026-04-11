@@ -9,11 +9,12 @@ Phases must be completed in order. Each phase lists its prerequisites explicitly
 | Phase | Document | Status | Gate |
 |---|---|---|---|
 | 00 | [Housekeeping](phase-00-housekeeping.md) | **Do first** | None |
+| 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Before Phase 03b** | Phase 00 complete |
 | 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00 | Phase 00 complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Hard gate for Phase 04** | Phase 01 complete |
 | 03 | [Code Quality & Bug Fixes](phase-03-code-quality.md) | Parallel with 01-02 | Phase 00 complete |
-| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00 complete |
-| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00 complete |
+| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
+| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 02 + 03b + 03c | Phase 02, 03b, and 03c complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete |
@@ -33,18 +34,41 @@ See [docs/plans/GreenField.md](../plans/GreenField.md) for the full architecture
 
 ## Key infrastructure addresses
 
+All services are validated on **pve-test** first, then promoted to **pve** (production).
+Services share the `192.168.1.x/24` LAN on both nodes; IPs are the same on both nodes
+except where noted.
+
+### Management infrastructure
+
+| Service | IP | VMID | Node | Phase |
+|---|---|---|---|---|
+| Portainer (production) | `192.168.1.4` | — | pve | existing |
+| Portainer (pve-test) | `192.168.1.20` | 120 | pve-test | 00b |
+| NetBox (IPAM) | `192.168.1.30` | 119 | pve | existing |
+| NetBox (pve-test) | `192.168.1.31` | 142 | pve-test | existing |
+| Harbor (registry) | `192.168.1.10` | 121 | pve | existing |
+| ci-runner-01 | `10.57.0.63` | 141 | pve-test | 01 |
+| apt-cacher-ng | `192.168.1.35` | 142 | pve-test → pve | 03c |
+
+### Core shared services (Phase 04)
+
 | Service | IP | VMID |
 |---|---|---|
-| Harbor (registry) | `192.168.1.10` | 121 |
-| NetBox (IPAM) | `192.168.1.30` | 119 |
-| ci-runner-01 | `10.57.0.63` | 141 |
-| apt-cacher-ng (Phase 03c) | `192.168.1.35` | 142 |
-| Authentik (Phase 04) | `192.168.1.40` | 150 |
-| Headscale (Phase 04) | `192.168.1.41` | 151 |
-| step-ca (Phase 04) | `192.168.1.42` | 152 |
-| Reverse proxy (Phase 04) | `192.168.1.43` | 153 |
-| Monitoring (Phase 04) | `192.168.1.44` | 154 |
+| Authentik | `192.168.1.40` | 150 |
+| Headscale | `192.168.1.41` | 151 |
+| step-ca | `192.168.1.42` | 152 |
+| Reverse proxy (Traefik) | `192.168.1.43` | 153 |
+| Monitoring (Grafana + VictoriaMetrics + Loki) | `192.168.1.44` | 154 |
 | Chainloop (Phase 05) | `192.168.1.45` | 155 |
+
+### Storage pool names
+
+| Pool | Node | Used by |
+|---|---|---|
+| `infrastructure-containers` | pve, pve-test | All LAN-attached stacks (`stack.yaml` default) |
+| `storage-containers` | pve-test | SDN-zone (net-\*) validation stacks only |
+
+All Phase 03b, 03c, and 04 `stack.yaml` files should use `rootfs_storage: infrastructure-containers`.
 
 ## Open issues summary
 
