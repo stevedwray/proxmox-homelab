@@ -159,7 +159,33 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 ## Phase 05 — Supply Chain Security
 
-<!-- Observations from Trivy CI integration, Syft, Cosign, Chainloop -->
+1. **Shared Trivy service — worth revisiting before implementing task 05-01.** The current
+   design runs three independent Trivy instances: an embedded adapter inside Harbor, a
+   transient process in the GitHub-hosted `sast-scan` CI job, and a planned transient
+   process in the self-hosted `trivy-image-scan` job. The preference is to reduce the
+   number of independent service instances where practical.
+
+   Trivy supports `trivy server` mode, which exposes an HTTP endpoint consumable by
+   both Harbor (as a registered external scanner) and `aquasecurity/trivy-action` (via
+   its `trivy-server` input). A shared service would mean a single DB download/cache and
+   consistent scan results across all consumers.
+
+   Arguments against as currently understood:
+   - **Network reachability from GitHub-hosted runners**: the `sast-scan` filesystem scan
+     runs on `ubuntu-latest` and cannot reach `192.168.1.x`. This is the structural
+     blocker for fully consolidating CI scans — but its significance depends on where the
+     Trivy service ends up in the SDN design. If ci-runner-01 handles all Trivy scans
+     (self-hosted), the GitHub-hosted constraint disappears.
+   - **Shared service as single point of failure**: if the Trivy service is down, both
+     Harbor scans and CI are blocked. Acceptable risk at homelab scale if the service is
+     on a reliable, always-on LXC.
+
+   **Decision deferred to Phase 05.** Before implementing task 05-01, evaluate whether
+   the `trivy-image-scan` job should run on the self-hosted runner (enabling server-mode
+   consolidation) or GitHub-hosted. Document the chosen topology as a follow-on task if
+   a shared service is adopted. Harbor's embedded Trivy can be replaced by registering an
+   external scanner via `POST /api/v2.0/scanners` after setting
+   `harbor_installer_with_trivy: false`.
 
 ---
 
