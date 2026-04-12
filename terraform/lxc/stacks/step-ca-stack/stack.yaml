@@ -1,0 +1,17 @@
+# step-ca internal certificate authority — management zone
+hostname: step-ca
+ip_address: "192.168.1.42/24"
+gateway: "192.168.1.1"
+vmid: 152
+cores: 1
+memory: 512
+swap: 256
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - step-ca
+  - pki
+  - infrastructure
+
+ansible_playbook: "deploy-step-ca"
