@@ -118,7 +118,20 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 ## Phase 03b (continued)
 
-<!-- Observations from Harbor configuration, Trivy, proxy caches, robot accounts -->
+4. **Default Terraform workspace targets pve — sourcing `.env.pve-test` is mandatory before
+   any Terraform operation on harbor-stack.** The default workspace state file
+   (`terraform/lxc/stacks/harbor-stack/terraform.tfstate`) records `target_node: pve`.
+   A `pve-test` workspace state exists in `terraform.tfstate.d/pve-test/`. Without
+   sourcing `.env.pve-test` first, `TF_WORKSPACE` is unset, Terraform uses the default
+   workspace, and any `plan` or `apply` targets pve's VMID 121. Because the
+   `lxc-docker-host` module defaults both `onboot` and `start` to `true`, the Proxmox
+   provider will start a stopped pve Harbor container to converge on desired state.
+
+   This was the root cause of pve's Harbor being started during task 03b-03: that task's
+   session prompt only sourced `.env` (not `.env.pve-test`), leaving the workspace in its
+   default (pve-targeting) state. The fix is to add a mandatory `source .env.pve-test`
+   step and a workspace safety check to every harbor-stack task session prompt, matching
+   the pattern used in tasks 03b-01 and 03b-02.
 
 ---
 
