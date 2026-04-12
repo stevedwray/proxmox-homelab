@@ -78,6 +78,29 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 ---
 
+## Phase 03b — Harbor Setup
+
+1. Harbor runs in its own dedicated LXC container, consistent with the one-service-per-LXC
+   pattern established by Portainer.
+
+2. The Harbor LXC connects directly to `vmbr0` (the flat LAN bridge) — no `network:` block
+   in `stack.yaml`, so it inherits the default bridge. This is the same placement as
+   Portainer and carries the same trade-off: it is reachable from anything on
+   `192.168.1.0/24` with no SDN policy enforcement in front of it.
+
+   The consequence is wider here than for Portainer. Every other LXC that pulls images
+   from Harbor (`192.168.1.10`) must have a routed path to the LAN. LXCs on `vmbr0`
+   (infra/apps zones) have this by default; LXCs in SDN zones (`build_seg`, `apps_seg`,
+   etc.) need either SNAT enabled or explicit cross-zone routing. This is a known gap in
+   the current network intent model — the policies in `pve-test.yaml` cover intra-VNet
+   FORWARD rules, but not LAN-to-SDN egress routing for registry pulls.
+
+   A future improvement would be to place Harbor in a dedicated `registry_seg` SDN zone
+   with explicit inbound policies from all consumer zones, or to enable SNAT on each SDN
+   subnet so containers can reach the LAN-addressed Harbor without per-zone routing rules.
+
+---
+
 ## Phase 03 — Code Quality and Bug Fixes
 
 <!-- Observations from shell script maintainability, NetBox integration refactoring, SSL acknowledgement -->
