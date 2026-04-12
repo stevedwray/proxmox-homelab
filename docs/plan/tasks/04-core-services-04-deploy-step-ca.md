@@ -14,14 +14,25 @@ Phase 04 — Core Shared Services
 
 ## Prerequisites
 
-- Task 04-03 complete — Traefik running at `192.168.1.43`, `step-ca` resolver block present in `traefik.yml`
+- Task 04-03 complete — Traefik running at `10.57.2.10`, `step-ca` resolver block present in `traefik.yml`
 - Phase 02 complete — pve-test at 32 GB
-- `192.168.1.42` available (verify in NetBox before deploying)
+- `10.57.1.11` available (ping-verify before deploying; also check NetBox)
 - `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` set in `.env`
+
+## Network placement
+
+| Field | Value |
+|---|---|
+| SDN zone | `mgmt_seg` |
+| Proxmox VNet | `tvmgmt` (`10.57.1.0/24`, gw `10.57.1.1`, SNAT enabled) |
+| Container IP | `10.57.1.11` |
+| IP selection | Second allocatable host in `mgmt_seg` after Authentik (`10.57.1.10`). Verified available with ping and NetBox check before deploying. |
+| Cross-zone routing | Traefik (`10.57.2.10`) reaches step-ca ACME directory at `https://10.57.1.11/acme/acme/directory`. Both subnets routed via MikroTik static routes to `192.168.1.40`. No inbound from LAN required — step-ca is internal-only. |
+| Firewall intent | Inbound: port 443 from `edge_seg` (Traefik) and managed hosts that need CA services. Outbound: SNAT to LAN for Harbor and apt-cacher. No public exposure. |
 
 ## Objective
 
-LXC `step-ca` (VMID 152) is running at `192.168.1.42` and serving an ACME directory. The root CA cert is saved to `certs/homelab-root.crt` in the repository. The homelab root CA is trusted by the Traefik container and the Proxmox host. The `step-ca` resolver in Traefik can reach the ACME directory and is confirmed working. The base LXC Ansible role is updated to distribute the root CA cert to all future containers.
+LXC `step-ca` (VMID 152) is running at `10.57.1.11` in `mgmt_seg` and serving an ACME directory. The root CA cert is saved to `certs/homelab-root.crt` in the repository. The homelab root CA is trusted by the Traefik container and the Proxmox host. The `step-ca` resolver in Traefik can reach the ACME directory and is confirmed working. The base LXC Ansible role is updated to distribute the root CA cert to all future containers.
 
 This task does not change any existing browser-facing routes. Let's Encrypt remains the resolver for all routes configured in task 04-03. The step-ca resolver becomes available for opt-in use by internal management routes.
 
@@ -49,7 +60,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 ## Inputs
 
 - `docs/plan/phase-04-core-shared-services.md` — Service 3 section
-- Traefik LXC for resolver verification: VMID 153, IP `192.168.1.43`
+- Traefik LXC for resolver verification: VMID 153, IP `10.57.2.10`
 - Proxmox host for CA trust: `192.168.1.2`
 
 ## Expected Outputs
@@ -60,11 +71,11 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 - `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml` (new)
 - `certs/homelab-root.crt` (new — committed to repository, safe to commit as it is a public cert)
 - Base LXC Ansible role updated with CA trust task
-- LXC VMID 152 provisioned; step-ca running at `192.168.1.42`
+- LXC VMID 152 provisioned; step-ca running at `10.57.1.11`
 
 ## Constraints and Conventions
 
-- `stack.yaml` values: VMID 152, IP `192.168.1.42/24`, `cores: 1`, `memory: 512`, no `docker_storage_size` (step-ca runs as a systemd service, not in Docker)
+- `stack.yaml` values: VMID 152, IP `10.57.1.11/24`, gateway `10.57.1.1`, `network: zone: mgmt_seg`, `cores: 1`, `memory: 512`, no `docker_storage_size` (step-ca runs as a systemd service, not in Docker)
 - step-ca binary installed from Smallstep GitHub releases — pin version, do not use package manager builds
 - `step ca init` must use `--provisioner acme` — this is what Traefik's ACME client expects
 - CA private key is protected by `STEP_CA_PASSWORD` — this password must be in `.env` and never hardcoded
@@ -75,14 +86,14 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 
 ## Acceptance Criteria
 
-- [ ] LXC VMID 152 running at `192.168.1.42`
-- [ ] `step ca health --ca-url https://192.168.1.42` returns OK
-- [ ] ACME directory reachable: `curl -sk https://192.168.1.42/acme/acme/directory` returns JSON
+- [ ] LXC VMID 152 running at `10.57.1.11` in zone `mgmt_seg`
+- [ ] `step ca health --ca-url https://10.57.1.11` returns OK
+- [ ] ACME directory reachable: `curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] `certs/homelab-root.crt` committed to repository
-- [ ] Homelab root CA trusted on Traefik container: `pct exec 153 -- update-ca-certificates` runs without error, cert present at `/usr/local/share/ca-certificates/homelab-root.crt`
+- [ ] Homelab root CA trusted on Traefik container: `pct exec 153 -- update-ca-certificates` runs without error
 - [ ] Homelab root CA trusted on Proxmox host `192.168.1.2`
 - [ ] Traefik `step-ca` resolver can reach ACME directory from inside the container:
-  `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://192.168.1.42/acme/acme/directory | jq .` returns valid JSON
+  `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .` returns valid JSON
 - [ ] Base LXC Ansible role includes CA trust task
 - [ ] No existing Let's Encrypt route has been changed or reassigned
 - [ ] Branch `feat/step-ca` merged to `dev/pve-test`
@@ -92,32 +103,72 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 ```
 You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
 
-TASK: Deploy step-ca as an internal certificate authority at 192.168.1.42 (VMID 152).
-Activate the step-ca resolver already pre-configured in Traefik (VMID 153).
+TASK: Deploy step-ca as an internal certificate authority at 10.57.1.11 (VMID 152) in mgmt_seg.
+Activate the step-ca resolver already pre-configured in Traefik (VMID 153 at 10.57.2.10).
 
 CONTEXT:
 - Reference for stack.yaml format: terraform/lxc/stacks/harbor-stack/stack.yaml
 - Full spec: docs/plan/phase-04-core-shared-services.md (Service 3 section)
-- VMID 152, IP 192.168.1.42, cores 1, memory 512 — no docker_storage_size (systemd service, not Docker)
+- VMID 152, IP 10.57.1.11/24, gateway 10.57.1.1, network zone mgmt_seg — no docker_storage_size (systemd service, not Docker)
 - step-ca does NOT run in Docker — install as a systemd service
-- Traefik resolver block is already present in traefik.yml at 192.168.1.43 — no Traefik config changes needed
+- Traefik resolver block is already present in traefik.yml at 10.57.2.10 — no Traefik config changes needed
 - The root CA cert must be saved to certs/homelab-root.crt in the repository root
 - certs/homelab-root.crt is a public cert — safe to commit
 - CA trust must be distributed to VMID 153 (Traefik) and 192.168.1.2 (Proxmox host)
 - Do NOT distribute the root CA to any end-user devices or browsers
+
+PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up the full 04-03 sequence first):
+
+STEP 0 — Verify SDN zones are applied (should be done in 04-03 but confirm):
+  pvesh get /nodes/pve-test/sdn/zones
+  # Expected: tvmgmt, tvedge, tvsegc all listed
+
+STEP 0b — Bring up harbor-stack:
+  source .env && source .env.pve-test
+  cd terraform/lxc/stacks/harbor-stack && terragrunt apply
+  cd /home/steve/git/proxmox-homelab
+  ansible-playbook -i "192.168.1.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+
+STEP 0c — Bring up apt-cacher-stack:
+  cd terraform/lxc/stacks/apt-cacher-stack && terragrunt apply
+  cd /home/steve/git/proxmox-homelab
+  ansible-playbook -i "192.168.1.35," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
+
+STEP 0d — Bring up authentik-stack:
+  cd terraform/lxc/stacks/authentik-stack && terragrunt apply
+  cd /home/steve/git/proxmox-homelab
+  ansible-playbook \
+    -i "10.57.1.10," \
+    terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
+    --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
+  curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/
+  # Must return 204 before continuing
+
+STEP 0e — Bring up proxy-stack (Traefik):
+  cd terraform/lxc/stacks/proxy-stack && terragrunt apply
+  cd /home/steve/git/proxmox-homelab
+  ansible-playbook -i "10.57.2.10," \
+    terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml \
+    --extra-vars "cf_dns_api_token=${CF_DNS_API_TOKEN}"
+  curl -s -o /dev/null -w "%{http_code}" http://10.57.2.10
+  # Must return 301 or 302 before continuing
 
 STEP 1 — Create branch:
   git checkout dev/pve-test && git pull
   git checkout -b feat/step-ca
 
 STEP 2 — Check IP availability:
+  ping -c 3 10.57.1.11
+  # Must timeout (no response)
   source .env
   curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.42" | jq .count
+    "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.1.11" | jq .count
   # Must be 0
 
 STEP 3 — Create stack files:
   - terraform/lxc/stacks/step-ca-stack/stack.yaml
+    (VMID 152, ip_address 10.57.1.11/24, gateway 10.57.1.1, network: {zone: mgmt_seg},
+     cores 1, memory 512 — no docker_storage_size)
   - terraform/lxc/stacks/step-ca-stack/terragrunt.hcl (copy from harbor-stack verbatim)
 
 STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-step-ca.yml:
@@ -129,15 +180,15 @@ STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-step-c
   d) Bootstrap the CA:
        step ca init \
          --name "Homelab CA" \
-         --dns "step-ca,192.168.1.42" \
+         --dns "step-ca,10.57.1.11" \
          --address ":443" \
          --provisioner "acme" \
          --password-file /etc/step-ca/password.txt \
          --non-interactive
   e) Create systemd service for step-ca, enable and start it
-  f) Wait for CA to be healthy: retry curl -sk https://192.168.1.42/health until HTTP 200
+  f) Wait for CA to be healthy: retry curl -sk https://10.57.1.11/health until HTTP 200
   g) Export root CA cert:
-       step ca root /tmp/homelab-root.crt --ca-url https://192.168.1.42
+       step ca root /tmp/homelab-root.crt --ca-url https://10.57.1.11
      Fetch to control machine: save to certs/homelab-root.crt in repository root
 
 STEP 5 — Create terraform/lxc/ansible/playbooks/trust-homelab-ca.yml:
@@ -152,13 +203,13 @@ STEP 6 — Deploy step-ca LXC:
   source .env && source .env.pve-test
   cd terraform/lxc/stacks/step-ca-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.42," \
+  ansible-playbook -i "10.57.1.11," \
     terraform/lxc/ansible/playbooks/deploy-step-ca.yml \
     --extra-vars "step_ca_password=${STEP_CA_PASSWORD}"
 
 STEP 7 — Distribute root CA to managed services:
   # Traefik container
-  ansible-playbook -i "192.168.1.43," \
+  ansible-playbook -i "10.57.2.10," \
     terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
   # Proxmox host
@@ -168,7 +219,7 @@ STEP 7 — Distribute root CA to managed services:
 STEP 8 — Verify resolver from inside Traefik container:
   pct exec 153 -- curl -s \
     --cacert /usr/local/share/ca-certificates/homelab-root.crt \
-    https://192.168.1.42/acme/acme/directory | jq .
+    https://10.57.1.11/acme/acme/directory | jq .
   # Expected: ACME directory JSON object with newNonce, newAccount, newOrder keys
 
 STEP 9 — Update base LXC Ansible role:
@@ -185,7 +236,7 @@ STEP 10 — Commit and merge:
           terraform/lxc/ansible/playbooks/trust-homelab-ca.yml \
           terraform/lxc/ansible/roles/base-lxc/ \
           certs/homelab-root.crt
-  git commit -m "feat(step-ca): deploy internal CA, distribute root cert to managed services (VMID 152)"
+  git commit -m "feat(step-ca): deploy internal CA in mgmt_seg, distribute root cert to managed services (VMID 152)"
   git checkout dev/pve-test && git merge feat/step-ca
   git push origin dev/pve-test
 

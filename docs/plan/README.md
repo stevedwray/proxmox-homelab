@@ -16,14 +16,14 @@ Phases must be completed in order. Each phase lists its prerequisites explicitly
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 02 + 03b + 03c | Phase 02, 03b, and 03c complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
-| 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete |
+| 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** Phase 04/05 establishes the platform basis. App stack migration is a separate planning effort. |
 
 ## Architecture reference
 
 See [docs/plans/GreenField.md](../plans/GreenField.md) for the full architecture rationale and technology selection.
 
-For SDN segment subnet/egress routing pattern (adding subnets to seg_a, seg_b, seg_c),
-see [docs/reference/sdn-segment-routing.md](../reference/sdn-segment-routing.md).
+For SDN zone design and egress routing (mgmt_seg, edge_seg, build_seg),
+see [terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
 
 ## Repository conventions
 
@@ -64,14 +64,12 @@ except where noted.
 
 ### Core shared services (Phase 04)
 
-| Service | IP | VMID |
-|---|---|---|
-| Authentik | `192.168.1.46` | 150 |
-| Headscale | `192.168.1.41` | 151 |
-| step-ca | `192.168.1.42` | 152 |
-| Reverse proxy (Traefik) | `192.168.1.43` | 153 |
-| Monitoring (Grafana + VictoriaMetrics + Loki) | `192.168.1.44` | 154 |
-| Chainloop (Phase 05) | `192.168.1.45` | 155 |
+| Service | Zone | IP | VMID |
+|---|---|---|---|
+| Authentik | `mgmt_seg` | `10.57.1.10` | 150 |
+| step-ca | `mgmt_seg` | `10.57.1.11` | 152 |
+| Reverse proxy (Traefik) | `edge_seg` | `10.57.2.10` | 153 |
+| Monitoring (Grafana + VictoriaMetrics + Loki) | `mgmt_seg` | `10.57.1.12` | 154 |
 
 ### Storage pool names
 
@@ -84,19 +82,15 @@ All Phase 03b, 03c, and 04 `stack.yaml` files should use `rootfs_storage: infras
 
 ## Open issues summary
 
-| Issue | Phase | Priority |
-|---|---|---|
-| #66 CI runner deployment | 01 | Medium |
-| #71 Pin GitHub Actions | 01 | Medium |
-| #67 Bump pve-test to 32 GB | 02 | Medium — blocks Phase 04 |
-| #35 SSL/TLS in proxmox_client.py | 03 | Critical |
-| #48 MikroTik primary_ip4 bug | 03 | Medium |
-| #28 Cognitive complexity | 03 | Critical |
-| #49 gluetun-6881 duplicate | 03 | Low |
-| #23 Shell function returns | 03 | Major |
-| #26 Shell positional params | 03 | Major |
-| #31 SSH options string | 03 | Minor |
-| #75 harbor_installer var prefix | Deferred | Low |
-| #27 _environ_get_and_map types | Deferred | Investigate first |
-| #25 Nested ternary | Deferred | Major |
-| #53 net-* teardown procedure | Deferred | Low |
+| Issue | Description | Phase | Action |
+|---|---|---|---|
+| #89 | Phase 02 service verification | 02 | Close — services verified healthy |
+| #104 | Headscale deployment | 04 | Close — cancelled (no remote access requirement) |
+| #106 | Traefik deployment | 04-03 | Active |
+| #107 | Monitoring deployment | 04-05 | Active (was 04-04 in old numbering) |
+| #108 | Trivy CI scan | 05-01 | Active |
+| #109 | Syft SBOM | 05-02 | Active |
+| #110 | Cosign signing | 05-03 | Active |
+| #111 | Chainloop server | 05-04 | Close — cancelled (no Docker Compose self-hosting path) |
+| #120 | ShellCheck cleanup: setup-dev-env.sh | — | Ready to work (ShellCheck available locally) |
+| #121 | ShellCheck cleanup: check-proxmox-status.sh | — | Ready to work |

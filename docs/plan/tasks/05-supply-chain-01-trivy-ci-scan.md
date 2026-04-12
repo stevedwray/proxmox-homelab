@@ -16,7 +16,12 @@ Phase 05 — Supply Chain Security
 
 - Phase 01 complete — ci-runner-01 online at `10.57.0.63`, registered under `[self-hosted, pve-test, build]`
 - Phase 03b complete — Harbor running at `192.168.1.10`, Trivy scanner enabled, `HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` already stored as GitHub Actions secrets
+- Phase 04 complete — full Phase 04 stack running (Authentik, Traefik, step-ca, Monitoring)
 - Trivy is already present on the runner (installed in the `sast-scan` job setup); the difference here is adding an image-specific scan job
+
+## Network placement
+
+This task does not deploy a new container. All work runs on ci-runner-01 (VMID 141, `10.57.0.63`) in `build_seg` (`10.57.0.0/24`). No new network configuration is required. ci-runner-01 reaches Harbor (`192.168.1.10`) via SNAT on the `build_seg` gateway.
 
 ## Objective
 
@@ -68,6 +73,16 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
 
 TASK: Add a Trivy image scan CI job to the GitHub Actions workflow.
+
+PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up Phase 04 first):
+  Follow the full Phase 04 bring-up sequence documented in the session prompt of
+  docs/plan/tasks/04-core-services-05-deploy-monitoring.md (Steps 0 through 0f),
+  then verify all Phase 04 stacks are healthy before continuing.
+  ci-runner-01 must also be online — redeploy if the runner registration was lost:
+    source .env && source .env.pve-test
+    cd terraform/lxc/stacks/ci-runner-01 && terragrunt apply
+    cd /home/steve/git/proxmox-homelab
+    ansible-playbook -i "10.57.0.63," terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
 
 STEP 1 — Read existing workflows:
   ls -1 .github/workflows/

@@ -39,6 +39,25 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 - Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
 - `.env` is sourced with Proxmox API credentials
+- **SDN zones applied to pve-test** — `mgmt_seg`, `edge_seg`, and `build_seg` must exist before any Phase 04 container is deployed (see SDN setup below)
+
+### SDN zone setup (do this before deploying any Phase 04 stack)
+
+Apply the SDN configuration from `terraform/lxc/network/pve-test.yaml` to pve-test. Then add the required MikroTik static routes so LAN clients can reach containers in each zone:
+
+```bash
+# MikroTik — add all three routes (run once per pve-test rebuild)
+/ip route add dst-address=10.57.0.0/24 gateway=192.168.1.40 comment="pve-test SDN build_seg"
+/ip route add dst-address=10.57.1.0/24 gateway=192.168.1.40 comment="pve-test SDN mgmt_seg"
+/ip route add dst-address=10.57.2.0/24 gateway=192.168.1.40 comment="pve-test SDN edge_seg"
+```
+
+Verify zones are present on pve-test before deploying:
+
+```bash
+pvesh get /nodes/pve-test/sdn/zones
+# Expected output includes: tvmgmt, tvedge, tvsegc
+```
 
 ---
 
@@ -61,20 +80,24 @@ Always use the Harbor proxy address in compose files. If an image is not yet in 
 
 ## Networking / IP allocation
 
-All new stacks go on VLAN/zone `mgmt_seg` (management plane). Use the next available IPs in the `192.168.1.x/24` range (check NetBox for current allocations before assigning):
+Phase 04 containers are placed in named SDN zones — not on the flat LAN bridge. SDN zones must be applied to pve-test before deploying any stack (see Prerequisites above).
 
-| Service | Suggested IP | VMID | Notes |
-|---|---|---|---|
-| Authentik | `192.168.1.46` | 150 | |
-| Reverse proxy | `192.168.1.43` | 153 | Edge — ports 80 and 443 must be reachable from LAN |
-| step-ca | `192.168.1.42` | 152 | Internal only — not exposed externally |
-| Monitoring | `192.168.1.44` | 154 | |
+| Service | Zone | IP | VMID | Notes |
+|---|---|---|---|---|
+| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | Identity provider — reachable from edge_seg (Traefik forward-auth) |
+| Traefik | `edge_seg` | `10.57.2.10` | 153 | Ports 80 and 443 reachable from LAN via MikroTik route |
+| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | Internal only — ACME directory at `https://10.57.1.11/acme/acme/directory` |
+| Monitoring | `mgmt_seg` | `10.57.1.12` | 154 | Grafana/VictoriaMetrics/Loki — accessed via Traefik proxy |
 
-**Verify these IPs are unallocated in NetBox before using them.**
+**Verify each IP is unallocated before deploying:**
 
 ```bash
-curl -s -H "Authorization: Token <NETBOX_TOKEN>" \
-  "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.46" | jq .count
+# Ping check — must timeout (no response means address is free)
+ping -c 3 10.57.1.10
+
+# NetBox check
+curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
+  "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.1.10" | jq .count
 # Should be 0 for each IP
 ```
 
@@ -95,7 +118,7 @@ Create `terraform/lxc/stacks/authentik-stack/stack.yaml`:
 ```yaml
 # Authentik identity provider — management zone
 hostname: authentik-stack
-ip_address: "192.168.1.46/24"
+ip_address: "10.57.1.10/24"
 gateway: "192.168.1.1"
 vmid: 150
 cores: 2
@@ -187,7 +210,7 @@ services:
 
 ### Initial configuration
 
-After deployment, access `http://192.168.1.46:9000/if/flow/initial-setup/` to set the initial admin password. Then:
+After deployment, access `http://10.57.1.10:9000/if/flow/initial-setup/` to set the initial admin password. Then:
 
 1. Create an admin user with the `AUTHENTIK_SUPERUSER_PASSWORD` value
 2. Create an API token — record in `.env` as `AUTHENTIK_SUPERUSER_API_TOKEN`
@@ -203,7 +226,7 @@ terragrunt apply
 source /home/steve/git/proxmox-homelab/.env
 
 ansible-playbook \
-  -i "192.168.1.46," \
+  -i "10.57.1.10," \
   terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
   --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
 ```
@@ -211,10 +234,10 @@ ansible-playbook \
 ### Validation
 
 ```bash
-curl -s http://192.168.1.46:9000/-/health/live/
+curl -s http://10.57.1.10:9000/-/health/live/
 # Expected: HTTP 204 (no body)
 
-curl -s http://192.168.1.46:9000/-/health/ready/
+curl -s http://10.57.1.10:9000/-/health/ready/
 # Expected: HTTP 204 (means DB and Redis connections healthy)
 ```
 
@@ -229,7 +252,7 @@ A dedicated reverse proxy LXC is the only ingress point from external networks i
 Two certificate resolvers are configured at deploy time:
 
 - **`letsencrypt`** — DNS-01 challenge via Cloudflare API. Issues `*.gibbsgreatly.xyz` wildcard. Used for all browser-facing routes. Active immediately on deploy.
-- **`step-ca`** — ACME via internal step-ca at `192.168.1.42`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
+- **`step-ca`** — ACME via internal step-ca at `10.57.1.11`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
 
 ### Stack file
 
@@ -238,7 +261,7 @@ Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
 ```yaml
 # Traefik reverse proxy — edge / ingress
 hostname: proxy-stack
-ip_address: "192.168.1.43/24"
+ip_address: "10.57.2.10/24"
 gateway: "192.168.1.1"
 vmid: 153
 cores: 1
@@ -302,7 +325,7 @@ certificatesResolvers:
   # Traefik will not contact this CA until a route explicitly requests it.
   step-ca:
     acme:
-      caServer: "https://192.168.1.42/acme/acme/directory"
+      caServer: "https://10.57.1.11/acme/acme/directory"
       email: "admin@gibbsgreatly.xyz"
       storage: "/certs/step-ca/acme.json"
       tlsChallenge: {}
@@ -326,7 +349,7 @@ http:
   middlewares:
     authentik:
       forwardAuth:
-        address: "http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik"
+        address: "http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader: true
         authResponseHeaders:
           - X-authentik-username
@@ -380,7 +403,7 @@ Create `terraform/lxc/stacks/step-ca-stack/stack.yaml`:
 ```yaml
 # step-ca internal certificate authority — management zone
 hostname: step-ca
-ip_address: "192.168.1.42/24"
+ip_address: "10.57.1.11/24"
 gateway: "192.168.1.1"
 vmid: 152
 cores: 1
@@ -416,7 +439,7 @@ Create `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`.
    ```bash
    step ca init \
      --name "Homelab CA" \
-     --dns "step-ca,192.168.1.42" \
+     --dns "step-ca,10.57.1.11" \
      --address ":443" \
      --provisioner "acme" \
      --password-file /etc/step-ca/password.txt
@@ -451,10 +474,10 @@ To distribute manually after step-ca is running:
 
 ```bash
 # Fetch the root cert
-step ca root certs/homelab-root.crt --ca-url https://192.168.1.42
+step ca root certs/homelab-root.crt --ca-url https://10.57.1.11
 
 # Push to Traefik container
-ansible-playbook -i "192.168.1.43," \
+ansible-playbook -i "10.57.2.10," \
   terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 # Push to Proxmox host
@@ -470,7 +493,7 @@ Verify the resolver is reachable from the Traefik container:
 
 ```bash
 pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
-  https://192.168.1.42/acme/acme/directory | jq .
+  https://10.57.1.11/acme/acme/directory | jq .
 # Expected: ACME directory JSON
 ```
 
@@ -487,7 +510,7 @@ Create `terraform/lxc/stacks/monitoring-stack/stack.yaml`:
 ```yaml
 # Monitoring: VictoriaMetrics + Grafana + Loki — management zone
 hostname: monitoring-stack
-ip_address: "192.168.1.44/24"
+ip_address: "10.57.1.12/24"
 gateway: "192.168.1.1"
 vmid: 154
 cores: 2
@@ -590,14 +613,14 @@ Update NetBox to record all new services, IPs, and their relationships.
 ## Acceptance criteria
 
 ### Authentik
-- [ ] LXC `authentik-stack` (VMID 150) running at `192.168.1.46`
-- [ ] `curl http://192.168.1.46:9000/-/health/ready/` returns HTTP 204
-- [ ] Admin UI accessible at `http://192.168.1.46:9000`
+- [ ] LXC `authentik-stack` (VMID 150) running at `10.57.1.10`
+- [ ] `curl http://10.57.1.10:9000/-/health/ready/` returns HTTP 204
+- [ ] Admin UI accessible at `http://10.57.1.10:9000`
 - [ ] Initial admin user created
 
 ### Reverse proxy
-- [ ] LXC `proxy-stack` (VMID 153) running at `192.168.1.43`
-- [ ] `curl -o /dev/null -w "%{http_code}" http://192.168.1.43` returns 301 or 302
+- [ ] LXC `proxy-stack` (VMID 153) running at `10.57.2.10`
+- [ ] `curl -o /dev/null -w "%{http_code}" http://10.57.2.10` returns 301 or 302
 - [ ] Traefik dashboard accessible via HTTPS with Authentik SSO gate
 - [ ] TLS cert for dashboard issued by Let's Encrypt (valid in browser without CA trust)
 - [ ] HTTP → HTTPS redirect working
@@ -605,16 +628,16 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] `step-ca` resolver block present in `traefik.yml` (inactive until task 04-04)
 
 ### step-ca
-- [ ] LXC `step-ca` (VMID 152) running at `192.168.1.42`
-- [ ] `step ca health --ca-url https://192.168.1.42` returns OK
+- [ ] LXC `step-ca` (VMID 152) running at `10.57.1.11`
+- [ ] `step ca health --ca-url https://10.57.1.11` returns OK
 - [ ] Root CA cert saved to `certs/homelab-root.crt` in repository
 - [ ] Homelab root CA distributed to Traefik container and Proxmox host
-- [ ] Traefik `step-ca` resolver can reach ACME directory: `pct exec 153 -- curl -sk https://192.168.1.42/acme/acme/directory` returns JSON
+- [ ] Traefik `step-ca` resolver can reach ACME directory: `pct exec 153 -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] At least one internal management endpoint issued a cert from step-ca
 
 ### Monitoring
-- [ ] LXC `monitoring-stack` (VMID 154) running at `192.168.1.44`
-- [ ] Grafana accessible at `http://192.168.1.44:3000` (and via proxy)
+- [ ] LXC `monitoring-stack` (VMID 154) running at `10.57.1.12`
+- [ ] Grafana accessible at `http://10.57.1.12:3000` (and via proxy)
 - [ ] VictoriaMetrics scraping at least pve-test node_exporter
 - [ ] Loki receiving logs from at least one LXC
 - [ ] Grafana datasources for VictoriaMetrics and Loki configured

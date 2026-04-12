@@ -1,7 +1,7 @@
-# step-ca internal certificate authority — management zone
+# step-ca internal certificate authority — mgmt_seg zone
 hostname: step-ca
-ip_address: "192.168.1.42/24"
-gateway: "192.168.1.1"
+ip_address: "10.57.1.11/24"
+gateway: "10.57.1.1"
 vmid: 152
 cores: 1
 memory: 512
@@ -13,5 +13,8 @@ tags:
   - step-ca
   - pki
   - infrastructure
+
+network:
+  zone: mgmt_seg
 
 ansible_playbook: "deploy-step-ca"

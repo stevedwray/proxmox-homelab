@@ -16,6 +16,11 @@ Phase 05 — Supply Chain Security
 
 - Task 05-01 complete — Trivy image scan job in CI (signing only happens after scan passes)
 - Phase 01 complete — ci-runner-01 running
+- Phase 04 complete — full Phase 04 stack running (Authentik, Traefik, step-ca, Monitoring)
+
+## Network placement
+
+This task does not deploy a new container. All work runs on ci-runner-01 (VMID 141, `10.57.0.63`) in `build_seg` (`10.57.0.0/24`). No new network configuration is required.
 
 ## Objective
 
@@ -74,6 +79,16 @@ You are working in the proxmox-homelab repository at /home/steve/git/proxmox-hom
 
 TASK: Generate Cosign signing keys, add image signing to CI.
 WARNING: Never commit cosign.key. Verify .gitignore before any git add.
+
+PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up Phase 04 first):
+  Follow the full Phase 04 bring-up sequence documented in the session prompt of
+  docs/plan/tasks/04-core-services-05-deploy-monitoring.md (Steps 0 through 0f),
+  then verify all Phase 04 stacks are healthy before continuing.
+  ci-runner-01 must also be online:
+    source .env && source .env.pve-test
+    cd terraform/lxc/stacks/ci-runner-01 && terragrunt apply
+    cd /home/steve/git/proxmox-homelab
+    ansible-playbook -i "10.57.0.63," terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
 
 STEP 1 — Add cosign.key to .gitignore (do this FIRST):
   grep -q "cosign.key" .gitignore || echo "cosign.key" >> .gitignore

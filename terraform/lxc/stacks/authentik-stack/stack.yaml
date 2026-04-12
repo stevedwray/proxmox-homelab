@@ -1,7 +1,7 @@
-# Authentik identity provider stack
+# Authentik identity provider — mgmt_seg zone
 hostname: authentik-stack
-ip_address: "192.168.1.46/24"
-gateway: "192.168.1.1"
+ip_address: "10.57.1.10/24"
+gateway: "10.57.1.1"
 vmid: 150
 cores: 2
 memory: 3072
@@ -15,6 +15,9 @@ tags:
   - identity
   - infrastructure
   - docker
+
+network:
+  zone: mgmt_seg
 
 ansible_playbook: "deploy-authentik-stack"
 portainer_agent: true

@@ -11,46 +11,111 @@ attachments:
   # the home router must have a static route pointing that subnet back to
   # pve-test (192.168.1.40) as the next hop.
   #
-  # Current required route:
-  #   10.57.0.0/24 via 192.168.1.40   (seg_c: build_seg / artifacts_seg)
-  #
-  # MikroTik command:
-  #   /ip route add dst-address=<subnet> gateway=192.168.1.40 comment="pve-test SDN <seg>"
+  # Required MikroTik routes (add all three before deploying any Phase 04 stack):
+  #   /ip route add dst-address=10.57.0.0/24 gateway=192.168.1.40 comment="pve-test SDN build_seg"
+  #   /ip route add dst-address=10.57.1.0/24 gateway=192.168.1.40 comment="pve-test SDN mgmt_seg"
+  #   /ip route add dst-address=10.57.2.0/24 gateway=192.168.1.40 comment="pve-test SDN edge_seg"
   #
   # Without these routes, LAN -> SDN container ingress will not work, and
   # container traffic bound for the internet will have no SNAT fallback.
+
+  # -------------------------------------------------------------------------
+  # vmbr0 — Bootstrap / canonical-IP exceptions
+  #
+  # The following containers are intentionally placed on the flat LAN bridge
+  # (vmbr0) rather than in a named SDN zone. Each exception is documented.
+  #
+  # Portainer (VMID 120) — 192.168.1.20
+  #   Bootstrap dependency: Portainer bootstraps every other stack. The SDN
+  #   zones must exist before Portainer can be moved into one of them, creating
+  #   a chicken-and-egg dependency. Access is controlled via Authentik
+  #   forward-auth (Phase 04-03) rather than network segmentation.
+  #
+  # Harbor (VMID 121) — 192.168.1.10
+  #   Canonical IP: 192.168.1.10 is shared between pve and pve-test. Placing
+  #   Harbor in an SDN zone would break the proxy-cache URLs baked into all
+  #   compose files. Registry traffic from SDN zones reaches Harbor via SNAT
+  #   on each zone's gateway.
+  #
+  # apt-cacher (VMID 142) — 192.168.1.35
+  #   Universal bootstrap dependency: all LXCs in all zones use apt-cacher as
+  #   their apt proxy during provisioning. Placing it in mgmt_seg would require
+  #   explicit cross-zone routing from build_seg and edge_seg to reach it. On
+  #   vmbr0 it is reachable from every SDN zone via SNAT without additional
+  #   routing rules.
+  # -------------------------------------------------------------------------
   lan:
-    description: Default LAN bridge for bridge-based validation zones on pve-test
+    description: Default LAN bridge — bootstrap/canonical-IP exceptions only
     type: bridge
     bridge: vmbr0
     vlan_tag: null
     firewall: true
-  seg_a:
-    description: First SDN VNet attachment for microsegmentation validation on pve-test
+
+  # -------------------------------------------------------------------------
+  # mgmt_seg — Management plane
+  #
+  # Purpose: Infra services that operators and automation reach.
+  # Containers: Authentik (10.57.1.10), step-ca (10.57.1.11),
+  #             Monitoring (10.57.1.12)
+  # Cross-zone routing: edge_seg → mgmt_seg allowed for Traefik forward-auth
+  #   to Authentik. All mgmt_seg containers can reach Harbor and apt-cacher
+  #   via SNAT to the LAN.
+  # -------------------------------------------------------------------------
+  mgmt_seg:
+    description: Management plane — identity, PKI, monitoring
     type: sdn_vnet
-    bridge: tvneta
+    bridge: tvmgmt
     firewall: true
     sdn:
-      zone: tvsega
+      zone: tvmgmt
       zone_type: simple
       nodes:
         - pve-test
-      vnet: tvneta
-      alias: pve-test network layer
-  seg_b:
-    description: Second SDN VNet attachment for independent microsegmentation validation
+      vnet: tvmgmt
+      alias: pve-test management segment
+      subnet: "10.57.1.0/24"
+      gateway: "10.57.1.1"
+      snat: true
+
+  # -------------------------------------------------------------------------
+  # edge_seg — Public ingress
+  #
+  # Purpose: The only ingress path from the LAN into internal services.
+  # Containers: Traefik (10.57.2.10)
+  # Cross-zone routing: edge_seg → mgmt_seg for Authentik forward-auth.
+  #   Traefik must reach 10.57.1.10 (Authentik) for the forwardAuth middleware.
+  #   This requires the MikroTik to route 10.57.1.0/24 back to pve-test, and
+  #   pve-test to route between tvmgmt and tvedge internally.
+  # Ports 80 and 443 at 10.57.2.10 must be reachable from LAN (192.168.1.0/24)
+  #   via the MikroTik static route for 10.57.2.0/24.
+  # -------------------------------------------------------------------------
+  edge_seg:
+    description: Edge ingress — reverse proxy only
     type: sdn_vnet
-    bridge: tvnetb
+    bridge: tvedge
     firewall: true
     sdn:
-      zone: tvsegb
+      zone: tvedge
       zone_type: simple
       nodes:
         - pve-test
-      vnet: tvnetb
-      alias: pve-test network layer 2
+      vnet: tvedge
+      alias: pve-test edge segment
+      subnet: "10.57.2.0/24"
+      gateway: "10.57.2.1"
+      snat: true
+
+  # -------------------------------------------------------------------------
+  # build_seg — CI build workloads
+  #
+  # Purpose: Self-hosted CI runner execution environment.
+  # Containers: ci-runner-01 (10.57.0.63, VMID 141) — already deployed
+  # Cross-zone routing: build_seg → mgmt_seg for any direct API calls to
+  #   Authentik or monitoring from CI jobs. build_seg → LAN (via SNAT) for
+  #   Harbor (192.168.1.10) and apt-cacher (192.168.1.35) access.
+  # -------------------------------------------------------------------------
   seg_c:
-    description: Third SDN VNet attachment for artifact flow validation on pve-test
+    description: CI build workload zone — artifact flow validation on pve-test
     type: sdn_vnet
     bridge: tvnetc
     firewall: false
@@ -60,58 +125,38 @@ attachments:
       nodes:
         - pve-test
       vnet: tvnetc
-      alias: pve-test network layer 3
+      alias: pve-test build segment
       subnet: "10.57.0.0/24"
       gateway: "10.57.0.1"
       snat: true
 
 zones:
-  apps:
-    description: Application workload zone on the default LAN bridge
-    attachment: lan
-  infra:
-    description: Service endpoint zone on the default LAN bridge
-    attachment: lan
-  isolated:
-    description: Bridge-attached isolated zone with no inbound policy overrides
-    attachment: lan
-  apps_seg:
-    description: Application workload zone on the first SDN VNet
-    attachment: seg_a
-  infra_seg:
-    description: Service endpoint zone on the first SDN VNet
-    attachment: seg_a
-  media_seg:
-    description: Application workload zone on the second SDN VNet
-    attachment: seg_b
-  observe_seg:
-    description: Service endpoint zone on the second SDN VNet
-    attachment: seg_b
+  mgmt_seg:
+    description: Management plane — Authentik, step-ca, Monitoring
+    attachment: mgmt_seg
+    containers:
+      - "Authentik (VMID 150) — 10.57.1.10"
+      - "step-ca (VMID 152)  — 10.57.1.11"
+      - "Monitoring (VMID 154) — 10.57.1.12"
+  edge_seg:
+    description: Edge ingress — Traefik reverse proxy
+    attachment: edge_seg
+    containers:
+      - "Traefik (VMID 153) — 10.57.2.10"
   build_seg:
-    description: Build workload zone on the third SDN VNet
+    description: CI build workload zone
     attachment: seg_c
-  artifacts_seg:
-    description: Artifact service zone on the third SDN VNet
-    attachment: seg_c
+    containers:
+      - "ci-runner-01 (VMID 141) — 10.57.0.63"
 
 policies:
-  - from: apps
-    to: infra
+  - from: edge_seg
+    to: mgmt_seg
     protocol: tcp
-    ports: [8080, 9000]
-    description: apps can reach infra on tcp/8080 and tcp/9000
-  - from: apps_seg
-    to: infra_seg
-    protocol: tcp
-    ports: [8080]
-    description: apps_seg can reach infra_seg on tcp/8080
-  - from: media_seg
-    to: observe_seg
-    protocol: tcp
-    ports: [8080]
-    description: media_seg can reach observe_seg on tcp/8080
+    ports: [9000, 9443]
+    description: Traefik forward-auth to Authentik (port 9000 HTTP, 9443 HTTPS)
   - from: build_seg
-    to: artifacts_seg
+    to: mgmt_seg
     protocol: tcp
-    ports: [5000, 8081]
-    description: build_seg can reach artifacts_seg on tcp/5000 and tcp/8081
+    ports: [9000, 8428, 3100]
+    description: ci-runner to Authentik (9000), VictoriaMetrics (8428), Loki (3100)

@@ -7,8 +7,7 @@ Implement a software supply chain security pipeline so that every container imag
 1. Has been scanned for vulnerabilities (Trivy)
 2. Has a Software Bill of Materials (Syft)
 3. Is cryptographically signed (Cosign)
-4. Has build evidence recorded and policy-gated in Chainloop
-5. Is pulled only from Harbor (never directly from Docker Hub at runtime)
+4. Is pulled only from Harbor (never directly from Docker Hub at runtime)
 
 This phase adds the tooling and CI pipeline stages. It does **not** yet migrate application stacks to pull from Harbor — that happens in Phase 06.
 
@@ -191,96 +190,7 @@ Store `cosign.pub` on each LXC under `/etc/cosign/` via the base Ansible role.
 
 ---
 
-## Part D — Chainloop (evidence and policy gates)
-
-### Overview
-
-Chainloop records build attestations (evidence) and enforces policy contracts before an image is promoted. If a required piece of evidence is missing or a policy is violated, the pipeline is blocked.
-
-Reference: [Chainloop docs](https://docs.chainloop.dev)
-
-### Deployment
-
-Chainloop server can be self-hosted (Docker Compose) or used as a SaaS. For the homelab, start with the self-hosted Docker Compose option to maintain full sovereignty.
-
-> **Note on timing:** All services deployed in Phases 03b–05 are *pulled and cached*, not locally built. There are no local build artefacts for Chainloop to attest during this phase. The server is deployed here so the infrastructure is ready, but **workflow contracts remain inactive until Phase 06** — the first phase that produces real local image builds. Activate Chainloop contracts at the start of Phase 06.
-
-Create `terraform/lxc/stacks/chainloop-stack/stack.yaml`:
-
-```yaml
-# Chainloop attestation and policy server — management zone
-hostname: chainloop-stack
-ip_address: "192.168.1.45/24"
-gateway: "192.168.1.1"
-vmid: 155
-cores: 2
-memory: 2048
-swap: 512
-rootfs_size: 8
-rootfs_storage: infrastructure-containers
-docker_storage_size: "20G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
-tags:
-  - chainloop
-  - supply-chain
-  - infrastructure
-  - docker
-
-ansible_playbook: "deploy-chainloop-stack"
-```
-
-Follow the [Chainloop self-hosting guide](https://docs.chainloop.dev/getting-started/self-hosted) for the compose file.
-
-### Define a workflow contract
-
-A Chainloop workflow contract specifies what evidence a CI run must produce. Example contract for an image build:
-
-```yaml
-# chainloop-contract.yaml
-schemaVersion: v1
-materials:
-  - name: trivy-scan
-    type: SARIF
-    required: true
-  - name: sbom
-    type: SBOM_SPDX_JSON
-    required: true
-  - name: cosign-signature
-    type: STRING
-    required: true
-policies:
-  - name: no-critical-vulns
-    # OPA/Rego policy that fails if trivy-scan contains CRITICAL findings
-```
-
-### Add Chainloop attestation to CI
-
-```yaml
-  chainloop-attest:
-    name: Record build attestation
-    runs-on: [self-hosted, pve-test, build]
-    needs: [trivy-image-scan, generate-sbom, sign-image]
-    steps:
-      - name: Initialize attestation
-        run: chainloop attestation init --workflow my-image-build
-
-      - name: Add Trivy SARIF evidence
-        run: chainloop attestation add --name trivy-scan --value trivy-image.sarif
-
-      - name: Add SBOM evidence
-        run: chainloop attestation add --name sbom --value sbom.spdx.json
-
-      - name: Push and evaluate policy
-        run: chainloop attestation push
-        # Chainloop evaluates policy contract here.
-        # Job fails (and image is not promoted) if policy is not satisfied.
-```
-
-Install the Chainloop CLI on the self-hosted runner (add to `deploy-ci-runner.yml`).
-
----
-
-## Part E — Harbor-only image policy (enforcement in CI)
+## Part D — Harbor-only image policy (enforcement in CI)
 
 ### Goal
 
