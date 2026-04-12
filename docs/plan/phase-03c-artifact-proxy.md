@@ -345,3 +345,10 @@ git push origin feat/apt-cacher-terraform-mirror
 ### Python / pip
 - [ ] `actions/cache@v4` configured for pip in `validate.yml`
 - [ ] Confirmed: no Pip Index Service / Nexus proxy needed
+
+## Observations
+
+- Apt proxy verification on ci-runner-01 is most reliable with a repeatable package download, not `apt-get update` alone.
+- `apt-config dump` confirms the runner sees `Acquire::http::Proxy`, even when the cache report requires the counted view to show hits.
+- The runner playbook should be launched from `terraform/lxc/ansible/` with the generated stack inventory so the shared LXC role and SSH options resolve correctly.
+- `sonar-scanner` is available in the local install under `/home/steve/.local/bin/sonar-scanner`, even though it is not on the default PATH in this shell.

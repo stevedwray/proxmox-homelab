@@ -58,6 +58,12 @@ ci-runner-01 has `/etc/apt/apt.conf.d/01proxy` pointing at `192.168.1.35:3142`, 
 - [ ] Branch `feat/apt-cacher-terraform-mirror` merged to `dev/pve-test` and pushed
 - [ ] Phase 03c acceptance criteria in `docs/plan/phase-03c-artifact-proxy.md` fully satisfied
 
+## Observations
+
+- The runner playbook needs to be executed from the Ansible directory with the generated Terragrunt inventory so `roles_path` and SSH settings resolve correctly.
+- The existing-runner deregistration path can fail even after the proxy and mirror files are written, so reruns should confirm the config files before assuming the whole playbook failed.
+- The apt-cacher stats page is easiest to verify via the counted report view, and a repeatable package download is a clearer hit signal than `apt-get update` alone.
+
 ## Session Prompt
 
 ```
