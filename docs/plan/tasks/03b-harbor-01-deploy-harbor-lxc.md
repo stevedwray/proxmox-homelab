@@ -19,7 +19,7 @@ Phase 03b — Harbor Configuration: Projects, Image Caching, and CI Robot
 - `terraform/lxc/stacks/harbor-stack/stack.yaml` and `terragrunt.hcl` exist in the repo
 - `terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml` exists
 - `.env` has `HARBOR_ADMIN_PASSWORD` set
-- `192.168.1.10` is unallocated (verify in NetBox)
+- Harbor on `pve` (VMID 121) stopped — `192.168.1.10` must be free before deploy (see note below)
 
 ## Objective
 
@@ -37,6 +37,13 @@ Harbor CE is running at `http://192.168.1.10` on pve-test (VMID 121), accessible
 - Robot account and GC configuration (task 03b-04)
 - Image pre-pull (task 03b-05)
 - `harbor_postconfigure` is included in the playbook — if it ran cleanly, that's covered here; otherwise task 03b-02 handles re-running it
+
+> **Migration model note:** The greenfield design assigns the same canonical IP on both
+> nodes (`192.168.1.10` for Harbor). Since pve-test and pve share `vmbr0`, both cannot
+> hold `192.168.1.10` simultaneously. Stop Harbor on `pve` (`pct stop 121`) before
+> applying to pve-test. If parallel operation is required, deploy at a temporary IP
+> using `export TF_VAR_stack_ip_address=192.168.1.21/24` before `terragrunt apply`,
+> then redeploy at `.10` after decommissioning pve's instance.
 
 ## Inputs
 
@@ -57,7 +64,7 @@ Harbor CE is running at `http://192.168.1.10` on pve-test (VMID 121), accessible
 - Verify `TF_VAR_proxmox_node=pve-test` before apply
 - Harbor's initial startup can take 2–3 minutes — wait before running health checks
 - If deploy-harbor-stack.yml includes a `harbor_postconfigure` role, it will run as part of this task
-- **LAN ingress**: Harbor (VMID 110, `192.168.1.10`) is on `mgmt_seg` and is directly LAN-reachable. Validate that ports 80 and 443 are accessible from your workstation after deploy — Harbor is unusable as an image cache if the LAN can't reach the registry API.
+- **LAN ingress**: Harbor (VMID 121, `192.168.1.10`) is on `mgmt_seg` and is directly LAN-reachable. Validate that ports 80 and 443 are accessible from your workstation after deploy — Harbor is unusable as an image cache if the LAN can't reach the registry API.
 
 ## Acceptance Criteria
 
@@ -88,10 +95,9 @@ STEP 2 — Safety check:
   echo "Node target  : $TF_VAR_proxmox_node"   # must print: pve-test
   echo "TF workspace : $TF_WORKSPACE"           # must print: pve-test
 
-STEP 3 — Verify IP 192.168.1.10 is free:
-  curl -s -H "Authorization: Token ${NETBOX_SUPERUSER_API_TOKEN}" \
-    "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.10" | jq .count
-  # Expected: 0
+STEP 3 — Verify 192.168.1.10 is free (pve Harbor must be stopped first):
+  ping -c 1 -W 2 192.168.1.10 && echo "CONFLICT: pve Harbor still running — stop with: ssh pve 'pct stop 121'" || echo "OK: IP is free"
+  # Expected: ping fails ("OK: IP is free") — if ping succeeds, stop pve Harbor first
 
 STEP 4 — Provision Harbor LXC:
   cd terraform/lxc/stacks/harbor-stack

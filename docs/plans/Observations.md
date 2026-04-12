@@ -99,6 +99,15 @@ these are reflections for future reference when revisiting decisions, patterns, 
    with explicit inbound policies from all consumer zones, or to enable SNAT on each SDN
    subnet so containers can reach the LAN-addressed Harbor without per-zone routing rules.
 
+3. **IP migration model for LAN-bridge stacks.** The greenfield design assigns the same
+   canonical `192.168.1.10` to Harbor on both nodes. Because both nodes share `vmbr0`,
+   only one can hold that IP at a time. Deploying Harbor to pve-test therefore requires
+   stopping the pve instance first (`pct stop 121` on pve). The override variable
+   `TF_VAR_stack_ip_address` exists in `terraform/lxc/variables.tf` and can be used via
+   `coalesce()` in `main.tf` if parallel operation at a temporary IP is ever needed — but
+   the primary migration path is a clean cut-over. This pattern applies to any future
+   LAN-bridge stack that already runs on pve at a canonical IP.
+
 ---
 
 ## Phase 03 — Code Quality and Bug Fixes
@@ -107,7 +116,7 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 ---
 
-## Phase 03b — Harbor Setup
+## Phase 03b (continued)
 
 <!-- Observations from Harbor configuration, Trivy, proxy caches, robot accounts -->
 
