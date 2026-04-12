@@ -1,37 +1,37 @@
-# Session Prompt — Plan Revision
+# Session Prompt — Plan Revision (Follow-up)
 
 You are working in the proxmox-homelab repository at `/home/steve/git/proxmox-homelab`.
 
-## What this session does
+## Status of this work
 
-This is a **planning and documentation session only**. You will revise the build plan
-documents to reflect decisions made in a prior review session. You will not run
-Terraform, Ansible, or any deployment commands. You will not write application code.
+The plan revision is **complete**. All nine changes were executed and merged to
+`dev/pve-test` in commit `03f40d3` on 2026-04-13. See
+`docs/plans/PlanRevisionBrief.md` for the full record of what was done and the
+decisions made.
 
-## Start here
+## One remaining action
 
-Read `docs/plans/PlanRevisionBrief.md` in full before doing anything else.
+Close three GitHub issues. Read `docs/plans/PlanRevisionBrief.md` (Outstanding action
+section) for the exact commands, confirm them with the user, then run them.
 
-That document contains:
-- The full list of documents you need to read before making changes
-- Nine numbered changes to execute, in order
-- Constraints on what you may and may not do
+```bash
+gh issue close 89 --comment "Phase 02 services verified healthy. No further action required."
+gh issue close 104 --comment "Headscale cancelled — no remote access requirement (lab is managed only from inside the home network). See task 04-core-services-02 archived in done/."
+gh issue close 111 --comment "Chainloop cancelled — no Docker Compose self-hosting path exists. Helm/Kubernetes only. Deferred indefinitely. See task 05-supply-chain-04 archived in done/ for full analysis and viable alternatives."
+```
 
-## The most important change
+Show the commands, ask before running.
 
-Change 1 (SDN zone design) must be done before all others because the task file
-updates in Changes 4, 7, and 9 depend on having concrete zone names, subnets, and
-container placements to reference.
+## What changed in this revision (summary for context)
 
-Every container that gets deployed in Phase 04 and Phase 05 must have a named SDN
-zone, a justified IP address, and a documented cross-zone routing intent before its
-task file is written or updated. This is not optional and not deferrable.
-
-## When you are done
-
-Report back with:
-- A list of every file changed or created, with one line saying what changed
-- The three `gh issue close` commands for #89, #104, and #111 (show the commands;
-  ask before running them)
-- Any decisions you made during Change 1 (zone design) that had more than one
-  reasonable option, so they can be reviewed
+- **SDN zones** — `pve-test.yaml` now has `mgmt_seg` (10.57.1.0/24), `edge_seg`
+  (10.57.2.0/24), `build_seg` (10.57.0.0/24). Portainer, Harbor, and apt-cacher remain
+  on vmbr0 with documented rationale.
+- **Phase 04 IPs** — all service IPs moved to SDN zone addresses: Authentik 10.57.1.10,
+  step-ca 10.57.1.11, Traefik 10.57.2.10, Monitoring 10.57.1.12.
+- **Task files** — 04-03, 04-04, 04-05 fully rewritten with SDN prereq, full bring-up
+  sequences, and network placement sections. Phase 05 tasks (01-03) updated similarly.
+- **Archived** — Authentik (DONE), Headscale (CANCELLED), Chainloop (CANCELLED) moved
+  to `docs/plan/tasks/done/`.
+- **Deleted** — stale old-numbered task files (04-03 step-ca, 04-04 Traefik).
+- **README** — services table, Phase 06 note, and open issues updated.

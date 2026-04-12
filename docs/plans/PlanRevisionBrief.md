@@ -1,14 +1,21 @@
 # Plan Revision Brief
 
+## Status
+
+**COMPLETE.** All nine changes were executed and merged to `dev/pve-test` in commit
+`03f40d3` on 2026-04-13. The only remaining action is closing three GitHub issues.
+
+---
+
 ## Purpose
 
-This document briefs a new session on the changes required to the homelab build plan
+This document briefed a session on the changes required to the homelab build plan
 following a review of the current state of pve-test, the development pass observations,
 and a set of architectural and scoping decisions made during that review.
 
-The new session performs **planning and document work only** — no deployment, no Terraform,
-no Ansible. The deliverable is an updated, self-consistent set of plan documents ready for
-the next development pass on pve-test.
+The session performed **planning and document work only** — no deployment, no Terraform,
+no Ansible. The deliverable was an updated, self-consistent set of plan documents ready
+for the next development pass on pve-test.
 
 ---
 
@@ -26,273 +33,131 @@ needed before the next pass begins.
 
 ---
 
-## Documents to read before making any changes
+## What was done
 
-Read all of these in full before touching any file.
+### Change 1 — SDN zone design ✓
 
-### Architecture and planning
+`terraform/lxc/network/pve-test.yaml` rewritten. The generic `seg_a`/`seg_b`/`seg_c`
+zones were replaced with:
 
-- `docs/plans/GreenField.md` — full architecture rationale, technology selection, phase
-  sequence, target operating model
-- `docs/plans/NetworkPlanning.md` — network zone model, SDN options, recommended zone
-  design, traffic policy shape
-- `docs/plans/Observations.md` — running notes from the development pass; decisions made
-  under time pressure, patterns that worked, known gaps
+| Zone | Proxmox VNet | Subnet | Gateway | Containers |
+|---|---|---|---|---|
+| `mgmt_seg` | `tvmgmt` | `10.57.1.0/24` | `10.57.1.1` | Authentik (10.57.1.10), step-ca (10.57.1.11), Monitoring (10.57.1.12) |
+| `edge_seg` | `tvedge` | `10.57.2.0/24` | `10.57.2.1` | Traefik (10.57.2.10) |
+| `build_seg` | `tvnetc` | `10.57.0.0/24` | `10.57.0.1` | ci-runner-01 (10.57.0.63) |
 
-### Phase plan documents
+vmbr0 exceptions (explicitly documented with rationale in `pve-test.yaml`):
+- **Portainer (VMID 120)** — bootstrap chicken-and-egg dependency
+- **Harbor (VMID 121)** — canonical IP 192.168.1.10 shared between pve and pve-test
+- **apt-cacher (VMID 142)** — must be reachable from all zones as an apt proxy; SDN
+  placement would require cross-zone routing from build_seg and edge_seg
 
-- `docs/plan/README.md` — phase index, services table, repository conventions
-- `docs/plan/phase-04-core-shared-services.md` — Phase 04 goal, service specs, IP
-  allocation table, compose excerpts, acceptance criteria
-- `docs/plan/phase-05-supply-chain.md` — Phase 05 goal and task breakdown
+MikroTik routes required (all three added to the yaml comments):
+```
+/ip route add dst-address=10.57.0.0/24 gateway=192.168.1.40 comment="pve-test SDN build_seg"
+/ip route add dst-address=10.57.1.0/24 gateway=192.168.1.40 comment="pve-test SDN mgmt_seg"
+/ip route add dst-address=10.57.2.0/24 gateway=192.168.1.40 comment="pve-test SDN edge_seg"
+```
 
-### Current task files (active)
+**Decisions with more than one reasonable option:**
 
-- `docs/plan/tasks/04-core-services-01-deploy-authentik.md`
-- `docs/plan/tasks/04-core-services-02-deploy-headscale.md`
-- `docs/plan/tasks/04-core-services-03-deploy-traefik.md` ← new numbering
-- `docs/plan/tasks/04-core-services-04-deploy-step-ca.md` ← new numbering
-- `docs/plan/tasks/04-core-services-05-deploy-monitoring.md`
-- `docs/plan/tasks/05-supply-chain-01-trivy-ci-scan.md`
-- `docs/plan/tasks/05-supply-chain-02-syft-sbom.md`
-- `docs/plan/tasks/05-supply-chain-03-cosign-signing.md`
-- `docs/plan/tasks/05-supply-chain-04-chainloop-server.md`
-- `docs/plan/tasks/05-supply-chain-05-harbor-image-policy.md`
+1. **apt-cacher placement** — placed on vmbr0 rather than mgmt_seg. The brief listed it
+   in mgmt_seg, but vmbr0 ensures universal reachability from all SDN zones without
+   per-zone routing rules. This was the one deviation from the brief's zone table.
+2. **Subnet numbering** — chose `10.57.1.0/24` / `10.57.2.0/24` continuing the
+   `10.57.x.0/24` pattern. Alternative bases (e.g. 172.16.x) were possible.
+3. **VNet/zone naming** — used `tvmgmt`/`tvedge` rather than `tvsega`/`tvsegb`.
+   More descriptive but deviates from the old `tvnet*` short-name pattern.
 
-### Stale task files (also present — read to understand old numbering, then delete)
+### Change 2 — Delete stale task files ✓
 
-- `docs/plan/tasks/04-core-services-03-deploy-step-ca.md` ← old numbering, delete
-- `docs/plan/tasks/04-core-services-04-deploy-traefik.md` ← old numbering, delete
+Deleted:
+- `docs/plan/tasks/04-core-services-03-deploy-step-ca.md` (old numbering)
+- `docs/plan/tasks/04-core-services-04-deploy-traefik.md` (old numbering)
 
-### Completed task files (for context on what patterns are already codified)
+### Change 3 — Archive completed Phase 04 tasks ✓
 
-- `docs/plan/tasks/done/` — all archived task files; read to understand what the
-  deployment patterns look like and what has been validated
+Moved to `docs/plan/tasks/done/`:
+- `04-core-services-01-deploy-authentik.md` — status updated to DONE
+- `04-core-services-02-deploy-headscale.md` — archived as CANCELLED (already was)
 
-### Network intent
+### Change 4 — Update task session prompts for full bring-up sequence ✓
 
-- `terraform/lxc/network/pve-test.yaml` — current SDN zone definitions for pve-test;
-  the generic seg_a/b/c zones do not yet reflect the target architecture
+- `04-core-services-03-deploy-traefik.md` — added Steps 0/0b/0c/0d (SDN apply, harbor,
+  apt-cacher, Authentik) with Authentik health check gate
+- `04-core-services-04-deploy-step-ca.md` — added Steps 0/0b/0c/0d/0e (full 04-03
+  sequence plus Traefik)
+- `04-core-services-05-deploy-monitoring.md` — added Steps 0/0b/0c/0d/0e/0f (full Phase
+  04 bring-up including step-ca)
+- `05-supply-chain-01..03` — each references the 04-05 session prompt for the Phase 04
+  bring-up sequence rather than duplicating it
 
-### Reference stacks (understand the deployment pattern)
+### Change 5 — Fix monitoring task prerequisites ✓
 
-- `terraform/lxc/stacks/harbor-stack/` — canonical reference for stack.yaml and
-  terragrunt.hcl format
-- `terraform/lxc/stacks/authentik-stack/` — most recently deployed Phase 04 stack
-- `terraform/lxc/ansible/playbooks/` — all current Ansible playbooks
+In `04-core-services-05-deploy-monitoring.md`, the stale "Task 04-04 complete — Traefik
+running" was replaced with:
+- Task 04-03 complete — Traefik running at `10.57.2.10`
+- Task 04-04 complete — step-ca running at `10.57.1.11`
 
----
+### Change 6 — Remove Chainloop from Phase 05 ✓
 
-## Required changes
+- `phase-05-supply-chain.md`: item 4 removed from goal list; entire Part D (Chainloop)
+  section removed; Part E renumbered to Part D
+- `05-supply-chain-04-chainloop-server.md`: status updated to CANCELLED with full
+  rationale; archived to `docs/plan/tasks/done/`
 
-Work through these in order. Each section is independent unless noted.
+### Change 7 — Add SDN zone setup as prerequisite in Phase 04 ✓
 
----
+- `phase-04-core-shared-services.md`: added "SDN zones applied to pve-test" to the
+  prerequisites list; added a "SDN zone setup" subsection with MikroTik route commands
+  and `pvesh` verification command
+- `04-core-services-03-deploy-traefik.md`: Step 0 applies SDN config and verifies zones
 
-### Change 1 — SDN zone design (do this first, everything else depends on it)
+### Change 8 — Update README.md ✓
 
-This is the most important change. Every container deployed in Phase 04 and Phase 05
-must have a planned, reasoned location on the SDN. vmbr0 (flat LAN) placement is not
-a default — it must be a conscious decision with a recorded rationale.
+- Services table: removed Headscale (VMID 151) and Chainloop (VMID 155) rows; added Zone
+  column; updated all Phase 04 IPs to SDN addresses
+- ci-runner-01 IP was already correct at `10.57.0.63`
+- Phase 06 row: added out-of-scope note
+- SDN reference line: updated from old `sdn-segment-routing.md` to `pve-test.yaml`
+- Open issues summary: replaced stale list with current issues table
 
-**What to produce:**
+### Change 9 — Network zone placement in task files ✓
 
-Update `terraform/lxc/network/pve-test.yaml` to replace the generic `seg_a`, `seg_b`,
-`seg_c` zones with named zones that reflect the target architecture.
+Network placement sections added to:
+- `04-core-services-03-deploy-traefik.md` — edge_seg, 10.57.2.10, cross-zone to Authentik
+- `04-core-services-04-deploy-step-ca.md` — mgmt_seg, 10.57.1.11
+- `04-core-services-05-deploy-monitoring.md` — mgmt_seg, 10.57.1.12
+- `05-supply-chain-01-trivy-ci-scan.md` — references ci-runner-01 in build_seg, no new config
+- `05-supply-chain-02-syft-sbom.md` — same
+- `05-supply-chain-03-cosign-signing.md` — same
 
-The target zone model (from NetworkPlanning.md, Design B) is:
+### Ancillary changes ✓
 
-| Zone | Purpose | Containers |
-|---|---|---|
-| `mgmt_seg` | Management plane — infra services that operators and automation reach | Harbor, Authentik, step-ca, Monitoring, apt-cacher |
-| `edge_seg` | Public ingress — the only path from the LAN into internal services | Traefik |
-| `build_seg` | CI build workloads | ci-runner-01 (already here on seg_c) |
-
-**Bootstrap exceptions (must be explicitly justified in the yaml):**
-
-Some services cannot easily be placed in SDN zones due to bootstrap ordering or
-IP migration constraints. For each, the placement must be documented with a rationale
-comment in `pve-test.yaml`:
-
-- **Portainer (VMID 120)**: on `vmbr0` — bootstraps everything else; SDN zones
-  must exist before Portainer can be moved, creating a chicken-and-egg dependency.
-  Acceptable on vmbr0 with access controlled via Authentik forward-auth (Phase 04-03).
-- **Harbor (VMID 121)**: on `vmbr0` — canonical IP `192.168.1.10` shared between
-  pve and pve-test; placing in an SDN zone would break the proxy cache URLs baked
-  into all compose files. Registry traffic from SDN zones reaches Harbor via SNAT
-  on each zone's gateway.
-
-For each SDN zone you define, include:
-- `zone_type` (use `simple` as established by existing zones)
-- `subnet` and `gateway`
-- `snat: true` where containers in that zone need outbound internet or LAN access
-- A static route note (MikroTik `/ip route` command) where required, matching the
-  pattern already documented in `pve-test.yaml` for `seg_c`
-
-For each container in Phase 04/05, explicitly document which zone it belongs to and
-why — either in `pve-test.yaml` comments or in an updated `pve-test.yaml` `zones`
-section that maps zone names to their intended purpose and container membership.
-
----
-
-### Change 2 — Delete stale task files
-
-Delete these two files — they are the old numbering, superseded by the new 04-03 and
-04-04 files:
-
-- `docs/plan/tasks/04-core-services-03-deploy-step-ca.md`
-- `docs/plan/tasks/04-core-services-04-deploy-traefik.md`
+- `terraform/lxc/stacks/authentik-stack/stack.yaml`: IP updated to 10.57.1.10/24,
+  gateway 10.57.1.1, added `network: zone: mgmt_seg`
+- `terraform/lxc/stacks/step-ca-stack/stack.yaml`: IP updated to 10.57.1.11/24,
+  gateway 10.57.1.1, added `network: zone: mgmt_seg`
+- `phase-04-core-shared-services.md`: all service IP references updated throughout
 
 ---
 
-### Change 3 — Archive completed Phase 04 tasks
+## Outstanding action
 
-Move to `docs/plan/tasks/done/` and update status to DONE:
+Close three GitHub issues. Commands to run:
 
-- `docs/plan/tasks/04-core-services-01-deploy-authentik.md` — deployed and healthy
-- `docs/plan/tasks/04-core-services-02-deploy-headscale.md` — cancelled; already
-  marked CANCELLED, archive as-is
-
----
-
-### Change 4 — Update task session prompts for full bring-up sequence
-
-pve-test is wiped between development passes. Every remaining task's session prompt
-must include the steps to bring up its dependencies before beginning work on the task
-itself. The deployment steps for dependencies should reference the existing playbooks
-and stack files (not re-specify them in full).
-
-**04-core-services-03-deploy-traefik.md session prompt:**
-Add a "Prerequisites bring-up" step before Step 1 that:
-- Sources `.env` and `.env.pve-test`
-- Runs `terragrunt apply` for `harbor-stack`, `apt-cacher-stack`, `authentik-stack`
-- Runs the Ansible playbooks for each in order
-- Verifies Authentik health (`curl http://192.168.1.46:9000/-/health/ready/` → 204)
-before proceeding
-
-**04-core-services-04-deploy-step-ca.md session prompt:**
-Add a "Prerequisites bring-up" step that brings up harbor, apt-cacher, Authentik,
-and Traefik (04-03 full sequence) before beginning step-ca work.
-
-**04-core-services-05-deploy-monitoring.md session prompt:**
-Add a "Prerequisites bring-up" step that brings up the full Phase 04 stack
-(harbor, apt-cacher, Authentik, Traefik, step-ca) before beginning monitoring work.
-
-**Phase 05 task session prompts (05-01 through 05-03):**
-Each must include a "Prerequisites bring-up" step that brings up the full Phase 04
-stack before beginning Phase 05 work. Reference the phase-04 task session prompts
-for the bring-up sequence rather than duplicating it.
+```bash
+gh issue close 89 --comment "Phase 02 services verified healthy. No further action required."
+gh issue close 104 --comment "Headscale cancelled — no remote access requirement (lab is managed only from inside the home network). See task 04-core-services-02 archived in done/."
+gh issue close 111 --comment "Chainloop cancelled — no Docker Compose self-hosting path exists. Helm/Kubernetes only. Deferred indefinitely. See task 05-supply-chain-04 archived in done/ for full analysis and viable alternatives."
+```
 
 ---
 
-### Change 5 — Fix monitoring task prerequisites (stale task number reference)
+## Constraints observed
 
-In `04-core-services-05-deploy-monitoring.md`, the prerequisites currently reference
-`Task 04-04 complete — Traefik running`. In the new numbering, 04-04 is step-ca and
-Traefik is 04-03. Update to:
-
-- Task 04-03 complete — Traefik running at `192.168.1.43`
-- Task 04-04 complete — step-ca running at `192.168.1.42` (Grafana uses the internal
-  CA for its own cert via the step-ca resolver in Traefik)
-
----
-
-### Change 6 — Remove Chainloop from Phase 05
-
-Chainloop has no Docker Compose self-hosting path and will not be used.
-
-- In `phase-05-supply-chain.md`: remove item 4 from the goal list; remove the
-  Chainloop section from the body
-- Cancel `05-supply-chain-04-chainloop-server.md` — update status to CANCELLED,
-  record the reason (no compose self-hosting path; Chainloop Cloud requires SaaS
-  dependency; deferred indefinitely)
-- Do not delete the file — archive it to `done/` as a cancelled task so the decision
-  is recorded
-
----
-
-### Change 7 — Add SDN zone setup as a prerequisite step in Phase 04
-
-The Phase 04 phase document (`phase-04-core-shared-services.md`) and the first
-active task (`04-core-services-03-deploy-traefik.md`) must include a prerequisite
-step for applying the SDN zone configuration to pve-test before any containers are
-deployed.
-
-Add to the phase-04 prerequisites section:
-- SDN zones defined in `terraform/lxc/network/pve-test.yaml` applied to pve-test
-- Static routes added to MikroTik router for any SDN subnets with gateways
-- Verification: `pvesh get /nodes/pve-test/sdn/zones` lists expected zones
-
-Add as Step 0 in the 04-03 session prompt: apply `pve-test.yaml` SDN configuration
-and verify zones before touching any stack.
-
----
-
-### Change 8 — Update README.md
-
-`docs/plan/README.md` contains several stale entries:
-
-- **Services table**: remove Headscale (VMID 151) and Chainloop (VMID 155) rows
-- **Services table**: update ci-runner-01 IP to `10.57.0.63` if not already correct
-- **Phase 06 row**: add a note — "Out of scope for this plan. Phase 04/05 establishes
-  the platform basis. App stack migration is a separate planning effort."
-- **Open issues summary**: replace the stale list (referencing old closed issues #23,
-  #25, #26 etc.) with the current open issues relevant to Phase 04/05
-
-Current open issues relevant to this plan:
-
-| Issue | Description | Phase | Action |
-|---|---|---|---|
-| #89 | Phase 02 service verification | 02 | Close — services verified healthy |
-| #104 | Headscale deployment | 04 | Close — cancelled |
-| #106 | Traefik deployment | 04-03 | Active |
-| #107 | Monitoring deployment | 04-05 | Active (note: was 04-04 in old numbering) |
-| #108 | Trivy CI scan | 05-01 | Active |
-| #109 | Syft SBOM | 05-02 | Active |
-| #110 | Cosign signing | 05-03 | Active |
-| #111 | Chainloop server | 05-04 | Close — cancelled |
-| #120 | ShellCheck cleanup: setup-dev-env.sh | — | Ready to work (ShellCheck available locally) |
-| #121 | ShellCheck cleanup: check-proxmox-status.sh | — | Ready to work |
-
-Close issues #89, #104, and #111 via `gh issue close` with a comment explaining why.
-
----
-
-### Change 9 — Network zone placement in each task file
-
-For every remaining task file that deploys a container, add a **Network placement**
-section between Prerequisites and Objective that specifies:
-
-- Which SDN zone the container belongs to
-- The IP address and how it was chosen (IPAM check, ping verify)
-- Any cross-zone routing required (e.g. Traefik in edge_seg reaching Authentik in mgmt_seg)
-- The firewall policy intent (what traffic is allowed in/out of this container)
-
-This section should be present in:
-- `04-core-services-03-deploy-traefik.md`
-- `04-core-services-04-deploy-step-ca.md`
-- `04-core-services-05-deploy-monitoring.md`
-- `05-supply-chain-01-trivy-ci-scan.md`
-- `05-supply-chain-02-syft-sbom.md`
-- `05-supply-chain-03-cosign-signing.md`
-
-Phase 05 tasks do not deploy new containers (they add CI jobs and tooling to the
-existing ci-runner-01), so their network placement section is brief: reference
-ci-runner-01's existing zone placement and note that no new network configuration
-is required.
-
----
-
-## Constraints for the new session
-
-- Do not deploy anything. This is a document revision session.
-- Do not invent IP addresses or zone subnets without grounding them in the existing
-  `pve-test.yaml` patterns and the NetworkPlanning.md recommendations.
-- Do not remove content from Observations.md — it is a reference document that
-  informs the plan, not a document to be updated in this session.
-- When making choices about SDN zone subnets, follow the pattern established by
-  `seg_c` in `pve-test.yaml` (simple zone, /24 subnet, SNAT enabled, MikroTik
-  static route documented).
-- The MikroTik router is at `192.168.1.1`. pve-test is at `192.168.1.40`. Any
-  SDN zone with a gateway needs a static route on the MikroTik pointing the
-  subnet back to `192.168.1.40`.
+- No deployment commands were run
+- No Observations.md changes were made
+- IP addresses and zone subnets were grounded in existing `pve-test.yaml` patterns
+- The MikroTik router (192.168.1.1) and pve-test (192.168.1.40) addresses were used
+  as anchors throughout
