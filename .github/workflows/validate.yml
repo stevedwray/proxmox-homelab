@@ -26,6 +26,25 @@ jobs:
       - name: Check formatting
         run: terraform fmt -check -recursive terraform/
 
+  harbor-image-policy:
+    name: Enforce Harbor-only image references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Check compose files use Harbor proxy
+        run: |
+          if grep -RInE \
+            --exclude-dir='.terragrunt-cache' \
+            --include='*.yml' \
+            --include='*.yaml' \
+            '^[[:space:]]*image:[[:space:]]*.*(docker\.io|ghcr\.io|quay\.io|registry\.k8s\.io)' \
+            terraform/lxc/stacks/; then
+            echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+            exit 1
+          fi
+          echo "OK — all image references use Harbor proxy."
+
   terraform-validate:
     name: Terraform validate
     runs-on: [self-hosted, pve-test, build]
