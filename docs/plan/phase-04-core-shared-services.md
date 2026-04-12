@@ -5,11 +5,28 @@
 Deploy the foundational shared services that must exist before any application stacks are migrated:
 
 1. **Authentik** — identity provider, SSO, MFA
-2. **step-ca** — internal certificate authority
-3. **Reverse proxy** (Traefik or Caddy) — dedicated ingress edge
+2. **Reverse proxy** (Traefik) — dedicated ingress edge with dual certificate strategy
+3. **step-ca** — internal certificate authority for service-to-service and management plane TLS
 4. **Monitoring stack** — VictoriaMetrics + Grafana + Loki
 
-Deploy in this order. Each depends on the previous: Authentik before the proxy (auth middleware), the proxy before monitoring dashboards are exposed, monitoring last (most resource-heavy).
+Deploy in this order. Authentik must be running before Traefik (auth middleware depends on it). Traefik must be running before step-ca (step-ca resolver is activated in Traefik as part of the step-ca task). Monitoring deploys last as the most resource-heavy service.
+
+## Certificate strategy
+
+This phase uses a **dual certificate resolver** model in Traefik:
+
+| Resolver | CA | Challenge | Used for |
+|---|---|---|---|
+| `letsencrypt` | Let's Encrypt | DNS-01 via Cloudflare | All browser-facing routes — wildcard `*.gibbsgreatly.xyz` |
+| `step-ca` | Homelab internal CA | ACME via step-ca | Internal management plane, Proxmox API, Ansible `validate_certs: true` |
+
+**Browser connections always use Let's Encrypt certs.** The homelab root CA is never distributed to browsers or end-user devices. It is distributed only to managed services that need to validate internal TLS: the Traefik container itself, the Ansible control machine, Proxmox hosts, and any service that calls another internal service directly.
+
+This approach preserves the existing Cloudflare DNS + Let's Encrypt wildcard workflow while eliminating `validate_certs: false` and self-signed certs from internal management tooling over time.
+
+step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using only the `letsencrypt` resolver. The `step-ca` resolver block is pre-written into `traefik.yml` at deploy time but references a CA that does not yet exist — this is safe because Traefik only contacts a resolver when a route explicitly requests it. The step-ca task (04-04) then bootstraps the CA and activates the resolver.
+
+---
 
 ## Prerequisites
 
@@ -19,8 +36,11 @@ Deploy in this order. Each depends on the previous: Authentik before the proxy (
 - **Phase 03c complete** — apt-cacher-ng running at `192.168.1.35`; all LXC stacks deployed in this phase will route apt through the proxy automatically
 - Harbor is running at `192.168.1.10` (deployed earlier)
 - NetBox is running at `192.168.1.30` (deployed earlier)
+- Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
 - `.env` is sourced with Proxmox API credentials
+
+---
 
 ## Image reference convention
 
@@ -37,6 +57,8 @@ All compose files in this phase use Harbor proxy cache image references — **ne
 
 Always use the Harbor proxy address in compose files. If an image is not yet in Harbor, pull it through the proxy first (see Phase 03b Part E).
 
+---
+
 ## Networking / IP allocation
 
 All new stacks go on VLAN/zone `mgmt_seg` (management plane). Use the next available IPs in the `192.168.1.x/24` range (check NetBox for current allocations before assigning):
@@ -44,8 +66,8 @@ All new stacks go on VLAN/zone `mgmt_seg` (management plane). Use the next avail
 | Service | Suggested IP | VMID | Notes |
 |---|---|---|---|
 | Authentik | `192.168.1.46` | 150 | |
-| step-ca | `192.168.1.42` | 152 | |
-| Reverse proxy | `192.168.1.43` | 153 | Edge — also needs a public IP or port-forward |
+| Reverse proxy | `192.168.1.43` | 153 | Edge — ports 80 and 443 must be reachable from LAN |
+| step-ca | `192.168.1.42` | 152 | Internal only — not exposed externally |
 | Monitoring | `192.168.1.44` | 154 | |
 
 **Verify these IPs are unallocated in NetBox before using them.**
@@ -121,6 +143,7 @@ Key compose services:
 - `worker` — Authentik background worker (same image as server)
 
 Minimal `docker-compose.yml` excerpt (all images via Harbor proxy cache — pre-scanned in Phase 03b):
+
 ```yaml
 services:
   postgresql:
@@ -197,11 +220,156 @@ curl -s http://192.168.1.46:9000/-/health/ready/
 
 ---
 
-## Service 2 — step-ca (internal PKI)
+## Service 2 — Reverse proxy (Traefik)
 
 ### Overview
 
-step-ca is an automated Certificate Authority for X.509 and SSH certificates. Deploying it eliminates the need for self-signed certs and `validate_certs: false` in Ansible playbooks for internal services over time.
+A dedicated reverse proxy LXC is the only ingress point from external networks into internal apps. Traefik is used for its dynamic container-discovery, dual ACME resolver support, and Authentik forward-auth middleware.
+
+Two certificate resolvers are configured at deploy time:
+
+- **`letsencrypt`** — DNS-01 challenge via Cloudflare API. Issues `*.gibbsgreatly.xyz` wildcard. Used for all browser-facing routes. Active immediately on deploy.
+- **`step-ca`** — ACME via internal step-ca at `192.168.1.42`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
+
+### Stack file
+
+Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
+
+```yaml
+# Traefik reverse proxy — edge / ingress
+hostname: proxy-stack
+ip_address: "192.168.1.43/24"
+gateway: "192.168.1.1"
+vmid: 153
+cores: 1
+memory: 512
+swap: 256
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "5G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - traefik
+  - proxy
+  - edge
+  - docker
+
+ansible_playbook: "deploy-proxy-stack"
+```
+
+### Secrets required
+
+Add to `.env.template` and `.env`:
+
+```bash
+CF_DNS_API_TOKEN=              # Cloudflare API token, Zone:DNS:Edit for gibbsgreatly.xyz
+```
+
+A dedicated scoped token is preferred over reusing the NPM token. Create at dash.cloudflare.com → My Profile → API Tokens → Create Token → Edit zone DNS (scope to gibbsgreatly.xyz only).
+
+### Traefik static configuration
+
+Key settings in `traefik.yml`:
+
+```yaml
+api:
+  dashboard: true
+  insecure: false  # dashboard only via HTTPS
+
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+
+certificatesResolvers:
+  letsencrypt:
+    acme:
+      email: "admin@gibbsgreatly.xyz"
+      storage: "/certs/letsencrypt/acme.json"
+      dnsChallenge:
+        provider: cloudflare
+        resolvers:
+          - "1.1.1.1:53"
+          - "8.8.8.8:53"
+
+  # step-ca resolver — pre-configured, inactive until task 04-04 (step-ca) completes.
+  # Traefik will not contact this CA until a route explicitly requests it.
+  step-ca:
+    acme:
+      caServer: "https://192.168.1.42/acme/acme/directory"
+      email: "admin@gibbsgreatly.xyz"
+      storage: "/certs/step-ca/acme.json"
+      tlsChallenge: {}
+
+providers:
+  docker:
+    exposedByDefault: false
+  file:
+    directory: "/etc/traefik/dynamic/"
+    watch: true
+```
+
+Both ACME storage paths (`/certs/letsencrypt/acme.json` and `/certs/step-ca/acme.json`) must be created with mode `0600` before Traefik starts.
+
+### Authentik forward-auth middleware
+
+Add to `traefik/dynamic/authentik.yml`:
+
+```yaml
+http:
+  middlewares:
+    authentik:
+      forwardAuth:
+        address: "http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik"
+        trustForwardHeader: true
+        authResponseHeaders:
+          - X-authentik-username
+          - X-authentik-groups
+          - X-authentik-email
+```
+
+Apply this middleware to any internal dashboard or sensitive service.
+
+### Wildcard TLS configuration
+
+Add to `traefik/dynamic/certs.yml` to request the wildcard cert from Let's Encrypt at startup:
+
+```yaml
+tls:
+  stores:
+    default:
+      defaultGeneratedCert:
+        resolver: letsencrypt
+        domain:
+          main: "gibbsgreatly.xyz"
+          sans:
+            - "*.gibbsgreatly.xyz"
+```
+
+### What to expose (initial scope)
+
+Only expose:
+- Traefik dashboard (via HTTPS + Authentik SSO), cert from `letsencrypt` resolver
+- Nothing else in Phase 04 — application stacks are migrated in Phase 06
+
+---
+
+## Service 3 — step-ca (internal PKI)
+
+### Overview
+
+step-ca is an automated Certificate Authority for X.509 and SSH certificates. It is deployed **after Traefik** because Traefik is already running and functional on Let's Encrypt certs. step-ca adds the internal resolver as a second option for management-plane and service-to-service TLS.
+
+Deploying step-ca after Traefik means:
+- Traefik is never blocked on an internal CA being available
+- The `step-ca` resolver in Traefik activates automatically once step-ca is online and the homelab root CA is distributed
+- No browser ever receives a step-ca cert — only routes explicitly assigned `certresolver=step-ca` will use it
 
 Reference: [step-ca docs](https://smallstep.com/docs/step-ca)
 
@@ -254,120 +422,61 @@ Create `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`.
      --password-file /etc/step-ca/password.txt
    ```
 4. Install as a systemd service
+5. Export the root CA cert to `certs/homelab-root.crt` in the repository
 
 ### CA trust distribution
 
-After step-ca is running, distribute the root CA cert to all LXCs and workstations:
+The homelab root CA is distributed only to managed services — not to browsers or end-user devices. The trust scope is:
+
+| Target | Why |
+|---|---|
+| Traefik container | Validates backend certs when proxying to step-ca-issued services |
+| Ansible control machine | Enables `validate_certs: true` on Proxmox, Harbor, Authentik API calls |
+| Proxmox hosts | Validates step-ca-issued certs on management endpoints |
+| Each new LXC (via base role) | Service-to-service calls without cert warnings |
+
+Distribution is handled by a single task added to the base LXC Ansible role:
+
+```yaml
+- name: Trust homelab root CA
+  copy:
+    src: certs/homelab-root.crt
+    dest: /usr/local/share/ca-certificates/homelab-root.crt
+  notify: update-ca-certificates
+```
+
+This propagates automatically to every container deployed from that point forward.
+
+To distribute manually after step-ca is running:
 
 ```bash
-# Get the root cert:
-step ca root root.crt --ca-url https://192.168.1.42
+# Fetch the root cert
+step ca root certs/homelab-root.crt --ca-url https://192.168.1.42
 
-# On each Debian LXC:
-cp root.crt /usr/local/share/ca-certificates/homelab-root.crt
-update-ca-certificates
+# Push to Traefik container
+ansible-playbook -i "192.168.1.43," \
+  terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
+
+# Push to Proxmox host
+ansible-playbook -i "192.168.1.2," \
+  terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 ```
 
-Add a task to the base LXC Ansible role to trust the homelab CA root cert.
+### Activating the step-ca resolver in Traefik
+
+The `step-ca` resolver block is already present in `traefik.yml` from task 04-03. No Traefik config change is needed. Once the homelab root CA is trusted by the Traefik container and step-ca is online, any route that specifies `certresolver=step-ca` will begin receiving certs from the internal CA.
+
+Verify the resolver is reachable from the Traefik container:
+
+```bash
+pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+  https://192.168.1.42/acme/acme/directory | jq .
+# Expected: ACME directory JSON
+```
 
 ---
 
-## Service 4 — Reverse proxy (Traefik)
-
-### Overview
-
-A dedicated reverse proxy LXC is the only ingress point from external networks into internal apps. Traefik is recommended for its dynamic container-discovery, built-in Let's Encrypt/ACME support, and Authentik forward-auth middleware.
-
-### Stack file
-
-Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
-
-```yaml
-# Traefik reverse proxy — edge / ingress
-hostname: proxy-stack
-ip_address: "192.168.1.43/24"
-gateway: "192.168.1.1"
-vmid: 153
-cores: 1
-memory: 512
-swap: 256
-rootfs_size: 8
-rootfs_storage: infrastructure-containers
-docker_storage_size: "5G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
-tags:
-  - traefik
-  - proxy
-  - edge
-  - docker
-
-ansible_playbook: "deploy-proxy-stack"
-```
-
-### Traefik configuration
-
-Key settings in `traefik.yml` (static config):
-
-```yaml
-api:
-  dashboard: true
-  insecure: false  # dashboard only via HTTPS
-
-entryPoints:
-  web:
-    address: ":80"
-    http:
-      redirections:
-        entryPoint:
-          to: websecure
-          scheme: https
-  websecure:
-    address: ":443"
-
-certificatesResolvers:
-  step-ca:
-    acme:
-      caServer: "https://192.168.1.42/acme/acme/directory"
-      email: "admin@gibbsgreatly.xyz"
-      storage: "/letsencrypt/acme.json"
-      tlsChallenge: {}
-
-providers:
-  docker:
-    exposedByDefault: false
-  file:
-    directory: "/etc/traefik/dynamic/"
-    watch: true
-```
-
-### Authentik forward-auth middleware
-
-Add to `traefik/dynamic/authentik.yml`:
-
-```yaml
-http:
-  middlewares:
-    authentik:
-      forwardAuth:
-        address: "http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik"
-        trustForwardHeader: true
-        authResponseHeaders:
-          - X-authentik-username
-          - X-authentik-groups
-          - X-authentik-email
-```
-
-Apply this middleware to any internal dashboard or sensitive service.
-
-### What to expose (initial scope)
-
-Only expose:
-- Traefik dashboard (via HTTPS + Authentik SSO)
-- Nothing else in Phase 04 — application stacks are migrated in Phase 06
-
----
-
-## Service 5 — Monitoring (VictoriaMetrics + Grafana + Loki)
+## Service 4 — Monitoring (VictoriaMetrics + Grafana + Loki)
 
 Deploy last — highest resource usage of the Phase 04 services.
 
@@ -405,7 +514,7 @@ portainer_agent: true
 ```yaml
 services:
   victoriametrics:
-    image: victoriametrics/victoria-metrics:<version>
+    image: 192.168.1.10/dockerhub/victoriametrics/victoria-metrics:<version>
     ports:
       - "8428:8428"
     volumes:
@@ -415,7 +524,7 @@ services:
       - "--retentionPeriod=90d"
 
   grafana:
-    image: grafana/grafana-oss:<version>
+    image: 192.168.1.10/dockerhub/grafana/grafana-oss:<version>
     ports:
       - "3000:3000"
     volumes:
@@ -426,14 +535,14 @@ services:
       # ... Authentik OIDC vars (configure after Authentik is up)
 
   loki:
-    image: grafana/loki:<version>
+    image: 192.168.1.10/dockerhub/grafana/loki:<version>
     ports:
       - "3100:3100"
     volumes:
       - loki-data:/loki
 
   promtail:
-    image: grafana/promtail:<version>
+    image: 192.168.1.10/dockerhub/grafana/promtail:<version>
     volumes:
       - /var/log:/var/log:ro
       - ./promtail-config.yml:/etc/promtail/config.yml
@@ -466,9 +575,9 @@ Deploy `node_exporter` on each LXC (or as a Docker container). Add a scrape conf
 
 ## Commit strategy
 
-Create a short-lived branch for each service (`feat/authentik-stack`, `feat/headscale`, etc.), merge to `dev/pve-test` after each service passes its health checks.
+Create a short-lived branch for each service (`feat/authentik-stack`, `feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), merge to `dev/pve-test` after each service passes its health checks.
 
-After all five services are deployed and healthy:
+After all services are deployed and healthy:
 
 ```bash
 git push origin dev/pve-test
@@ -486,22 +595,22 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] Admin UI accessible at `http://192.168.1.46:9000`
 - [ ] Initial admin user created
 
-### Headscale
-- [ ] LXC `headscale-stack` (VMID 151) running at `192.168.1.41`
-- [ ] `systemctl status headscale` is active
-- [ ] Workstation can join the tailnet and `tailscale ping 192.168.1.46` succeeds
+### Reverse proxy
+- [ ] LXC `proxy-stack` (VMID 153) running at `192.168.1.43`
+- [ ] `curl -o /dev/null -w "%{http_code}" http://192.168.1.43` returns 301 or 302
+- [ ] Traefik dashboard accessible via HTTPS with Authentik SSO gate
+- [ ] TLS cert for dashboard issued by Let's Encrypt (valid in browser without CA trust)
+- [ ] HTTP → HTTPS redirect working
+- [ ] Authentik forward-auth middleware configured in `dynamic/authentik.yml`
+- [ ] `step-ca` resolver block present in `traefik.yml` (inactive until task 04-04)
 
 ### step-ca
 - [ ] LXC `step-ca` (VMID 152) running at `192.168.1.42`
 - [ ] `step ca health --ca-url https://192.168.1.42` returns OK
-- [ ] Root CA cert distributed to at least pve-test host
-- [ ] At least one internal service issued a cert from step-ca
-
-### Reverse proxy
-- [ ] LXC `proxy-stack` (VMID 153) running at `192.168.1.43`
-- [ ] Traefik dashboard accessible via HTTPS with Authentik SSO gate
-- [ ] HTTP → HTTPS redirect working
-- [ ] Authentik forward-auth middleware configured
+- [ ] Root CA cert saved to `certs/homelab-root.crt` in repository
+- [ ] Homelab root CA distributed to Traefik container and Proxmox host
+- [ ] Traefik `step-ca` resolver can reach ACME directory: `pct exec 153 -- curl -sk https://192.168.1.42/acme/acme/directory` returns JSON
+- [ ] At least one internal management endpoint issued a cert from step-ca
 
 ### Monitoring
 - [ ] LXC `monitoring-stack` (VMID 154) running at `192.168.1.44`
@@ -511,7 +620,8 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] Grafana datasources for VictoriaMetrics and Loki configured
 
 ### Overall
-- [ ] All five stacks registered in NetBox (IPs, services, relationships)
+- [ ] All stacks registered in NetBox (IPs, services, relationships)
 - [ ] Grafana admin login works via Authentik OIDC
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events
 - [ ] All stacks survive a `pct restart <vmid>` and come back healthy
+- [ ] No browser receives a step-ca cert — all browser-facing routes verified against Let's Encrypt issuer
