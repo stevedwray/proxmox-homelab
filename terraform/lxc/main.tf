@@ -26,6 +26,8 @@ locals {
   stack_dir   = dirname(var.stack_yaml_path)      # …/stacks/<name>
   lxc_root    = dirname(dirname(local.stack_dir)) # …/terraform/lxc
   ansible_dir = "${local.lxc_root}/ansible"
+  ansible_cfg = "${local.ansible_dir}/ansible.cfg"
+  ansible_roles_path = "${local.ansible_dir}/roles"
 
   # Optional declarative network intent. Existing stacks continue to use the
   # current bridge defaults unless they opt in with stack.network.zone.
@@ -206,10 +208,12 @@ resource "null_resource" "configure_network_sdn_attachment" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
 
   triggers = {
-    ansible_dir   = local.ansible_dir
-    sdn_vars      = local_file.network_sdn_vars[0].content
-    sdn_vars_file = local_file.network_sdn_vars[0].filename
-    vmid          = tostring(try(local.stack.vmid, ""))
+    ansible_dir        = local.ansible_dir
+    ansible_cfg        = local.ansible_cfg
+    ansible_roles_path = local.ansible_roles_path
+    sdn_vars           = local_file.network_sdn_vars[0].content
+    sdn_vars_file      = local_file.network_sdn_vars[0].filename
+    vmid               = tostring(try(local.stack.vmid, ""))
   }
 
   provisioner "local-exec" {
@@ -223,6 +227,8 @@ resource "null_resource" "configure_network_sdn_attachment" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
+      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -245,6 +251,8 @@ EOF
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
+      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -325,6 +333,8 @@ resource "null_resource" "configure_keyctl" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = local.ansible_cfg
+      ANSIBLE_ROLES_PATH           = local.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -376,6 +386,8 @@ resource "null_resource" "ansible_provision" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
+      ANSIBLE_CONFIG            = local.ansible_cfg
+      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
       PORTAINER_ADMIN_PASSWORD  = var.portainer_admin_password
     }
   }
@@ -407,6 +419,8 @@ resource "null_resource" "configure_network_firewall" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = local.ansible_cfg
+      ANSIBLE_ROLES_PATH           = local.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -461,6 +475,8 @@ resource "null_resource" "configure_network_vnet_firewall" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
+      ANSIBLE_CONFIG            = local.ansible_cfg
+      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
     }
   }
 
@@ -492,6 +508,8 @@ resource "null_resource" "stack_cleanup" {
       export AGENT_HOSTNAME="${self.triggers.hostname}"
       export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"
       export ANSIBLE_HOST_KEY_CHECKING="False"
+      export ANSIBLE_CONFIG="${self.triggers.ansible_dir}/ansible.cfg"
+      export ANSIBLE_ROLES_PATH="${self.triggers.ansible_dir}/roles"
       ansible-playbook -i localhost, playbooks/cleanup.yml
     EOT
     working_dir = self.triggers.ansible_dir
