@@ -1,4 +1,4 @@
-# Phase 05 — Supply Chain Security (Trivy, Syft, Cosign, Chainloop)
+# Phase 05 — Supply Chain Security (Trivy, Syft, Cosign)
 
 ## Goal
 
@@ -19,14 +19,14 @@ This phase adds the tooling and CI pipeline stages. It does **not** yet migrate 
 
 ## Related GreenField sections
 
-- GreenField §5 (Supply chain: Harbor + Chainloop + signing)
+- GreenField §5 (Supply chain: Harbor + signing)
 - GreenField §7 (Policy-as-code: OPA/Conftest, Trivy IaC)
 
 ---
 
 ## Part A — Trivy CI image scanning (extends Phase 03b Harbor scanning)
 
-Harbor already scans every image on push (configured in Phase 03b). This part adds a second Trivy scan gate in CI that runs against the specific image digest produced by a build job, before Chainloop will attest and promote it. The Harbor scan catches vulnerabilities at cache time; this CI scan catches them at build/promote time.
+Harbor already scans every image on push (configured in Phase 03b). This part adds a second Trivy scan gate in CI that runs against the specific image digest produced by a build job. The Harbor scan catches vulnerabilities at cache time; this CI scan catches them at build/promote time.
 
 Trivy also currently runs in the `sast-scan` CI job on `ubuntu-latest` for filesystem, secrets, and IaC misfigurations. That job remains unchanged.
 
@@ -110,8 +110,6 @@ Add a `generate-sbom` job after each image build:
           path: sbom.spdx.json
           retention-days: 90
 ```
-
-The SBOM is also passed to Chainloop in Part D.
 
 ---
 
@@ -231,7 +229,6 @@ Add these to the repository (Settings → Secrets → Actions):
 | `HARBOR_ROBOT_PASSWORD` | Harbor robot account password |
 | `COSIGN_KEY` | PEM-encoded encrypted cosign private key |
 | `COSIGN_PASSWORD` | Passphrase for the cosign private key |
-| `CHAINLOOP_TOKEN` | Chainloop API token for CI |
 
 ---
 
@@ -243,10 +240,9 @@ git checkout -b feat/supply-chain-pipeline dev/pve-test
 # After all changes:
 git add .github/workflows/ \
         terraform/lxc/ansible/playbooks/deploy-ci-runner.yml \
-        terraform/lxc/stacks/chainloop-stack/ \
         cosign.pub
 
-git commit -m "feat(ci): add supply chain pipeline — Trivy image scan, Syft SBOM, Cosign signing, Chainloop attestation"
+git commit -m "feat(ci): add supply chain pipeline — Trivy image scan, Syft SBOM, Cosign signing"
 git push origin feat/supply-chain-pipeline
 # Merge to dev/pve-test via PR
 ```
@@ -272,13 +268,6 @@ git push origin feat/supply-chain-pipeline
 - [ ] `cosign.key` stored as encrypted GitHub Actions secret (never committed unencrypted)
 - [ ] Images are signed in CI after scan pass
 - [ ] `cosign verify --key cosign.pub` passes for at least one signed image in Harbor
-
-### Chainloop
-- [ ] Chainloop server running at `192.168.1.45`
-- [ ] Chainloop CLI installed on ci-runner-01
-- [ ] Workflow contract *defined* requiring Trivy SARIF + SBOM + signature (but not yet activated — see Phase 06)
-- [ ] Server accessible from ci-runner-01 (connectivity verified)
-- [ ] **Contracts activate in Phase 06** — do not block the Phase 05 milestone on end-to-end attestation
 
 ### Harbor-only policy (enforcement)
 - [ ] All compose files for Phase 06+ stacks reference `192.168.1.10/<project>/` only

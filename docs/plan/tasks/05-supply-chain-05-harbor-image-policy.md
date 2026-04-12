@@ -16,7 +16,7 @@ Phase 05 — Supply Chain Security
 
 - Phase 03b complete — Harbor proxy cache projects configured
 - Phase 01 complete — ci-runner-01 online
-- Task 05-01 through 05-04 complete (or in progress) — this task can be done in parallel after 05-01
+- Task 05-01 through 05-03 complete (or in progress) — this task can be done in parallel after 05-01
 
 ## Objective
 
@@ -38,7 +38,7 @@ A `harbor-image-policy` CI job fails whenever any compose file in the repo refer
 
 - `.github/workflows/validate.yml` — extend with new job
 - `terraform/lxc/stacks/**/*.yml` — grep these for violations
-- `docs/plan/phase-05-supply-chain.md` — Part E for exact grep command and job YAML
+- `docs/plan/phase-05-supply-chain.md` — Part D for exact grep command and job YAML
 
 ## Expected Outputs
 
@@ -78,7 +78,7 @@ STEP 2 — Scan for existing violations:
   # If any results, fix them to use 192.168.1.10/<project>/<image>:<tag> before continuing.
 
 STEP 3 — Add harbor-image-policy job to .github/workflows/validate.yml:
-  Full spec in docs/plan/phase-05-supply-chain.md (Part E).
+  Full spec in docs/plan/phase-05-supply-chain.md (Part D).
   The job should:
   - runs-on: ubuntu-latest
   - uses: actions/checkout@v4
