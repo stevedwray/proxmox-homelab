@@ -44,7 +44,7 @@ All new stacks go on VLAN/zone `mgmt_seg` (management plane). Use the next avail
 
 | Service | Suggested IP | VMID | Notes |
 |---|---|---|---|
-| Authentik | `192.168.1.40` | 150 | |
+| Authentik | `192.168.1.46` | 150 | |
 | Headscale | `192.168.1.41` | 151 | |
 | step-ca | `192.168.1.42` | 152 | |
 | Reverse proxy | `192.168.1.43` | 153 | Edge — also needs a public IP or port-forward |
@@ -54,7 +54,7 @@ All new stacks go on VLAN/zone `mgmt_seg` (management plane). Use the next avail
 
 ```bash
 curl -s -H "Authorization: Token <NETBOX_TOKEN>" \
-  "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.40" | jq .count
+  "http://192.168.1.30/api/ipam/ip-addresses/?address=192.168.1.46" | jq .count
 # Should be 0 for each IP
 ```
 
@@ -75,7 +75,7 @@ Create `terraform/lxc/stacks/authentik-stack/stack.yaml`:
 ```yaml
 # Authentik identity provider — management zone
 hostname: authentik-stack
-ip_address: "192.168.1.40/24"
+ip_address: "192.168.1.46/24"
 gateway: "192.168.1.1"
 vmid: 150
 cores: 2
@@ -166,7 +166,7 @@ services:
 
 ### Initial configuration
 
-After deployment, access `http://192.168.1.40:9000/if/flow/initial-setup/` to set the initial admin password. Then:
+After deployment, access `http://192.168.1.46:9000/if/flow/initial-setup/` to set the initial admin password. Then:
 
 1. Create an admin user with the `AUTHENTIK_SUPERUSER_PASSWORD` value
 2. Create an API token — record in `.env` as `AUTHENTIK_SUPERUSER_API_TOKEN`
@@ -182,7 +182,7 @@ terragrunt apply
 source /home/steve/git/proxmox-homelab/.env
 
 ansible-playbook \
-  -i "192.168.1.40," \
+  -i "192.168.1.46," \
   terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
   --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
 ```
@@ -190,10 +190,10 @@ ansible-playbook \
 ### Validation
 
 ```bash
-curl -s http://192.168.1.40:9000/-/health/live/
+curl -s http://192.168.1.46:9000/-/health/live/
 # Expected: HTTP 204 (no body)
 
-curl -s http://192.168.1.40:9000/-/health/ready/
+curl -s http://192.168.1.46:9000/-/health/ready/
 # Expected: HTTP 204 (means DB and Redis connections healthy)
 ```
 
@@ -445,7 +445,7 @@ http:
   middlewares:
     authentik:
       forwardAuth:
-        address: "http://192.168.1.40:9000/outpost.goauthentik.io/auth/traefik"
+        address: "http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik"
         trustForwardHeader: true
         authResponseHeaders:
           - X-authentik-username
@@ -577,15 +577,15 @@ Update NetBox to record all new services, IPs, and their relationships.
 ## Acceptance criteria
 
 ### Authentik
-- [ ] LXC `authentik-stack` (VMID 150) running at `192.168.1.40`
-- [ ] `curl http://192.168.1.40:9000/-/health/ready/` returns HTTP 204
-- [ ] Admin UI accessible at `http://192.168.1.40:9000`
+- [ ] LXC `authentik-stack` (VMID 150) running at `192.168.1.46`
+- [ ] `curl http://192.168.1.46:9000/-/health/ready/` returns HTTP 204
+- [ ] Admin UI accessible at `http://192.168.1.46:9000`
 - [ ] Initial admin user created
 
 ### Headscale
 - [ ] LXC `headscale-stack` (VMID 151) running at `192.168.1.41`
 - [ ] `systemctl status headscale` is active
-- [ ] Workstation can join the tailnet and `tailscale ping 192.168.1.40` succeeds
+- [ ] Workstation can join the tailnet and `tailscale ping 192.168.1.46` succeeds
 
 ### step-ca
 - [ ] LXC `step-ca` (VMID 152) running at `192.168.1.42`

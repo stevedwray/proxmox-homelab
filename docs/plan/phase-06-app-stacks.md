@@ -344,7 +344,7 @@ jobs:
       matrix:
         host:
           - "192.168.1.35"   # apt-cacher-ng
-          - "192.168.1.40"   # Authentik
+          - "192.168.1.46"   # Authentik
           - "192.168.1.41"   # Headscale
           - "192.168.1.42"   # step-ca
           - "192.168.1.43"   # Traefik

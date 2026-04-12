@@ -102,11 +102,11 @@ CONTEXT:
     grafana/loki:<pin>
     grafana/promtail:<pin>
   Check Harbor UI for pre-pulled version tags from Phase 03b.
-- Authentik OIDC provider for Grafana must be created in Authentik UI at 192.168.1.40 BEFORE
+- Authentik OIDC provider for Grafana must be created in Authentik UI at 192.168.1.46 BEFORE
   running this playbook. Record the client secret as GRAFANA_OAUTH_CLIENT_SECRET in .env.
 
 STEP 1 — Pre-requisite: create Authentik OIDC provider for Grafana:
-  In Authentik UI (http://192.168.1.40:9000), admin → Applications → Providers → OAuth2/OIDC:
+  In Authentik UI (http://192.168.1.46:9000), admin → Applications → Providers → OAuth2/OIDC:
   - Name: Grafana
   - Redirect URI: http://192.168.1.44:3000/login/generic_oauth
   - Copy the client ID and secret to .env as GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET
@@ -135,8 +135,8 @@ STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-monito
   - victoriametrics: --storageDataPath=/storage --retentionPeriod=90d
   - grafana: with GF_SECURITY_ADMIN_PASSWORD, GF_AUTH_GENERIC_OAUTH_ENABLED=true,
              GF_AUTH_GENERIC_OAUTH_CLIENT_ID, GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET,
-             GF_AUTH_GENERIC_OAUTH_AUTH_URL=http://192.168.1.40:9000/application/o/authorize/
-             GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://192.168.1.40:9000/application/o/token/
+             GF_AUTH_GENERIC_OAUTH_AUTH_URL=http://192.168.1.46:9000/application/o/authorize/
+             GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://192.168.1.46:9000/application/o/token/
   - loki: with /loki data volume
   - promtail: scraping /var/log from host and configured to push to loki:3100
 

@@ -21,7 +21,7 @@ Phase 04 — Core Shared Services
 
 ## Objective
 
-LXC `headscale-stack` (VMID 151) is running at `192.168.1.41`, the `headscale` systemd service is active, and the workstation can join the tailnet and reach `192.168.1.40` (Authentik) via `tailscale ping`.
+LXC `headscale-stack` (VMID 151) is running at `192.168.1.41`, the `headscale` systemd service is active, and the workstation can join the tailnet and reach `192.168.1.46` (Authentik) via `tailscale ping`.
 
 ## Scope
 
@@ -64,7 +64,7 @@ LXC `headscale-stack` (VMID 151) is running at `192.168.1.41`, the `headscale` s
 - [ ] `systemctl status headscale` is `active (running)`
 - [ ] `headscale namespaces list` shows `homelab` namespace
 - [ ] Workstation can join with pre-auth key: `tailscale up --login-server http://192.168.1.41:8080 ...`
-- [ ] `tailscale ping 192.168.1.40` succeeds from workstation
+- [ ] `tailscale ping 192.168.1.46` succeeds from workstation
 - [ ] Branch `feat/headscale-stack` merged to `dev/pve-test`
 
 ## Session Prompt
@@ -124,7 +124,7 @@ STEP 7 — Create namespace and pre-auth key:
   # Join workstation: tailscale up --login-server http://192.168.1.41:8080 --authkey <key>
 
 STEP 8 — Verify VPN connectivity:
-  tailscale ping 192.168.1.40   # Should succeed if workstation joined
+  tailscale ping 192.168.1.46   # Should succeed if workstation joined
 
 STEP 9 — Commit and merge:
   git add terraform/lxc/stacks/headscale-stack/ terraform/lxc/ansible/playbooks/deploy-headscale.yml

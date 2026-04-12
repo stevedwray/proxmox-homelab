@@ -9,6 +9,36 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 <!-- Add observations that apply across phases here -->
 
+1. **NetBox should be set up earlier and kept current with a Terraform provider integration.**
+   NetBox is currently hosted on `pve` and is referenced during Phase 04 for IPAM checks,
+   but it is not deployed as a tracked stack on `pve-test` until later in the phase order.
+   This creates a gap where early phases must query production NetBox or skip IPAM
+   validation entirely. NetBox should be one of the first stacks brought up on any new
+   node — before CI runners, Harbor, or application stacks — so that IP allocations and
+   DNS records are recorded from the start.
+
+   Additionally, the `netbox-community/terraform-provider-netbox` Terraform provider
+   enables IaC-managed IPAM: IP addresses, prefixes, and device records can be
+   created/updated as part of the same Terraform run that creates an LXC. This removes
+   the manual step of updating NetBox after each deployment and keeps IPAM in sync with
+   actual state automatically.
+
+2. **NPM (Nginx Proxy Manager) should be deployed early and updated per service as the
+   project progresses.** NPM is the current front door for most internal services and
+   is treated as an end-of-phase concern, but it should be deployed in the first wave
+   alongside Portainer and NetBox on any new node. Proxy host entries for each service
+   should be added as that service is deployed rather than in a batch at the end of a
+   phase. This ensures each service is reachable by hostname immediately after deployment
+   and that later services (Harbor, Authentik, Traefik) can be validated through the same
+   access path that production will use.
+
+3. **When allocating an IP address, verify availability with a ping in addition to checking
+   IPAM.** NetBox records what was allocated but cannot detect addresses that are live on
+   the network but never registered. Before assigning any IP, run `ping -c 3 <ip>` from a
+   host on the same subnet; if the ping succeeds, the address is in use regardless of what
+   IPAM shows. Allocate a different address and flag the conflict in NetBox for
+   investigation. This applies to both manual and Terraform-driven allocations.
+
 ---
 
 ## Phase 00b — pve-test Management Bootstrap
@@ -36,6 +66,11 @@ these are reflections for future reference when revisiting decisions, patterns, 
    SDN isolation applies to application workloads but not to the management plane itself.
    Stricter access control for Portainer would need to come from Traefik + Authentik
    forward-auth (Phase 04), not from network segmentation.
+
+3. NetBox is hosted on `pve`, not `pve-test`. Any IPAM or allocation checks for Phase 04
+   must query the production NetBox instance at `192.168.1.30` even when the deploy target
+   is `pve-test`. Assuming NetBox is available locally on `pve-test` will cause false
+   failures during validation and can make an otherwise healthy setup look blocked.
 
 ---
 
@@ -155,7 +190,34 @@ these are reflections for future reference when revisiting decisions, patterns, 
    it and accepted `0 0 3 * * 0` instead. In other words, this Harbor build wants seconds
    as the first field. That detail should be carried forward anywhere GC scheduling is
    documented or automated.
+8. **Portainer agent and server versions must be kept in sync across all stacks.**
+   The portainer-agent in harbor-stack was deployed at v2.40.0 while the Portainer server
+   on pve-test was at v2.27.3, and pve's Portainer server was at v2.33.6. This caused two
+   compounding problems:
 
+   - **Protocol incompatibility**: agent v2.40.0 starts TLS from the first byte
+     (`use_tls=true`). Portainer server v2.27.3 sends a plain-HTTP handshake first, so
+     every connection attempt from pve-test's server fails with
+     `client sent an HTTP request to an HTTPS server`. The endpoint shows as Status 2
+     (down) in the UI despite the agent being fully running.
+   - **Cross-instance pairing lock**: pve's Portainer (v2.33.6) can complete the TLS
+     handshake with agent v2.40.0 and claims the agent. The agent then locks itself to
+     that server and rejects any subsequent connection from pve-test's server as
+     "already paired with another Portainer instance." Removing the endpoint from the
+     pve Portainer UI does not send an unpair signal to the agent; the lock persists
+     in the agent's in-memory state until the container is restarted.
+
+   **Fix**: upgrade pve-test's Portainer server to `portainer-ce:latest` (matching or
+   exceeding the agent version) *before* restarting the agent container. Restarting the
+   agent clears the in-memory pairing state; the first server that successfully completes
+   a TLS handshake re-claims it. If pve's older Portainer still has a registration for
+   harbor-stack, it can re-claim the agent before pve-test does. Remove the harbor-stack
+   endpoint from pve's Portainer first as a precaution.
+
+   **Going forward**: pin agent and server to the same major/minor version tag in all
+   `docker-compose.yml` files rather than using `latest` or mismatched explicit tags.
+   The portainer stack on pve-test (`/opt/portainer/docker-compose.yml` in VMID 120) and
+   the agent deployed with each stack should reference the same version string.
 ---
 
 ## Phase 03c — Artifact Proxy
@@ -167,6 +229,17 @@ these are reflections for future reference when revisiting decisions, patterns, 
 ## Phase 04 — Core Shared Services
 
 <!-- Observations from Authentik, Headscale, step-ca, Traefik, Monitoring deployments -->
+
+1. **Authentik must be placed in the correct SDN network zone.** Authentik acts as the
+   forward-auth provider for Traefik and as the SSO identity provider for internal apps.
+   Its LXC must be reachable from both Traefik (in whatever zone the reverse proxy sits)
+   and from the apps that delegate auth to it. Placing Authentik on `vmbr0` (flat LAN)
+   avoids zone-routing complexity during initial setup, but conflicts with the goal of
+   keeping the auth layer behind the SDN enforcement boundary. The intended placement is
+   the `mgmt_seg` zone with explicit allow rules from the `public-edge` zone (Traefik)
+   and any app zones that use forward-auth. Verify zone reachability before starting the
+   Authentik deployment and confirm that Traefik can reach both the Authentik server and
+   outpost endpoints before wiring up any protected routes.
 
 ---
 
@@ -212,11 +285,17 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 <!-- Observations about the AI-assisted workflow, Codex, Copilot, branching patterns, scan gates -->
 
+1. `jq` should be treated as an early bootstrap dependency for `pve-test`. Several setup and validation steps use it for NetBox and Harbor API checks, so the pve-test Ansible bootstrap should install it alongside the other base tooling rather than relying on it being present later in the workflow.
+
 ---
 
 ## Patterns and Conventions
 
 <!-- Observations about what stack patterns worked well, what was awkward, what to carry forward -->
+
+1. **Preferred IP allocation sequence: IPAM check → ping verify → allocate.**
+   See General observation 3 above. This sequence applies universally — Terraform modules,
+   Ansible tasks, and manual deployments should all follow it before committing an address.
 
 ---
 

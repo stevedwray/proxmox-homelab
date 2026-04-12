@@ -66,7 +66,7 @@ except where noted.
 
 | Service | IP | VMID |
 |---|---|---|
-| Authentik | `192.168.1.40` | 150 |
+| Authentik | `192.168.1.46` | 150 |
 | Headscale | `192.168.1.41` | 151 |
 | step-ca | `192.168.1.42` | 152 |
 | Reverse proxy (Traefik) | `192.168.1.43` | 153 |

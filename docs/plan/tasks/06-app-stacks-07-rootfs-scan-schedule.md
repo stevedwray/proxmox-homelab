@@ -38,7 +38,7 @@ A scheduled GitHub Actions workflow `rootfs-scan.yml` runs every Monday at 03:00
 ## Inputs
 
 - `docs/plan/phase-06-app-stacks.md` — Trivy rootfs scheduled scans section for the workflow YAML
-- All LXC IPs to scan (Phase 03c apt-cacher at 192.168.1.35, Phase 04 LXCs 192.168.1.40–44, Chainloop 192.168.1.45, Phase 06 LXCs 10.60.0.10, 10.60.0.20, 10.60.0.21, 10.61.0.10)
+- All LXC IPs to scan (Phase 03c apt-cacher at 192.168.1.35, Phase 04 LXCs 192.168.1.46, 192.168.1.41–44, Chainloop 192.168.1.45, Phase 06 LXCs 10.60.0.10, 10.60.0.20, 10.60.0.21, 10.61.0.10)
 - `terraform/lxc/ansible/roles/base-lxc/tasks/main.yml` — add Trivy install here
 
 ## Expected Outputs
@@ -81,7 +81,7 @@ CONTEXT:
 - Full spec: docs/plan/phase-06-app-stacks.md (section "Trivy rootfs scheduled scans")
 - LXCs to scan:
     192.168.1.35 (apt-cacher-ng)
-    192.168.1.40 (Authentik)
+    192.168.1.46 (Authentik)
     192.168.1.41 (Headscale)
     192.168.1.42 (step-ca)
     192.168.1.43 (Traefik)

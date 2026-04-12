@@ -14,7 +14,7 @@ Phase 04 — Core Shared Services
 
 ## Prerequisites
 
-- Task 04-01 complete — Authentik running at `192.168.1.40`
+- Task 04-01 complete — Authentik running at `192.168.1.46`
 - Task 04-03 complete — step-ca running at `192.168.1.42`, ACME directory responding
 - Phase 02 complete — pve-test at 32 GB
 - `192.168.1.43` available (verify in NetBox before deploying)
@@ -44,7 +44,7 @@ LXC `proxy-stack` (VMID 153) is running at `192.168.1.43`, the Traefik dashboard
 - `docs/plan/phase-04-core-shared-services.md` — Service 4 section
 - Traefik image: `192.168.1.10/dockerhub/library/traefik:<pin>`
 - step-ca ACME URL: `https://192.168.1.42/acme/acme/directory`
-- Authentik forward-auth address: `http://192.168.1.40:9000/outpost.goauthentik.io/auth/traefik`
+- Authentik forward-auth address: `http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik`
 
 ## Expected Outputs
 
@@ -86,7 +86,7 @@ CONTEXT:
 - Traefik image: 192.168.1.10/dockerhub/library/traefik:<version>
   (check Harbor proxy cache for latest stable pin)
 - ACME directory: https://192.168.1.42/acme/acme/directory (step-ca from task 04-03)
-- Authentik forward-auth: http://192.168.1.40:9000/outpost.goauthentik.io/auth/traefik
+- Authentik forward-auth: http://192.168.1.46:9000/outpost.goauthentik.io/auth/traefik
 - The root CA cert is at certs/homelab-root.crt (created in task 04-03)
 
 STEP 1 — Create branch:
@@ -133,7 +133,7 @@ STEP 6 — Validate TLS and redirect:
     https://192.168.1.43/dashboard/
   # Expect 200 or Authentik redirect
 
-STEP 7 — Configure Authentik outpost for forward-auth (in Authentik UI at 192.168.1.40:9000):
+STEP 7 — Configure Authentik outpost for forward-auth (in Authentik UI at 192.168.1.46:9000):
   - Create a "Proxy Provider" for the Traefik forward-auth URL
   - Create an outpost of type "Proxy" pointing at 192.168.1.43
   - The middleware is already configured in dynamic/authentik.yml
