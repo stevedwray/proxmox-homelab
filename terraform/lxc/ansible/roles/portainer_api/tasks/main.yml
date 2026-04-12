@@ -84,7 +84,10 @@
 
     - name: Display existing endpoint
       ansible.builtin.debug:
-        msg: "Agent '{{ portainer_api_endpoint_name }}' already registered (ID: {{ portainer_api_existing_endpoint_id }}) — URL updated to tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
+        msg: >-
+          Agent '{{ portainer_api_endpoint_name }}' already registered
+          (ID: {{ portainer_api_existing_endpoint_id }}) — URL updated to
+          tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}
       when: portainer_api_existing_endpoint_id is defined
       delegate_to: localhost
 

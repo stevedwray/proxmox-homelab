@@ -7,6 +7,7 @@
   become: true
   gather_facts: true
   roles:
+    - lxc_base
     - docker_base
 
 - name: Deploy Portainer CE server

@@ -1,0 +1,9 @@
+---
+- name: Configure apt to use apt-cacher-ng proxy
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/01proxy
+    content: |
+      Acquire::http::Proxy "http://192.168.1.35:3142";
+    owner: root
+    group: root
+    mode: "0644"

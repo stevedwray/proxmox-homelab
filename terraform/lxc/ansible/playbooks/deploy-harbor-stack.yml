@@ -10,6 +10,7 @@
   become: true
   gather_facts: true
   roles:
+    - lxc_base
     - docker_base
     - portainer_agent
 

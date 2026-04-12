@@ -23,10 +23,10 @@ locals {
   stack      = yamldecode(file(var.stack_yaml_path))
 
   # Derive stable absolute paths from the stack_yaml_path input.
-  stack_dir   = dirname(var.stack_yaml_path)      # …/stacks/<name>
-  lxc_root    = dirname(dirname(local.stack_dir)) # …/terraform/lxc
-  ansible_dir = "${local.lxc_root}/ansible"
-  ansible_cfg = "${local.ansible_dir}/ansible.cfg"
+  stack_dir          = dirname(var.stack_yaml_path)      # …/stacks/<name>
+  lxc_root           = dirname(dirname(local.stack_dir)) # …/terraform/lxc
+  ansible_dir        = "${local.lxc_root}/ansible"
+  ansible_cfg        = "${local.ansible_dir}/ansible.cfg"
   ansible_roles_path = "${local.ansible_dir}/roles"
 
   # Optional declarative network intent. Existing stacks continue to use the

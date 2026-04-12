@@ -10,6 +10,10 @@
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
     runner_labels: "self-hosted,pve-test,build,linux,x64"
     runner_name: "ci-runner-pve-test"
+    terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
+
+  roles:
+    - lxc_base
 
   pre_tasks:
     - name: Derive the GitHub repository slug for runner registration
@@ -56,6 +60,17 @@
       no_log: true
 
   tasks:
+    - name: Configure Terraform provider filesystem mirror
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/terraformrc.j2"
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - /root/.terraformrc
+        - "{{ runner_home }}/.terraformrc"
+
     - name: Install runner dependencies
       ansible.builtin.apt:
         name:

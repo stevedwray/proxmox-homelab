@@ -1,0 +1,48 @@
+---
+- name: Deploy apt-cacher-ng
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Install apt-cacher-ng
+      ansible.builtin.apt:
+        name: apt-cacher-ng
+        state: present
+        update_cache: true
+
+    - name: Ensure apt-cacher-ng is enabled and running
+      ansible.builtin.systemd:
+        name: apt-cacher-ng
+        enabled: true
+        state: started
+
+    - name: Configure PassThroughPattern to allow HTTPS passthrough
+      ansible.builtin.lineinfile:
+        path: /etc/apt-cacher-ng/acng.conf
+        regexp: "^#?PassThroughPattern:"
+        line: "PassThroughPattern: .*"
+      notify: Restart apt-cacher-ng
+
+    - name: Check whether UFW is active
+      ansible.builtin.command:
+        argv:
+          - ufw
+          - status
+      register: ufw_status
+      changed_when: false
+      failed_when: false
+
+    - name: Allow apt-cacher-ng through UFW
+      ansible.builtin.command:
+        argv:
+          - ufw
+          - allow
+          - "3142/tcp"
+      when: "ufw_status.stdout is search('Status: active')"
+
+  handlers:
+    - name: Restart apt-cacher-ng
+      ansible.builtin.systemd:
+        name: apt-cacher-ng
+        state: restarted

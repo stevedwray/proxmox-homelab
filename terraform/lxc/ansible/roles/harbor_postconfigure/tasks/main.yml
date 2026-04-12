@@ -70,7 +70,11 @@
   ansible.builtin.debug:
     msg: >-
       Docker Hub proxy endpoint '{{ harbor_postconfigure_dockerhub_endpoint_name }}'
-      {{ 'created (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' if harbor_postconfigure_endpoint_result is not skipped else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' }}
+      {{
+        'created (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
+        if harbor_postconfigure_endpoint_result is not skipped
+        else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
+      }}
   delegate_to: localhost
 
 # -----------------------------------------------------------------------

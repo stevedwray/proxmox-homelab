@@ -60,7 +60,7 @@ except where noted.
 | NetBox (IPAM) | `192.168.1.30` | 119 | pve | existing |
 | Harbor (registry) | `192.168.1.10` | 121 | pve | existing |
 | ci-runner-01 | `10.57.0.63` | 141 | pve-test | 01 |
-| apt-cacher-ng | `192.168.1.35` | 143 | pve-test → pve | 03c |
+| apt-cacher-ng | `192.168.1.35` | 142 | pve-test → pve | 03c |
 
 ### Core shared services (Phase 04)
 

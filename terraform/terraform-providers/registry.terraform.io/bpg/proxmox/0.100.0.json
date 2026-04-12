@@ -1,0 +1,10 @@
+{
+  "archives": {
+    "linux_amd64": {
+      "hashes": [
+        "h1:ubWt5DGEISEVYd1xWrNBS6BmNHOj5nlUcBqxd0Fo2Dg="
+      ],
+      "url": "terraform-provider-proxmox_0.100.0_linux_amd64.zip"
+    }
+  }
+}
