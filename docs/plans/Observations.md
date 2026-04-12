@@ -280,6 +280,33 @@ these are reflections for future reference when revisiting decisions, patterns, 
    external scanner via `POST /api/v2.0/scanners` after setting
    `harbor_installer_with_trivy: false`.
 
+2. **Chainloop has no Docker Compose self-hosting path — Helm on Kubernetes is the only
+   supported option.** The phase-05 plan documented a Docker Compose deployment for the
+   Chainloop server, but this does not exist upstream. The Chainloop repository's entire
+   self-hosting surface is the `oci://ghcr.io/chainloop-dev/charts/chainloop` Helm chart.
+
+   Two real images exist (`controlplane` and `artifact-cas`) but they require PostgreSQL,
+   a Vault instance (or cloud secrets backend), an OIDC provider, and an ECDSA keypair —
+   all wired together by Helm init jobs and hooks. There is no official compose bundle
+   and no evaluated extraction of those manifests into compose form. Reverse-engineering
+   a compose stack from `helm template` output is possible but produces an unsupported,
+   unpatchable result that carries significant operational risk.
+
+   The image reference used in the repo (`ghcr/chainloop-dev/chainloop:v1.58.0`) was a
+   placeholder that does not exist in any registry — it is not a valid GHCR path.
+
+   **Viable paths for Phase 05 task 05-04:**
+   - **Chainloop Cloud free tier (recommended)**: register at `chainloop.dev`, obtain a
+     `CHAINLOOP_TOKEN`, point the CLI at the SaaS control plane. No LXC or Kubernetes
+     required. Meets all Phase 05 acceptance criteria (CLI on ci-runner-01, contract
+     defined, gated CI job, token stored as Actions secret).
+   - **K3s in LXC 155 + Helm dev mode**: install K3s inside the existing LXC, then
+     `helm install chainloop oci://ghcr.io/chainloop-dev/charts/chainloop --set development=true`.
+     Dev mode bundles PostgreSQL, Vault (in-memory), and Dex OIDC. LXC 155 at 2 cores /
+     2 GB RAM is undersized; needs at minimum 4 GB to be viable.
+   - **Defer**: keep LXC 155 paused; complete the rest of Phase 05 (Trivy, Syft, Cosign)
+     and revisit Chainloop when a Kubernetes layer exists elsewhere in the lab.
+
 ---
 
 ## Phase 06 — Application Stack Migration
