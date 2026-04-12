@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## GitHub Issue
 
@@ -21,6 +21,8 @@ Phase 03 — Code Quality and Bug Fixes
 ## Objective
 
 `populate.py` sets the MikroTik device's `primary_ip4` to `192.168.1.1` (the LAN IP) instead of the WAN IP after running, and issue #48 is closed.
+
+This task is already reflected in the codebase and issue #48 has been closed.
 
 ## Scope
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## GitHub Issue
 
@@ -20,6 +20,8 @@ Phase 03 — Code Quality and Bug Fixes
 ## Objective
 
 The intentional SSL certificate verification disable in `proxmox_client.py` is explained by an inline comment, the SonarCloud findings (`python:S5527`, `python:S4423`, `python:S4830`) are acknowledged, and issue #35 is closed.
+
+This task is already reflected in the codebase and issue #35 has been closed.
 
 ## Scope
 

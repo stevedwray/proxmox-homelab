@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## GitHub Issue
 
@@ -21,6 +21,8 @@ Phase 03 — Code Quality and Bug Fixes
 ## Objective
 
 `populate.py` no longer registers `gluetun-6881` twice; running it against a clean NetBox produces exactly one service entry per (vm_id, name, port, protocol) tuple, and issue #49 is closed.
+
+This task is already reflected in the codebase and issue #49 has been closed.
 
 ## Scope
 
