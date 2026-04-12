@@ -57,6 +57,7 @@ PROXMOX_PASSWORD="${PROXMOX_PASSWORD:-}"
 SSH_USER="${SSH_USER:-root}"
 AUTOMATION_USER="automation"
 SSH_OPTS="-o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no"
+SEPARATOR="=============================================="
 
 # Test function wrapper
 run_check() {
@@ -234,9 +235,9 @@ generate_remediation() {
 # Generate summary report
 generate_report() {
     echo
-    echo "=============================================="
+    echo "$SEPARATOR"
     echo "       PROXMOX SERVER STATUS REPORT"
-    echo "=============================================="
+    echo "$SEPARATOR"
     echo
     echo "Target Server: $PROXMOX_HOST"
     echo "Total Checks: $CHECKS_TOTAL"
@@ -257,15 +258,15 @@ generate_report() {
         return 1
     fi
 
-    echo "=============================================="
+    echo "$SEPARATOR"
     return 0
 }
 
 # Main execution
 main() {
-    echo "=============================================="
+    echo "$SEPARATOR"
     echo "      PROXMOX SERVER STATUS VALIDATION"
-    echo "=============================================="
+    echo "$SEPARATOR"
     echo
     echo "Checking Proxmox server: $PROXMOX_HOST"
     echo
@@ -309,11 +310,15 @@ case "${1:-}" in
         ;;
     --quick|-q)
         # Override get_system_info to do nothing
-        get_system_info() { :; }
+        get_system_info() {
+            return 0
+        }
         ;;
     --no-api)
         # Override test_api_connectivity to do nothing
-        test_api_connectivity() { :; }
+        test_api_connectivity() {
+            return 0
+        }
         ;;
     *)
         echo "Unknown option: ${1}" >&2
