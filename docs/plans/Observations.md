@@ -241,6 +241,13 @@ these are reflections for future reference when revisiting decisions, patterns, 
    Authentik deployment and confirm that Traefik can reach both the Authentik server and
    outpost endpoints before wiring up any protected routes.
 
+2. **Headscale was dropped from Phase 04.** Remote access to the homelab is never needed
+   — the lab is only managed from inside the home network. The only outgoing VPN in use
+   is gluetun, which provides traffic privacy for specific containers and is not an admin
+   access path. A self-hosted Tailscale control plane adds complexity with no benefit in
+   this setup. If remote admin access is ever required in the future, options in ascending
+   complexity are: router WireGuard peer, managed Tailscale free tier, then Headscale.
+
 ---
 
 ## Phase 05 — Supply Chain Security

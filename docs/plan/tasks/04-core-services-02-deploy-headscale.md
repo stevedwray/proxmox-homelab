@@ -2,7 +2,13 @@
 
 ## Status
 
-PENDING
+CANCELLED
+
+## Reason
+
+Headscale is not needed. The homelab is never managed from outside the home network, and the only outgoing VPN in use is gluetun (for traffic privacy on specific containers, not for admin access). There is no requirement for a mesh VPN or self-hosted Tailscale control plane.
+
+Step-ca has been renumbered to Service 2 in phase-04-core-shared-services.md.
 
 ## GitHub Issue
 
