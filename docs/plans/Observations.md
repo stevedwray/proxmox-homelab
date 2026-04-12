@@ -143,6 +143,19 @@ these are reflections for future reference when revisiting decisions, patterns, 
    first container stacks, so future Harbor and application validation can happen against
    the test environment directly instead of depending on the production NPM bridge.
 
+6. **Harbor scan summaries lag behind image pulls and may need an explicit scan trigger.**
+   After a `docker pull` through the proxy cache, `scan_overview` can stay `null` for a
+   while even though the artifact is already cached. In practice, the cleanest validation
+   path was to trigger the artifact scan endpoint explicitly and then poll the artifact
+   list until the Trivy summary appeared. The repository path in the API call also needs
+   double-encoding for nested image names such as `goauthentik%2Fserver`.
+
+7. **Harbor’s GC schedule API on pve-test expects a 6-field cron string.**
+   The task docs originally showed the 5-field cron `0 3 * * 0`, but the live API rejected
+   it and accepted `0 0 3 * * 0` instead. In other words, this Harbor build wants seconds
+   as the first field. That detail should be carried forward anywhere GC scheduling is
+   documented or automated.
+
 ---
 
 ## Phase 03c — Artifact Proxy
