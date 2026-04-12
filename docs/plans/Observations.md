@@ -133,6 +133,16 @@ these are reflections for future reference when revisiting decisions, patterns, 
    step and a workspace safety check to every harbor-stack task session prompt, matching
    the pattern used in tasks 03b-01 and 03b-02.
 
+5. **NPM on pve is currently the safest Harbor validation path for shared-host work.**
+   While pve-test is the active rebuild target, `harbor.gibbsgreatly.xyz` can already be
+   used through the existing NPM instance on pve as a temporary front door to Harbor at
+   `192.168.1.10`. This is useful for validating robot logins and other registry-facing
+   checks without touching the pve-test Harbor daemon/client trust configuration.
+
+   The next development/testing round should bring up NPM early on pve-test as one of the
+   first container stacks, so future Harbor and application validation can happen against
+   the test environment directly instead of depending on the production NPM bridge.
+
 ---
 
 ## Phase 03c — Artifact Proxy
@@ -174,4 +184,3 @@ these are reflections for future reference when revisiting decisions, patterns, 
 ## Things to Revisit
 
 <!-- Decisions made under time pressure that deserve a second look later -->
-
