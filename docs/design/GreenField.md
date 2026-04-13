@@ -38,6 +38,27 @@ My placement rule would be:
 
 That is a design recommendation rather than a vendor requirement, but it lines up with the trust and blast-radius differences between those workloads.
 
+## 1a) Automation layers
+
+The implementation is split across three automation layers, and the design should treat
+all three as first-class parts of the platform:
+
+* **Host bootstrap** — Proxmox host preparation, package repositories, Terraform API user/token setup, firewall backend capability, storage baseline, and template creation. In this repository this currently lives under `ansible/00-initial-setup` and `ansible/01-base-system`.
+* **Infrastructure provisioning** — network intent, LXC creation, and shared Ansible-driven provisioning. In this repository this lives under `terraform/lxc` and `terraform/lxc/ansible`.
+* **Service and application deployment** — phased deployment of shared services, supply-chain controls, and application migrations. This is driven by `docs/plan/`.
+
+For the current pve-test rebuild, host bootstrap is not “background tooling” or an
+operator-only concern. It is part of the planned platform implementation and must be kept
+aligned with the current pve-test model:
+
+* bare-metal `pve-test`
+* Proxmox SDN VLAN zones on a VLAN-aware `vmbr0`
+* MikroTik-owned L3 gateways
+* `infrastructure-containers` as the active target storage pool for LXC stacks unless a phase explicitly introduces a new storage model
+
+Any future development of the host/bootstrap Ansible should therefore be reflected in the
+design and phased plan, not treated as repo-local implementation detail.
+
 ## 2) Network design
 
 Build the network first. A secure homelab is mostly a segmentation exercise.

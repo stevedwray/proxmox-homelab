@@ -12,6 +12,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 
 | Phase | Document | Status | Gate |
 |---|---|---|---|
+| 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | Before Phase 00b | Phase 00 complete |
 | 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Before Phase 03b** | Phase 00 complete |
 | 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00 | Phase 00 complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Complete** | — |
@@ -44,6 +45,18 @@ The pve-test VM that previously ran inside `pve` has been retired. pve (producti
 - Treat `docs/design/` as the target architecture and rationale.
 - Treat each `docs/plan/phase-*.md` file as the execution plan for a slice of work.
 - Treat `docs/plan/tasks/*.md` as the detailed implementation prompts and checklists for individual tasks.
+
+## Host Bootstrap Dependencies
+
+The active plan now includes Proxmox host/bootstrap work as a planned part of the build,
+not just as background repo tooling.
+
+See [phase-00a-proxmox-host-bootstrap.md](./phase-00a-proxmox-host-bootstrap.md) for the
+current classification of:
+
+- host bootstrap playbooks that are part of the active pve-test path
+- host/bootstrap playbooks that need redesign for the current plan
+- storage/bootstrap playbooks that should be treated as historical or alternate-path work
 
 ## Repository conventions
 
