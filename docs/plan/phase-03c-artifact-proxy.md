@@ -9,6 +9,10 @@ Reduce bandwidth usage and build latency by caching Debian apt packages and Terr
 
 This phase replaces the need for Nexus or any similar heavy artifact manager. Python/pip caching is handled by GitHub Actions `actions/cache@v4` (cache key on `requirements.txt`), which is sufficient for this lab.
 
+## Live task docs
+
+- [03c-artifact-proxy-01 — Deploy apt-cacher-ng stack on infra_seg](tasks/03c-artifact-proxy-01-deploy-apt-cacher.md)
+
 ## Prerequisites
 
 - Phase 00 (housekeeping) complete — repo is clean

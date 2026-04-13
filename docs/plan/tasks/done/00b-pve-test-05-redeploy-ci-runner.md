@@ -1,5 +1,9 @@
 # 00b-pve-test-05 — Redeploy ci-runner-01 and verify Portainer isolation
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Active docs under `docs/design/` and `docs/plan/` take precedence.
+
 ## Status
 
 PENDING

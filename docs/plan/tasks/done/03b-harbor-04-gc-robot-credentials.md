@@ -1,5 +1,9 @@
 # 03b-harbor-04 — GC schedule, robot credentials in .env.template, GitHub secrets
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Active docs under `docs/design/` and `docs/plan/` take precedence.
+
 ## Status
 
 PENDING

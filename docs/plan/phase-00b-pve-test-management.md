@@ -30,6 +30,10 @@ override accordingly.
 - Phase 03b (Harbor) — once Harbor is deployed, Portainer image updates should go through Harbor
 - Phase 04 (core shared services) — all Phase 04 stacks on pve-test register here
 
+## Live task docs
+
+- [00b-pve-test-01 — Deploy Portainer bootstrap stack on bare-metal pve-test](tasks/00b-pve-test-01-deploy-portainer.md)
+
 ---
 
 ## IP / VMID allocation
