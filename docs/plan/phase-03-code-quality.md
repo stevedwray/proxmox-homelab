@@ -293,6 +293,36 @@ gh issue close 28 --comment "Refactored. discover.py complexity 70→<15, proxmo
 
 ---
 
+---
+
+## Batch 6 — Fix stale Harbor IP in CI (task 03-06)
+
+One-line fix in `validate.yml`: update the `harbor-image-policy` error message from
+`192.168.1.10` (old vmbr0 address) to `10.57.3.10` (current infra_seg address).
+
+See [docs/plan/tasks/03-code-quality-06-fix-harbor-ip-in-ci.md](tasks/03-code-quality-06-fix-harbor-ip-in-ci.md).
+
+---
+
+## Batch 7 — Add ShellCheck to CI (task 03-07)
+
+Add a `shellcheck` job to `validate.yml` that lints all `.sh` files on every push/PR.
+Excludes `_legacy/` and `.terragrunt-cache/`. Uses `ubuntu-latest` with `apt-get install shellcheck`.
+
+See [docs/plan/tasks/03-code-quality-07-shellcheck-ci.md](tasks/03-code-quality-07-shellcheck-ci.md).
+
+---
+
+## Batch 8 — Integrate SonarCloud into CI (task 03-08)
+
+Add a `sonarcloud` job to `security-scan.yml` using `SonarSource/sonarcloud-github-action`.
+Remove hardcoded `sonar.branch.name=main` from `sonar-project.properties`. Requires
+`SONAR_TOKEN` repository secret to be set before the job will pass.
+
+See [docs/plan/tasks/03-code-quality-08-sonarcloud-ci.md](tasks/03-code-quality-08-sonarcloud-ci.md).
+
+---
+
 ## Deferred issues (do not action in this phase)
 
 - **#25** (`mikrotik_client.py` nested ternary) — cosmetic only, no functional impact. Fix opportunistically if touching that file.
@@ -303,6 +333,9 @@ gh issue close 28 --comment "Refactored. discover.py complexity 70→<15, proxmo
 
 ## Acceptance criteria
 
+- [ ] Harbor IP `192.168.1.10` removed from CI config (task 03-06)
+- [ ] `shellcheck` job present in `validate.yml` and passing (task 03-07)
+- [ ] SonarCloud job present in `security-scan.yml` and passing (task 03-08)
 - [ ] `shellcheck` passes on all three modified shell scripts (or no new failures)
 - [ ] `scripts/check-proxmox-status.sh`, `scripts/setup-dev-env.sh`, `sync-secrets.sh` have explicit returns, named locals, and extracted string constants
 - [ ] `proxmox_client.py` has a suppression comment explaining intentional SSL disable
