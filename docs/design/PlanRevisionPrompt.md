@@ -6,12 +6,12 @@ You are working in the proxmox-homelab repository at `/home/steve/git/proxmox-ho
 
 The plan revision is **complete**. All nine changes were executed and merged to
 `dev/pve-test` in commit `03f40d3` on 2026-04-13. See
-`docs/plans/PlanRevisionBrief.md` for the full record of what was done and the
+`docs/design/PlanRevisionBrief.md` for the full record of what was done and the
 decisions made.
 
 ## One remaining action
 
-Close three GitHub issues. Read `docs/plans/PlanRevisionBrief.md` (Outstanding action
+Close three GitHub issues. Read `docs/design/PlanRevisionBrief.md` (Outstanding action
 section) for the exact commands, confirm them with the user, then run them.
 
 ```bash

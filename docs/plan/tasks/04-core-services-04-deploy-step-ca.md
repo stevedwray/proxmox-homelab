@@ -24,11 +24,11 @@ Phase 04 — Core Shared Services
 | Field | Value |
 |---|---|
 | SDN zone | `mgmt_seg` |
-| Proxmox VNet | `tvmgmt` (`10.57.1.0/24`, gw `10.57.1.1`, SNAT enabled) |
+| Proxmox VNet | `tvmgmt` (VLAN 20, `10.57.1.0/24`, gw `10.57.1.1` on MikroTik) |
 | Container IP | `10.57.1.11` |
 | IP selection | Second allocatable host in `mgmt_seg` after Authentik (`10.57.1.10`). Verified available with ping and NetBox check before deploying. |
-| Cross-zone routing | Traefik (`10.57.2.10`) reaches step-ca ACME directory at `https://10.57.1.11/acme/acme/directory`. Both subnets routed via MikroTik static routes to `192.168.1.40`. No inbound from LAN required — step-ca is internal-only. |
-| Firewall intent | Inbound: port 443 from `edge_seg` (Traefik) and managed hosts that need CA services. Outbound: SNAT to LAN for Harbor and apt-cacher. No public exposure. |
+| Cross-zone routing | Traefik (`10.57.2.10`) reaches step-ca ACME directory at `https://10.57.1.11/acme/acme/directory`. MikroTik routes between VLAN 30 (edge_seg) and VLAN 20 (mgmt_seg). step-ca httpChallenge callback reaches Traefik at `10.57.2.10:80` via MikroTik VLAN routing. No inbound from LAN required — step-ca is internal-only. |
+| Firewall intent | Inbound: port 443 from `edge_seg` (Traefik) and managed hosts that need CA services. Outbound: ports 80/443 to Harbor (`10.57.3.10`) and apt-cacher (`10.57.3.11`) via MikroTik routing to infra_seg. No public exposure. |
 
 ## Objective
 
@@ -127,12 +127,12 @@ STEP 0b — Bring up harbor-stack:
   source .env && source .env.pve-test
   cd terraform/lxc/stacks/harbor-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+  ansible-playbook -i "10.57.3.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
 
 STEP 0c — Bring up apt-cacher-stack:
   cd terraform/lxc/stacks/apt-cacher-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.35," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
+  ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
 
 STEP 0d — Bring up authentik-stack:
   cd terraform/lxc/stacks/authentik-stack && terragrunt apply
@@ -162,7 +162,7 @@ STEP 2 — Check IP availability:
   # Must timeout (no response)
   source .env
   curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.1.11" | jq .count
+    "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.1.11" | jq .count
   # Must be 0
 
 STEP 3 — Create stack files:

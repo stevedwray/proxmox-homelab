@@ -230,7 +230,58 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 <!-- Observations from Authentik, Headscale, step-ca, Traefik, Monitoring deployments -->
 
-1. **Authentik must be placed in the correct SDN network zone.** Authentik acts as the
+1. **SDN zone type changed from Simple to VLAN; MikroTik is now the L3 gateway.**
+   The original design used Proxmox SDN Simple zones, where the Proxmox host itself
+   held the gateway IPs and performed SNAT. This was replaced with VLAN zones, where
+   the MikroTik owns all gateway IPs (10.57.0.1–10.57.3.1) and routes all inter-zone
+   and internet-bound traffic. Proxmox is now a pure L2 switch.
+
+   Consequences:
+   - No static routes are needed on the MikroTik for inter-zone traffic — all VLAN
+     subnets are directly connected.
+   - `snat: false` on all SDN zones is mandatory. SNAT at Proxmox would double-NAT
+     traffic (MikroTik also SNATs at WAN) and break LAN → container ingress.
+   - MikroTik firewall is now the enforcement point for all cross-zone policy. The
+     Proxmox VNet firewall controls inbound per-container rules only.
+   - pve-test is a bare-metal laptop connected via a trunk port to the MikroTik. It
+     is NOT a VM inside pve. All 16 GB RAM is available to pve-test containers.
+   - The Terraform SDN provisioner (`configure-network-sdn-vnet.yml`) handles Simple
+     zones only. VLAN zones must be created manually via pvesh until the playbook is
+     updated. This is documented as a known code gap.
+
+2. **Harbor, apt-cacher-ng, and NetBox moved to a dedicated `infra_seg` zone.**
+   Previously, Harbor and apt-cacher ran on `vmbr0` (flat LAN) at `192.168.1.10` and
+   `192.168.1.35`. They are now placed in `infra_seg` (VLAN 40, `10.57.3.0/24`):
+   - Harbor: `10.57.3.10`
+   - apt-cacher-ng: `10.57.3.11`
+   - NetBox: `10.57.3.12`
+
+   All zones have a cross-zone allow rule to infra_seg (tcp/80,443,3142), so every
+   container can reach Harbor and apt-cacher without vmbr0 bridging. The
+   `all_zones → infra_seg` policy is documented in `pve-test.yaml`.
+
+3. **Harbor bootstrap: first pass pulls from Docker Hub directly.**
+   On a fresh pve-test pass, Harbor's own container images must be pulled from Docker
+   Hub because Harbor is not yet running. Once Harbor is up, all subsequent containers
+   in all zones pull from `10.57.3.10`. This chicken-and-egg dependency is expected and
+   documented in the Phase 04 bring-up sequence in `docs/plan/README.md`. It is NOT a
+   misconfiguration — Harbor pulls from Docker Hub on first pass, then becomes the
+   registry for everything else.
+
+4. **Let's Encrypt staging CA for all dev passes.**
+   All Traefik deployments on pve-test use the LE staging CA
+   (`https://acme-staging-v02.api.letsencrypt.org/directory`) to avoid burning the
+   production rate limit during iterative development. The staging cert issuer shows
+   `(STAGING) Let's Encrypt` in browsers — this is expected and correct for dev passes.
+   Switch to the production CA only when promoting to `pve` (production).
+
+5. **step-ca ACME challenge is httpChallenge, not tlsChallenge.**
+   step-ca connects back to Traefik on port 80 to verify domain ownership. This requires
+   an explicit MikroTik policy: `mgmt_seg → edge_seg tcp/80`. Using tlsChallenge would
+   require step-ca to reach Traefik on port 443 with a valid cert — circular dependency
+   during initial PKI bootstrapping. httpChallenge is simpler and avoids this.
+
+6. **Authentik must be placed in the correct SDN network zone.** Authentik acts as the
    forward-auth provider for Traefik and as the SSO identity provider for internal apps.
    Its LXC must be reachable from both Traefik (in whatever zone the reverse proxy sits)
    and from the apps that delegate auth to it. Placing Authentik on `vmbr0` (flat LAN)
@@ -241,7 +292,7 @@ these are reflections for future reference when revisiting decisions, patterns, 
    Authentik deployment and confirm that Traefik can reach both the Authentik server and
    outpost endpoints before wiring up any protected routes.
 
-2. **Headscale was dropped from Phase 04.** Remote access to the homelab is never needed
+7. **Headscale was dropped from Phase 04.** Remote access to the homelab is never needed
    — the lab is only managed from inside the home network. The only outgoing VPN in use
    is gluetun, which provides traffic privacy for specific containers and is not an admin
    access path. A self-hosted Tailscale control plane adds complexity with no benefit in

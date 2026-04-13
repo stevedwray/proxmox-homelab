@@ -26,11 +26,11 @@ Phase 04 — Core Shared Services
 | Field | Value |
 |---|---|
 | SDN zone | `mgmt_seg` |
-| Proxmox VNet | `tvmgmt` (`10.57.1.0/24`, gw `10.57.1.1`, SNAT enabled) |
+| Proxmox VNet | `tvmgmt` (VLAN 20, `10.57.1.0/24`, gw `10.57.1.1` on MikroTik) |
 | Container IP | `10.57.1.12` |
 | IP selection | Third allocatable host in `mgmt_seg` after Authentik (`10.57.1.10`) and step-ca (`10.57.1.11`). Verified available with ping and NetBox check before deploying. |
-| Cross-zone routing | Traefik (`10.57.2.10`) proxies Grafana dashboards from `edge_seg` to `mgmt_seg` (`10.57.1.12:3000`). No inbound from LAN required — access is via Traefik only. |
-| Firewall intent | Inbound: port 3000 (Grafana), 8428 (VictoriaMetrics), 3100 (Loki) from `edge_seg` (Traefik) and `build_seg` (ci-runner-01 log shipping). Outbound: SNAT to LAN for Harbor and apt-cacher. Promtail scrapes logs from the local LXC only. |
+| Cross-zone routing | Traefik (`10.57.2.10`) proxies Grafana dashboards from `edge_seg` to `mgmt_seg` (`10.57.1.12:3000`). MikroTik routes between VLAN 30 (edge_seg) and VLAN 20 (mgmt_seg). No inbound from LAN required — access is via Traefik only. |
+| Firewall intent | Inbound: port 3000 (Grafana), 8428 (VictoriaMetrics), 3100 (Loki) from `edge_seg` (Traefik) and `build_seg` (ci-runner-01 log shipping). Outbound: ports 80/443 to Harbor (`10.57.3.10`) and apt-cacher (`10.57.3.11`) via MikroTik routing to infra_seg. Promtail scrapes logs from the local LXC only. |
 
 ## Objective
 
@@ -55,10 +55,10 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 
 - `docs/plan/phase-04-core-shared-services.md` — Service 4 section
 - Images (via Harbor proxy cache):
-  - `192.168.1.10/dockerhub/victoriametrics/victoria-metrics:<pin>`
-  - `192.168.1.10/dockerhub/grafana/grafana-oss:<pin>`
-  - `192.168.1.10/dockerhub/grafana/loki:<pin>`
-  - `192.168.1.10/dockerhub/grafana/promtail:<pin>`
+  - `10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<pin>`
+  - `10.57.3.10/dockerhub/grafana/grafana-oss:<pin>`
+  - `10.57.3.10/dockerhub/grafana/loki:<pin>`
+  - `10.57.3.10/dockerhub/grafana/promtail:<pin>`
 - Authentik OIDC client secret (created in Authentik UI after task 04-01)
 
 ## Expected Outputs
@@ -71,7 +71,7 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 
 ## Constraints and Conventions
 
-- `stack.yaml` values: VMID 154, IP `10.57.1.12/24`, gateway `10.57.1.1`, `network: zone: mgmt_seg`, `cores: 2`, `memory: 3072`, `docker_storage_size: "50G"`
+- `stack.yaml` values: VMID 154, IP `10.57.1.12/24`, gateway `10.57.1.1`, `network: zone: mgmt_seg`, `cores: 2`, `memory: 1536`, `docker_storage_size: "50G"`
 - All images via Harbor proxy — never direct pulls
 - VictoriaMetrics retention period: `90d`
 - Grafana OIDC integration with Authentik (generic OAuth) — `GF_AUTH_GENERIC_OAUTH_ENABLED: "true"`
@@ -107,12 +107,12 @@ at 10.57.1.12 in mgmt_seg. This is the most resource-heavy stack — pve-test mu
 CONTEXT:
 - Reference for stack.yaml format: terraform/lxc/stacks/harbor-stack/stack.yaml
 - Full spec: docs/plan/phase-04-core-shared-services.md (Service 4 section)
-- VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, network zone mgmt_seg, cores 2, memory 3072, docker_storage_size 50G
-- Images (all via Harbor proxy cache at 192.168.1.10):
-    victoriametrics/victoria-metrics:<pin>
-    grafana/grafana-oss:<pin>
-    grafana/loki:<pin>
-    grafana/promtail:<pin>
+- VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, network zone mgmt_seg, cores 2, memory 1536, docker_storage_size 50G
+- Images (all via Harbor proxy cache at 10.57.3.10):
+    10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<pin>
+    10.57.3.10/dockerhub/grafana/grafana-oss:<pin>
+    10.57.3.10/dockerhub/grafana/loki:<pin>
+    10.57.3.10/dockerhub/grafana/promtail:<pin>
   Check Harbor UI for pre-pulled version tags from Phase 03b.
 - Authentik OIDC provider for Grafana must be created in Authentik UI at 10.57.1.10:9000 BEFORE
   running this playbook. Record the client secret as GRAFANA_OAUTH_CLIENT_SECRET in .env.
@@ -127,12 +127,12 @@ STEP 0b — Bring up harbor-stack:
   source .env && source .env.pve-test
   cd terraform/lxc/stacks/harbor-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+  ansible-playbook -i "10.57.3.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
 
 STEP 0c — Bring up apt-cacher-stack:
   cd terraform/lxc/stacks/apt-cacher-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.35," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
+  ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
 
 STEP 0d — Bring up authentik-stack:
   cd terraform/lxc/stacks/authentik-stack && terragrunt apply
@@ -177,13 +177,13 @@ STEP 3 — Check IP availability:
   # Must timeout (no response)
   source .env
   curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.1.12" | jq .count
+    "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.1.12" | jq .count
   # Should be 0
 
 STEP 4 — Create stack files:
   - terraform/lxc/stacks/monitoring-stack/stack.yaml
     (VMID 154, ip_address 10.57.1.12/24, gateway 10.57.1.1, network: {zone: mgmt_seg},
-     cores 2, memory 3072, docker_storage_size 50G)
+     cores 2, memory 1536, docker_storage_size 50G)
   - terraform/lxc/stacks/monitoring-stack/terragrunt.hcl (copy from harbor-stack verbatim)
 
 STEP 5 — Add secrets to .env.template and .env:

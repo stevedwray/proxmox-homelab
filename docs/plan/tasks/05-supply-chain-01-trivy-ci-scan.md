@@ -15,13 +15,13 @@ Phase 05 — Supply Chain Security
 ## Prerequisites
 
 - Phase 01 complete — ci-runner-01 online at `10.57.0.63`, registered under `[self-hosted, pve-test, build]`
-- Phase 03b complete — Harbor running at `192.168.1.10`, Trivy scanner enabled, `HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` already stored as GitHub Actions secrets
+- Phase 03b complete — Harbor running at `10.57.3.10` in `infra_seg`, Trivy scanner enabled, `HARBOR_ROBOT_USER` and `HARBOR_ROBOT_PASSWORD` already stored as GitHub Actions secrets
 - Phase 04 complete — full Phase 04 stack running (Authentik, Traefik, step-ca, Monitoring)
 - Trivy is already present on the runner (installed in the `sast-scan` job setup); the difference here is adding an image-specific scan job
 
 ## Network placement
 
-This task does not deploy a new container. All work runs on ci-runner-01 (VMID 141, `10.57.0.63`) in `build_seg` (`10.57.0.0/24`). No new network configuration is required. ci-runner-01 reaches Harbor (`192.168.1.10`) via SNAT on the `build_seg` gateway.
+This task does not deploy a new container. All work runs on ci-runner-01 (VMID 141, `10.57.0.63`) in `build_seg` (`10.57.0.0/24`). No new network configuration is required. ci-runner-01 reaches Harbor (`10.57.3.10`) via MikroTik routing between `build_seg` (VLAN 10) and `infra_seg` (VLAN 40).
 
 ## Objective
 
@@ -31,7 +31,7 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 
 - Add `trivy-image-scan` job to `.github/workflows/` (the relevant build workflow)
 - Job uses `aquasecurity/trivy-action` pinned to a specific version
-- Job logs in to Harbor before scanning (`192.168.1.10`)
+- Job logs in to Harbor before scanning (`10.57.3.10`)
 - SARIF output uploaded via `github/codeql-action/upload-sarif`
 - `exit-code: "1"` ensures CRITICAL/HIGH findings break the build
 
@@ -55,14 +55,14 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 - Pin `aquasecurity/trivy-action` to a specific version tag (e.g., `@v0.35.0`) — never `@main`
 - Pin `github/codeql-action/upload-sarif` to its current hash or version
 - Severity: `CRITICAL,HIGH` — do not include MEDIUM/LOW (too noisy)
-- Image reference must use Harbor proxy format: `192.168.1.10/<project>/<image>:<tag>`
+- Image reference must use Harbor proxy format: `10.57.3.10/<project>/<image>:<tag>`
 - This job only runs when a build job exists in the same workflow — if there is no image build job yet, add it to the workflow as a placeholder with a `if: false` gate or document it as extending in Phase 06
 
 ## Acceptance Criteria
 
 - [ ] `trivy-image-scan` job present in CI workflow
 - [ ] Job uses `runs-on: [self-hosted, pve-test, build]`
-- [ ] Docker login to `192.168.1.10` present (uses `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_PASSWORD` secrets)
+- [ ] Docker login to `10.57.3.10` present (uses `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_PASSWORD` secrets)
 - [ ] `exit-code: "1"` set for CRITICAL/HIGH
 - [ ] SARIF uploaded to GitHub Security tab (`upload-sarif` step)
 - [ ] Commit pushed to `dev/pve-test`
@@ -93,10 +93,10 @@ STEP 2 — Add trivy-image-scan job.
   Key requirements:
   - runs-on: [self-hosted, pve-test, build]
   - needs: [build-image]  (or the actual build job name)
-  - Docker login to 192.168.1.10 using HARBOR_ROBOT_USER / HARBOR_ROBOT_PASSWORD secrets
+  - Docker login to 10.57.3.10 using HARBOR_ROBOT_USER / HARBOR_ROBOT_PASSWORD secrets
   - aquasecurity/trivy-action@<pin> with:
       scan-type: image
-      image-ref: "192.168.1.10/<project>/<image>:<tag>"
+      image-ref: "10.57.3.10/<project>/<image>:<tag>"
       format: sarif
       output: trivy-image.sarif
       severity: CRITICAL,HIGH

@@ -131,11 +131,11 @@ STEP 7 — Add sign-image job to CI workflow:
   - needs: [trivy-image-scan]  (only sign AFTER scan passes)
   - runs-on: [self-hosted, pve-test, build]
   - echo "$COSIGN_KEY" > /tmp/cosign.key  (from secret)
-  - cosign sign --key /tmp/cosign.key 192.168.1.10/<project>/<image>@<digest>
+  - cosign sign --key /tmp/cosign.key 10.57.3.10/<project>/<image>@<digest>
   - rm /tmp/cosign.key  (clean up private key from disk)
 
 STEP 8 — Verify signing works (once Phase 06 produces a real image):
-  cosign verify --key certs/cosign.pub 192.168.1.10/<project>/<image>@<digest>
+  cosign verify --key certs/cosign.pub 10.57.3.10/<project>/<image>@<digest>
 
 STEP 9 — Commit:
   git checkout dev/pve-test && git pull

@@ -27,11 +27,11 @@ Note: step-ca is **not** a prerequisite for this task. The `step-ca` resolver is
 | Field | Value |
 |---|---|
 | SDN zone | `edge_seg` |
-| Proxmox VNet | `tvedge` (`10.57.2.0/24`, gw `10.57.2.1`, SNAT enabled) |
+| Proxmox VNet | `tvedge` (VLAN 30, `10.57.2.0/24`, gw `10.57.2.1` on MikroTik) |
 | Container IP | `10.57.2.10` |
 | IP selection | Next allocatable host in the `edge_seg` subnet after the gateway. Verified available with ping and NetBox check before deploying. |
-| Cross-zone routing | Traefik → Authentik: `10.57.2.10` → `10.57.1.10:9000` for `forwardAuth` middleware. Both subnets are routed via the MikroTik static routes to `192.168.1.40` (pve-test). Proxmox routes between `tvedge` and `tvmgmt` internally. |
-| Firewall intent | Inbound: ports 80 and 443 from LAN (`192.168.1.0/24`) and any LAN client. Outbound: port 9000 to Authentik (`10.57.1.10`); DNS on 53; HTTPS (443) for Let's Encrypt DNS-01 challenge via Cloudflare API. Harbor and apt-cacher reached via SNAT to LAN. |
+| Cross-zone routing | Traefik → Authentik: `10.57.2.10` → `10.57.1.10:9000` for `forwardAuth` middleware. MikroTik routes between VLAN 30 (edge_seg) and VLAN 20 (mgmt_seg). |
+| Firewall intent | Inbound: ports 80 and 443 from LAN and all zones via MikroTik routing. Outbound: port 9000 to Authentik (`10.57.1.10`); DNS on 53; HTTPS (443) for Let's Encrypt DNS-01 challenge via Cloudflare API; Harbor (`10.57.3.10`) and apt-cacher (`10.57.3.11`) via MikroTik routing to infra_seg. |
 
 ## Objective
 
@@ -80,8 +80,8 @@ LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traef
 - Both ACME storage files must be created with `mode: '0600'` as an explicit Ansible `file` module task before `docker compose up -d` — Traefik will refuse to start if permissions are wrong
 - The `step-ca` resolver block in `traefik.yml` references `10.57.1.11` — this host does not yet exist. This is intentional and safe. Traefik will not contact it unless a route uses `certresolver=step-ca`
 - The Authentik outpost must be configured in Authentik before the forwardAuth middleware is active
-- `stack.yaml` values: VMID 153, IP `10.57.2.10/24`, gateway `10.57.2.1`, `network: zone: edge_seg`, `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`
-- **LAN ingress**: ports 80 and 443 at `10.57.2.10` must be reachable from `192.168.1.0/24`. Requires MikroTik static route `10.57.2.0/24 via 192.168.1.40`. Verify from a workstation: HTTP to port 80 redirects to HTTPS, port 443 serves a cert with issuer `Let's Encrypt`
+- `stack.yaml` values: VMID 153, IP `10.57.2.10/24`, gateway `10.57.2.1` (MikroTik VLAN 30 interface), `network: zone: edge_seg`, `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`
+- **LAN ingress**: ports 80 and 443 at `10.57.2.10` must be reachable from `192.168.1.0/24`. The MikroTik VLAN 30 interface (10.57.2.1) provides this routing — no static routes needed. Verify from a workstation: HTTP to port 80 redirects to HTTPS, port 443 serves a cert with issuer `(STAGING) Let's Encrypt` (dev passes use LE staging).
 
 ## Acceptance Criteria
 
@@ -108,38 +108,37 @@ CONTEXT:
 - Reference for stack.yaml format: terraform/lxc/stacks/harbor-stack/stack.yaml
 - Full spec: docs/plan/phase-04-core-shared-services.md (Service 2 section)
 - VMID 153, IP 10.57.2.10/24, gateway 10.57.2.1, network zone edge_seg, cores 1, memory 512, docker_storage_size 5G
-- Traefik image: 192.168.1.10/dockerhub/library/traefik:<version>
-  (check Harbor proxy cache for latest stable pin)
-- Let's Encrypt DNS-01 via Cloudflare: CF_DNS_API_TOKEN from .env
+- Traefik image: 10.57.3.10/dockerhub/library/traefik:<version>
+  (check Harbor proxy cache for latest stable pin — Harbor is now in infra_seg)
+- Let's Encrypt: use STAGING CA for all dev passes (caServer: https://acme-staging-v02.api.letsencrypt.org/directory)
+- Cloudflare DNS-01: CF_DNS_API_TOKEN from .env
 - Authentik forward-auth: http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik
 - step-ca ACME URL (pre-configure only): https://10.57.1.11/acme/acme/directory
   step-ca does not exist yet — pre-configure the resolver block but do NOT assign any
   route to certresolver=step-ca in this task
+- step-ca resolver uses httpChallenge (not tlsChallenge) — step-ca connects back to Traefik:80
 
 PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up dependencies first):
 
-STEP 0 — Apply SDN zones to pve-test and verify:
-  source .env && source .env.pve-test
-  # Apply the SDN configuration from terraform/lxc/network/pve-test.yaml to pve-test.
-  # Then add MikroTik static routes:
-  #   10.57.0.0/24 via 192.168.1.40 (build_seg — may already exist)
-  #   10.57.1.0/24 via 192.168.1.40 (mgmt_seg)
-  #   10.57.2.0/24 via 192.168.1.40 (edge_seg)
-  # Verify zones on pve-test:
+STEP 0 — Verify VLAN zones and MikroTik setup:
+  # MikroTik VLAN interfaces (10.57.0.1, 10.57.1.1, 10.57.2.1, 10.57.3.1) must already
+  # be configured and the trunk port to pve-test active. See pve-test.yaml for setup commands.
+  # Proxmox vmbr0 must have VLAN awareness enabled.
+  # Apply SDN VLAN zones manually (Terraform VLAN support pending):
   pvesh get /nodes/pve-test/sdn/zones
-  # Expected: tvmgmt, tvedge, tvsegc all listed
+  # Expected: tvinfra, tvmgmt, tvedge, tvsegc all listed
 
-STEP 0b — Bring up harbor-stack:
+STEP 0b — Bring up harbor-stack (first pass pulls from Docker Hub; subsequent passes use cache):
   source .env && source .env.pve-test
   cd terraform/lxc/stacks/harbor-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
-  curl -s http://192.168.1.10/api/v2.0/ping   # Expect: pong
+  ansible-playbook -i "10.57.3.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+  curl -s http://10.57.3.10/api/v2.0/ping   # Expect: pong
 
 STEP 0c — Bring up apt-cacher-stack:
   cd terraform/lxc/stacks/apt-cacher-stack && terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "192.168.1.35," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
+  ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
 
 STEP 0d — Bring up authentik-stack:
   cd terraform/lxc/stacks/authentik-stack && terragrunt apply
@@ -161,7 +160,7 @@ STEP 2 — Check IP availability:
   # Must timeout (no response) — if ping succeeds, address is in use, choose another
   source .env
   curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.2.10" | jq .count
+    "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.2.10" | jq .count
   # Should be 0
 
 STEP 3 — Create stack files:
@@ -185,7 +184,7 @@ STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-proxy-
            acme.caServer https://10.57.1.11/acme/acme/directory
            acme.email admin@gibbsgreatly.xyz
            acme.storage /certs/step-ca/acme.json
-           acme.tlsChallenge {}
+           acme.httpChallenge.entryPoint web
          providers.docker (exposedByDefault: false)
          providers.file (directory: /etc/traefik/dynamic/, watch: true)
          api.dashboard: true, api.insecure: false

@@ -1,9 +1,12 @@
-# Harbor container registry stack
+# Harbor container registry stack — infra_seg zone (VLAN 40, 10.57.3.0/24)
 hostname: harbor-stack
-ip_address: "192.168.1.10/24"
+ip_address: "10.57.3.10/24"
+gateway: "10.57.3.1"
+network:
+  zone: infra_seg
 vmid: 121
 cores: 4
-memory: 8192
+memory: 2048
 swap: 2048
 rootfs_size: 16
 rootfs_storage: infrastructure-containers

@@ -2,184 +2,196 @@
 
 ## Overview
 
-SDN Simple zones on pve-test provide isolated Layer 2 broadcast domains for
-microsegmentation validation. When a container in a segmented zone needs:
+pve-test uses **Proxmox SDN VLAN zones** for network segmentation. Each zone is a
+VLAN-tagged sub-bridge; containers attach to a zone and receive an IP in that zone's
+subnet. The **MikroTik router** owns all gateway IPs and performs all L3 routing
+between zones. Proxmox does not route or NAT — it is a pure L2 switch.
 
-- Outbound internet access (e.g. package downloads, GitHub API calls)
-- Inbound access from the LAN (e.g. workstation → ci-runner)
-
-...the correct model is **routing**, not SNAT/MASQUERADE.
-
-This document describes the pattern, the out-of-band router prerequisite, and
-how to apply it when a new segment gains a subnet.
+This document describes the VLAN zone model, how routing works, and the pattern for
+adding a new segment.
 
 ---
 
-## Why routing, not SNAT
+## Architecture: MikroTik as L3 gateway
 
-| | SNAT | Routing |
+```text
+  Workstation (192.168.1.x)
+         |
+    MikroTik (router/firewall)
+    ├── LAN: 192.168.1.1/24       (untagged)
+    ├── VLAN 10: 10.57.0.1/24    (build_seg)
+    ├── VLAN 20: 10.57.1.1/24    (mgmt_seg)
+    ├── VLAN 30: 10.57.2.1/24    (edge_seg)
+    └── VLAN 40: 10.57.3.1/24    (infra_seg)
+         |
+    pve-test (trunk port — all VLANs tagged)
+    ├── vmbr0 (VLAN-aware bridge)
+    ├── tvbuild  → VLAN 10 → containers in build_seg
+    ├── tvmgmt   → VLAN 20 → containers in mgmt_seg
+    ├── tvedge   → VLAN 30 → containers in edge_seg
+    └── tvinfra  → VLAN 40 → containers in infra_seg
+```
+
+Each container uses its zone's MikroTik interface as its default gateway
+(e.g. `10.57.3.1` for infra_seg). All routing — including inter-zone traffic,
+LAN access, and internet egress — flows through the MikroTik. Proxmox does
+not have any gateway IPs and performs no routing or SNAT.
+
+---
+
+## Why VLAN zones, not Simple zones
+
+| | Simple zones | VLAN zones |
 |---|---|---|
-| Outbound internet | ✅ works | ✅ works |
-| LAN → container ingress | ❌ broken (no DNAT rules) | ✅ works natively |
-| Container identity in logs | ❌ masked (appears as pve-test IP) | ✅ real container IP |
-| NAT hops to internet | 2× (pve-test + home router) | 1× (home router only) |
-| Config needed per service | DNAT rule per port | none |
+| L3 gateway | Proxmox host (iptables) | MikroTik (hardware router) |
+| SNAT | Proxmox host (double NAT) | MikroTik WAN only (single NAT) |
+| LAN → container ingress | Requires static route on router | MikroTik directly connected |
+| Inter-zone routing | Requires static routes per zone pair | MikroTik routing table (automatic) |
+| Container identity in logs | Masked by Proxmox SNAT | Real container IP preserved |
+| MikroTik firewall enforcement | Partial (only at WAN) | Full (all inter-zone traffic) |
 
-The home router (MikroTik) already SNATs all LAN traffic to the WAN IP. Adding a
-second SNAT layer at pve-test provides no benefit and loses source attribution.
-
-IP forwarding is permanently enabled on pve-test (`net.ipv4.ip_forward = 1`). The
-SDN VNet bridge interface (`tvnetc`, `tvneta`, etc.) already has the gateway IP when
-a subnet is configured via Proxmox SDN. The only missing piece for routing is a
-static route on the home router.
+With VLAN zones, **no static routes are needed on the MikroTik** — the VLAN
+interfaces are directly connected routes. Any host on 192.168.1.0/24 can reach
+any container at 10.57.x.x directly via the MikroTik.
 
 ---
 
-## Current segment state
+## Current zone state
 
-| Segment | Attachment | Subnet | Gateway | SNAT | Router route needed |
+| Zone | VNet bridge | VLAN | Subnet | Gateway | Containers |
 |---|---|---|---|---|---|
-| `seg_c` (`build_seg`, `artifacts_seg`) | `tvnetc` | `10.57.0.0/24` | `10.57.0.1` | `false` | ✅ `10.57.0.0/24 via 192.168.1.40` |
-| `seg_a` (`apps_seg`, `infra_seg`) | `tvneta` | — | — | — | not yet (no subnet assigned) |
-| `seg_b` (`media_seg`, `observe_seg`) | `tvnetb` | — | — | — | not yet (no subnet assigned) |
-
-`seg_a` and `seg_b` have no subnets yet. When Phase 04 services are assigned to
-segmented zones, follow the pattern below.
+| `build_seg` | `tvnetc` | 10 | `10.57.0.0/24` | `10.57.0.1` | ci-runner-01 (10.57.0.63) |
+| `mgmt_seg` | `tvmgmt` | 20 | `10.57.1.0/24` | `10.57.1.1` | Authentik (10.57.1.10), step-ca (10.57.1.11), Monitoring (10.57.1.12) |
+| `edge_seg` | `tvedge` | 30 | `10.57.2.0/24` | `10.57.2.1` | Traefik (10.57.2.10) |
+| `infra_seg` | `tvinfra` | 40 | `10.57.3.0/24` | `10.57.3.1` | Harbor (10.57.3.10), apt-cacher (10.57.3.11), NetBox (10.57.3.12) |
 
 ---
 
-## Pattern: adding egress to a new segment
+## Pattern: adding a new segment
 
-### Step 1 — Declare the subnet in `pve-test.yaml`
+### Step 1 — Assign VLAN ID and subnet
 
-In `terraform/lxc/network/pve-test.yaml`, add `subnet`, `gateway`, and `snat: false`
-to the attachment's `sdn` block:
+Choose a VLAN ID and subnet that does not conflict with existing zones. Update
+`terraform/lxc/network/pve-test.yaml` with the new attachment:
 
 ```yaml
-  seg_a:
-    description: First SDN VNet attachment ...
+  new_seg:
+    description: New zone description
     type: sdn_vnet
-    bridge: tvneta
-    firewall: true
+    bridge: tvnew
+    firewall: false
     sdn:
-      zone: tvsega
-      zone_type: simple
+      zone: tvnew
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve-test
-      vnet: tvneta
-      alias: pve-test network layer
-      subnet: "10.55.0.0/24"    # ← add
-      gateway: "10.55.0.1"      # ← add
-      snat: false               # ← always false — use routing not SNAT
+      vnet: tvnew
+      vlan_tag: 50          # ← new VLAN ID
+      alias: pve-test new segment
+      subnet: "10.57.4.0/24"
+      gateway: "10.57.4.1"
+      snat: false           # ← always false — MikroTik handles routing
 ```
 
-Also update the comment block near the top of `attachments:` with the new route:
+Also add the zone and its containers to the `zones:` block.
 
-```yaml
-# Current required routes:
-#   10.57.0.0/24 via 192.168.1.40   (seg_c: build_seg / artifacts_seg)
-#   10.55.0.0/24 via 192.168.1.40   (seg_a: apps_seg / infra_seg)   ← add
-```
+### Step 2 — Configure MikroTik (out-of-band, mandatory first)
 
-### Step 2 — Add static route on the MikroTik (out-of-band, mandatory first)
-
-**This must be done before applying Terraform** so containers retain internet
-egress throughout the change. If the route is absent when any existing SNAT rule
-is removed, containers lose connectivity.
+**This must be done before any container is deployed on the new segment**, so the
+new VLAN is routable before the container boots.
 
 In the MikroTik terminal:
 
-```
-/ip route add dst-address=<subnet> gateway=192.168.1.40 comment="pve-test SDN <seg_name>"
-```
-
-Example for `seg_a`:
-
-```
-/ip route add dst-address=10.55.0.0/24 gateway=192.168.1.40 comment="pve-test SDN seg_a"
+```text
+/interface vlan add interface=<trunk-iface> name=vlan50-new vlan-id=50
+/ip address add address=10.57.4.1/24 interface=vlan50-new comment="pve-test new_seg gw"
 ```
 
-Verify before continuing:
+Verify the new VLAN interface is up and reachable:
 
 ```bash
-# From the workstation — should resolve via pve-test, not drop
-ping -c 3 <gateway-ip>     # e.g. ping -c 3 10.55.0.1
-
-# From pve-test — internet egress test for the segment bridge
-ssh root@pve-test.gibbsgreatly.xyz \
-  "ip route get 8.8.8.8 from 10.55.0.1"
-# Next hop should be 192.168.1.1, not a MASQUERADE chain
+# From the workstation — should respond
+ping -c 3 10.57.4.1
 ```
 
-### Step 3 — Apply via Terraform
+### Step 3 — Apply SDN zone manually (Terraform code gap)
 
-Any stack assigned to a zone on the newly configured segment triggers the SDN
-apply when `terragrunt apply` runs. The `configure-network-sdn-vnet.yml` playbook
-handles both create (new subnet) and update (existing subnet with wrong SNAT) cases
-idempotently — no manual `pvesh` commands needed.
+The `configure-network-sdn-vnet.yml` playbook currently handles Simple zone
+creation only. VLAN zones must be created manually with pvesh until the playbook
+is updated for `zone_type: vlan`.
 
 ```bash
-source .env && source .env.pve-test
-cd terraform/lxc/stacks/<first-stack-on-new-segment>
-terragrunt apply
+# Create the SDN zone
+pvesh create /cluster/sdn/zones --type vlan --zone tvnew --bridge vmbr0 --nodes pve-test
+
+# Create the VNet
+pvesh create /cluster/sdn/vnets --vnet tvnew --zone tvnew --tag 50
+
+# Create the subnet
+pvesh create /cluster/sdn/vnets/tvnew/subnets --subnet 10.57.4.0/24 --gateway 10.57.4.1 --type subnet
+
+# Apply SDN config
+pvesh set /cluster/sdn
 ```
 
-### Step 4 — Verify
+Verify the zone appears in Proxmox:
 
 ```bash
-HOST=pve-test.gibbsgreatly.xyz
+pvesh get /nodes/pve-test/sdn/zones
+# Expected: tvnew listed
+```
 
-# 1. SDN subnet SNAT flag
-ssh root@${HOST} \
-  "pvesh get /cluster/sdn/vnets/<vnet>/subnets --output-format json | python3 -m json.tool"
-# snat should be 0
+### Step 4 — Deploy and verify
 
-# 2. No iptables MASQUERADE for the segment subnet
-ssh root@${HOST} "iptables -t nat -L -n | grep <subnet-prefix>"
-# should return nothing
+Once the zone is created and a container is deployed:
 
-# 3. Container internet egress
-ssh root@${HOST} "pct exec <vmid> -- ping -c 3 8.8.8.8"
+```bash
+# From a workstation — container should be reachable
+ping -c 3 10.57.4.<host>
 
-# 4. LAN → container ingress (from workstation)
-ping -c 3 <container-ip>
+# From pve-test — internet egress via MikroTik
+pct exec <vmid> -- ping -c 3 8.8.8.8
+
+# Inter-zone routing — e.g. from a container in build_seg to new_seg
+pct exec 141 -- ping -c 3 10.57.4.<host>
 ```
 
 ---
 
-## Applying to existing segments with SNAT already on
+## Cross-zone traffic
 
-If a segment is live with `snat: true` and needs to be converted to routing:
+All cross-zone traffic flows through the MikroTik. The MikroTik routing table
+has directly-connected routes for all VLAN subnets, so no additional static
+routes are required. Inter-zone policy is enforced via MikroTik firewall rules.
 
-1. **Add the router static route first** (Step 2 above).
-2. Change `snat: false` in `pve-test.yaml`.
-3. Run `terragrunt apply` on any stack using that segment. The playbook's
-   `Update SDN subnet when existing egress config differs from desired state`
-   task will issue `pvesh set` to flip `snat=0` and call `pvesh set /cluster/sdn`
-   to apply.
-
-Do not remove the router static route once added — even if the segment has no
-active containers, leaving the route in place is harmless and prevents an outage
-if containers are redeployed.
+The Proxmox VNet firewall (`firewall: true` on a zone) controls inbound traffic
+to individual containers within a zone, but does NOT enforce cross-zone policies.
+There is a known bug in `main.tf:86-95` where cross-zone ACCEPT rules are never
+generated — see the code gaps table in `docs/plan/README.md`. The Proxmox
+firewall is disabled for dev passes; cross-zone policy is enforced by the
+MikroTik firewall only.
 
 ---
 
-## Validation gap
+## No SNAT at Proxmox
 
-The `validate-network-layer.yml` test suite currently only covers east-west
-reachability between containers on the same VNet. It does not test north-south
-egress or LAN → container ingress. This is tracked in issue **#80**.
+`snat: false` must be set on all SDN zones. The MikroTik performs WAN SNAT for
+all traffic leaving the home network. Adding a second SNAT layer at Proxmox
+would:
 
-Until that is resolved, verify manually with the checks in Step 4 above after
-each new segment is brought up with a subnet.
+- Double NAT all traffic (MikroTik + Proxmox)
+- Break LAN → container ingress (source IP becomes pve-test, not the client)
+- Mask container IPs in logs
+
+Do not set `snat: true` on any zone in `pve-test.yaml`.
 
 ---
 
 ## Related
 
-- `terraform/lxc/network/pve-test.yaml` — declarative segment/subnet/zone intent
-- `terraform/lxc/ansible/playbooks/configure-network-sdn-vnet.yml` — idempotent
-  SDN zone/VNet/subnet provisioner; handles create and update
-- `docs/plans/NetworkPlanning.md` — hybrid model rationale, zone design
-- Issues: #78 (remove SNAT from seg_c), #79 (document router route prerequisite),
-  #80 (egress validation in test suite)
+- `terraform/lxc/network/pve-test.yaml` — declarative zone/VNet/subnet intent
+- `terraform/lxc/ansible/playbooks/configure-network-sdn-vnet.yml` — SDN
+  provisioner (Simple zones only; VLAN support pending)
+- `docs/design/NetworkPlanning.md` — zone design rationale
+- `docs/plan/README.md` — Phase 04 bring-up sequence, known code gaps

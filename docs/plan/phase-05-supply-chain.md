@@ -45,7 +45,7 @@ When Harbor stores a newly built image (Phase 06), add a CI job to scan that spe
       - name: Log in to Harbor
         run: |
           echo "$HARBOR_ROBOT_PASSWORD" | \
-            docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+            docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
         env:
           HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_ROBOT_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
@@ -54,7 +54,7 @@ When Harbor stores a newly built image (Phase 06), add a CI job to scan that spe
         uses: aquasecurity/trivy-action@v0.35.0
         with:
           scan-type: image
-          image-ref: "192.168.1.10/<project>/<image>:<tag>"
+          image-ref: "10.57.3.10/<project>/<image>:<tag>"
           format: sarif
           output: trivy-image.sarif
           severity: CRITICAL,HIGH
@@ -100,7 +100,7 @@ Add a `generate-sbom` job after each image build:
     steps:
       - name: Generate SBOM (SPDX)
         run: |
-          syft 192.168.1.10/<project>/<image>:<tag> \
+          syft 10.57.3.10/<project>/<image>:<tag> \
             --output spdx-json=sbom.spdx.json
 
       - name: Upload SBOM as artifact
@@ -166,7 +166,7 @@ After image build and push to Harbor:
         run: |
           echo "$COSIGN_KEY" > /tmp/cosign.key
           cosign sign --key /tmp/cosign.key \
-            192.168.1.10/<project>/<image>@<digest>
+            10.57.3.10/<project>/<image>@<digest>
           rm /tmp/cosign.key
 ```
 
@@ -180,7 +180,7 @@ In Ansible playbooks that pull images, add a pre-pull verification step:
     cmd: >
       cosign verify
       --key /etc/cosign/cosign.pub
-      192.168.1.10/<project>/<image>@<digest>
+      10.57.3.10/<project>/<image>@<digest>
   changed_when: false
 ```
 
@@ -209,7 +209,7 @@ Add a CI step (can go in `validate.yml`) that fails if any compose file referenc
           # Fail if any image: line references an upstream registry directly
           if grep -r "^\s*image:.*\(docker\.io\|ghcr\.io\|quay\.io\|registry\.k8s\.io\)" \
                terraform/lxc/stacks/ --include="*.yml" --include="*.yaml"; then
-            echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+            echo "ERROR: Direct upstream registry references found. Use 10.57.3.10/... instead."
             exit 1
           fi
           echo "OK — all image references use Harbor proxy."
@@ -270,6 +270,6 @@ git push origin feat/supply-chain-pipeline
 - [ ] `cosign verify --key cosign.pub` passes for at least one signed image in Harbor
 
 ### Harbor-only policy (enforcement)
-- [ ] All compose files for Phase 06+ stacks reference `192.168.1.10/<project>/` only
+- [ ] All compose files for Phase 06+ stacks reference `10.57.3.10/<project>/` only
 - [ ] CI check added that flags any compose file referencing `docker.io/` or `ghcr.io/` directly
 - [ ] Content trust / Cosign signature verification enabled in at least one Harbor project

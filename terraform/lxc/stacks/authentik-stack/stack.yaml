@@ -4,7 +4,7 @@ ip_address: "10.57.1.10/24"
 gateway: "10.57.1.1"
 vmid: 150
 cores: 2
-memory: 3072
+memory: 2048
 swap: 1024
 rootfs_size: 8
 rootfs_storage: infrastructure-containers

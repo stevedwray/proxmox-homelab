@@ -1,5 +1,14 @@
 # Green Field Home Lab Architecture
 
+> **Implementation note (2026):** This document is the original architectural design
+> reference. The build is in progress on `pve-test`, a **bare-metal laptop** running
+> Proxmox (not a nested VM). All services run on pve-test only; pve (production) is not
+> used during development passes. The network model uses **Proxmox SDN VLAN zones** with
+> the MikroTik as L3 gateway (not Simple zones). **Chainloop** has been descoped from
+> Phase 05 — no self-hosted Docker Compose deployment path exists upstream; the Chainloop
+> Cloud free tier is the viable alternative if attestation is later required. For the
+> current operational plan, see `docs/plan/README.md`.
+
 ## 1) Platform layout
 
 I would split the lab into five logical planes:

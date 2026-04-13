@@ -43,20 +43,42 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 
 ### SDN zone setup (do this before deploying any Phase 04 stack)
 
-Apply the SDN configuration from `terraform/lxc/network/pve-test.yaml` to pve-test. Then add the required MikroTik static routes so LAN clients can reach containers in each zone:
+pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all zones — no routing or NAT is performed on the Proxmox host.
 
-```bash
-# MikroTik — add all three routes (run once per pve-test rebuild)
-/ip route add dst-address=10.57.0.0/24 gateway=192.168.1.40 comment="pve-test SDN build_seg"
-/ip route add dst-address=10.57.1.0/24 gateway=192.168.1.40 comment="pve-test SDN mgmt_seg"
-/ip route add dst-address=10.57.2.0/24 gateway=192.168.1.40 comment="pve-test SDN edge_seg"
+**MikroTik one-time setup** — run once per pve-test rebuild (see full commands in `pve-test.yaml`):
+
+```text
+# Create VLAN interfaces on the trunk port facing pve-test
+/interface vlan add interface=<trunk-iface> name=vlan10-build vlan-id=10
+/interface vlan add interface=<trunk-iface> name=vlan20-mgmt  vlan-id=20
+/interface vlan add interface=<trunk-iface> name=vlan30-edge  vlan-id=30
+/interface vlan add interface=<trunk-iface> name=vlan40-infra vlan-id=40
+/ip address add address=10.57.0.1/24 interface=vlan10-build
+/ip address add address=10.57.1.1/24 interface=vlan20-mgmt
+/ip address add address=10.57.2.1/24 interface=vlan30-edge
+/ip address add address=10.57.3.1/24 interface=vlan40-infra
 ```
 
-Verify zones are present on pve-test before deploying:
+**Proxmox one-time setup** — enable VLAN awareness on vmbr0:
 
 ```bash
+# In Proxmox UI: Network → vmbr0 → Edit → check "VLAN aware" → Apply
+ifreload -a
+```
+
+**Apply SDN zones** (manual pvesh until Terraform VLAN zone support is implemented):
+
+```bash
+# Create each zone and VNet — see pve-test.yaml for the full sequence
+pvesh create /cluster/sdn/zones --type vlan --zone tvinfra --bridge vmbr0 --nodes pve-test
+pvesh create /cluster/sdn/zones --type vlan --zone tvmgmt  --bridge vmbr0 --nodes pve-test
+pvesh create /cluster/sdn/zones --type vlan --zone tvedge  --bridge vmbr0 --nodes pve-test
+pvesh create /cluster/sdn/zones --type vlan --zone tvsegc  --bridge vmbr0 --nodes pve-test
+# ... create VNets with tags and subnets, then:
+pvesh set /cluster/sdn
+
 pvesh get /nodes/pve-test/sdn/zones
-# Expected output includes: tvmgmt, tvedge, tvsegc
+# Expected output includes: tvinfra, tvmgmt, tvedge, tvsegc
 ```
 
 ---
@@ -67,12 +89,12 @@ All compose files in this phase use Harbor proxy cache image references — **ne
 
 | Upstream | Via Harbor |
 |---|---|
-| `docker.io/library/postgres:16-alpine` | `192.168.1.10/dockerhub/library/postgres:16-alpine` |
-| `ghcr.io/goauthentik/server:<ver>` | `192.168.1.10/ghcr/goauthentik/server:<ver>` |
-| `docker.io/grafana/grafana-oss:<ver>` | `192.168.1.10/dockerhub/grafana/grafana-oss:<ver>` |
-| `docker.io/library/traefik:<ver>` | `192.168.1.10/dockerhub/library/traefik:<ver>` |
-| `docker.io/victoriametrics/victoria-metrics:<ver>` | `192.168.1.10/dockerhub/victoriametrics/victoria-metrics:<ver>` |
-| `docker.io/grafana/loki:<ver>` | `192.168.1.10/dockerhub/grafana/loki:<ver>` |
+| `docker.io/library/postgres:16-alpine` | `10.57.3.10/dockerhub/library/postgres:16-alpine` |
+| `ghcr.io/goauthentik/server:<ver>` | `10.57.3.10/ghcr/goauthentik/server:<ver>` |
+| `docker.io/grafana/grafana-oss:<ver>` | `10.57.3.10/dockerhub/grafana/grafana-oss:<ver>` |
+| `docker.io/library/traefik:<ver>` | `10.57.3.10/dockerhub/library/traefik:<ver>` |
+| `docker.io/victoriametrics/victoria-metrics:<ver>` | `10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<ver>` |
+| `docker.io/grafana/loki:<ver>` | `10.57.3.10/dockerhub/grafana/loki:<ver>` |
 
 Always use the Harbor proxy address in compose files. If an image is not yet in Harbor, pull it through the proxy first (see Phase 03b Part E).
 
@@ -95,9 +117,9 @@ Phase 04 containers are placed in named SDN zones — not on the flat LAN bridge
 # Ping check — must timeout (no response means address is free)
 ping -c 3 10.57.1.10
 
-# NetBox check
+# NetBox check (NetBox runs locally on pve-test at 10.57.3.12)
 curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-  "http://192.168.1.30/api/ipam/ip-addresses/?address=10.57.1.10" | jq .count
+  "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.1.10" | jq .count
 # Should be 0 for each IP
 ```
 
@@ -119,10 +141,10 @@ Create `terraform/lxc/stacks/authentik-stack/stack.yaml`:
 # Authentik identity provider — management zone
 hostname: authentik-stack
 ip_address: "10.57.1.10/24"
-gateway: "192.168.1.1"
+gateway: "10.57.1.1"
 vmid: 150
 cores: 2
-memory: 3072
+memory: 2048
 swap: 1024
 rootfs_size: 8
 rootfs_storage: infrastructure-containers
@@ -170,7 +192,7 @@ Minimal `docker-compose.yml` excerpt (all images via Harbor proxy cache — pre-
 ```yaml
 services:
   postgresql:
-    image: 192.168.1.10/dockerhub/library/postgres:16-alpine
+    image: 10.57.3.10/dockerhub/library/postgres:16-alpine
     environment:
       POSTGRES_PASSWORD: "${AUTHENTIK_POSTGRES_PASSWORD}"
       POSTGRES_USER: authentik
@@ -179,11 +201,11 @@ services:
       - database:/var/lib/postgresql/data
 
   redis:
-    image: 192.168.1.10/dockerhub/library/redis:alpine
+    image: 10.57.3.10/dockerhub/library/redis:alpine
     command: --save 60 1 --loglevel warning
 
   server:
-    image: 192.168.1.10/ghcr/goauthentik/server:2024.12.3   # pin to specific version
+    image: 10.57.3.10/ghcr/goauthentik/server:2024.12.3   # pin to specific version
     command: server
     environment:
       AUTHENTIK_REDIS__HOST: redis
@@ -200,7 +222,7 @@ services:
       - redis
 
   worker:
-    image: 192.168.1.10/ghcr/goauthentik/server:2024.12.3   # same version as server
+    image: 10.57.3.10/ghcr/goauthentik/server:2024.12.3   # same version as server
     command: worker
     environment: *server-env  # reference server env block
     depends_on:
@@ -262,7 +284,7 @@ Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
 # Traefik reverse proxy — edge / ingress
 hostname: proxy-stack
 ip_address: "10.57.2.10/24"
-gateway: "192.168.1.1"
+gateway: "10.57.2.1"
 vmid: 153
 cores: 1
 memory: 512
@@ -313,6 +335,10 @@ entryPoints:
 certificatesResolvers:
   letsencrypt:
     acme:
+      # Use LE staging CA for all pve-test dev passes to avoid rate limits.
+      # Remove the caServer line (or switch to production URL) only when
+      # promoting to the main branch or running a final validation pass.
+      caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
       email: "admin@gibbsgreatly.xyz"
       storage: "/certs/letsencrypt/acme.json"
       dnsChallenge:
@@ -328,7 +354,9 @@ certificatesResolvers:
       caServer: "https://10.57.1.11/acme/acme/directory"
       email: "admin@gibbsgreatly.xyz"
       storage: "/certs/step-ca/acme.json"
-      tlsChallenge: {}
+      httpChallenge:
+        entryPoint: web  # step-ca connects back to Traefik:80 to complete the challenge
+        # Requires MikroTik policy: mgmt_seg → edge_seg tcp/80 (see pve-test.yaml)
 
 providers:
   docker:
@@ -404,7 +432,7 @@ Create `terraform/lxc/stacks/step-ca-stack/stack.yaml`:
 # step-ca internal certificate authority — management zone
 hostname: step-ca
 ip_address: "10.57.1.11/24"
-gateway: "192.168.1.1"
+gateway: "10.57.1.1"
 vmid: 152
 cores: 1
 memory: 512
@@ -511,10 +539,10 @@ Create `terraform/lxc/stacks/monitoring-stack/stack.yaml`:
 # Monitoring: VictoriaMetrics + Grafana + Loki — management zone
 hostname: monitoring-stack
 ip_address: "10.57.1.12/24"
-gateway: "192.168.1.1"
+gateway: "10.57.1.1"
 vmid: 154
 cores: 2
-memory: 3072
+memory: 1536
 swap: 1024
 rootfs_size: 8
 rootfs_storage: infrastructure-containers
@@ -537,7 +565,7 @@ portainer_agent: true
 ```yaml
 services:
   victoriametrics:
-    image: 192.168.1.10/dockerhub/victoriametrics/victoria-metrics:<version>
+    image: 10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<version>
     ports:
       - "8428:8428"
     volumes:
@@ -547,7 +575,7 @@ services:
       - "--retentionPeriod=90d"
 
   grafana:
-    image: 192.168.1.10/dockerhub/grafana/grafana-oss:<version>
+    image: 10.57.3.10/dockerhub/grafana/grafana-oss:<version>
     ports:
       - "3000:3000"
     volumes:
@@ -558,14 +586,14 @@ services:
       # ... Authentik OIDC vars (configure after Authentik is up)
 
   loki:
-    image: 192.168.1.10/dockerhub/grafana/loki:<version>
+    image: 10.57.3.10/dockerhub/grafana/loki:<version>
     ports:
       - "3100:3100"
     volumes:
       - loki-data:/loki
 
   promtail:
-    image: 192.168.1.10/dockerhub/grafana/promtail:<version>
+    image: 10.57.3.10/dockerhub/grafana/promtail:<version>
     volumes:
       - /var/log:/var/log:ro
       - ./promtail-config.yml:/etc/promtail/config.yml

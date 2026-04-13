@@ -1,5 +1,11 @@
 # Network Planning
 
+> **Decision (2026):** The implemented network model is **Option 2 (Proxmox SDN)**
+> using **VLAN zones** (not Simple zones). The MikroTik router owns all gateway IPs
+> and performs all L3 routing between zones. Proxmox is a pure L2 switch with no
+> routing or SNAT. See `terraform/lxc/network/pve-test.yaml` and
+> `docs/reference/sdn-segment-routing.md` for the implemented zone layout.
+
 ## What the network stage is trying to achieve
 
 This stage is not mainly about “making VLANs.” It is about creating a **stable network contract** that your current and future LXCs/VMs can sit on top of, while Proxmox remains the control point for segmentation. Proxmox VE gives you the pieces for this through VLAN-aware Linux bridges, the integrated firewall, cluster-level security groups, and SDN constructs such as zones, VNets, and subnets. ([Proxmox Virtual Environment][1])

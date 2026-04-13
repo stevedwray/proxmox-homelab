@@ -20,7 +20,7 @@ Phase 05 — Supply Chain Security
 
 ## Objective
 
-A `harbor-image-policy` CI job fails whenever any compose file in the repo references `docker.io`, `ghcr.io`, `quay.io`, or `registry.k8s.io` directly instead of using the Harbor proxy address `192.168.1.10/...`.
+A `harbor-image-policy` CI job fails whenever any compose file in the repo references `docker.io`, `ghcr.io`, `quay.io`, or `registry.k8s.io` directly instead of using the Harbor proxy address `10.57.3.10/...`.
 
 ## Scope
 
@@ -43,7 +43,7 @@ A `harbor-image-policy` CI job fails whenever any compose file in the repo refer
 ## Expected Outputs
 
 - New `harbor-image-policy` job in `validate.yml`
-- Any existing violations in `terraform/lxc/stacks/` fixed to use `192.168.1.10/...`
+- Any existing violations in `terraform/lxc/stacks/` fixed to use `10.57.3.10/...`
 
 ## Constraints and Conventions
 
@@ -67,7 +67,7 @@ You are working in the proxmox-homelab repository at /home/steve/git/proxmox-hom
 
 TASK: Add a harbor-image-policy lint check to the CI validate workflow that fails whenever
 any Docker Compose file in terraform/lxc/stacks/ references an upstream registry directly
-instead of the Harbor proxy at 192.168.1.10.
+instead of the Harbor proxy at 10.57.3.10.
 
 STEP 1 — Read the existing validate workflow:
   cat .github/workflows/validate.yml
@@ -75,7 +75,7 @@ STEP 1 — Read the existing validate workflow:
 STEP 2 — Scan for existing violations:
   grep -rn "image:.*\(docker\.io\|ghcr\.io\|quay\.io\|registry\.k8s\.io\)" \
     terraform/lxc/stacks/ --include="*.yml" --include="*.yaml"
-  # If any results, fix them to use 192.168.1.10/<project>/<image>:<tag> before continuing.
+  # If any results, fix them to use 10.57.3.10/<project>/<image>:<tag> before continuing.
 
 STEP 3 — Add harbor-image-policy job to .github/workflows/validate.yml:
   Full spec in docs/plan/phase-05-supply-chain.md (Part D).
@@ -89,7 +89,7 @@ STEP 3 — Add harbor-image-policy job to .github/workflows/validate.yml:
   Example script for the check:
     if grep -rn "^\s*image:\s*.*\(docker\.io\|ghcr\.io\|quay\.io\|registry\.k8s\.io\)" \
          terraform/lxc/stacks/ --include="*.yml" --include="*.yaml"; then
-      echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+      echo "ERROR: Direct upstream registry references found. Use 10.57.3.10/... instead."
       exit 1
     fi
     echo "OK — all image references use Harbor proxy."
