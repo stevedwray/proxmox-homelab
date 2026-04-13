@@ -89,16 +89,23 @@ Before Phase 00b / 01 / 03b / 04 work is considered ready, the host layer should
 4. A documented template build path, if template creation remains part of the workflow
 5. Host bootstrap documentation that matches the current SDN VLAN and storage assumptions
 
+## Tasks
+
+| # | Task file | Description |
+|---|---|---|
+| 01 | [00a-host-bootstrap-01-initial-setup.md](tasks/00a-host-bootstrap-01-initial-setup.md) | Run `proxmox-initial-setup.yml` — package repos, host tuning, Terraform API user/token |
+| 02 | [00a-host-bootstrap-02-sdn-zones.md](tasks/00a-host-bootstrap-02-sdn-zones.md) | Write and run `proxmox-sdn-setup.yml` — create all four VLAN zones on pve-test |
+| 03 | [00a-host-bootstrap-03-build-template.md](tasks/00a-host-bootstrap-03-build-template.md) | Align and run `build-debian-13-template.yml` — produce the Debian Docker template |
+
 ## Recommended follow-on tasks
 
 1. Update `ansible/00-initial-setup/README.md` so it describes the current pve-test bootstrap workflow and inventories.
-2. Decide whether template creation remains an active workflow; if yes, align `build-debian-13-template.yml` with the current pve-test design and `terraform/lxc` expectations.
-3. Mark storage setup playbooks as historical/alternate-path in their headers unless a new storage phase brings them back into active scope.
-4. Add task documents for any host-bootstrap code changes required by the current pve-test rebuild.
+2. Mark storage setup playbooks as historical/alternate-path in their headers unless a new storage phase brings them back into active scope.
 
 ## Acceptance criteria
 
-- [ ] Host/bootstrap Ansible is explicitly represented in the active plan
-- [ ] Required host bootstrap playbooks are identified
+- [ ] Task 00a-01 complete — Terraform API token provisioned on pve-test
+- [ ] Task 00a-02 complete — all four SDN VLAN zones active on pve-test
+- [ ] Task 00a-03 complete — Debian Docker template in `storage-template:vztmpl/`
+- [ ] Required host bootstrap playbooks are identified and classified
 - [ ] Non-canonical storage/bootstrap playbooks are clearly classified
-- [ ] Follow-on work for host bootstrap alignment is visible in the plan
