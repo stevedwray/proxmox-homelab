@@ -516,7 +516,7 @@ ansible-playbook -i "10.57.2.10," \
   terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 # Push to Proxmox host
-ansible-playbook -i "192.168.1.2," \
+ansible-playbook -i "192.168.1.40," \
   terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 ```
 

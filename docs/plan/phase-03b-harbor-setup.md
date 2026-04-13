@@ -25,7 +25,7 @@ follows once the base Harbor stack is healthy.
 
 ## Prerequisites
 
-- Phase 00b complete: Portainer running at `192.168.1.20` on pve-test
+- Phase 00b complete: Portainer running at `10.57.1.20` on `mgmt_seg`
 - Phase 01 complete: ci-runner-01 running on pve-test
 - **Harbor LXC deployed to pve-test** via:
   ```bash

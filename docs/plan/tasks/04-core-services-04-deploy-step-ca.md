@@ -46,7 +46,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
   - Install and start systemd service
   - Export root CA cert to repository at `certs/homelab-root.crt`
 - Create `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml` — reusable playbook for distributing the root cert to a target host
-- Distribute root CA to Traefik container (VMID 153) and Proxmox host (192.168.1.2)
+- Distribute root CA to Traefik container (VMID 153) and Proxmox host (192.168.1.40)
 - Update base LXC Ansible role to include root CA trust task
 - Verify Traefik `step-ca` resolver can reach the ACME directory
 
@@ -61,7 +61,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 
 - `docs/plan/phase-04-core-shared-services.md` — Service 3 section
 - Traefik LXC for resolver verification: VMID 153, IP `10.57.2.10`
-- Proxmox host for CA trust: `192.168.1.2`
+- Proxmox host for CA trust: `192.168.1.40`
 
 ## Expected Outputs
 
@@ -91,7 +91,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 - [ ] ACME directory reachable: `curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] `certs/homelab-root.crt` committed to repository
 - [ ] Homelab root CA trusted on Traefik container: `pct exec 153 -- update-ca-certificates` runs without error
-- [ ] Homelab root CA trusted on Proxmox host `192.168.1.2`
+- [ ] Homelab root CA trusted on Proxmox host `192.168.1.40`
 - [ ] Traefik `step-ca` resolver can reach ACME directory from inside the container:
   `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .` returns valid JSON
 - [ ] Base LXC Ansible role includes CA trust task
@@ -114,7 +114,7 @@ CONTEXT:
 - Traefik resolver block is already present in traefik.yml at 10.57.2.10 — no Traefik config changes needed
 - The root CA cert must be saved to certs/homelab-root.crt in the repository root
 - certs/homelab-root.crt is a public cert — safe to commit
-- CA trust must be distributed to VMID 153 (Traefik) and 192.168.1.2 (Proxmox host)
+- CA trust must be distributed to VMID 153 (Traefik) and 192.168.1.40 (Proxmox host)
 - Do NOT distribute the root CA to any end-user devices or browsers
 
 PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up the full 04-03 sequence first):
@@ -213,7 +213,7 @@ STEP 7 — Distribute root CA to managed services:
     terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
   # Proxmox host
-  ansible-playbook -i "192.168.1.2," \
+  ansible-playbook -i "192.168.1.40," \
     terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 STEP 8 — Verify resolver from inside Traefik container:

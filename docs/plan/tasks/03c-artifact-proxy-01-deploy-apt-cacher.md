@@ -19,7 +19,7 @@ been brought up, but apt-cacher-ng has not.
 
 ## Prerequisites
 
-- Phase 00b complete — Portainer running at `192.168.1.20`
+- Phase 00b complete — Portainer running at `10.57.1.20`
 - Harbor deployment task complete — Harbor healthy at `10.57.3.10`
 - Storage pool `infrastructure-containers` exists
 - Template `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` exists
@@ -97,7 +97,7 @@ STEP 0 — Verify bootstrap dependencies:
   source /home/steve/git/proxmox-homelab/.env.pve-test
   echo "$TF_VAR_proxmox_node"   # must print pve-test
   echo "$TF_WORKSPACE"          # must print pve-test
-  curl -s http://192.168.1.20:9000/api/system/status
+  curl -s http://10.57.1.20:9000/api/system/status
   curl -s http://10.57.3.10/api/v2.0/ping
 
 STEP 0b — Confirm template and infra SDN prerequisites:

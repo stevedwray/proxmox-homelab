@@ -29,7 +29,6 @@ from scratch and validated independently.
 
 - Phase 00 complete
 - Phase 00a host bootstrap path available
-- `vmbr0` available for bootstrap LAN connectivity
 - `storage-template` and `infrastructure-containers` storage available on `pve-test`
 
 ## Deliverables
@@ -53,7 +52,6 @@ from scratch and validated independently.
 - [ ] Portainer is running on `pve-test` at `10.57.1.20` (mgmt_seg)
 - [ ] Admin login works with `PORTAINER_ADMIN_PASSWORD`
 - [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
-- [ ] `192.168.1.20` is unreachable (bootstrap address decommissioned)
 - [ ] Subsequent pve-test stack deploys target the mgmt_seg Portainer
 - [ ] Production Portainer is not required for any later pve-test work
 
