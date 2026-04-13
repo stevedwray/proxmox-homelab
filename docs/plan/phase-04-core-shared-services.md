@@ -11,6 +11,13 @@ Deploy the foundational shared services that must exist before any application s
 
 Deploy in this order. Authentik must be running before Traefik (auth middleware depends on it). Traefik must be running before step-ca (step-ca resolver is activated in Traefik as part of the step-ca task). Monitoring deploys last as the most resource-heavy service.
 
+## Live task docs
+
+- [04-core-services-01 — Deploy Authentik identity provider on mgmt_seg](tasks/04-core-services-01-deploy-authentik.md)
+- [04-core-services-03 — Deploy Traefik reverse proxy](tasks/04-core-services-03-deploy-traefik.md)
+- [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
+- [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
+
 ## Certificate strategy
 
 This phase uses a **dual certificate resolver** model in Traefik:

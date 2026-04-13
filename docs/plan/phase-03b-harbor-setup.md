@@ -16,6 +16,13 @@ registry before any new services are deployed. This phase:
 **From Phase 04 onwards, all compose files reference `10.57.3.10/...` — never upstream
 registries directly.**
 
+## Live task docs
+
+- [03b-harbor-01 — Deploy Harbor registry stack on infra_seg](tasks/03b-harbor-01-deploy-harbor.md)
+
+The rest of this phase document covers Harbor post-deployment configuration work that
+follows once the base Harbor stack is healthy.
+
 ## Prerequisites
 
 - Phase 00b complete: Portainer running at `192.168.1.20` on pve-test

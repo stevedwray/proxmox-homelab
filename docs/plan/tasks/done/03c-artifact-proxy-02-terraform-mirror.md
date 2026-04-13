@@ -1,5 +1,9 @@
 # 03c-artifact-proxy-02 — Create Terraform provider filesystem mirror
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Active docs under `docs/design/` and `docs/plan/` take precedence.
+
 ## Status
 
 PENDING

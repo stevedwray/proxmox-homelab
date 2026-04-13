@@ -1,5 +1,9 @@
 # 00b-pve-test-04 — Update .env.pve-test and verify pve-test isolation
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Active docs under `docs/design/` and `docs/plan/` take precedence.
+
 ## Status
 
 PENDING
