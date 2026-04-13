@@ -33,9 +33,9 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 - Phase 01 (CI runner) complete — self-hosted runner is online
 - **Phase 02 (memory upgrade) complete** — pve-test must be at 32 GB before starting this phase
 - **Phase 03b complete** — Harbor has Trivy scanner enabled, proxy cache projects configured, and Phase 04 images already pulled and scanned
-- **Phase 03c complete** — apt-cacher-ng running at `192.168.1.35`; all LXC stacks deployed in this phase will route apt through the proxy automatically
-- Harbor is running at `192.168.1.10` (deployed earlier)
-- NetBox is running at `192.168.1.30` (deployed earlier)
+- **Phase 03c complete** — apt-cacher-ng running at `10.57.3.11` in `infra_seg`; all LXC stacks deployed in this phase will route apt through the proxy automatically
+- Harbor is running at `10.57.3.10` in `infra_seg` (deployed earlier)
+- NetBox is running at `10.57.3.12` in `infra_seg` (deployed earlier)
 - Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
 - `.env` is sourced with Proxmox API credentials

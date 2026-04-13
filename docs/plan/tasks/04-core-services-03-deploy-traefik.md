@@ -59,7 +59,7 @@ LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traef
 ## Inputs
 
 - `docs/plan/phase-04-core-shared-services.md` — Service 2 section
-- Traefik image: `192.168.1.10/dockerhub/library/traefik:<pin>`
+- Traefik image: `10.57.3.10/dockerhub/library/traefik:<pin>`
 - Cloudflare DNS API token: `${CF_DNS_API_TOKEN}` from `.env`
 - Authentik forward-auth address: `http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik`
 - step-ca ACME URL (pre-configure only, not yet live): `https://10.57.1.11/acme/acme/directory`

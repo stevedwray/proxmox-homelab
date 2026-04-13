@@ -1,10 +1,12 @@
-# NetBox IPAM/DCIM stack — test instance for live validation of integration scripts
-# Deployed on pve-test, registered to prod Portainer as environment 'netbox-stack-test'.
+# NetBox IPAM/DCIM stack — pve-test instance in infra_seg (VLAN 40, 10.57.3.0/24)
 hostname: netbox-stack-test
-ip_address: "192.168.1.31/24"
-vmid: 142
+ip_address: "10.57.3.12/24"
+gateway: "10.57.3.1"
+network:
+  zone: infra_seg
+vmid: 143
 cores: 2
-memory: 4096
+memory: 1024
 swap: 4096
 rootfs_size: 8
 rootfs_storage: infrastructure-containers

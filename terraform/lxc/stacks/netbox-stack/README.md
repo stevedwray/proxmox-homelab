@@ -2,6 +2,10 @@
 
 NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service Docker Compose stack, managed via Portainer.
 
+> **Environment note:** This stack (`netbox-stack/`) is the **production pve** instance
+> (VMID 119, `192.168.1.30`). The pve-test instance is in
+> `terraform/lxc/stacks/netbox-stack-test/` (VMID 143, `10.57.3.12` in `infra_seg`).
+
 ## Resources
 
 | Property | Value |
