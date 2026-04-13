@@ -21,13 +21,12 @@ greenfield `pve-test` rebuild.
 
 ## Objective
 
-All `pve-test` applies between this task and the Portainer pivot (task 00b-03) target the
-local bootstrap Portainer at `192.168.1.20`. This address is temporary — task 00b-03
-rebuilds Portainer on `mgmt_seg` at `10.57.1.20` and updates this env var.
+All subsequent `pve-test` applies target the local Portainer server at `10.57.1.20`
+instead of the retired production default at `192.168.1.4`.
 
 ## Scope
 
-- Update `.env.pve-test` with `TF_VAR_portainer_server_ip=192.168.1.20`
+- Update `.env.pve-test` with `TF_VAR_portainer_server_ip=10.57.1.20`
 - Add a comment-only placeholder to `.env.template`
 - Verify the override is visible in the shell before later stack deploys
 
@@ -38,28 +37,28 @@ rebuilds Portainer on `mgmt_seg` at `10.57.1.20` and updates this env var.
 
 ## Acceptance Criteria
 
-- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=192.168.1.20`
+- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
 - [ ] `.env.template` documents the override as a pve-test-only setting
-- [ ] `echo "$TF_VAR_portainer_server_ip"` prints `192.168.1.20` after sourcing `.env` and `.env.pve-test`
+- [ ] `echo "$TF_VAR_portainer_server_ip"` prints `10.57.1.20` after sourcing `.env` and `.env.pve-test`
 
 ## Session Prompt
 
 ```text
 TASK: Update the pve-test environment so later stacks register with the local Portainer at
-192.168.1.20 instead of the old production Portainer.
+10.57.1.20 instead of the old production Portainer.
 
 STEP 1 — Edit .env.pve-test:
-  export TF_VAR_portainer_server_ip=192.168.1.20
+  export TF_VAR_portainer_server_ip=10.57.1.20
 
 STEP 2 — Add a comment-only placeholder to .env.template:
   # pve-test overrides (set in .env.pve-test, not here)
-  # TF_VAR_portainer_server_ip=192.168.1.20   # pve-test Portainer
+  # TF_VAR_portainer_server_ip=10.57.1.20   # pve-test Portainer
 
 STEP 3 — Verify:
   source .env
   source .env.pve-test
   echo "$TF_VAR_portainer_server_ip"
-  # Expect: 192.168.1.20
+  # Expect: 10.57.1.20
 
 DONE WHEN: Later pve-test stack deploys will use the local Portainer server.
 ```

@@ -37,13 +37,11 @@ from scratch and validated independently.
 - Portainer running at `10.57.1.20` / VMID 120 on `mgmt_seg`
 - `TF_VAR_portainer_server_ip=10.57.1.20` in `.env.pve-test`
 - active pve-test deployments no longer depend on `192.168.1.4`
-- `192.168.1.20` decommissioned (bootstrap address, not permanent)
 
 ## Live task docs
 
-- [00b-pve-test-01 — Deploy Portainer bootstrap stack on bare-metal pve-test](tasks/00b-pve-test-01-deploy-portainer.md)
+- [00b-pve-test-01 — Deploy Portainer on mgmt_seg](tasks/00b-pve-test-01-deploy-portainer.md)
 - [00b-pve-test-02 — Update pve-test environment isolation after Portainer bootstrap](tasks/00b-pve-test-02-update-env-isolation.md)
-- [00b-pve-test-03 — Pivot Portainer from vmbr0 to mgmt_seg](tasks/00b-pve-test-03-pivot-portainer-to-mgmt-seg.md)
 
 ## Out of Scope
 
@@ -61,7 +59,7 @@ from scratch and validated independently.
 
 ## Notes
 
-- `192.168.1.20` is a bootstrap-only address used during task 00b-01 and 00b-02.
-  It is decommissioned in task 00b-03 when Portainer is rebuilt on `mgmt_seg`.
+- Portainer is deployed directly on `mgmt_seg` — there is no vmbr0 bootstrap step.
+  This is possible because Phase 00a-02 (SDN zone setup) runs before this phase.
 - All later stack work should follow the phase/task docs rather than the archived `done/`
   runbooks

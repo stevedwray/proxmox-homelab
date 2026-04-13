@@ -23,31 +23,30 @@ This task assumes a **true greenfield laptop rebuild**:
 
 ## Prerequisites
 
-- Phase 00a complete — host bootstrap path classified and usable
-- Proxmox host baseline applied enough to support Terraform and Ansible access
+- Phase 00a-01 complete — Proxmox host baseline applied, Terraform API token provisioned
+- Phase 00a-02 complete — `mgmt_seg` SDN VLAN zone active on pve-test (`tvmgmt`, VLAN 20, `10.57.1.0/24`)
+- Phase 00a-03 complete — Debian Docker LXC template exists in `storage-template`
+- MikroTik route for `10.57.1.0/24 → 192.168.1.40` is active
 - Storage pool `infrastructure-containers` exists on `pve-test`
-- Template storage `storage-template` exists on `pve-test`
-- `vmbr0` exists and provides flat LAN access on `192.168.1.0/24`
 - `.env` and `.env.pve-test` exist and set `TF_VAR_proxmox_node=pve-test`
 - `PORTAINER_ADMIN_PASSWORD` exists in `.env`
 
-### Template prerequisite
+## Network placement
 
-The stack uses `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz`.
-
-If that template does not exist yet on the laptop, build or import it before continuing.
-Use the active host-bootstrap path described in:
-
-- [docs/plan/phase-00a-proxmox-host-bootstrap.md](/home/steve/git/proxmox-homelab/docs/plan/phase-00a-proxmox-host-bootstrap.md:1)
-- [docs/reference/proxmox-server-baseline.md](/home/steve/git/proxmox-homelab/docs/reference/proxmox-server-baseline.md:1)
-
-Do not assume an inherited template from `pve`.
+| Field | Value |
+|---|---|
+| Zone | `mgmt_seg` |
+| VLAN | 20 |
+| VNet | `tvmgmt` |
+| IP | `10.57.1.20` |
+| Gateway | `10.57.1.1` |
+| VMID | 120 |
 
 ## Objective
 
-LXC `portainer-stack` (VMID 120) is running on `pve-test` at `192.168.1.20` on `vmbr0`.
-Portainer is reachable locally and provides the standalone management endpoint for all later
-`pve-test` stacks.
+LXC `portainer-stack` (VMID 120) is running on `pve-test` at `10.57.1.20` on `mgmt_seg`.
+Portainer is reachable from the management network and provides the standalone management
+endpoint for all later `pve-test` stacks.
 
 ## Scope
 
@@ -77,13 +76,12 @@ Portainer is reachable locally and provides the standalone management endpoint f
 ## Expected Outputs
 
 - VMID 120 running on `pve-test`
-- Portainer reachable at `http://192.168.1.20:9000`
+- Portainer reachable at `http://10.57.1.20:9000`
 - `PORTAINER_ADMIN_PASSWORD` used to initialize the admin user
 - `.env.template` contains `PORTAINER_ADMIN_PASSWORD`
 
 ## Constraints and Conventions
 
-- Portainer is the only permanent bootstrap stack on flat LAN `vmbr0`
 - This task is allowed to pull `portainer/portainer-ce` directly from Docker Hub on the first pass
 - Do not assume NetBox exists yet for IP allocation checks
 - Portainer should expose the local Docker environment as an endpoint after bootstrap
@@ -94,14 +92,14 @@ Portainer is reachable locally and provides the standalone management endpoint f
 ## Acceptance Criteria
 
 - [ ] Debian Docker template exists at `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz`
-- [ ] `terraform/lxc/stacks/portainer-stack/stack.yaml` exists and targets VMID 120 / `192.168.1.20`
+- [ ] `terraform/lxc/stacks/portainer-stack/stack.yaml` exists and targets VMID 120 / `10.57.1.20`
 - [ ] `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml` exists
 - [ ] `.env.template` contains `PORTAINER_ADMIN_PASSWORD`
 - [ ] `terragrunt apply` for `portainer-stack` exits 0
-- [ ] `curl -s http://192.168.1.20:9000/api/system/status` returns HTTP 200
+- [ ] `curl -s http://10.57.1.20:9000/api/system/status` returns HTTP 200
 - [ ] Portainer admin login works with `PORTAINER_ADMIN_PASSWORD`
 - [ ] Portainer shows the local Docker environment as an endpoint
-- [ ] Follow-on environment configuration sets `TF_VAR_portainer_server_ip=192.168.1.20` in `.env.pve-test`
+- [ ] Follow-on environment configuration sets `TF_VAR_portainer_server_ip=10.57.1.20` in `.env.pve-test`
 
 ## Session Prompt
 
@@ -128,7 +126,7 @@ If the template does not exist, stop and complete the template build/import path
 Do not continue with this task until the template exists.
 
 STEP 1 — Verify the bootstrap IP is free:
-  ping -c 3 192.168.1.20
+  ping -c 3 10.57.1.20
   # Expect no reply
 
 STEP 2 — Ensure these files exist and match the active plan:
@@ -146,18 +144,18 @@ STEP 3 — Apply the stack:
 STEP 4 — Run the playbook:
   cd /home/steve/git/proxmox-homelab
   ansible-playbook \
-    -i "192.168.1.20," \
+    -i "10.57.1.20," \
     terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml
 
 STEP 5 — Verify Portainer:
-  curl -s http://192.168.1.20:9000/api/system/status
+  curl -s http://10.57.1.20:9000/api/system/status
   # Expect HTTP 200 / JSON payload
 
   Confirm the local Docker environment appears in Portainer as an endpoint.
 
 STEP 6 — Hand off to environment configuration:
-  Set TF_VAR_portainer_server_ip=192.168.1.20 in .env.pve-test before deploying any later stack.
+  Set TF_VAR_portainer_server_ip=10.57.1.20 in .env.pve-test before deploying any later stack.
 
-DONE WHEN: Portainer is up at 192.168.1.20:9000 and serves as the standalone management
+DONE WHEN: Portainer is up at 10.57.1.20:9000 and serves as the standalone management
 endpoint for all later pve-test work.
 ```
