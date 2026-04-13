@@ -2,45 +2,75 @@ name: Security Scan
 
 on:
   push:
-    branches: [ main, develop ]
+    branches:
+      - main
+      - 'dev/pve-test'
+      - 'dev/**'
   pull_request:
-    branches: [ main ]
+    branches:
+      - main
+      - 'dev/pve-test'
 
 jobs:
   sast-scan:
     runs-on: ubuntu-latest
+    permissions:
+      security-events: write
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-    - name: Run Trivy vulnerability scanner
-      uses: aquasecurity/trivy-action@master
+    - name: Run Trivy vulnerability + IaC + secret scanner
+      uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
       with:
         scan-type: 'fs'
         scan-ref: '.'
+        scanners: 'vuln,secret,misconfig'
         format: 'sarif'
         output: 'trivy-results.sarif'
 
-    - name: Upload Trivy scan results
-      uses: github/codeql-action/upload-sarif@v2
+    - name: Upload Trivy SARIF results
+      uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
       with:
         sarif_file: 'trivy-results.sarif'
 
-  terraform-security:
+  # Removed terraform-security job (tfsec build fails in CI due to Go toolchain)
+  # IaC scanning is now consolidated into the `sast-scan` job via Trivy.
+
+  snyk-iac:
+    name: Snyk IaC scan
+    runs-on: ubuntu-latest
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Run Snyk IaC scan
+        uses: snyk/actions/iac@9adf32b1121593767fc3c057af55b55db032dc04 # v1.0.0
+        continue-on-error: true
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+        with:
+          file: terraform/
+          args: --severity-threshold=high --report
+
+      - name: Upload Snyk results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        if: always() && hashFiles('snyk.sarif') != ''
+        with:
+          sarif_file: snyk.sarif
+
+  trufflehog:
+    name: TruffleHog secret scan
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v4
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+        with:
+          fetch-depth: 0
 
-    - name: Setup Terraform
-      uses: hashicorp/setup-terraform@v2
-
-    - name: Terraform Security Scan
-      uses: triat/terraform-security-scan@v3.1.0
-      with:
-        tfsec_actions_comment: true
-        tfsec_output_format: sarif
-        tfsec_output_file: tfsec.sarif
-
-    - name: Upload tfsec scan results
-      uses: github/codeql-action/upload-sarif@v2
-      with:
-        sarif_file: tfsec.sarif
+      - name: TruffleHog OSS
+        uses: trufflesecurity/trufflehog@47e7b7cd74f578e1e3145d48f669f22fd1330ca6 # v3.94.3
+        with:
+          path: ./
+          base: ${{ github.event.repository.default_branch }}
+          head: HEAD
+          extra_args: --only-verified

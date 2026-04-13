@@ -61,7 +61,8 @@
 
 - name: Set endpoint ID from create
   ansible.builtin.set_fact:
-    harbor_postconfigure_dockerhub_endpoint_id: "{{ harbor_postconfigure_endpoint_result.json.id }}"
+    harbor_postconfigure_dockerhub_endpoint_id: >-
+      {{ harbor_postconfigure_endpoint_result.get('json', harbor_postconfigure_endpoint_result).get('id') }}
   when: harbor_postconfigure_endpoint_result is not skipped
   delegate_to: localhost
 
@@ -69,7 +70,11 @@
   ansible.builtin.debug:
     msg: >-
       Docker Hub proxy endpoint '{{ harbor_postconfigure_dockerhub_endpoint_name }}'
-      {{ 'created (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' if harbor_postconfigure_endpoint_result is not skipped else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')' }}
+      {{
+        'created (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
+        if harbor_postconfigure_endpoint_result is not skipped
+        else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
+      }}
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
@@ -264,8 +269,8 @@
       --arg name "{{ harbor_postconfigure_bw_item_name }}" \
       --arg org  "{{ harbor_postconfigure_bw_org_id }}" \
       --arg coll "{{ harbor_postconfigure_bw_collection_id }}" \
-      --arg user "{{ harbor_postconfigure_robot_result.json.name }}" \
-      --arg pw   "{{ harbor_postconfigure_robot_result.json.secret }}" \
+      --arg user "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}" \
+      --arg pw   "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}" \
       '{type:1, name:$name, organizationId:$org, collectionIds:[$coll],
         login:{username:$user, password:$pw}}')
     existing_id=$(bw list items \
@@ -297,8 +302,8 @@
     msg:
       - "================================================================"
       - "Bitwarden CLI unavailable or vault locked — save manually!"
-      - "Name:   {{ harbor_postconfigure_robot_result.json.name }}"
-      - "Secret: {{ harbor_postconfigure_robot_result.json.secret }}"
+      - "Name:   {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}"
+      - "Secret: {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}"
       - "================================================================"
   when:
     - harbor_postconfigure_robot_exists is not defined

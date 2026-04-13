@@ -1,0 +1,24 @@
+# NetBox IPAM/DCIM stack — pve-test instance in infra_seg (VLAN 40, 10.57.3.0/24)
+hostname: netbox-stack-test
+ip_address: "10.57.3.12/24"
+gateway: "10.57.3.1"
+network:
+  zone: infra_seg
+vmid: 143
+cores: 2
+memory: 1024
+swap: 4096
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "32G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - netbox
+  - test
+  - docker
+keyctl: true
+
+# Deployment
+ansible_playbook: "deploy-netbox-stack"
+portainer_agent: true
+app_stack_name: "netbox"

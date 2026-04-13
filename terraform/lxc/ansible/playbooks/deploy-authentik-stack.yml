@@ -1,0 +1,115 @@
+---
+# Authentik stack lifecycle:
+# Docker base + Portainer Agent -> deploy local compose -> validate health
+
+- name: Configure Docker base and Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+
+- name: Deploy Authentik compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    authentik_compose_dir: /opt/authentik-stack
+    authentik_compose_path: /opt/authentik-stack/docker-compose.yml
+    authentik_compose_content: "{{ lookup('file', '../../stacks/authentik-stack/docker-compose.yml') }}"
+    authentik_registry_host: "192.168.1.10"
+    authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
+    authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
+    authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | default('', true) }}"
+    authentik_superuser_api_token: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | default('', true) }}"
+
+  tasks:
+    - name: Create Authentik compose directory
+      ansible.builtin.file:
+        path: "{{ authentik_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_path }}"
+        mode: "0640"
+        content: "{{ authentik_compose_content }}"
+
+    - name: Write Authentik environment file
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          AUTHENTIK_SECRET_KEY={{ authentik_secret_key }}
+          AUTHENTIK_POSTGRES_PASSWORD={{ authentik_postgres_password }}
+      no_log: true
+
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ authentik_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+
+    - name: Restart Docker to apply registry trust
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+    - name: Validate Authentik compose
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ authentik_compose_path }}" config -q
+        chdir: "{{ authentik_compose_dir }}"
+      register: authentik_compose_validate
+      changed_when: false
+
+    - name: Fail if compose invalid
+      ansible.builtin.fail:
+        msg: "docker compose config failed: {{ authentik_compose_validate.stderr | default(authentik_compose_validate.stdout) }}"
+      when: authentik_compose_validate.rc != 0
+
+    - name: Start Authentik via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ authentik_compose_dir }}"
+        state: present
+
+    - name: Wait for Authentik live health endpoint
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/-/health/live/"
+        method: GET
+        status_code: [200, 204]
+      register: authentik_live_health
+      retries: 30
+      delay: 10
+      until: authentik_live_health.status in [200, 204]
+
+    - name: Wait for Authentik ready health endpoint
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/-/health/ready/"
+        method: GET
+        status_code: [200, 204]
+      register: authentik_ready_health
+      retries: 30
+      delay: 10
+      until: authentik_ready_health.status in [200, 204]
+
+    - name: Remind operator to complete initial setup
+      ansible.builtin.debug:
+        msg: >-
+          Authentik is healthy at http://{{ ansible_host }}:9000/.
+          Complete the initial setup wizard at
+          http://{{ ansible_host }}:9000/if/flow/initial-setup/
+          using AUTHENTIK_SUPERUSER_PASSWORD from .env, then create
+          AUTHENTIK_SUPERUSER_API_TOKEN and store it in .env.

@@ -1,0 +1,132 @@
+name: Validate
+
+on:
+  push:
+    branches:
+      - main
+      - 'dev/pve-test'
+      - 'dev/**'
+      - 'feat/**'
+      - 'fix/**'
+  pull_request:
+    branches:
+      - main
+      - 'dev/pve-test'
+
+jobs:
+  terraform-fmt:
+    name: Terraform format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+
+      - name: Check formatting
+        run: terraform fmt -check -recursive terraform/
+
+  harbor-image-policy:
+    name: Enforce Harbor-only image references
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Check compose files use Harbor proxy
+        run: |
+          if grep -RInE \
+            --exclude-dir='.terragrunt-cache' \
+            --include='*.yml' \
+            --include='*.yaml' \
+            '^[[:space:]]*image:[[:space:]]*.*(docker\.io|ghcr\.io|quay\.io|registry\.k8s\.io)' \
+            terraform/lxc/stacks/; then
+            echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+            exit 1
+          fi
+          echo "OK — all image references use Harbor proxy."
+
+  terraform-validate:
+    name: Terraform validate
+    runs-on: [self-hosted, pve-test, build]
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@5e8dbf3c6d9deaf4193ca7a8fb23f2ac83bb6c85 # v4.0.0
+
+      - name: Cache Terraform providers
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.terraform.d/plugin-cache
+          key: terraform-providers-${{ runner.os }}-${{ hashFiles('terraform/lxc/.terraform.lock.hcl') }}
+          restore-keys: terraform-providers-${{ runner.os }}-
+
+      - name: Init (no backend)
+        working-directory: terraform/lxc
+        run: |
+          mkdir -p ~/.terraform.d/plugin-cache
+          TF_PLUGIN_CACHE_DIR=~/.terraform.d/plugin-cache \
+            terraform init -backend=false
+
+      - name: Validate
+        working-directory: terraform/lxc
+        # terraform validate does not accept -var-file; supply required
+        # variables via TF_VAR_ environment variables instead.
+        env:
+          TF_VAR_stack_name: ci-validate
+          TF_VAR_stack_yaml_path: /dev/null
+          TF_VAR_proxmox_api_url: https://localhost:8006
+          TF_VAR_pm_api_token_id: ci@pve!token
+          TF_VAR_pm_api_token_secret: dummy-secret-for-ci-validate-only
+          TF_VAR_lxc_password: dummy-password-for-ci-validate-only
+        run: terraform validate
+
+  ansible-lint:
+    name: Ansible lint
+    runs-on: [self-hosted, pve-test, build]
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Cache pip packages
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7 # v5.0.4
+        with:
+          path: ~/.cache/pip
+          key: pip-ansible-lint-${{ hashFiles('requirements.txt') }}
+          restore-keys: pip-ansible-lint-
+
+      - name: Create Python virtual environment
+        run: python3 -m venv .venv
+
+      - name: Install ansible-lint
+        run: .venv/bin/pip install ansible-lint
+
+      - name: Install Ansible collections
+        working-directory: terraform/lxc/ansible
+        run: ../../../.venv/bin/ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint
+        # Run from the ansible directory so ansible.cfg is discovered,
+        # which sets roles_path = roles (relative to this directory).
+        working-directory: terraform/lxc/ansible
+        run: ../../../.venv/bin/ansible-lint playbooks/
+
+  sops-decrypt-check:
+    name: SOPS decrypt verification
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install sops
+        env:
+          SOPS_VERSION: "3.10.2"
+        run: |
+          curl -Lo /usr/local/bin/sops \
+            "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.amd64"
+          chmod +x /usr/local/bin/sops
+
+      - name: Verify decryption succeeds
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          sops --decrypt terraform/secrets.enc.yaml > /dev/null
+          echo "Decryption successful"

@@ -1,0 +1,87 @@
+---
+# Portainer CE server bootstrap for pve-test.
+# This stack is the Portainer server, not an agent.
+
+- name: Install Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+
+- name: Deploy Portainer CE server
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    portainer_compose_dir: /opt/portainer
+    portainer_version: "2.27.3"
+
+  tasks:
+    - name: Create Portainer compose directory
+      ansible.builtin.file:
+        path: "{{ portainer_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ portainer_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            portainer:
+              image: portainer/portainer-ce:{{ portainer_version }}
+              restart: unless-stopped
+              ports:
+                - "9000:9000"
+                - "9443:9443"
+                - "8000:8000"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /var/lib/portainer:/data
+
+    - name: Pull Portainer image
+      community.docker.docker_image:
+        name: "portainer/portainer-ce:{{ portainer_version }}"
+        source: pull
+
+    - name: Start Portainer via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ portainer_compose_dir }}"
+        state: present
+
+- name: Initialise Portainer admin account
+  hosts: all
+  become: false
+  gather_facts: false
+
+  tasks:
+    - name: Wait for Portainer API to become available
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/system/status"
+        status_code: 200
+      register: portainer_status
+      until: portainer_status.status == 200
+      retries: 30
+      delay: 5
+
+    - name: Initialise admin credentials
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users/admin/init"
+        method: POST
+        body_format: json
+        body:
+          Username: "admin"
+          Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+        status_code: [200, 409]
+      register: portainer_init_result
+      no_log: true
+
+    - name: Report init outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer admin account initialised.' if portainer_init_result.status == 200
+             else 'Portainer admin account already exists (idempotent).' }}

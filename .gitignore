@@ -6,9 +6,17 @@ storage-audit
 .env.*
 !.env.template
 
+# SOPS — never commit decrypted/plaintext versions
+*.dec.yaml
+*.dec.env
+
+# step-ca root cert exported during deployment
+certs/homelab-root.crt
+
 # Terraform
 *.tfstate
 *.tfstate.*
+terraform.tfstate.d/
 .terraform/
 .terraform.lock.hcl
 terraform/lxc/.terraform-plugin-cache/
@@ -16,6 +24,7 @@ crash.log
 crash.*.log
 *.tfvars
 *.tfvars.json
+!terraform/lxc/ci-validate.tfvars
 override.tf
 override.tf.json
 *_override.tf
@@ -67,4 +76,3 @@ id_rsa.pub
 .continue/config.json
 *~
 .scannerwork/
-

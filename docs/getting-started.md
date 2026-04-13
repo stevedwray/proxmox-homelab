@@ -1,54 +1,30 @@
-# Getting Started with Proxmox Homelab Automation
+# Getting Started
 
-This guide walks you through setting up and validating the complete Proxmox homelab automation environment.
+This guide is the current onboarding path for working on the `pve-test` build of the
+Proxmox homelab repository.
 
-## Prerequisites
+It assumes the active project model:
 
-- Windows with WSL1 (for VMware compatibility)
-- VMware Workstation with Proxmox VE 9.0+ running
-- Git configured with SSH keys
-- Basic understanding of infrastructure automation concepts
+- `pve-test` is a bare-metal Proxmox host
+- Terraform entry point is `terraform/lxc/`
+- Proxmox API access uses the `automation@pve!terraform` token
+- host bootstrap is handled through the planned bootstrap Ansible playbooks
 
-## Phase 1: Verify Your Foundation
+## What you need first
 
-Before starting automation setup, ensure your Proxmox VM is properly configured.
+- Git with SSH access to the repository
+- a Linux shell environment suitable for Terraform, Ansible, and SSH
+- SSH access to `root@pve-test.gibbsgreatly.xyz`
+- local copies of required environment files and secrets
 
-### Proxmox Server Requirements
-
-- Static IP configuration
-- FQDN resolution (for example, `pvetest.gibbsgreatly.xyz`)
-- SSH access as `root` with key authentication
-- Web interface accessible on port `8006`
-
-### Validation
-
-Your Proxmox server should be accessible:
+If you are setting up your local toolchain from scratch, use:
 
 ```bash
-ping pvetest.gibbsgreatly.xyz
-ssh root@pvetest.gibbsgreatly.xyz "pveversion"
-curl -k https://pvetest.gibbsgreatly.xyz:8006
-```
-
-## Phase 2: Development Environment Setup
-
-### Quick Setup
-
-```bash
-# Clone or create repository structure
-git clone https://github.com/your-username/proxmox-homelab.git
-cd proxmox-homelab
-
-# Or create from scratch
-curl -sSL https://raw.githubusercontent.com/your-repo/proxmox-homelab/main/scripts/repo-structure-creation.sh | bash
-cd ~/proxmox-homelab
-
-# Set up development tools
 chmod +x scripts/setup-dev-env.sh
 ./scripts/setup-dev-env.sh
 ```
 
-### Manual Verification
+Then verify the basics:
 
 ```bash
 terraform version
@@ -57,172 +33,135 @@ git --version
 python3 -c "import proxmoxer; print('Proxmoxer available')"
 ```
 
-## Phase 3: Proxmox Server Configuration
+## Verify host access
 
-### Configure Your Environment
-
-```bash
-cp .env.template .env
-nano .env
-```
-
-Add your Proxmox lab details, for example:
+Before using any automation, confirm the target host is reachable:
 
 ```bash
-PROXMOX_HOST=192.168.1.100
-PROXMOX_USER=root@pam
-PROXMOX_PASSWORD=your-password
+ping -c 1 pve-test.gibbsgreatly.xyz
+ssh root@pve-test.gibbsgreatly.xyz "pveversion"
+curl -k https://pve-test.gibbsgreatly.xyz:8006
 ```
 
-### Apply Baseline Setup
+Expected:
+
+- DNS resolves correctly
+- root SSH works
+- the Proxmox web/API endpoint responds on port `8006`
+
+## Bootstrap the Proxmox host
+
+If `pve-test` is freshly installed or has lost its automation baseline, run the current
+bootstrap flow:
 
 ```bash
 cd ansible
-ansible-playbook -i inventory/test-lab.yml 01-base-system/base-config.yml
+ansible-playbook -i inventory/dev.yml 00-initial-setup/proxmox-initial-setup.yml
+ansible-playbook -i inventory/dev.yml 01-base-system/terraform-token-management.yml
 ```
 
-### Set API Access Password
+This establishes the current baseline, including:
 
-The playbook creates the `automation@pve` user but does not set a password automatically.
+- Proxmox repository normalization
+- `automation@pve`
+- `automation@pve!terraform`
+- token output for Terraform use
+
+After rotating or creating the token, update your local `.env` and/or `.env.pve-test`
+with the printed token values.
+
+## Configure local environment files
+
+At minimum, copy and populate the local environment file:
 
 ```bash
-ssh root@pvetest.gibbsgreatly.xyz "pveum passwd automation@pve"
+cp .env.template .env
 ```
 
-Update `.env` with the password you chose:
+Fill in the values required by the current repo workflow. For Terraform auth, the active
+pattern is token-based, for example:
 
 ```bash
-PROXMOX_HOST=pvetest.gibbsgreatly.xyz
-PROXMOX_USER=automation@pve
-PROXMOX_PASSWORD=your-chosen-password
+TF_VAR_pm_api_token_id=automation@pve!terraform
+TF_VAR_pm_api_token_secret=<TOKEN_SECRET>
 ```
 
-## Phase 4: Validation and Testing
+Depending on the task, you may also need `.env.pve-test`.
 
-### Complete System Validation
+## Verify Proxmox API access
+
+Before running Terraform, confirm the token works:
 
 ```bash
-./scripts/check-proxmox-status.sh
+curl -ks -H "Authorization: PVEAPIToken=automation@pve!terraform=<TOKEN_SECRET>" \
+  "https://pve-test.gibbsgreatly.xyz:8006/api2/json/version"
 ```
 
-Expected: all checks should pass with green checkmarks.
+Expected: JSON containing Proxmox version data.
 
-### Individual Component Testing
+## Work from the active Terraform entry point
 
-**SSH Connectivity**
+The current Terraform/Terragrunt workflow lives under `terraform/lxc/`.
+
+Typical validation flow:
 
 ```bash
-ssh root@pvetest.gibbsgreatly.xyz "echo 'Root SSH works'"
-ssh automation@pvetest.gibbsgreatly.xyz "sudo whoami"
+cd terraform/lxc
+tofu init
+tofu validate
+terragrunt plan
 ```
 
-**API Authentication**
+Use the stack and network docs there as your primary implementation reference:
 
-```bash
-source .env
-curl -k -d "username=$PROXMOX_USER&password=$PROXMOX_PASSWORD" \
-  https://$PROXMOX_HOST:8006/api2/json/access/ticket
-```
+- `terraform/lxc/README.md`
+- `terraform/lxc/network/pve-test.yaml`
+- `terraform/lxc/stacks/<stack>/stack.yaml`
 
-**Terraform Integration**
+## Success criteria
 
-```bash
-cd terraform/environments/test-vm
-terraform init
-terraform validate
-terraform plan
-```
+You are ready to work when:
 
-## Success Criteria
+- local Terraform and Ansible tooling is installed
+- `pve-test.gibbsgreatly.xyz` is reachable by SSH and HTTPS
+- the Proxmox bootstrap baseline has been applied if needed
+- `automation@pve!terraform` is available and working
+- `terragrunt plan` or `tofu validate` succeeds from `terraform/lxc/`
 
-Your environment is ready when:
+## Common issues
 
-- [ ] All development tools are installed and working
-- [ ] Proxmox server passes complete validation via `./scripts/check-proxmox-status.sh`
-- [ ] SSH access works for both `root` and `automation` users
-- [ ] API authentication is successful with `automation@pve`
-- [ ] Terraform can connect to Proxmox and `terraform plan` succeeds
-- [ ] VSCode workspace opens with recommended extensions
-- [ ] Continue.dev AI assistant responds to custom commands
+### SSH access problems
 
-## Common Issues and Solutions
+Check:
 
-### WSL Version Conflicts
+- your SSH key is present locally
+- root SSH works to `pve-test.gibbsgreatly.xyz`
+- `ansible/inventory/dev.yml` still matches the current host IP and key path
 
-If VMware Workstation fails to start VMs:
+### Proxmox API authentication problems
 
-```bash
-wsl --set-version <distro-name> 1
-```
+Check:
 
-### Missing SSH Keys
+- the token exists: `pveum user token list automation@pve`
+- the token secret in `.env` or `.env.pve-test` is current
+- you are using token auth, not the old password-based `access/ticket` flow
 
-```bash
-ssh-keygen -t rsa -b 4096 -C "your-email@example.com"
-ssh-copy-id root@pvetest.gibbsgreatly.xyz
-```
+### Host bootstrap drift
 
-### Proxmox Configuration Issues
+If the host has been rebuilt or partially reset, follow:
 
-After VM resets, run the recovery procedure from `docs/troubleshooting/vm-reset-recovery.md`.
-
-```bash
-ansible-playbook -i inventory/test-lab.yml 01-base-system/base-config.yml
-ssh root@pvetest.gibbsgreatly.xyz "pveum passwd automation@pve"
-./scripts/check-proxmox-status.sh
-```
-
-### Package Installation Errors
-
-```bash
-pip install package-name --break-system-packages
-sudo apt install missing-package
-```
-
-## Next Steps After Setup
-
-### Infrastructure Deployment
-
-1. Create test LXC containers with Terraform
-2. Configure containers with Ansible playbooks
-3. Set up monitoring and logging
-4. Implement backup procedures
-
-### Development Workflow
-
-1. Make infrastructure changes in code
-2. Test in VMware lab environment
-3. Validate with security scans
-4. Deploy to production when ready
-
-### Advanced Features
-
-- Explore LXC template automation
-- Set up container orchestration
-- Implement disaster recovery testing
-- Integrate with external monitoring
-
-## Support Resources
-
+- `docs/troubleshooting/vm-reset-recovery.md`
 - `docs/reference/proxmox-server-baseline.md`
 - `docs/reference/proxmox-terraform-user.md`
-- `docs/reference/dev-environment-setup.md`
-- `docs/reference/stack-deployment-generalisation.md`
+
+## Next places to read
+
+- `docs/plan/README.md`
+- `docs/plan/phase-00a-proxmox-host-bootstrap.md`
+- `docs/reference/proxmox-server-baseline.md`
+- `docs/reference/proxmox-terraform-user.md`
+- `docs/reference/secrets-management.md`
+- `docs/reference/sdn-segment-routing.md`
 - `docs/troubleshooting/vm-reset-recovery.md`
-- `docs/troubleshooting/ipv6-issues.md`
-
-## Maintenance
-
-### Regular Tasks
-
-- Run validation weekly: `./scripts/check-proxmox-status.sh`
-- Update packages monthly
-- Test recovery procedures before major changes
-- Keep documentation current with manual changes
-
-### Backup Important Files
-
-- `.env` file (secure storage)
-- SSH private keys
-- Terraform state files
-- Custom configuration changes
+- `terraform/README.md`
+- `terraform/lxc/README.md`

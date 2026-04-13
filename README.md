@@ -1,205 +1,98 @@
-# Homelab Secrets Management
+# Proxmox Homelab
 
-A secure way to manage Terraform and Ansible secrets using Bitwarden, designed to be resilient against accidental directory deletion while keeping secrets out of git.
+This repository contains the current build, planning, and automation work for the
+`pve-test` Proxmox homelab environment.
 
-## Quick Start
+The active project direction is:
 
-### 1. Get Your Secrets
+- single-node `pve-test`
+- bare-metal Proxmox host
+- Terraform/Terragrunt-driven LXC provisioning under `terraform/lxc/`
+- Ansible-based host bootstrap and stack provisioning
+- Proxmox SDN VLAN zones on a VLAN-aware `vmbr0`
+- MikroTik as the L3 gateway
 
-```bash
-# Clone the repository
-git clone <your-repo-url>
-cd proxmox-homelab
+## Start here
 
-# Login to Bitwarden (one-time setup)
-bw login homelab@gibbsgreatly.xyz
+If you are new to the repository, read these in order:
 
-# Unlock and sync secrets
-export BW_SESSION=$(bw unlock --raw)
-./sync-secrets.sh
+1. [`docs/getting-started.md`](./docs/getting-started.md)
+2. [`docs/plan/README.md`](./docs/plan/README.md)
+3. [`terraform/README.md`](./terraform/README.md)
+4. [`terraform/lxc/README.md`](./terraform/lxc/README.md)
 
-# Load environment variables
-source .env
+## Repository layout
 
-# Now run your infrastructure commands
-terraform plan
-ansible-playbook playbook.yml
-```
-
-### 2. Daily Workflow
-
-```bash
-cd proxmox-homelab
-
-# If session expired, unlock again
-export BW_SESSION=$(bw unlock --raw)
-
-# Pull latest secrets (in case they were updated)
-./sync-secrets.sh
-source .env
-
-# Work with your infrastructure
-terraform apply
-```
-
-## Managing Secrets
-
-### Adding New Secrets
-
-**Option 1: Via Web Interface (Recommended)**
-1. Login to [vault.bitwarden.com](https://vault.bitwarden.com) with your main account
-2. Navigate to "Wray Family" organization → "Homelab" collection
-3. Create new **Login** item
-4. Set name to your environment variable name (e.g., `NEW_API_KEY`)
-5. Put the secret value in the **Password** field
-6. Save the item
-
-**Option 2: Via Script**
-1. Add your secret to your current `.env` file
-2. Add the variable name to the `ENV_VARS` array in `populate-bitwarden.sh`
-3. Run `./populate-bitwarden.sh`
-
-After adding secrets either way:
-```bash
-# Update the sync script to include the new variable
-# Edit sync-secrets.sh and add "NEW_API_KEY" to ENV_VARS array
-
-# Pull the new secret
-./sync-secrets.sh
-source .env
-```
-
-### Updating Existing Secrets
-
-**Via Web Interface:**
-1. Login to vault.bitwarden.com with your main account
-2. Find the secret in "Wray Family" → "Homelab" collection
-3. Edit the item and update the password field
-4. Save
-
-**Then sync locally:**
-```bash
-./sync-secrets.sh
-source .env
-```
-
-### Removing Secrets
-
-1. Delete the item from Bitwarden web interface
-2. Remove the variable name from `ENV_VARS` arrays in both scripts
-3. Remove any references from `.env.template`
-
-## Repository Structure
-
-```
+```text
 proxmox-homelab/
-├── .env.template          # Template showing required secrets (committed)
-├── .env                   # Generated file with actual secrets (ignored)
-├── sync-secrets.sh        # Pulls secrets from Bitwarden
-├── populate-bitwarden.sh  # Pushes secrets to Bitwarden
-├── .gitignore            # Excludes .env and temp files
-└── terraform/ansible files...
+├── ansible/
+│   ├── 00-initial-setup/        # Proxmox host bootstrap
+│   ├── 01-base-system/          # Terraform user/token and related host setup
+│   └── _legacy/                 # Older automation kept outside the active path
+├── docs/
+│   ├── design/                  # Architecture and revision docs
+│   ├── plan/                    # Active development/deployment phases and tasks
+│   ├── reference/               # Current operator/developer reference docs
+│   └── troubleshooting/         # Current troubleshooting guides
+├── scripts/                     # Local helper and validation scripts
+├── terraform/
+│   ├── lxc/                     # Active Terraform + Ansible LXC pipeline
+│   ├── secrets.enc.yaml         # SOPS-encrypted infrastructure secrets
+│   └── terraform-providers/     # Local provider mirror/cache
+├── .env.template                # Local environment template
+├── AGENTS.md                    # Codex workflow instructions
+└── CLAUDE.md                    # Claude workflow notes
 ```
 
-## Files Explained
+## Active workflow
 
-### `.env.template`
-Shows the structure of required environment variables. Contains placeholder values and non-secret configuration. **This is committed to git** so team members know what secrets are needed.
+At a high level, the current workflow is:
 
-```bash
-# Secret values (populated by sync-secrets.sh)
-export PROXMOX_TOKEN_ID='__FROM_BITWARDEN__'
-export PROXMOX_TOKEN_SECRET='__FROM_BITWARDEN__'
+1. Bootstrap or recover the Proxmox host with the active Ansible playbooks
+2. Define stack intent in `terraform/lxc/stacks/<stack>/stack.yaml`
+3. Define network intent in `terraform/lxc/network/pve-test.yaml`
+4. Run Terraform/Terragrunt from `terraform/lxc/`
+5. Let Terraform create LXCs and invoke Ansible-based provisioning
 
-# Non-secret configuration
-export TF_VAR_pm_api_url='https://proxmox.local:8006/api2/json'
-export ANSIBLE_HOST_KEY_CHECKING=False
-```
+## Key documents
 
-### `.env`
-Generated file containing actual secret values. **This is never committed to git**. Recreated each time you run `sync-secrets.sh`.
+### Architecture and planning
 
-### `sync-secrets.sh`
-Pulls secrets from Bitwarden and generates a complete `.env` file by:
-1. Starting with your `.env.template`
-2. Replacing `__FROM_BITWARDEN__` placeholders with actual secrets
-3. Preserving all non-secret configuration
+- [`docs/design/GreenField.md`](./docs/design/GreenField.md)
+- [`docs/design/NetworkPlanning.md`](./docs/design/NetworkPlanning.md)
+- [`docs/plan/README.md`](./docs/plan/README.md)
+- [`docs/plan/phase-00a-proxmox-host-bootstrap.md`](./docs/plan/phase-00a-proxmox-host-bootstrap.md)
 
-### `populate-bitwarden.sh`
-Migration tool to push existing environment variables into Bitwarden. Used when:
-- Setting up the system initially
-- Adding new secrets via script instead of web interface
+### Host bootstrap and Terraform access
 
-## How It Works
+- [`docs/reference/proxmox-server-baseline.md`](./docs/reference/proxmox-server-baseline.md)
+- [`docs/reference/proxmox-terraform-user.md`](./docs/reference/proxmox-terraform-user.md)
+- [`docs/troubleshooting/vm-reset-recovery.md`](./docs/troubleshooting/vm-reset-recovery.md)
 
-### The Problem This Solves
-- **Lost secrets**: Accidentally deleting your project directory meant losing `.env` files with secrets
-- **No backup**: Secrets weren't backed up anywhere safe
-- **Not in git**: Couldn't commit secrets to version control for obvious security reasons
-- **Manual recreation**: Had to manually recreate secret files after `git clone`
+### Network model
 
-### The Solution
-1. **Bitwarden as backend**: All secrets stored encrypted in Bitwarden
-2. **Separate account**: Uses `homelab@gibbsgreatly.xyz` account for isolation
-3. **Organization sharing**: Secrets shared via "Wray Family" organization's "Homelab" collection
-4. **Template approach**: `.env.template` in git shows structure, actual `.env` generated from secrets
-5. **CLI automation**: Scripts handle the sync automatically
+- [`docs/reference/sdn-segment-routing.md`](./docs/reference/sdn-segment-routing.md)
+- [`terraform/lxc/network/pve-test.yaml`](./terraform/lxc/network/pve-test.yaml)
 
-### Security Model
-- **Homelab account**: Has CLI access to read secrets but limited web UI access
-- **Main account**: Full control via web interface for managing secrets
-- **Bitwarden encryption**: All secrets encrypted at rest and in transit
-- **No plaintext in git**: Only templates and scripts are committed
-- **Local isolation**: Generated `.env` file only exists on your machine
+### Terraform and stacks
 
-### Why Login Items Instead of Secure Notes?
-The Bitwarden CLI has better support for reading login item passwords than secure note content. Each secret is stored as a login item with the secret value in the password field.
+- [`terraform/README.md`](./terraform/README.md)
+- [`terraform/lxc/README.md`](./terraform/lxc/README.md)
 
-## Troubleshooting
+## Secrets management
 
-### "Command not found: bw"
-Install the Bitwarden CLI:
-```bash
-# Download and install
-curl -L https://github.com/bitwarden/clients/releases/download/cli-v2024.8.1/bw-linux-2024.8.1.zip -o bw.zip
-unzip bw.zip
-chmod +x bw
-sudo mv bw /usr/local/bin/
-```
+Secrets are not committed in plaintext.
 
-### "Session expired" or authentication issues
-```bash
-# Check status
-bw status
+The current repository references:
 
-# Re-unlock if needed
-export BW_SESSION=$(bw unlock --raw)
-```
+- local environment files such as `.env`
+- SOPS-encrypted infrastructure data in `terraform/secrets.enc.yaml`
+- GitHub Actions secrets for CI-only values
 
-### Missing secrets in generated `.env`
-```bash
-# Check if secret exists in Bitwarden
-bw get item "SECRET_NAME" --organizationid 03cd75dc-3db4-4b2e-8ecc-af86014151a7
+See [`docs/reference/secrets-management.md`](./docs/reference/secrets-management.md) for the current secrets workflow.
 
-# Verify it's in the ENV_VARS array in sync-secrets.sh
-```
+## Current notes
 
-### Special characters in secrets
-The scripts handle special characters (like `!`, `$`, `*`) by wrapping values in single quotes. This prevents shell interpretation issues.
-
-## Security Notes
-
-- The `homelab@gibbsgreatly.xyz` account can read secrets via CLI but cannot see/edit them in the web interface
-- Session tokens expire after a period of inactivity
-- Always use `bw logout` when finished if working on a shared machine
-- The `.env` file contains plaintext secrets - ensure it's in `.gitignore`
-- Consider using `shred .env` instead of `rm .env` on sensitive systems
-
-## Benefits
-
-✅ **Resilient**: Secrets survive directory deletion  
-✅ **Backed up**: Bitwarden handles backup and sync  
-✅ **Version controlled**: Structure documented in git  
-✅ **Secure**: Encrypted storage, isolated access  
-✅ **Automated**: One command to sync all secrets  
-✅ **Portable**: Works on any machine with Bitwarden CLI
+- The design uses Proxmox SDN VLAN zones. VLANs did not replace SDN; VLAN-backed zones are the current SDN model.
+- Some SDN VLAN setup is still manual because the current Terraform/Ansible automation does not yet fully apply VLAN zones automatically.
+- The active implementation is still mid-alignment with the revised design and plan, so the planning docs should be treated as the target state and `terraform/lxc` as the implementation in progress.

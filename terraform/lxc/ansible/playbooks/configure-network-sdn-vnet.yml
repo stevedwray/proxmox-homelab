@@ -86,6 +86,76 @@
         | list | length) == 0
       changed_when: true
 
+    - name: Read current SDN subnets for the VNet
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_subnets_result
+      when: (network_sdn_subnet | default('', true)) | length > 0
+      changed_when: false
+
+    - name: Capture the desired SDN subnet entry
+      ansible.builtin.set_fact:
+        network_sdn_existing_subnet: >-
+          {{
+            (
+              network_sdn_subnets_result.stdout | default('[]') | from_json
+              | selectattr('subnet', 'equalto', network_sdn_subnet)
+              | list
+            ) | first | default({})
+          }}
+      when: (network_sdn_subnet | default('', true)) | length > 0
+
+    - name: Update SDN subnet when existing egress config differs from desired state
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - set
+          - /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets/{{ network_sdn_existing_subnet.subnet }}
+          - --gateway
+          - "{{ network_sdn_gateway }}"
+          - --snat
+          - "{{ (network_sdn_snat | bool) | ternary('1', '0') }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_subnet | default('', true)) | length > 0
+        and network_sdn_existing_subnet | length > 0
+        and (
+          (network_sdn_existing_subnet.gateway | default('')) != network_sdn_gateway
+          or (network_sdn_existing_subnet.snat | default(false) | bool) != (network_sdn_snat | bool)
+        )
+      changed_when: true
+
+    - name: Create SDN subnet when missing
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets
+          - --subnet
+          - "{{ network_sdn_subnet }}"
+          - --type
+          - subnet
+          - --gateway
+          - "{{ network_sdn_gateway }}"
+          - --snat
+          - "{{ (network_sdn_snat | bool) | ternary('1', '0') }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: (network_sdn_subnet | default('', true)) | length > 0 and network_sdn_existing_subnet | length == 0
+      changed_when: true
+
     - name: Apply pending SDN changes on pve-test
       ansible.builtin.command:
         cmd: pvesh set /cluster/sdn
@@ -102,6 +172,23 @@
         (network_sdn_vnets_result.stdout | from_json
         | selectattr('vnet', 'equalto', network_sdn_vnet)
         | list | length) == 0
+        or
+        (
+          (network_sdn_subnet | default('', true)) | length > 0 and
+          (
+            (network_sdn_subnets_result.stdout | default('[]') | from_json
+            | selectattr('subnet', 'equalto', network_sdn_subnet)
+            | list | length) == 0
+            or
+            (
+              network_sdn_existing_subnet | length > 0 and
+              (
+                (network_sdn_existing_subnet.gateway | default('')) != network_sdn_gateway
+                or (network_sdn_existing_subnet.snat | default(false) | bool) != (network_sdn_snat | bool)
+              )
+            )
+          )
+        )
 
     - name: Validate proxmox-firewall compilation on pve-test
       ansible.builtin.command:

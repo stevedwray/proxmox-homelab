@@ -1,0 +1,177 @@
+---
+- name: Remove an SDN VNet and zone from pve-test when no guests still use them
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    network_sdn_vmid_exclude_effective: "{{ network_sdn_vmid_exclude | default('') }}"
+
+  tasks:
+    - name: Assert pve-test-only execution
+      ansible.builtin.assert:
+        that:
+          - network_sdn_enable | bool
+          - network_sdn_target == 'pve-test'
+          - network_sdn_pve_host == 'pve-test.gibbsgreatly.xyz'
+          - network_sdn_zone_type == 'simple'
+          - network_sdn_nodes | length > 0
+        fail_msg: "SDN destroy automation is restricted to pve-test simple zones and must not run on pve."
+        success_msg: "SDN destroy automation is pinned to pve-test."
+
+    - name: Inspect pve-test LXC configs for remaining VNet bridge usage
+      ansible.builtin.shell: |
+        set -o pipefail
+        grep -R "bridge={{ network_sdn_vnet }}\([, ]\|$\)" /etc/pve/lxc/*.conf 2>/dev/null \
+          | grep -v "^/etc/pve/lxc/{{ network_sdn_vmid_exclude_effective }}.conf:" || true
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_remaining_bridge_usage
+      changed_when: false
+
+    - name: Read current SDN VNets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_vnets_result
+      changed_when: false
+
+    - name: Read current SDN subnets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_subnets_result
+      changed_when: false
+
+    - name: Delete SDN subnets when present
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - delete
+          - "/cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets/{{ item.subnet }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      loop: "{{ network_sdn_subnets_result.stdout | from_json }}"
+      loop_control:
+        label: "{{ item.subnet }}"
+      when: (network_sdn_subnets_result.stdout | from_json | length) > 0
+      register: network_sdn_subnet_delete
+      changed_when: true
+
+    - name: Delete SDN VNet when no other containers reference it
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - delete
+          - "/cluster/sdn/vnets/{{ network_sdn_vnet }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_remaining_bridge_usage.stdout | trim) == '' and
+        (network_sdn_vnets_result.stdout | from_json
+        | selectattr('vnet', 'equalto', network_sdn_vnet)
+        | list | length) > 0
+      register: network_sdn_vnet_delete
+      changed_when: true
+
+    - name: Remove VNet firewall config file when VNet is deleted # noqa: no-handler
+      ansible.builtin.command:
+        cmd: rm -f /etc/pve/sdn/firewall/{{ network_sdn_vnet }}.fw
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: network_sdn_vnet_delete is changed
+      changed_when: true
+
+    - name: Refresh SDN VNets after VNet deletion # noqa: no-handler
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_vnets_after_delete_result
+      when: network_sdn_vnet_delete is changed
+      changed_when: false
+
+    - name: Read current SDN zones
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --output-format json
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: network_sdn_zones_result
+      changed_when: false
+
+    - name: Delete SDN zone when no remaining VNets reference it
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - delete
+          - "/cluster/sdn/zones/{{ network_sdn_zone }}"
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        network_sdn_vnet_delete is changed and
+        (network_sdn_zones_result.stdout | from_json
+        | selectattr('zone', 'equalto', network_sdn_zone)
+        | list | length) > 0 and
+        (
+          network_sdn_vnets_after_delete_result.stdout | from_json
+          | selectattr('zone', 'equalto', network_sdn_zone)
+          | list | length
+        ) == 0
+      register: network_sdn_zone_delete
+      changed_when: true
+
+    - name: Apply pending SDN changes on pve-test
+      ansible.builtin.command:
+        cmd: pvesh set /cluster/sdn
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      when: >-
+        (network_sdn_vnet_delete is defined and network_sdn_vnet_delete is changed)
+        or
+        (network_sdn_subnet_delete is defined and network_sdn_subnet_delete is changed)
+        or
+        (network_sdn_zone_delete is defined and network_sdn_zone_delete is changed)
+      changed_when: true
+
+    - name: Validate proxmox-firewall compilation on pve-test
+      ansible.builtin.command:
+        cmd: /usr/libexec/proxmox/proxmox-firewall compile
+      delegate_to: "{{ network_sdn_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
+        ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: false

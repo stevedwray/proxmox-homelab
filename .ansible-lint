@@ -1,0 +1,11 @@
+profile: moderate
+
+warn_list:
+  # Shell blocks embedded in YAML legitimately exceed 160 chars (pid-file
+  # paths with Jinja2 template vars). Downgrade to warning rather than error.
+  - yaml[line-length]
+
+  # Pre-existing roles (lxc_tun_device) use non-prefixed vars and are out of
+  # scope for refactoring. harbor_installer vars were fixed in issue #75.
+  - var-naming[no-role-prefix]
+

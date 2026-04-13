@@ -1,54 +1,124 @@
-# IPv6 Setup and Fix Summary (Proxmox + MikroTik)
+# IPv6 Troubleshooting Notes
 
-## Overview
-This document records the issues discovered with IPv6 connectivity in the Proxmox homelab environment and the solutions that were applied.
-It is intended as a reference for future troubleshooting and to ensure consistent configuration across hosts and containers.
+This document captures the IPv6 issues previously seen in the homelab and the checks that
+still matter when IPv6 connectivity breaks.
 
----
+It is not intended to be a canonical host configuration file. Use it as a troubleshooting
+reference, not as a source of exact interface settings for the current `pve-test` host.
 
-## Problems Identified
+## Main failure patterns seen
 
-### 1. Duplicate / Conflicting Prefixes
-- The MikroTik router was advertising **two IPv6 prefixes** on the LAN:
-  - `2404:440c:1357:2a00::/64` (static, not routed upstream)
-  - `2404:440c:234e:5900::/64` (dynamic, valid and routed)
-- Proxmox hosts and containers auto-configured addresses from both prefixes.
-- Packets sourced from the invalid `…:2a00::/64` never received replies, causing broken IPv6 connectivity.
+### 1. Conflicting IPv6 prefixes on the LAN
 
-### 2. Proxmox Host Configuration
-- `/etc/network/interfaces` only contained IPv4 static config.
-- IPv6 was left to kernel defaults:
-  - Router Advertisements (RA) were not always accepted.
-  - Packet loss occurred with larger payloads due to **PMTU black-holing** on the upstream path.
+The MikroTik previously advertised two different IPv6 prefixes:
 
-### 3. LXC Container Networking
-- Containers were configured with **IPv6 = Static** in Proxmox UI.
-- They did not accept Router Advertisements and failed to acquire:
-  - Global IPv6 addresses
-  - Default IPv6 route
-  - Upstream DNS servers
-- Result: Containers had no usable IPv6 connectivity.
+- one valid upstream-routed prefix
+- one stale/static prefix that was not actually routed upstream
 
----
+Symptoms:
 
-## Solutions Applied
+- hosts and containers autoconfigure addresses from both prefixes
+- outbound IPv6 appears partially working
+- some destinations never reply because traffic leaves with the invalid source prefix
 
-### MikroTik Router
-- Disabled and removed the static `2404:440c:1357:2a00::/64` prefix.
-- Left only the **valid routed prefix** `2404:440c:234e:5900::/64` advertised via ND.
-- Ensured RA continued to provide default gateway and recursive DNS servers.
+### 2. Router advertisement handling on the Proxmox host
 
-### Proxmox Host
-- Updated `/etc/network/interfaces` for bridge `vmbr0`:
-  ```ini
-  auto vmbr0
-  iface vmbr0 inet static
-      address 192.168.1.9/24
-      gateway 192.168.1.1
-      bridge-ports ens33
-      bridge-stp off
-      bridge-fd 0
-      mtu 1480
+The host can break IPv6 if it is not correctly accepting router advertisements on `vmbr0`
+or if MTU/PMTU behaviour is wrong on the upstream path.
 
-  iface vmbr0 inet6 auto
-      accept_ra 2
+Symptoms:
+
+- host has link-local IPv6 but no usable global IPv6
+- intermittent IPv6 packet loss
+- larger payloads fail while small pings work
+
+### 3. LXC guest IPv6 mode mismatch
+
+Containers previously failed when configured with static IPv6 settings that did not match
+the actual LAN/router-advertisement model.
+
+Symptoms:
+
+- no default IPv6 route inside the container
+- no recursive DNS from RA
+- container has no usable outbound IPv6 despite IPv4 working
+
+## What fixed it previously
+
+### MikroTik-side fixes
+
+- remove any stale or non-routed advertised IPv6 prefix
+- leave only the valid routed prefix active
+- ensure ND/RA still provides a default route and recursive DNS
+
+### Proxmox host-side fixes
+
+- ensure the intended bridge accepts router advertisements when using SLAAC
+- verify the effective MTU on the host, bridge, and upstream path
+- avoid treating old one-off interface examples as authoritative for the current host
+
+### Container-side fixes
+
+- make sure the container IPv6 mode matches the actual network model
+- if the environment depends on RA/SLAAC, do not force a conflicting static setup
+- verify the guest receives a global address, default route, and DNS information
+
+## Current troubleshooting checklist
+
+### On the MikroTik
+
+Check:
+
+- only the intended upstream-routed IPv6 prefix is being advertised
+- the RA/ND configuration is enabled on the correct LAN/VLAN interfaces
+- the MikroTik still has working upstream IPv6
+
+### On `pve-test`
+
+Check:
+
+```bash
+ssh root@pve-test.gibbsgreatly.xyz "ip -6 addr show"
+ssh root@pve-test.gibbsgreatly.xyz "ip -6 route show"
+ssh root@pve-test.gibbsgreatly.xyz "ping -6 -c 3 2606:4700:4700::1111"
+```
+
+Look for:
+
+- one sensible global address from the correct prefix
+- a default IPv6 route
+- successful outbound IPv6 ping
+
+### Inside an affected container
+
+Check:
+
+```bash
+ssh root@pve-test.gibbsgreatly.xyz "pct exec <vmid> -- ip -6 addr show"
+ssh root@pve-test.gibbsgreatly.xyz "pct exec <vmid> -- ip -6 route show"
+ssh root@pve-test.gibbsgreatly.xyz "pct exec <vmid> -- ping -6 -c 3 2606:4700:4700::1111"
+```
+
+Look for:
+
+- a global IPv6 address from the expected prefix
+- a default route
+- working outbound IPv6 from the guest
+
+## If IPv6 is still broken
+
+Work through the path in this order:
+
+1. MikroTik upstream IPv6 status
+2. active RA/ND advertisements on the right interface
+3. host bridge/interface IPv6 state
+4. guest IPv6 mode and route state
+5. MTU/PMTU behaviour
+
+## Notes
+
+- The exact IPv4 address, interface name, and old bridge examples from earlier troubleshooting sessions are intentionally omitted here because they were tied to an older environment snapshot.
+- If the current pve-test host networking is being rebuilt, align any permanent fixes with:
+  - `docs/reference/sdn-segment-routing.md`
+  - `terraform/lxc/network/pve-test.yaml`
+  - `docs/plan/phase-00a-proxmox-host-bootstrap.md`

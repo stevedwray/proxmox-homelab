@@ -23,15 +23,17 @@ locals {
   stack      = yamldecode(file(var.stack_yaml_path))
 
   # Derive stable absolute paths from the stack_yaml_path input.
-  stack_dir   = dirname(var.stack_yaml_path)      # …/stacks/<name>
-  lxc_root    = dirname(dirname(local.stack_dir)) # …/terraform/lxc
-  ansible_dir = "${local.lxc_root}/ansible"
+  stack_dir          = dirname(var.stack_yaml_path)      # …/stacks/<name>
+  lxc_root           = dirname(dirname(local.stack_dir)) # …/terraform/lxc
+  ansible_dir        = "${local.lxc_root}/ansible"
+  ansible_cfg        = "${local.ansible_dir}/ansible.cfg"
+  ansible_roles_path = "${local.ansible_dir}/roles"
 
   # Optional declarative network intent. Existing stacks continue to use the
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network               = try(local.stack.network, null)
   stack_network_zone          = try(local.stack.network.zone, null)
-  network_intent_default_path = "${local.lxc_root}/network/pve-test.yaml"
+  network_intent_default_path = "${local.lxc_root}/network/${var.proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
     local.network_intent_default_path
@@ -43,6 +45,9 @@ locals {
   resolved_zone_attachment      = local.resolved_zone_attachment_name != null ? local.network_intent.attachments[local.resolved_zone_attachment_name] : null
   resolved_attachment_type      = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.type, "bridge") : "bridge"
   resolved_sdn_attachment       = local.resolved_attachment_type == "sdn_vnet" ? try(local.resolved_zone_attachment.sdn, null) : null
+  resolved_sdn_subnet           = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.subnet, null) : null
+  resolved_sdn_gateway          = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.gateway, null) : null
+  resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
 
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, var.proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
@@ -130,13 +135,10 @@ locals {
   ])) : tolist([])
 }
 
-check "network_layer_runs_only_on_pve_test" {
+check "network_intent_node_matches_proxmox_node" {
   assert {
-    condition = local.stack_network_zone == null || (
-      local.effective_target_node == "pve-test" &&
-      local.effective_pve_host == "pve-test.gibbsgreatly.xyz"
-    )
-    error_message = "Stacks using stack.network.zone must target pve-test (node pve-test, host pve-test.gibbsgreatly.xyz) and must not run on pve."
+    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == var.proxmox_node
+    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but var.proxmox_node is '${var.proxmox_node}'. Ensure the correct intent file exists for this environment."
   }
 }
 
@@ -160,6 +162,23 @@ check "network_layer_sdn_attachment_is_complete" {
   }
 }
 
+check "network_layer_sdn_attachment_egress_is_complete" {
+  assert {
+    condition = local.stack_network_zone == null || local.resolved_attachment_type != "sdn_vnet" || (
+      !anytrue([
+        local.resolved_sdn_subnet != null && local.resolved_sdn_subnet != "",
+        local.resolved_sdn_gateway != null && local.resolved_sdn_gateway != "",
+        try(local.resolved_sdn_snat, null) != null,
+        ]) || alltrue([
+        local.resolved_sdn_subnet != null && local.resolved_sdn_subnet != "",
+        local.resolved_sdn_gateway != null && local.resolved_sdn_gateway != "",
+        try(local.resolved_sdn_snat, null) != null,
+      ])
+    )
+    error_message = "SDN attachments that define egress must set subnet, gateway, and snat together."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
 # Ensures the attachment exists on pve-test before the LXC is created.
@@ -172,11 +191,15 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_enable     = true
     network_sdn_target     = local.effective_target_node
     network_sdn_pve_host   = local.effective_pve_host
+    network_sdn_vmid       = try(local.stack.vmid, null)
     network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
     network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
+    network_sdn_subnet     = local.resolved_sdn_subnet
+    network_sdn_gateway    = local.resolved_sdn_gateway
+    network_sdn_snat       = local.resolved_sdn_snat
     network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
   })
 }
@@ -185,7 +208,12 @@ resource "null_resource" "configure_network_sdn_attachment" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
 
   triggers = {
-    sdn_vars = local_file.network_sdn_vars[0].content
+    ansible_dir        = local.ansible_dir
+    ansible_cfg        = local.ansible_cfg
+    ansible_roles_path = local.ansible_roles_path
+    sdn_vars           = local_file.network_sdn_vars[0].content
+    sdn_vars_file      = local_file.network_sdn_vars[0].filename
+    vmid               = tostring(try(local.stack.vmid, ""))
   }
 
   provisioner "local-exec" {
@@ -199,6 +227,32 @@ resource "null_resource" "configure_network_sdn_attachment" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
+      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
+      ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
+      ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
+    }
+  }
+
+  provisioner "local-exec" {
+    when        = destroy
+    working_dir = self.triggers.ansible_dir
+    command     = <<-EOT
+      tmp_vars_file="$(mktemp)"
+      trap 'rm -f "$tmp_vars_file"' EXIT
+      cat >"$tmp_vars_file" <<'EOF'
+${self.triggers.sdn_vars}
+EOF
+      ansible-playbook \
+        -i localhost, \
+        playbooks/destroy-network-sdn-vnet.yml \
+        -e "@$tmp_vars_file"
+    EOT
+
+    environment = {
+      ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
+      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -279,6 +333,8 @@ resource "null_resource" "configure_keyctl" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = local.ansible_cfg
+      ANSIBLE_ROLES_PATH           = local.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -314,9 +370,10 @@ resource "null_resource" "ansible_provision" {
   count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0
 
   triggers = {
-    container_id      = module.lxc.container_id
-    inventory_content = local_file.ansible_inventory.content
-    playbook          = try(local.stack.ansible_playbook, "")
+    container_id       = module.lxc.container_id
+    container_epoch_id = module.lxc.container_epoch_id
+    inventory_content  = local_file.ansible_inventory.content
+    playbook           = try(local.stack.ansible_playbook, "")
   }
 
   provisioner "local-exec" {
@@ -329,6 +386,8 @@ resource "null_resource" "ansible_provision" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
+      ANSIBLE_CONFIG            = local.ansible_cfg
+      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
       PORTAINER_ADMIN_PASSWORD  = var.portainer_admin_password
     }
   }
@@ -360,6 +419,8 @@ resource "null_resource" "configure_network_firewall" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
+      ANSIBLE_CONFIG               = local.ansible_cfg
+      ANSIBLE_ROLES_PATH           = local.ansible_roles_path
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -414,6 +475,8 @@ resource "null_resource" "configure_network_vnet_firewall" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING = "False"
+      ANSIBLE_CONFIG            = local.ansible_cfg
+      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
     }
   }
 
@@ -445,6 +508,8 @@ resource "null_resource" "stack_cleanup" {
       export AGENT_HOSTNAME="${self.triggers.hostname}"
       export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"
       export ANSIBLE_HOST_KEY_CHECKING="False"
+      export ANSIBLE_CONFIG="${self.triggers.ansible_dir}/ansible.cfg"
+      export ANSIBLE_ROLES_PATH="${self.triggers.ansible_dir}/roles"
       ansible-playbook -i localhost, playbooks/cleanup.yml
     EOT
     working_dir = self.triggers.ansible_dir

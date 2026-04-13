@@ -1,0 +1,192 @@
+---
+- name: Deploy GitHub Actions self-hosted runner
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    runner_version: "2.333.1"
+    runner_user: runner
+    runner_home: /opt/actions-runner
+    runner_repo: "https://github.com/stevedwray/proxmox-homelab"
+    runner_labels: "self-hosted,pve-test,build,linux,x64"
+    runner_name: "ci-runner-pve-test"
+    terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
+
+  roles:
+    - lxc_base
+
+  pre_tasks:
+    - name: Derive the GitHub repository slug for runner registration
+      ansible.builtin.set_fact:
+        runner_repo_slug: "{{ runner_repo | regex_replace('^https://github.com/', '') }}"
+      run_once: true
+
+    - name: Wait for SSH to become available after container creation
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 2
+        sleep: 3
+
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
+
+    - name: Generate runner registration token when one is not provided
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - --method
+          - POST
+          - repos/{{ runner_repo_slug }}/actions/runners/registration-token
+          - --jq
+          - .token
+      delegate_to: localhost
+      become: false
+      register: runner_registration_token_generated
+      run_once: true
+      changed_when: false
+      when: runner_registration_token is not defined or (runner_registration_token | length) == 0
+      no_log: true
+
+    - name: Select the effective runner registration token
+      ansible.builtin.set_fact:
+        runner_registration_token_effective: >-
+          {{
+            runner_registration_token
+            if runner_registration_token is defined and (runner_registration_token | length) > 0
+            else runner_registration_token_generated.stdout
+          }}
+      run_once: true
+      no_log: true
+
+  tasks:
+    - name: Configure Terraform provider filesystem mirror
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/terraformrc.j2"
+        dest: "{{ item }}"
+        owner: root
+        group: root
+        mode: "0644"
+      loop:
+        - /root/.terraformrc
+        - "{{ runner_home }}/.terraformrc"
+
+    - name: Install runner dependencies
+      ansible.builtin.apt:
+        name:
+          - curl
+          - nodejs
+          - tar
+          - libicu-dev
+          - libssl-dev
+        state: present
+        update_cache: true
+
+    - name: Create runner user
+      ansible.builtin.user:
+        name: "{{ runner_user }}"
+        system: true
+        home: "{{ runner_home }}"
+        shell: /bin/bash
+        create_home: true
+
+    - name: Create runner directory
+      ansible.builtin.file:
+        path: "{{ runner_home }}"
+        state: directory
+        owner: "{{ runner_user }}"
+        mode: '0755'
+
+    - name: Download runner package
+      ansible.builtin.get_url:
+        url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
+        dest: "/tmp/actions-runner.tar.gz"
+        mode: '0644'
+
+    - name: Extract runner
+      ansible.builtin.unarchive:
+        src: /tmp/actions-runner.tar.gz
+        dest: "{{ runner_home }}"
+        remote_src: true
+        owner: "{{ runner_user }}"
+
+    - name: Check if runner is already configured
+      ansible.builtin.stat:
+        path: "{{ runner_home }}/.runner"
+      become: true
+      become_user: "{{ runner_user }}"
+      register: runner_config_stat
+
+    - name: Generate removal token for clean deregistration
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - --method
+          - POST
+          - repos/{{ runner_repo_slug }}/actions/runners/remove-token
+          - --jq
+          - .token
+      delegate_to: localhost
+      become: false
+      register: runner_removal_token_result
+      changed_when: false
+      when: runner_config_stat.stat.exists
+      no_log: true
+
+    - name: Deregister existing runner before reconfiguring
+      ansible.builtin.command:
+        cmd: ./config.sh remove --token {{ runner_removal_token_result.stdout }}
+        chdir: "{{ runner_home }}"
+      become: true
+      become_user: "{{ runner_user }}"
+      when: runner_config_stat.stat.exists
+      no_log: true
+
+    - name: Configure runner
+      ansible.builtin.command:
+        cmd: >
+          ./config.sh
+          --url {{ runner_repo }}
+          --token {{ runner_registration_token_effective }}
+          --name {{ runner_name }}
+          --labels {{ runner_labels }}
+          --unattended
+          --replace
+        chdir: "{{ runner_home }}"
+      become: true
+      become_user: "{{ runner_user }}"
+      no_log: true
+
+    - name: Find installed runner systemd service file
+      ansible.builtin.find:
+        paths: /etc/systemd/system
+        patterns: "actions.runner.*.{{ runner_name }}.service"
+      register: runner_service_files
+
+    - name: Install runner as systemd service
+      ansible.builtin.command:
+        cmd: ./svc.sh install {{ runner_user }}
+        chdir: "{{ runner_home }}"
+      when: runner_service_files.matched == 0
+
+    - name: Start runner service
+      ansible.builtin.command:
+        cmd: ./svc.sh start
+        chdir: "{{ runner_home }}"
+
+    - name: Verify runner is registered and online via GitHub API
+      ansible.builtin.command:
+        argv:
+          - gh
+          - api
+          - repos/{{ runner_repo_slug }}/actions/runners
+          - --jq
+          - "[.runners[] | select(.name == \"{{ runner_name }}\") | .status][0]"
+      delegate_to: localhost
+      become: false
+      register: runner_online_check
+      until: runner_online_check.stdout == "online"
+      retries: 18
+      delay: 10
+      changed_when: false

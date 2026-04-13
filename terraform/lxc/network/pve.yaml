@@ -1,0 +1,102 @@
+# Proxmox-only network intent for the pve production environment.
+# Mirrors the zone structure of pve-test.yaml; SDN zones/vnets are
+# created on pve by the same Terraform/Ansible pipeline used on pve-test.
+
+proxmox:
+  target_node: pve
+  pve_host: pve.gibbsgreatly.xyz
+
+attachments:
+  lan:
+    description: Default LAN bridge on pve
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: true
+  seg_a:
+    description: First SDN VNet for microsegmentation on pve
+    type: sdn_vnet
+    bridge: pvneta
+    firewall: true
+    sdn:
+      zone: pvsega
+      zone_type: simple
+      nodes:
+        - pve
+      vnet: pvneta
+      alias: pve network layer
+  seg_b:
+    description: Second SDN VNet for independent microsegmentation on pve
+    type: sdn_vnet
+    bridge: pvnetb
+    firewall: true
+    sdn:
+      zone: pvsegb
+      zone_type: simple
+      nodes:
+        - pve
+      vnet: pvnetb
+      alias: pve network layer 2
+  seg_c:
+    description: Third SDN VNet for artifact flow on pve
+    type: sdn_vnet
+    bridge: pvnetc
+    firewall: true
+    sdn:
+      zone: pvsegc
+      zone_type: simple
+      nodes:
+        - pve
+      vnet: pvnetc
+      alias: pve network layer 3
+
+zones:
+  apps:
+    description: Application workload zone on the default LAN bridge
+    attachment: lan
+  infra:
+    description: Service endpoint zone on the default LAN bridge
+    attachment: lan
+  isolated:
+    description: Bridge-attached isolated zone with no inbound policy overrides
+    attachment: lan
+  apps_seg:
+    description: Application workload zone on the first SDN VNet
+    attachment: seg_a
+  infra_seg:
+    description: Service endpoint zone on the first SDN VNet
+    attachment: seg_a
+  media_seg:
+    description: Application workload zone on the second SDN VNet
+    attachment: seg_b
+  observe_seg:
+    description: Service endpoint zone on the second SDN VNet
+    attachment: seg_b
+  build_seg:
+    description: Build workload zone on the third SDN VNet
+    attachment: seg_c
+  artifacts_seg:
+    description: Artifact service zone on the third SDN VNet
+    attachment: seg_c
+
+policies:
+  - from: apps
+    to: infra
+    protocol: tcp
+    ports: [8080, 9000]
+    description: apps can reach infra on tcp/8080 and tcp/9000
+  - from: apps_seg
+    to: infra_seg
+    protocol: tcp
+    ports: [8080]
+    description: apps_seg can reach infra_seg on tcp/8080
+  - from: media_seg
+    to: observe_seg
+    protocol: tcp
+    ports: [8080]
+    description: media_seg can reach observe_seg on tcp/8080
+  - from: build_seg
+    to: artifacts_seg
+    protocol: tcp
+    ports: [5000, 8081]
+    description: build_seg can reach artifacts_seg on tcp/5000 and tcp/8081

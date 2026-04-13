@@ -1,0 +1,275 @@
+---
+- name: Prepare step-ca host
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    step_ca_version: "0.28.4"
+    step_cli_version: "0.28.7"
+    step_ca_install_dir: /tmp/step-ca-install
+    step_cli_install_dir: /tmp/step-cli-install
+    step_ca_steppath: /etc/step-ca
+    step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+    step_ca_trust_host: "{{ lookup('env', 'PROXMOX_HOST') | default('pve-test.gibbsgreatly.xyz', true) }}"
+    step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') }}"
+    step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
+
+  roles:
+    - lxc_base
+
+  pre_tasks:
+    - name: Wait for SSH to become available after container creation
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 2
+        sleep: 3
+
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
+
+  tasks:
+    - name: Install step-ca host dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - tar
+        state: present
+        update_cache: true
+
+    - name: Check whether step and step-ca are already installed
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - /usr/local/bin/step
+        - /usr/local/bin/step-ca
+      register: step_binary_stats
+
+    - name: Download step CLI release
+      ansible.builtin.get_url:
+        url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_{{ step_cli_version }}_amd64.tar.gz"
+        dest: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
+        mode: "0644"
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Download step-ca release
+      ansible.builtin.get_url:
+        url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
+        dest: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
+        mode: "0644"
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Create step CLI installation directory
+      ansible.builtin.file:
+        path: "{{ step_cli_install_dir }}"
+        state: directory
+        mode: "0755"
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Create step-ca installation directory
+      ansible.builtin.file:
+        path: "{{ step_ca_install_dir }}"
+        state: directory
+        mode: "0755"
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Extract step CLI binaries
+      ansible.builtin.unarchive:
+        src: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
+        dest: "{{ step_cli_install_dir }}"
+        remote_src: true
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Extract step-ca binaries
+      ansible.builtin.unarchive:
+        src: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
+        dest: "{{ step_ca_install_dir }}"
+        remote_src: true
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Locate step CLI binary
+      ansible.builtin.find:
+        paths: "{{ step_cli_install_dir }}"
+        patterns: step
+        file_type: file
+        recurse: true
+      register: step_cli_binary_find
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Locate step-ca binary
+      ansible.builtin.find:
+        paths: "{{ step_ca_install_dir }}"
+        patterns: step-ca
+        file_type: file
+        recurse: true
+      register: step_ca_binary_find
+      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+
+    - name: Install step CLI binary
+      ansible.builtin.copy:
+        src: "{{ step_cli_binary_find.files | map(attribute='path') | list | first }}"
+        dest: /usr/local/bin/step
+        remote_src: true
+        mode: "0755"
+      when: step_binary_stats.results[0].stat.exists is not defined or not step_binary_stats.results[0].stat.exists
+
+    - name: Install step-ca binary
+      ansible.builtin.copy:
+        src: "{{ step_ca_binary_find.files | map(attribute='path') | list | first }}"
+        dest: /usr/local/bin/step-ca
+        remote_src: true
+        mode: "0755"
+      when: step_binary_stats.results[1].stat.exists is not defined or not step_binary_stats.results[1].stat.exists
+
+    - name: Create step-ca configuration directory
+      ansible.builtin.file:
+        path: "{{ step_ca_steppath }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write step-ca root password file
+      ansible.builtin.copy:
+        dest: "{{ step_ca_steppath }}/password.txt"
+        mode: "0600"
+        content: "{{ step_ca_password }}\n"
+      no_log: true
+
+    - name: Write step-ca provisioner password file
+      ansible.builtin.copy:
+        dest: "{{ step_ca_steppath }}/provisioner-password.txt"
+        mode: "0600"
+        content: "{{ step_ca_provisioner_password }}\n"
+      no_log: true
+
+    - name: Check whether step-ca configuration already exists
+      ansible.builtin.stat:
+        path: "{{ step_ca_steppath }}/config/ca.json"
+      register: step_ca_config_stat
+
+    - name: Bootstrap step-ca configuration
+      ansible.builtin.command:
+        argv:
+          - step
+          - ca
+          - init
+          - --deployment-type
+          - standalone
+          - --name
+          - Homelab CA
+          - --dns
+          - step-ca
+          - --dns
+          - "{{ ansible_host }}"
+          - --address
+          - :443
+          - --provisioner
+          - acme
+          - --password-file
+          - "{{ step_ca_steppath }}/password.txt"
+          - --provisioner-password-file
+          - "{{ step_ca_steppath }}/provisioner-password.txt"
+      args:
+        chdir: "{{ step_ca_steppath }}"
+      environment:
+        STEPPATH: "{{ step_ca_steppath }}"
+      when: not step_ca_config_stat.stat.exists
+      no_log: true
+
+    - name: Install step-ca systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/step-ca.service
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=step-ca internal certificate authority
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          Type=simple
+          Environment=STEPPATH={{ step_ca_steppath }}
+          ExecStart=/usr/local/bin/step-ca {{ step_ca_steppath }}/config/ca.json --password-file {{ step_ca_steppath }}/password.txt
+          Restart=on-failure
+          RestartSec=5
+
+          [Install]
+          WantedBy=multi-user.target
+      register: step_ca_unit_file
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: step_ca_unit_file.changed
+
+    - name: Enable and start step-ca
+      ansible.builtin.systemd:
+        name: step-ca
+        enabled: true
+        state: started
+
+    - name: Wait for step-ca to answer health checks
+      ansible.builtin.command:
+        argv:
+          - step
+          - ca
+          - health
+          - --ca-url
+          - "https://{{ ansible_host }}"
+          - --root
+          - "{{ step_ca_steppath }}/certs/root_ca.crt"
+      register: step_ca_health
+      retries: 30
+      delay: 10
+      until: step_ca_health.rc == 0
+      changed_when: false
+
+    - name: Create local certs directory
+      ansible.builtin.file:
+        path: "{{ step_ca_root_cert_local | dirname }}"
+        state: directory
+        mode: "0755"
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fetch root CA certificate to the repository
+      ansible.builtin.fetch:
+        src: "{{ step_ca_steppath }}/certs/root_ca.crt"
+        dest: "{{ step_ca_root_cert_local }}"
+        flat: true
+      run_once: true
+
+    - name: Copy root CA certificate to the pve-test host
+      ansible.builtin.command:
+        argv:
+          - scp
+          - -F
+          - /dev/null
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - "{{ step_ca_root_cert_local }}"
+          - "root@{{ step_ca_trust_host }}:/usr/local/share/ca-certificates/homelab-root.crt"
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
+
+    - name: Trust the homelab root CA on the pve-test host
+      ansible.builtin.command:
+        argv:
+          - ssh
+          - -F
+          - /dev/null
+          - -o
+          - StrictHostKeyChecking=no
+          - -o
+          - UserKnownHostsFile=/dev/null
+          - "root@{{ step_ca_trust_host }}"
+          - update-ca-certificates
+      delegate_to: localhost
+      become: false
+      run_once: true
+      changed_when: false
