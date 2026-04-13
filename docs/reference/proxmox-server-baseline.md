@@ -1,74 +1,85 @@
-# File: docs/phase4-testing-validation/proxmox-server-baseline.md
-
 # Proxmox Server Baseline Configuration
 
-This document defines the standard baseline configuration for Proxmox VE servers in the homelab automation environment.
+This document defines the current baseline for a Proxmox VE host that is going to run the
+active `pve-test` build path.
 
 ## Overview
 
-The baseline configuration ensures consistent, automated-ready Proxmox servers that can be reliably restored after VM resets or fresh installations. This configuration is applied via the `base-config.yml` Ansible playbook.
+The baseline exists to make a freshly installed Proxmox host automation-ready before
+`terraform/lxc` stacks are applied. In the current project, this work is primarily done by:
+
+- `ansible/00-initial-setup/proxmox-initial-setup.yml`
+- `ansible/01-base-system/proxmox-terraform-setup.yml`
+- `ansible/01-base-system/terraform-token-management.yml`
+
+For planning context, see `docs/plan/phase-00a-proxmox-host-bootstrap.md`.
 
 ## Baseline Components
 
 ### Repository Configuration
-- **Enterprise repository**: Disabled (all lines commented out)
-- **No-subscription repository**: Enabled for updates
-- **Package cache**: Updated and maintained
+- **Enterprise repository**: removed or disabled
+- **No-subscription repositories**: enabled for Proxmox VE and optional Ceph packages
+- **Package cache**: updated after repository changes
+- **Dist upgrade**: applied after repo normalization
 
 ### System Users
-- **automation user**: System user with sudo privileges, SSH key access
-- **automation@pve**: Proxmox VE user with Administrator role for API access
+- **root**: initial bootstrap entry point
+- **automation@pve**: Proxmox VE user used by Terraform automation
+
+### API Token
+- **automation@pve!terraform**: Proxmox API token used by Terraform
+- Token management is handled by the bootstrap playbooks, not manually tracked in this doc
 
 ### Security Configuration
-- **Subscription nag**: Removed from web interface
-- **SSH keys**: Deployed for passwordless authentication
-- **Sudo access**: Configured for automation user with NOPASSWD
+- **Subscription nag**: optionally removed from the web interface
+- **Host firewall backend**: nftables backend can be enabled for Proxmox firewall work
+- **SSH**: root access is used for initial host bootstrap only
+- **Token-based API auth**: preferred over password auth for Terraform
 
 ### Service Configuration
-- **HA services**: Disabled for single-node setup (pve-ha-lrm, pve-ha-crm, corosync)
-- **SSH**: Enabled and configured for key-based authentication
+- **Single-node host**: `pve-test` is treated as a single-node development target
+- **VLAN-aware bridge**: `vmbr0` must be configured as VLAN-aware for SDN VLAN zones
+- **MikroTik gateway model**: routing and SNAT are handled by the MikroTik, not Proxmox
 
 ### Package Installation
 Standard packages installed:
-- curl, wget, vim, htop, unzip, git
-- python3, python3-pip
-- iftop, iotop, net-tools, smartmontools
-- sudo, openssh-server
+- repo and system tools required by the bootstrap playbooks
+- Proxmox host packages updated through normal apt upgrade flow
+- no special app-stack packages are assumed at the host level
 
 ## Validation Checklist
 
 Use `scripts/check-proxmox-status.sh` to validate the baseline:
 
 - [ ] Network connectivity (ping, SSH port 22, HTTPS port 8006)
-- [ ] SSH access as root user
-- [ ] SSH access as automation user
-- [ ] API authentication with automation@pve user
+- [ ] SSH access as root user for initial bootstrap
+- [ ] API authentication works with the Terraform token
 - [ ] API version information retrieval
 - [ ] Enterprise repository disabled
 - [ ] No-subscription repository enabled
 - [ ] Subscription nag removed
-- [ ] Automation system user exists
-- [ ] Automation PVE user exists
-- [ ] Automation user sudo access
+- [ ] `automation@pve` user exists
+- [ ] Terraform API token exists or can be rotated
 - [ ] Storage pools available
-- [ ] Network bridges available
+- [ ] `vmbr0` exists and is VLAN-aware when SDN VLAN zones are in use
 
 ## Restoration Procedure
 
-After VM reset or fresh installation:
+After a fresh Proxmox installation on `pve-test`:
 
 1. **Apply baseline configuration**:
    ```bash
    cd ansible
-   ansible-playbook -i inventory/test-lab.yml 01-base-system/base-config.yml
+   ansible-playbook 00-initial-setup/proxmox-initial-setup.yml
    ```
 
-2. **Set automation@pve password manually**:
+2. **Create or rotate the Terraform token if needed**:
    ```bash
-   ssh root@pvetest.gibbsgreatly.xyz "pveum passwd automation@pve"
+   cd ansible
+   ansible-playbook 01-base-system/terraform-token-management.yml
    ```
 
-3. **Update .env file** with the password you set
+3. **Update local environment files** with the token values if they changed
 
 4. **Validate configuration**:
    ```bash
@@ -80,42 +91,43 @@ After VM reset or fresh installation:
 After successful baseline application, the validation script should show:
 - All critical checks passing (green checkmarks)
 - Only optional warnings (yellow) acceptable
-- API authentication working with automation@pve user
+- API authentication working with the Terraform token
 
 ## Troubleshooting
 
 ### Common Issues
-- **Missing sudo package**: Baseline playbook installs this automatically
-- **Broken automation user**: Playbook recreates user idempotently
-- **API authentication failure**: Verify password in .env matches manually set password
+- **Repository drift**: rerun `proxmox-initial-setup.yml` to normalize sources
+- **Missing Terraform token**: rerun `terraform-token-management.yml`
+- **API authentication failure**: verify the token values in `.env` or `.env.pve-test`
+- **SDN networking issues**: confirm `vmbr0` is VLAN-aware and the MikroTik VLANs exist
 
 ### Recovery Commands
 If manual intervention is needed:
 ```bash
-# Recreate automation user
-ssh root@proxmox "useradd -m -s /bin/bash -G sudo automation"
+# Verify the Terraform user exists
+ssh root@pve-test.gibbsgreatly.xyz "pveum user list | grep automation@pve"
 
-# Reset PVE user password
-ssh root@proxmox "pveum passwd automation@pve"
+# List Terraform tokens for that user
+ssh root@pve-test.gibbsgreatly.xyz "pveum user token list automation@pve"
 
-# Verify sudo access
-ssh automation@proxmox "sudo whoami"
+# Confirm vmbr0 is VLAN-aware
+ssh root@pve-test.gibbsgreatly.xyz "bridge vlan show"
 ```
 
 ## Integration with Infrastructure Automation
 
 The baseline configuration provides the foundation for:
-- **Terraform**: Uses automation@pve credentials for Proxmox provider
-- **Ansible**: Uses automation user for SSH access and system configuration
-- **Backup procedures**: Relies on consistent user and permission setup
-- **Monitoring**: Expects standard directory structure and services
+- **Terraform**: uses `automation@pve!terraform` for Proxmox API access
+- **Ansible bootstrap**: prepares the host and token before stack deployment
+- **SDN VLAN zones**: depends on a VLAN-aware `vmbr0` and MikroTik-side VLAN setup
+- **Stack deployment**: expects the host baseline to be stable before `terraform/lxc` runs
 
 ## Maintenance
 
 The baseline should be:
-- **Tested regularly**: Run validation script weekly
-- **Updated as needed**: Modify base-config.yml for new requirements
-- **Documented**: Record any manual changes that should be automated
+- **Tested regularly**: run the validation script after rebuilds or host changes
+- **Updated as needed**: modify the bootstrap playbooks for new requirements
+- **Documented**: record any manual host step that should move into automation
 - **Version controlled**: All changes committed to Git repository
 
 This baseline configuration ensures reliable, repeatable infrastructure that supports the full automation workflow.

@@ -26,7 +26,7 @@ adding a new segment.
          |
     pve-test (trunk port — all VLANs tagged)
     ├── vmbr0 (VLAN-aware bridge)
-    ├── tvbuild  → VLAN 10 → containers in build_seg
+    ├── tvnetc   → VLAN 10 → containers in build_seg
     ├── tvmgmt   → VLAN 20 → containers in mgmt_seg
     ├── tvedge   → VLAN 30 → containers in edge_seg
     └── tvinfra  → VLAN 40 → containers in infra_seg

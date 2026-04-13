@@ -14,7 +14,7 @@
 I would split the lab into five logical planes:
 
 **Management plane**
-Proxmox management, PBS, NetBox, identity, CA, secrets, monitoring, CI runners, registry, Git, and Chainloop. This is the most trusted segment.
+Proxmox management, PBS, NetBox, identity, CA, secrets, monitoring, CI runners, registry, and Git. This is the most trusted segment.
 
 **Application plane**
 arr stack, Jellyfin, Pi-hole, internal reverse proxies, helper services.
@@ -63,20 +63,25 @@ design and phased plan, not treated as repo-local implementation detail.
 
 Build the network first. A secure homelab is mostly a segmentation exercise.
 
-I would use at least these zones:
+For the current implementation, the intended model is **Proxmox SDN VLAN zones** on a
+VLAN-aware `vmbr0`, with the MikroTik acting as the L3 gateway. In other words, VLANs
+did not replace SDN in the plan; VLAN-backed zones are the current SDN design.
 
-* **mgmt** – Proxmox UI/API, PBS, Git, CI, Harbor, Chainloop, Authentik, step-ca, NetBox
-* **storage/backup** – backup traffic, NFS/iSCSI if any
-* **internal-apps** – Jellyfin, arr stack, dashboards, admin UIs
-* **dns-core** – Pi-hole and supporting DNS resolvers if you split them
-* **public-edge** – reverse proxy only
-* **game-services** – Minecraft and similar
-* **security-lab** – Security Onion, Wazuh, scanning infrastructure
-* **client/ops-vpn** – trusted admin endpoints coming in over VPN/tailnet
+The active pve-test plan currently uses these SDN segments:
+
+* **build_seg** – CI build workloads
+* **mgmt_seg** – identity, PKI, monitoring, and management-plane services
+* **edge_seg** – reverse proxy / ingress
+* **infra_seg** – Harbor, apt-cacher, NetBox, and other shared build dependencies
+
+Additional zones such as app, game, backup, or security segments may still be introduced
+later, but they are not part of the active pve-test implementation path today.
 
 The main rule is that east-west communication should be explicit, not implicit. For example, Jellyfin may need media storage and auth; it should not also be able to talk to Harbor, CI, Git, or Proxmox. The Proxmox firewall and SDN feature set are directly aimed at guest network separation and centralized traffic policy. ([Proxmox VE][1])
 
-For remote administration, I would add **Headscale** rather than exposing management ports. Headscale is a self-hosted implementation of the Tailscale control server and is specifically intended for self-hosters and small environments. ([Headscale][2])
+For remote administration, the design intent is still to keep management access behind a
+trusted VPN or tailnet rather than exposing management ports directly. The exact remote
+access control plane is not part of the active implementation plan today.
 
 ## 3) Identity, auth, and certificates
 
@@ -130,13 +135,16 @@ Your CI stages should be:
 9. **deploy**
 10. **post-deploy verification**
 
-## 5) Supply chain: Harbor + Chainloop + signing
+## 5) Supply chain: Harbor + signing + optional attestations
 
 This is where your background makes the platform unusually worthwhile.
 
 **Harbor** should be your single internal registry. Harbor supports vulnerability scanning with Trivy, supports pluggable scanners, supports robot accounts for automation, and supports storing Cosign signatures alongside OCI artifacts. ([Harbor][6])
 
-**Chainloop** then becomes the evidence-and-policy layer on top of CI. Its contracts define what evidence a workflow must produce, and its control gates can block pipeline progression while still recording the attestation for audit. It is explicitly designed for SBOMs, SARIF, QA reports, vulnerability scans, and similar evidence. ([Chainloop Documentation][7])
+An attestation and evidence layer can sit on top of CI later, but it is not part of the
+active self-hosted build plan today. The current plan focuses first on Harbor, Trivy,
+Syft, Cosign, and policy checks in CI. If attestation is revisited later, it should be
+treated as a follow-on capability rather than a prerequisite for the current platform.
 
 The supply-chain flow I would use is:
 
@@ -144,8 +152,8 @@ The supply-chain flow I would use is:
 * CI runs Trivy on repo/filesystem and generated images
 * CI generates SBOM with **Syft**
 * CI signs built images with **Cosign**
-* CI uploads evidence to Chainloop
-* Chainloop policy evaluates:
+* CI records scan and validation results
+* policy evaluates:
 
   * no critical vulns unless explicitly waived
   * no blocked misconfigs
@@ -192,7 +200,7 @@ For policy-as-code:
 * use **OPA/Conftest** on Terraform plans and selected manifests
 * use **ansible-lint**
 * use Trivy IaC scans on repo files
-* optionally ingest Snyk/Sonar findings as Chainloop evidence
+* optionally ingest Snyk/Sonar findings into a later attestation/evidence layer
 
 OPA explicitly supports Terraform policy checks before changes are applied, and Conftest can also be used against Ansible playbooks. ([Open Policy Agent][12])
 
@@ -320,11 +328,9 @@ Prefer rebuilding/redeploying from Git over hand-tuning containers in place.
 * Trivy
 * SOPS
 * Grafana + metrics + logs
-* Headscale
 
 ### Strongly recommended next
 
-* Chainloop
 * Cosign
 * Syft
 * Renovate
@@ -352,7 +358,7 @@ The final operating model would be:
 
 **Evidence**
 
-* results go to Chainloop
+* scan, validation, and SBOM outputs are retained in CI and artifact storage
 
 **Artifact**
 
@@ -386,24 +392,21 @@ So I would start in this exact order:
 2. **Git + CI runner**
 3. **Harbor**
 4. **Trivy + Syft + Cosign**
-5. **Chainloop gate**
-6. **Authentik + Headscale + step-ca**
+5. **Authentik + step-ca**
+6. **Monitoring/logging**
 7. **NetBox**
-8. **Monitoring/logging**
-9. **PBS + restore practice**
-10. **Only then migrate the app stacks**
+8. **PBS + restore practice**
+9. **Only then migrate the app stacks**
 
 That order gives you the platform first and the hobby apps second, which is the right sequence if the actual objective is a secure and maintainable lab.
 
 If you want, I’ll turn this into a **phased build plan** for Proxmox with specific VM/LXC roles, zones, and “build this first / later” priorities.
 
 [1]: https://pve.proxmox.com/pve-docs/chapter-pve-firewall.html?utm_source=chatgpt.com "Proxmox VE Firewall"
-[2]: https://headscale.net/?utm_source=chatgpt.com "Headscale"
 [3]: https://docs.goauthentik.io/install-config/reverse-proxy/?utm_source=chatgpt.com "Reverse proxy"
 [4]: https://smallstep.com/docs/step-ca/?utm_source=chatgpt.com "step-ca Certificate Authority Overview"
 [5]: https://forgejo.org/docs/latest/user/actions/?utm_source=chatgpt.com "Forgejo Actions | Reference"
 [6]: https://goharbor.io/docs/2.13.0/administration/robot-accounts/?utm_source=chatgpt.com "Harbor docs | Create System Robot Accounts"
-[7]: https://docs.chainloop.dev/concepts/control-gates?utm_source=chatgpt.com "Control and Quality Gates - Chainloop Documentation"
 [8]: https://github.com/anchore/syft?utm_source=chatgpt.com "anchore/syft: CLI tool and library for generating a Software ..."
 [9]: https://goharbor.io/docs/edge/working-with-projects/working-with-images/sign-images/?utm_source=chatgpt.com "Sign Artifacts with Cosign or Notation"
 [10]: https://getsops.io/docs/?utm_source=chatgpt.com "SOPS: Secrets OPerationS"
@@ -418,6 +421,14 @@ If you want, I’ll turn this into a **phased build plan** for Proxmox with spec
 [19]: https://pbs.proxmox.com/docs/technical-overview.html?utm_source=chatgpt.com "Technical Overview — Proxmox Backup 4.1.5-1 ..."
 [20]: https://kopia.io/docs/?utm_source=chatgpt.com "What is Kopia?"
 [21]: https://github.com/renovatebot/renovate?utm_source=chatgpt.com "renovatebot/renovate: Home of the Renovate CLI ..."
+
+
+## Historical appendix
+
+The remaining phased sketch below is retained as original design background. Where it
+differs from the 2026 implementation note at the top of this document or from
+`docs/plan/README.md`, the active plan and current pve-test design should be treated as
+authoritative.
 
 
 ## Phase 0 — Define the target and keep dev separate
