@@ -174,7 +174,7 @@ content:
 > It is one of **two permitted exceptions** to the Harbor-only pull rule (the other being
 > Harbor itself). Pull `portainer-ce` directly from Docker Hub for this bootstrap. Once
 > Phase 03b is complete, update the image reference to
-> `192.168.1.10/dockerhub/portainer/portainer-ce:2.27.3` and redeploy.
+> `10.57.3.10/dockerhub/portainer/portainer-ce:2.27.3` and redeploy.
 
 ```yaml
 ---
@@ -326,7 +326,7 @@ register its Portainer agent with the new server at `192.168.1.20` because
 | 2 | `ci-runner-01` | 00b (this phase) | 141 | 00b-05 — see below |
 | 3 | `harbor-stack` | 03b | 121 | 03b-01 |
 | 4 | `apt-cacher-ng` | 03c | 142 | 03c-01 |
-| 5+ | Phase 04 stacks | 04 | 150+ | Authentik, Traefik, Headscale, Monitoring |
+| 5+ | Phase 04 stacks | 04 | 150+ | Authentik, Traefik, step-ca, Monitoring |
 
 Do not skip steps or deploy out of order. Harbor (Step 3) must be running and configured
 before Phase 04 stacks are deployed, since they pull images via Harbor.

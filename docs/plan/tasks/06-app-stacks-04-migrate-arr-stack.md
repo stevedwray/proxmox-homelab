@@ -17,7 +17,7 @@ Phase 06 — Application Stack Migration
 - Task 06-01 complete — arr stack's current VMID, IP, services, config paths, and NAS mount documented
 - Task 06-02 complete — `app_seg` (10.60.0.0/24) available
 - Task 04-04 complete — Traefik running; arr UIs will be accessible at `*.homelab.internal`
-- Phase 03b complete — arr images mirrored to Harbor at `192.168.1.10/homelab/apps/`
+- Phase 03b complete — arr images mirrored to Harbor at `10.57.3.10/homelab/apps/`
 - Phase 05 complete — harbor-image-policy CI check active
 
 ## Objective
@@ -55,7 +55,7 @@ Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in 
 
 ## Constraints and Conventions
 
-- All images via Harbor proxy: `192.168.1.10/homelab/apps/<service>:<pin>`
+- All images via Harbor proxy: `10.57.3.10/homelab/apps/<service>:<pin>`
 - `stack.yaml`: VMID 161, IP `10.60.0.20/24`, `cores: 2`, `memory: 2048`, `docker_storage_size: "10G"`
 - NAS NFS mount must be configured in `stack.yaml` or as a bind mount via Ansible
 - Traefik labels must include `authentik@file` middleware — arr UIs are internal only
@@ -63,14 +63,14 @@ Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in 
 
 ## Acceptance Criteria
 
-- [ ] Arr service images present in Harbor at `192.168.1.10/homelab/apps/`
+- [ ] Arr service images present in Harbor at `10.57.3.10/homelab/apps/`
 - [ ] LXC VMID 161 running at `10.60.0.20`
 - [ ] NFS media library mount accessible at `/media` inside the LXC
 - [ ] Radarr, Sonarr, Prowlarr (and others from discovery) responding on their ports
 - [ ] All arr services accessible at `<service>.homelab.internal` via Traefik
 - [ ] Authentik SSO gate active on all arr service routes
 - [ ] Download client configured and connected to arr services
-- [ ] All images sourced from `192.168.1.10/...` (harbor-image-policy CI check passes)
+- [ ] All images sourced from `10.57.3.10/...` (harbor-image-policy CI check passes)
 - [ ] Old containers snapshotted and destroyed
 - [ ] NetBox updated; branch merged to `dev/pve-test`
 
@@ -86,10 +86,10 @@ services, config paths, and NAS mount from the old deployment.
 STEP 1 — Mirror arr images to Harbor:
   For each arr service image discovered (radarr, sonarr, prowlarr, etc.):
     docker pull <image>:<version>
-    docker tag <image>:<version> 192.168.1.10/homelab/apps/<service>:<version>
+    docker tag <image>:<version> 10.57.3.10/homelab/apps/<service>:<version>
     source .env && echo "$HARBOR_ROBOT_PASSWORD" | \
-      docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
-    docker push 192.168.1.10/homelab/apps/<service>:<version>
+      docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+    docker push 10.57.3.10/homelab/apps/<service>:<version>
 
 STEP 2 — Back up config from each old arr service (one at a time):
   For each service (radarr, sonarr, prowlarr, etc.):
@@ -115,7 +115,7 @@ STEP 5 — Create stack files:
 
 STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-arr-stack.yml:
   - Deploy docker-compose.yml at /opt/arr-stack/ with all arr services
-  - All images via 192.168.1.10/homelab/apps/<service>:<pin>
+  - All images via 10.57.3.10/homelab/apps/<service>:<pin>
   - Traefik labels on each service:
       traefik.enable: "true"
       traefik.http.routers.<svc>.rule: "Host(`<svc>.homelab.internal`)"

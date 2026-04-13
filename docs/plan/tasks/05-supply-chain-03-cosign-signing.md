@@ -38,7 +38,7 @@ A Cosign signing key pair is generated, `cosign.pub` is committed to the repo, `
 ## Out of Scope
 
 - Distributing `cosign.pub` to all LXCs for deploy-time verification (add to base role in Phase 06)
-- Chainloop integration (task 05-04)
+- External attestation integration, if reintroduced in a future phase
 - SOPS/age encryption of `cosign.key` (storing via GitHub Actions secret is sufficient for Phase 05)
 
 ## Inputs

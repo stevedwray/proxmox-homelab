@@ -3,7 +3,7 @@
 ## Goal
 
 1. Actually deploy the `ci-runner-01` LXC on pve-test so that the self-hosted GitHub Actions runner comes online (the Terraform stack and Ansible playbook already exist in code — this phase applies them).
-2. Pin all remaining GitHub Actions to release tags to reduce supply-chain risk. *(Note: release-tag pins such as `@v4` are mutable and do not fully prevent supply-chain attacks; commit-SHA pinning is required for that guarantee. This phase pins to stable release tags, which is an improvement over unpinned or `@master` refs.)*
+2. Pin all remaining GitHub Actions references to immutable commit SHAs to reduce supply-chain risk.
 
 ## Repository context
 
@@ -141,22 +141,21 @@ After reboot, confirm runner comes back online in GitHub Settings.
 
 ### Current state audit
 
-Check `.github/workflows/security-scan.yml` and `validate.yml` for any unpinned or partially pinned refs:
+Check `.github/workflows/security-scan.yml` and `validate.yml` for any unpinned or non-SHA refs:
 
-| Action | Current pin | Status |
+| Action | Current pin style | Status |
 |---|---|---|
-| `actions/checkout` | `@v4` | ✓ Release-tag pinned |
-| `hashicorp/setup-terraform` | `@v3` | ✓ Release-tag pinned |
-| `actions/setup-python` | `@v5` | ✓ Release-tag pinned |
-| `actions/cache` | `@v4` | ✓ Release-tag pinned |
-| `aquasecurity/trivy-action` | `@v0.35.0` | ✓ Release-tag pinned |
-| `github/codeql-action/upload-sarif` | `@v3` | ✓ Release-tag pinned |
-| `snyk/actions/iac` | `@v1.0.0` | ✓ Release-tag pinned |
-| `trufflesecurity/trufflehog` | `@v3.94.3` | ✓ Release-tag pinned |
+| `actions/checkout` | Commit SHA | ✓ Immutable pin |
+| `hashicorp/setup-terraform` | Commit SHA | ✓ Immutable pin |
+| `actions/cache` | Commit SHA | ✓ Immutable pin |
+| `aquasecurity/trivy-action` | Commit SHA | ✓ Immutable pin |
+| `github/codeql-action/upload-sarif` | Commit SHA | ✓ Immutable pin |
+| `snyk/actions/iac` | Commit SHA | ✓ Immutable pin |
+| `trufflesecurity/trufflehog` | Commit SHA | ✓ Immutable pin |
 
-> **Supply-chain note:** Release tags (`@v4`, `@v3`, etc.) are mutable — a tag can be force-pushed to a different commit. For full supply-chain hardening, pins should be commit SHAs (e.g. `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2`). The current state is an improvement over `@master` or unpinned refs but does not meet full SHA-pinning standards.
+> **Supply-chain note:** Commit-SHA pins are the target state because release tags are mutable. The workflow files should keep the human-readable version comment beside the SHA for maintainability.
 
-If all are already pinned, this step is verification-only. If any `@master` or unpinned refs are found, pin them to the latest stable tag in a commit on a short-lived branch.
+If all are already SHA-pinned, this step is verification-only. If any `@master`, tag-only, or unpinned refs are found, pin them to the current release commit SHA in a commit on a short-lived branch.
 
 ### Verification command
 
@@ -168,7 +167,7 @@ grep -r 'uses:' .github/workflows/ | grep '@master'
 # Expected: no output
 ```
 
-If findings exist, create a branch `fix/pin-github-actions-<date>`, update the workflow files, and merge to `dev/pve-test`.
+If findings exist, create a branch `fix/pin-github-actions-<date>`, update the workflow files to commit SHAs, and merge to `dev/pve-test`.
 
 ---
 

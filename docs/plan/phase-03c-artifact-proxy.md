@@ -19,7 +19,7 @@ This phase replaces the need for Nexus or any similar heavy artifact manager. Py
 
 | Service | IP | VMID | Zone |
 |---|---|---|---|
-| apt-cacher-ng | `192.168.1.35` | 142 | `mgmt_seg` |
+| apt-cacher-ng | `10.57.3.11` | 142 | `infra_seg` |
 
 Check NetBox for confirmed availability before assigning. Adjust if `.35` is already taken.
 
@@ -39,10 +39,10 @@ Check NetBox for confirmed availability before assigning. Adjust if `.35` is alr
 Create `terraform/lxc/stacks/apt-cacher-stack/stack.yaml`:
 
 ```yaml
-# apt-cacher-ng transparent apt proxy — management zone
+# apt-cacher-ng transparent apt proxy — infrastructure zone
 hostname: apt-cacher-stack
-ip_address: "192.168.1.35/24"
-gateway: "192.168.1.1"
+ip_address: "10.57.3.11/24"
+gateway: "10.57.3.1"
 vmid: 142
 cores: 1
 memory: 256
@@ -115,7 +115,7 @@ Add the following task to the **base LXC Ansible role** (or the common tasks fil
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/01proxy
     content: |
-      Acquire::http::Proxy "http://192.168.1.35:3142";
+      Acquire::http::Proxy "http://10.57.3.11:3142";
     owner: root
     group: root
     mode: "0644"
@@ -330,8 +330,8 @@ git push origin feat/apt-cacher-terraform-mirror
 ## Acceptance criteria
 
 ### apt-cacher-ng
-- [ ] apt-cacher-ng LXC running at `192.168.1.35` (VMID 142)
-- [ ] `curl http://192.168.1.35:3142/acng-report.html` returns stats page
+- [ ] apt-cacher-ng LXC running at `10.57.3.11` (VMID 142)
+- [ ] `curl http://10.57.3.11:3142/acng-report.html` returns stats page
 - [ ] `/etc/apt/apt.conf.d/01proxy` present on all new LXCs and on ci-runner-01
 - [ ] Second `apt-get update` on any proxied LXC hits the cache (verify via stats page)
 - [ ] apt-cacher-ng registered in NetBox

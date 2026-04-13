@@ -14,7 +14,7 @@ Phase 06 — Application Stack Migration
 
 ## Prerequisites
 
-- Phase 04 complete — Traefik, Authentik, step-ca, Headscale, Monitoring all running
+- Phase 04 complete — Traefik, Authentik, step-ca, and Monitoring all running
 - Phase 05 complete — supply chain pipeline active
 - NetBox running at `192.168.1.30`
 

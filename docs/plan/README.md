@@ -1,10 +1,14 @@
-# Homelab Build Plan — Phase Index
+# Homelab Build Plan — Development and Deployment Index
 
-This directory contains per-phase planning documents for the greenfield rebuild of the proxmox-homelab. Each document is self-contained and intended to be used in a single AI-assisted work session.
+This directory is the execution index for the greenfield rebuild of the proxmox-homelab.
+It links the active development and deployment phases, the task documents used to carry
+them out, and the repository conventions that apply while the implementation catches up
+to the revised design.
 
 ## Phase sequence
 
-Phases must be completed in order. Each phase lists its prerequisites explicitly.
+Phases must be completed in order unless a phase explicitly says it can run in parallel.
+Each phase document owns its own prerequisites, acceptance criteria, and task breakdown.
 
 | Phase | Document | Status | Gate |
 |---|---|---|---|
@@ -26,13 +30,20 @@ See [docs/design/NetworkPlanning.md](../design/NetworkPlanning.md) for the netwo
 
 For the SDN VLAN zone design, IP allocations, and MikroTik configuration, see [terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
 
-## pve-test environment
+## Environment summary
 
 pve-test is a **laptop running bare-metal Proxmox VE** at `192.168.1.40` (`pve-test.gibbsgreatly.xyz`), connected via a trunk port to the MikroTik router. It is treated as ephemeral — all services are wiped and rebuilt from scratch at the start of each development pass. No state from a previous pass is assumed to persist.
 
 The pve-test VM that previously ran inside `pve` has been retired. pve (production) is not used during development passes — all services, including Harbor, apt-cacher, and NetBox, are deployed locally on pve-test.
 
 **Network model:** Proxmox SDN VLAN zones. The MikroTik acts as the L3 gateway for all SDN zones. No NAT or routing is performed on the Proxmox host itself. See [terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml) for the zone design and MikroTik setup commands.
+
+## What This README Is For
+
+- Use this file as the top-level index for active build phases and task documents.
+- Treat `docs/design/` as the target architecture and rationale.
+- Treat each `docs/plan/phase-*.md` file as the execution plan for a slice of work.
+- Treat `docs/plan/tasks/*.md` as the detailed implementation prompts and checklists for individual tasks.
 
 ## Repository conventions
 
@@ -54,9 +65,10 @@ The pve-test VM that previously ran inside `pve` has been retired. pve (producti
 
 If a scan returns new issues, **stop and present options** — do not merge until resolved or explicitly accepted.
 
-## Key infrastructure addresses
+## Active Target-State Addresses
 
-All services are deployed on **pve-test** only. pve (production) is not referenced during development passes.
+All active planning assumes services are deployed on **pve-test** only. pve (production) is
+not part of development passes.
 
 ### Bootstrap services (vmbr0 — LAN bridge)
 
@@ -104,28 +116,7 @@ Deployed second, immediately after Portainer. All other zones depend on Harbor a
 |---|---|---|
 | `infrastructure-containers` | pve-test | All stacks |
 
-## Memory budget — pve-test (16 GB)
-
-pve-test runs on a 16 GB laptop. Only one application stack runs at a time during development passes. The table below shows the target allocation for the Phase 04 platform. Do not exceed these values; OOM on the Proxmox host disrupts all running containers.
-
-| Service | VMID | Memory |
-|---|---|---|
-| Portainer | 120 | 512 MB |
-| Harbor | 121 | 2048 MB |
-| apt-cacher | 142 | 256 MB |
-| NetBox | 143 | 1024 MB |
-| ci-runner-01 | 141 | 1024 MB |
-| Authentik | 150 | 2048 MB |
-| step-ca | 152 | 256 MB |
-| Traefik | 153 | 512 MB |
-| Monitoring | 154 | 1536 MB |
-| **Platform total** | | **~9.2 GB** |
-| Host OS overhead | | ~2.5 GB |
-| **Available for one app stack** | | **~4.3 GB** |
-
-When deploying an application stack for development, check that platform containers are within their allocations first: `pct list` on pve-test. Stop any non-essential containers if the headroom is insufficient.
-
-## Phase 04 bring-up sequence (per-pass rebuild)
+## Phase 04 Bring-Up Sequence (Per-Pass Rebuild)
 
 pve-test is wiped before each development pass. On a fresh node, bring up services in this exact order before starting any Phase 04 task:
 
@@ -141,7 +132,7 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 10. **step-ca** (VMID 152, mgmt_seg)
 11. **Monitoring** (VMID 154, mgmt_seg)
 
-## Open issues summary
+## Active Issues Summary
 
 | Issue | Description | Phase | Action |
 |---|---|---|---|
@@ -153,9 +144,15 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 | #120 | ShellCheck cleanup: setup-dev-env.sh | — | Ready to work |
 | #121 | ShellCheck cleanup: check-proxmox-status.sh | — | Ready to work |
 
-## Known code gaps (not yet fixed)
+## Known Implementation Gaps
 
 | Gap | Location | Description |
 |---|---|---|
 | VNet firewall cross-zone rule bug | `terraform/lxc/main.tf:86-95` | `vnet_policy_candidates` requires both `from` and `to` to match the current container's VNet — impossible for cross-zone policies. No ACCEPT rules are generated. Proxmox firewall disabled for dev passes as a workaround. |
 | SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Apply manually via pvesh until fixed. |
+
+## Notes
+
+- This README is intentionally an index and execution guide, not the full architecture document.
+- If a phase document conflicts with `docs/design/` after the 2026 plan revision, update the phase document to match the revised design or mark it historical.
+- Phase 06 remains intentionally out of scope until the platform and supply-chain phases are stable.

@@ -16,7 +16,7 @@ Phase 06 — Application Stack Migration
 
 - Task 06-01 complete — Pi-hole's current VMID, IP, config paths, and blocklist version documented
 - Task 06-02 complete — `app_seg` (10.60.0.0/24) available
-- Phase 03b complete — Harbor running; Pi-hole image mirrored to `192.168.1.10/homelab/apps/pihole:<tag>`
+- Phase 03b complete — Harbor running; Pi-hole image mirrored to `10.57.3.10/homelab/apps/pihole:<tag>`
 - Phase 05 complete — supply chain pipeline checks against Harbor images active
 - **Rollback plan ready**: know how to revert DNS resolvers to the old Pi-hole IP
 
@@ -55,7 +55,7 @@ Pi-hole is running in a new LXC (`pihole-stack`, VMID 160) at `10.60.0.10`, all 
 ## Constraints and Conventions
 
 - Pi-hole is critical path for DNS. Deploy the new one **before** touching the old one. Only destroy old after the new is fully verified.
-- Image must be sourced from Harbor: `192.168.1.10/homelab/apps/pihole:<pin>`
+- Image must be sourced from Harbor: `10.57.3.10/homelab/apps/pihole:<pin>`
 - `stack.yaml`: VMID 160, IP `10.60.0.10/24`, `gateway: 10.60.0.1`, `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`
 - The new Pi-hole must be able to forward DNS queries upstream (ensure `10.60.0.0/24` has internet egress via the SDN gateway)
 - Test DNS resolution explicitly before updating any client resolver configs
@@ -63,7 +63,7 @@ Pi-hole is running in a new LXC (`pihole-stack`, VMID 160) at `10.60.0.10`, all 
 
 ## Acceptance Criteria
 
-- [ ] Pi-hole image present in Harbor at `192.168.1.10/homelab/apps/pihole:<tag>`
+- [ ] Pi-hole image present in Harbor at `10.57.3.10/homelab/apps/pihole:<tag>`
 - [ ] LXC VMID 160 running at `10.60.0.10`
 - [ ] `dig @10.60.0.10 harbor-stack` resolves correctly
 - [ ] Blocklists loaded (Pi-hole admin UI shows active blocklists)
@@ -85,10 +85,10 @@ PREREQUISITE: Check task 06-01 discovery for the old Pi-hole's current IP and VM
 
 STEP 1 — Mirror Pi-hole image to Harbor (if not already done):
   docker pull pihole/pihole:<version>   # use installed version from discovery
-  docker tag pihole/pihole:<version> 192.168.1.10/homelab/apps/pihole:<version>
+  docker tag pihole/pihole:<version> 10.57.3.10/homelab/apps/pihole:<version>
   source .env && echo "$HARBOR_ROBOT_PASSWORD" | \
-    docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
-  docker push 192.168.1.10/homelab/apps/pihole:<version>
+    docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+  docker push 10.57.3.10/homelab/apps/pihole:<version>
 
 STEP 2 — Back up old Pi-hole config:
   ssh root@<old-pihole-ip> \
@@ -121,7 +121,7 @@ STEP 6 — Add PIHOLE_WEB_PASSWORD to .env.template and .env.
 
 STEP 7 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-pihole-stack.yml:
   Deploy Pi-hole via Docker Compose at /opt/pihole-stack/docker-compose.yml.
-  Image: 192.168.1.10/homelab/apps/pihole:<version>
+  Image: 10.57.3.10/homelab/apps/pihole:<version>
   The playbook should:
   - Deploy compose
   - Copy pihole-backup.tar.gz to the LXC and restore to /etc/pihole/ and /etc/dnsmasq.d/

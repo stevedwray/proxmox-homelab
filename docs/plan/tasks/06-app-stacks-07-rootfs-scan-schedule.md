@@ -16,7 +16,7 @@ Phase 06 — Application Stack Migration
 
 - Tasks 06-03 to 06-06 complete — all Phase 06 LXCs deployed and running
 - Phase 05 Task 05-01 complete — Trivy image scan CI job exists (Trivy installed on ci-runner-01)
-- ci-runner-01 can SSH to all LXC IPs (`10.60.x.x`, `10.61.x.x`, `192.168.1.x`)
+- ci-runner-01 can SSH to all LXC IPs used by the platform and app segments (`10.57.x.x`, `10.60.x.x`, `10.61.x.x`)
 
 ## Objective
 
@@ -38,7 +38,7 @@ A scheduled GitHub Actions workflow `rootfs-scan.yml` runs every Monday at 03:00
 ## Inputs
 
 - `docs/plan/phase-06-app-stacks.md` — Trivy rootfs scheduled scans section for the workflow YAML
-- All LXC IPs to scan (Phase 03c apt-cacher at 192.168.1.35, Phase 04 LXCs 192.168.1.46, 192.168.1.41–44, Chainloop 192.168.1.45, Phase 06 LXCs 10.60.0.10, 10.60.0.20, 10.60.0.21, 10.61.0.10)
+- All LXC IPs to scan (Phase 03c apt-cacher at `10.57.3.11`, Phase 04 LXCs `10.57.1.10`, `10.57.1.11`, `10.57.2.10`, `10.57.1.12`, and Phase 06 LXCs `10.60.0.10`, `10.60.0.20`, `10.60.0.21`, `10.61.0.10`)
 - `terraform/lxc/ansible/roles/base-lxc/tasks/main.yml` — add Trivy install here
 
 ## Expected Outputs
@@ -80,13 +80,11 @@ CONTEXT:
 - Trivy is already installed on ci-runner-01 (from Phase 05)
 - Full spec: docs/plan/phase-06-app-stacks.md (section "Trivy rootfs scheduled scans")
 - LXCs to scan:
-    192.168.1.35 (apt-cacher-ng)
-    192.168.1.46 (Authentik)
-    192.168.1.41 (Headscale)
-    192.168.1.42 (step-ca)
-    192.168.1.43 (Traefik)
-    192.168.1.44 (Monitoring)
-    192.168.1.45 (Chainloop)
+    10.57.3.11   (apt-cacher-ng)
+    10.57.1.10   (Authentik)
+    10.57.1.11   (step-ca)
+    10.57.2.10   (Traefik)
+    10.57.1.12   (Monitoring)
     10.60.0.10   (Pi-hole)
     10.60.0.20   (arr-stack)
     10.60.0.21   (Jellyfin)

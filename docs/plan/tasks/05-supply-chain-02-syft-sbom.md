@@ -34,7 +34,7 @@ Syft is installed on ci-runner-01 at a pinned version, a `generate-sbom` CI job 
 
 ## Out of Scope
 
-- Attaching the SBOM to Chainloop (task 05-04)
+- Attaching the SBOM to an external attestation system, if reintroduced in a future phase
 - Uploading SBOM to Harbor as an OCI artifact (future enhancement — not in scope for this phase)
 
 ## Inputs

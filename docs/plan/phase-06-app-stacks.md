@@ -9,10 +9,10 @@ Migrate existing application stacks (media/arr stack, Jellyfin, Pi-hole) from th
 ## Prerequisites
 
 - Phase 01 (CI runner) complete
-- Phase 02 (memory upgrade) complete
-- Phase 04 complete — Authentik, Headscale, step-ca, Traefik, and monitoring all running
-- Phase 05 complete — Trivy, Syft, Cosign, Chainloop pipeline active
-- Harbor at `192.168.1.10` operational with projects and scanning configured
+- Phase 02 complete or otherwise superseded by the current pve-test capacity baseline
+- Phase 04 complete — Authentik, step-ca, Traefik, and monitoring all running
+- Phase 05 complete — Trivy, Syft, and Cosign pipeline work active
+- Harbor at `10.57.3.10` operational with projects and scanning configured
 - NetBox updated with current IP allocations
 
 ## Current state of application workloads
@@ -41,14 +41,16 @@ Fill this table in from `pct list`/`qm list` output before proceeding.
 
 ## Segmentation target
 
-Per the GreenField architecture, application stacks belong in the `internal-apps` zone, not `mgmt_seg`. Define the zone and IP range in Proxmox SDN:
+Per the revised GreenField architecture, application stacks belong in an application
+segment rather than `mgmt_seg`. Define the zone and IP range in Proxmox SDN:
 
 | Zone | Subnet | Purpose |
 |---|---|---|
 | `app_seg` | `10.60.0.0/24` | Media stack, Jellyfin, Pi-hole |
 | `game_seg` | `10.61.0.0/24` | Game servers |
 
-Adjust subnets if they conflict with the existing network layer (`tvnetc` SDN zones) — check `terraform/lxc/network/` for the current zone definitions.
+Adjust subnets if they conflict with the current SDN layer — check
+`terraform/lxc/network/` for the active zone definitions before creating new zones.
 
 ### Create app_seg zone (if not already defined)
 
@@ -102,7 +104,9 @@ ansible_playbook: "deploy-pihole-stack"
 portainer_agent: true
 ```
 
-**Option:** Keep Pi-hole on `192.168.1.x` (its existing LAN IP) to minimise DNS resolver reconfiguration. Only move it to `app_seg` if the network segmentation plan requires it.
+**Transitional exception (optional):** Keep Pi-hole on `192.168.1.x` only if DNS cutover
+complexity makes that necessary during migration. The preferred target state is to place
+application workloads inside the SDN-defined application segment.
 
 ### Image: source from Harbor
 
@@ -111,8 +115,8 @@ Mirror the Pi-hole image to Harbor before deploying:
 ```bash
 # Pull and retag for Harbor:
 docker pull pihole/pihole:<version>
-docker tag pihole/pihole:<version> 192.168.1.10/homelab/apps/pihole:<version>
-docker push 192.168.1.10/homelab/apps/pihole:<version>
+docker tag pihole/pihole:<version> 10.57.3.10/homelab/apps/pihole:<version>
+docker push 10.57.3.10/homelab/apps/pihole:<version>
 ```
 
 Or use the Harbor replication policy to pull from Docker Hub on a schedule.
@@ -343,13 +347,11 @@ jobs:
     strategy:
       matrix:
         host:
-          - "192.168.1.35"   # apt-cacher-ng
-          - "192.168.1.46"   # Authentik
-          - "192.168.1.41"   # Headscale
-          - "192.168.1.42"   # step-ca
-          - "192.168.1.43"   # Traefik
-          - "192.168.1.44"   # Monitoring
-          - "192.168.1.45"   # Chainloop
+          - "10.57.3.11"     # apt-cacher-ng
+          - "10.57.1.10"     # Authentik
+          - "10.57.1.11"     # step-ca
+          - "10.57.2.10"     # Traefik
+          - "10.57.1.12"     # Monitoring
           # Add Phase 06 app stacks as they are deployed
     steps:
       - uses: actions/checkout@v4
@@ -480,7 +482,7 @@ Merge each to `dev/pve-test` after the service is validated and the old instance
 - [ ] Media library accessible at `/media` mount
 - [ ] Download client connected and processing
 - [ ] UIs accessible via Traefik at `*.homelab.internal` with Authentik gate
-- [ ] All images sourced from `192.168.1.10/homelab/apps/`
+- [ ] All images sourced from `10.57.3.10/homelab/apps/`
 - [ ] Old containers destroyed
 
 ### Jellyfin

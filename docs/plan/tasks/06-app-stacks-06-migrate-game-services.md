@@ -16,7 +16,7 @@ Phase 06 — Application Stack Migration
 
 - Task 06-01 complete — game services' current VMID, IPs, world data paths, exposed ports documented
 - Task 06-02 complete — `game_seg` (10.61.0.0/24) available
-- Phase 03b complete — game server images mirrored to Harbor at `192.168.1.10/homelab/apps/`
+- Phase 03b complete — game server images mirrored to Harbor at `10.57.3.10/homelab/apps/`
 
 ## Objective
 
@@ -56,13 +56,13 @@ Game servers (Minecraft and others from discovery) are running in a new LXC (`ga
 
 - `stack.yaml`: VMID 163, IP `10.61.0.10/24`, `gateway: 10.61.0.1`, `cores: 4`, `memory: 4096`, `docker_storage_size: "20G"`
 - Game services need direct port exposure (not through Traefik) — port forwarding via Proxmox firewall
-- All images via Harbor: `192.168.1.10/homelab/apps/<game-service>:<pin>`
+- All images via Harbor: `10.57.3.10/homelab/apps/<game-service>:<pin>`
 - World data is critical — verify file integrity after migration before destroying old LXC (compare directory sizes, test loading in game client)
 - Apply rate limiting and IP allow-list rules on Proxmox firewall for exposed game ports where practical
 
 ## Acceptance Criteria
 
-- [ ] Game server images present in Harbor at `192.168.1.10/homelab/apps/`
+- [ ] Game server images present in Harbor at `10.57.3.10/homelab/apps/`
 - [ ] LXC VMID 163 running at `10.61.0.10`
 - [ ] World data migrated and verified (size comparison, game client test connection)
 - [ ] Game server ports accessible from outside via Proxmox port-forwarding rules
@@ -80,10 +80,10 @@ Check task 06-01 discovery for the exact game services, world data paths, and po
 STEP 1 — Mirror game server images to Harbor (if not done in Phase 03b):
   For each game server image from discovery:
     docker pull <image>:<version>
-    docker tag <image>:<version> 192.168.1.10/homelab/apps/<game-service>:<version>
+    docker tag <image>:<version> 10.57.3.10/homelab/apps/<game-service>:<version>
     source .env && echo "$HARBOR_ROBOT_PASSWORD" | \
-      docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
-    docker push 192.168.1.10/homelab/apps/<game-service>:<version>
+      docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+    docker push 10.57.3.10/homelab/apps/<game-service>:<version>
 
 STEP 2 — Back up world data:
   ssh root@<old-game-ip> "tar czf /tmp/minecraft-world.tar.gz /data/world/ /data/server.properties"
@@ -104,7 +104,7 @@ STEP 5 — Create stack files:
 
 STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-game-stack.yml:
   - Deploy docker-compose.yml at /opt/game-stack/ with game server services
-  - Images from 192.168.1.10/homelab/apps/<game-service>:<pin>
+  - Images from 10.57.3.10/homelab/apps/<game-service>:<pin>
   - Expose game ports directly (ports: section in compose — NOT Traefik labels)
   - Restore world data backup to /opt/game-stack/data/
 

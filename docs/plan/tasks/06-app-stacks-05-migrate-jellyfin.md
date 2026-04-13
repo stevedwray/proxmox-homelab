@@ -17,7 +17,7 @@ Phase 06 — Application Stack Migration
 - Task 06-01 complete — Jellyfin's current VMID, IP, media library path, GPU passthrough config documented
 - Task 06-02 complete — `app_seg` (10.60.0.0/24) available
 - Task 04-04 complete — Traefik running with step-ca ACME for external TLS
-- Phase 03b complete — Jellyfin image mirrored to Harbor at `192.168.1.10/homelab/apps/jellyfin:<tag>`
+- Phase 03b complete — Jellyfin image mirrored to Harbor at `10.57.3.10/homelab/apps/jellyfin:<tag>`
 
 ## Objective
 
@@ -54,7 +54,7 @@ Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, t
 
 ## Constraints and Conventions
 
-- Image via Harbor: `192.168.1.10/homelab/apps/jellyfin:<pin>`
+- Image via Harbor: `10.57.3.10/homelab/apps/jellyfin:<pin>`
 - `stack.yaml`: VMID 162, IP `10.60.0.21/24`, `gateway: 10.60.0.1`, `cores: 4`, `memory: 4096`, `docker_storage_size: "10G"`
 - GPU passthrough (LXC config additions) cannot be set via the standard Terraform LXC resource — use SSH via a Terraform `null_resource` or add it after `terragrunt apply` via Ansible
 - GPU passthrough lines for Proxmox LXC conf: `lxc.cgroup2.devices.allow: c 226:* rwm` and `lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir`
@@ -62,7 +62,7 @@ Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, t
 
 ## Acceptance Criteria
 
-- [ ] Jellyfin image present in Harbor at `192.168.1.10/homelab/apps/jellyfin:<pin>`
+- [ ] Jellyfin image present in Harbor at `10.57.3.10/homelab/apps/jellyfin:<pin>`
 - [ ] LXC VMID 162 running at `10.60.0.21`
 - [ ] NFS media library mount accessible inside LXC at `/media`
 - [ ] Jellyfin admin UI accessible at `http://10.60.0.21:8096`
@@ -81,10 +81,10 @@ Jellyfin may require GPU passthrough for hardware transcoding — check task 06-
 
 STEP 1 — Mirror Jellyfin image to Harbor (if not already done):
   docker pull jellyfin/jellyfin:<version>
-  docker tag jellyfin/jellyfin:<version> 192.168.1.10/homelab/apps/jellyfin:<version>
+  docker tag jellyfin/jellyfin:<version> 10.57.3.10/homelab/apps/jellyfin:<version>
   source .env && echo "$HARBOR_ROBOT_PASSWORD" | \
-    docker login 192.168.1.10 -u "$HARBOR_ROBOT_USER" --password-stdin
-  docker push 192.168.1.10/homelab/apps/jellyfin:<version>
+    docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+  docker push 10.57.3.10/homelab/apps/jellyfin:<version>
 
 STEP 2 — Back up Jellyfin config from old instance:
   ssh root@<old-jellyfin-ip> \
@@ -106,7 +106,7 @@ STEP 5 — Create stack files:
 
 STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml:
   - Deploy docker-compose.yml at /opt/jellyfin-stack/ with Jellyfin service
-  - Image: 192.168.1.10/homelab/apps/jellyfin:<pin>
+  - Image: 10.57.3.10/homelab/apps/jellyfin:<pin>
   - Mount /media (NAS NFS) and /opt/jellyfin-stack/config:/config
   - Traefik labels:
       traefik.enable: "true"

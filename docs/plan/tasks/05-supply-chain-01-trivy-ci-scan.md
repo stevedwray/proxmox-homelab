@@ -38,7 +38,7 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 ## Out of Scope
 
 - Filesystem / secrets / IaC Trivy scans (already in `sast-scan` job — do not change)
-- Chainloop attestation integration (task 05-04)
+- External attestation integration, if reintroduced in a future phase
 - Harbor Trivy scan-on-push configuration (done in Phase 03b)
 
 ## Inputs
