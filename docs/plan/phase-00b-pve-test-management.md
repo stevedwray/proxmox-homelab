@@ -34,31 +34,34 @@ from scratch and validated independently.
 
 ## Deliverables
 
-- local Portainer stack on `192.168.1.20` / VMID 120
-- `TF_VAR_portainer_server_ip=192.168.1.20` in `.env.pve-test`
+- Portainer running at `10.57.1.20` / VMID 120 on `mgmt_seg`
+- `TF_VAR_portainer_server_ip=10.57.1.20` in `.env.pve-test`
 - active pve-test deployments no longer depend on `192.168.1.4`
+- `192.168.1.20` decommissioned (bootstrap address, not permanent)
 
 ## Live task docs
 
 - [00b-pve-test-01 — Deploy Portainer bootstrap stack on bare-metal pve-test](tasks/00b-pve-test-01-deploy-portainer.md)
 - [00b-pve-test-02 — Update pve-test environment isolation after Portainer bootstrap](tasks/00b-pve-test-02-update-env-isolation.md)
+- [00b-pve-test-03 — Pivot Portainer from vmbr0 to mgmt_seg](tasks/00b-pve-test-03-pivot-portainer-to-mgmt-seg.md)
 
 ## Out of Scope
 
 - Harbor deployment
 - ci-runner deployment
-- SDN VLAN-zone service placement beyond the Portainer bootstrap exception
 
 ## Acceptance Criteria
 
-- [ ] Portainer is running locally on `pve-test` at `192.168.1.20`
+- [ ] Portainer is running on `pve-test` at `10.57.1.20` (mgmt_seg)
 - [ ] Admin login works with `PORTAINER_ADMIN_PASSWORD`
-- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=192.168.1.20`
-- [ ] Subsequent pve-test stack deploys target the local Portainer server
+- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
+- [ ] `192.168.1.20` is unreachable (bootstrap address decommissioned)
+- [ ] Subsequent pve-test stack deploys target the mgmt_seg Portainer
 - [ ] Production Portainer is not required for any later pve-test work
 
 ## Notes
 
-- Portainer is the permanent bootstrap exception on flat LAN `vmbr0`
+- `192.168.1.20` is a bootstrap-only address used during task 00b-01 and 00b-02.
+  It is decommissioned in task 00b-03 when Portainer is rebuilt on `mgmt_seg`.
 - All later stack work should follow the phase/task docs rather than the archived `done/`
   runbooks

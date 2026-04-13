@@ -21,8 +21,9 @@ greenfield `pve-test` rebuild.
 
 ## Objective
 
-All subsequent `pve-test` applies target the local Portainer server at `192.168.1.20`
-instead of the retired production default at `192.168.1.4`.
+All `pve-test` applies between this task and the Portainer pivot (task 00b-03) target the
+local bootstrap Portainer at `192.168.1.20`. This address is temporary — task 00b-03
+rebuilds Portainer on `mgmt_seg` at `10.57.1.20` and updates this env var.
 
 ## Scope
 
