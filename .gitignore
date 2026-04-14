@@ -76,3 +76,9 @@ id_rsa.pub
 .continue/config.json
 *~
 .scannerwork/
+
+# BMAD GenAI agents and tooling (not committed — sourced from bmad-core)
+.genai/
+.github/agents/
+.github/skills/
+.github/instructions/
