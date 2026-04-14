@@ -21,7 +21,7 @@ Docker template and Portainer.
 ## Prerequisites
 
 - Phase 00a complete — host bootstrap path available
-- Phase 00b complete — Portainer running at `192.168.1.20`
+- Phase 00b complete — Portainer running at `10.57.1.20`
 - Storage pool `infrastructure-containers` exists
 - Template `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` exists
 - MikroTik VLANs and routes for `infra_seg` are configured
@@ -105,7 +105,7 @@ STEP 0 — Verify host target and bootstrap dependencies:
   echo "$TF_WORKSPACE"          # must print pve-test
 
 STEP 0b — Confirm Portainer is already up:
-  curl -s http://192.168.1.20:9000/api/system/status
+  curl -s http://10.57.1.20:9000/api/system/status
 
 STEP 0c — Confirm the Debian Docker template exists:
   ssh root@pve-test.gibbsgreatly.xyz "pvesm list storage-template | grep debian-13.1-2-docker-template.tar.gz"

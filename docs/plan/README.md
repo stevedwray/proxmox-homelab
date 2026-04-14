@@ -83,13 +83,14 @@ If a scan returns new issues, **stop and present options** — do not merge unti
 All active planning assumes services are deployed on **pve-test** only. pve (production) is
 not part of development passes.
 
-### Bootstrap services (vmbr0 — LAN bridge)
+### Management segment — mgmt_seg (VLAN 20, 10.57.1.0/24, gw 10.57.1.1) — first deployed
 
-These run on the flat LAN bridge before SDN zones exist. Portainer is the only permanent vmbr0 exception; all other services move to SDN zones once the zones are up.
-
-| Service | IP | VMID | Phase |
-|---|---|---|---|
-| Portainer | `192.168.1.20` | 120 | 00b |
+| Service | Zone | IP | VMID | Phase |
+|---|---|---|---|---|
+| Portainer | `mgmt_seg` | `10.57.1.20` | 120 | 00b |
+| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | 04 |
+| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | 04 |
+| Monitoring (Grafana + VictoriaMetrics + Loki) | `mgmt_seg` | `10.57.1.12` | 154 | 04 |
 
 ### Infrastructure segment — infra_seg (VLAN 40, 10.57.3.0/24, gw 10.57.3.1)
 
@@ -103,13 +104,7 @@ Deployed second, immediately after Portainer. All other zones depend on Harbor a
 
 **Harbor bootstrap:** On the first pass, Harbor pulls its own images from Docker Hub directly. Once Harbor is running, all subsequent containers in all zones pull from `10.57.3.10`.
 
-### Management segment — mgmt_seg (VLAN 20, 10.57.1.0/24, gw 10.57.1.1)
-
-| Service | Zone | IP | VMID | Phase |
-|---|---|---|---|---|
-| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | 04 |
-| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | 04 |
-| Monitoring (Grafana + VictoriaMetrics + Loki) | `mgmt_seg` | `10.57.1.12` | 154 | 04 |
+### Management segment — mgmt_seg (VLAN 20, 10.57.1.0/24, gw 10.57.1.1) — Phase 04 additions
 
 ### Edge segment — edge_seg (VLAN 30, 10.57.2.0/24, gw 10.57.2.1)
 

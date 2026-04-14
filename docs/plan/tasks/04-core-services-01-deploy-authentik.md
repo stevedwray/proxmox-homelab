@@ -20,7 +20,7 @@ services must already exist locally on `pve-test`.
 
 ## Prerequisites
 
-- Phase 00b complete — Portainer running at `192.168.1.20`
+- Phase 00b complete — Portainer running at `10.57.1.20`
 - Harbor deployment task complete — Harbor healthy at `10.57.3.10`
 - apt-cacher deployment task complete — apt-cacher healthy at `10.57.3.11`
 - Storage pool `infrastructure-containers` exists
@@ -109,7 +109,7 @@ STEP 0 — Verify bootstrap and infra dependencies:
   source /home/steve/git/proxmox-homelab/.env.pve-test
   echo "$TF_VAR_proxmox_node"   # must print pve-test
   echo "$TF_WORKSPACE"          # must print pve-test
-  curl -s http://192.168.1.20:9000/api/system/status
+  curl -s http://10.57.1.20:9000/api/system/status
   curl -s http://10.57.3.10/api/v2.0/ping
   curl -s http://10.57.3.11:3142/acng-report.html >/dev/null
 
