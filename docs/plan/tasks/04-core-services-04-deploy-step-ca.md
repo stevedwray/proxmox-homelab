@@ -6,7 +6,7 @@ PENDING
 
 ## GitHub Issue
 
-https://github.com/stevedwray/proxmox-homelab/issues/107
+https://github.com/stevedwray/proxmox-homelab/issues/125
 
 ## Phase
 

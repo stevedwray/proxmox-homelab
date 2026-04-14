@@ -58,7 +58,8 @@ attachments:
   #   rather than network segmentation.
   # -------------------------------------------------------------------------
   lan:
-    description: Default LAN bridge — bootstrap exception (Portainer only)
+    description: Default LAN bridge — used only by legacy/test stacks (test-lxc, test-docker).
+      All active platform stacks use named SDN zones. Portainer moved to mgmt_seg in stack.yaml.
     type: bridge
     bridge: vmbr0
     vlan_tag: null
@@ -182,9 +183,10 @@ zones:
       - "apt-cacher (VMID 142) — 10.57.3.11"
       - "NetBox (VMID 143)    — 10.57.3.12"
   mgmt_seg:
-    description: Management plane — Authentik, step-ca, Monitoring
+    description: Management plane — Portainer, Authentik, step-ca, Monitoring
     attachment: mgmt_seg
     containers:
+      - "Portainer (VMID 120)  — 10.57.1.20"
       - "Authentik (VMID 150)  — 10.57.1.10"
       - "step-ca (VMID 152)    — 10.57.1.11"
       - "Monitoring (VMID 154) — 10.57.1.12"

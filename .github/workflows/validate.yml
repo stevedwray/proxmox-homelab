@@ -114,6 +114,16 @@ jobs:
         working-directory: terraform/lxc/ansible
         run: ../../../.venv/bin/ansible-lint playbooks/
 
+      - name: Install host bootstrap Ansible collections
+        working-directory: ansible
+        run: ../../.venv/bin/ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint on host bootstrap playbooks
+        # ansible/ contains higher-risk bootstrap playbooks that target physical Proxmox
+        # hosts. Run from ansible/ so ansible/ansible.cfg is discovered automatically.
+        working-directory: ansible
+        run: ../../.venv/bin/ansible-lint 00-initial-setup/ 01-base-system/
+
   sops-decrypt-check:
     name: SOPS decrypt verification
     runs-on: ubuntu-latest

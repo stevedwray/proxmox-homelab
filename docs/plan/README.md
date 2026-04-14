@@ -22,6 +22,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c | Phase 03b and 03c complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
+| 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |
 
 ## Architecture reference
 
@@ -45,6 +46,20 @@ The pve-test VM that previously ran inside `pve` has been retired. pve (producti
 - Treat `docs/design/` as the target architecture and rationale.
 - Treat each `docs/plan/phase-*.md` file as the execution plan for a slice of work.
 - Treat `docs/plan/tasks/*.md` as the detailed implementation prompts and checklists for individual tasks.
+
+### Task document lifecycle
+
+Task documents in `docs/plan/tasks/` fall into two categories:
+
+**Recurring rebuild tasks** — Phase 04, 05, and 06 task docs describe work that must be
+re-executed on each fresh pve-test wipe. These docs stay in `tasks/` even after a
+successful pass. Do not archive them to `done/`.
+
+**One-time tasks** — Code quality fixes, CI changes, planning documents, and any task that
+modifies the repository itself (not a running service) are one-time. Once merged, archive
+these to `done/`. The `done/` directory indicates the repository change was merged and will
+not be re-executed as a standalone task on the next pve-test pass — it does NOT mean a
+service is currently running.
 
 ## Host Bootstrap Dependencies
 
@@ -131,7 +146,7 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 1. **VLAN setup on MikroTik** (once per pve-test rebuild) — see `pve-test.yaml`
 2. **Enable VLAN awareness on vmbr0** in Proxmox UI, then `ifreload -a`
 3. **Apply SDN VLAN zones** to pve-test (manual pvesh until Terraform support is complete)
-4. **Portainer** (VMID 120, vmbr0)
+4. **Portainer** (VMID 120, mgmt_seg, `10.57.1.20`)
 5. **Harbor** (VMID 121, infra_seg) — first pass pulls from Docker Hub; verify at `http://10.57.3.10/api/v2.0/ping`
 6. **apt-cacher** (VMID 142, infra_seg)
 7. **NetBox** (VMID 143, infra_seg) — record all IP allocations from this point forward
