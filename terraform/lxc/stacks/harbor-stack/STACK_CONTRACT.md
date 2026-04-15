@@ -51,8 +51,13 @@ Docker Hub directly (Harbor is not yet running). All subsequent stacks pull from
 
 ## What May Depend on This Stack
 
-Every stack that uses Docker images. All `docker-compose.yml` files on pve-test
-reference `${REGISTRY_HOST}` which resolves to `10.57.3.10`.
+Every stack that uses Docker images.
+
+**Target state:** active pve-test `docker-compose.yml` files should reference
+`${REGISTRY_HOST}`, which resolves to `10.57.3.10`.
+
+**Current state:** some stacks still hardcode Harbor addresses directly and are being
+normalized as part of the boundary-strengthening follow-up work.
 
 ## What Must Not Be Edited Casually
 

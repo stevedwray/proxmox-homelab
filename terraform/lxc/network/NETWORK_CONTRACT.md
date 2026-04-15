@@ -7,8 +7,11 @@ is the single canonical source for:
 
 - Zone definitions (name, VLAN ID, subnet, gateway)
 - Physical attachment config (bridge, SDN VNet)
-- Which containers belong to which zone
 - Cross-zone firewall policies (enforced at MikroTik)
+
+`network/<env>.yaml` does **not** decide which stack is attached to which zone.
+Actual stack-to-zone membership is declared in each stack's `stack.yaml` via
+`network.zone`.
 
 The platform layer reads these files to drive SDN VNet creation and LXC network
 attachment. Firewall rule generation also reads the `policies` section.
@@ -26,6 +29,12 @@ files.
   zones must be created manually — see code gap below)
 - AI context: hand this file to any AI session that needs to understand zone
   placement, IP ranges, or firewall policy
+
+## Authority
+
+- Zone definition authority: `network/<env>.yaml`
+- Stack placement authority: `stacks/<stack>/stack.yaml` via `network.zone`
+- Attachment and policy consumer: `terraform/lxc/main.tf`
 
 ## Zone summary (pve-test)
 

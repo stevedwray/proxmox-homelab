@@ -29,6 +29,13 @@ responsible for:
 All stacks. Each stack's `terragrunt.hcl` sources this module via
 `terraform { source = "${get_repo_root()}/terraform/lxc//" }`.
 
+## Authority
+
+- Shared variable authority: `variables.tf`
+- Generated host var authority: `templates/inventory.tpl`
+- Stack field authority: `stacks/<stack>/stack.yaml`
+- Platform behavior authority: `main.tf` plus shared Ansible roles/playbooks
+
 ## Platform-level variables
 
 These are declared in `variables.tf` and may be overridden per environment:
@@ -51,30 +58,37 @@ The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 These are the fields the platform reads from each stack's `stack.yaml`. Treat any
 change to field names or semantics as a platform API change affecting all stacks.
 
-| Field                | Type    | Required | Notes |
-|----------------------|---------|----------|-------|
-| `hostname`           | string  | yes      | LXC hostname |
-| `ip_address`         | string  | yes      | CIDR notation (e.g. `10.57.3.10/24`) |
-| `gateway`            | string  | yes      | Default gateway IP |
-| `vmid`               | int     | yes      | Proxmox VMID (must be unique) |
-| `cores`              | int     | yes      | vCPU count |
-| `memory`             | int     | yes      | Memory in MiB |
-| `swap`               | int     | no       | Swap in MiB |
-| `rootfs_size`        | int     | yes      | Root disk in GiB |
-| `rootfs_storage`     | string  | yes      | Proxmox storage pool |
-| `docker_storage_size`| string  | no       | Additional Docker data volume |
-| `ostemplate`         | string  | yes      | Proxmox template reference |
-| `tags`               | list    | no       | Informational |
-| `network.zone`       | string  | yes      | Zone key from `network/<env>.yaml` |
-| `ansible_playbook`   | string  | no       | Playbook to run after provisioning |
-| `portainer_agent`    | bool    | no       | If true, deploy and register agent |
-| `keyctl`             | bool    | no       | If true, enable keyctl in container |
-| `app_stack_name`     | string  | no       | Portainer stack name override |
-| `extra_mount_path`   | string  | no       | Path for extra storage mount |
-| `extra_mount_size`   | string  | no       | Size of extra mount |
-| `extra_mount_storage`| string  | no       | Storage pool for extra mount |
-| `depends_on`         | list    | planned  | Declared upstream service deps |
-| `provides`           | list    | planned  | Services this stack exposes |
+### Required now
+
+| Field              | Type   | Notes |
+|--------------------|--------|-------|
+| `hostname`         | string | LXC hostname |
+| `ip_address`       | string | CIDR notation (e.g. `10.57.3.10/24`) |
+
+### Optional with platform defaults
+
+| Field                 | Type    | Default behavior |
+|-----------------------|---------|------------------|
+| `gateway`             | string  | Falls back to `default_gateway` from `variables.tf` |
+| `vmid`                | int     | Passed through if set; omitted otherwise |
+| `cores`               | int     | Defaults to `2` |
+| `memory`              | int     | Defaults to `2048` MiB |
+| `swap`                | int     | Defaults to `512` MiB |
+| `rootfs_size`         | int     | Defaults to `8` GiB |
+| `rootfs_storage`      | string  | Falls back to `default_storage` |
+| `docker_storage_size` | string  | Defaults to `"20G"` |
+| `ostemplate`          | string  | Defaults to the shared Debian Docker template |
+| `tags`                | list    | Defaults to `[stack_name]` |
+| `network.zone`        | string  | Optional; when omitted, the stack uses bridge defaults rather than network intent |
+| `ansible_playbook`    | string  | If omitted, no Ansible provisioning runs |
+| `portainer_agent`     | bool    | Defaults to `false` |
+| `keyctl`              | bool    | Defaults to `false` |
+| `app_stack_name`      | string  | Defaults to stack directory name |
+| `extra_mount_path`    | string  | No extra mount when omitted |
+| `extra_mount_size`    | string  | No extra mount when omitted |
+| `extra_mount_storage` | string  | Falls back to `rootfs_storage` when extra mount is used |
+| `depends_on`          | list    | Planned metadata only; no functional effect yet |
+| `provides`            | list    | Planned metadata only; no functional effect yet |
 
 ## What must not be edited casually
 
