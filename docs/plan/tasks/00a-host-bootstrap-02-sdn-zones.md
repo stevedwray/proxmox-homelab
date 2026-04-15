@@ -87,9 +87,20 @@ prerequisite for every LXC deployed outside the bootstrap flat-LAN (`vmbr0`).
 ## Session Prompt
 
 ```text
-You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
+You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+
+Issue: #128 — feat(sdn): configure Proxmox SDN VLAN zones on pve-test (Phase 00a, task 2)
+
+Context:
+- Task 00a-01 should already be complete or verified enough that pve-test has the expected host baseline and Terraform API access.
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- `terraform/lxc/network/pve-test.yaml` is the source of truth for pve-test SDN zone names, VLAN IDs, VNet names, subnets, and gateways.
+- Do not invent alternate SDN naming or topology semantics outside that file.
 
 TASK: Write and run an Ansible playbook that configures the four SDN VLAN zones on pve-test.
+
+Primary objective:
+- Bring pve-test to the point where the four SDN VLAN zones exist and later LXC deployment work can attach to them predictably.
 
 The source of truth for zone definitions is:
   terraform/lxc/network/pve-test.yaml
@@ -108,6 +119,7 @@ STEP 2 — Write the playbook:
   Use pvesh to create each zone and VNet if not already present.
   The playbook must be idempotent (check-before-create pattern).
   Target host group: proxmox (pve-test)
+  Keep names and VLAN assignments exactly aligned with terraform/lxc/network/pve-test.yaml.
 
 STEP 3 — Run the playbook:
   ansible-playbook \
@@ -122,10 +134,16 @@ STEP 5 — Verify zones and VNets:
   ssh root@pve-test.gibbsgreatly.xyz "pvesh get /nodes/pve-test/network"
   # Expect: tvnetc, tvmgmt, tvedge, tvinfra bridges present
 
-STEP 6 — Commit the new playbook:
+STEP 6 — Validate any repo changes:
+  Run the relevant validation for any files you touched.
+  If Terraform files or Python/shell/YAML code changes were made, run the required scans before merging.
+
+STEP 7 — Commit and close the issue when verified:
   git add ansible/00-initial-setup/proxmox-sdn-setup.yml
-  git commit -m "feat(ansible): add proxmox-sdn-setup playbook for VLAN zones"
+  git commit -m "feat(ansible): add pve-test SDN VLAN setup playbook (Closes #128)"
+  gh issue close 128 --comment "Fixed in commit <sha>"
 
 DONE WHEN: All four SDN VLAN zones are active on pve-test and the VNet bridges appear in
-the host network interface list.
+the host network interface list, and any repo updates have been validated and committed
+against issue #128.
 ```

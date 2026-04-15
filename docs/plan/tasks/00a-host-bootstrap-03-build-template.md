@@ -81,10 +81,21 @@ later phases.
 ## Session Prompt
 
 ```text
-You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
+You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+
+Issue: #127 — feat(template): build and register Debian Docker LXC template on pve-test (Phase 00a, task 3)
+
+Context:
+- Task 00a-01 should already be complete or verified enough that pve-test has the expected host baseline and Terraform API access.
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- `terraform/lxc` stacks expect the template name `debian-13.1-2-docker-template.tar.gz`.
+- Do not rename the template or drift from the current pve-test storage assumptions unless the repo’s active consumers are updated too.
 
 TASK: Align the Debian LXC template build playbook with the current pve-test design, then
 run it to produce the template needed by terraform/lxc.
+
+Primary objective:
+- Ensure pve-test can build and register the Debian Docker LXC template expected by the active Terraform stack definitions.
 
 STEP 1 — Review the current playbook and what needs to change:
   Read: ansible/00-initial-setup/build-debian-13-template.yml
@@ -108,10 +119,18 @@ STEP 4 — Verify the template:
     "pvesm list storage-template | grep debian-13.1-2-docker-template.tar.gz"
   # Expect: one result with the correct filename
 
-STEP 5 — Commit the updated playbook:
+STEP 5 — Optionally prove the template is usable:
+  If practical, verify it can back a test `pct create` without errors.
+
+STEP 6 — Validate any repo changes:
+  Run the relevant validation for any files you touched.
+  If Terraform files or Python/shell/YAML code changes were made, run the required scans before merging.
+
+STEP 7 — Commit and close the issue when verified:
   git add ansible/00-initial-setup/build-debian-13-template.yml
-  git commit -m "fix(ansible): align build-debian-13-template for pve-test storage and host group"
+  git commit -m "fix(ansible): align Debian template build for pve-test (Closes #127)"
+  gh issue close 127 --comment "Fixed in commit <sha>"
 
 DONE WHEN: The template exists in storage-template:vztmpl/ and is confirmed usable for LXC
-creation. Task 00b-01 (deploy Portainer) can now proceed.
+creation, and any repo updates have been validated and committed against issue #127.
 ```
