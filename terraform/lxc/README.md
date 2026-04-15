@@ -269,8 +269,13 @@ Use the disposable validation stacks on `pve-test` to exercise the network layer
 
 `validate-stack-metadata.sh` checks the active platform stacks added in the
 boundary-strengthening work. It currently validates only metadata shape:
-- `depends_on` exists, is a list, and references real stack directories
-- `provides` exists, is a list, and each entry includes `service`, `port`, and `protocol`
+- `depends_on` exists, is a list, uses non-empty stack names, does not self-reference,
+  does not duplicate entries, and only points at the active pve-test stack set
+- `provides` exists, is a list, and each entry includes `service`, `port`, and
+  `protocol`
+- `provides.service` values use lowercase kebab-case and do not duplicate within a stack
+- `provides.port` values are integer TCP/UDP port numbers in the valid range
+- `provides.protocol` values are lowercase transport identifiers (`tcp` or `udp`)
 
 It is intentionally documentation/schema validation only. It does not affect Terraform
 ordering or deployment behavior.
@@ -284,8 +289,10 @@ The validator is layered so humans and AI agents can tell what kind of drift occ
   conservative text sync between declared dependencies/services and the contract text
 
 `--json` emits the same validation result as structured JSON with aggregate layer
-status plus per-stack layer results. This is intended for CI jobs and AI agents that
-need to route follow-up edits without parsing terminal prose.
+status, an explicit `validation_scope`, active-stack pass/fail summary,
+per-stack declared dependency/service metadata, and structured `issue_details`.
+This is intended for CI jobs and AI agents that need to route follow-up edits
+without parsing terminal prose.
 
 `--check-contract-sections` is a stricter presence/coverage check for active stacks only.
 It verifies that each active stack has a `STACK_CONTRACT.md` and includes the current
