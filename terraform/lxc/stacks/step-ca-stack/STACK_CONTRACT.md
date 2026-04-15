@@ -36,6 +36,8 @@ installs (`ca-certificates`, `curl`, `tar`).
 | step-ca ACME       | 443  | HTTPS    | ACME challenge endpoint |
 | step-ca health     | 443  | HTTPS    | `step ca health` check |
 
+`stack.yaml` service identifier: `step-ca-acme`.
+
 The ACME `httpChallenge` requires step-ca to reach Traefik on port 80 to verify
 domain ownership. MikroTik policy required: `mgmt_seg → edge_seg tcp/80`.
 See Observations.md Phase 04 note 5.

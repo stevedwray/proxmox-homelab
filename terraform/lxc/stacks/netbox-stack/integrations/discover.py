@@ -12,6 +12,13 @@ from mikrotik_client import discover_from_mikrotik
 from proxmox_client import discover_from_proxmox
 
 
+DEFAULT_PORTAINER_SERVER_IP = os.environ.get("PORTAINER_SERVER_IP", "10.57.1.20")
+DEFAULT_PORTAINER_URL = os.environ.get(
+    "PORTAINER_URL",
+    f"https://{DEFAULT_PORTAINER_SERVER_IP}:9443",
+)
+
+
 # ---------------------------------------------------------------------------
 # Stack YAML discovery
 # ---------------------------------------------------------------------------
@@ -44,7 +51,7 @@ class PortainerClient:
     """Minimal Portainer API client."""
 
     def __init__(self, url=None, password=None):
-        self.url = (url or os.environ.get("PORTAINER_URL", "https://192.168.1.4:9443")).rstrip("/")
+        self.url = (url or DEFAULT_PORTAINER_URL).rstrip("/")
         self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
         self._token = None
 
@@ -252,7 +259,7 @@ def build_topology():
 
     # The Portainer server itself isn't a Proxmox container (it runs on management-stack).
     # We already have management-stack from Proxmox, but ensure Portainer services are listed.
-    portainer_ip = os.environ.get("PORTAINER_SERVER_IP", "192.168.1.4")
+    portainer_ip = DEFAULT_PORTAINER_SERVER_IP
     portainer_vms = [v for v in vms if v["ip"].startswith(portainer_ip)]
     if not portainer_vms:
         # Only add if not already discovered from Proxmox

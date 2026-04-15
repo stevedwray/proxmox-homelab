@@ -1,9 +1,12 @@
 # NetBox Docker Compose — based on netbox-docker release v4.5-4.0.2
 # Adapted for Portainer API deployment: env vars inlined, absolute config path.
+# All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
+# REGISTRY_HOST is injected by deploy-netbox-stack.yml via Portainer env vars.
+# pve-test: 10.57.3.10  pve: 192.168.1.10
 # Upstream: https://github.com/netbox-community/netbox-docker
 services:
   netbox: &netbox
-    image: 192.168.1.10/dockerhub/netboxcommunity/netbox:v4.5-4.0.2
+    image: ${REGISTRY_HOST}/dockerhub/netboxcommunity/netbox:v4.5-4.0.2
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,7 +108,7 @@ services:
       interval: 15s
 
   postgres:
-    image: 192.168.1.10/dockerhub/library/postgres:18-alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/postgres:18-alpine
     healthcheck:
       test: pg_isready -q -t 2 -d $$POSTGRES_DB -U $$POSTGRES_USER
       start_period: 20s
@@ -121,7 +124,7 @@ services:
     restart: unless-stopped
 
   redis:
-    image: 192.168.1.10/dockerhub/valkey/valkey:9.0-alpine
+    image: ${REGISTRY_HOST}/dockerhub/valkey/valkey:9.0-alpine
     command:
       - sh
       - -c
@@ -139,7 +142,7 @@ services:
     restart: unless-stopped
 
   redis-cache:
-    image: 192.168.1.10/dockerhub/valkey/valkey:9.0-alpine
+    image: ${REGISTRY_HOST}/dockerhub/valkey/valkey:9.0-alpine
     command:
       - sh
       - -c

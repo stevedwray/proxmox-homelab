@@ -27,6 +27,8 @@ The only runtime input is HTTP CONNECT requests from apt clients.
 |---------------|------|----------|-------|
 | apt proxy     | 3142 | HTTP     | Debian/Ubuntu package cache |
 
+`stack.yaml` service identifier: `apt-proxy`.
+
 The `all_zones → infra_seg tcp/3142` firewall policy means every zone can reach
 this service without additional MikroTik rules.
 

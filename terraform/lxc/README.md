@@ -134,7 +134,7 @@ Terraform will create the LXC, generate inventory, and run the Ansible playbook 
 | `ansible_playbook` | No | — | Playbook to run after creation (omit for bare LXC) |
 | `portainer_agent` | No | `false` | Enable Portainer cleanup on destroy |
 | `app_stack_name` | No | Stack directory name | Name for the stack in Portainer |
-| `portainer_server_ip` | No | `192.168.1.4` | Central Portainer server IP |
+| `portainer_server_ip` | No | Variable default (`192.168.1.4`) | Central Portainer server IP; active shared roles prefer the generated inventory host var when present |
 | `tags` | No | `[<stack_name>]` | Proxmox tags |
 | `keyctl` | No | `false` | Enable keyctl feature flag on the LXC (requires root@pam on PVE) |
 | `rootfs_storage` | No | Variable default | Proxmox storage pool for root filesystem |
@@ -245,12 +245,56 @@ terraform destroy
 Use the disposable validation stacks on `pve-test` to exercise the network layer end to end.
 
 ```bash
+# Documentation-only metadata validation for active platform stacks
+./validate-stack-metadata.sh
+
+# Optional: verify active STACK_CONTRACT.md files include core boundary sections
+./validate-stack-metadata.sh --check-contract-sections
+
+# Optional: also check active STACK_CONTRACT.md files for obvious drift
+./validate-stack-metadata.sh --check-contract-docs
+
+# Optional: run both contract checks together
+./validate-stack-metadata.sh --check-contract-sections --check-contract-docs
+
+# Optional: emit machine-readable JSON for CI or AI consumers
+./validate-stack-metadata.sh --check-contract-sections --check-contract-docs --json
+
 # Single client/service check for the first SDN slice
 ./validate-network.sh
 
 # Full 11-case bridge + SDN + isolated matrix
 ./validate-network-matrix.sh
 ```
+
+`validate-stack-metadata.sh` checks the active platform stacks added in the
+boundary-strengthening work. It currently validates only metadata shape:
+- `depends_on` exists, is a list, and references real stack directories
+- `provides` exists, is a list, and each entry includes `service`, `port`, and `protocol`
+
+It is intentionally documentation/schema validation only. It does not affect Terraform
+ordering or deployment behavior.
+
+The validator is layered so humans and AI agents can tell what kind of drift occurred:
+- `metadata`:
+  `stack.yaml` structure and references
+- `contract-sections`:
+  required `STACK_CONTRACT.md` section coverage for active stacks
+- `contract-docs`:
+  conservative text sync between declared dependencies/services and the contract text
+
+`--json` emits the same validation result as structured JSON with aggregate layer
+status plus per-stack layer results. This is intended for CI jobs and AI agents that
+need to route follow-up edits without parsing terminal prose.
+
+`--check-contract-sections` is a stricter presence/coverage check for active stacks only.
+It verifies that each active stack has a `STACK_CONTRACT.md` and includes the current
+core boundary sections: `## Provides` and `## Dependencies`.
+
+`--check-contract-docs` is a conservative sync check for active stacks only. It verifies
+that each active stack has a `STACK_CONTRACT.md` and that declared `depends_on` stack
+names and `provides.service` names appear in the contract text. It does not attempt to
+infer runtime-versus-provisioning semantics.
 
 `validate-network-matrix.sh` expects generated inventory files for:
 - `net-app-01`

@@ -41,6 +41,8 @@ Harbor addresses.
 | Authentik server   | 9443 | HTTPS    | TLS endpoint |
 | Portainer agent    | 9001 | TCP      | Agent registration |
 
+`stack.yaml` service identifiers: `authentik-http`, `authentik-https`.
+
 These ports must be reachable from `edge_seg` (Traefik forward-auth) and from the
 LAN for admin access. See `pve-test.yaml` policies:
 `edge_seg → mgmt_seg tcp/9000,9443`.

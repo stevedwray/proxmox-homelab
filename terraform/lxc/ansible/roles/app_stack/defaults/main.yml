@@ -1,8 +1,10 @@
 # terraform/ansible/shared-roles/app_stack/defaults/main.yml
 
 ---
-# Portainer Server connection details
-app_stack_server_ip: "192.168.1.4"
+# Portainer server connection details.
+# Prefer the generated inventory host var when present.
+# Current active pve-test fallback: 10.57.1.20.
+app_stack_server_ip: "{{ portainer_server_ip | default('10.57.1.20') }}"
 app_stack_server_port: "9000"
 
 # Authentication credentials

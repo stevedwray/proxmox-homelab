@@ -13,6 +13,12 @@ tags:
   - step-ca
   - pki
   - infrastructure
+depends_on:
+  - apt-cacher-stack
+provides:
+  - service: step-ca-acme
+    port: 443
+    protocol: tcp
 
 network:
   zone: mgmt_seg

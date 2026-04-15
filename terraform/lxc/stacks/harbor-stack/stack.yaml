@@ -17,6 +17,15 @@ tags:
   - registry
   - infrastructure
   - docker
+depends_on:
+  - portainer-stack
+provides:
+  - service: registry-http
+    port: 80
+    protocol: tcp
+  - service: registry-https
+    port: 443
+    protocol: tcp
 
 # Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
 extra_mount_path: "/var/lib/harbor"

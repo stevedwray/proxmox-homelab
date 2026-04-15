@@ -33,6 +33,9 @@ fresh pass. Use explicit version-pinned tags, not `latest`.
 | Portainer UI (TLS)    | 9443 | HTTPS    | Web interface |
 | Agent tunnel endpoint | 8000 | TCP      | Edge agent communication |
 
+`stack.yaml` service identifiers: `portainer-http`, `portainer-https`,
+`portainer-edge`.
+
 Other stacks register their agents at port 9000 using `portainer_server_ip`.
 
 ## Dependencies

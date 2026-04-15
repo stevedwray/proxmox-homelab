@@ -42,6 +42,7 @@
   vars:
     app_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
     app_stack_endpoint_name: "{{ inventory_hostname }}"
+    app_stack_registry_host: "{{ registry_host | default('10.57.3.10') }}"
     app_stack_server_ip: "{{ portainer_server_ip }}"
     app_stack_env:
       - name: NETBOX_DB_PASSWORD
@@ -54,6 +55,8 @@
         value: "{{ lookup('env', 'NETBOX_SECRET_KEY') | mandatory('NETBOX_SECRET_KEY env var is not set') }}"
       - name: NETBOX_API_TOKEN_PEPPER
         value: "{{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') | mandatory('NETBOX_API_TOKEN_PEPPER env var is not set') }}"
+      - name: REGISTRY_HOST
+        value: "{{ app_stack_registry_host }}"
     portainer_api_server_ip: "{{ portainer_server_ip }}"
     portainer_api_endpoint_name: "{{ inventory_hostname }}"
     portainer_api_agent_ip: "{{ ansible_host }}"

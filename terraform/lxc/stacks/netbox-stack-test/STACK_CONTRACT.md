@@ -29,6 +29,13 @@ pve is a separate stack (`netbox-stack`).
 | Harbor registry             | `registry_host` (`10.57.3.10`) | Image pulls via proxy cache |
 | Portainer server            | `portainer_server_ip` (`10.57.1.20`) | Agent registration |
 
+**Current implementation:** `deploy-netbox-stack.yml` injects `REGISTRY_HOST` from the
+generated `registry_host` inventory var into Portainer stack env vars, and the compose
+file expands `${REGISTRY_HOST}` so Harbor stays environment-specific without hardcoded
+IPs in the compose definition. Portainer endpoint registration and stack deployment
+consume the generated `portainer_server_ip` host var through the shared `portainer_api`
+and `app_stack` roles.
+
 Special: requires `keyctl: true` in `stack.yaml` because netbox-community's
 Docker image uses kernel keyring for secret storage.
 
@@ -39,11 +46,13 @@ Docker image uses kernel keyring for secret storage.
 | NetBox UI    | 8080 | HTTP     | Web interface and REST API |
 | NetBox API   | 8080 | HTTP     | `/api/` prefix |
 
+`stack.yaml` service identifier: `netbox-http`.
+
 ## Dependencies
 
 | Stack         | Why |
 |---------------|-----|
-| harbor-stack  | All container images pulled via `10.57.3.10` |
+| harbor-stack  | All container images pulled via `${REGISTRY_HOST}` |
 | portainer-stack | Registers Portainer agent |
 
 ## Persistent State

@@ -15,6 +15,16 @@ tags:
   - identity
   - infrastructure
   - docker
+depends_on:
+  - harbor-stack
+  - portainer-stack
+provides:
+  - service: authentik-http
+    port: 9000
+    protocol: tcp
+  - service: authentik-https
+    port: 9443
+    protocol: tcp
 
 network:
   zone: mgmt_seg

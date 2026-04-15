@@ -16,5 +16,10 @@ tags:
   - apt-cache
   - infrastructure
   - build
+depends_on: []
+provides:
+  - service: apt-proxy
+    port: 3142
+    protocol: tcp
 ansible_playbook: "deploy-apt-cacher-stack"
 portainer_agent: false

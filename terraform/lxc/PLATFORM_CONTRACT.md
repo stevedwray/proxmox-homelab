@@ -53,6 +53,11 @@ them in `stack.yaml` if a stack needs a non-default upstream.
 The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 `templates/inventory.tpl` as host vars so playbooks pick them up automatically.
 
+`portainer_server_ip` follows the same generated-inventory pattern in active
+paths. Shared roles such as `portainer_api` and `app_stack` now prefer the
+generated `portainer_server_ip` host var and only fall back to the current
+pve-test address when that host var is absent.
+
 ## Platform API — `stack.yaml` fields
 
 These are the fields the platform reads from each stack's `stack.yaml`. Treat any
@@ -102,7 +107,7 @@ change to field names or semantics as a platform API change affecting all stacks
 - `variables.tf` — removing a variable with an existing default is a breaking change
   for any stack that relies on that default.
 
-## Pending code changes
+## Implemented boundary wiring
 
 ### 1. Extend shared host vars through the platform layer
 

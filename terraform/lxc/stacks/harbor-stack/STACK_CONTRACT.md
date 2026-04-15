@@ -33,6 +33,8 @@ reporting.
 | Harbor UI        | 80   | HTTP     | Web interface |
 | Portainer agent  | 9001 | TCP      | Portainer server connects here |
 
+`stack.yaml` service identifiers: `registry-http`, `registry-https`.
+
 ## Dependencies
 
 | Stack           | Why |
@@ -56,8 +58,10 @@ Every stack that uses Docker images.
 **Target state:** active pve-test `docker-compose.yml` files should reference
 `${REGISTRY_HOST}`, which resolves to `10.57.3.10`.
 
-**Current state:** some stacks still hardcode Harbor addresses directly and are being
-normalized as part of the boundary-strengthening follow-up work.
+**Current state:** `authentik-stack` and the active NetBox compose path already
+reference `${REGISTRY_HOST}` through generated inventory variables. Remaining Harbor
+cleanup is now mostly about runtime consumers, production-path stacks, and broader
+repo consistency rather than the active pve-test provisioning path.
 
 ## What Must Not Be Edited Casually
 

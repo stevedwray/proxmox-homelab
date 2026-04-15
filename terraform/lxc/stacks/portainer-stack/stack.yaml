@@ -15,6 +15,17 @@ tags:
   - management
   - infrastructure
   - docker
+depends_on: []
+provides:
+  - service: portainer-http
+    port: 9000
+    protocol: tcp
+  - service: portainer-https
+    port: 9443
+    protocol: tcp
+  - service: portainer-edge
+    port: 8000
+    protocol: tcp
 
 network:
   zone: mgmt_seg
