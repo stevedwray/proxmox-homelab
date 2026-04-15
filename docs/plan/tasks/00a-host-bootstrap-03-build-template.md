@@ -10,7 +10,7 @@ Phase 00a — Proxmox Host Bootstrap Alignment
 
 ## GitHub Issue
 
-Not assigned yet.
+[#127](https://github.com/stevedwray/proxmox-homelab/issues/127)
 
 ## Greenfield assumption
 
