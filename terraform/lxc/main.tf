@@ -306,6 +306,8 @@ resource "local_file" "ansible_inventory" {
     ssh_key             = var.ssh_private_key_path
     ansible_playbook    = try(local.stack.ansible_playbook, "")
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
+    registry_host       = try(local.stack.registry_host, var.registry_host)
+    apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host

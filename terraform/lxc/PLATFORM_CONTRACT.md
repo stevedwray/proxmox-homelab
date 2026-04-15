@@ -46,9 +46,9 @@ These are declared in `variables.tf` and may be overridden per environment:
 | `registry_host`         | `192.168.1.10` | `10.57.3.10`    | Harbor IP for Docker pulls |
 | `apt_cacher_host`       | `192.168.1.35` | `10.57.3.11`    | apt-cacher-ng proxy |
 
-**Note:** `registry_host` and `apt_cacher_host` are planned additions — see
-[Code Change Plan](#pending-code-changes) below. Currently they are hardcoded in
-`lxc_base/tasks/main.yml` and `deploy-authentik-stack.yml`.
+`registry_host` and `apt_cacher_host` now flow through `variables.tf` →
+`main.tf` → `templates/inventory.tpl` as generated host vars. Stacks can override
+them in `stack.yaml` if a stack needs a non-default upstream.
 
 The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 `templates/inventory.tpl` as host vars so playbooks pick them up automatically.
@@ -104,9 +104,9 @@ change to field names or semantics as a platform API change affecting all stacks
 
 ## Pending code changes
 
-### 1. Parameterize `registry_host` and `apt_cacher_host`
+### 1. Extend shared host vars through the platform layer
 
-**Files to change:**
+**Implemented in:**
 
 `terraform/lxc/variables.tf` — add:
 ```hcl
@@ -166,4 +166,5 @@ export TF_VAR_apt_cacher_host=10.57.3.11
 
 ### 3. Fix hardcoded registry host in authentik
 
-See `stacks/authentik-stack/STACK_CONTRACT.md` — Pending Code Changes section.
+Implemented by reading `registry_host` from generated inventory and writing
+`REGISTRY_HOST` into the stack `.env` file for Docker Compose expansion.

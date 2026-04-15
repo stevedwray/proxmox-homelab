@@ -24,16 +24,14 @@ Identity provider (IdP) and SSO gateway for the platform. Authentik provides:
 | `AUTHENTIK_POSTGRES_PASSWORD` | env var (mandatory)                 | DB password |
 | `AUTHENTIK_SUPERUSER_PASSWORD`| env var (optional)                  | Initial admin password |
 | `AUTHENTIK_SUPERUSER_API_TOKEN`| env var (optional)                 | For API-driven setup |
-| `registry_host`               | generated host var (planned)        | Harbor registry host injected via inventory |
+| `registry_host`               | generated host var                  | Harbor registry host injected via inventory |
 | Harbor registry               | `10.57.3.10`                        | Current pve-test target for image pulls |
 | Portainer server              | `portainer_server_ip` (`10.57.1.20`) | Agent registration |
 
-**Current implementation:** the playbook and compose file still hardcode
-`192.168.1.10`, which is the pve Harbor address rather than the pve-test one.
-
-**Target contract:** the platform should expose `registry_host` as a generated host
-var, and the playbook should write `REGISTRY_HOST` into the stack `.env` file so the
-compose file can expand `${REGISTRY_HOST}`.
+**Current implementation:** the platform exposes `registry_host` as a generated host
+var, and the playbook writes `REGISTRY_HOST` into the stack `.env` file so the
+compose file expands `${REGISTRY_HOST}` without hardcoding environment-specific
+Harbor addresses.
 
 ## Provides
 
@@ -51,7 +49,7 @@ LAN for admin access. See `pve-test.yaml` policies:
 
 | Stack           | Why |
 |-----------------|-----|
-| harbor-stack    | Target state: all images pulled via `${REGISTRY_HOST}` |
+| harbor-stack    | All images pulled via `${REGISTRY_HOST}` |
 | portainer-stack | Registers Portainer agent |
 
 ## Persistent State
@@ -71,15 +69,6 @@ LAN for admin access. See `pve-test.yaml` policies:
   to encrypt session data and tokens. Rotation requires a full re-setup.
 - The forward-auth middleware in Traefik routes traffic to `10.57.1.10:9000`.
   Changing the IP or port requires updating Traefik's dynamic config.
-
-## Pending Code Changes
-
-1. **`deploy-authentik-stack.yml` line 23**: `authentik_registry_host: "192.168.1.10"`
-   should read from `registry_host` host var with a pve-test default of `10.57.3.10`.
-
-2. **`authentik-stack/docker-compose.yml`**: all image references hardcode
-   `192.168.1.10`. Replace with `${REGISTRY_HOST}`. Write `REGISTRY_HOST` to the
-   `.env` file from the playbook.
 
 ## Playbook
 

@@ -105,6 +105,18 @@ variable "portainer_server_ip" {
   default     = "192.168.1.4"
 }
 
+variable "registry_host" {
+  description = "Hostname or IP of the Harbor registry used for Docker image pulls"
+  type        = string
+  default     = "192.168.1.10"
+}
+
+variable "apt_cacher_host" {
+  description = "IP of the apt-cacher-ng proxy. Empty string disables apt proxy configuration."
+  type        = string
+  default     = "192.168.1.35"
+}
+
 variable "portainer_admin_password" {
   description = "Admin password for the Portainer server"
   type        = string
