@@ -118,6 +118,12 @@ Before Phase 00b / 01 / 03b / 04 work is considered ready, the host layer should
 
 - [x] Task 00a-01 complete — Terraform API token provisioned on pve-test
 - [x] Task 00a-02 complete — all four SDN VLAN zones active on pve-test
+<<<<<<< HEAD
 - [x] Task 00a-03 complete — Debian Docker template in `storage-template:vztmpl/`
 - [x] Required host bootstrap playbooks are identified and classified
 - [x] Non-canonical storage/bootstrap playbooks are clearly classified
+=======
+- [ ] Task 00a-03 complete — Debian Docker template in `storage-template:vztmpl/`
+- [ ] Required host bootstrap playbooks are identified and classified
+- [ ] Non-canonical storage/bootstrap playbooks are clearly classified
+>>>>>>> 8fac74d (feat(ansible): add pve-test SDN VLAN setup playbook (Closes #128))
