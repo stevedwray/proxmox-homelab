@@ -39,7 +39,8 @@ locals {
     local.network_intent_default_path
   )
 
-  network_intent = local.stack_network_zone != null ? yamldecode(file(local.effective_network_intent_path)) : null
+  network_intent                    = local.stack_network_zone != null ? yamldecode(file(local.effective_network_intent_path)) : null
+  effective_zone_members_index_path = trimsuffix(local.effective_network_intent_path, ".yaml") != local.effective_network_intent_path ? "${trimsuffix(local.effective_network_intent_path, ".yaml")}.zone-members.yaml" : "${local.effective_network_intent_path}.zone-members.yaml"
 
   resolved_zone_attachment_name = local.stack_network_zone != null ? local.network_intent.zones[local.stack_network_zone].attachment : null
   resolved_zone_attachment      = local.resolved_zone_attachment_name != null ? local.network_intent.attachments[local.resolved_zone_attachment_name] : null
@@ -62,11 +63,19 @@ locals {
       stack_name  = basename(dirname(relpath))
       zone        = try(yamldecode(file("${local.lxc_root}/${relpath}")).network.zone, null)
       ip_address  = split("/", yamldecode(file("${local.lxc_root}/${relpath}")).ip_address)[0]
+      gateway     = try(yamldecode(file("${local.lxc_root}/${relpath}")).gateway, null)
       description = try(yamldecode(file("${local.lxc_root}/${relpath}")).hostname, basename(dirname(relpath)))
     }
   ]
+  # When the network intent declares a per-zone gateway, use it to keep
+  # pve-test zone membership from silently absorbing stacks from other
+  # environments that happen to reuse the same zone name.
+  zone_gateways = local.stack_network_zone != null ? tomap({
+    for zone_name, zone in local.network_intent.zones :
+    zone_name => try(local.network_intent.attachments[zone.attachment].sdn.gateway, null)
+  }) : tomap({})
 
-  zone_members = try(tomap({
+  inferred_zone_members = local.stack_network_zone != null ? tomap({
     for zone_name, _zone in local.network_intent.zones :
     zone_name => [
       for member in local.all_zone_members : {
@@ -75,8 +84,14 @@ locals {
         description = member.description
       }
       if member.zone == zone_name
+      && (
+        try(local.zone_gateways[zone_name], null) == null ||
+        member.gateway == try(local.zone_gateways[zone_name], null)
+      )
     ]
-  }), tomap({}))
+  }) : tomap({})
+  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(file(local.effective_zone_members_index_path)) : null
+  zone_members                 = local.generated_zone_members_index != null ? try(tomap(local.generated_zone_members_index.zones), tomap({})) : local.inferred_zone_members
 
   inbound_zone_policies = try([
     for policy in local.network_intent.policies : policy

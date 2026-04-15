@@ -197,6 +197,21 @@ This preserves the VPN/TUN implementation guidance from the main branch while ke
 | `docker-base.yml` | `ansible_playbook: "docker-base"` | Target LXC | docker_base only (bare Docker, no Portainer) |
 | `cleanup.yml` | Terraform destroy (automatic) | localhost | Deletes Portainer stacks + endpoint via API |
 
+## Zone Members Index
+
+For the active `pve-test` path, Terraform can consume a generated zone-members
+index at `network/pve-test.zone-members.yaml` instead of inferring membership by
+rescanning every `stacks/*/stack.yaml` during each run.
+
+Regenerate it after changing `network.zone`, `ip_address`, or `gateway` values
+for active pve-test stacks:
+
+```bash
+python3 terraform/lxc/generate-zone-members-index.py \
+  --network-intent terraform/lxc/network/pve-test.yaml \
+  --output terraform/lxc/network/pve-test.zone-members.yaml
+```
+
 ## Terraform Resources
 
 For each stack, Terraform creates:

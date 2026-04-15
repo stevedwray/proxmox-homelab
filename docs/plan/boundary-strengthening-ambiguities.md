@@ -181,3 +181,80 @@ Related plan: [boundary-strengthening.md](./boundary-strengthening.md)
   - basic typing
 - Delay stronger semantic enforcement until the meanings of `depends_on` and
   `provides` are settled.
+
+## Session 5 Review Notes
+
+This section records the repo-wide inference points reviewed in Session 5, with
+their current behavior, boundary risk, and the most practical target direction.
+
+### 1. `terraform/lxc/main.tf` zone member inference
+
+- **Current behavior:** `main.tf` scans every `stacks/*/stack.yaml`, infers
+  zone membership from `network.zone`, and uses that inferred member list to
+  build inbound firewall policy inputs.
+- **Current risk:** this creates hidden repo-wide coupling. Any other stack with
+  the same zone name can be treated as a member, even if it belongs to a
+  different environment or to disposable validation work.
+- **Session 5 recommendation:** **replace with generated index**.
+  - Authority should remain declared metadata in each `stack.yaml`
+    (`network.zone`, `ip_address`, `gateway`).
+  - The consumer in `main.tf` should stop re-scanning the whole repo ad hoc and
+    instead consume an environment-scoped index derived from that declared data.
+- **First practical improvement landed in Session 5:** keep the current scan for
+  now, but when the selected network intent declares a per-zone gateway, filter
+  inferred members by that gateway. This narrows active pve-test membership
+  without inventing new metadata semantics.
+- **Direct follow-up landed after Session 5 review:** active `pve-test` now has
+  a generated `network/pve-test.zone-members.yaml` index derived from declared
+  stack metadata, and `main.tf` prefers that index when it is present. The
+  repo-wide scan remains as a fallback for non-indexed environments.
+
+### 2. NetBox discovery: Portainer endpoint location
+
+- **Current behavior before Session 5:** `discover.py` defaulted Portainer to
+  `10.57.1.20` unless environment variables overrode it, and the synthetic
+  `portainer-api` node used that same default.
+- **Current risk:** this duplicates environment topology outside the declared
+  stack metadata and can drift from the actual `portainer-stack/stack.yaml`.
+- **Session 5 recommendation:** **replace with declared metadata**.
+  - `portainer-stack/stack.yaml` is the clearest authoritative declaration for
+    the active Portainer endpoint IP.
+  - Environment variables should remain explicit overrides for one-off runs.
+- **First practical improvement landed in Session 5:** `discover.py` now reads
+  the Portainer IP from `portainer-stack/stack.yaml` when no override is
+  provided, then derives the default URL from that declared IP.
+
+### 3. NetBox discovery: running service inventory from Portainer
+
+- **Current behavior:** `discover.py` asks the Portainer API for running
+  containers and published ports, then deduplicates those into service entries.
+- **Current risk:** service names are still runtime-shaped and can differ from
+  `provides.service` naming. However, the running container and exposed-port
+  view is fundamentally runtime state, not stable repo metadata.
+- **Session 5 recommendation:** **keep inference**.
+  - This is one of the places where runtime discovery is still the right source.
+  - Declared metadata is useful for contracts, but not a full substitute for
+    current published-port state.
+
+### 4. NetBox discovery: stack metadata enrichment by stack name
+
+- **Current behavior:** Proxmox remains the authoritative source for VM/LXC
+  existence, while matching `stack.yaml` files enrich the discovered objects
+  with description, tags, IP fallback, and sizing defaults.
+- **Current risk:** this assumes stack directory names and Proxmox container
+  names remain aligned.
+- **Session 5 recommendation:** **keep inference** for now.
+  - The current lookup is lightweight and grounded because Proxmox stays
+    authoritative for actual object existence.
+  - A generated index would only become worthwhile if additional discovery
+    consumers start depending on richer stack metadata joins.
+
+## Future Work After Session 5
+
+- Generate an environment-scoped zone-members index from declared stack metadata
+  so `main.tf` no longer rescans `stacks/*/stack.yaml` directly.
+- Decide whether NetBox should also ingest declared `provides` data as a
+  contract view alongside the existing runtime-discovered services.
+- If that dual view is added later, keep runtime discovery authoritative for
+  live published ports and use declared metadata for intended boundary/service
+  identity.

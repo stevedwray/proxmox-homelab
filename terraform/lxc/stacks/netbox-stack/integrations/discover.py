@@ -12,11 +12,8 @@ from mikrotik_client import discover_from_mikrotik
 from proxmox_client import discover_from_proxmox
 
 
-DEFAULT_PORTAINER_SERVER_IP = os.environ.get("PORTAINER_SERVER_IP", "10.57.1.20")
-DEFAULT_PORTAINER_URL = os.environ.get(
-    "PORTAINER_URL",
-    f"https://{DEFAULT_PORTAINER_SERVER_IP}:9443",
-)
+FALLBACK_PORTAINER_SERVER_IP = "10.57.1.20"
+FALLBACK_PORTAINER_URL = f"https://{FALLBACK_PORTAINER_SERVER_IP}:9443"
 
 
 # ---------------------------------------------------------------------------
@@ -43,6 +40,26 @@ def load_stack_yamls(stacks_dir=None):
     return stacks
 
 
+def _get_declared_portainer_ip(stack_yamls: dict) -> str | None:
+    """Return the Portainer server IP declared in stack metadata, if any."""
+    portainer_stack = stack_yamls.get("portainer-stack", {})
+    ip_raw = portainer_stack.get("ip_address", "")
+    if not ip_raw:
+        return None
+    return ip_raw.split("/", 1)[0]
+
+
+def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str, str]:
+    """Resolve Portainer endpoint config from env vars, then declared metadata."""
+    portainer_ip = (
+        os.environ.get("PORTAINER_SERVER_IP")
+        or _get_declared_portainer_ip(stack_yamls)
+        or FALLBACK_PORTAINER_SERVER_IP
+    )
+    portainer_url = os.environ.get("PORTAINER_URL", f"https://{portainer_ip}:9443")
+    return portainer_ip, portainer_url
+
+
 # ---------------------------------------------------------------------------
 # Portainer discovery
 # ---------------------------------------------------------------------------
@@ -51,7 +68,7 @@ class PortainerClient:
     """Minimal Portainer API client."""
 
     def __init__(self, url=None, password=None):
-        self.url = (url or DEFAULT_PORTAINER_URL).rstrip("/")
+        self.url = (url or os.environ.get("PORTAINER_URL") or FALLBACK_PORTAINER_URL).rstrip("/")
         self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
         self._token = None
 
@@ -247,10 +264,11 @@ def build_topology():
     """
     stacks_dir = os.path.join(os.path.dirname(__file__), "..", "..")
     stack_yamls = load_stack_yamls(stacks_dir)
+    portainer_ip, portainer_url = _resolve_portainer_endpoint(stack_yamls)
 
     portainer = None
     if os.environ.get("PORTAINER_ADMIN_PASSWORD"):
-        portainer = PortainerClient()
+        portainer = PortainerClient(url=portainer_url)
 
     # Query Proxmox for authoritative container/VM list
     proxmox_data = discover_from_proxmox()
@@ -259,7 +277,6 @@ def build_topology():
 
     # The Portainer server itself isn't a Proxmox container (it runs on management-stack).
     # We already have management-stack from Proxmox, but ensure Portainer services are listed.
-    portainer_ip = DEFAULT_PORTAINER_SERVER_IP
     portainer_vms = [v for v in vms if v["ip"].startswith(portainer_ip)]
     if not portainer_vms:
         # Only add if not already discovered from Proxmox
