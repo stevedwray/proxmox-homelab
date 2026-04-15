@@ -159,8 +159,6 @@ Treat them as historical or alternate-environment support unless a later phase e
 
 - Verify Proxmox SDN objects with `pvesh get /cluster/sdn/zones --output-format json` and `pvesh get /cluster/sdn/vnets --output-format json`.
 - Verify live bridge interfaces with `ip -br link`; Proxmox VLAN SDN VNet bridges do not appear in `/nodes/<node>/network`.
-- After SDN-attached stacks are created, validate the DNS contract from the guest side with `terraform/lxc/validate-zone-dns.sh <stack-name> [...]`.
-  This confirms that each guest is using its expected MikroTik zone gateway as resolver and that the resolver answers queries.
 
 ### Template usage
 
