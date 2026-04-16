@@ -244,6 +244,14 @@
         name: homelab-runner-resolver.service
         state: started
 
+    - name: Deploy .terraformrc for filesystem provider mirror
+      ansible.builtin.template:
+        src: terraformrc.j2
+        dest: /root/.terraformrc
+        owner: root
+        group: root
+        mode: "0600"
+
     - name: Ensure runner service is started
       ansible.builtin.systemd_service:
         name: "{{ runner_service_name }}"
