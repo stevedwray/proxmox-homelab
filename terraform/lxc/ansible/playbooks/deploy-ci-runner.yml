@@ -246,7 +246,7 @@
 
     - name: Deploy .terraformrc for filesystem provider mirror
       ansible.builtin.template:
-        src: terraformrc.j2
+        src: "{{ playbook_dir }}/../templates/terraformrc.j2"
         dest: /root/.terraformrc
         owner: root
         group: root
