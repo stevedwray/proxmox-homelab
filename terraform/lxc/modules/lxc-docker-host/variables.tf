@@ -115,6 +115,12 @@ variable "gateway" {
   default     = "192.168.1.1"
 }
 
+variable "dns_servers" {
+  description = "DNS servers applied by Proxmox container initialization"
+  type        = list(string)
+  default     = null
+}
+
 variable "ssh_public_keys" {
   description = "SSH public keys for root access"
   type        = string

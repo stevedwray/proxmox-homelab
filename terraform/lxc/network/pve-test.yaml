@@ -37,7 +37,8 @@
 #
 # Code gap: configure-network-sdn-vnet.yml currently handles Simple zone
 # creation only. It must be updated to support zone_type: vlan before
-# these zones can be applied via Terraform. Until then, apply manually:
+# these zones can be applied via Terraform. Until then, run
+# ansible/00-initial-setup/proxmox-sdn-setup.yml or apply manually:
 #   pvesh create /cluster/sdn/zones --type vlan --zone <zone> --bridge vmbr0 --nodes pve-test
 #   pvesh create /cluster/sdn/vnets --vnet <vnet> --zone <zone> --tag <vlan_id>
 #   pvesh create /cluster/sdn/vnets/<vnet>/subnets --subnet <cidr> --gateway <gw> --type subnet

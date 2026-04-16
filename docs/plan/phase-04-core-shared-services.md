@@ -73,7 +73,7 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 ifreload -a
 ```
 
-**Apply SDN zones** (manual pvesh until Terraform VLAN zone support is implemented):
+**Apply SDN zones** (run `ansible/00-initial-setup/proxmox-sdn-setup.yml` until Terraform VLAN zone support is implemented):
 
 ```bash
 # Create each zone and VNet — see pve-test.yaml for the full sequence

@@ -1,0 +1,186 @@
+---
+- name: Configure Proxmox SDN VLAN zones for pve-test
+  hosts: "{{ target_hosts | default('proxmox_testbed') }}"
+  become: true
+  gather_facts: true
+
+  vars_files:
+    - ../../terraform/lxc/network/pve-test.yaml
+
+  vars:
+    proxmox_sdn_attachments: >-
+      {{
+        attachments
+        | dict2items
+        | selectattr('value.type', 'equalto', 'sdn_vnet')
+        | list
+      }}
+
+  tasks:
+    - name: Assert pve-test VLAN SDN source of truth
+      ansible.builtin.assert:
+        that:
+          - proxmox.target_node == 'pve-test'
+          - proxmox_sdn_attachments | length == 4
+          - proxmox_sdn_attachments | map(attribute='value.sdn.zone_type') | unique == ['vlan']
+          - proxmox_sdn_attachments | map(attribute='value.sdn.bridge') | unique == ['vmbr0']
+        fail_msg: "The loaded SDN network definition is not the expected pve-test VLAN model."
+        success_msg: "Loaded the pve-test VLAN SDN definition from terraform/lxc/network/pve-test.yaml."
+
+    - name: Read current SDN zones
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --output-format json
+      register: proxmox_sdn_zones_result
+      changed_when: false
+
+    - name: Read current SDN VNets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --output-format json
+      register: proxmox_sdn_vnets_result
+      changed_when: false
+
+    - name: Create missing SDN VLAN zones
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/sdn/zones
+          - --type
+          - "{{ item.value.sdn.zone_type }}"
+          - --zone
+          - "{{ item.value.sdn.zone }}"
+          - --bridge
+          - "{{ item.value.sdn.bridge }}"
+          - --nodes
+          - "{{ item.value.sdn.nodes | join(',') }}"
+      loop: "{{ proxmox_sdn_attachments }}"
+      when: >-
+        (proxmox_sdn_zones_result.stdout | from_json
+        | selectattr('zone', 'equalto', item.value.sdn.zone)
+        | list | length) == 0
+      register: proxmox_sdn_zone_create_result
+      changed_when: true
+
+    - name: Assert existing SDN zones match the source of truth
+      ansible.builtin.assert:
+        that:
+          - current_zone.type == item.value.sdn.zone_type
+          - current_zone.bridge == item.value.sdn.bridge
+          - (current_zone.nodes | default('')) == (item.value.sdn.nodes | join(','))
+        fail_msg: "Existing SDN zone {{ item.value.sdn.zone }} does not match terraform/lxc/network/pve-test.yaml."
+        success_msg: "Existing SDN zone {{ item.value.sdn.zone }} matches the source of truth."
+      vars:
+        current_zone: >-
+          {{
+            (proxmox_sdn_zones_result.stdout | from_json
+            | selectattr('zone', 'equalto', item.value.sdn.zone)
+            | list | first | default({}))
+          }}
+      loop: "{{ proxmox_sdn_attachments }}"
+      when: >-
+        (proxmox_sdn_zones_result.stdout | from_json
+        | selectattr('zone', 'equalto', item.value.sdn.zone)
+        | list | length) > 0
+
+    - name: Create missing SDN VNets
+      ansible.builtin.command:
+        argv:
+          - pvesh
+          - create
+          - /cluster/sdn/vnets
+          - --vnet
+          - "{{ item.value.sdn.vnet }}"
+          - --zone
+          - "{{ item.value.sdn.zone }}"
+          - --tag
+          - "{{ item.value.sdn.vlan_tag | string }}"
+          - --alias
+          - "{{ item.value.sdn.alias }}"
+      loop: "{{ proxmox_sdn_attachments }}"
+      when: >-
+        (proxmox_sdn_vnets_result.stdout | from_json
+        | selectattr('vnet', 'equalto', item.value.sdn.vnet)
+        | list | length) == 0
+      register: proxmox_sdn_vnet_create_result
+      changed_when: true
+
+    - name: Assert existing SDN VNets match the source of truth
+      ansible.builtin.assert:
+        that:
+          - current_vnet.zone == item.value.sdn.zone
+          - (current_vnet.tag | string) == (item.value.sdn.vlan_tag | string)
+          - (current_vnet.alias | default('')) == item.value.sdn.alias
+        fail_msg: "Existing SDN VNet {{ item.value.sdn.vnet }} does not match terraform/lxc/network/pve-test.yaml."
+        success_msg: "Existing SDN VNet {{ item.value.sdn.vnet }} matches the source of truth."
+      vars:
+        current_vnet: >-
+          {{
+            (proxmox_sdn_vnets_result.stdout | from_json
+            | selectattr('vnet', 'equalto', item.value.sdn.vnet)
+            | list | first | default({}))
+          }}
+      loop: "{{ proxmox_sdn_attachments }}"
+      when: >-
+        (proxmox_sdn_vnets_result.stdout | from_json
+        | selectattr('vnet', 'equalto', item.value.sdn.vnet)
+        | list | length) > 0
+
+    - name: Configure SDN subnets for each VNet
+      ansible.builtin.include_tasks: tasks/proxmox-sdn-subnet.yml
+      loop: "{{ proxmox_sdn_attachments }}"
+      loop_control:
+        loop_var: sdn_attachment
+        label: "{{ sdn_attachment.value.sdn.vnet }}"
+
+    - name: Apply pending SDN changes
+      ansible.builtin.command:
+        cmd: pvesh set /cluster/sdn
+      changed_when: false
+
+    - name: Read final SDN zones
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/zones --output-format json
+      register: proxmox_sdn_final_zones_result
+      changed_when: false
+
+    - name: Read final SDN VNets
+      ansible.builtin.command:
+        cmd: pvesh get /cluster/sdn/vnets --output-format json
+      register: proxmox_sdn_final_vnets_result
+      changed_when: false
+
+    - name: Read live Linux link interfaces
+      ansible.builtin.command:
+        cmd: ip -br link
+      register: proxmox_sdn_link_result
+      changed_when: false
+
+    - name: Assert expected SDN zones exist
+      ansible.builtin.assert:
+        that:
+          - expected_zones | difference(current_zones) | length == 0
+        fail_msg: "One or more expected SDN zones are missing after playbook execution."
+        success_msg: "All expected SDN zones exist on pve-test."
+      vars:
+        expected_zones: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.zone') | list }}"
+        current_zones: "{{ proxmox_sdn_final_zones_result.stdout | from_json | map(attribute='zone') | list }}"
+
+    - name: Assert expected SDN VNets exist on the node
+      ansible.builtin.assert:
+        that:
+          - expected_vnets | difference(current_vnets) | length == 0
+        fail_msg: "One or more expected SDN VNets are missing after applying SDN config."
+        success_msg: "All expected SDN VNets exist on pve-test."
+      vars:
+        expected_vnets: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.vnet') | list }}"
+        current_vnets: "{{ proxmox_sdn_final_vnets_result.stdout | from_json | map(attribute='vnet') | list }}"
+
+    - name: Assert expected VNet bridges exist on the node
+      ansible.builtin.assert:
+        that:
+          - expected_bridges | difference(current_bridges) | length == 0
+        fail_msg: "One or more expected SDN VNet bridges are missing after applying SDN config."
+        success_msg: "All expected SDN VNet bridges exist on pve-test."
+      vars:
+        expected_bridges: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.vnet') | list }}"
+        current_bridges: "{{ proxmox_sdn_link_result.stdout_lines | map('regex_replace', '\\s+.*$', '') | list }}"

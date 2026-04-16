@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## Phase
 
@@ -37,9 +37,18 @@ instead of the retired production default at `192.168.1.4`.
 
 ## Acceptance Criteria
 
-- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
-- [ ] `.env.template` documents the override as a pve-test-only setting
-- [ ] `echo "$TF_VAR_portainer_server_ip"` prints `10.57.1.20` after sourcing `.env` and `.env.pve-test`
+- [x] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
+- [x] `.env.template` documents the override as a pve-test-only setting
+- [x] `echo "$TF_VAR_portainer_server_ip"` prints `10.57.1.20` after sourcing `.env` and `.env.pve-test`
+
+## Completion Notes
+
+- Verified on 2026-04-16.
+- `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20` for the pve-test
+  environment.
+- `.env.template` keeps the override as comment-only documentation for the pve-test-only
+  setting.
+- Sourcing `.env` followed by `.env.pve-test` produces the expected local Portainer target.
 
 ## Session Prompt
 

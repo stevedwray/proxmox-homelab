@@ -13,8 +13,8 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | Phase | Document | Status | Gate |
 |---|---|---|---|
 | 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | Before Phase 00b | Phase 00 complete |
-| 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Before Phase 03b** | Phase 00 complete |
-| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00 | Phase 00 complete |
+| 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Complete** | Phase 00 complete |
+| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00b | Phase 00b complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Complete** | — |
 | 03 | [Code Quality & Bug Fixes](phase-03-code-quality.md) | Parallel with 01-02 | Phase 00 complete |
 | 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
@@ -145,7 +145,7 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 
 1. **VLAN setup on MikroTik** (once per pve-test rebuild) — see `pve-test.yaml`
 2. **Enable VLAN awareness on vmbr0** in Proxmox UI, then `ifreload -a`
-3. **Apply SDN VLAN zones** to pve-test (manual pvesh until Terraform support is complete)
+3. **Apply SDN VLAN zones** to pve-test with `ansible/00-initial-setup/proxmox-sdn-setup.yml` until Terraform support is complete
 4. **Portainer** (VMID 120, mgmt_seg, `10.57.1.20`)
 5. **Harbor** (VMID 121, infra_seg) — first pass pulls from Docker Hub; verify at `http://10.57.3.10/api/v2.0/ping`
 6. **apt-cacher** (VMID 142, infra_seg)
@@ -172,7 +172,7 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 | Gap | Location | Description |
 |---|---|---|
 | VNet firewall cross-zone rule bug | `terraform/lxc/main.tf:86-95` | `vnet_policy_candidates` requires both `from` and `to` to match the current container's VNet — impossible for cross-zone policies. No ACCEPT rules are generated. Proxmox firewall disabled for dev passes as a workaround. |
-| SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Apply manually via pvesh until fixed. |
+| SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` until that gap is closed. |
 
 ## Notes
 

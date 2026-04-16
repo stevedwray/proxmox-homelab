@@ -23,4 +23,8 @@ provides: []
 network:
   zone: build_seg
 
+# Greenfield Phase 01 runs before the apt-cacher stack exists. Leave apt proxy
+# configuration disabled here; Phase 03c re-applies local infra settings later.
+apt_cacher_host: ""
+
 ansible_playbook: "deploy-ci-runner"

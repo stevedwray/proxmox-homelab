@@ -103,6 +103,7 @@ The following constraints were identified through adversarial analysis and must 
 2. ~~**NPM (Nginx Proxy Manager)** should be deployed earlier~~ — **Closed.** Evaluated and rejected by ADR-02. Traefik is the sole reverse proxy. Services are accessed by IP during early phases.
 3. **Shell script CI coverage** (ShellCheck) — Phase 03 observation still open
 4. **Remote access control plane** (VPN/tailnet) — deferred to Phase 07 per ADR-05; immediate mitigation is MikroTik ACL per SEC-05
+5. **Phase 01 runner recovery** — repository-level security checks already run on GitHub-hosted runners, but self-hosted `terraform-validate`, `ansible-lint`, and planned Phase 05 image/SBOM/signing jobs depend on `ci-runner-01` being restored and re-enabled
 
 ---
 
@@ -122,7 +123,7 @@ The following constraints were identified through adversarial analysis and must 
 
 **Decision:** GitHub Actions + self-hosted runner for all current phases. Forgejo evaluated as a Phase 07 candidate once the platform has proven stability through at least one full pve-test rebuild cycle.
 
-**Rationale:** The runner is already operational on `build_seg`. Adding Forgejo before core shared services are stable inverts operational priorities. SEC-01 (runner egress restriction) mitigates the primary supply chain risk of the external CI platform.
+**Rationale:** The intended runner location is `build_seg`, not `mgmt_seg`, so build execution stays outside the management plane. GitHub-hosted jobs already cover repo-level checks such as Trivy filesystem scanning, Snyk IaC, TruffleHog, SonarCloud, Terraform format, Harbor image policy, and SOPS decryption. Self-hosted jobs are reserved for runner-dependent validation and later image pipeline work. Adding Forgejo before core shared services are stable still inverts operational priorities. SEC-01 (runner egress restriction) mitigates the primary supply chain risk of the external CI platform.
 
 ---
 
@@ -235,7 +236,7 @@ The following constraints were identified through adversarial analysis and must 
 | TM-03 | Operator workstation | Spoofing | Bitwarden `bw unlock` session token scope and lifetime are not documented. A long-lived unlock token left in env is equivalent to a plaintext credential cache. | **High** |
 | TM-04 | Operator workstation | Elevation | No workstation hardening policy documented. If the operator account has passwordless sudo, a malicious process running as the operator has immediate access to age key and unlock token material. | **Medium** |
 | TM-05 | GitHub Actions / CI | Elevation | Self-hosted runner in `build_seg` executes code from the repository. A malicious PR using `pull_request_target` that triggers CI on the self-hosted runner can run arbitrary code with runner network access. The workflow trigger policy for self-hosted runners has not been confirmed safe. | **Critical** |
-| TM-06 | GitHub Actions / CI | Tampering | If any third-party Actions are not SHA-pinned, upstream tag mutation is a silent supply chain attack vector. Architecture does not confirm all actions are pinned. | **High** |
+| TM-06 | GitHub Actions / CI | Tampering | If any third-party Actions are not SHA-pinned, upstream tag mutation is a silent supply chain attack vector. This repository currently mitigates that risk by SHA-pinning the active workflow actions, but the control must be maintained as workflows change. | **High** |
 | TM-07 | GitHub Actions / CI | Info Disclosure | `SOPS_AGE_KEY`, `HARBOR_ROBOT_PASSWORD`, `SONAR_TOKEN`, and `SNYK_TOKEN` are stored as GitHub Actions secrets. GitHub is the external trust root (ADR-01). A GitHub account compromise bypasses all internal controls. | **High** |
 | TM-08 | GitHub Actions / CI | Repudiation | If the runner LXC is compromised, GitHub Actions logs can be tampered with at the runner level before upload. No independent audit log exists for runner-executed operations. | **Medium** |
 | TM-09 | MikroTik router | Tampering | MikroTik configuration is not managed by IaC. A config change that removes VLAN ACLs eliminates all zone isolation. No automated config backup or drift detection is in place. | **Critical** |

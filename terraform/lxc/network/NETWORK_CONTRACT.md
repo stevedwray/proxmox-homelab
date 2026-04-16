@@ -26,7 +26,8 @@ files.
 - `terraform/lxc/main.tf` — reads attachment config and policy rules
 - `terraform/lxc/ansible/playbooks/configure-network-sdn-vnet.yml` — reads zone
   definitions to create SDN zones (note: currently handles Simple zones only; VLAN
-  zones must be created manually — see code gap below)
+  zones are applied by `ansible/00-initial-setup/proxmox-sdn-setup.yml` until
+  Terraform support is added — see code gap below)
 - AI context: hand this file to any AI session that needs to understand zone
   placement, IP ranges, or firewall policy
 
@@ -78,7 +79,8 @@ the current main.tf (known bug — see Observations.md Phase 04 note 1).
 ## Code gap: VLAN zone provisioning
 
 `configure-network-sdn-vnet.yml` currently handles Simple zone creation only.
-VLAN zones must be created manually via `pvesh`:
+VLAN zones are not yet applied by Terraform. Use
+`ansible/00-initial-setup/proxmox-sdn-setup.yml`, or fall back to manual `pvesh`:
 
 ```sh
 pvesh create /cluster/sdn/zones --type vlan --zone <zone> --bridge vmbr0 --nodes pve-test

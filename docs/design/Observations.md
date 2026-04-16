@@ -52,7 +52,9 @@ these are reflections for future reference when revisiting decisions, patterns, 
    MikroTik static route for `10.57.1.0/24 → 192.168.1.40` (pve-test). Portainer agents
    in `infra_seg`, `edge_seg`, and `build_seg` reach the server at `10.57.1.20` via
    standard MikroTik inter-VLAN routing — no extra static routes required beyond those
-   already defined in `pve-test.yaml`.
+   already defined in `pve-test.yaml`. `mgmt_seg` now also uses the MikroTik as its
+   DNS entry point at `10.57.1.1`; the router serves split DNS for
+   `gibbsgreatly.xyz` on that interface and forwards public lookups via DoH.
 
 3. NetBox now has a dedicated pve-test stack (`netbox-stack-test` / VMID 143) placed in
    `infra_seg` at `10.57.3.12`. It is deployed in Phase 03b alongside Harbor and apt-cacher.
@@ -214,9 +216,9 @@ these are reflections for future reference when revisiting decisions, patterns, 
      Proxmox VNet firewall controls inbound per-container rules only.
    - pve-test is a bare-metal laptop connected via a trunk port to the MikroTik. It
      is NOT a VM inside pve. All 16 GB RAM is available to pve-test containers.
-   - The Terraform SDN provisioner (`configure-network-sdn-vnet.yml`) handles Simple
-     zones only. VLAN zones must be created manually via pvesh until the playbook is
-     updated. This is documented as a known code gap.
+    - The Terraform SDN provisioner (`configure-network-sdn-vnet.yml`) handles Simple
+       zones only. VLAN zones are now applied by `ansible/00-initial-setup/proxmox-sdn-setup.yml`
+       until the Terraform-side playbook is updated. This remains a known code gap.
 
 2. **Harbor, apt-cacher-ng, and NetBox moved to a dedicated `infra_seg` zone.**
    Previously, Harbor and apt-cacher ran on `vmbr0` (flat LAN) at `192.168.1.10` and

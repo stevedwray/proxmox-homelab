@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## Phase
 
@@ -15,7 +15,8 @@ Phase 00a — Proxmox Host Bootstrap Alignment
 ## Greenfield assumption
 
 This task assumes the Proxmox host initial setup (task 00a-01) is complete and pve-test has
-the package baseline applied. No Debian LXC template is assumed to exist yet on pve-test.
+the package baseline applied. A prior Debian LXC template may already exist on pve-test, but
+the active build path must still be aligned and validated against the current pve-test design.
 
 ## Prerequisites
 
@@ -72,11 +73,25 @@ later phases.
 
 ## Acceptance Criteria
 
-- [ ] `ansible/00-initial-setup/build-debian-13-template.yml` targets `proxmox` group (pve-test)
-- [ ] `storage_pool` defaults to `infrastructure-containers`
-- [ ] Playbook run exits 0 with no failed tasks
-- [ ] `ssh root@pve-test pvesm list storage-template | grep debian-13.1-2-docker-template.tar.gz` returns a result
-- [ ] Template can be used to create an LXC via `pct create` without errors
+- [x] `ansible/00-initial-setup/build-debian-13-template.yml` targets `proxmox` group (pve-test)
+- [x] `storage_pool` defaults to `infrastructure-containers`
+- [x] Playbook run exits 0 with no failed tasks
+- [x] `ssh root@pve-test pvesm list storage-template | grep debian-13.1-2-docker-template.tar.gz` returns a result
+- [x] Template can be used to provision an LXC via `pct clone` or `pct restore` without errors
+
+## Completion Notes
+
+- Verified on 2026-04-16 from branch `feat/00a-build-template`.
+- Updated `ansible/00-initial-setup/build-debian-13-template.yml` to target the `proxmox`
+  inventory group, use `infrastructure-containers`, pin the expected final filename,
+  and align SSH defaults with the working ED25519 control-node identity.
+- Updated `ansible/group_vars/proxmox_production.yml` so the temporary builder LXC uses
+  `192.168.1.54` instead of the conflicting `192.168.1.50` address.
+- Ran the template build playbook successfully against `pve-test`; final play recap was
+  `failed=0` for both `pve-test.gibbsgreatly.xyz` and the runtime builder.
+- Verified `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` exists after the run.
+- Performed a smoke test with `pct clone 910 911 --hostname template-smoke-911`, then
+  destroyed CT `911` successfully to confirm the preserved template is usable.
 
 ## Session Prompt
 

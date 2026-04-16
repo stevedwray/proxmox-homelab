@@ -16,6 +16,9 @@ responsible for:
 - **Shared Ansible roles**: `lxc_base`, `docker_base`, `portainer_agent`,
   `portainer_api`, `app_stack`, `harbor_installer`, `harbor_postconfigure`,
   `lxc_tun_device` — logic that applies to 2+ stacks lives here
+- **Platform validation**: shared validators such as `validate-network.sh`,
+  `validate-network-matrix.sh`, and `validate-zone-dns.sh` that prove network and
+  DNS contracts from generated stack inventories
 
 ## What it may read from elsewhere
 
@@ -57,6 +60,12 @@ The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 paths. Shared roles such as `portainer_api` and `app_stack` now prefer the
 generated `portainer_server_ip` host var and only fall back to the current
 pve-test address when that host var is absent.
+
+`dns_server` also flows through generated inventory. It is derived from the zone
+gateway contract in `network/<env>.yaml`, injected into Proxmox container
+initialization, and emitted alongside `network_zone` and `contract_dns_server` host
+vars. `validate-zone-dns.sh` / `validate-zone-dns.yml` use those fields to verify
+that SDN-attached LXCs have not drifted from their declared zone-local resolver.
 
 ## Platform API — `stack.yaml` fields
 

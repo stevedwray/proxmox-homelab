@@ -80,6 +80,48 @@
       register: portainer_init_result
       no_log: true
 
+    - name: Get Portainer auth token
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/auth"
+        method: POST
+        body_format: json
+        body:
+          username: "admin"
+          password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+        status_code: 200
+      register: portainer_auth_response
+      no_log: true
+
+    - name: Get existing Portainer endpoints
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_endpoints_response
+
+    - name: Check for local Docker endpoint
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_id: "{{ item.Id }}"
+      loop: "{{ portainer_endpoints_response.json }}"
+      when: item.URL == 'unix:///var/run/docker.sock'
+
+    - name: Create local Docker endpoint when missing
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: form-urlencoded
+        body:
+          Name: "local"
+          URL: "unix:///var/run/docker.sock"
+          EndpointCreationType: 1
+        status_code: 200
+      when: portainer_local_endpoint_id is not defined
+      register: portainer_local_endpoint_create
+
     - name: Report init outcome
       ansible.builtin.debug:
         msg: >-

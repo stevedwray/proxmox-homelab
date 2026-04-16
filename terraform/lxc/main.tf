@@ -49,6 +49,7 @@ locals {
   resolved_sdn_subnet           = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.subnet, null) : null
   resolved_sdn_gateway          = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.gateway, null) : null
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
+  effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, var.proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
@@ -209,8 +210,10 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_vmid       = try(local.stack.vmid, null)
     network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_bridge     = try(local.resolved_sdn_attachment.bridge, null)
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
+    network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
     network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
     network_sdn_subnet     = local.resolved_sdn_subnet
     network_sdn_gateway    = local.resolved_sdn_gateway
@@ -242,8 +245,8 @@ resource "null_resource" "configure_network_sdn_attachment" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
-      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
-      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
+      ANSIBLE_CONFIG               = lookup(self.triggers, "ansible_cfg", "./ansible.cfg")
+      ANSIBLE_ROLES_PATH           = lookup(self.triggers, "ansible_roles_path", "./roles")
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -266,8 +269,8 @@ EOF
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
-      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
-      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
+      ANSIBLE_CONFIG               = lookup(self.triggers, "ansible_cfg", "./ansible.cfg")
+      ANSIBLE_ROLES_PATH           = lookup(self.triggers, "ansible_roles_path", "./roles")
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -301,6 +304,7 @@ module "lxc" {
   tags             = try(local.stack.tags, [local.stack_name])
   network_bridge   = local.effective_network_bridge
   network_firewall = local.effective_firewall == true
+  dns_servers      = local.effective_dns_server != null ? [local.effective_dns_server] : null
 
   extra_mount_path    = try(local.stack.extra_mount_path, null)
   extra_mount_size    = try(local.stack.extra_mount_size, null)
@@ -323,6 +327,9 @@ resource "local_file" "ansible_inventory" {
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     registry_host       = try(local.stack.registry_host, var.registry_host)
     apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
+    dns_server          = local.effective_dns_server
+    network_zone        = coalesce(local.stack_network_zone, "")
+    contract_dns_server = local.resolved_sdn_gateway != null ? local.resolved_sdn_gateway : ""
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host
@@ -381,6 +388,37 @@ resource "local_file" "network_firewall_vars" {
 }
 
 # ---------------------------------------------------------------------------
+# Ensure the Proxmox host can reach SDN-attached guests for Ansible
+# provisioning. Without a direct route, ProxyJump sessions to VNet-backed
+# containers follow the LAN default route and fail with "No route to host".
+# ---------------------------------------------------------------------------
+resource "null_resource" "prime_sdn_host_route" {
+  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && try(local.stack.ansible_playbook, "") != "" && local.effective_pve_host != "" ? 1 : 0
+
+  triggers = {
+    container_id = module.lxc.container_id
+    guest_ip     = replace(module.lxc.ip_address, "/24", "")
+    pve_host     = local.effective_pve_host
+    subnet       = local.resolved_sdn_subnet
+    bridge       = local.effective_network_bridge
+    host_ip      = cidrhost(local.resolved_sdn_subnet, 254)
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      ssh -F /dev/null \
+        -o BatchMode=yes \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        'root@${local.effective_pve_host}' \
+        'ip addr replace ${cidrhost(local.resolved_sdn_subnet, 254)}/${split("/", local.resolved_sdn_subnet)[1]} dev ${local.effective_network_bridge} && ip route replace ${local.resolved_sdn_subnet} dev ${local.effective_network_bridge} src ${cidrhost(local.resolved_sdn_subnet, 254)} && ip route get ${replace(module.lxc.ip_address, "/24", "")}'
+    EOT
+  }
+
+  depends_on = [module.lxc]
+}
+
+# ---------------------------------------------------------------------------
 # Ansible provisioning (only if ansible_playbook is set in stack.yaml)
 # ---------------------------------------------------------------------------
 resource "null_resource" "ansible_provision" {
@@ -409,7 +447,11 @@ resource "null_resource" "ansible_provision" {
     }
   }
 
-  depends_on = [local_file.ansible_inventory, null_resource.configure_keyctl]
+  depends_on = [
+    local_file.ansible_inventory,
+    null_resource.configure_keyctl,
+    null_resource.prime_sdn_host_route,
+  ]
 }
 
 # ---------------------------------------------------------------------------

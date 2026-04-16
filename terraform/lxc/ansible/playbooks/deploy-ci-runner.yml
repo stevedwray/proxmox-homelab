@@ -7,9 +7,11 @@
     runner_version: "2.333.1"
     runner_user: runner
     runner_home: /opt/actions-runner
+    runner_service_name: "actions.runner.stevedwray-proxmox-homelab.ci-runner-pve-test.service"
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
     runner_labels: "self-hosted,pve-test,build,linux,x64"
     runner_name: "ci-runner-pve-test"
+    runner_force_reconfigure: false
     terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
 
   roles:
@@ -60,17 +62,6 @@
       no_log: true
 
   tasks:
-    - name: Configure Terraform provider filesystem mirror
-      ansible.builtin.template:
-        src: "{{ playbook_dir }}/../templates/terraformrc.j2"
-        dest: "{{ item }}"
-        owner: root
-        group: root
-        mode: "0644"
-      loop:
-        - /root/.terraformrc
-        - "{{ runner_home }}/.terraformrc"
-
     - name: Install runner dependencies
       ansible.builtin.apt:
         name:
@@ -96,6 +87,21 @@
         state: directory
         owner: "{{ runner_user }}"
         mode: '0755'
+
+    - name: Configure Terraform provider filesystem mirror
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/terraformrc.j2"
+        dest: "{{ item.path }}"
+        owner: "{{ item.owner }}"
+        group: "{{ item.group }}"
+        mode: "0644"
+      loop:
+        - path: /root/.terraformrc
+          owner: root
+          group: root
+        - path: "{{ runner_home }}/.terraformrc"
+          owner: "{{ runner_user }}"
+          group: "{{ runner_user }}"
 
     - name: Download runner package
       ansible.builtin.get_url:
@@ -131,7 +137,9 @@
       become: false
       register: runner_removal_token_result
       changed_when: false
-      when: runner_config_stat.stat.exists
+      when:
+        - runner_force_reconfigure | bool
+        - runner_config_stat.stat.exists
       no_log: true
 
     - name: Deregister existing runner before reconfiguring
@@ -140,7 +148,10 @@
         chdir: "{{ runner_home }}"
       become: true
       become_user: "{{ runner_user }}"
-      when: runner_config_stat.stat.exists
+      when:
+        - runner_force_reconfigure | bool
+        - runner_config_stat.stat.exists
+      failed_when: false
       no_log: true
 
     - name: Configure runner
@@ -156,6 +167,8 @@
         chdir: "{{ runner_home }}"
       become: true
       become_user: "{{ runner_user }}"
+      when:
+        - not runner_config_stat.stat.exists or runner_force_reconfigure | bool
       no_log: true
 
     - name: Find installed runner systemd service file
@@ -170,10 +183,72 @@
         chdir: "{{ runner_home }}"
       when: runner_service_files.matched == 0
 
-    - name: Start runner service
-      ansible.builtin.command:
-        cmd: ./svc.sh start
-        chdir: "{{ runner_home }}"
+    - name: Persist desired resolver content for runner reboot recovery
+      ansible.builtin.copy:
+        dest: /etc/homelab-runner-resolv.conf
+        content: |
+          nameserver {{ dns_server }}
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: Install resolver restore service for runner boot
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/homelab-runner-resolver.service
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Restore homelab runner DNS resolver
+          DefaultDependencies=no
+          Before={{ runner_service_name }}
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/bin/install -m 0644 /etc/homelab-runner-resolv.conf /etc/resolv.conf
+
+          [Install]
+          WantedBy=multi-user.target
+
+    - name: Ensure runner override directory exists
+      ansible.builtin.file:
+        path: "/etc/systemd/system/{{ runner_service_name }}.d"
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Add runner service dependency on resolver restore service
+      ansible.builtin.copy:
+        dest: "/etc/systemd/system/{{ runner_service_name }}.d/override.conf"
+        owner: root
+        group: root
+        mode: '0644'
+        content: |
+          [Unit]
+          Wants=homelab-runner-resolver.service
+          After=homelab-runner-resolver.service
+
+    - name: Reload systemd after runner resolver override changes
+      ansible.builtin.systemd_service:
+        daemon_reload: true
+
+    - name: Enable resolver restore service
+      ansible.builtin.systemd_service:
+        name: homelab-runner-resolver.service
+        enabled: true
+
+    - name: Run resolver restore service immediately
+      ansible.builtin.systemd_service:
+        name: homelab-runner-resolver.service
+        state: started
+
+    - name: Ensure runner service is started
+      ansible.builtin.systemd_service:
+        name: "{{ runner_service_name }}"
+        enabled: true
+        state: started
 
     - name: Verify runner is registered and online via GitHub API
       ansible.builtin.command:

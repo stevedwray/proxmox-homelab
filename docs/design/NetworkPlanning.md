@@ -5,6 +5,10 @@
 > and performs all L3 routing between zones. Proxmox is a pure L2 switch with no
 > routing or SNAT. See `terraform/lxc/network/pve-test.yaml` and
 > `docs/reference/sdn-segment-routing.md` for the implemented zone layout.
+> DNS follows the same boundary: each SDN zone should use the MikroTik on its
+> zone-local gateway IP as the resolver entry point. For example, `mgmt_seg`
+> clients use `10.57.1.1`, which serves split DNS for `gibbsgreatly.xyz` and
+> forwards public lookups via DoH.
 
 ## What the network stage is trying to achieve
 

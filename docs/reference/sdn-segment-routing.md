@@ -67,6 +67,63 @@ any container at 10.57.x.x directly via the MikroTik.
 
 ---
 
+## DNS standard for SDN-attached LXCs
+
+For every SDN-attached LXC, the expected resolver is the MikroTik interface for that
+zone:
+
+| Zone | Resolver target |
+|---|---|
+| `build_seg` | `10.57.0.1` |
+| `mgmt_seg` | `10.57.1.1` |
+| `edge_seg` | `10.57.2.1` |
+| `infra_seg` | `10.57.3.1` |
+
+This is the intended platform contract. Public resolvers such as `1.1.1.1` are not the
+target architecture for normal LXC operation.
+
+### 2026-04-16 runner recovery note
+
+During the greenfield `ci-runner-01` recovery, `build_seg` was missing its MikroTik VLAN
+interface initially, and router-local DNS on `10.57.0.1` did not answer during runner
+bootstrap even after the VLAN and gateway were added. A temporary `dns_server: "1.1.1.1"`
+override was used to recover the runner.
+
+That workaround is documented so future tasks understand the incident, but it should not
+be copied forward as the default pattern. If a new stack needs public DNS to come up, the
+platform DNS path is still broken and should be fixed before treating the stack as done.
+
+### Where DNS fixes belong
+
+Template rebuilds are useful when a common package set or baseline filesystem content must
+change for all future LXCs. They are not sufficient by themselves to guarantee runtime DNS
+because Proxmox can rewrite `/etc/resolv.conf` during container boot.
+
+For DNS behavior that must survive create, stop, and reboot cycles, fix the platform layer:
+
+- ensure the MikroTik VLAN interface and DNS service are reachable for the zone
+- ensure Proxmox/Terraform container initialization writes the intended resolver
+- use per-container playbook workarounds only as temporary recovery steps
+
+### Future automation note
+
+The current DNS validator is intentionally black-box from the guest side: it confirms
+that a stack is configured with the expected `dns_server` and that the resolver answers
+queries from inside the LXC. The next maturity step is to add RouterOS-aware validation
+through the MikroTik API so the platform can also prove, before or alongside stack
+deployment, that:
+
+- the expected VLAN interface exists for the zone
+- the expected gateway IP is bound to that interface
+- MikroTik DNS service is enabled for remote requests
+- the router is actually answering DNS on the zone-local gateway IP
+
+When that work is taken on, keep the guest-side validator as the final end-to-end proof.
+Router API checks should supplement the platform contract, not replace runtime validation
+from inside the LXC.
+
+---
+
 ## Pattern: adding a new segment
 
 ### Step 1 — Assign VLAN ID and subnet
@@ -118,8 +175,8 @@ ping -c 3 10.57.4.1
 ### Step 3 — Apply SDN zone manually (Terraform code gap)
 
 The `configure-network-sdn-vnet.yml` playbook currently handles Simple zone
-creation only. VLAN zones must be created manually with pvesh until the playbook
-is updated for `zone_type: vlan`.
+creation only. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` for VLAN
+zones until Terraform-side support is updated for `zone_type: vlan`.
 
 ```bash
 # Create the SDN zone

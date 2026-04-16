@@ -111,7 +111,7 @@ For greenfield, I would choose one of these two:
 **Pragmatic path**
 
 * GitHub
-* self-hosted runner in mgmt zone
+* self-hosted runner in build_seg
 * local-only secrets and internal network access on the runner
 
 **Full self-hosted path**

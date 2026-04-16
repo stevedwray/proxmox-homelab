@@ -124,7 +124,7 @@ STEP 0 — Verify VLAN zones and MikroTik setup:
   # MikroTik VLAN interfaces (10.57.0.1, 10.57.1.1, 10.57.2.1, 10.57.3.1) must already
   # be configured and the trunk port to pve-test active. See pve-test.yaml for setup commands.
   # Proxmox vmbr0 must have VLAN awareness enabled.
-  # Apply SDN VLAN zones manually (Terraform VLAN support pending):
+  # Apply SDN VLAN zones with ansible/00-initial-setup/proxmox-sdn-setup.yml (Terraform VLAN support pending):
   pvesh get /nodes/pve-test/sdn/zones
   # Expected: tvinfra, tvmgmt, tvedge, tvsegc all listed
 

@@ -14,6 +14,13 @@ all:
           portainer_server_ip: ${portainer_server_ip}
           registry_host: ${registry_host}
           apt_cacher_host: ${apt_cacher_host}
+          dns_server: ${dns_server}
+%{ if network_zone != "" ~}
+          network_zone: ${network_zone}
+%{ endif ~}
+%{ if contract_dns_server != "" ~}
+          contract_dns_server: ${contract_dns_server}
+%{ endif ~}
           stack_name: ${stack_name}
           vmid: ${vmid}
 %{ if pve_host != "" ~}

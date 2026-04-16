@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## Phase
 
@@ -64,10 +64,18 @@ runs can authenticate to the Proxmox API.
 
 ## Acceptance Criteria
 
-- [ ] `ansible-playbook` run exits 0 with no failed tasks
-- [ ] `pveum user list` shows the Terraform automation user
-- [ ] `curl -k -H "Authorization: PVEAPIToken=..." https://192.168.1.40:8006/api2/json/version` returns HTTP 200
-- [ ] Token stored in `terraform/secrets.enc.yaml` under the expected key
+- [x] `ansible-playbook` run exits 0 with no failed tasks
+- [x] `pveum user list` shows the Terraform automation user
+- [x] `curl -k -H "Authorization: PVEAPIToken=..." https://192.168.1.40:8006/api2/json/version` returns HTTP 200
+- [x] Token stored in `terraform/secrets.enc.yaml` under the expected key
+
+## Completion Notes
+
+- Verified on 2026-04-16 against `pve-test.gibbsgreatly.xyz`
+- Host baseline applied cleanly: no-subscription Proxmox and Ceph repos, enterprise repos removed, nftables firewall backend enabled, IPv6 sysctl baseline applied
+- Current automation API identity is `automation@pve!terraform`; older `terraform@pve!terraform-token` wording in this task is historical
+- Token source of truth updated in `terraform/secrets.enc.yaml` and validated with a successful Proxmox API version query
+- Completed in commit `d58a8e0`; issue `#129` closed
 
 ## Session Prompt
 

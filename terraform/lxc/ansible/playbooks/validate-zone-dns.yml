@@ -1,0 +1,76 @@
+---
+- name: Validate zone DNS contract on target stacks
+  hosts: all
+  gather_facts: false
+
+  vars:
+    dns_validation_probe_name: "{{ network_dns_probe_name | default('github.com') }}"
+    dns_validation_expected_resolver: >-
+      {{
+        contract_dns_server
+        if (contract_dns_server is defined and contract_dns_server | string | length > 0)
+        else dns_server
+      }}
+
+  tasks:
+    - name: Assert generated inventory includes dns_server
+      ansible.builtin.assert:
+        that:
+          - dns_server is defined
+          - dns_server | string | length > 0
+        fail_msg: >-
+          Host {{ inventory_hostname }} is missing dns_server in generated inventory.
+          Regenerate the stack inventory before running validate-zone-dns.yml.
+
+    - name: Assert SDN-attached stack resolver matches zone contract
+      ansible.builtin.assert:
+        that:
+          - dns_server == contract_dns_server
+        fail_msg: >-
+          {{ inventory_hostname }} is configured with dns_server={{ dns_server }},
+          but network zone {{ network_zone | default('unknown') }} requires
+          contract_dns_server={{ contract_dns_server }}.
+        success_msg: >-
+          {{ inventory_hostname }} matches the DNS contract for
+          {{ network_zone | default('its network zone') }}.
+      when:
+        - contract_dns_server is defined
+        - contract_dns_server | string | length > 0
+
+    - name: Read guest resolver configuration
+      ansible.builtin.command: cat /etc/resolv.conf
+      register: dns_validation_resolv_conf
+      changed_when: false
+
+    - name: Assert guest resolver matches zone contract
+      ansible.builtin.assert:
+        that:
+          - ('nameserver ' ~ dns_validation_expected_resolver) in dns_validation_resolv_conf.stdout
+        fail_msg: >-
+          {{ inventory_hostname }} is not using the expected resolver {{ dns_validation_expected_resolver }}.
+          Current /etc/resolv.conf:
+          {{ dns_validation_resolv_conf.stdout }}
+        success_msg: >-
+          {{ inventory_hostname }} is configured to use {{ dns_validation_expected_resolver }} as its resolver.
+
+    - name: Resolve probe name via expected resolver
+      ansible.builtin.shell: |
+        if command -v dig >/dev/null 2>&1; then
+          dig @"{{ dns_validation_expected_resolver }}" +time=3 +tries=1 +short "{{ dns_validation_probe_name }}" | grep -q .
+        else
+          getent hosts "{{ dns_validation_probe_name }}" >/dev/null
+        fi
+      args:
+        executable: /bin/bash
+      register: dns_validation_probe_result
+      changed_when: false
+
+    - name: Assert expected resolver answers queries
+      ansible.builtin.assert:
+        that:
+          - dns_validation_probe_result.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }} could not resolve {{ dns_validation_probe_name }} via {{ dns_validation_expected_resolver }}.
+          Check the MikroTik VLAN interface, DNS service configuration, and zone firewall policy.
+        success_msg: >-
+          {{ inventory_hostname }} resolved {{ dns_validation_probe_name }} via {{ dns_validation_expected_resolver }}.

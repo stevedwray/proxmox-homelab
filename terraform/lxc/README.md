@@ -278,6 +278,9 @@ Use the disposable validation stacks on `pve-test` to exercise the network layer
 # Single client/service check for the first SDN slice
 ./validate-network.sh
 
+# DNS contract check for one or more active stacks
+./validate-zone-dns.sh ci-runner-01 portainer-stack
+
 # Full 11-case bridge + SDN + isolated matrix
 ./validate-network-matrix.sh
 ```
@@ -294,6 +297,13 @@ boundary-strengthening work. It currently validates only metadata shape:
 
 It is intentionally documentation/schema validation only. It does not affect Terraform
 ordering or deployment behavior.
+
+`validate-zone-dns.sh` is the shared DNS contract validator for SDN-attached LXCs.
+It reads each stack's generated `inventory.yml`, compares the stack's configured
+resolver to the zone gateway declared by network intent, confirms the guest is using
+that expected resolver, and verifies that the resolver actually answers a lookup from
+inside the guest. Use it after stack creation and before accepting any resolver
+exception such as a temporary public DNS override.
 
 The validator is layered so humans and AI agents can tell what kind of drift occurred:
 - `metadata`:
@@ -325,6 +335,8 @@ infer runtime-versus-provisioning semantics.
 - `net-service-01`
 - `net-client-02`
 - `net-service-02`
+- `net-build-01`
+- `net-artifacts-01`
 - `net-isolated-01`
 
 If one of those inventories is missing, apply the corresponding disposable test stack on `pve-test` first.
