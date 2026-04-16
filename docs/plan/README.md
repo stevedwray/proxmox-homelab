@@ -111,7 +111,7 @@ current classification of:
 | Change type | Command |
 |---|---|
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
-| Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
+| Code files modified (Python, shell, YAML) | `./with-secrets sonar-scanner` |
 
 If a scan returns new issues, **stop and present options** — do not merge until resolved or explicitly accepted.
 

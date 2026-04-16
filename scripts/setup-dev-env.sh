@@ -199,18 +199,12 @@ install_precommit() {
 setup_environment() {
     log_info "Setting up environment configuration..."
 
-    if [[ -f .env ]]; then
-        log_success ".env file already exists"
-        return 0
-    fi
-
-    if [[ -f .env.template ]]; then
-        log_info "Copy .env.template to .env and configure your settings:"
-        echo "  cp .env.template .env"
-        echo "  nano .env"
-    else
-        log_warning "No .env.template found"
-    fi
+    log_info "Secrets are managed via SOPS — no .env file required."
+    log_info "All infrastructure credentials are stored in terraform/secrets.enc.yaml"
+    echo "  Ensure the age private key is present at ~/.config/sops/age/keys.txt"
+    echo "  Retrieve from Bitwarden: 'proxmox-homelab age private key'"
+    echo "  Then: mkdir -p ~/.config/sops/age && install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
+    echo "  Use ./with-secrets <command> to run any command with secrets injected."
     return 0
 }
 
@@ -263,14 +257,16 @@ show_completion() {
     echo "  ✓ Pre-commit hooks (if config present)"
     echo
     log_info "Next steps:"
-    echo "1. Configure .env file with your Proxmox credentials:"
-    echo "   cp .env.template .env && nano .env"
+    echo "1. Ensure the age private key is present:"
+    echo "   mkdir -p ~/.config/sops/age"
+    echo "   install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
+    echo "   (Retrieve key from Bitwarden: 'proxmox-homelab age private key')"
     echo
-    echo "2. Test Proxmox connectivity:"
-    echo "   cd ansible && ansible -i inventory/test-lab.yml proxmox -m ping"
+    echo "2. Verify secret access:"
+    echo "   ./with-secrets env | grep TF_VAR_"
     echo
-    echo "3. Deploy test infrastructure:"
-    echo "   cd terraform/environments/test-vm && terraform init && terraform plan"
+    echo "3. Deploy infrastructure with secrets:"
+    echo "   cd terraform/lxc/stacks/<stack> && ../../../../with-secrets terragrunt apply"
     echo
     echo "4. Open in VSCode:"
     echo "   code proxmox-homelab.code-workspace"

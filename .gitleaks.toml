@@ -1,0 +1,22 @@
+title = "proxmox-homelab gitleaks config"
+
+[extend]
+# Extend the default ruleset
+useDefault = true
+
+[allowlist]
+description = "Global allowlist"
+
+# SOPS-encrypted files: values are ciphertext, not plaintext secrets
+paths = [
+    '''terraform/secrets\.enc\.yaml''',
+]
+
+# CHANGEME_ placeholder values used in SOPS for not-yet-provisioned secrets
+regexes = [
+    '''CHANGEME_[A-Z0-9_]+''',
+    # __FROM_BITWARDEN__ placeholders in .env.template
+    '''__FROM_BITWARDEN__''',
+    # __GENERATE placeholders
+    '''__GENERATE:.*?__''',
+]

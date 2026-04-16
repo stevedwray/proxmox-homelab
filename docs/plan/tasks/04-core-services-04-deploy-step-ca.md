@@ -17,7 +17,7 @@ Phase 04 — Core Shared Services
 - Task 04-03 complete — Traefik running at `10.57.2.10`, `step-ca` resolver block present in `traefik.yml`
 - Phase 02 complete — pve-test at 32 GB
 - `10.57.1.11` available (ping-verify before deploying; also check NetBox)
-- `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` set in `.env`
+- `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` set to real values in `terraform/secrets.enc.yaml`
 
 ## Network placement
 

@@ -26,7 +26,7 @@ services must already exist locally on `pve-test`.
 - Storage pool `infrastructure-containers` exists
 - Template `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` exists
 - `mgmt_seg` and `infra_seg` SDN VLAN zones are applied manually on `pve-test`
-- `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_POSTGRES_PASSWORD`, `AUTHENTIK_SUPERUSER_PASSWORD`, and `AUTHENTIK_SUPERUSER_API_TOKEN` exist in `.env`
+- `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_POSTGRES_PASSWORD`, `AUTHENTIK_SUPERUSER_PASSWORD`, and `AUTHENTIK_SUPERUSER_API_TOKEN` are set to real values in `terraform/secrets.enc.yaml`
 
 ## Network placement
 
@@ -127,15 +127,17 @@ STEP 2 — Ensure these files exist and match the active plan:
   - terraform/lxc/stacks/authentik-stack/terragrunt.hcl
   - terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
 
-STEP 3 — Ensure Authentik secrets exist in .env and placeholders exist in .env.template:
+STEP 3 — Ensure Authentik secrets are set to real values in terraform/secrets.enc.yaml:
   AUTHENTIK_SECRET_KEY
   AUTHENTIK_POSTGRES_PASSWORD
   AUTHENTIK_SUPERUSER_PASSWORD
-  AUTHENTIK_SUPERUSER_API_TOKEN
+  (AUTHENTIK_SUPERUSER_API_TOKEN will be populated after first-boot init in Step 7)
+
+  To edit: SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 
 STEP 4 — Apply Authentik:
   cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/authentik-stack
-  terragrunt apply
+  ./../../../../with-secrets terragrunt apply
 
 STEP 5 — Run the playbook:
   cd /home/steve/git/proxmox-homelab
@@ -150,9 +152,10 @@ STEP 6 — Verify health:
 
 STEP 7 — Complete first-boot setup:
   Open http://10.57.1.10:9000/if/flow/initial-setup/
-  Use AUTHENTIK_SUPERUSER_PASSWORD from .env.
-  After the admin account is ready, create an API token and store it in .env as:
-    AUTHENTIK_SUPERUSER_API_TOKEN=...
+  Use AUTHENTIK_SUPERUSER_PASSWORD (check terraform/secrets.enc.yaml).
+  After the admin account is ready, create an API token and update it in secrets.enc.yaml:
+    SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
+    (Replace CHANGEME_AUTHENTIK_SUPERUSER_API_TOKEN with the real token)
 
 DONE WHEN: Authentik is healthy at 10.57.1.10 and later Phase 04 tasks can depend on it.
 ```
