@@ -251,3 +251,35 @@ for the execution plan for Stage 1 and Stage 2.
 
 See [docs/plan/phase-03d-secrets-hardening.md](../plan/phase-03d-secrets-hardening.md)
 for Phase 03d (Stage 0).
+
+---
+
+## Two modes of work
+
+The repository is used in two fundamentally different modes. Confusing them is the most
+common source of incorrect planning decisions.
+
+**Mode 1 — Development:** Building and refining the playbook. Writing Ansible roles,
+exploring how services are configured, generating code and documentation, understanding
+what a given service's configuration looks like in practice. Order of work does not matter
+in Mode 1. A service can be stood up temporarily on any machine, for any purpose, and then
+discarded. The phase sequence and bootstrap stages do not constrain Mode 1 work. You can
+deploy Harbor before Portainer, explore Authentik before deploying a CI runner, or run
+Phase 04 playbooks to understand them without having completed Phase 00c. None of this
+violates the model — Mode 1 is exploration, and exploration has no required order.
+
+**Mode 2 — Deployment:** Executing the playbook on real infrastructure to produce a
+running, correct system. Order is load-bearing. The bootstrap stage model, phase gates, and
+task prerequisites all describe Mode 2. A pve-test wipe-and-rebuild is a Mode 2 activity.
+The phase sequence exists to ensure Mode 2 deployments succeed reliably and without
+circular dependency failures.
+
+The phase documents and task documents describe Mode 2 deployment ordering. The stage
+sequence and phase gate requirements in this document also describe Mode 2. The design
+documents (GreenField.md, architecture.md) describe the target architecture that Mode 2
+produces. None of these constrain Mode 1.
+
+When reading a phase document and finding that a prerequisite has not been met, the
+appropriate question is: "Am I doing Mode 2 (deployment) work right now?" If not, proceed
+with Mode 1 exploration in whatever order is useful. If yes, satisfy the prerequisites
+before proceeding.

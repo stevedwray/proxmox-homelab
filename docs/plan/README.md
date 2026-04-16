@@ -21,7 +21,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
 | 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | Workstation task — do before first deploy | None — workstation only |
-| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c + 03d | Phase 03b, 03c, and 03d complete |
+| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 00c + 03c + 03d | Phase 00c, 03c, and 03d complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
 | 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |
@@ -50,6 +50,24 @@ The pve-test VM that previously ran inside `pve` has been retired. pve (producti
 - Treat `docs/design/` as the target architecture and rationale.
 - Treat each `docs/plan/phase-*.md` file as the execution plan for a slice of work.
 - Treat `docs/plan/tasks/*.md` as the detailed implementation prompts and checklists for individual tasks.
+
+## Two modes of work
+
+This repository is used in two distinct modes:
+
+**Mode 1 — Development:** Building and refining the playbook — writing Ansible roles,
+exploring service configuration, generating documentation. Order does not matter. Services
+can be stood up temporarily on any machine and then discarded. The phase sequence does not
+constrain Mode 1 work.
+
+**Mode 2 — Deployment:** Executing the playbook on real infrastructure. Order is
+load-bearing. The phase sequence in this README, the bootstrap stage model, and all task
+prerequisites describe Mode 2. A pve-test wipe-and-rebuild is a Mode 2 activity.
+
+When a phase document lists prerequisites you have not met, ask first whether you are doing
+Mode 2 work. If you are exploring or writing code, proceed in whatever order is useful. See
+[docs/design/bootstrap-stages.md](../design/bootstrap-stages.md) for the full treatment of
+this distinction.
 
 ### Task document lifecycle
 

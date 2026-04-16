@@ -37,11 +37,10 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
 ```
 
 ### Add a new secret
-1. Open the file with `sops terraform/secrets.enc.yaml`
+1. Open the file with `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml`
 2. Add the key/value in your `$EDITOR`
 3. Save — sops re-encrypts automatically
 4. Commit the updated `.enc.yaml`
-5. Add the variable name to `populate-bitwarden.sh` and `sync-secrets.sh`
 
 ## Key management
 

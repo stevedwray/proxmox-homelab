@@ -205,20 +205,21 @@ The following constraints were identified through adversarial analysis and must 
 
 ### ADR-06: Secrets Runtime Delivery
 
-**Status:** Decided (current phases); Vault deferred to Phase 07
+**Status:** Decided — updated by Phase 03d
 **Context:** Current approach is Bitwarden CLI → `.env` → `source .env`. There is no runtime secret delivery mechanism for running containers — secrets are passed as Docker environment variables at deploy time.
 
 **Options considered:**
 
 | Option | Pros | Cons |
 |---|---|---|
-| `.env` injection (current) | Simple; Bitwarden is already the vault; no additional infrastructure | Secrets visible in `docker inspect`; no rotation without redeployment; no audit log of access |
+| `.env` injection (original) | Simple; Bitwarden is already the vault; no additional infrastructure | Secrets visible in `docker inspect`; no rotation without redeployment; no audit log of access; `.env` file persists on disk until manually deleted (TM-02) |
+| `sops exec-env` + `with-secrets` | No file written to disk; secrets injected in-memory only; Bitwarden not needed for routine operations; age key is the sole workstation credential | Secrets still visible in `docker inspect` for running containers |
 | HashiCorp Vault | Dynamic secrets; audit log; lease-based rotation; first-class Terraform/Ansible integration | Another service to deploy and operate; Phase 07 complexity |
 | Docker secrets / K8s secrets | Native platform integration | Not using Swarm or Kubernetes |
 
-**Decision:** `.env` injection with SEC-03 ephemeral constraint enforced for all current phases. HashiCorp Vault evaluated as a Phase 07 candidate for runtime secret rotation.
+**Decision:** `./with-secrets` wrapping `sops exec-env` for all operator secret delivery. Docker environment variable injection for running containers. OpenBao evaluated as Phase 07 candidate for runtime rotation.
 
-**Rationale:** Adding Vault before the platform is stable inverts priorities. SEC-03 (`.env` materialised ephemerally from Bitwarden at deploy time, never persisted) is the minimum required bar. `docker inspect` secret exposure is accepted as a known limitation for the current phase — addressed via network segmentation (secrets only visible to operator on `mgmt_seg`) and rebuild-cycle rotation.
+**Rationale:** Phase 03d supersedes the original `.env` approach. SEC-03 (manual `.env` deletion) relied on operator discipline rather than a technical control — `with-secrets` makes it unnecessary by eliminating the file entirely. The `docker inspect` exposure for running containers remains an accepted limitation until Phase 07. See [docs/design/bootstrap-stages.md](bootstrap-stages.md) (Stage 0) and [docs/plan/phase-03d-secrets-hardening.md](../plan/phase-03d-secrets-hardening.md) for the implementation detail and migration rationale.
 
 ---
 
