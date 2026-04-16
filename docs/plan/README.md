@@ -14,12 +14,14 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 |---|---|---|---|
 | 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | Before Phase 00b | Phase 00 complete |
 | 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Complete** | Phase 00 complete |
+| 00c | [Bootstrap Sequence (Stage 1 temporary → Stage 2 production)](phase-00c-bootstrap-sequence.md) | After Phase 03d | Stage 0 (Phase 03d) complete |
 | 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00b | Phase 00b complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Complete** | — |
 | 03 | [Code Quality & Bug Fixes](phase-03-code-quality.md) | Parallel with 01-02 | Phase 00 complete |
 | 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
-| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c | Phase 03b and 03c complete |
+| 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | Workstation task — do before first deploy | None — workstation only |
+| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c + 03d | Phase 03b, 03c, and 03d complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
 | 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |
@@ -29,6 +31,8 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 See [docs/design/GreenField.md](../design/GreenField.md) for the full architecture rationale and technology selection.
 
 See [docs/design/NetworkPlanning.md](../design/NetworkPlanning.md) for the network zone model and implementation options.
+
+See [docs/design/bootstrap-stages.md](../design/bootstrap-stages.md) for the three-stage bootstrap model: why it exists, the Linux From Scratch parallel, security controls by stage, and the mapping from stages to execution phases.
 
 For the SDN VLAN zone design, IP allocations, and MikroTik configuration, see [terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
 
