@@ -13,6 +13,7 @@
     runner_name: "ci-runner-pve-test"
     runner_force_reconfigure: false
     terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
+    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
 
   roles:
     - lxc_base
@@ -252,6 +253,25 @@
         group: root
         mode: "0600"
 
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before runner starts
+      ansible.builtin.meta: flush_handlers
+
     - name: Ensure runner service is started
       ansible.builtin.systemd_service:
         name: "{{ runner_service_name }}"
@@ -273,3 +293,9 @@
       retries: 18
       delay: 10
       changed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
