@@ -24,3 +24,8 @@ provides:
     protocol: tcp
 ansible_playbook: "deploy-apt-cacher-stack"
 portainer_agent: false
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: ""  # This container IS the apt-cacher; no self-proxy

@@ -33,6 +33,11 @@ extra_mount_path: "/var/lib/harbor"
 extra_mount_size: "100G"
 extra_mount_storage: infrastructure-containers
 
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: ""  # No apt proxy on first Harbor deploy — pulls from Docker Hub directly
+
 # Deployment
 ansible_playbook: "deploy-harbor-stack"
 portainer_agent: true

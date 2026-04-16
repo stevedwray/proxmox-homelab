@@ -25,6 +25,9 @@ network:
   zone: build_seg
 
 # Phase 03c: apt-cacher-ng is now deployed at 10.57.3.11 on infra_seg.
+# pve-test service IPs (explicit — do not rely on variable defaults)
 apt_cacher_host: "10.57.3.11"
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
 
 ansible_playbook: "deploy-ci-runner"
