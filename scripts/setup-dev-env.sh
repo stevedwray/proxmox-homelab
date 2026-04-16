@@ -33,7 +33,8 @@ log_error() {
     return 0
 }
 
-# Update system packages
+# update_system is called by main() and may be redefined by the --no-update case.
+# shellcheck disable=SC2329
 update_system() {
     log_info "Updating system packages..."
     sudo apt-get update && sudo apt-get upgrade -y
@@ -57,10 +58,10 @@ install_terraform() {
     TERRAFORM_VERSION=$(curl -s https://api.github.com/repos/hashicorp/terraform/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/v//')
 
     # Download and install
-    wget -q https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-    unzip -q terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+    wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+    unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
     sudo mv terraform /usr/local/bin/
-    rm terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+    rm "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
 
     # Verify installation
     if terraform version >/dev/null 2>&1; then
@@ -81,6 +82,7 @@ install_ansible() {
         python3 -m venv ~/.ansible-venv
     fi
 
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
 
     # Install Ansible and required packages
@@ -125,8 +127,8 @@ configure_git() {
 
     # Prompt for Git configuration
     echo "Git configuration needed:"
-    read -p "Enter your Git username: " git_username
-    read -p "Enter your Git email: " git_email
+    read -r -p "Enter your Git username: " git_username
+    read -r -p "Enter your Git email: " git_email
 
     git config --global user.name "$git_username"
     git config --global user.email "$git_email"
@@ -149,7 +151,7 @@ setup_ssh_keys() {
     fi
 
     echo "SSH key generation:"
-    read -p "Enter your email for SSH key: " ssh_email
+    read -r -p "Enter your email for SSH key: " ssh_email
 
     # Create .ssh directory if it doesn't exist
     mkdir -p ~/.ssh
@@ -180,6 +182,7 @@ install_precommit() {
     log_info "Installing pre-commit hooks..."
 
     # Activate Ansible environment to get pip
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
 
     # Install pre-commit
@@ -220,6 +223,7 @@ test_installations() {
     fi
 
     # Test Ansible (need to activate environment first)
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
     if ansible --version >/dev/null 2>&1; then
         log_success "Ansible: $(ansible --version | head -1)"
