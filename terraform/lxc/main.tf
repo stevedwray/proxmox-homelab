@@ -215,7 +215,7 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
     network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
-    network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
+    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
     network_sdn_subnet     = local.resolved_sdn_subnet
     network_sdn_gateway    = local.resolved_sdn_gateway
     network_sdn_snat       = local.resolved_sdn_snat
