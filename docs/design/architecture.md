@@ -1,4 +1,5 @@
 ---
+
 stepsCompleted: [1, 2, 3, 4]
 inputDocuments:
   - docs/design/GreenField.md

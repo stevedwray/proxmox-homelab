@@ -51,28 +51,30 @@ external names such as `deb.debian.org`. This blocked `apt` during the runner bo
 A temporary override to `nameserver 1.1.1.1` was applied to unblock the dependency
 install. This is **not acceptable** as a steady state.
 
-### Root cause hypothesis
+### Root cause — confirmed 2026-04-16
 
-The MikroTik `vlan10-build` interface (`10.57.0.1`) was not forwarding DNS queries to an
-upstream resolver during the bootstrap window. Likely causes:
+The MikroTik firewall input chain was missing rules for `build_seg`. The `mgmt_seg`,
+`edge_seg`, and `infra_seg` VLANs all had explicit ICMP and DNS accept rules; `vlan10-build`
+had none, so all traffic from `10.57.0.0/24` to the router hit the default drop rule.
 
-- DNS forwarding not enabled or not configured to reach the WAN upstream from the MikroTik
-  at the time the container was brought up.
-- The MikroTik DNS service may have been configured but the VLAN 10 interface was not yet
-  allowed to use it (firewall input chain blocking UDP/TCP 53 from `10.57.0.0/24`).
-- Timing: the MikroTik interface was just created and the DNS cache was cold.
+The three missing rules were added:
 
-### Required fix
+```
+/ip firewall filter add chain=input action=accept protocol=icmp in-interface=vlan10-build comment="allow build_seg ping to router" place-before=8
+/ip firewall filter add chain=input action=accept protocol=udp in-interface=vlan10-build dst-port=53 comment="allow build_seg DNS UDP to router" place-before=8
+/ip firewall filter add chain=input action=accept protocol=tcp in-interface=vlan10-build dst-port=53 comment="allow build_seg DNS TCP to router" place-before=8
+```
+
+After adding these, `nslookup github.com 10.57.0.1` from inside `ci-runner-01` succeeded,
+`apt` unblocked, the runner installed and registered, and `validate-zone-dns.yml` passed
+all assertions (resolver `10.57.0.1` confirmed, external resolution confirmed via MikroTik).
+
+### Fix checklist for future rebuilds
 
 1. Verify the MikroTik DNS service is enabled: `/ip dns print` should show `allow-remote-requests: yes`.
-2. Confirm the MikroTik firewall input chain allows DNS from `build_seg` (`10.57.0.0/24`)
-   to `10.57.0.1` on UDP/TCP port 53.
-3. Confirm the MikroTik WAN uplink is correctly forwarding external queries (check `/ip dns
-   cache` after a test lookup from a known-good host).
-4. Test by executing `nslookup deb.debian.org 10.57.0.1` from a shell on `ci-runner-01`
-   *before* the bootstrap playbook runs.
-5. Only once the MikroTik-local resolver works end-to-end may the `1.1.1.1` temporary
-   entry be considered removed — it must already be absent in the current `deploy-ci-runner.yml`.
+2. Confirm the MikroTik firewall input chain has ICMP + DNS (UDP/TCP 53) accept rules for **all four** VLAN interfaces before deploying any LXC.
+3. Pre-flight test from the workstation: `dig @10.57.0.1 github.com +short` — must answer before the bootstrap playbook runs.
+4. Do not accept a public resolver (`1.1.1.1`) as a workaround — fix the MikroTik.
 
 ### Persistence note
 
