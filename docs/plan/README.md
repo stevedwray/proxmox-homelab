@@ -21,7 +21,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
 | 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | Workstation task — do before first deploy | None — workstation only |
-| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c + 03d | Phase 03b, 03c, and 03d complete |
+| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 00c + 03c + 03d | Phase 00c, 03c, and 03d complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
 | 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |

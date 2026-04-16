@@ -274,9 +274,10 @@ task prerequisites all describe Mode 2. A pve-test wipe-and-rebuild is a Mode 2 
 The phase sequence exists to ensure Mode 2 deployments succeed reliably and without
 circular dependency failures.
 
-The phase documents, task documents, and this bootstrap stages document describe Mode 2.
-The design documents (GreenField.md, architecture.md, bootstrap-stages.md) describe the
-target architecture that Mode 2 produces. Neither constrains Mode 1.
+The phase documents and task documents describe Mode 2 deployment ordering. The stage
+sequence and phase gate requirements in this document also describe Mode 2. The design
+documents (GreenField.md, architecture.md) describe the target architecture that Mode 2
+produces. None of these constrain Mode 1.
 
 When reading a phase document and finding that a prerequisite has not been met, the
 appropriate question is: "Am I doing Mode 2 (deployment) work right now?" If not, proceed
