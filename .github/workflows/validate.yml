@@ -26,6 +26,23 @@ jobs:
       - name: Check formatting
         run: terraform fmt -check -recursive terraform/
 
+  shellcheck:
+    name: ShellCheck lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          find . -name '*.sh' \
+            -not -path './.git/*' \
+            -not -path './_legacy/*' \
+            -not -path '*/.terragrunt-cache/*' \
+            | xargs shellcheck
+
   harbor-image-policy:
     name: Enforce Harbor-only image references
     runs-on: ubuntu-latest
