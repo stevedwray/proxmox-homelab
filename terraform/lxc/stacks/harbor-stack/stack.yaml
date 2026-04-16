@@ -2,6 +2,7 @@
 hostname: harbor-stack
 ip_address: "10.57.3.10/24"
 gateway: "10.57.3.1"
+proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 121

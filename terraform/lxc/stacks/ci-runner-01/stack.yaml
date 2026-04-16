@@ -2,6 +2,7 @@
 hostname: ci-runner-01
 ip_address: "10.57.0.63/24"
 gateway: "10.57.0.1"
+proxmox_node: pve-test
 vmid: 141
 cores: 2
 memory: 4096

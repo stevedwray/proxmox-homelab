@@ -2,6 +2,7 @@
 hostname: netbox-stack-test
 ip_address: "10.57.3.12/24"
 gateway: "10.57.3.1"
+proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 143

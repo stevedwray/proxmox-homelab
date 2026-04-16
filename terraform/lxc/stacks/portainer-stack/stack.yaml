@@ -2,6 +2,7 @@
 hostname: portainer-stack
 ip_address: "10.57.1.20/24"
 gateway: "10.57.1.1"
+proxmox_node: pve-test
 vmid: 120
 cores: 1
 memory: 512

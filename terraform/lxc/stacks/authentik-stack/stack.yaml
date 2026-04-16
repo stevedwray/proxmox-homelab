@@ -2,6 +2,7 @@
 hostname: authentik-stack
 ip_address: "10.57.1.10/24"
 gateway: "10.57.1.1"
+proxmox_node: pve-test
 vmid: 150
 cores: 2
 memory: 2048

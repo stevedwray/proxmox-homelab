@@ -33,7 +33,8 @@ locals {
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network               = try(local.stack.network, null)
   stack_network_zone          = try(local.stack.network.zone, null)
-  network_intent_default_path = "${local.lxc_root}/network/${var.proxmox_node}.yaml"
+  effective_proxmox_node      = try(local.stack.proxmox_node, var.proxmox_node)
+  network_intent_default_path = "${local.lxc_root}/network/${local.effective_proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
     local.network_intent_default_path
@@ -51,7 +52,7 @@ locals {
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
   effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
-  effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, var.proxmox_node)
+  effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
 
   effective_network_bridge = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.bridge, "vmbr0") : try(local.stack.network_bridge, "vmbr0")
@@ -153,8 +154,8 @@ locals {
 
 check "network_intent_node_matches_proxmox_node" {
   assert {
-    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == var.proxmox_node
-    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but var.proxmox_node is '${var.proxmox_node}'. Ensure the correct intent file exists for this environment."
+    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == local.effective_proxmox_node
+    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but effective proxmox_node is '${local.effective_proxmox_node}'. Ensure the correct intent file exists for this environment."
   }
 }
 
