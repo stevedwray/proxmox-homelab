@@ -59,11 +59,27 @@
   when: harbor_postconfigure_dockerhub_endpoint_id is not defined
   delegate_to: localhost
 
-- name: Set endpoint ID from create
-  ansible.builtin.set_fact:
-    harbor_postconfigure_dockerhub_endpoint_id: >-
-      {{ harbor_postconfigure_endpoint_result.get('json', harbor_postconfigure_endpoint_result).get('id') }}
+- name: Re-fetch registry list after create to resolve Docker Hub endpoint ID
+  # Harbor's POST /registries returns 201 with an empty body (Location header only),
+  # so the ID cannot be read from the creation response. Re-query to get it by name.
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/registries"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_registries_after_create
   when: harbor_postconfigure_endpoint_result is not skipped
+  delegate_to: localhost
+
+- name: Set endpoint ID from registry list
+  ansible.builtin.set_fact:
+    harbor_postconfigure_dockerhub_endpoint_id: "{{ item.id }}"
+  loop: "{{ harbor_postconfigure_registries_after_create.json | default([]) }}"
+  when:
+    - harbor_postconfigure_endpoint_result is not skipped
+    - item.name == harbor_postconfigure_dockerhub_endpoint_name
   delegate_to: localhost
 
 - name: Display Docker Hub endpoint status
