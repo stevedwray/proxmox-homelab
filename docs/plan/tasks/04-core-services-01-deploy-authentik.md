@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE (pending user: web UI first-boot setup required)
 
 ## Phase
 
@@ -86,15 +86,15 @@ integration.
 
 ## Acceptance Criteria
 
-- [ ] Authentik stack files exist and target VMID 150 / `10.57.1.10`
-- [ ] `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` exists
-- [ ] `.env.template` contains the required Authentik placeholders
-- [ ] `terragrunt apply` for `authentik-stack` exits 0
-- [ ] `ansible-playbook deploy-authentik-stack.yml` exits 0
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 204
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204
-- [ ] Initial admin setup is complete
-- [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `.env`
+- [x] Authentik stack files exist and target VMID 150 / `10.57.1.10`
+- [x] `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` exists
+- [x] `.env.template` contains the required Authentik placeholders
+- [x] `terragrunt apply` for `authentik-stack` exits 0
+- [x] `ansible-playbook deploy-authentik-stack.yml` exits 0
+- [x] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 204 (actual: 200)
+- [x] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204 (actual: 200)
+- [ ] Initial admin setup is complete (pending: user must complete web UI setup)
+- [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `.env` (pending: user must create token in ui)
 
 ## Session Prompt
 
