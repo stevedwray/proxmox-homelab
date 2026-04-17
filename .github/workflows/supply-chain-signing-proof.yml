@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       target_project:
-        description: "Writable Harbor project for proof image (overrides vars.HARBOR_PROOF_TARGET_PROJECT)"
+        description: "Preferred Harbor project (optional; workflow can auto-discover writable target)"
         required: true
         default: "homelab"
         type: string
       target_image:
-        description: "Image name within the Harbor project (overrides vars.HARBOR_PROOF_TARGET_IMAGE)"
+        description: "Preferred image path in project (optional; workflow can auto-discover writable target)"
         required: true
         default: "apps/phase05-signing-proof"
         type: string
@@ -34,34 +34,86 @@ jobs:
         env:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          TARGET_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
-          TARGET_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'apps/phase05-signing-proof' }}
+          REQUESTED_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
+          REQUESTED_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'apps/phase05-signing-proof' }}
+          TARGET_CANDIDATES: ${{ vars.HARBOR_PROOF_TARGET_CANDIDATES || '' }}
         run: |
           set -euo pipefail
-          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          SOURCE_REF="docker.io/library/alpine:3.20"
 
-          echo "Using Harbor target ${TARGET_PROJECT}/${TARGET_IMAGE}"
+          DEFAULT_CANDIDATES=(
+            "${REQUESTED_PROJECT}/${REQUESTED_IMAGE}"
+            "homelab/apps/phase05-signing-proof"
+            "homelab/phase05-signing-proof"
+            "library/phase05-signing-proof"
+          )
 
-          # Verify push permission up front and return a clear failure if robot scope is wrong.
-          PROBE_URL="http://10.57.3.10/v2/${TARGET_PROJECT}/${TARGET_IMAGE}/blobs/uploads/"
-          PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-headers.txt"
-          PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")"
-          if [[ "$PROBE_STATUS" != "202" ]]; then
-            echo "Harbor push preflight failed for ${TARGET_PROJECT}/${TARGET_IMAGE} (HTTP ${PROBE_STATUS})." >&2
-            echo "Update vars.HARBOR_PROOF_TARGET_PROJECT/vars.HARBOR_PROOF_TARGET_IMAGE or rotate HARBOR_ROBOT_* secrets to a writer account." >&2
+          declare -a CANDIDATES=()
+          if [[ -n "$TARGET_CANDIDATES" ]]; then
+            while IFS= read -r candidate; do
+              candidate="${candidate//[[:space:]]/}"
+              [[ -n "$candidate" ]] && CANDIDATES+=("$candidate")
+            done < <(printf '%s' "$TARGET_CANDIDATES" | tr ',' '\n')
+          fi
+          CANDIDATES+=("${DEFAULT_CANDIDATES[@]}")
+
+          declare -A SEEN=()
+          declare -a UNIQUE_CANDIDATES=()
+          for candidate in "${CANDIDATES[@]}"; do
+            if [[ -n "$candidate" && -z "${SEEN[$candidate]:-}" ]]; then
+              SEEN[$candidate]=1
+              UNIQUE_CANDIDATES+=("$candidate")
+            fi
+          done
+
+          SELECTED_TARGET=""
+          declare -a PROBE_RESULTS=()
+          for candidate in "${UNIQUE_CANDIDATES[@]}"; do
+            CANDIDATE_PROJECT="${candidate%%/*}"
+            CANDIDATE_IMAGE="${candidate#*/}"
+            if [[ -z "$CANDIDATE_PROJECT" || -z "$CANDIDATE_IMAGE" || "$CANDIDATE_PROJECT" == "$CANDIDATE_IMAGE" ]]; then
+              PROBE_RESULTS+=("${candidate}:INVALID")
+              continue
+            fi
+
+            PROBE_URL="http://10.57.3.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/"
+            PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-${CANDIDATE_PROJECT}-${RANDOM}.txt"
+            PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")"
+            PROBE_RESULTS+=("${candidate}:${PROBE_STATUS}")
+
+            if [[ "$PROBE_STATUS" == "202" ]]; then
+              SELECTED_TARGET="$candidate"
+              PROBE_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2}' "$PROBE_HEADERS" | tr -d '\r')"
+              if [[ -n "$PROBE_LOCATION" ]]; then
+                if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
+                  CANCEL_URL="$PROBE_LOCATION"
+                else
+                  CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}"
+                fi
+                curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true
+              fi
+              break
+            fi
+          done
+
+          if [[ -z "$SELECTED_TARGET" ]]; then
+            {
+              echo "Harbor push preflight failed for all candidate targets."
+              echo "Probe results:"
+              for result in "${PROBE_RESULTS[@]}"; do
+                echo "- ${result}"
+              done
+              echo "Set vars.HARBOR_PROOF_TARGET_CANDIDATES to a comma-separated list of writable targets (for example: homelab/apps/phase05-signing-proof,project-x/proof/image)."
+              echo "Or rotate HARBOR_ROBOT_* secrets to a Harbor robot with push rights."
+            } >&2
             exit 1
           fi
 
-          PROBE_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2}' "$PROBE_HEADERS" | tr -d '\r')"
-          if [[ -n "$PROBE_LOCATION" ]]; then
-            if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
-              CANCEL_URL="$PROBE_LOCATION"
-            else
-              CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}"
-            fi
-            curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true
-          fi
+          TARGET_PROJECT="${SELECTED_TARGET%%/*}"
+          TARGET_IMAGE="${SELECTED_TARGET#*/}"
+          echo "Selected Harbor target ${TARGET_PROJECT}/${TARGET_IMAGE}"
+
+          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          SOURCE_REF="docker.io/library/alpine:3.20"
 
           CRANE_VERSION="v0.20.3"
           curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
