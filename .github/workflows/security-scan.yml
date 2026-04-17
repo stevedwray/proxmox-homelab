@@ -17,6 +17,10 @@ on:
         required: true
         type: string
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   # Phase 05 does not yet define a concrete build-image job in this workflow.
   # This job is executable now via workflow_dispatch with an explicit Harbor
@@ -33,6 +37,14 @@ jobs:
       - name: Install Trivy CLI
         run: |
           curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Install Crane CLI
+        env:
+          CRANE_VERSION: v0.20.6
+        run: |
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" crane
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run Trivy image scan
@@ -94,35 +106,37 @@ jobs:
             repo_tag="${IMAGE_REF#*/}"
             repo="${repo_tag%:*}"
             tag="${repo_tag##*:}"
-
-            manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
-            manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
-            manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
             digest=""
 
-            manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
-              -H "Accept: ${manifest_accept}" \
-              "$manifest_url" || true)"
+            digest="$(crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
-            if [[ "$manifest_status" != "200" ]]; then
-              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+            if [[ -z "$digest" ]]; then
+              manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
+              manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+              manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
+
+              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
                 -H "Accept: ${manifest_accept}" \
                 "$manifest_url" || true)"
-            fi
 
-            if [[ "$manifest_status" == "200" ]]; then
-              digest="$(tr -d '\r' < "$manifest_headers" \
-                | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
-                | tail -n 1)"
+              if [[ "$manifest_status" != "200" ]]; then
+                manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+                  -H "Accept: ${manifest_accept}" \
+                  "$manifest_url" || true)"
+              fi
+
+              if [[ "$manifest_status" == "200" ]]; then
+                digest="$(tr -d '\r' < "$manifest_headers" \
+                  | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+                  | tail -n 1)"
+              fi
             fi
 
             if [[ -n "$digest" ]]; then
               sign_ref="${registry}/${repo}@${digest}"
             else
-              # Some Harbor installs return 404 for manifest-by-tag lookups while
-              # still allowing registry clients to pull the tag. Cosign can sign tags.
-              echo "Digest lookup unavailable for $IMAGE_REF (HTTP ${manifest_status}); falling back to tag signing reference." >&2
-              sign_ref="$IMAGE_REF"
+              echo "Unable to resolve digest for $IMAGE_REF. Refusing tag-based signing." >&2
+              exit 1
             fi
           fi
 
@@ -160,10 +174,20 @@ jobs:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
         run: |
+          set -euo pipefail
           printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
           chmod 600 /tmp/cosign.key
-          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
+          sign_output="$(cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}" 2>&1)" || sign_status=$?
           rm -f /tmp/cosign.key
+          sign_status="${sign_status:-0}"
+          echo "$sign_output"
+          if [[ "$sign_status" -ne 0 ]]; then
+            if echo "$sign_output" | grep -Eqi 'unauthorized|action: push'; then
+              echo "Cosign signing failed because Harbor robot credentials do not have push rights for signature artifacts in this repository." >&2
+              echo "Grant push access to HARBOR_ROBOT_USER on the target repo/project and retry." >&2
+            fi
+            exit "$sign_status"
+          fi
 
       - name: Verify signature
         run: |
