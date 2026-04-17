@@ -188,11 +188,13 @@ jobs:
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
           set -euo pipefail
           printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
           chmod 600 /tmp/cosign.key
-          sign_output="$(cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}" 2>&1)" || sign_status=$?
+          sign_output="$(cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}" 2>&1)" || sign_status=$?
           rm -f /tmp/cosign.key
           sign_status="${sign_status:-0}"
           echo "$sign_output"
@@ -348,10 +350,12 @@ jobs:
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
           printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
           chmod 600 /tmp/cosign.key
-          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
+          cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
           rm -f /tmp/cosign.key
 
   verify-signature:
