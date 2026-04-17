@@ -9,9 +9,9 @@ zones:
   - stack_name: harbor-stack
     ip_address: 10.57.3.10
     description: harbor-stack
-  - stack_name: netbox-stack-test
+  - stack_name: netbox-stack
     ip_address: 10.57.3.12
-    description: netbox-stack-test
+    description: netbox-stack
   mgmt_seg:
   - stack_name: authentik-stack
     ip_address: 10.57.1.10

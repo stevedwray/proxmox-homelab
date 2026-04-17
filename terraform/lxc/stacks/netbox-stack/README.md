@@ -2,20 +2,19 @@
 
 NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service Docker Compose stack, managed via Portainer.
 
-> **Environment note:** This stack (`netbox-stack/`) is the **production pve** instance
-> (VMID 119, `192.168.1.30`). The pve-test instance is in
-> `terraform/lxc/stacks/netbox-stack-test/` (VMID 143, `10.57.3.12` in `infra_seg`).
+> **Environment note:** This stack (`netbox-stack/`) is the active **pve-test** instance
+> (VMID 143, `10.57.3.12` in `infra_seg`).
 
 ## Resources
 
 | Property | Value |
 |----------|-------|
 | Hostname | `netbox-stack` |
-| VMID | 119 |
-| IP | 192.168.1.30 (see `stack.yaml`) |
-| Cores / RAM | 2 / 4 GB |
+| VMID | 143 |
+| IP | 10.57.3.12 (see `stack.yaml`) |
+| Cores / RAM | 2 / 1 GB |
 | Storage | `infrastructure-containers` (8 GB rootfs) |
-| Web UI | http://192.168.1.30:8080 (derives from IP above) |
+| Web UI | http://10.57.3.12:8080 (derives from IP above) |
 
 ## Services
 
@@ -49,7 +48,7 @@ netbox-stack/
 
 Terraform orchestrates the full lifecycle:
 
-1. **LXC creation** — Terraform creates VMID 119 on Proxmox via the `lxc-docker-host` module
+1. **LXC creation** — Terraform creates VMID 143 on Proxmox via the `lxc-docker-host` module
 2. **keyctl feature flag** — Set via Ansible `configure-keyctl.yml` playbook (delegates `pct set` to the PVE host) because the API token cannot set feature flags beyond nesting
 3. **Ansible provisioning** — Runs `deploy-netbox-stack.yml` which:
    - Installs Docker and configures registry mirror (`docker_base` role)

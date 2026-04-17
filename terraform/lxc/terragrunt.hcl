@@ -34,6 +34,7 @@ terraform {
   # source-hash change).
   before_hook "init_before_destroy" {
     commands = ["destroy"]
-    execute  = ["tofu", "init", "-reconfigure"]
+    # Use automatic backend migration flags so destroy never blocks on prompts.
+    execute  = ["tofu", "init", "-migrate-state", "-force-copy"]
   }
 }

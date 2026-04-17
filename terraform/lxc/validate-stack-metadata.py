@@ -15,7 +15,7 @@ import yaml
 ACTIVE_STACKS = (
     "harbor-stack",
     "apt-cacher-stack",
-    "netbox-stack-test",
+    "netbox-stack",
     "portainer-stack",
     "authentik-stack",
     "step-ca-stack",

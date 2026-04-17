@@ -36,17 +36,17 @@ for IP allocation verification before deploying any new container.
 | IP | `10.57.3.12` |
 | Gateway | `10.57.3.1` |
 | VMID | 143 |
-| Stack | `netbox-stack-test` |
+| Stack | `netbox-stack` |
 
 ## Objective
 
-LXC `netbox-stack-test` (VMID 143) is running at `10.57.3.12` in `infra_seg`. The NetBox
+LXC `netbox-stack` (VMID 143) is running at `10.57.3.12` in `infra_seg`. The NetBox
 web interface is accessible and an initial superuser exists. All subsequent Phase 03b, 03c,
 and Phase 04 deployments record their IP allocations in NetBox before deploying.
 
 ## Scope
 
-- Run `terragrunt apply` for `terraform/lxc/stacks/netbox-stack-test/`
+- Run `terragrunt apply` for `terraform/lxc/stacks/netbox-stack/`
 - Run `deploy-netbox-stack.yml` Ansible playbook against the new LXC
 - Create the initial NetBox superuser
 - Seed the prefix `10.57.3.0/24` (infra_seg) in NetBox with existing allocations:
@@ -63,8 +63,8 @@ and Phase 04 deployments record their IP allocations in NetBox before deploying.
 
 ## Inputs
 
-- `terraform/lxc/stacks/netbox-stack-test/stack.yaml`
-- `terraform/lxc/stacks/netbox-stack-test/terragrunt.hcl`
+- `terraform/lxc/stacks/netbox-stack/stack.yaml`
+- `terraform/lxc/stacks/netbox-stack/terragrunt.hcl`
 - `terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml`
 - `.env` / `.env.pve-test`
 

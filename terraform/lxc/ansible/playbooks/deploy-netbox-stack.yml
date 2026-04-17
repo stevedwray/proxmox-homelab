@@ -6,10 +6,38 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
   roles:
     - lxc_base
     - docker_base
     - portainer_agent
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Provision NetBox configuration files on host
   hosts: all
