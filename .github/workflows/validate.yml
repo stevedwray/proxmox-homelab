@@ -135,7 +135,7 @@ jobs:
         # ansible/ contains higher-risk bootstrap playbooks that target physical Proxmox
         # hosts. Run from ansible/ so ansible/ansible.cfg is discovered automatically.
         working-directory: ansible
-        run: ../.venv/bin/ansible-lint 00-initial-setup/ 01-base-system/
+        run: ../.venv/bin/ansible-lint 00-initial-setup/*.yml 01-base-system/*.yml
 
   sops-decrypt-check:
     name: SOPS decrypt verification
