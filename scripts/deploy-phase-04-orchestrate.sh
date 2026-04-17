@@ -30,9 +30,9 @@ readonly NC='\033[0m'  # No Color
 readonly SERVICES=("authentik-stack" "proxy-stack" "step-ca-stack" "monitoring-stack")
 readonly STACK_DIR="terraform/lxc/stacks"
 readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
-readonly DRY_RUN="${DRY_RUN:-false}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 readonly LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
+DRY_RUN="${DRY_RUN:-false}"  # Can be set by --dry-run flag
 
 # Logging functions
 mkdir -p "$LOG_DIR"
@@ -147,7 +147,7 @@ deploy_stack_infrastructure() {
 
   # Initialize Terragrunt
   log_info "Initializing Terragrunt..."
-  if ! terragrunt init \
+  if ! "$PROJECT_ROOT/with-secrets" terragrunt init \
     > "$LOG_DIR/${service}-init.log" 2>&1; then
     log_error "Terragrunt init failed (see $LOG_DIR/${service}-init.log)"
     popd > /dev/null
@@ -157,7 +157,7 @@ deploy_stack_infrastructure() {
 
   # Plan infrastructure
   log_info "Planning infrastructure..."
-  if ! terragrunt plan -no-color \
+  if ! "$PROJECT_ROOT/with-secrets" terragrunt plan -no-color \
     > "$LOG_DIR/${service}-plan.log" 2>&1; then
     log_error "Terragrunt plan failed (see $LOG_DIR/${service}-plan.log)"
     popd > /dev/null
@@ -174,7 +174,7 @@ deploy_stack_infrastructure() {
   # Apply if not dry-run
   if [ "$DRY_RUN" = false ]; then
     log_info "Applying infrastructure..."
-    if ! terragrunt apply -auto-approve -no-color \
+    if ! "$PROJECT_ROOT/with-secrets" terragrunt apply -auto-approve -no-color \
       > "$LOG_DIR/${service}-apply.log" 2>&1; then
       log_error "Terragrunt apply failed (see $LOG_DIR/${service}-apply.log)"
       popd > /dev/null
