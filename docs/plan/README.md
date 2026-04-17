@@ -12,18 +12,18 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 
 | Phase | Document | Status | Gate |
 |---|---|---|---|
-| 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | Before Phase 00b | Phase 00 complete |
+| 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | **Complete** | Phase 00 complete |
 | 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Complete** | Phase 00 complete |
-| 00c | [Bootstrap Sequence (Stage 1 temporary → Stage 2 production)](phase-00c-bootstrap-sequence.md) | After Phase 03d | Stage 0 (Phase 03d) complete |
-| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00b | Phase 00b complete |
+| 00c | [Bootstrap Sequence (Stage 1 temporary → Stage 2 production)](phase-00c-bootstrap-sequence.md) | In progress | Stage 0 (Phase 03d) complete |
+| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | **Complete** | Phase 00b complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Complete** | — |
 | 03 | [Code Quality & Bug Fixes](phase-03-code-quality.md) | Parallel with 01-02 | Phase 00 complete |
-| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
-| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
-| 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | Workstation task — do before first deploy | None — workstation only |
-| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 00c + 03c + 03d | Phase 00c, 03c, and 03d complete |
-| 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
-| 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
+| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Complete** | Phase 00b complete |
+| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Complete** | Phase 00b complete |
+| 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | **Complete** | None — workstation only |
+| 04 | [Core Shared Services](phase-04-core-shared-services.md) | In progress | Phase 00c, 03c, and 03d complete |
+| 05 | [Supply Chain Security](phase-05-supply-chain.md) | In progress (partially implemented in CI) | Phase 01, 03b, 04 complete |
+| 06 | [Application Stack Migration](phase-06-app-stacks.md) | Planned (issues opened) | Phase 04, 05 complete — **Out of scope for current execution.** |
 | 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |
 
 ## Architecture reference
@@ -182,12 +182,18 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 | Issue | Description | Phase | Action |
 |---|---|---|---|
 | #106 | Traefik deployment | 04-03 | Active |
+| #125 | step-ca deployment | 04-04 | Active |
 | #107 | Monitoring deployment | 04-05 | Active |
 | #108 | Trivy CI scan | 05-01 | Active |
 | #109 | Syft SBOM | 05-02 | Active |
 | #110 | Cosign signing | 05-03 | Active |
-| #120 | ShellCheck cleanup: setup-dev-env.sh | — | Ready to work |
-| #121 | ShellCheck cleanup: check-proxmox-status.sh | — | Ready to work |
+| #113 | Discover and document application workloads | 06-01 | Active |
+| #114 | Create app_seg and game_seg SDN zones | 06-02 | Active |
+| #115 | Migrate Pi-hole to app_seg | 06-03 | Active |
+| #116 | Migrate arr stack to app_seg | 06-04 | Active |
+| #117 | Migrate Jellyfin to app_seg | 06-05 | Active |
+| #118 | Migrate game services to game_seg | 06-06 | Active |
+| #119 | Add Trivy rootfs scheduled scan workflow | 06-07 | Active |
 
 ## Known Implementation Gaps
 
@@ -195,6 +201,7 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 |---|---|---|
 | VNet firewall cross-zone rule bug | `terraform/lxc/main.tf:86-95` | `vnet_policy_candidates` requires both `from` and `to` to match the current container's VNet — impossible for cross-zone policies. No ACCEPT rules are generated. Proxmox firewall disabled for dev passes as a workaround. |
 | SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` until that gap is closed. |
+| Phase 04 delivery artifact gap | `terraform/lxc/stacks/` and `terraform/lxc/ansible/playbooks/` | Traefik and monitoring stack directories/playbooks are not present, and `step-ca-stack` references `deploy-step-ca` without a corresponding playbook. Task docs remain authoritative target state until these artifacts are implemented. |
 
 ## Notes
 

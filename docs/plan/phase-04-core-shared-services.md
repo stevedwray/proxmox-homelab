@@ -18,6 +18,13 @@ Deploy in this order. Authentik must be running before Traefik (auth middleware 
 - [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
 - [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
 
+## Current implementation status (2026-04-17)
+
+- Authentik stack intent exists in `terraform/lxc/stacks/authentik-stack/stack.yaml` and corresponding playbook `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml`.
+- Traefik and monitoring stack artifacts are not yet present in `terraform/lxc/stacks/` and `terraform/lxc/ansible/playbooks/`.
+- `step-ca-stack` exists, but it references `deploy-step-ca` and no matching playbook exists yet.
+- Treat this phase document and its task docs as target state until the missing artifacts are implemented and validated.
+
 ## Certificate strategy
 
 This phase uses a **dual certificate resolver** model in Traefik:
