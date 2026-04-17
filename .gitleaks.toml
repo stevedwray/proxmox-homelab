@@ -19,4 +19,16 @@ regexes = [
     '''__FROM_BITWARDEN__''',
     # __GENERATE placeholders
     '''__GENERATE:.*?__''',
+    # PVEAPIToken=... in documentation (redacted example, not a real token)
+    '''PVEAPIToken=\.\.\.|PVEAPIToken=[A-Za-z0-9@!]+\.\.\.$''',
+]
+
+# Docs directory: contains redacted examples only
+[[rules.allowlist]]
+description = "Documentation examples with redacted tokens"
+paths = [
+    '''docs/''',
+]
+regexes = [
+    '''PVEAPIToken''',
 ]
