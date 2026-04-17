@@ -30,22 +30,27 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: Install Trivy CLI
+        run: |
+          TRIVY_VERSION="0.63.0"
+          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o trivy.tar.gz
+          tar -xzf trivy.tar.gz trivy
+          install -m 0755 trivy "$RUNNER_TEMP/trivy"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
       - name: Run Trivy image scan
         env:
           TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
-          docker run --rm \
-            -v "$PWD:/work" \
-            aquasec/trivy:0.63.0 \
-            image \
+          trivy image \
             --username "$TRIVY_USERNAME" \
             --password "$TRIVY_PASSWORD" \
             --insecure \
             --severity CRITICAL,HIGH \
             --exit-code 1 \
             --format sarif \
-            --output /work/trivy-image.sarif \
+            --output trivy-image.sarif \
             "${{ github.event.inputs.image_ref }}"
 
       - name: Upload image SARIF
