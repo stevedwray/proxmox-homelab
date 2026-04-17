@@ -32,10 +32,7 @@ jobs:
 
       - name: Install Trivy CLI
         run: |
-          TRIVY_VERSION="0.63.0"
-          curl -fsSL "https://github.com/aquasecurity/trivy/releases/download/v${TRIVY_VERSION}/trivy_${TRIVY_VERSION}_Linux-64bit.tar.gz" -o trivy.tar.gz
-          tar -xzf trivy.tar.gz trivy
-          install -m 0755 trivy "$RUNNER_TEMP/trivy"
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run Trivy image scan
