@@ -54,6 +54,27 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
 
+  generate-sbom:
+    name: Generate SBOM
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Generate SBOM (SPDX)
+        run: |
+          syft "${{ github.event.inputs.image_ref }}" \
+            --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.spdx.json
+          retention-days: 90
+
   sast-scan:
     runs-on: ubuntu-latest
     permissions:

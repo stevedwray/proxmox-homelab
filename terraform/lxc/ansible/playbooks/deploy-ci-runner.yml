@@ -5,6 +5,7 @@
   gather_facts: false
   vars:
     runner_version: "2.333.1"
+    syft_version: "1.19.0"
     runner_user: runner
     runner_home: /opt/actions-runner
     runner_service_name: "actions.runner.stevedwray-proxmox-homelab.ci-runner-pve-test.service"
@@ -73,6 +74,13 @@
           - libssl-dev
         state: present
         update_cache: true
+
+    - name: Install Syft # noqa command-instead-of-module
+      ansible.builtin.shell: |
+        curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | \
+          sh -s -- -b /usr/local/bin v{{ syft_version }}
+      args:
+        creates: /usr/local/bin/syft
 
     - name: Create runner user
       ansible.builtin.user:
