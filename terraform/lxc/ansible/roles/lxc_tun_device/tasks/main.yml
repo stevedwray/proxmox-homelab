@@ -14,14 +14,14 @@
   set_fact:
     container_vmid: "{{ item.split()[0] }}"
   loop: "{{ pct_list.stdout_lines }}"
-  when: 
+  when:
     - item is defined
     - inventory_hostname in item
   delegate_to: localhost
 
 - name: Debug container search
   debug:
-    msg: 
+    msg:
       - "Looking for hostname: {{ inventory_hostname }}"
       - "Found VMID: {{ container_vmid | default('NOT FOUND') }}"
       - "PCT list output: {{ pct_list.stdout_lines }}"

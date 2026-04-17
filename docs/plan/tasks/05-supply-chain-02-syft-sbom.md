@@ -88,7 +88,7 @@ STEP 1 — Read the existing ci-runner playbook:
 STEP 2 — Add Syft install task to deploy-ci-runner.yml:
   Check https://github.com/anchore/syft/releases for the latest stable version.
   Add a task to install Syft (after Cosign install if it exists, or before the runner registration step):
-  
+
     - name: Install Syft
       ansible.builtin.shell: |
         curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | \

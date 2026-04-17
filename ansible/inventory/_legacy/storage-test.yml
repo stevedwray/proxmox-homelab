@@ -11,13 +11,13 @@ all:
               ansible_host: 192.168.1.30
               ansible_user: root
               ansible_ssh_private_key_file: ~/.ssh/id_rsa
-              
+
         # Future: proxmox_production group would go here
         # proxmox_production:
         #   hosts:
         #     pve01.gibbsgreatly.xyz:
         #       ansible_host: 192.168.1.10
-          
+
       vars:
         # Common Proxmox variables (apply to ALL Proxmox hosts)
         ansible_python_interpreter: /usr/bin/python3

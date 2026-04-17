@@ -191,16 +191,16 @@ def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
 
 def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
     """Merge Proxmox (primary), stack.yaml, and Portainer (services) data.
-    
+
     Proxmox is the authoritative source for container/VM existence and config.
     stack.yaml and Portainer enrich with metadata and services.
-    
+
     Returns list of VM dicts with: name, ip, status, vcpus, memory, disk,
     description, tags, services, mounts.
     """
     if proxmox_data is None:
         proxmox_data = {"containers": [], "storage": []}
-    
+
     yamls = stack_yamls or {}
 
     # Index Portainer endpoints by name for service discovery
@@ -215,7 +215,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
             }
 
     vms = []
-    
+
     # Process all containers/VMs from Proxmox (authoritative source)
     for container in proxmox_data.get("containers", []):
         pve_name = container["name"]
@@ -231,7 +231,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
         vcpus = int(config.get("cores", yml.get("cores", 2)))
         memory = int(config.get("memory", yml.get("memory", 2048)))
         disk = _get_container_disk(container, yml)
-        
+
         vm = {
             "name": pve_name,
             "ip": ip,
@@ -259,7 +259,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
 
 def build_topology():
     """Build the full topology dict from all available data sources.
-    
+
     Priority: Proxmox (authoritative) → stack.yaml (metadata) → Portainer (services).
     """
     stacks_dir = os.path.join(os.path.dirname(__file__), "..", "..")

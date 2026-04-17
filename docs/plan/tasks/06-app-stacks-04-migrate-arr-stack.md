@@ -121,7 +121,7 @@ STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-arr-st
       traefik.http.routers.<svc>.rule: "Host(`<svc>.homelab.internal`)"
       traefik.http.routers.<svc>.middlewares: "authentik@file"
   - Restore config tarballs to /srv/docker/arr/<service>/
-  
+
 STEP 7 — Deploy:
   source .env && source .env.pve-test
   cd terraform/lxc/stacks/arr-stack && terragrunt apply

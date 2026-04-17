@@ -8,8 +8,10 @@ useDefault = true
 description = "Global allowlist"
 
 # SOPS-encrypted files: values are ciphertext, not plaintext secrets
+# docs/ contains redacted examples only — no real secrets
 paths = [
     '''terraform/secrets\.enc\.yaml''',
+    '''docs/''',
 ]
 
 # CHANGEME_ placeholder values used in SOPS for not-yet-provisioned secrets
@@ -21,14 +23,4 @@ regexes = [
     '''__GENERATE:.*?__''',
     # PVEAPIToken=... in documentation (redacted example, not a real token)
     '''PVEAPIToken=\.\.\.|PVEAPIToken=[A-Za-z0-9@!]+\.\.\.$''',
-]
-
-# Docs directory: contains redacted examples only
-[[rules.allowlist]]
-description = "Documentation examples with redacted tokens"
-paths = [
-    '''docs/''',
-]
-regexes = [
-    '''PVEAPIToken''',
 ]
