@@ -109,7 +109,7 @@ jobs:
             digest=""
             manifest_status=""
 
-            digest="$(crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
+            digest="$(timeout 20s crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
             if [[ -z "$digest" ]]; then
               manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
@@ -269,7 +269,7 @@ jobs:
             digest=""
             manifest_status=""
 
-            digest="$(crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
+            digest="$(timeout 20s crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
             manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
