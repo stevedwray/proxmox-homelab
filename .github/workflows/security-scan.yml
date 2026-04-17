@@ -136,7 +136,7 @@ jobs:
             "$IMAGE_REF"
 
       - name: Upload image SARIF
-        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         if: always() && hashFiles('trivy-image.sarif') != ''
         with:
           sarif_file: trivy-image.sarif
@@ -332,7 +332,7 @@ jobs:
         output: 'trivy-results.sarif'
 
     - name: Upload Trivy SARIF results
-      uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+      uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
       with:
         sarif_file: 'trivy-results.sarif'
 
@@ -357,7 +357,7 @@ jobs:
           args: --severity-threshold=high --report
 
       - name: Upload Snyk results to GitHub Security tab
-        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
         if: always() && hashFiles('snyk.sarif') != ''
         with:
           sarif_file: snyk.sarif
