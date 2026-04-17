@@ -40,7 +40,8 @@ jobs:
           set -euo pipefail
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
 
-          echo "$HARBOR_PASS" | docker login 10.57.3.10 -u "$HARBOR_USER" --password-stdin
+          # Harbor in this lab is HTTP-only; force scheme to avoid HTTPS:443 login attempts.
+          echo "$HARBOR_PASS" | docker login http://10.57.3.10 -u "$HARBOR_USER" --password-stdin
 
           cat > Dockerfile.proof <<'EOF'
           FROM 10.57.3.10/dockerhub/library/alpine:3.20
