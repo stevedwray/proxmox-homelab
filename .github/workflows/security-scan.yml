@@ -12,6 +12,41 @@ on:
       - 'dev/pve-test'
 
 jobs:
+  # Phase 05 task 01 placeholder job. This is fully wired but gated off until
+  # Phase 06 introduces the concrete build-image job and Harbor image reference.
+  trivy-image-scan:
+    name: Trivy image scan
+    if: ${{ false }}
+    runs-on: [self-hosted, pve-test, build]
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Log in to Harbor
+        run: |
+          echo "$HARBOR_ROBOT_PASSWORD" | \
+            docker login 10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
+        env:
+          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_ROBOT_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+
+      - name: Run Trivy image scan
+        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
+        with:
+          scan-type: image
+          image-ref: "10.57.3.10/phase06/placeholder:latest"
+          format: sarif
+          output: trivy-image.sarif
+          severity: CRITICAL,HIGH
+          exit-code: "1"
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        if: always()
+        with:
+          sarif_file: trivy-image.sarif
+
   sast-scan:
     runs-on: ubuntu-latest
     permissions:
