@@ -60,7 +60,7 @@ jobs:
 
           # Discover additional candidate projects from Harbor catalog visibility.
           CATALOG_JSON="$RUNNER_TEMP/harbor-catalog.json"
-          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://10.57.3.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then
+          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://10.57.3.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             mapfile -t CATALOG_PROJECTS < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); repos=data.get("repositories") or []; projects=sorted({r.split("/",1)[0] for r in repos if isinstance(r,str) and "/" in r}); print("\n".join(projects))' "$CATALOG_JSON" 2>/dev/null || true)
 
             for project in "${CATALOG_PROJECTS[@]}"; do
@@ -89,9 +89,9 @@ jobs:
               continue
             fi
 
-            PROBE_URL="http://10.57.3.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/"
+            PROBE_URL="http://10.57.3.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-${CANDIDATE_PROJECT}-${RANDOM}.txt"
-            PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")"
+            PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             PROBE_RESULTS+=("${candidate}:${PROBE_STATUS}")
 
             if [[ "$PROBE_STATUS" == "202" ]]; then
@@ -101,9 +101,9 @@ jobs:
                 if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
                   CANCEL_URL="$PROBE_LOCATION"
                 else
-                  CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}"
+                  CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
                 fi
-                curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true
+                curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
               fi
               break
             fi
@@ -130,7 +130,7 @@ jobs:
           SOURCE_REF="docker.io/library/alpine:3.20"
 
           CRANE_VERSION="v0.20.3"
-          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
             | tar -xz -C "$RUNNER_TEMP" crane
           chmod +x "$RUNNER_TEMP/crane"
 
@@ -156,7 +156,7 @@ jobs:
 
       - name: Install Trivy CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run Trivy image scan
@@ -225,7 +225,7 @@ jobs:
 
       - name: Install Trivy CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run Trivy image scan

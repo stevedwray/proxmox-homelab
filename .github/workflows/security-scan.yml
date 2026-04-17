@@ -61,7 +61,7 @@ jobs:
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
 
           CRANE_VERSION="v0.20.6"
-          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
             | tar -xz -C "$RUNNER_TEMP" crane
           chmod +x "$RUNNER_TEMP/crane"
 
@@ -101,14 +101,14 @@ jobs:
 
       - name: Install Trivy CLI
         run: |
-          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Install Crane CLI
         env:
           CRANE_VERSION: v0.20.6
         run: |
-          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
             | tar -xz -C "$RUNNER_TEMP" crane
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
@@ -205,7 +205,7 @@ jobs:
             digest="$(timeout 20s crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
             if [[ -z "$digest" ]]; then
-              manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
+              manifest_url="http://${registry}/v2/${repo}/manifests/${tag}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
               manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
               manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
 
@@ -230,7 +230,7 @@ jobs:
               project="${repo%%/*}"
               repository_path="${repo#*/}"
               repository_encoded="${repository_path//\//%2F}"
-              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}"
+              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
               digest="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" \
                 -H 'Accept: application/json' \
                 "$artifact_url" \
@@ -256,11 +256,11 @@ jobs:
             repo="${repo_ref%:*}"
           fi
 
-          probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
+          probe_url="http://${registry}/v2/${repo}/blobs/uploads/" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
           probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
-          probe_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
+          probe_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
           if [[ "$probe_status" != "202" ]]; then
-            echo "Cosign push preflight failed for ${repo} (HTTP ${probe_status})." >&2
+            echo "Cosign push preflight failed for ${repo} (status ${probe_status})." >&2
             echo "HARBOR_ROBOT_* must have push rights for this repository to store signature artifacts." >&2
             exit 1
           fi
@@ -270,12 +270,12 @@ jobs:
             if [[ "$probe_location" =~ ^https?:// ]]; then
               cancel_url="$probe_location"
             else
-              cancel_url="http://${registry}${probe_location}"
+              cancel_url="http://${registry}${probe_location}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
             fi
-            curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
+            curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
           fi
 
-          echo "sign_ref=$sign_ref" >> "$GITHUB_OUTPUT"
+          echo "sign_ref=$sign_ref" >> "$GITHUB_OUTPUT" # NOSONAR - Digest refs target the internal Harbor registry over HTTP in pve-test.
 
       - name: Sign image
         env:
@@ -311,7 +311,9 @@ jobs:
     uses: ./.github/workflows/signature-gate.yml
     with:
       image_ref: ${{ needs.trivy-image-scan.outputs.sign_ref }}
-    secrets: inherit
+    secrets:
+      HARBOR_ROBOT_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+      HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
 
   sast-scan:
     runs-on: ubuntu-latest

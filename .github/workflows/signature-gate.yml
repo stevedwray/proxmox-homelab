@@ -7,6 +7,11 @@ on:
         description: "Harbor image reference (tag or digest) to verify before deployment"
         required: true
         type: string
+    secrets:
+      HARBOR_ROBOT_PASSWORD:
+        required: true
+      HARBOR_ROBOT_USER:
+        required: true
   workflow_dispatch:
     inputs:
       image_ref:
@@ -33,7 +38,7 @@ jobs:
         env:
           CRANE_VERSION: v0.20.6
         run: |
-          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
             | tar -xz -C "$RUNNER_TEMP" crane
           echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
@@ -65,7 +70,7 @@ jobs:
               project="${repo%%/*}"
               repository_path="${repo#*/}"
               repository_encoded="${repository_path//\//%2F}"
-              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}"
+              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
               digest="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" \
                 -H 'Accept: application/json' \
                 "$artifact_url" \
@@ -80,7 +85,7 @@ jobs:
             DIGEST_REF="${registry}/${repo}@${digest}"
           fi
 
-          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT" # NOSONAR - Digest refs target the internal Harbor registry over HTTP in pve-test.
 
       - name: Verify signature
         run: |
