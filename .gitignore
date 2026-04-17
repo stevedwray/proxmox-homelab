@@ -66,6 +66,7 @@ id_rsa
 id_rsa.pub
 *.pem
 *.key
+cosign.key
 
 # Logs
 *.log

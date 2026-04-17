@@ -6,6 +6,7 @@
   vars:
     runner_version: "2.333.1"
     syft_version: "1.19.0"
+    cosign_version: "3.0.6"
     runner_user: runner
     runner_home: /opt/actions-runner
     runner_service_name: "actions.runner.stevedwray-proxmox-homelab.ci-runner-pve-test.service"
@@ -81,6 +82,13 @@
           sh -s -- -b /usr/local/bin v{{ syft_version }}
       args:
         creates: /usr/local/bin/syft
+
+    - name: Install Cosign # noqa command-instead-of-module
+      ansible.builtin.shell: |
+        curl -sSfL "https://github.com/sigstore/cosign/releases/download/v{{ cosign_version }}/cosign-linux-amd64" \
+          -o /usr/local/bin/cosign && chmod +x /usr/local/bin/cosign
+      args:
+        creates: /usr/local/bin/cosign
 
     - name: Create runner user
       ansible.builtin.user:
