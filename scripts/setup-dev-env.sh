@@ -306,6 +306,8 @@ main() {
 
 # Handle script arguments
 case "${1:-}" in
+    "")
+        ;;
     --help|-h)
         echo "Usage: $0 [OPTIONS]"
         echo

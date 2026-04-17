@@ -23,4 +23,28 @@ regexes = [
     '''__GENERATE:.*?__''',
     # PVEAPIToken=... in documentation (redacted example, not a real token)
     '''PVEAPIToken=\.\.\.|PVEAPIToken=[A-Za-z0-9@!]+\.\.\.$''',
+    # Ansible vault_password_file directives and dummy CI values
+    '''vault_password_file''',
+    # dummy-* placeholder values used in CI terraform validate
+    '''dummy-''',
 ]
+
+# Keyword-based rule: catches plaintext passwords assigned to password-like
+# variables regardless of entropy. Matches: password = "...", passwd: '...',
+# secret = "...", etc. in any source file.
+[[rules]]
+id = "keyword-password"
+description = "Plaintext password or secret assigned to a keyword variable"
+regex = '''(?i)(?:password|passwd|pwd|secret|pass)\s*[:=]\s*["'][^"']{6,}["']'''
+entropy = 0
+
+    [rules.allowlist]
+    description = "Exclude known safe patterns"
+    regexes = [
+        # Ansible vault_password_file directives
+        '''vault_password_file''',
+        # Placeholder / template values
+        '''(?i)(changeme|placeholder|example|dummy|your[-_]|<[^>]+>|\$\{|\{\{)''',
+        # Environment variable references  (${VAR}, {{ var }}, $VAR)
+        '''["']\s*\$''',
+    ]
