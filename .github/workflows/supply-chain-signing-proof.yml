@@ -16,7 +16,7 @@ on:
       target_image:
         description: "Image name within the Harbor project (overrides vars.HARBOR_PROOF_TARGET_IMAGE)"
         required: true
-        default: "phase05-signing-proof"
+        default: "apps/phase05-signing-proof"
         type: string
 
 jobs:
@@ -35,7 +35,7 @@ jobs:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
           TARGET_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
-          TARGET_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'phase05-signing-proof' }}
+          TARGET_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'apps/phase05-signing-proof' }}
         run: |
           set -euo pipefail
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
