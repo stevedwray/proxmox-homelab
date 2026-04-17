@@ -23,6 +23,8 @@ jobs:
   build-proof-image:
     name: Build and Push Proof Image
     runs-on: [self-hosted, pve-test, build]
+    permissions:
+      security-events: write
     outputs:
       image_ref: ${{ steps.meta.outputs.image_ref }}
       digest_ref: ${{ steps.meta.outputs.digest_ref }}
@@ -149,8 +151,69 @@ jobs:
 
           echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
           echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+          echo "DIGEST_REF=$DIGEST_REF" >> "$GITHUB_ENV"
+
+      - name: Install Trivy CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Run Trivy image scan
+        env:
+          TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          trivy image \
+            --username "$TRIVY_USERNAME" \
+            --password "$TRIVY_PASSWORD" \
+            --insecure \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif \
+            "$IMAGE_REF"
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+
+      - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          syft scan --from registry "$IMAGE_REF" --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-proof-${{ github.run_id }}
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "$DIGEST_REF"
+          rm -f /tmp/cosign.key
+
+      - name: Verify with public key
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "$DIGEST_REF"
 
   trivy-image-scan:
+    if: ${{ false }}
     name: Trivy Image Scan
     runs-on: [self-hosted, pve-test, build]
     needs:
@@ -188,6 +251,7 @@ jobs:
           sarif_file: trivy-image.sarif
 
   generate-sbom:
+    if: ${{ false }}
     name: Generate SBOM
     runs-on: [self-hosted, pve-test, build]
     needs:
@@ -214,6 +278,7 @@ jobs:
           retention-days: 90
 
   sign-image:
+    if: ${{ false }}
     name: Sign Image With Cosign
     runs-on: [self-hosted, pve-test, build]
     needs:
@@ -236,6 +301,7 @@ jobs:
           rm -f /tmp/cosign.key
 
   verify-signature:
+    if: ${{ false }}
     name: Verify Signature
     runs-on: [self-hosted, pve-test, build]
     needs:
