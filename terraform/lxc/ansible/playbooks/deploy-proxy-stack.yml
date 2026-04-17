@@ -136,13 +136,18 @@
                     - X-authentik-email
             routers:
               traefik-dashboard:
-                rule: "PathPrefix(`/dashboard`) || PathPrefix(`/api`)"
+                rule: "Host(`traefik.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: api@internal
                 middlewares:
                   - authentik
-                tls: {}
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:
