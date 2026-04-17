@@ -56,9 +56,102 @@ jobs:
         with:
           sarif_file: trivy-image.sarif
 
+      - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          syft scan --from registry "${{ github.event.inputs.image_ref }}" \
+            --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-${{ github.sha }}
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Resolve digest and signing policy
+        id: sign_target
+        env:
+          IMAGE_REF: ${{ github.event.inputs.image_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_REF" =~ ^10\.57\.3\.10\/ ]]; then
+            echo "Security scan signing requires Harbor image refs (10.57.3.10/...)." >&2
+            exit 1
+          fi
+
+          if [[ "$IMAGE_REF" == *@sha256:* ]]; then
+            sign_ref="$IMAGE_REF"
+          else
+            registry="${IMAGE_REF%%/*}"
+            repo_tag="${IMAGE_REF#*/}"
+            repo="${repo_tag%:*}"
+            tag="${repo_tag##*:}"
+
+            digest="$(curl -fsSI -u "$HARBOR_USER:$HARBOR_PASS" \
+              -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+              "http://${registry}/v2/${repo}/manifests/${tag}" \
+              | tr -d '\r' \
+              | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+              | tail -n 1)"
+
+            if [[ -z "$digest" ]]; then
+              echo "Unable to resolve image digest for $IMAGE_REF" >&2
+              exit 1
+            fi
+
+            sign_ref="${registry}/${repo}@${digest}"
+          fi
+
+          registry="${sign_ref%%/*}"
+          repo_digest="${sign_ref#*/}"
+          repo="${repo_digest%@*}"
+
+          probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
+          probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
+          probe_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
+          if [[ "$probe_status" != "202" ]]; then
+            echo "Cosign push preflight failed for ${repo} (HTTP ${probe_status})." >&2
+            echo "HARBOR_ROBOT_* must have push rights for this repository to store signature artifacts." >&2
+            exit 1
+          fi
+
+          probe_location="$(awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2}' "$probe_headers" | tr -d '\r')"
+          if [[ -n "$probe_location" ]]; then
+            if [[ "$probe_location" =~ ^https?:// ]]; then
+              cancel_url="$probe_location"
+            else
+              cancel_url="http://${registry}${probe_location}"
+            fi
+            curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
+          fi
+
+          echo "sign_ref=$sign_ref" >> "$GITHUB_OUTPUT"
+
+      - name: Sign image
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
+          rm -f /tmp/cosign.key
+
+      - name: Verify signature
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "${{ steps.sign_target.outputs.sign_ref }}"
+
   generate-sbom:
+    if: ${{ false }}
     name: Generate SBOM
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, pve-test, build]
     needs:
       - trivy-image-scan
@@ -83,8 +176,8 @@ jobs:
           retention-days: 90
 
   sign-image:
+    if: ${{ false }}
     name: Sign image with Cosign
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, pve-test, build]
     needs:
       - trivy-image-scan
@@ -166,8 +259,8 @@ jobs:
           rm -f /tmp/cosign.key
 
   verify-signature:
+    if: ${{ false }}
     name: Verify signature
-    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, pve-test, build]
     needs:
       - sign-image
