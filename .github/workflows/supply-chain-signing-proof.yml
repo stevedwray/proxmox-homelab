@@ -1,6 +1,11 @@
 name: Supply Chain Signing Proof
 
 on:
+  push:
+    branches:
+      - dev/pve-test
+    paths:
+      - .github/workflows/supply-chain-signing-proof.yml
   workflow_dispatch:
     inputs:
       target_project:
@@ -29,8 +34,8 @@ jobs:
         env:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          TARGET_PROJECT: ${{ github.event.inputs.target_project }}
-          TARGET_IMAGE: ${{ github.event.inputs.target_image }}
+          TARGET_PROJECT: ${{ github.event.inputs.target_project || 'library' }}
+          TARGET_IMAGE: ${{ github.event.inputs.target_image || 'phase05-signing-proof' }}
         run: |
           set -euo pipefail
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
