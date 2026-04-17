@@ -148,6 +148,22 @@
                     - main: "gibbsgreatly.xyz"
                       sans:
                         - "*.gibbsgreatly.xyz"
+              grafana:
+                rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
+                entryPoints:
+                  - websecure
+                service: grafana-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+            services:
+              grafana-backend:
+                loadBalancer:
+                  servers:
+                    - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:

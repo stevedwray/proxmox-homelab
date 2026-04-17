@@ -34,7 +34,7 @@ Phase 04 — Core Shared Services
 
 ## Objective
 
-LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Grafana is accessible at `http://10.57.1.12:3000`, VictoriaMetrics is scraping pve-test node_exporter, Loki is receiving logs from at least one LXC, and Grafana login works via Authentik OIDC.
+LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Grafana is primarily accessed via Traefik at `https://grafana.gibbsgreatly.xyz` with Authentik protection, the internal URL `http://10.57.1.12:3000` remains available for break-glass operations, VictoriaMetrics is scraping pve-test node_exporter, Loki is receiving logs from at least one LXC, and Grafana login works via Authentik OIDC.
 
 ## Scope
 
@@ -75,6 +75,7 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 - All images via Harbor proxy — never direct pulls
 - VictoriaMetrics retention period: `90d`
 - Grafana OIDC integration with Authentik (generic OAuth) — `GF_AUTH_GENERIC_OAUTH_ENABLED: "true"`
+- Preferred Grafana access path is `https://grafana.gibbsgreatly.xyz` via Traefik; direct `http://10.57.1.12:3000` is operational fallback only
 - Create the Authentik OIDC provider in Authentik UI before deploying Grafana
 - `GRAFANA_OAUTH_CLIENT_SECRET` comes from the Authentik OIDC provider config
 - Secrets injected via `./with-secrets bash -c 'ansible-playbook ... --extra-vars "..."'` — values come from `terraform/secrets.enc.yaml` via SOPS
@@ -89,6 +90,7 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 - [ ] Grafana datasource "VictoriaMetrics" configured and test passes
 - [ ] Grafana datasource "Loki" configured and test passes
 - [ ] Grafana admin login via Authentik OIDC works
+- [ ] Grafana route `https://grafana.gibbsgreatly.xyz` responds through Traefik and enforces Authentik access flow
 - [ ] VictoriaMetrics scraping at least pve-test node_exporter
 - [ ] Loki receiving logs from at least one LXC (via Promtail)
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events
