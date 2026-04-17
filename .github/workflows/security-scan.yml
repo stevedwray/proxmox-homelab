@@ -39,7 +39,7 @@ concurrency:
 jobs:
   build-image:
     name: Build image for scan
-    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref == '' }}
+    if: ${{ github.event_name != 'workflow_dispatch' || github.event.inputs.image_ref == '' }}
     runs-on: [self-hosted, pve-test, build]
     outputs:
       image_ref: ${{ steps.meta.outputs.image_ref }}
@@ -83,12 +83,12 @@ jobs:
           echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
           echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
 
-  # Phase 05 does not yet define a concrete build-image job in this workflow.
-  # This job is executable now via workflow_dispatch with an explicit Harbor
-  # image reference input and can be wired to needs: [build-image] in Phase 06.
+  # Unified image security path:
+  # - push/pull_request: build image then scan/sign by digest
+  # - workflow_dispatch: use explicit image_ref if supplied, otherwise auto-build
   trivy-image-scan:
     name: Trivy image scan
-    if: ${{ github.event_name == 'workflow_dispatch' && always() && (needs.build-image.result == 'success' || needs.build-image.result == 'skipped') }}
+    if: ${{ always() && (needs.build-image.result == 'success' || needs.build-image.result == 'skipped') }}
     needs:
       - build-image
     runs-on: [self-hosted, pve-test, build]
@@ -114,8 +114,15 @@ jobs:
         env:
           TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
+          INPUT_IMAGE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref || '' }}
+          BUILT_IMAGE_REF: ${{ needs.build-image.outputs.image_ref }}
         run: |
+          IMAGE_REF="${INPUT_IMAGE_REF:-$BUILT_IMAGE_REF}"
+          if [[ -z "$IMAGE_REF" ]]; then
+            echo "Unable to determine image reference for scan." >&2
+            exit 1
+          fi
+
           trivy image \
             --username "$TRIVY_USERNAME" \
             --password "$TRIVY_PASSWORD" \
@@ -138,8 +145,15 @@ jobs:
           SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
           SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
+          INPUT_IMAGE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref || '' }}
+          BUILT_IMAGE_REF: ${{ needs.build-image.outputs.image_ref }}
         run: |
+          IMAGE_REF="${INPUT_IMAGE_REF:-$BUILT_IMAGE_REF}"
+          if [[ -z "$IMAGE_REF" ]]; then
+            echo "Unable to determine image reference for SBOM generation." >&2
+            exit 1
+          fi
+
           syft scan --from registry "$IMAGE_REF" \
             --output spdx-json=sbom.spdx.json
 
@@ -153,12 +167,19 @@ jobs:
       - name: Resolve digest and signing policy
         id: sign_target
         env:
-          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
+          INPUT_IMAGE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref || '' }}
+          BUILT_IMAGE_REF: ${{ needs.build-image.outputs.image_ref }}
           BUILT_DIGEST_REF: ${{ needs.build-image.outputs.digest_ref }}
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
           set -euo pipefail
+
+          IMAGE_REF="${INPUT_IMAGE_REF:-$BUILT_IMAGE_REF}"
+          if [[ -z "$IMAGE_REF" ]]; then
+            echo "Unable to determine image reference for signing policy." >&2
+            exit 1
+          fi
 
           if [[ -n "$BUILT_DIGEST_REF" ]]; then
             sign_ref="$BUILT_DIGEST_REF"
