@@ -75,6 +75,25 @@ jobs:
           path: sbom.spdx.json
           retention-days: 90
 
+  sign-image:
+    name: Sign image with Cosign
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Sign image
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --key /tmp/cosign.key "${{ github.event.inputs.image_ref }}"
+          rm -f /tmp/cosign.key
+
   sast-scan:
     runs-on: ubuntu-latest
     permissions:
