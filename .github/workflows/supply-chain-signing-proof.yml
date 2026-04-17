@@ -39,23 +39,22 @@ jobs:
         run: |
           set -euo pipefail
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
-          SOURCE_REF="docker://docker.io/library/alpine:3.20"
-          DEST_REF="docker://${IMAGE_REF}"
+          SOURCE_REF="docker.io/library/alpine:3.20"
 
-          # Use skopeo with explicit TLS controls so Harbor HTTP works without daemon config changes.
-          docker run --rm quay.io/skopeo/stable:latest \
-            copy \
-            --dest-creds "${HARBOR_USER}:${HARBOR_PASS}" \
-            --dest-tls-verify=false \
-            "$SOURCE_REF" \
-            "$DEST_REF"
+          CRANE_VERSION="v0.20.3"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" crane
+          chmod +x "$RUNNER_TEMP/crane"
 
-          DIGEST="$(docker run --rm quay.io/skopeo/stable:latest \
-            inspect \
-            --creds "${HARBOR_USER}:${HARBOR_PASS}" \
-            --tls-verify=false \
-            --format '{{.Digest}}' \
-            "$DEST_REF")"
+          AUTH_B64="$(printf '%s:%s' "$HARBOR_USER" "$HARBOR_PASS" | base64 -w0)"
+          mkdir -p "$HOME/.docker"
+          cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${AUTH_B64}"}}}
+          EOF
+
+          "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
+
+          DIGEST="$("$RUNNER_TEMP/crane" digest --insecure "$IMAGE_REF")"
           DIGEST_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
           if [[ -z "$DIGEST_REF" ]]; then
             echo "Failed to resolve digest for $IMAGE_REF" >&2
