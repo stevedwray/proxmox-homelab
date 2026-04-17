@@ -95,10 +95,26 @@ jobs:
             repo="${repo_tag%:*}"
             tag="${repo_tag##*:}"
 
-            digest="$(curl -fsSI -u "$HARBOR_USER:$HARBOR_PASS" \
-              -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
-              "http://${registry}/v2/${repo}/manifests/${tag}" \
-              | tr -d '\r' \
+            manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
+            manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+            manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
+
+            manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+              -H "Accept: ${manifest_accept}" \
+              "$manifest_url" || true)"
+
+            if [[ "$manifest_status" != "200" ]]; then
+              manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+                -H "Accept: ${manifest_accept}" \
+                "$manifest_url" || true)"
+            fi
+
+            if [[ "$manifest_status" != "200" ]]; then
+              echo "Unable to resolve digest for $IMAGE_REF (HTTP ${manifest_status} from ${manifest_url})." >&2
+              exit 1
+            fi
+
+            digest="$(tr -d '\r' < "$manifest_headers" \
               | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
               | tail -n 1)"
 
@@ -208,10 +224,26 @@ jobs:
             repo="${repo_tag%:*}"
             tag="${repo_tag##*:}"
 
-            digest="$(curl -fsSI -u "$HARBOR_USER:$HARBOR_PASS" \
-              -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
-              "http://${registry}/v2/${repo}/manifests/${tag}" \
-              | tr -d '\r' \
+            manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
+            manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
+            manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
+
+            manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+              -H "Accept: ${manifest_accept}" \
+              "$manifest_url" || true)"
+
+            if [[ "$manifest_status" != "200" ]]; then
+              manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+                -H "Accept: ${manifest_accept}" \
+                "$manifest_url" || true)"
+            fi
+
+            if [[ "$manifest_status" != "200" ]]; then
+              echo "Unable to resolve digest for $IMAGE_REF (HTTP ${manifest_status} from ${manifest_url})." >&2
+              exit 1
+            fi
+
+            digest="$(tr -d '\r' < "$manifest_headers" \
               | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
               | tail -n 1)"
 
