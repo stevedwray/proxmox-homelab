@@ -19,6 +19,9 @@ on:
         default: "apps/phase05-signing-proof"
         type: string
 
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
 jobs:
   build-proof-image:
     name: Build and Push Proof Image
