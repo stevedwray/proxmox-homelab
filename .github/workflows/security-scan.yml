@@ -10,13 +10,20 @@ on:
     branches:
       - main
       - 'dev/pve-test'
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Harbor image reference to scan (for example: 10.57.3.10/project/image:tag)"
+        required: true
+        type: string
 
 jobs:
-  # Phase 05 task 01 placeholder job. This is fully wired but gated off until
-  # Phase 06 introduces the concrete build-image job and Harbor image reference.
+  # Phase 05 does not yet define a concrete build-image job in this workflow.
+  # This job is executable now via workflow_dispatch with an explicit Harbor
+  # image reference input and can be wired to needs: [build-image] in Phase 06.
   trivy-image-scan:
     name: Trivy image scan
-    if: ${{ false }}
+    if: ${{ github.event_name == 'workflow_dispatch' }}
     runs-on: [self-hosted, pve-test, build]
     permissions:
       security-events: write
@@ -35,7 +42,7 @@ jobs:
         uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
         with:
           scan-type: image
-          image-ref: "10.57.3.10/phase06/placeholder:latest"
+          image-ref: ${{ github.event.inputs.image_ref }}
           format: sarif
           output: trivy-image.sarif
           severity: CRITICAL,HIGH
