@@ -91,15 +91,60 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: Resolve digest and signing policy
+        id: sign_target
+        env:
+          IMAGE_REF: ${{ github.event.inputs.image_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          if [[ "$IMAGE_REF" =~ ^10\.57\.3\.10\/(dockerhub|ghcr|quay|lscr)\/ ]]; then
+            echo "skip_sign=true" >> "$GITHUB_OUTPUT"
+            echo "sign_ref=" >> "$GITHUB_OUTPUT"
+            echo "Proxy-cache namespace detected; skipping Cosign push to read-only project."
+            exit 0
+          fi
+
+          if [[ "$IMAGE_REF" == *@sha256:* ]]; then
+            echo "skip_sign=false" >> "$GITHUB_OUTPUT"
+            echo "sign_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          registry="${IMAGE_REF%%/*}"
+          repo_tag="${IMAGE_REF#*/}"
+          repo="${repo_tag%:*}"
+          tag="${repo_tag##*:}"
+
+          digest="$(curl -fsSI -u "$HARBOR_USER:$HARBOR_PASS" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+            "http://${registry}/v2/${repo}/manifests/${tag}" \
+            | tr -d '\r' \
+            | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+            | tail -n 1)"
+
+          if [[ -z "$digest" ]]; then
+            echo "Unable to resolve image digest for $IMAGE_REF" >&2
+            exit 1
+          fi
+
+          echo "skip_sign=false" >> "$GITHUB_OUTPUT"
+          echo "sign_ref=${registry}/${repo}@${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Sign image
+        if: steps.sign_target.outputs.skip_sign != 'true'
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
         run: |
           printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
           chmod 600 /tmp/cosign.key
-          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ github.event.inputs.image_ref }}"
+          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
           rm -f /tmp/cosign.key
+
+      - name: Skip sign for proxy cache namespace
+        if: steps.sign_target.outputs.skip_sign == 'true'
+        run: echo "Cosign sign skipped for Harbor proxy-cache project image."
 
   sast-scan:
     runs-on: ubuntu-latest
