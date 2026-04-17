@@ -160,7 +160,7 @@ jobs:
             --output spdx-json=sbom.spdx.json
 
       - name: Upload SBOM as artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
         with:
           name: sbom-${{ github.sha }}
           path: sbom.spdx.json
