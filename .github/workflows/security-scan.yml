@@ -107,6 +107,7 @@ jobs:
             repo="${repo_tag%:*}"
             tag="${repo_tag##*:}"
             digest=""
+            manifest_status=""
 
             digest="$(crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
@@ -132,10 +133,24 @@ jobs:
               fi
             fi
 
+            if [[ -z "$digest" ]]; then
+              project="${repo%%/*}"
+              repository_path="${repo#*/}"
+              repository_encoded="${repository_path//\//%2F}"
+              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}"
+              digest="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" \
+                -H 'Accept: application/json' \
+                "$artifact_url" \
+                | jq -r '.digest // empty' 2>/dev/null || true)"
+            fi
+
             if [[ -n "$digest" ]]; then
               sign_ref="${registry}/${repo}@${digest}"
             else
               echo "Unable to resolve digest for $IMAGE_REF. Refusing tag-based signing." >&2
+              if [[ -n "$manifest_status" ]]; then
+                echo "Registry manifest probe status: ${manifest_status}" >&2
+              fi
               exit 1
             fi
           fi
@@ -251,35 +266,52 @@ jobs:
             repo_tag="${IMAGE_REF#*/}"
             repo="${repo_tag%:*}"
             tag="${repo_tag##*:}"
+            digest=""
+            manifest_status=""
+
+            digest="$(crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
 
             manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
             manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
-            digest=""
 
-            manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
-              -H "Accept: ${manifest_accept}" \
-              "$manifest_url" || true)"
-
-            if [[ "$manifest_status" != "200" ]]; then
-              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+            if [[ -z "$digest" ]]; then
+              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
                 -H "Accept: ${manifest_accept}" \
                 "$manifest_url" || true)"
+
+              if [[ "$manifest_status" != "200" ]]; then
+                manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+                  -H "Accept: ${manifest_accept}" \
+                  "$manifest_url" || true)"
+              fi
+
+              if [[ "$manifest_status" == "200" ]]; then
+                digest="$(tr -d '\r' < "$manifest_headers" \
+                  | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+                  | tail -n 1)"
+              fi
             fi
 
-            if [[ "$manifest_status" == "200" ]]; then
-              digest="$(tr -d '\r' < "$manifest_headers" \
-                | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
-                | tail -n 1)"
+            if [[ -z "$digest" ]]; then
+              project="${repo%%/*}"
+              repository_path="${repo#*/}"
+              repository_encoded="${repository_path//\//%2F}"
+              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}"
+              digest="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" \
+                -H 'Accept: application/json' \
+                "$artifact_url" \
+                | jq -r '.digest // empty' 2>/dev/null || true)"
             fi
 
             if [[ -n "$digest" ]]; then
               sign_ref="${registry}/${repo}@${digest}"
             else
-              # Some Harbor installs return 404 for manifest-by-tag lookups while
-              # still allowing registry clients to pull the tag. Cosign can sign tags.
-              echo "Digest lookup unavailable for $IMAGE_REF (HTTP ${manifest_status}); falling back to tag signing reference." >&2
-              sign_ref="$IMAGE_REF"
+              echo "Unable to resolve digest for $IMAGE_REF. Refusing tag-based signing." >&2
+              if [[ -n "$manifest_status" ]]; then
+                echo "Registry manifest probe status: ${manifest_status}" >&2
+              fi
+              exit 1
             fi
           fi
 
