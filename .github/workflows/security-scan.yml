@@ -99,12 +99,12 @@ jobs:
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
             manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
 
-            manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+            manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
               -H "Accept: ${manifest_accept}" \
               "$manifest_url" || true)"
 
             if [[ "$manifest_status" != "200" ]]; then
-              manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
                 -H "Accept: ${manifest_accept}" \
                 "$manifest_url" || true)"
             fi
@@ -132,7 +132,7 @@ jobs:
 
           probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
           probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
-          probe_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
+          probe_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
           if [[ "$probe_status" != "202" ]]; then
             echo "Cosign push preflight failed for ${repo} (HTTP ${probe_status})." >&2
             echo "HARBOR_ROBOT_* must have push rights for this repository to store signature artifacts." >&2
@@ -146,7 +146,7 @@ jobs:
             else
               cancel_url="http://${registry}${probe_location}"
             fi
-            curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
+            curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
           fi
 
           echo "sign_ref=$sign_ref" >> "$GITHUB_OUTPUT"
@@ -228,12 +228,12 @@ jobs:
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
             manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
 
-            manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+            manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
               -H "Accept: ${manifest_accept}" \
               "$manifest_url" || true)"
 
             if [[ "$manifest_status" != "200" ]]; then
-              manifest_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
+              manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X GET -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
                 -H "Accept: ${manifest_accept}" \
                 "$manifest_url" || true)"
             fi
@@ -261,7 +261,7 @@ jobs:
 
           probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
           probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
-          probe_status="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
+          probe_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$probe_headers" -o /dev/null -w '%{http_code}' "$probe_url")"
           if [[ "$probe_status" != "202" ]]; then
             echo "Cosign push preflight failed for ${repo} (HTTP ${probe_status})." >&2
             echo "HARBOR_ROBOT_* must have push rights for this repository to store signature artifacts." >&2
@@ -275,7 +275,7 @@ jobs:
             else
               cancel_url="http://${registry}${probe_location}"
             fi
-            curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
+            curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$cancel_url" || true
           fi
 
           echo "sign_ref=$sign_ref" >> "$GITHUB_OUTPUT"
