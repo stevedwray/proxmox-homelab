@@ -5,8 +5,8 @@
   gather_facts: false
 
   vars:
-    step_ca_version: "0.28.4"
-    step_cli_version: "0.28.7"
+    step_ca_version: "0.30.2"
+    step_cli_version: "0.30.2"
     step_ca_install_dir: /tmp/step-ca-install
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
@@ -47,14 +47,14 @@
 
     - name: Download step CLI release
       ansible.builtin.get_url:
-        url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_{{ step_cli_version }}_amd64.tar.gz"
+        url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_amd64.tar.gz"
         dest: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
         mode: "0644"
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
 
     - name: Download step-ca release
       ansible.builtin.get_url:
-        url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
+        url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_amd64.tar.gz"
         dest: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
         mode: "0644"
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
@@ -162,13 +162,13 @@
           - "{{ ansible_host }}"
           - --address
           - :443
+          - --acme
           - --provisioner
-          - acme
+          - homelab-admin
           - --password-file
           - "{{ step_ca_steppath }}/password.txt"
           - --provisioner-password-file
           - "{{ step_ca_steppath }}/provisioner-password.txt"
-          - --non-interactive
       args:
         chdir: "{{ step_ca_steppath }}"
       environment:
@@ -234,18 +234,11 @@
       run_once: true
 
     - name: Export root CA certificate for managed trust distribution
-      ansible.builtin.command:
-        argv:
-          - step
-          - ca
-          - root
-          - /tmp/homelab-root.crt
-          - --ca-url
-          - "https://{{ ansible_host }}"
-          - --root
-          - "{{ step_ca_steppath }}/certs/root_ca.crt"
-      environment:
-        STEPPATH: "{{ step_ca_steppath }}"
+      ansible.builtin.copy:
+        src: "{{ step_ca_steppath }}/certs/root_ca.crt"
+        dest: /tmp/homelab-root.crt
+        mode: "0644"
+        remote_src: true
       changed_when: false
 
     - name: Fetch root CA certificate to the repository

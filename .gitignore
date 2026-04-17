@@ -10,9 +10,6 @@ storage-audit
 *.dec.yaml
 *.dec.env
 
-# step-ca root cert exported during deployment
-certs/homelab-root.crt
-
 # Terraform
 *.tfstate
 *.tfstate.*
