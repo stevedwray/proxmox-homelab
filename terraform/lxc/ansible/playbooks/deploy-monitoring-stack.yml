@@ -71,7 +71,7 @@
     - name: Write Loki configuration
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/loki/config.yml"
-        mode: "0640"
+        mode: "0644"
         content: |
           auth_enabled: false
           server:
@@ -102,7 +102,7 @@
     - name: Write Promtail configuration
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/promtail-config.yml"
-        mode: "0640"
+        mode: "0644"
         content: |
           server:
             http_listen_port: 9080
@@ -169,6 +169,7 @@
                 - "3000:3000"
               environment:
                 GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
+                GF_SERVER_ROOT_URL: "http://10.57.1.12:3000"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
                 GF_AUTH_GENERIC_OAUTH_NAME: "Authentik"
                 GF_AUTH_GENERIC_OAUTH_CLIENT_ID: "{{ grafana_oauth_client_id }}"
