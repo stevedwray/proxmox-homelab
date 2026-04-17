@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## GitHub Issue
 
@@ -60,12 +60,12 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 
 ## Acceptance Criteria
 
-- [ ] `trivy-image-scan` job present in CI workflow
-- [ ] Job uses `runs-on: [self-hosted, pve-test, build]`
-- [ ] Docker login to `10.57.3.10` present (uses `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_PASSWORD` secrets)
-- [ ] `exit-code: "1"` set for CRITICAL/HIGH
-- [ ] SARIF uploaded to GitHub Security tab (`upload-sarif` step)
-- [ ] Commit pushed to `dev/pve-test`
+- [x] `trivy-image-scan` job present in CI workflow
+- [x] Job uses `runs-on: [self-hosted, pve-test, build]`
+- [x] Docker login to `10.57.3.10` present (uses `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_PASSWORD` secrets)
+- [x] `exit-code: "1"` set for CRITICAL/HIGH
+- [x] SARIF uploaded to GitHub Security tab (`upload-sarif` step)
+- [x] Commit pushed to `dev/pve-test`
 
 ## Session Prompt
 
