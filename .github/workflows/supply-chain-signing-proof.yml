@@ -56,6 +56,17 @@ jobs:
           fi
           CANDIDATES+=("${DEFAULT_CANDIDATES[@]}")
 
+          # Discover additional candidate projects from Harbor catalog visibility.
+          CATALOG_JSON="$RUNNER_TEMP/harbor-catalog.json"
+          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://10.57.3.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then
+            mapfile -t CATALOG_PROJECTS < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); repos=data.get("repositories") or []; projects=sorted({r.split("/",1)[0] for r in repos if isinstance(r,str) and "/" in r}); print("\n".join(projects))' "$CATALOG_JSON" 2>/dev/null || true)
+
+            for project in "${CATALOG_PROJECTS[@]}"; do
+              CANDIDATES+=("${project}/phase05-signing-proof")
+              CANDIDATES+=("${project}/apps/phase05-signing-proof")
+            done
+          fi
+
           declare -A SEEN=()
           declare -a UNIQUE_CANDIDATES=()
           for candidate in "${CANDIDATES[@]}"; do
