@@ -157,7 +157,7 @@ deploy_stack_infrastructure() {
 
   # Plan infrastructure
   log_info "Planning infrastructure..."
-  if ! "$PROJECT_ROOT/with-secrets" terragrunt plan -no-color \
+  if ! "$PROJECT_ROOT/with-secrets" terragrunt plan -no-color -lock=false \
     > "$LOG_DIR/${service}-plan.log" 2>&1; then
     log_error "Terragrunt plan failed (see $LOG_DIR/${service}-plan.log)"
     popd > /dev/null
