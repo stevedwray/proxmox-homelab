@@ -28,3 +28,25 @@
   when: >-
     apt_cacher_host | default('', true) | string | length == 0
     or ansible_host | default('', true) | string == apt_cacher_host | string
+
+- name: Check whether homelab root CA exists on the control node
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+  delegate_to: localhost
+  become: false
+  register: lxc_base_homelab_root_ca_local
+
+- name: Install homelab root CA on managed host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+    dest: /usr/local/share/ca-certificates/homelab-root.crt
+    mode: "0644"
+  when: lxc_base_homelab_root_ca_local.stat.exists
+  register: lxc_base_homelab_root_ca_copy
+
+- name: Refresh CA trust store after root CA update
+  ansible.builtin.command:
+    cmd: update-ca-certificates
+  when:
+    - lxc_base_homelab_root_ca_local.stat.exists
+    - lxc_base_homelab_root_ca_copy.changed

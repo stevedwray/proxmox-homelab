@@ -1,0 +1,45 @@
+# Monitoring stack (VictoriaMetrics + Grafana + Loki) — mgmt_seg zone
+hostname: monitoring-stack
+ip_address: "10.57.1.12/24"
+gateway: "10.57.1.1"
+proxmox_node: pve-test
+network:
+  zone: mgmt_seg
+vmid: 154
+cores: 2
+memory: 1536
+swap: 1024
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "50G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - monitoring
+  - grafana
+  - loki
+  - victoria-metrics
+  - infrastructure
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+  - authentik-stack
+  - proxy-stack
+  - step-ca-stack
+provides:
+  - service: grafana-http
+    port: 3000
+    protocol: tcp
+  - service: victoriametrics-http
+    port: 8428
+    protocol: tcp
+  - service: loki-http
+    port: 3100
+    protocol: tcp
+ansible_playbook: "deploy-monitoring-stack"
+portainer_agent: true
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: "10.57.3.11"

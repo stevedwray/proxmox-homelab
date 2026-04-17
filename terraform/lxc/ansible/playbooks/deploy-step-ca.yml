@@ -11,7 +11,6 @@
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
     step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
-    step_ca_trust_host: "{{ lookup('env', 'PROXMOX_HOST') | default('pve-test.gibbsgreatly.xyz', true) }}"
     step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') }}"
     step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
 
@@ -169,6 +168,7 @@
           - "{{ step_ca_steppath }}/password.txt"
           - --provisioner-password-file
           - "{{ step_ca_steppath }}/provisioner-password.txt"
+          - --non-interactive
       args:
         chdir: "{{ step_ca_steppath }}"
       environment:
@@ -233,43 +233,24 @@
       become: false
       run_once: true
 
+    - name: Export root CA certificate for managed trust distribution
+      ansible.builtin.command:
+        argv:
+          - step
+          - ca
+          - root
+          - /tmp/homelab-root.crt
+          - --ca-url
+          - "https://{{ ansible_host }}"
+          - --root
+          - "{{ step_ca_steppath }}/certs/root_ca.crt"
+      environment:
+        STEPPATH: "{{ step_ca_steppath }}"
+      changed_when: false
+
     - name: Fetch root CA certificate to the repository
       ansible.builtin.fetch:
-        src: "{{ step_ca_steppath }}/certs/root_ca.crt"
+        src: /tmp/homelab-root.crt
         dest: "{{ step_ca_root_cert_local }}"
         flat: true
       run_once: true
-
-    - name: Copy root CA certificate to the pve-test host
-      ansible.builtin.command:
-        argv:
-          - scp
-          - -F
-          - /dev/null
-          - -o
-          - StrictHostKeyChecking=no
-          - -o
-          - UserKnownHostsFile=/dev/null
-          - "{{ step_ca_root_cert_local }}"
-          - "root@{{ step_ca_trust_host }}:/usr/local/share/ca-certificates/homelab-root.crt"
-      delegate_to: localhost
-      become: false
-      run_once: true
-      changed_when: false
-
-    - name: Trust the homelab root CA on the pve-test host
-      ansible.builtin.command:
-        argv:
-          - ssh
-          - -F
-          - /dev/null
-          - -o
-          - StrictHostKeyChecking=no
-          - -o
-          - UserKnownHostsFile=/dev/null
-          - "root@{{ step_ca_trust_host }}"
-          - update-ca-certificates
-      delegate_to: localhost
-      become: false
-      run_once: true
-      changed_when: false
