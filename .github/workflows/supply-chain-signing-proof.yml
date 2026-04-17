@@ -62,6 +62,7 @@ jobs:
             mapfile -t CATALOG_PROJECTS < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); repos=data.get("repositories") or []; projects=sorted({r.split("/",1)[0] for r in repos if isinstance(r,str) and "/" in r}); print("\n".join(projects))' "$CATALOG_JSON" 2>/dev/null || true)
 
             for project in "${CATALOG_PROJECTS[@]}"; do
+              [[ -z "$project" ]] && continue
               CANDIDATES+=("${project}/phase05-signing-proof")
               CANDIDATES+=("${project}/apps/phase05-signing-proof")
             done
