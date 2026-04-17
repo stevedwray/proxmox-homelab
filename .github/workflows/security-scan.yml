@@ -14,7 +14,22 @@ on:
     inputs:
       image_ref:
         description: "Harbor image reference to scan (for example: 10.57.3.10/project/image:tag)"
-        required: true
+        required: false
+        type: string
+      source_ref:
+        description: "Optional upstream image to mirror into Harbor when image_ref is empty"
+        required: false
+        default: "docker.io/library/alpine:3.20"
+        type: string
+      target_project:
+        description: "Harbor project for auto-built workflow_dispatch image"
+        required: false
+        default: "library"
+        type: string
+      target_image:
+        description: "Harbor image path for auto-built workflow_dispatch image"
+        required: false
+        default: "phase05-signing-proof"
         type: string
 
 concurrency:
@@ -22,12 +37,60 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  build-image:
+    name: Build image for scan
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref == '' }}
+    runs-on: [self-hosted, pve-test, build]
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      digest_ref: ${{ steps.meta.outputs.digest_ref }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Build and push image
+        id: meta
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          SOURCE_REF: ${{ github.event.inputs.source_ref || 'docker.io/library/alpine:3.20' }}
+          TARGET_PROJECT: ${{ github.event.inputs.target_project || 'library' }}
+          TARGET_IMAGE: ${{ github.event.inputs.target_image || 'phase05-signing-proof' }}
+        run: |
+          set -euo pipefail
+
+          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+
+          CRANE_VERSION="v0.20.6"
+          curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" crane
+          chmod +x "$RUNNER_TEMP/crane"
+
+          AUTH_B64="$(printf '%s:%s' "$HARBOR_USER" "$HARBOR_PASS" | base64 -w0)"
+          mkdir -p "$HOME/.docker"
+          cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${AUTH_B64}"}}}
+          EOF
+
+          "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
+          DIGEST="$($RUNNER_TEMP/crane digest --insecure "$IMAGE_REF")"
+          DIGEST_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
+
+          if [[ -z "$DIGEST" || -z "$DIGEST_REF" ]]; then
+            echo "Failed to resolve digest for $IMAGE_REF" >&2
+            exit 1
+          fi
+
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+
   # Phase 05 does not yet define a concrete build-image job in this workflow.
   # This job is executable now via workflow_dispatch with an explicit Harbor
   # image reference input and can be wired to needs: [build-image] in Phase 06.
   trivy-image-scan:
     name: Trivy image scan
-    if: ${{ github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'workflow_dispatch' && always() && (needs.build-image.result == 'success' || needs.build-image.result == 'skipped') }}
+    needs:
+      - build-image
     runs-on: [self-hosted, pve-test, build]
     permissions:
       security-events: write
@@ -51,6 +114,7 @@ jobs:
         env:
           TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
         run: |
           trivy image \
             --username "$TRIVY_USERNAME" \
@@ -60,7 +124,7 @@ jobs:
             --exit-code 1 \
             --format sarif \
             --output trivy-image.sarif \
-            "${{ github.event.inputs.image_ref }}"
+            "$IMAGE_REF"
 
       - name: Upload image SARIF
         uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
@@ -74,8 +138,9 @@ jobs:
           SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
           SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
         run: |
-          syft scan --from registry "${{ github.event.inputs.image_ref }}" \
+          syft scan --from registry "$IMAGE_REF" \
             --output spdx-json=sbom.spdx.json
 
       - name: Upload SBOM as artifact
@@ -88,20 +153,25 @@ jobs:
       - name: Resolve digest and signing policy
         id: sign_target
         env:
-          IMAGE_REF: ${{ github.event.inputs.image_ref }}
+          IMAGE_REF: ${{ github.event.inputs.image_ref != '' && github.event.inputs.image_ref || needs.build-image.outputs.image_ref }}
+          BUILT_DIGEST_REF: ${{ needs.build-image.outputs.digest_ref }}
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
           set -euo pipefail
+
+          if [[ -n "$BUILT_DIGEST_REF" ]]; then
+            sign_ref="$BUILT_DIGEST_REF"
+          fi
 
           if [[ ! "$IMAGE_REF" =~ ^10\.57\.3\.10\/ ]]; then
             echo "Security scan signing requires Harbor image refs (10.57.3.10/...)." >&2
             exit 1
           fi
 
-          if [[ "$IMAGE_REF" == *@sha256:* ]]; then
+          if [[ -z "${sign_ref:-}" && "$IMAGE_REF" == *@sha256:* ]]; then
             sign_ref="$IMAGE_REF"
-          else
+          elif [[ -z "${sign_ref:-}" ]]; then
             registry="${IMAGE_REF%%/*}"
             repo_tag="${IMAGE_REF#*/}"
             repo="${repo_tag%:*}"
