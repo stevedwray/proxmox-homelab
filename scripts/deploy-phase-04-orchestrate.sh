@@ -112,6 +112,13 @@ check_prerequisites() {
     log_success "Target node: pve-test ✓"
   fi
 
+  # Ensure with-secrets loads environment overrides for pve-test.
+  # Without this, with-secrets falls back to .env (pve) and causes Proxmox 401s.
+  if [ "${PVE_ENV:-}" = "" ] && [ "$TF_VAR_proxmox_node" = "pve-test" ]; then
+    export PVE_ENV="pve-test"
+    log_info "Set PVE_ENV=pve-test for with-secrets commands"
+  fi
+
   # Check for SOPS secrets
   if ./with-secrets env | grep -q "AUTHENTIK_SECRET_KEY"; then
     log_success "SOPS secrets accessible"
@@ -167,8 +174,9 @@ deploy_stack_infrastructure() {
 
   # Show plan summary
   local resources_planned
-  resources_planned=$(grep -c "will be created\|will be destroyed\|will be updated" \
-    "$LOG_DIR/${service}-plan.log" || echo "0")
+  resources_planned=$(grep -E -c "will be created|will be destroyed|will be updated" \
+    "$LOG_DIR/${service}-plan.log" || true)
+  resources_planned=${resources_planned:-0}
   log_info "Resources affected: $resources_planned"
 
   # Apply if not dry-run
@@ -191,7 +199,11 @@ deploy_stack_infrastructure() {
 deploy_stack_application() {
   local service=$1
   local stack_path="$STACK_DIR/$service"
-  local playbook_name="deploy-${service%-stack}"
+  local playbook_name
+  playbook_name=$(sed -n 's/^ansible_playbook:[[:space:]]*"\([^"]*\)"$/\1/p' "$stack_path/stack.yaml" | head -1)
+  if [ -z "$playbook_name" ]; then
+    playbook_name="deploy-${service%-stack}"
+  fi
   local playbook_path="$ANSIBLE_DIR/${playbook_name}.yml"
 
   log_step "Deploying Application: $service"
@@ -289,7 +301,7 @@ deploy_service() {
   log_success "$service deployment complete"
 
   # Small delay between services
-  if [ "$service" != "${SERVICES[-1]}" ]; then
+  if [ "$service" != "${SERVICES[-1]}" ] && [ "$DRY_RUN" = false ]; then
     log_info "Waiting 60s before next service..."
     sleep 60
   fi
