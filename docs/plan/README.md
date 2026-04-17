@@ -201,7 +201,6 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 |---|---|---|
 | VNet firewall cross-zone rule bug | `terraform/lxc/main.tf:86-95` | `vnet_policy_candidates` requires both `from` and `to` to match the current container's VNet — impossible for cross-zone policies. No ACCEPT rules are generated. Proxmox firewall disabled for dev passes as a workaround. |
 | SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` until that gap is closed. |
-| Phase 04 delivery artifact gap | `terraform/lxc/stacks/` and `terraform/lxc/ansible/playbooks/` | Traefik and monitoring stack directories/playbooks are not present, and `step-ca-stack` references `deploy-step-ca` without a corresponding playbook. Task docs remain authoritative target state until these artifacts are implemented. |
 
 ## Notes
 
