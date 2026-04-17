@@ -30,23 +30,25 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
-      - name: Log in to Harbor
+      - name: Install Trivy CLI
         run: |
-          echo "$HARBOR_ROBOT_PASSWORD" | \
-            docker login http://10.57.3.10 -u "$HARBOR_ROBOT_USER" --password-stdin
-        env:
-          HARBOR_ROBOT_USER: ${{ secrets.HARBOR_ROBOT_USER }}
-          HARBOR_ROBOT_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
 
       - name: Run Trivy image scan
-        uses: aquasecurity/trivy-action@57a97c7e7821a5776cebc9bb87c984fa69cba8f1 # v0.35.0
-        with:
-          scan-type: image
-          image-ref: ${{ github.event.inputs.image_ref }}
-          format: sarif
-          output: trivy-image.sarif
-          severity: CRITICAL,HIGH
-          exit-code: "1"
+        env:
+          TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          trivy image \
+            --username "$TRIVY_USERNAME" \
+            --password "$TRIVY_PASSWORD" \
+            --insecure \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif \
+            "${{ github.event.inputs.image_ref }}"
 
       - name: Upload image SARIF
         uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
@@ -64,8 +66,13 @@ jobs:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
       - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
         run: |
-          syft "${{ github.event.inputs.image_ref }}" \
+          syft scan --from registry "${{ github.event.inputs.image_ref }}" \
             --output spdx-json=sbom.spdx.json
 
       - name: Upload SBOM as artifact
@@ -84,15 +91,60 @@ jobs:
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
+      - name: Resolve digest and signing policy
+        id: sign_target
+        env:
+          IMAGE_REF: ${{ github.event.inputs.image_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          if [[ "$IMAGE_REF" =~ ^10\.57\.3\.10\/(dockerhub|ghcr|quay|lscr)\/ ]]; then
+            echo "skip_sign=true" >> "$GITHUB_OUTPUT"
+            echo "sign_ref=" >> "$GITHUB_OUTPUT"
+            echo "Proxy-cache namespace detected; skipping Cosign push to read-only project."
+            exit 0
+          fi
+
+          if [[ "$IMAGE_REF" == *@sha256:* ]]; then
+            echo "skip_sign=false" >> "$GITHUB_OUTPUT"
+            echo "sign_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          registry="${IMAGE_REF%%/*}"
+          repo_tag="${IMAGE_REF#*/}"
+          repo="${repo_tag%:*}"
+          tag="${repo_tag##*:}"
+
+          digest="$(curl -fsSI -u "$HARBOR_USER:$HARBOR_PASS" \
+            -H 'Accept: application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json' \
+            "http://${registry}/v2/${repo}/manifests/${tag}" \
+            | tr -d '\r' \
+            | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+            | tail -n 1)"
+
+          if [[ -z "$digest" ]]; then
+            echo "Unable to resolve image digest for $IMAGE_REF" >&2
+            exit 1
+          fi
+
+          echo "skip_sign=false" >> "$GITHUB_OUTPUT"
+          echo "sign_ref=${registry}/${repo}@${digest}" >> "$GITHUB_OUTPUT"
+
       - name: Sign image
+        if: steps.sign_target.outputs.skip_sign != 'true'
         env:
           COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
           COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
         run: |
           printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
           chmod 600 /tmp/cosign.key
-          cosign sign --yes --key /tmp/cosign.key "${{ github.event.inputs.image_ref }}"
+          cosign sign --yes --allow-http-registry --registry-username "${{ secrets.HARBOR_ROBOT_USER }}" --registry-password "${{ secrets.HARBOR_ROBOT_PASSWORD }}" --key /tmp/cosign.key "${{ steps.sign_target.outputs.sign_ref }}"
           rm -f /tmp/cosign.key
+
+      - name: Skip sign for proxy cache namespace
+        if: steps.sign_target.outputs.skip_sign == 'true'
+        run: echo "Cosign sign skipped for Harbor proxy-cache project image."
 
   sast-scan:
     runs-on: ubuntu-latest
