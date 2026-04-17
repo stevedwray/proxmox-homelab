@@ -98,6 +98,7 @@ jobs:
             manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
             manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
+            digest=""
 
             manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
               -H "Accept: ${manifest_accept}" \
@@ -109,26 +110,29 @@ jobs:
                 "$manifest_url" || true)"
             fi
 
-            if [[ "$manifest_status" != "200" ]]; then
-              echo "Unable to resolve digest for $IMAGE_REF (HTTP ${manifest_status} from ${manifest_url})." >&2
-              exit 1
+            if [[ "$manifest_status" == "200" ]]; then
+              digest="$(tr -d '\r' < "$manifest_headers" \
+                | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+                | tail -n 1)"
             fi
 
-            digest="$(tr -d '\r' < "$manifest_headers" \
-              | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
-              | tail -n 1)"
-
-            if [[ -z "$digest" ]]; then
-              echo "Unable to resolve image digest for $IMAGE_REF" >&2
-              exit 1
+            if [[ -n "$digest" ]]; then
+              sign_ref="${registry}/${repo}@${digest}"
+            else
+              # Some Harbor installs return 404 for manifest-by-tag lookups while
+              # still allowing registry clients to pull the tag. Cosign can sign tags.
+              echo "Digest lookup unavailable for $IMAGE_REF (HTTP ${manifest_status}); falling back to tag signing reference." >&2
+              sign_ref="$IMAGE_REF"
             fi
-
-            sign_ref="${registry}/${repo}@${digest}"
           fi
 
           registry="${sign_ref%%/*}"
-          repo_digest="${sign_ref#*/}"
-          repo="${repo_digest%@*}"
+          repo_ref="${sign_ref#*/}"
+          if [[ "$repo_ref" == *"@"* ]]; then
+            repo="${repo_ref%@*}"
+          else
+            repo="${repo_ref%:*}"
+          fi
 
           probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
           probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
@@ -227,6 +231,7 @@ jobs:
             manifest_url="http://${registry}/v2/${repo}/manifests/${tag}"
             manifest_accept='application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json'
             manifest_headers="$RUNNER_TEMP/cosign-manifest-headers.txt"
+            digest=""
 
             manifest_status="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" -X HEAD -D "$manifest_headers" -o /dev/null -w '%{http_code}' \
               -H "Accept: ${manifest_accept}" \
@@ -238,26 +243,29 @@ jobs:
                 "$manifest_url" || true)"
             fi
 
-            if [[ "$manifest_status" != "200" ]]; then
-              echo "Unable to resolve digest for $IMAGE_REF (HTTP ${manifest_status} from ${manifest_url})." >&2
-              exit 1
+            if [[ "$manifest_status" == "200" ]]; then
+              digest="$(tr -d '\r' < "$manifest_headers" \
+                | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
+                | tail -n 1)"
             fi
 
-            digest="$(tr -d '\r' < "$manifest_headers" \
-              | awk -F': ' 'tolower($1)=="docker-content-digest"{print $2}' \
-              | tail -n 1)"
-
-            if [[ -z "$digest" ]]; then
-              echo "Unable to resolve image digest for $IMAGE_REF" >&2
-              exit 1
+            if [[ -n "$digest" ]]; then
+              sign_ref="${registry}/${repo}@${digest}"
+            else
+              # Some Harbor installs return 404 for manifest-by-tag lookups while
+              # still allowing registry clients to pull the tag. Cosign can sign tags.
+              echo "Digest lookup unavailable for $IMAGE_REF (HTTP ${manifest_status}); falling back to tag signing reference." >&2
+              sign_ref="$IMAGE_REF"
             fi
-
-            sign_ref="${registry}/${repo}@${digest}"
           fi
 
           registry="${sign_ref%%/*}"
-          repo_digest="${sign_ref#*/}"
-          repo="${repo_digest%@*}"
+          repo_ref="${sign_ref#*/}"
+          if [[ "$repo_ref" == *"@"* ]]; then
+            repo="${repo_ref%@*}"
+          else
+            repo="${repo_ref%:*}"
+          fi
 
           probe_url="http://${registry}/v2/${repo}/blobs/uploads/"
           probe_headers="$RUNNER_TEMP/cosign-sign-preflight-headers.txt"
