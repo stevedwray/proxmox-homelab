@@ -9,12 +9,12 @@ on:
   workflow_dispatch:
     inputs:
       target_project:
-        description: "Writable Harbor project for proof image (for example: homelab)"
+        description: "Writable Harbor project for proof image (overrides vars.HARBOR_PROOF_TARGET_PROJECT)"
         required: true
         default: "homelab"
         type: string
       target_image:
-        description: "Image name within the Harbor project"
+        description: "Image name within the Harbor project (overrides vars.HARBOR_PROOF_TARGET_IMAGE)"
         required: true
         default: "phase05-signing-proof"
         type: string
@@ -34,12 +34,34 @@ jobs:
         env:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          TARGET_PROJECT: ${{ github.event.inputs.target_project || 'homelab' }}
-          TARGET_IMAGE: ${{ github.event.inputs.target_image || 'phase05-signing-proof' }}
+          TARGET_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
+          TARGET_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'phase05-signing-proof' }}
         run: |
           set -euo pipefail
           IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
           SOURCE_REF="docker.io/library/alpine:3.20"
+
+          echo "Using Harbor target ${TARGET_PROJECT}/${TARGET_IMAGE}"
+
+          # Verify push permission up front and return a clear failure if robot scope is wrong.
+          PROBE_URL="http://10.57.3.10/v2/${TARGET_PROJECT}/${TARGET_IMAGE}/blobs/uploads/"
+          PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-headers.txt"
+          PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")"
+          if [[ "$PROBE_STATUS" != "202" ]]; then
+            echo "Harbor push preflight failed for ${TARGET_PROJECT}/${TARGET_IMAGE} (HTTP ${PROBE_STATUS})." >&2
+            echo "Update vars.HARBOR_PROOF_TARGET_PROJECT/vars.HARBOR_PROOF_TARGET_IMAGE or rotate HARBOR_ROBOT_* secrets to a writer account." >&2
+            exit 1
+          fi
+
+          PROBE_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2}' "$PROBE_HEADERS" | tr -d '\r')"
+          if [[ -n "$PROBE_LOCATION" ]]; then
+            if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
+              CANCEL_URL="$PROBE_LOCATION"
+            else
+              CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}"
+            fi
+            curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true
+          fi
 
           CRANE_VERSION="v0.20.3"
           curl -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
