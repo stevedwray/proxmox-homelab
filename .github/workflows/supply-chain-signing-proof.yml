@@ -1,0 +1,159 @@
+name: Supply Chain Signing Proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_project:
+        description: "Writable Harbor project for proof image (for example: library)"
+        required: true
+        default: "library"
+        type: string
+      target_image:
+        description: "Image name within the Harbor project"
+        required: true
+        default: "phase05-signing-proof"
+        type: string
+
+jobs:
+  build-proof-image:
+    name: Build and Push Proof Image
+    runs-on: [self-hosted, pve-test, build]
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      digest_ref: ${{ steps.meta.outputs.digest_ref }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Build and push proof image
+        id: meta
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          TARGET_PROJECT: ${{ github.event.inputs.target_project }}
+          TARGET_IMAGE: ${{ github.event.inputs.target_image }}
+        run: |
+          set -euo pipefail
+          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+
+          echo "$HARBOR_PASS" | docker login 10.57.3.10 -u "$HARBOR_USER" --password-stdin
+
+          cat > Dockerfile.proof <<'EOF'
+          FROM 10.57.3.10/dockerhub/library/alpine:3.20
+          ARG BUILD_STAMP
+          LABEL org.opencontainers.image.title="phase05-signing-proof"
+          LABEL org.opencontainers.image.revision="$BUILD_STAMP"
+          RUN echo "phase05-signing-proof:$BUILD_STAMP" > /proof.txt
+          CMD ["cat", "/proof.txt"]
+          EOF
+
+          docker build --build-arg BUILD_STAMP="${GITHUB_SHA}" -f Dockerfile.proof -t "$IMAGE_REF" .
+          docker push "$IMAGE_REF"
+
+          DIGEST_REF="$(docker inspect --format='{{index .RepoDigests 0}}' "$IMAGE_REF")"
+          if [[ -z "$DIGEST_REF" ]]; then
+            echo "Failed to resolve digest for $IMAGE_REF" >&2
+            exit 1
+          fi
+
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+
+  trivy-image-scan:
+    name: Trivy Image Scan
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - build-proof-image
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Trivy CLI
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Run Trivy image scan
+        env:
+          TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ needs.build-proof-image.outputs.image_ref }}
+        run: |
+          trivy image \
+            --username "$TRIVY_USERNAME" \
+            --password "$TRIVY_PASSWORD" \
+            --insecure \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif \
+            "$IMAGE_REF"
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@5c8a8a642e79153f5d047b10ec1cba1d1cc65699 # v3
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+
+  generate-sbom:
+    name: Generate SBOM
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ needs.build-proof-image.outputs.image_ref }}
+        run: |
+          syft scan --from registry "$IMAGE_REF" --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sbom-proof-${{ github.run_id }}
+          path: sbom.spdx.json
+          retention-days: 90
+
+  sign-image:
+    name: Sign Image With Cosign
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          DIGEST_REF: ${{ needs.build-proof-image.outputs.digest_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "$DIGEST_REF"
+          rm -f /tmp/cosign.key
+
+  verify-signature:
+    name: Verify Signature
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - sign-image
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Verify with public key
+        env:
+          DIGEST_REF: ${{ needs.build-proof-image.outputs.digest_ref }}
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "$DIGEST_REF"
