@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       target_project:
-        description: "Writable Harbor project for proof image (for example: library)"
+        description: "Writable Harbor project for proof image (for example: homelab)"
         required: true
-        default: "library"
+        default: "homelab"
         type: string
       target_image:
         description: "Image name within the Harbor project"
@@ -34,7 +34,7 @@ jobs:
         env:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
-          TARGET_PROJECT: ${{ github.event.inputs.target_project || 'library' }}
+          TARGET_PROJECT: ${{ github.event.inputs.target_project || 'homelab' }}
           TARGET_IMAGE: ${{ github.event.inputs.target_image || 'phase05-signing-proof' }}
         run: |
           set -euo pipefail
