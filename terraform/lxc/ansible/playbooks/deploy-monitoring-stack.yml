@@ -169,7 +169,7 @@
                 - "3000:3000"
               environment:
                 GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
-                GF_SERVER_ROOT_URL: "http://10.57.1.12:3000"
+                GF_SERVER_ROOT_URL: "{{ grafana_public_url | default('https://grafana.gibbsgreatly.xyz') }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
                 GF_AUTH_GENERIC_OAUTH_NAME: "Authentik"
                 GF_AUTH_GENERIC_OAUTH_CLIENT_ID: "{{ grafana_oauth_client_id }}"
