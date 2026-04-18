@@ -122,11 +122,15 @@
         port: 53
         timeout: 30
 
+    - name: Gather service facts
+      ansible.builtin.service_facts:
+
     - name: Verify CoreDNS service is active
-      ansible.builtin.command: systemctl is-active coredns
-      register: coredns_service_state
-      changed_when: false
-      failed_when: coredns_service_state.stdout != "active"
+      ansible.builtin.assert:
+        that:
+          - "'coredns.service' in ansible_facts.services"
+          - ansible_facts.services['coredns.service'].state == "running"
+        fail_msg: "CoreDNS service is not running"
 
     - name: Test authority query for traefik.lab.gibbsgreatly.xyz
       ansible.builtin.command: dig @127.0.0.1 +short traefik.lab.gibbsgreatly.xyz
