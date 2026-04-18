@@ -30,6 +30,8 @@ readonly NC='\033[0m'  # No Color
 readonly SERVICES=("authentik-stack" "proxy-stack" "step-ca-stack" "monitoring-stack")
 readonly STACK_DIR="terraform/lxc/stacks"
 readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
+readonly ANSIBLE_CONFIG_FILE="${PROJECT_ROOT}/terraform/lxc/ansible/ansible.cfg"
+readonly ANSIBLE_ROLES_DIR="${PROJECT_ROOT}/terraform/lxc/ansible/roles"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 readonly LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 DRY_RUN="${DRY_RUN:-false}"  # Can be set by --dry-run flag
@@ -182,7 +184,7 @@ deploy_stack_infrastructure() {
   # Apply if not dry-run
   if [ "$DRY_RUN" = false ]; then
     log_info "Applying infrastructure..."
-    if ! "$PROJECT_ROOT/with-secrets" terragrunt apply -auto-approve -no-color \
+    if ! "$PROJECT_ROOT/with-secrets" terragrunt apply -auto-approve -no-color -lock=false \
       > "$LOG_DIR/${service}-apply.log" 2>&1; then
       log_error "Terragrunt apply failed (see $LOG_DIR/${service}-apply.log)"
       popd > /dev/null
@@ -215,9 +217,12 @@ deploy_stack_application() {
 
   if [ "$DRY_RUN" = false ]; then
     log_info "Running Ansible playbook: $playbook_name"
-    if ! ./with-secrets ansible-playbook \
-      -i "$stack_path/inventory.yml" \
-      "$playbook_path" \
+    if ! env \
+      ANSIBLE_CONFIG="$ANSIBLE_CONFIG_FILE" \
+      ANSIBLE_ROLES_PATH="$ANSIBLE_ROLES_DIR" \
+      "$PROJECT_ROOT/with-secrets" ansible-playbook \
+      -i "$PROJECT_ROOT/$stack_path/inventory.yml" \
+      "$PROJECT_ROOT/$playbook_path" \
       > "$LOG_DIR/${service}-ansible.log" 2>&1; then
       log_error "Ansible playbook failed (see $LOG_DIR/${service}-ansible.log)"
       return 1
