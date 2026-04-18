@@ -1,0 +1,185 @@
+---
+# Session Prompt Index
+#
+# Each entry is a YAML file in this directory that defines a discrete unit of
+# development work. Use the file as the system prompt for a Claude Code session
+# to get a fully-briefed agent ready to do that specific task.
+#
+# Types:
+#   remediation  - fixing code that exists but is incorrect or incomplete
+#   deployment   - executing the IaC against pve-test (Mode 2 work)
+#   development  - writing new code, playbooks, or Terraform
+#   operations   - discovery, validation, or read-only work
+#
+# Status values:
+#   pending      - not started
+#   in-progress  - partially complete
+#   complete     - done and merged
+
+prompts:
+
+  # ── Phase 04 Remediation ────────────────────────────────────────────────────
+  # These must be done before any clean rebuild pass. Current playbooks bake
+  # credentials into on-disk files — they must be fixed first.
+
+  - id: rem-01-authentik-secrets
+    file: remediation-01-authentik-secrets.yaml
+    title: "Fix Authentik playbook — secrets injection via SOPS env_file"
+    type: remediation
+    status: pending
+    priority: 1
+    blocks:
+      - dep-01-authentik
+
+  - id: rem-02-traefik-secrets
+    file: remediation-02-traefik-secrets.yaml
+    title: "Fix Traefik playbook — secrets injection, LE staging CA, cert persistence"
+    type: remediation
+    status: pending
+    priority: 1
+    blocks:
+      - dep-02-traefik
+
+  - id: rem-03-monitoring-secrets
+    file: remediation-03-monitoring-secrets.yaml
+    title: "Fix Monitoring playbook — secrets injection via SOPS env_file"
+    type: remediation
+    status: pending
+    priority: 1
+    blocks:
+      - dep-04-monitoring
+
+  - id: rem-04-step-ca-secrets
+    file: remediation-04-step-ca-secrets.yaml
+    title: "Fix step-ca playbook — STEP_CA_PASSWORD from env, not extra-vars"
+    type: remediation
+    status: pending
+    priority: 2
+    blocks:
+      - dep-03-step-ca
+
+  # ── Phase 04 Deployments ────────────────────────────────────────────────────
+  # Mode 2 (rebuild) execution. Run in order. Each has manual steps noted.
+
+  - id: dep-01-authentik
+    file: deploy-01-authentik.yaml
+    title: "Deploy Authentik identity provider (VMID 150)"
+    type: deployment
+    status: pending
+    depends_on:
+      - rem-01-authentik-secrets
+    github_issue: "#150"
+
+  - id: dep-02-traefik
+    file: deploy-02-traefik.yaml
+    title: "Deploy Traefik reverse proxy (VMID 153)"
+    type: deployment
+    status: pending
+    depends_on:
+      - dep-01-authentik
+      - rem-02-traefik-secrets
+    github_issue: "#106"
+
+  - id: dep-03-step-ca
+    file: deploy-03-step-ca.yaml
+    title: "Deploy step-ca internal CA (VMID 152)"
+    type: deployment
+    status: pending
+    depends_on:
+      - dep-02-traefik
+      - rem-04-step-ca-secrets
+    github_issue: "#125"
+
+  - id: dep-04-monitoring
+    file: deploy-04-monitoring.yaml
+    title: "Deploy monitoring stack (VMID 154)"
+    type: deployment
+    status: pending
+    depends_on:
+      - dep-03-step-ca
+      - rem-03-monitoring-secrets
+    github_issue: "#107"
+
+  # ── Phase 05 — Supply Chain Security ────────────────────────────────────────
+
+  - id: p05-01-trivy-image-scan
+    file: phase-05-01-trivy-image-scan.yaml
+    title: "Add Trivy image scan CI job"
+    type: development
+    status: complete
+    github_issue: "#108"
+    task_doc: docs/plan/tasks/05-supply-chain-01-trivy-ci-scan.md
+
+  - id: p05-02-syft-sbom
+    file: phase-05-02-syft-sbom.yaml
+    title: "Install Syft on ci-runner and add SBOM generation job"
+    type: development
+    status: pending
+    github_issue: "#109"
+    task_doc: docs/plan/tasks/05-supply-chain-02-syft-sbom.md
+
+  - id: p05-03-cosign-signing
+    file: phase-05-03-cosign-signing.yaml
+    title: "Generate Cosign keys and add image signing to CI"
+    type: development
+    status: pending
+    github_issue: "#110"
+    task_doc: docs/plan/tasks/05-supply-chain-03-cosign-signing.md
+
+  # ── Phase 06 — Application Stack Migration ──────────────────────────────────
+
+  - id: p06-01-workload-discovery
+    file: phase-06-01-workload-discovery.yaml
+    title: "Discover and document existing application workloads"
+    type: operations
+    status: pending
+    github_issue: "#113"
+    task_doc: docs/plan/tasks/06-app-stacks-01-discover-workloads.md
+
+  - id: p06-02-sdn-zones
+    file: phase-06-02-create-sdn-zones.yaml
+    title: "Create app_seg and game_seg SDN zones"
+    type: development
+    status: pending
+    github_issue: "#114"
+    task_doc: docs/plan/tasks/06-app-stacks-02-create-sdn-zones.md
+
+  - id: p06-03-pihole
+    file: phase-06-03-migrate-pihole.yaml
+    title: "Migrate Pi-hole to app_seg (VMID 160)"
+    type: deployment
+    status: pending
+    github_issue: "#115"
+    task_doc: docs/plan/tasks/06-app-stacks-03-migrate-pihole.md
+
+  - id: p06-04-arr-stack
+    file: phase-06-04-migrate-arr-stack.yaml
+    title: "Migrate arr stack to app_seg"
+    type: deployment
+    status: pending
+    github_issue: "#116"
+    task_doc: docs/plan/tasks/06-app-stacks-04-migrate-arr-stack.md
+
+  - id: p06-05-jellyfin
+    file: phase-06-05-migrate-jellyfin.yaml
+    title: "Migrate Jellyfin to app_seg"
+    type: deployment
+    status: pending
+    github_issue: "#117"
+    task_doc: docs/plan/tasks/06-app-stacks-05-migrate-jellyfin.md
+
+  - id: p06-06-game-services
+    file: phase-06-06-migrate-game-services.yaml
+    title: "Migrate game services to game_seg"
+    type: deployment
+    status: pending
+    github_issue: "#118"
+    task_doc: docs/plan/tasks/06-app-stacks-06-migrate-game-services.md
+
+  - id: p06-07-rootfs-scan
+    file: phase-06-07-rootfs-scan.yaml
+    title: "Add Trivy rootfs scheduled scan workflow"
+    type: development
+    status: pending
+    github_issue: "#119"
+    task_doc: docs/plan/tasks/06-app-stacks-07-rootfs-scan-schedule.md

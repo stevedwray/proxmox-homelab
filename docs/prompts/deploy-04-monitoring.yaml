@@ -1,0 +1,205 @@
+---
+id: dep-04-monitoring
+title: "Deploy monitoring stack — VictoriaMetrics + Grafana + Loki (VMID 154)"
+phase: "04"
+type: deployment
+status: pending
+depends_on:
+  - dep-01-authentik
+  - dep-03-step-ca
+  - rem-03-monitoring-secrets
+task_doc: docs/plan/tasks/04-core-services-05-deploy-monitoring.md
+github_issue: "#107"
+
+context: |
+  Mode 2 (rebuild) execution. Deploy the monitoring stack as the last Phase 04
+  service. This is the most resource-heavy stack (cores: 2, memory: 1536, 50G storage)
+  — confirm pve-test is at 32 GB RAM before starting.
+
+  HARD DEPENDENCY: GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET must
+  be real values in terraform/secrets.enc.yaml before the playbook runs. They come
+  from the Authentik OIDC provider created in dep-01-authentik Step 6. If they are
+  still CHANGEME_, stop and return to that task first.
+
+  The stack deploys four services: VictoriaMetrics, Grafana, Loki, Promtail.
+  All secrets are injected from SOPS via the env_file pattern.
+
+preconditions:
+  repository:
+    - id: remediation-done
+      description: rem-03-monitoring-secrets is complete — playbook uses env_file pattern
+      verify: "grep -c 'lookup.*env.*GRAFANA_ADMIN_PASSWORD' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
+      expect: "1 or more"
+
+  secrets:
+    - key: GRAFANA_ADMIN_PASSWORD
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml | grep 'GRAFANA_ADMIN_PASSWORD'
+      expect: Real value (not CHANGEME_)
+    - key: GRAFANA_OAUTH_CLIENT_ID
+      verify: same pattern
+      expect: Real value from Authentik OIDC provider (not CHANGEME_)
+    - key: GRAFANA_OAUTH_CLIENT_SECRET
+      verify: same pattern
+      expect: Real value from Authentik OIDC provider (not CHANGEME_)
+
+  infrastructure:
+    - id: memory
+      description: pve-test has 32 GB RAM
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'free -h | grep Mem'"
+      expect: "~31 GiB total"
+
+    - id: authentik-healthy
+      description: Authentik running and OIDC provider configured
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "204"
+
+    - id: traefik-running
+      description: Traefik running at 10.57.2.10
+      verify: "curl -o /dev/null -w '%{http_code}' http://10.57.2.10"
+      expect: "301 or 302"
+
+    - id: step-ca-running
+      description: step-ca ACME directory reachable
+      verify: "curl -sk https://10.57.1.11/acme/acme/directory | jq .newNonce"
+      expect: URL string
+
+    - id: ip-available
+      description: 10.57.1.12 is not in use
+      verify: "ping -c 2 -W 1 10.57.1.12 && echo IN_USE || echo available"
+      expect: available
+
+objective: |
+  LXC VMID 154 is running at 10.57.1.12 in mgmt_seg. All four containers are running.
+  Grafana health returns {"database":"ok"}. VictoriaMetrics scrapes CoreDNS.
+  Grafana OIDC login works via Authentik. No literal credentials on disk.
+  Grafana is accessible via Traefik at https://grafana.gibbsgreatly.xyz.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for all terragrunt and ansible-playbook calls.
+      No --extra-vars for secrets.
+      Grafana datasources are added manually via the UI after deploy.
+
+  steps:
+    - id: 1
+      name: Confirm all three Grafana secrets are real values in SOPS
+      commands:
+        - |
+          SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+            sops --decrypt terraform/secrets.enc.yaml \
+            | grep -E 'GRAFANA_ADMIN_PASSWORD|GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET'
+      decision:
+        if_any_is_CHANGEME: |
+          STOP. Return to dep-01-authentik Step 6 to create the Grafana OIDC provider
+          in Authentik and record the resulting client ID and secret in SOPS.
+
+    - id: 2
+      name: Apply monitoring LXC
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/monitoring-stack
+        - "../../../../with-secrets terragrunt apply"
+      notes:
+        - VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, zone mgmt_seg
+        - cores 2, memory 1536, docker_storage_size 50G
+
+    - id: 3
+      name: Run Ansible playbook
+      commands:
+        - cd /home/steve/git/proxmox-homelab
+        - "./with-secrets ansible-playbook -i '10.57.1.12,' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
+
+    - id: 4
+      name: Validate services
+      commands:
+        - "curl -s http://10.57.1.12:3000/api/health | jq .database"
+        - "curl -s http://10.57.1.12:8428/metrics | head -5"
+        - "curl -s http://10.57.1.12:3100/ready"
+      expect:
+        - Grafana returns '"ok"'
+        - VictoriaMetrics returns metrics output
+        - Loki returns "ready"
+
+    - id: 5
+      name: Verify no secrets on disk
+      commands:
+        - "pct exec 154 -- stat -c '%a' /opt/monitoring-stack/.env"
+        - "pct exec 154 -- grep -c 'GRAFANA_ADMIN_PASSWORD.*=' /opt/monitoring-stack/docker-compose.yml"
+      expect:
+        - .env mode is 600
+        - compose grep returns 0
+
+    - id: 6
+      name: OOM check on Proxmox host
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'dmesg | grep -i oom | tail -5'"
+      expect: Empty output (no OOM events)
+
+    - id: 7
+      name: "MANUAL — Configure Grafana datasources"
+      type: manual
+      instructions: |
+        1. Open http://10.57.1.12:3000 (or https://grafana.gibbsgreatly.xyz via Traefik)
+        2. Log in via Authentik OIDC (or with admin / GRAFANA_ADMIN_PASSWORD from SOPS)
+        3. Add datasource: Prometheus → URL http://victoriametrics:8428 → Test → Save
+        4. Add datasource: Loki → URL http://loki:3100 → Test → Save
+        5. Verify both datasource tests pass
+
+    - id: 8
+      name: Verify Traefik route (if configured)
+      commands:
+        - "curl -o /dev/null -w '%{http_code}' https://grafana.gibbsgreatly.xyz"
+      expect: "200 or 302 (Authentik redirect)"
+
+    - id: 9
+      name: Restart survival test
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct restart 154'"
+        - "sleep 30"
+        - "curl -s http://10.57.1.12:3000/api/health | jq .database"
+      expect: '"ok"' returned after restart
+
+postconditions:
+  criteria:
+    - id: lxc-running
+      description: VMID 154 is running
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct status 154'"
+      expect: "status: running"
+
+    - id: grafana-healthy
+      description: Grafana database is ok
+      verify: "curl -s http://10.57.1.12:3000/api/health | jq .database"
+      expect: '"ok"'
+
+    - id: vm-healthy
+      description: VictoriaMetrics is serving metrics
+      verify: "curl -s http://10.57.1.12:8428/metrics | head -1"
+      expect: "# HELP or vm_"
+
+    - id: loki-ready
+      description: Loki is ready
+      verify: "curl -s http://10.57.1.12:3100/ready"
+      expect: ready
+
+    - id: no-secrets-on-disk
+      description: No literal Grafana password in compose file
+      verify: "pct exec 154 -- grep -c 'GRAFANA_ADMIN_PASSWORD.*=' /opt/monitoring-stack/docker-compose.yml"
+      expect: "0"
+
+    - id: oidc-login
+      description: Grafana OIDC login via Authentik works
+      verify: "Manual check — log in to Grafana via Authentik and confirm successful access"
+
+    - id: no-oom
+      description: No OOM events after all Phase 04 stacks running
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'dmesg | grep -i oom | wc -l'"
+      expect: "0"
+
+notes:
+  - Phase 04 is complete when this task postconditions are all met
+  - Phase 05 (Supply Chain) is now unblocked
+  - VictoriaMetrics currently only scrapes CoreDNS — expanding scrape targets is Phase 05 work
+  - If Grafana OIDC login fails, check Authentik outpost configuration and that
+    GRAFANA_OAUTH_CLIENT_ID in SOPS matches the client ID in the Authentik OIDC provider

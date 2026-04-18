@@ -1,0 +1,21 @@
+---
+id: p05-01-trivy-image-scan
+title: "Add Trivy image scan CI job"
+phase: "05"
+type: development
+status: complete
+github_issue: "#108"
+task_doc: docs/plan/tasks/05-supply-chain-01-trivy-ci-scan.md
+
+context: |
+  COMPLETE — Trivy image scan CI job already merged. This entry is kept for
+  reference and as a model for the remaining Phase 05 tasks.
+
+  The job was added to .github/workflows/ and runs on the self-hosted runner
+  (ci-runner-01 at 10.57.0.63). It logs in to Harbor at 10.57.3.10 before
+  scanning, fails on CRITICAL/HIGH findings, and uploads SARIF to the GitHub
+  Security tab.
+
+notes:
+  - See docs/plan/tasks/05-supply-chain-01-trivy-ci-scan.md for full spec
+  - This task is complete — no action required
