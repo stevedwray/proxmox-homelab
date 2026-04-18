@@ -56,6 +56,13 @@ resource "proxmox_virtual_environment_container" "docker_host" {
   initialization {
     hostname = var.hostname
 
+    dynamic "dns" {
+      for_each = var.dns_servers != null && length(var.dns_servers) > 0 ? [1] : []
+      content {
+        servers = var.dns_servers
+      }
+    }
+
     ip_config {
       ipv4 {
         address = var.ip_address

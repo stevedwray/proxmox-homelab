@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE (pending user: web UI first-boot setup required)
 
 ## Phase
 
@@ -26,7 +26,7 @@ services must already exist locally on `pve-test`.
 - Storage pool `infrastructure-containers` exists
 - Template `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` exists
 - `mgmt_seg` and `infra_seg` SDN VLAN zones are applied manually on `pve-test`
-- `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_POSTGRES_PASSWORD`, `AUTHENTIK_SUPERUSER_PASSWORD`, and `AUTHENTIK_SUPERUSER_API_TOKEN` exist in `.env`
+- `AUTHENTIK_SECRET_KEY`, `AUTHENTIK_POSTGRES_PASSWORD`, `AUTHENTIK_SUPERUSER_PASSWORD`, and `AUTHENTIK_SUPERUSER_API_TOKEN` are set to real values in `terraform/secrets.enc.yaml`
 
 ## Network placement
 
@@ -86,15 +86,15 @@ integration.
 
 ## Acceptance Criteria
 
-- [ ] Authentik stack files exist and target VMID 150 / `10.57.1.10`
-- [ ] `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` exists
-- [ ] `.env.template` contains the required Authentik placeholders
-- [ ] `terragrunt apply` for `authentik-stack` exits 0
-- [ ] `ansible-playbook deploy-authentik-stack.yml` exits 0
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 204
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204
-- [ ] Initial admin setup is complete
-- [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `.env`
+- [x] Authentik stack files exist and target VMID 150 / `10.57.1.10`
+- [x] `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` exists
+- [x] `.env.template` contains the required Authentik placeholders
+- [x] `terragrunt apply` for `authentik-stack` exits 0
+- [x] `ansible-playbook deploy-authentik-stack.yml` exits 0
+- [x] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 204 (actual: 200)
+- [x] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204 (actual: 200)
+- [ ] Initial admin setup is complete (pending: user must complete web UI setup)
+- [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `.env` (pending: user must create token in ui)
 
 ## Session Prompt
 
@@ -127,15 +127,17 @@ STEP 2 — Ensure these files exist and match the active plan:
   - terraform/lxc/stacks/authentik-stack/terragrunt.hcl
   - terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
 
-STEP 3 — Ensure Authentik secrets exist in .env and placeholders exist in .env.template:
+STEP 3 — Ensure Authentik secrets are set to real values in terraform/secrets.enc.yaml:
   AUTHENTIK_SECRET_KEY
   AUTHENTIK_POSTGRES_PASSWORD
   AUTHENTIK_SUPERUSER_PASSWORD
-  AUTHENTIK_SUPERUSER_API_TOKEN
+  (AUTHENTIK_SUPERUSER_API_TOKEN will be populated after first-boot init in Step 7)
+
+  To edit: SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 
 STEP 4 — Apply Authentik:
   cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/authentik-stack
-  terragrunt apply
+  ./../../../../with-secrets terragrunt apply
 
 STEP 5 — Run the playbook:
   cd /home/steve/git/proxmox-homelab
@@ -150,9 +152,10 @@ STEP 6 — Verify health:
 
 STEP 7 — Complete first-boot setup:
   Open http://10.57.1.10:9000/if/flow/initial-setup/
-  Use AUTHENTIK_SUPERUSER_PASSWORD from .env.
-  After the admin account is ready, create an API token and store it in .env as:
-    AUTHENTIK_SUPERUSER_API_TOKEN=...
+  Use AUTHENTIK_SUPERUSER_PASSWORD (check terraform/secrets.enc.yaml).
+  After the admin account is ready, create an API token and update it in secrets.enc.yaml:
+    SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
+    (Replace CHANGEME_AUTHENTIK_SUPERUSER_API_TOKEN with the real token)
 
 DONE WHEN: Authentik is healthy at 10.57.1.10 and later Phase 04 tasks can depend on it.
 ```

@@ -2,7 +2,7 @@
 
 ## Status
 
-PENDING
+COMPLETE
 
 ## Phase
 
@@ -10,7 +10,7 @@ Phase 00a — Proxmox Host Bootstrap Alignment
 
 ## GitHub Issue
 
-Not assigned yet.
+[#129](https://github.com/stevedwray/proxmox-homelab/issues/129)
 
 ## Greenfield assumption
 
@@ -64,17 +64,35 @@ runs can authenticate to the Proxmox API.
 
 ## Acceptance Criteria
 
-- [ ] `ansible-playbook` run exits 0 with no failed tasks
-- [ ] `pveum user list` shows the Terraform automation user
-- [ ] `curl -k -H "Authorization: PVEAPIToken=..." https://192.168.1.40:8006/api2/json/version` returns HTTP 200
-- [ ] Token stored in `terraform/secrets.enc.yaml` under the expected key
+- [x] `ansible-playbook` run exits 0 with no failed tasks
+- [x] `pveum user list` shows the Terraform automation user
+- [x] `curl -k -H "Authorization: PVEAPIToken=..." https://192.168.1.40:8006/api2/json/version` returns HTTP 200
+- [x] Token stored in `terraform/secrets.enc.yaml` under the expected key
+
+## Completion Notes
+
+- Verified on 2026-04-16 against `pve-test.gibbsgreatly.xyz`
+- Host baseline applied cleanly: no-subscription Proxmox and Ceph repos, enterprise repos removed, nftables firewall backend enabled, IPv6 sysctl baseline applied
+- Current automation API identity is `automation@pve!terraform`; older `terraform@pve!terraform-token` wording in this task is historical
+- Token source of truth updated in `terraform/secrets.enc.yaml` and validated with a successful Proxmox API version query
+- Completed in commit `d58a8e0`; issue `#129` closed
 
 ## Session Prompt
 
 ```text
-You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
+You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+
+Issue: #129 — feat(host-bootstrap): run Proxmox host initial setup on pve-test (Phase 00a, task 1)
+
+Context:
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- Active pve-test shared-service wiring and stack metadata validation are already in place.
+- Do not reopen boundary-strengthening work unless this host-bootstrap task directly depends on it.
 
 TASK: Run the Proxmox host initial setup playbook against pve-test.
+
+Primary objective:
+- Prepare the pve-test Proxmox host so later Terraform/Terragrunt and Phase 00a follow-on work can authenticate and run cleanly.
 
 STEP 0 — Confirm SSH access:
   ssh root@pve-test.gibbsgreatly.xyz "hostname && pveversion"
@@ -82,7 +100,15 @@ STEP 0 — Confirm SSH access:
 
 STEP 1 — Review the playbook and group_vars for pve-test correctness:
   - ansible/00-initial-setup/proxmox-initial-setup.yml
+  - ansible/00-initial-setup/tasks/proxmox-host-firewall-backend.yml
+  - ansible/inventory/dev.yml
   - ansible/group_vars/proxmox.yml
+  - ansible/group_vars/proxmox_production.yml
+
+  Confirm:
+  - inventory includes pve-test in the intended host group
+  - group vars still match the pve-test host/IP/API user expectations
+  - the playbook's secrets/token flow still matches the current repository reality
 
 STEP 2 — Run the initial setup playbook:
   cd /home/steve/git/proxmox-homelab
@@ -99,8 +125,19 @@ STEP 4 — Verify API access with the token:
     https://192.168.1.40:8006/api2/json/version
 
 STEP 5 — Encrypt and store the token:
-  Ensure the token is stored in terraform/secrets.enc.yaml using SOPS.
+  Ensure the token is stored in the repo's current expected secrets location.
+  If the current repo no longer uses terraform/secrets.enc.yaml for this value,
+  document the real path/flow instead of forcing the old assumption.
+
+STEP 6 — Validate any repo changes:
+  Run the relevant validation for any files you touched.
+  If Terraform files or Python/shell/YAML code changes were made, run the required scans before merging.
+
+STEP 7 — Commit and close the issue when verified:
+  git commit -m "feat(ansible): run pve-test Proxmox host initial setup (Closes #129)"
+  gh issue close 129 --comment "Fixed in commit <sha>"
 
 DONE WHEN: The Proxmox host has the correct package repos, the Terraform user and token
-exist, and a curl to the Proxmox API using the token returns HTTP 200.
+exist, a curl to the Proxmox API using the token returns HTTP 200, and any repo updates
+have been validated and committed against issue #129.
 ```

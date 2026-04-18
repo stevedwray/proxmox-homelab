@@ -102,7 +102,19 @@ variable "default_storage" {
 variable "portainer_server_ip" {
   description = "IP of the central Portainer server (for agent registration/cleanup)"
   type        = string
-  default     = "192.168.1.4"
+  default     = ""
+}
+
+variable "registry_host" {
+  description = "Hostname or IP of the Harbor registry used for Docker image pulls"
+  type        = string
+  default     = ""
+}
+
+variable "apt_cacher_host" {
+  description = "IP of the apt-cacher-ng proxy. Empty string disables apt proxy configuration."
+  type        = string
+  default     = ""
 }
 
 variable "portainer_admin_password" {

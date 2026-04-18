@@ -5,13 +5,12 @@
   gather_facts: false
 
   vars:
-    step_ca_version: "0.28.4"
-    step_cli_version: "0.28.7"
+    step_ca_version: "0.30.2"
+    step_cli_version: "0.30.2"
     step_ca_install_dir: /tmp/step-ca-install
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
     step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
-    step_ca_trust_host: "{{ lookup('env', 'PROXMOX_HOST') | default('pve-test.gibbsgreatly.xyz', true) }}"
     step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') }}"
     step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
 
@@ -48,14 +47,14 @@
 
     - name: Download step CLI release
       ansible.builtin.get_url:
-        url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_{{ step_cli_version }}_amd64.tar.gz"
+        url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_amd64.tar.gz"
         dest: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
         mode: "0644"
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
 
     - name: Download step-ca release
       ansible.builtin.get_url:
-        url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
+        url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_amd64.tar.gz"
         dest: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
         mode: "0644"
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
@@ -163,8 +162,9 @@
           - "{{ ansible_host }}"
           - --address
           - :443
+          - --acme
           - --provisioner
-          - acme
+          - homelab-admin
           - --password-file
           - "{{ step_ca_steppath }}/password.txt"
           - --provisioner-password-file
@@ -233,43 +233,17 @@
       become: false
       run_once: true
 
+    - name: Export root CA certificate for managed trust distribution
+      ansible.builtin.copy:
+        src: "{{ step_ca_steppath }}/certs/root_ca.crt"
+        dest: /tmp/homelab-root.crt
+        mode: "0644"
+        remote_src: true
+      changed_when: false
+
     - name: Fetch root CA certificate to the repository
       ansible.builtin.fetch:
-        src: "{{ step_ca_steppath }}/certs/root_ca.crt"
+        src: /tmp/homelab-root.crt
         dest: "{{ step_ca_root_cert_local }}"
         flat: true
       run_once: true
-
-    - name: Copy root CA certificate to the pve-test host
-      ansible.builtin.command:
-        argv:
-          - scp
-          - -F
-          - /dev/null
-          - -o
-          - StrictHostKeyChecking=no
-          - -o
-          - UserKnownHostsFile=/dev/null
-          - "{{ step_ca_root_cert_local }}"
-          - "root@{{ step_ca_trust_host }}:/usr/local/share/ca-certificates/homelab-root.crt"
-      delegate_to: localhost
-      become: false
-      run_once: true
-      changed_when: false
-
-    - name: Trust the homelab root CA on the pve-test host
-      ansible.builtin.command:
-        argv:
-          - ssh
-          - -F
-          - /dev/null
-          - -o
-          - StrictHostKeyChecking=no
-          - -o
-          - UserKnownHostsFile=/dev/null
-          - "root@{{ step_ca_trust_host }}"
-          - update-ca-certificates
-      delegate_to: localhost
-      become: false
-      run_once: true
-      changed_when: false

@@ -17,6 +17,7 @@
     name: python3-docker
     state: present
     update_cache: true
+    lock_timeout: 300
 
 - name: Ensure docker group exists
   ansible.builtin.group:

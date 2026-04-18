@@ -67,6 +67,103 @@ any container at 10.57.x.x directly via the MikroTik.
 
 ---
 
+## DNS standard for SDN-attached LXCs
+
+For every SDN-attached LXC, the expected resolver is the MikroTik interface for that
+zone:
+
+| Zone | Resolver target |
+|---|---|
+| `build_seg` | `10.57.0.1` |
+| `mgmt_seg` | `10.57.1.1` |
+| `edge_seg` | `10.57.2.1` |
+| `infra_seg` | `10.57.3.1` |
+
+This is the intended platform contract. Public resolvers such as `1.1.1.1` are not the
+target architecture for normal LXC operation.
+
+Resolver entry point and record authority are separate concerns. Zone clients use the
+MikroTik zone gateway IP as first-hop resolver. Specific internal zones can be delegated
+behind that resolver. For shared platform services, `lab.gibbsgreatly.xyz` is delegated
+to a dedicated internal DNS server while clients continue querying MikroTik.
+
+### 2026-04-16 runner recovery note
+
+During the greenfield `ci-runner-01` recovery, `build_seg` was missing its MikroTik VLAN
+interface initially, and router-local DNS on `10.57.0.1` did not answer during runner
+bootstrap even after the VLAN and gateway were added. A temporary `dns_server: "1.1.1.1"`
+override was used to recover the runner.
+
+That workaround is documented so future tasks understand the incident, but it should not
+be copied forward as the default pattern. If a new stack needs public DNS to come up, the
+platform DNS path is still broken and should be fixed before treating the stack as done.
+
+### Where DNS fixes belong
+
+Template rebuilds are useful when a common package set or baseline filesystem content must
+change for all future LXCs. They are not sufficient by themselves to guarantee runtime DNS
+because Proxmox can rewrite `/etc/resolv.conf` during container boot.
+
+For DNS behavior that must survive create, stop, and reboot cycles, fix the platform layer:
+
+- ensure the MikroTik VLAN interface and DNS service are reachable for the zone
+- ensure Proxmox/Terraform container initialization writes the intended resolver
+- use per-container playbook workarounds only as temporary recovery steps
+
+### Future automation note
+
+The current DNS validator is intentionally black-box from the guest side: it confirms
+that a stack is configured with the expected `dns_server` and that the resolver answers
+queries from inside the LXC. The next maturity step is to add RouterOS-aware validation
+through the MikroTik API so the platform can also prove, before or alongside stack
+deployment, that:
+
+- the expected VLAN interface exists for the zone
+- the expected gateway IP is bound to that interface
+- MikroTik DNS service is enabled for remote requests
+- the router is actually answering DNS on the zone-local gateway IP
+
+When that work is taken on, keep the guest-side validator as the final end-to-end proof.
+Router API checks should supplement the platform contract, not replace runtime validation
+from inside the LXC.
+
+### Internal zone delegation model (`lab.gibbsgreatly.xyz`)
+
+* Client behavior remains unchanged: query MikroTik zone gateway resolver.
+* MikroTik forwards only `lab.gibbsgreatly.xyz` to an internal authoritative DNS server.
+* MikroTik may continue serving static records and current recursive behavior for non-delegated names.
+* This preserves stable client configuration while enabling platform DNS authority to move into code-managed services.
+
+Automation scope for this delegation model should include:
+
+* validate conditional forwarding exists for `lab.gibbsgreatly.xyz`
+* validate delegated authority answers from the configured internal DNS server
+* validate all SDN zones can resolve delegated internal names and public probe names through MikroTik
+* defer full recursive DoH migration off MikroTik to a later phase
+
+RouterOS command baseline for this delegation model:
+
+```text
+# Delegate only lab.gibbsgreatly.xyz to internal authoritative DNS
+# Replace <internal-auth-dns-ip> with your internal DNS authority for lab.gibbsgreatly.xyz
+/ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
+
+# Verify the delegation entry exists
+/ip dns static print where comment="delegate-lab-zone"
+```
+
+Resolver-path validation baseline:
+
+```bash
+dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short github.com
+```
+
+---
+
 ## Pattern: adding a new segment
 
 ### Step 1 — Assign VLAN ID and subnet
@@ -118,8 +215,8 @@ ping -c 3 10.57.4.1
 ### Step 3 — Apply SDN zone manually (Terraform code gap)
 
 The `configure-network-sdn-vnet.yml` playbook currently handles Simple zone
-creation only. VLAN zones must be created manually with pvesh until the playbook
-is updated for `zone_type: vlan`.
+creation only. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` for VLAN
+zones until Terraform-side support is updated for `zone_type: vlan`.
 
 ```bash
 # Create the SDN zone
@@ -155,6 +252,12 @@ pct exec <vmid> -- ping -c 3 8.8.8.8
 
 # Inter-zone routing — e.g. from a container in build_seg to new_seg
 pct exec 141 -- ping -c 3 10.57.4.<host>
+
+# Delegated internal zone check via zone resolver
+pct exec <vmid> -- dig @10.57.<zone>.1 +short traefik.lab.gibbsgreatly.xyz
+
+# Public probe check via the same resolver path
+pct exec <vmid> -- dig @10.57.<zone>.1 +short github.com
 ```
 
 ---

@@ -12,22 +12,27 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 
 | Phase | Document | Status | Gate |
 |---|---|---|---|
-| 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | Before Phase 00b | Phase 00 complete |
-| 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Before Phase 03b** | Phase 00 complete |
-| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | After Phase 00 | Phase 00 complete |
+| 00a | [Proxmox Host Bootstrap Alignment](phase-00a-proxmox-host-bootstrap.md) | **Complete** | Phase 00 complete |
+| 00b | [pve-test Management Bootstrap](phase-00b-pve-test-management.md) | **Complete** | Phase 00 complete |
+| 00c | [Bootstrap Sequence (Stage 1 temporary → Stage 2 production)](phase-00c-bootstrap-sequence.md) | In progress | Stage 0 (Phase 03d) complete |
+| 01 | [CI Runner Deployment](phase-01-ci-runner-deployment.md) | **Complete** | Phase 00b complete |
 | 02 | [Memory Upgrade (32 GB)](phase-02-memory-upgrade.md) | **Complete** | — |
 | 03 | [Code Quality & Bug Fixes](phase-03-code-quality.md) | Parallel with 01-02 | Phase 00 complete |
-| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Before Phase 04** | Phase 00b complete |
-| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Before Phase 04** | Phase 00b complete |
-| 04 | [Core Shared Services](phase-04-core-shared-services.md) | After Phase 03b + 03c | Phase 03b and 03c complete |
-| 05 | [Supply Chain Security](phase-05-supply-chain.md) | After Phase 04 | Phase 01, 03b, 04 complete |
-| 06 | [Application Stack Migration](phase-06-app-stacks.md) | After Phase 05 | Phase 04, 05 complete — **Out of scope for this plan.** |
+| 03b | [Harbor Setup: Trivy, Projects, Image Cache](phase-03b-harbor-setup.md) | **Complete** | Phase 00b complete |
+| 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | **Complete** | Phase 00b complete |
+| 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | **Complete** | None — workstation only |
+| 04 | [Core Shared Services](phase-04-core-shared-services.md) | In progress | Phase 00c, 03c, and 03d complete |
+| 05 | [Supply Chain Security](phase-05-supply-chain.md) | In progress (partially implemented in CI) | Phase 01, 03b, 04 complete |
+| 06 | [Application Stack Migration](phase-06-app-stacks.md) | Planned (issues opened) | Phase 04, 05 complete — **Out of scope for current execution.** |
+| 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | After Phase 06 | Phase 06 complete — **Placeholder; not yet planned.** |
 
 ## Architecture reference
 
 See [docs/design/GreenField.md](../design/GreenField.md) for the full architecture rationale and technology selection.
 
 See [docs/design/NetworkPlanning.md](../design/NetworkPlanning.md) for the network zone model and implementation options.
+
+See [docs/design/bootstrap-stages.md](../design/bootstrap-stages.md) for the three-stage bootstrap model: why it exists, the Linux From Scratch parallel, security controls by stage, and the mapping from stages to execution phases.
 
 For the SDN VLAN zone design, IP allocations, and MikroTik configuration, see [terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
 
@@ -45,6 +50,38 @@ The pve-test VM that previously ran inside `pve` has been retired. pve (producti
 - Treat `docs/design/` as the target architecture and rationale.
 - Treat each `docs/plan/phase-*.md` file as the execution plan for a slice of work.
 - Treat `docs/plan/tasks/*.md` as the detailed implementation prompts and checklists for individual tasks.
+
+## Two modes of work
+
+This repository is used in two distinct modes:
+
+**Mode 1 — Development:** Building and refining the playbook — writing Ansible roles,
+exploring service configuration, generating documentation. Order does not matter. Services
+can be stood up temporarily on any machine and then discarded. The phase sequence does not
+constrain Mode 1 work.
+
+**Mode 2 — Deployment:** Executing the playbook on real infrastructure. Order is
+load-bearing. The phase sequence in this README, the bootstrap stage model, and all task
+prerequisites describe Mode 2. A pve-test wipe-and-rebuild is a Mode 2 activity.
+
+When a phase document lists prerequisites you have not met, ask first whether you are doing
+Mode 2 work. If you are exploring or writing code, proceed in whatever order is useful. See
+[docs/design/bootstrap-stages.md](../design/bootstrap-stages.md) for the full treatment of
+this distinction.
+
+### Task document lifecycle
+
+Task documents in `docs/plan/tasks/` fall into two categories:
+
+**Recurring rebuild tasks** — Phase 04, 05, and 06 task docs describe work that must be
+re-executed on each fresh pve-test wipe. These docs stay in `tasks/` even after a
+successful pass. Do not archive them to `done/`.
+
+**One-time tasks** — Code quality fixes, CI changes, planning documents, and any task that
+modifies the repository itself (not a running service) are one-time. Once merged, archive
+these to `done/`. The `done/` directory indicates the repository change was merged and will
+not be re-executed as a standalone task on the next pve-test pass — it does NOT mean a
+service is currently running.
 
 ## Host Bootstrap Dependencies
 
@@ -74,7 +111,7 @@ current classification of:
 | Change type | Command |
 |---|---|
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
-| Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
+| Code files modified (Python, shell, YAML) | `./with-secrets sonar-scanner` |
 
 If a scan returns new issues, **stop and present options** — do not merge until resolved or explicitly accepted.
 
@@ -130,8 +167,8 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 
 1. **VLAN setup on MikroTik** (once per pve-test rebuild) — see `pve-test.yaml`
 2. **Enable VLAN awareness on vmbr0** in Proxmox UI, then `ifreload -a`
-3. **Apply SDN VLAN zones** to pve-test (manual pvesh until Terraform support is complete)
-4. **Portainer** (VMID 120, vmbr0)
+3. **Apply SDN VLAN zones** to pve-test with `ansible/00-initial-setup/proxmox-sdn-setup.yml` until Terraform support is complete
+4. **Portainer** (VMID 120, mgmt_seg, `10.57.1.20`)
 5. **Harbor** (VMID 121, infra_seg) — first pass pulls from Docker Hub; verify at `http://10.57.3.10/api/v2.0/ping`
 6. **apt-cacher** (VMID 142, infra_seg)
 7. **NetBox** (VMID 143, infra_seg) — record all IP allocations from this point forward
@@ -145,19 +182,25 @@ pve-test is wiped before each development pass. On a fresh node, bring up servic
 | Issue | Description | Phase | Action |
 |---|---|---|---|
 | #106 | Traefik deployment | 04-03 | Active |
+| #125 | step-ca deployment | 04-04 | Active |
 | #107 | Monitoring deployment | 04-05 | Active |
 | #108 | Trivy CI scan | 05-01 | Active |
 | #109 | Syft SBOM | 05-02 | Active |
 | #110 | Cosign signing | 05-03 | Active |
-| #120 | ShellCheck cleanup: setup-dev-env.sh | — | Ready to work |
-| #121 | ShellCheck cleanup: check-proxmox-status.sh | — | Ready to work |
+| #113 | Discover and document application workloads | 06-01 | Active |
+| #114 | Create app_seg and game_seg SDN zones | 06-02 | Active |
+| #115 | Migrate Pi-hole to app_seg | 06-03 | Active |
+| #116 | Migrate arr stack to app_seg | 06-04 | Active |
+| #117 | Migrate Jellyfin to app_seg | 06-05 | Active |
+| #118 | Migrate game services to game_seg | 06-06 | Active |
+| #119 | Add Trivy rootfs scheduled scan workflow | 06-07 | Active |
 
 ## Known Implementation Gaps
 
 | Gap | Location | Description |
 |---|---|---|
 | VNet firewall cross-zone rule bug | `terraform/lxc/main.tf:86-95` | `vnet_policy_candidates` requires both `from` and `to` to match the current container's VNet — impossible for cross-zone policies. No ACCEPT rules are generated. Proxmox firewall disabled for dev passes as a workaround. |
-| SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Apply manually via pvesh until fixed. |
+| SDN VLAN zone support in Terraform | `configure-network-sdn-vnet.yml` | Playbook handles Simple zone creation only. Must be updated for `zone_type: vlan` before VLAN zones can be applied via `terragrunt apply`. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` until that gap is closed. |
 
 ## Notes
 

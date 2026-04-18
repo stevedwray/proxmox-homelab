@@ -8,4 +8,3 @@ warn_list:
   # Pre-existing roles (lxc_tun_device) use non-prefixed vars and are out of
   # scope for refactoring. harbor_installer vars were fixed in issue #75.
   - var-naming[no-role-prefix]
-

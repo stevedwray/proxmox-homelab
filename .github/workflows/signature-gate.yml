@@ -1,0 +1,88 @@
+name: Signature Gate
+
+on:
+  workflow_call:
+    inputs:
+      image_ref:
+        description: "Harbor image reference (tag or digest) to verify before deployment"
+        required: true
+        type: string
+    secrets:
+      HARBOR_ROBOT_PASSWORD:
+        required: true
+      HARBOR_ROBOT_USER:
+        required: true
+  workflow_dispatch:
+    inputs:
+      image_ref:
+        description: "Harbor image reference (tag or digest) to verify before deployment"
+        required: true
+        type: string
+
+jobs:
+  verify-signature-gate:
+    name: Verify image signature gate
+    runs-on: [self-hosted, pve-test, build]
+    permissions:
+      contents: read
+    outputs:
+      digest_ref: ${{ steps.resolve.outputs.digest_ref }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Crane CLI
+        env:
+          CRANE_VERSION: v0.20.6
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" crane
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Resolve digest reference
+        id: resolve
+        env:
+          IMAGE_REF: ${{ inputs.image_ref || github.event.inputs.image_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          if [[ ! "$IMAGE_REF" =~ ^10\.57\.3\.10/ ]]; then
+            echo "Signature gate requires Harbor image refs (10.57.3.10/...)." >&2
+            exit 1
+          fi
+
+          if [[ "$IMAGE_REF" == *@sha256:* ]]; then
+            DIGEST_REF="$IMAGE_REF"
+          else
+            registry="${IMAGE_REF%%/*}"
+            repo_tag="${IMAGE_REF#*/}"
+            repo="${repo_tag%:*}"
+            tag="${repo_tag##*:}"
+
+            digest="$(timeout 20s crane digest --insecure --username "$HARBOR_USER" --password "$HARBOR_PASS" "$IMAGE_REF" 2>/dev/null || true)"
+
+            if [[ -z "$digest" ]]; then
+              project="${repo%%/*}"
+              repository_path="${repo#*/}"
+              repository_encoded="${repository_path//\//%2F}"
+              artifact_url="http://${registry}/api/v2.0/projects/${project}/repositories/${repository_encoded}/artifacts/${tag}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+              digest="$(curl -sS --connect-timeout 5 --max-time 20 -u "$HARBOR_USER:$HARBOR_PASS" \
+                -H 'Accept: application/json' \
+                "$artifact_url" \
+                | jq -r '.digest // empty' 2>/dev/null || true)"
+            fi
+
+            if [[ -z "$digest" ]]; then
+              echo "Unable to resolve digest for $IMAGE_REF in signature gate." >&2
+              exit 1
+            fi
+
+            DIGEST_REF="${registry}/${repo}@${digest}"
+          fi
+
+          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT" # NOSONAR - Digest refs target the internal Harbor registry over HTTP in pve-test.
+
+      - name: Verify signature
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "${{ steps.resolve.outputs.digest_ref }}"

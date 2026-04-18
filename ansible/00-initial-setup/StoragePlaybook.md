@@ -50,7 +50,7 @@ storage_devices:
   games_device: "/dev/sdc"    # Game servers storage
   mon_device: "/dev/sdd"      # Monitoring stack storage
   scratch_device: "/dev/sde"  # Temporary/scratch storage
-  
+
 # Alternative: Use by-id paths for production (recommended)
 storage_devices:
   sec_device: "/dev/disk/by-id/nvme-ADATA_LEGEND_860_2P212LAG1DUL"
@@ -78,15 +78,15 @@ zfs_pools:
   pool_sec:
     device: "{{ storage_devices.sec_device }}"
     purpose: "Security applications (Wazuh, Graylog, Security Onion)"
-    
+
   pool_games:
     device: "{{ storage_devices.games_device }}"
     purpose: "Game servers (Minecraft, AzerothCore, ARK)"
-    
+
   pool_mon:
     device: "{{ storage_devices.mon_device }}"
     purpose: "Monitoring stack (Grafana, TimescaleDB, Prometheus)"
-    
+
   pool_scratch:
     device: "{{ storage_devices.scratch_device }}"
     purpose: "Temporary data (torrents, scratch space)"
@@ -100,26 +100,26 @@ sec_datasets:
   - name: "pool_sec/apps"
     props:
       mountpoint: "/pool_sec/apps"
-      
+
   - name: "pool_sec/apps/wazuh"
     props:
       recordsize: "16K"          # Log ingestion optimization
       logbias: "latency"         # Prioritize latency over throughput
       compression: "lz4"
       atime: "off"
-      
+
   - name: "pool_sec/apps/graylog"
     props:
       recordsize: "16K"          # Log storage optimization
       logbias: "latency"
       atime: "off"
-      
+
   - name: "pool_sec/logs"
     props:
       recordsize: "16K"          # Small record optimization
       logbias: "latency"
       atime: "off"
-      
+
   # Example zvol for Security Onion VM
   - name: "pool_sec/vm/security-onion"
     props:
@@ -139,7 +139,7 @@ games_datasets:
       mountpoint: "/pool_games/servers"
       recordsize: "16K"          # Minecraft region files optimization
       atime: "off"
-      
+
   - name: "pool_games/backups"
     props:
       recordsize: "1M"           # Large sequential writes
@@ -154,7 +154,7 @@ mon_datasets:
     props:
       recordsize: "16K"
       atime: "off"
-      
+
   - name: "pool_mon/timeseries"
     props:
       recordsize: "16K"          # TimescaleDB/Prometheus chunks
@@ -170,7 +170,7 @@ scratch_datasets:
       recordsize: "1M"           # Large file optimization
       atime: "off"
       sync: "disabled"           # Performance over safety (expendable data)
-      
+
   - name: "pool_scratch/torrents/tmp"
     props:
       recordsize: "1M"
@@ -304,7 +304,7 @@ zfs_arc_min: "8G"               # Minimum ARC size
 
 ### LXC vs VM Decision Matrix
 - **Use LXC for**: Most applications (better resource efficiency)
-- **Use VM for**: 
+- **Use VM for**:
   - Hardware passthrough needs (GPU, NIC)
   - Kernel-specific requirements
   - Strict isolation requirements

@@ -19,6 +19,7 @@ registries directly.**
 ## Live task docs
 
 - [03b-harbor-01 — Deploy Harbor registry stack on infra_seg](tasks/03b-harbor-01-deploy-harbor.md)
+- [03b-netbox-01 — Deploy NetBox IPAM on infra_seg](tasks/03b-netbox-01-deploy-netbox.md)
 
 The rest of this phase document covers Harbor post-deployment configuration work that
 follows once the base Harbor stack is healthy.

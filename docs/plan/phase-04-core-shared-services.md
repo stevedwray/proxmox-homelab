@@ -18,6 +18,14 @@ Deploy in this order. Authentik must be running before Traefik (auth middleware 
 - [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
 - [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
 
+## Current implementation status (2026-04-17)
+
+- Authentik stack intent exists in `terraform/lxc/stacks/authentik-stack/stack.yaml` and corresponding playbook `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml`.
+- Traefik stack artifacts now exist at `terraform/lxc/stacks/proxy-stack/` with playbook `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`.
+- step-ca stack/playbook wiring is present (`terraform/lxc/stacks/step-ca-stack/stack.yaml` -> `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`) and CA trust distribution playbook exists at `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml`.
+- Monitoring stack artifacts now exist at `terraform/lxc/stacks/monitoring-stack/` with playbook `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`.
+- Validate and execute task acceptance checks per service docs before marking Phase 04 complete.
+
 ## Certificate strategy
 
 This phase uses a **dual certificate resolver** model in Traefik:
@@ -30,6 +38,13 @@ This phase uses a **dual certificate resolver** model in Traefik:
 **Browser connections always use Let's Encrypt certs.** The homelab root CA is never distributed to browsers or end-user devices. It is distributed only to managed services that need to validate internal TLS: the Traefik container itself, the Ansible control machine, Proxmox hosts, and any service that calls another internal service directly.
 
 This approach preserves the existing Cloudflare DNS + Let's Encrypt wildcard workflow while eliminating `validate_certs: false` and self-signed certs from internal management tooling over time.
+
+### Naming and trust split
+
+- Public ingress names remain under `gibbsgreatly.xyz` and are routed through Traefik.
+- Internal platform names use `lab.gibbsgreatly.xyz`.
+- Internal `lab.gibbsgreatly.xyz` identities rely on step-ca trust from day one on managed hosts.
+- Direct IP access is allowed only for test, verification, and first-boot bootstrap workflows.
 
 step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using only the `letsencrypt` resolver. The `step-ca` resolver block is pre-written into `traefik.yml` at deploy time but references a CA that does not yet exist — this is safe because Traefik only contacts a resolver when a route explicitly requests it. The step-ca task (04-04) then bootstraps the CA and activates the resolver.
 
@@ -44,6 +59,7 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 - Harbor is running at `10.57.3.10` in `infra_seg` (deployed earlier)
 - NetBox is running at `10.57.3.12` in `infra_seg` (deployed earlier)
 - Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
+- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to an internal DNS server authoritative for that zone
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
 - `.env` is sourced with Proxmox API credentials
 - **SDN zones applied to pve-test** — `mgmt_seg`, `edge_seg`, and `build_seg` must exist before any Phase 04 container is deployed (see SDN setup below)
@@ -64,6 +80,21 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 /ip address add address=10.57.1.1/24 interface=vlan20-mgmt
 /ip address add address=10.57.2.1/24 interface=vlan30-edge
 /ip address add address=10.57.3.1/24 interface=vlan40-infra
+
+# DNS delegation baseline for lab.gibbsgreatly.xyz (requires MikroTik admin credentials)
+# Phase 1 (no internal DNS authority deployed yet): static A records per platform name.
+/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-baseline
+
+# Phase 2 (when internal authoritative DNS exists): replace static records with a FWD entry.
+# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
+# /ip dns static remove [find comment=lab-zone-baseline]
+
+# Note: api-user (read group) cannot write DNS entries. Use admin credentials.
+# Via REST API (admin only):
+#   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
+#     -X POST https://192.168.1.1/rest/ip/dns/static/add \
+#     -H "Content-Type: application/json" \
+#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-baseline"}'
 ```
 
 **Proxmox one-time setup** — enable VLAN awareness on vmbr0:
@@ -73,7 +104,7 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 ifreload -a
 ```
 
-**Apply SDN zones** (manual pvesh until Terraform VLAN zone support is implemented):
+**Apply SDN zones** (run `ansible/00-initial-setup/proxmox-sdn-setup.yml` until Terraform VLAN zone support is implemented):
 
 ```bash
 # Create each zone and VNet — see pve-test.yaml for the full sequence
@@ -283,6 +314,11 @@ Two certificate resolvers are configured at deploy time:
 - **`letsencrypt`** — DNS-01 challenge via Cloudflare API. Issues `*.gibbsgreatly.xyz` wildcard. Used for all browser-facing routes. Active immediately on deploy.
 - **`step-ca`** — ACME via internal step-ca at `10.57.1.11`. Used for internal management routes. Pre-configured in `traefik.yml` but not active until task 04-04 (step-ca) is complete.
 
+Ingress hostname policy for this phase:
+
+- Browser/operator ingress remains on `gibbsgreatly.xyz` hostnames.
+- Internal `lab.gibbsgreatly.xyz` names are platform-internal identities and are not the default public entry points.
+
 ### Stack file
 
 Create `terraform/lxc/stacks/proxy-stack/stack.yaml`:
@@ -429,6 +465,10 @@ Deploying step-ca after Traefik means:
 - The `step-ca` resolver in Traefik activates automatically once step-ca is online and the homelab root CA is distributed
 - No browser ever receives a step-ca cert — only routes explicitly assigned `certresolver=step-ca` will use it
 
+Internal certificate policy:
+
+- Shared-platform internal names under `lab.gibbsgreatly.xyz` should be issued and validated via step-ca trust paths on managed hosts.
+
 Reference: [step-ca docs](https://smallstep.com/docs/step-ca)
 
 ### Stack file
@@ -567,6 +607,11 @@ ansible_playbook: "deploy-monitoring-stack"
 portainer_agent: true
 ```
 
+Monitoring naming policy:
+
+- External/operator route remains `grafana.gibbsgreatly.xyz` via Traefik.
+- Internal service identity uses `grafana.lab.gibbsgreatly.xyz` and step-ca trust for managed internal consumers.
+
 ### Compose services
 
 ```yaml
@@ -683,3 +728,120 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events
 - [ ] All stacks survive a `pct restart <vmid>` and come back healthy
 - [ ] No browser receives a step-ca cert — all browser-facing routes verified against Let's Encrypt issuer
+- [ ] `lab.gibbsgreatly.xyz` delegation is operational through MikroTik conditional forwarding
+- [ ] SDN clients resolve delegated internal names via their zone resolver path
+- [ ] Internal shared-platform names validate with step-ca trust on managed hosts
+- [ ] Public ingress names under `gibbsgreatly.xyz` remain functional and unchanged
+
+---
+
+## AI-assisted implementation runbook (VS Code)
+
+Use this section when driving implementation with Copilot Chat or custom agents in VS Code.
+The goal is deterministic, rebuild-safe execution with small, reviewable changes.
+
+### Rules for AI execution
+
+- Treat all pve-test platform containers as disposable.
+- Prefer incremental PR-sized edits over broad refactors.
+- Apply one integration slice at a time, validate, then move to the next slice.
+- Keep resolver entry point on MikroTik gateway IPs for all SDN clients.
+- Keep public ingress hostnames under `gibbsgreatly.xyz`.
+- Use `lab.gibbsgreatly.xyz` for internal shared-platform identity names.
+- Use step-ca trust for internal `lab.gibbsgreatly.xyz` names.
+
+### Execution sequence (AI task order)
+
+1. DNS delegation baseline
+  - Implement/verify MikroTik conditional forwarding for `lab.gibbsgreatly.xyz`.
+  - Keep existing MikroTik static DNS behavior for non-delegated names.
+  - Validate from all zones via gateway resolvers (`10.57.0.1`, `10.57.1.1`, `10.57.2.1`, `10.57.3.1`).
+
+2. Naming policy alignment
+  - Keep Traefik ingress routes on `*.gibbsgreatly.xyz`.
+  - Add internal platform names under `*.lab.gibbsgreatly.xyz`.
+  - Do not switch operator/browser ingress to `*.lab.gibbsgreatly.xyz` in this phase.
+
+3. PKI and trust alignment
+  - Ensure managed hosts trust `certs/homelab-root.crt`.
+  - Issue/validate internal cert paths for `*.lab.gibbsgreatly.xyz`.
+  - Confirm browser-facing routes still use Let's Encrypt issuer.
+
+4. Service integration alignment
+  - Traefik: keep public ingress behavior stable; preserve Authentik forward-auth.
+  - Authentik: ensure providers/outposts align with route and hostname policy.
+  - Monitoring: preserve public ingress route while validating internal identity naming.
+
+5. Validation and resilience
+  - Run DNS validation from each zone.
+  - Restart each LXC once and re-check health.
+  - Confirm no regressions in security-scan/validate workflows.
+
+### Validation commands (minimum set)
+
+```bash
+# Resolver path checks for delegated lab zone (one per SDN gateway resolver)
+dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+
+# Non-delegated public probe over the same resolver path
+# This confirms existing MikroTik static/recursive behavior is preserved.
+dig @10.57.1.1 +short github.com
+
+# Public ingress still works
+curl -I http://10.57.2.10
+
+# step-ca directory reachable
+curl -sk https://10.57.1.11/acme/acme/directory | jq . >/dev/null
+
+# Managed-host trust example
+pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+  https://10.57.1.11/acme/acme/directory | jq . >/dev/null
+```
+
+### Prompt template: implementation slice
+
+```text
+Implement one integration slice only for Phase 04 shared services in proxmox-homelab.
+
+Scope in this run:
+- [DEFINE A SINGLE SLICE: DNS delegation | naming alignment | trust distribution | service wiring]
+
+Required constraints:
+- No broad refactor.
+- Keep public ingress names on *.gibbsgreatly.xyz.
+- Keep SDN clients using MikroTik gateway DNS.
+- Internal shared-platform names are *.lab.gibbsgreatly.xyz.
+- Internal *.lab.gibbsgreatly.xyz trust path uses step-ca.
+
+Deliverables:
+1) Minimal file edits
+2) Validation commands executed
+3) Acceptance results and any residual risk
+
+Do not proceed to the next slice until this one is validated.
+```
+
+### Prompt template: review pass
+
+```text
+Review only for integration regressions introduced by the last change.
+
+Check specifically:
+1) DNS resolution path (MikroTik gateway -> delegated lab zone)
+2) Public ingress behavior on *.gibbsgreatly.xyz
+3) Internal trust behavior for *.lab.gibbsgreatly.xyz via step-ca
+4) Authentik/Traefik/Monitoring interaction consistency
+
+Report findings first, ordered by severity, with exact file references.
+```
+
+### Done criteria for AI-driven work sessions
+
+- Exactly one integration slice completed and validated.
+- No change to public ingress naming policy.
+- No change to resolver entry-point policy.
+- CI/validation checks remain green or deviations are explicitly documented.
+- Follow-up slice is clearly identified before ending the session.

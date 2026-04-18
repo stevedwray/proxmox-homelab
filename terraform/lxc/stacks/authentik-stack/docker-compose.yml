@@ -1,9 +1,11 @@
 # Authentik identity provider stack
-# All images are routed through Harbor proxy cache at 192.168.1.10.
+# All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
+# REGISTRY_HOST is written to .env by deploy-authentik-stack.yml.
+# pve-test: 10.57.3.10  pve: 192.168.1.10
 
 services:
   postgresql:
-    image: 192.168.1.10/dockerhub/library/postgres:16-alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/postgres:16-alpine
     restart: unless-stopped
     environment:
       POSTGRES_DB: authentik
@@ -13,7 +15,7 @@ services:
       - authentik-postgresql:/var/lib/postgresql/data
 
   redis:
-    image: 192.168.1.10/dockerhub/library/redis:alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/redis:alpine
     restart: unless-stopped
     command:
       - sh
@@ -23,7 +25,7 @@ services:
       - authentik-redis:/data
 
   server:
-    image: 192.168.1.10/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
     restart: unless-stopped
     command: server
     environment: &authentik-env
@@ -46,7 +48,7 @@ services:
       - authentik-certs:/certs
 
   worker:
-    image: 192.168.1.10/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
     restart: unless-stopped
     command: worker
     environment: *authentik-env

@@ -2,6 +2,7 @@
 hostname: apt-cacher-stack
 ip_address: "10.57.3.11/24"
 gateway: "10.57.3.1"
+proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 142
@@ -16,5 +17,15 @@ tags:
   - apt-cache
   - infrastructure
   - build
+depends_on: []
+provides:
+  - service: apt-proxy
+    port: 3142
+    protocol: tcp
 ansible_playbook: "deploy-apt-cacher-stack"
 portainer_agent: false
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: ""  # This container IS the apt-cacher; no self-proxy

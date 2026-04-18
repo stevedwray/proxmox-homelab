@@ -17,7 +17,8 @@ Phase 04 — Core Shared Services
 - Task 04-01 complete — Authentik running at `10.57.1.10`
 - Phase 02 complete — pve-test at 32 GB
 - `10.57.2.10` available (ping-verify before deploying; also check NetBox)
-- `CF_DNS_API_TOKEN` set in `.env` — Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz`
+- `CF_DNS_API_TOKEN` set to its real value in `terraform/secrets.enc.yaml` — Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz`
+- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to the internal authoritative DNS server
 - SDN zones applied to pve-test and MikroTik static routes added (see Step 0 below)
 
 Note: step-ca is **not** a prerequisite for this task. The `step-ca` resolver is written into `traefik.yml` at deploy time but will not be used by any route until task 04-04 (step-ca) is complete. Traefik will not attempt to contact `10.57.1.11` until a route explicitly requests it.
@@ -36,6 +37,11 @@ Note: step-ca is **not** a prerequisite for this task. The `step-ca` resolver is
 ## Objective
 
 LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traefik dashboard is accessible over HTTPS with a valid Let's Encrypt wildcard cert, HTTP redirects to HTTPS, and the Authentik forward-auth middleware is configured. Both certificate resolver blocks (`letsencrypt` and `step-ca`) are present in `traefik.yml`. The `step-ca` resolver block is pre-configured and dormant, ready to activate when task 04-04 completes.
+
+Ingress naming policy for this task:
+
+- Public/operator ingress remains on `*.gibbsgreatly.xyz`.
+- Internal `*.lab.gibbsgreatly.xyz` names are platform-internal identities and are not the default browser ingress in this task.
 
 ## Scope
 
@@ -60,7 +66,7 @@ LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traef
 
 - `docs/plan/phase-04-core-shared-services.md` — Service 2 section
 - Traefik image: `10.57.3.10/dockerhub/library/traefik:<pin>`
-- Cloudflare DNS API token: `${CF_DNS_API_TOKEN}` from `.env`
+- Cloudflare DNS API token: `${CF_DNS_API_TOKEN}` from `terraform/secrets.enc.yaml` (injected by `./with-secrets`)
 - Authentik forward-auth address: `http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik`
 - step-ca ACME URL (pre-configure only, not yet live): `https://10.57.1.11/acme/acme/directory`
 
@@ -94,6 +100,7 @@ LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traef
 - [ ] `dynamic/certs.yml` requesting wildcard `*.gibbsgreatly.xyz` from `letsencrypt` resolver
 - [ ] Both `certificatesResolvers.letsencrypt` and `certificatesResolvers.step-ca` blocks present in `traefik.yml`
 - [ ] `/certs/letsencrypt/acme.json` and `/certs/step-ca/acme.json` both have mode `0600`
+- [ ] Public ingress hostnames remain under `*.gibbsgreatly.xyz` (no migration to `*.lab.gibbsgreatly.xyz` for browser ingress)
 - [ ] Branch `feat/proxy-stack` merged to `dev/pve-test`
 
 ## Session Prompt
@@ -111,7 +118,7 @@ CONTEXT:
 - Traefik image: 10.57.3.10/dockerhub/library/traefik:<version>
   (check Harbor proxy cache for latest stable pin — Harbor is now in infra_seg)
 - Let's Encrypt: use STAGING CA for all dev passes (caServer: https://acme-staging-v02.api.letsencrypt.org/directory)
-- Cloudflare DNS-01: CF_DNS_API_TOKEN from .env
+- Cloudflare DNS-01: CF_DNS_API_TOKEN from terraform/secrets.enc.yaml (injected by ./with-secrets)
 - Authentik forward-auth: http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik
 - step-ca ACME URL (pre-configure only): https://10.57.1.11/acme/acme/directory
   step-ca does not exist yet — pre-configure the resolver block but do NOT assign any
@@ -124,29 +131,28 @@ STEP 0 — Verify VLAN zones and MikroTik setup:
   # MikroTik VLAN interfaces (10.57.0.1, 10.57.1.1, 10.57.2.1, 10.57.3.1) must already
   # be configured and the trunk port to pve-test active. See pve-test.yaml for setup commands.
   # Proxmox vmbr0 must have VLAN awareness enabled.
-  # Apply SDN VLAN zones manually (Terraform VLAN support pending):
+  # Apply SDN VLAN zones with ansible/00-initial-setup/proxmox-sdn-setup.yml (Terraform VLAN support pending):
   pvesh get /nodes/pve-test/sdn/zones
   # Expected: tvinfra, tvmgmt, tvedge, tvsegc all listed
 
 STEP 0b — Bring up harbor-stack (first pass pulls from Docker Hub; subsequent passes use cache):
-  source .env && source .env.pve-test
-  cd terraform/lxc/stacks/harbor-stack && terragrunt apply
+  cd terraform/lxc/stacks/harbor-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "10.57.3.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+  ./with-secrets ansible-playbook -i "10.57.3.10," terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
   curl -s http://10.57.3.10/api/v2.0/ping   # Expect: pong
 
 STEP 0c — Bring up apt-cacher-stack:
-  cd terraform/lxc/stacks/apt-cacher-stack && terragrunt apply
+  cd terraform/lxc/stacks/apt-cacher-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
+  ./with-secrets ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
 
 STEP 0d — Bring up authentik-stack:
-  cd terraform/lxc/stacks/authentik-stack && terragrunt apply
+  cd terraform/lxc/stacks/authentik-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook \
+  ./with-secrets bash -c 'ansible-playbook \
     -i "10.57.1.10," \
     terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
-    --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
+    --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"'
   # Verify Authentik health before proceeding:
   curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/
   # Must return 204 before continuing to Step 1
@@ -196,12 +202,11 @@ STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-proxy-
   c) docker compose up -d
 
 STEP 5 — Deploy:
-  source .env && source .env.pve-test
-  cd terraform/lxc/stacks/proxy-stack && terragrunt apply
+  cd terraform/lxc/stacks/proxy-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook -i "10.57.2.10," \
+  ./with-secrets bash -c 'ansible-playbook -i "10.57.2.10," \
     terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml \
-    --extra-vars "cf_dns_api_token=${CF_DNS_API_TOKEN}"
+    --extra-vars "cf_dns_api_token=${CF_DNS_API_TOKEN}"'
 
 STEP 6 — Validate TLS and redirect:
   curl -o /dev/null -w "%{http_code}" http://10.57.2.10

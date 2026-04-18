@@ -1,8 +1,10 @@
 # terraform/ansible/shared-roles/portainer_api/defaults/main.yml
 
 ---
-# Portainer Server connection details
-portainer_api_server_ip: "192.168.1.4"
+# Portainer server connection details.
+# Prefer the generated inventory host var when present.
+# Current active pve-test fallback: 10.57.1.20.
+portainer_api_server_ip: "{{ portainer_server_ip | default('10.57.1.20') }}"
 portainer_api_server_port: "9000"
 
 # Authentication credentials

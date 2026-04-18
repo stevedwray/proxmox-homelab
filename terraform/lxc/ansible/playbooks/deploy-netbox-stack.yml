@@ -6,10 +6,38 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
   roles:
     - lxc_base
     - docker_base
     - portainer_agent
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Provision NetBox configuration files on host
   hosts: all
@@ -42,6 +70,7 @@
   vars:
     app_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
     app_stack_endpoint_name: "{{ inventory_hostname }}"
+    app_stack_registry_host: "{{ registry_host | default('10.57.3.10') }}"
     app_stack_server_ip: "{{ portainer_server_ip }}"
     app_stack_env:
       - name: NETBOX_DB_PASSWORD
@@ -54,6 +83,8 @@
         value: "{{ lookup('env', 'NETBOX_SECRET_KEY') | mandatory('NETBOX_SECRET_KEY env var is not set') }}"
       - name: NETBOX_API_TOKEN_PEPPER
         value: "{{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') | mandatory('NETBOX_API_TOKEN_PEPPER env var is not set') }}"
+      - name: REGISTRY_HOST
+        value: "{{ app_stack_registry_host }}"
     portainer_api_server_ip: "{{ portainer_server_ip }}"
     portainer_api_endpoint_name: "{{ inventory_hostname }}"
     portainer_api_agent_ip: "{{ ansible_host }}"

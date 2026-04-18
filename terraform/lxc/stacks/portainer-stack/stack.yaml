@@ -1,7 +1,8 @@
-# Portainer CE management server for pve-test
+# Portainer CE management server for pve-test — mgmt_seg zone (VLAN 20, 10.57.1.0/24)
 hostname: portainer-stack
-ip_address: "192.168.1.20/24"
-gateway: "192.168.1.1"
+ip_address: "10.57.1.20/24"
+gateway: "10.57.1.1"
+proxmox_node: pve-test
 vmid: 120
 cores: 1
 memory: 512
@@ -15,6 +16,22 @@ tags:
   - management
   - infrastructure
   - docker
+depends_on: []
+provides:
+  - service: portainer-http
+    port: 9000
+    protocol: tcp
+  - service: portainer-https
+    port: 9443
+    protocol: tcp
+  - service: portainer-edge
+    port: 8000
+    protocol: tcp
+
+network:
+  zone: mgmt_seg
 
 ansible_playbook: "deploy-portainer-stack"
+apt_cacher_host: ""
+dns_server: "10.57.1.1"
 portainer_agent: false

@@ -1,0 +1,330 @@
+name: Supply Chain Signing Proof
+
+on:
+  push:
+    branches:
+      - dev/pve-test
+    paths:
+      - .github/workflows/supply-chain-signing-proof.yml
+  workflow_dispatch:
+    inputs:
+      target_project:
+        description: "Preferred Harbor project (optional; workflow can auto-discover writable target)"
+        required: true
+        default: "homelab"
+        type: string
+      target_image:
+        description: "Preferred image path in project (optional; workflow can auto-discover writable target)"
+        required: true
+        default: "apps/phase05-signing-proof"
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+jobs:
+  build-proof-image:
+    name: Build and Push Proof Image
+    runs-on: [self-hosted, pve-test, build]
+    permissions:
+      security-events: write
+    outputs:
+      image_ref: ${{ steps.meta.outputs.image_ref }}
+      digest_ref: ${{ steps.meta.outputs.digest_ref }}
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Build and push proof image
+        id: meta
+        env:
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          DOCKERHUB_USER: ${{ secrets.HARBOR_DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASS: ${{ secrets.HARBOR_DOCKERHUB_PASSWORD }}
+          REQUESTED_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
+          REQUESTED_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'apps/phase05-signing-proof' }}
+          TARGET_CANDIDATES: ${{ vars.HARBOR_PROOF_TARGET_CANDIDATES || '' }}
+        run: |
+          set -euo pipefail
+
+          DEFAULT_CANDIDATES=(
+            "${REQUESTED_PROJECT}/${REQUESTED_IMAGE}"
+            "homelab/apps/phase05-signing-proof"
+            "homelab/phase05-signing-proof"
+            "library/phase05-signing-proof"
+          )
+
+          declare -a CANDIDATES=()
+          if [[ -n "$TARGET_CANDIDATES" ]]; then
+            while IFS= read -r candidate; do
+              candidate="${candidate//[[:space:]]/}"
+              [[ -n "$candidate" ]] && CANDIDATES+=("$candidate")
+            done < <(printf '%s' "$TARGET_CANDIDATES" | tr ',' '\n')
+          fi
+          CANDIDATES+=("${DEFAULT_CANDIDATES[@]}")
+
+          # Discover additional candidate projects from Harbor catalog visibility.
+          CATALOG_JSON="$RUNNER_TEMP/harbor-catalog.json"
+          if curl -sS -u "$HARBOR_USER:$HARBOR_PASS" "http://10.57.3.10/v2/_catalog?n=1000" -o "$CATALOG_JSON"; then # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+            mapfile -t CATALOG_PROJECTS < <(python3 -c 'import json,sys; data=json.load(open(sys.argv[1], "r", encoding="utf-8")); repos=data.get("repositories") or []; projects=sorted({r.split("/",1)[0] for r in repos if isinstance(r,str) and "/" in r}); print("\n".join(projects))' "$CATALOG_JSON" 2>/dev/null || true)
+
+            for project in "${CATALOG_PROJECTS[@]}"; do
+              [[ -z "$project" ]] && continue
+              CANDIDATES+=("${project}/phase05-signing-proof")
+              CANDIDATES+=("${project}/apps/phase05-signing-proof")
+            done
+          fi
+
+          declare -A SEEN=()
+          declare -a UNIQUE_CANDIDATES=()
+          for candidate in "${CANDIDATES[@]}"; do
+            if [[ -n "$candidate" && -z "${SEEN[$candidate]:-}" ]]; then
+              SEEN[$candidate]=1
+              UNIQUE_CANDIDATES+=("$candidate")
+            fi
+          done
+
+          SELECTED_TARGET=""
+          declare -a PROBE_RESULTS=()
+          for candidate in "${UNIQUE_CANDIDATES[@]}"; do
+            CANDIDATE_PROJECT="${candidate%%/*}"
+            CANDIDATE_IMAGE="${candidate#*/}"
+            if [[ -z "$CANDIDATE_PROJECT" || -z "$CANDIDATE_IMAGE" || "$CANDIDATE_PROJECT" == "$CANDIDATE_IMAGE" ]]; then
+              PROBE_RESULTS+=("${candidate}:INVALID")
+              continue
+            fi
+
+            PROBE_URL="http://10.57.3.10/v2/${CANDIDATE_PROJECT}/${CANDIDATE_IMAGE}/blobs/uploads/" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+            PROBE_HEADERS="$RUNNER_TEMP/harbor-preflight-${CANDIDATE_PROJECT}-${RANDOM}.txt"
+            PROBE_STATUS="$(curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X POST -D "$PROBE_HEADERS" -o /dev/null -w '%{http_code}' "$PROBE_URL")" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+            PROBE_RESULTS+=("${candidate}:${PROBE_STATUS}")
+
+            if [[ "$PROBE_STATUS" == "202" ]]; then
+              SELECTED_TARGET="$candidate"
+              PROBE_LOCATION="$(awk 'BEGIN{IGNORECASE=1} /^Location:/{print $2}' "$PROBE_HEADERS" | tr -d '\r')"
+              if [[ -n "$PROBE_LOCATION" ]]; then
+                if [[ "$PROBE_LOCATION" =~ ^https?:// ]]; then
+                  CANCEL_URL="$PROBE_LOCATION"
+                else
+                  CANCEL_URL="http://10.57.3.10${PROBE_LOCATION}" # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+                fi
+                curl -sS -u "$HARBOR_USER:$HARBOR_PASS" -X DELETE -o /dev/null "$CANCEL_URL" || true # NOSONAR - Harbor test registry is intentionally HTTP-only on the isolated lab network.
+              fi
+              break
+            fi
+          done
+
+          if [[ -z "$SELECTED_TARGET" ]]; then
+            {
+              echo "Harbor push preflight failed for all candidate targets."
+              echo "Probe results:"
+              for result in "${PROBE_RESULTS[@]}"; do
+                echo "- ${result}"
+              done
+              echo "Set vars.HARBOR_PROOF_TARGET_CANDIDATES to a comma-separated list of writable targets (for example: homelab/apps/phase05-signing-proof,project-x/proof/image)."
+              echo "Or rotate HARBOR_ROBOT_* secrets to a Harbor robot with push rights."
+            } >&2
+            exit 1
+          fi
+
+          TARGET_PROJECT="${SELECTED_TARGET%%/*}"
+          TARGET_IMAGE="${SELECTED_TARGET#*/}"
+          echo "Selected Harbor target ${TARGET_PROJECT}/${TARGET_IMAGE}"
+
+          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          SOURCE_REF="docker.io/library/alpine:3.20"
+
+          CRANE_VERSION="v0.20.3"
+          curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
+            | tar -xz -C "$RUNNER_TEMP" crane
+          chmod +x "$RUNNER_TEMP/crane"
+
+          HARBOR_AUTH_B64="$(printf '%s:%s' "$HARBOR_USER" "$HARBOR_PASS" | base64 -w0)"
+          mkdir -p "$HOME/.docker"
+          if [[ -n "$DOCKERHUB_USER" && -n "$DOCKERHUB_PASS" ]]; then
+            DOCKERHUB_AUTH_B64="$(printf '%s:%s' "$DOCKERHUB_USER" "$DOCKERHUB_PASS" | base64 -w0)"
+            cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
+          EOF
+          else
+            echo "HARBOR_DOCKERHUB_USERNAME/HARBOR_DOCKERHUB_PASSWORD are not set; Docker Hub source pulls may be rate limited." >&2
+            cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"}}}
+          EOF
+          fi
+
+          "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
+
+          DIGEST="$("$RUNNER_TEMP/crane" digest --insecure "$IMAGE_REF")"
+          DIGEST_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
+          if [[ -z "$DIGEST_REF" ]]; then
+            echo "Failed to resolve digest for $IMAGE_REF" >&2
+            exit 1
+          fi
+
+          echo "image_ref=$IMAGE_REF" >> "$GITHUB_OUTPUT"
+          echo "digest_ref=$DIGEST_REF" >> "$GITHUB_OUTPUT"
+          echo "IMAGE_REF=$IMAGE_REF" >> "$GITHUB_ENV"
+          echo "DIGEST_REF=$DIGEST_REF" >> "$GITHUB_ENV"
+
+      - name: Install Trivy CLI
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Run Trivy image scan
+        env:
+          TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          trivy image \
+            --username "$TRIVY_USERNAME" \
+            --password "$TRIVY_PASSWORD" \
+            --insecure \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif \
+            "$IMAGE_REF"
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+
+      - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          syft scan --from registry "$IMAGE_REF" --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: sbom-proof-${{ github.run_id }}
+          path: sbom.spdx.json
+          retention-days: 90
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "$DIGEST_REF"
+          rm -f /tmp/cosign.key
+
+      - name: Verify with public key
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "$DIGEST_REF"
+
+  trivy-image-scan:
+    if: ${{ false }}
+    name: Trivy Image Scan
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - build-proof-image
+    permissions:
+      security-events: write
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install Trivy CLI
+        run: |
+          curl --proto '=https' --tlsv1.2 -fsSL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sh -s -- -b "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Run Trivy image scan
+        env:
+          TRIVY_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          TRIVY_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ needs.build-proof-image.outputs.image_ref }}
+        run: |
+          trivy image \
+            --username "$TRIVY_USERNAME" \
+            --password "$TRIVY_PASSWORD" \
+            --insecure \
+            --severity CRITICAL,HIGH \
+            --exit-code 1 \
+            --format sarif \
+            --output trivy-image.sarif \
+            "$IMAGE_REF"
+
+      - name: Upload image SARIF
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4
+        if: always() && hashFiles('trivy-image.sarif') != ''
+        with:
+          sarif_file: trivy-image.sarif
+
+  generate-sbom:
+    if: ${{ false }}
+    name: Generate SBOM
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Generate SBOM (SPDX)
+        env:
+          SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
+          SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          IMAGE_REF: ${{ needs.build-proof-image.outputs.image_ref }}
+        run: |
+          syft scan --from registry "$IMAGE_REF" --output spdx-json=sbom.spdx.json
+
+      - name: Upload SBOM as artifact
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5
+        with:
+          name: sbom-proof-${{ github.run_id }}
+          path: sbom.spdx.json
+          retention-days: 90
+
+  sign-image:
+    if: ${{ false }}
+    name: Sign Image With Cosign
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - trivy-image-scan
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Sign image by digest
+        env:
+          COSIGN_PASSWORD: ${{ secrets.COSIGN_PASSWORD }}
+          COSIGN_KEY: ${{ secrets.COSIGN_KEY }}
+          DIGEST_REF: ${{ needs.build-proof-image.outputs.digest_ref }}
+          HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
+          HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+        run: |
+          printf '%s' "$COSIGN_KEY" > /tmp/cosign.key
+          chmod 600 /tmp/cosign.key
+          cosign sign --yes --allow-http-registry --registry-username "$HARBOR_USER" --registry-password "$HARBOR_PASS" --key /tmp/cosign.key "$DIGEST_REF"
+          rm -f /tmp/cosign.key
+
+  verify-signature:
+    if: ${{ false }}
+    name: Verify Signature
+    runs-on: [self-hosted, pve-test, build]
+    needs:
+      - sign-image
+      - build-proof-image
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Verify with public key
+        env:
+          DIGEST_REF: ${{ needs.build-proof-image.outputs.digest_ref }}
+        run: |
+          cosign verify --allow-http-registry --key certs/cosign.pub "$DIGEST_REF"

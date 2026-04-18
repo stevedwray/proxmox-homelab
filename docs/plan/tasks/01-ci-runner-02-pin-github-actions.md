@@ -2,7 +2,11 @@
 
 ## Status
 
-PENDING
+COMPLETE
+
+The active workflow files are already SHA-pinned. This task is retained as a verification
+checkpoint for greenfield passes and future workflow edits, not as a pending repository
+change.
 
 ## Phase
 
@@ -29,14 +33,15 @@ All GitHub-hosted and self-hosted workflow actions remain pinned to immutable co
 
 ## Acceptance Criteria
 
-- [ ] No remote `uses:` entries are unpinned
-- [ ] No `@master` references exist
-- [ ] Any changed workflow refs are pinned to SHAs and validated
+- [x] No remote `uses:` entries are unpinned
+- [x] No `@master` references exist
+- [x] Any changed workflow refs are pinned to SHAs and validated
 
 ## Session Prompt
 
 ```text
-TASK: Verify GitHub Actions workflow references remain pinned to immutable SHAs.
+This task is already complete. Use it as a verification step when workflows change or
+when validating a fresh greenfield pass.
 
 STEP 1 — Audit workflows:
   rg -n 'uses:' .github/workflows

@@ -47,7 +47,6 @@ Examples of current stack directories under `terraform/lxc/stacks/` include:
 - `harbor-stack`
 - `apt-cacher-stack`
 - `netbox-stack`
-- `netbox-stack-test`
 - `authentik-stack`
 - `step-ca-stack`
 - `ci-runner-01`

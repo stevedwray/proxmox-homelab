@@ -2,6 +2,7 @@
 hostname: authentik-stack
 ip_address: "10.57.1.10/24"
 gateway: "10.57.1.1"
+proxmox_node: pve-test
 vmid: 150
 cores: 2
 memory: 2048
@@ -15,9 +16,24 @@ tags:
   - identity
   - infrastructure
   - docker
+depends_on:
+  - harbor-stack
+  - portainer-stack
+provides:
+  - service: authentik-http
+    port: 9000
+    protocol: tcp
+  - service: authentik-https
+    port: 9443
+    protocol: tcp
 
 network:
   zone: mgmt_seg
 
 ansible_playbook: "deploy-authentik-stack"
 portainer_agent: true
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: "10.57.3.11"

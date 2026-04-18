@@ -6,7 +6,7 @@ PENDING
 
 ## GitHub Issue
 
-https://github.com/stevedwray/proxmox-homelab/issues/107
+https://github.com/stevedwray/proxmox-homelab/issues/125
 
 ## Phase
 
@@ -17,7 +17,7 @@ Phase 04 — Core Shared Services
 - Task 04-03 complete — Traefik running at `10.57.2.10`, `step-ca` resolver block present in `traefik.yml`
 - Phase 02 complete — pve-test at 32 GB
 - `10.57.1.11` available (ping-verify before deploying; also check NetBox)
-- `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` set in `.env`
+- `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` set to real values in `terraform/secrets.enc.yaml`
 
 ## Network placement
 
@@ -35,6 +35,12 @@ Phase 04 — Core Shared Services
 LXC `step-ca` (VMID 152) is running at `10.57.1.11` in `mgmt_seg` and serving an ACME directory. The root CA cert is saved to `certs/homelab-root.crt` in the repository. The homelab root CA is trusted by the Traefik container and the Proxmox host. The `step-ca` resolver in Traefik can reach the ACME directory and is confirmed working. The base LXC Ansible role is updated to distribute the root CA cert to all future containers.
 
 This task does not change any existing browser-facing routes. Let's Encrypt remains the resolver for all routes configured in task 04-03. The step-ca resolver becomes available for opt-in use by internal management routes.
+
+Internal naming and trust policy for this task:
+
+- Internal shared-platform identities should use `*.lab.gibbsgreatly.xyz`.
+- Certificates for `*.lab.gibbsgreatly.xyz` are issued/trusted via step-ca on managed hosts.
+- Browser/operator ingress remains on `*.gibbsgreatly.xyz`.
 
 ## Scope
 
@@ -94,6 +100,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 - [ ] Homelab root CA trusted on Proxmox host `192.168.1.40`
 - [ ] Traefik `step-ca` resolver can reach ACME directory from inside the container:
   `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .` returns valid JSON
+- [ ] At least one internal shared-platform identity under `*.lab.gibbsgreatly.xyz` can be validated via step-ca trust on a managed host
 - [ ] Base LXC Ansible role includes CA trust task
 - [ ] No existing Let's Encrypt route has been changed or reassigned
 - [ ] Branch `feat/step-ca` merged to `dev/pve-test`

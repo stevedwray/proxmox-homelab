@@ -10,7 +10,7 @@ import urllib.error
 
 class MikrotikClient:
     """REST API client for Mikrotik RouterOS.
-    
+
     RouterOS 7.x provides a REST API over HTTPS with self-signed certificates.
     Uses basic authentication (username:password in Authorization header).
     """
@@ -20,12 +20,12 @@ class MikrotikClient:
         self.port = port or int(os.environ.get("MIKROTIK_PORT", "8729"))
         self.user = user or os.environ.get("MIKROTIK_USER")
         self.password = password or os.environ.get("MIKROTIK_PASSWORD")
-        
+
         if not all([self.user, self.password]):
             raise ValueError(
                 "Mikrotik auth requires MIKROTIK_USER and MIKROTIK_PASSWORD env vars"
             )
-        
+
         # Create basic auth header: base64(user:password)
         auth_str = base64.b64encode(f"{self.user}:{self.password}".encode()).decode()
         self.auth_header = f"Basic {auth_str}"
@@ -35,7 +35,7 @@ class MikrotikClient:
         """Make HTTP request to RouterOS REST API."""
         endpoint = f"{self.base_url}/rest{path}"
         body = json.dumps(data).encode() if data else None
-        
+
         req = urllib.request.Request(
             endpoint,
             data=body,
@@ -46,7 +46,7 @@ class MikrotikClient:
                 "Accept": "application/json",
             },
         )
-        
+
         # Disable SSL cert verification for self-signed homelab certs
         # Use more permissive SSL settings for RouterOS compatibility
         ctx = ssl.create_default_context()
@@ -54,7 +54,7 @@ class MikrotikClient:
         ctx.verify_mode = ssl.CERT_NONE
         # Allow older TLS versions for RouterOS compatibility
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        
+
         try:
             with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
                 if resp.status == 200:
@@ -165,7 +165,7 @@ class MikrotikClient:
 
 def discover_from_mikrotik(host=None, port=None, user=None, password=None):
     """Discover network topology from Mikrotik RouterOS.
-    
+
     Returns dict structure:
     {
         "router": {name, identity, ...},
@@ -178,7 +178,7 @@ def discover_from_mikrotik(host=None, port=None, user=None, password=None):
     }
     """
     client = MikrotikClient(host, port, user, password)
-    
+
     try:
         identity = client.get_system_identity()
         interfaces = client.get_interfaces()
@@ -193,7 +193,7 @@ def discover_from_mikrotik(host=None, port=None, user=None, password=None):
     except Exception as e:
         print(f"Error querying Mikrotik: {e}")
         raise
-    
+
     return {
         "router": {
             "identity": identity.get("name", "RouterOS"),
@@ -218,36 +218,36 @@ def discover_from_mikrotik(host=None, port=None, user=None, password=None):
 if __name__ == "__main__":
     """Test connectivity and output network topology."""
     import pprint
-    
+
     try:
         print(f"Mikrotik: {os.environ.get('MIKROTIK_HOST')}:{os.environ.get('MIKROTIK_PORT')}")
         data = discover_from_mikrotik()
-        
+
         print(f"\nRouter: {data['router']['identity']}")
-        
+
         print(f"\nInterfaces: {len(data['interfaces'])}")
         for iface in data["interfaces"][:10]:
             running = "↑" if iface.get("running") else "↓"
             print(f"  {running} {iface.get('name', '?'):15s} {iface.get('type', '?')}")
         if len(data['interfaces']) > 10:
             print(f"  ... and {len(data['interfaces']) - 10} more")
-        
+
         print(f"\nVLANs: {len(data['vlans'])}")
         for vlan in data["vlans"][:5]:
             print(f"  - {vlan.get('name')} (ID {vlan.get('vlan-id')}) on {vlan.get('interface')}")
         if len(data['vlans']) > 5:
             print(f"  ... and {len(data['vlans']) - 5} more")
-        
+
         print(f"\nIP Addresses: {len(data['ip_addresses'])}")
         for ip in data["ip_addresses"][:5]:
             print(f"  - {ip.get('address')} on {ip.get('interface')}")
         if len(data['ip_addresses']) > 5:
             print(f"  ... and {len(data['ip_addresses']) - 5} more")
-        
+
         print(f"\nFirewall Rules: {len(data['firewall']['filter_rules'])} filter, {len(data['firewall']['nat_rules'])} NAT")
-        
+
         print(f"\nDHCP: {len(data['dhcp']['servers'])} servers, {len(data['dhcp']['networks'])} networks")
-        
+
     except Exception as e:
         print(f"ERROR: {e}")
         import traceback

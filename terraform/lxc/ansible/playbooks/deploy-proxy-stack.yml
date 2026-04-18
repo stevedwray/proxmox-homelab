@@ -1,0 +1,214 @@
+---
+- name: Configure Docker base and Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Traefik compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    proxy_compose_dir: /opt/proxy-stack
+    traefik_version: "v3.1.6"
+    traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
+    cf_dns_api_token: "{{ lookup('env', 'CF_DNS_API_TOKEN') | mandatory('CF_DNS_API_TOKEN env var is not set') }}"
+
+  tasks:
+    - name: Create Traefik directory structure
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ proxy_compose_dir }}", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
+        - { path: "{{ proxy_compose_dir }}/certs/step-ca", mode: "0700" }
+
+    - name: Create ACME storage files with strict permissions
+      ansible.builtin.copy:
+        dest: "{{ item }}"
+        content: ""
+        force: false
+        mode: "0600"
+      loop:
+        - "{{ proxy_compose_dir }}/certs/letsencrypt/acme.json"
+        - "{{ proxy_compose_dir }}/certs/step-ca/acme.json"
+
+    - name: Write Traefik static configuration
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/traefik.yml"
+        mode: "0640"
+        content: |
+          api:
+            dashboard: true
+            insecure: false
+
+          entryPoints:
+            web:
+              address: ":80"
+              http:
+                redirections:
+                  entryPoint:
+                    to: websecure
+                    scheme: https
+            websecure:
+              address: ":443"
+
+          certificatesResolvers:
+            letsencrypt:
+              acme:
+                caServer: "https://acme-staging-v02.api.letsencrypt.org/directory"
+                email: "admin@gibbsgreatly.xyz"
+                storage: "/certs/letsencrypt/acme.json"
+                dnsChallenge:
+                  provider: cloudflare
+                  resolvers:
+                    - "1.1.1.1:53"
+                    - "8.8.8.8:53"
+            step-ca:
+              acme:
+                caServer: "https://10.57.1.11/acme/acme/directory"
+                email: "admin@gibbsgreatly.xyz"
+                storage: "/certs/step-ca/acme.json"
+                httpChallenge:
+                  entryPoint: web
+
+          providers:
+            docker:
+              exposedByDefault: false
+            file:
+              directory: "/etc/traefik/dynamic/"
+              watch: true
+
+          log:
+            level: INFO
+
+    - name: Write Authentik middleware and dashboard router config
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/dynamic/authentik.yml"
+        mode: "0640"
+        content: |
+          http:
+            middlewares:
+              authentik:
+                forwardAuth:
+                  address: "http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik"
+                  trustForwardHeader: true
+                  authResponseHeaders:
+                    - X-authentik-username
+                    - X-authentik-groups
+                    - X-authentik-email
+            routers:
+              traefik-dashboard:
+                rule: "Host(`traefik.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: api@internal
+                middlewares:
+                  - authentik
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+              grafana:
+                rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
+                entryPoints:
+                  - websecure
+                service: grafana-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+            services:
+              grafana-backend:
+                loadBalancer:
+                  servers:
+                    - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
+
+    - name: Write wildcard certificate request config
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/dynamic/certs.yml"
+        mode: "0640"
+        content: |
+          tls:
+            stores:
+              default:
+                defaultGeneratedCert:
+                  resolver: letsencrypt
+                  domain:
+                    main: "gibbsgreatly.xyz"
+                    sans:
+                      - "*.gibbsgreatly.xyz"
+
+    - name: Write Traefik compose definition
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            traefik:
+              image: {{ traefik_image }}
+              container_name: traefik
+              restart: unless-stopped
+              ports:
+                - "80:80"
+                - "443:443"
+              environment:
+                CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./traefik.yml:/etc/traefik/traefik.yml:ro
+                - ./dynamic:/etc/traefik/dynamic:ro
+                - ./certs/letsencrypt:/certs/letsencrypt
+                - ./certs/step-ca:/certs/step-ca
+
+    - name: Validate Traefik compose configuration
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
+        chdir: "{{ proxy_compose_dir }}"
+      changed_when: false
+
+    - name: Start Traefik via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ proxy_compose_dir }}"
+        state: present

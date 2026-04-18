@@ -1,0 +1,48 @@
+- name: Read current SDN subnets for {{ sdn_attachment.value.sdn.vnet }}
+  ansible.builtin.command:
+    cmd: pvesh get /cluster/sdn/vnets/{{ sdn_attachment.value.sdn.vnet }}/subnets --output-format json
+  register: proxmox_sdn_subnets_result
+  changed_when: false
+
+- name: Capture current SDN subnet for {{ sdn_attachment.value.sdn.vnet }}
+  ansible.builtin.set_fact:
+    proxmox_sdn_current_subnet: >-
+      {{
+        (proxmox_sdn_subnets_result.stdout | from_json
+        | selectattr('cidr', 'equalto', sdn_attachment.value.sdn.subnet)
+        | list | first | default({}))
+      }}
+
+- name: Update existing SDN subnet when gateway or snat drifted
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - set
+      - /cluster/sdn/vnets/{{ sdn_attachment.value.sdn.vnet }}/subnets/{{ proxmox_sdn_current_subnet.subnet }}
+      - --gateway
+      - "{{ sdn_attachment.value.sdn.gateway }}"
+      - --snat
+      - "{{ (sdn_attachment.value.sdn.snat | bool) | ternary('1', '0') }}"
+  when: >-
+    proxmox_sdn_current_subnet | length > 0 and (
+      (proxmox_sdn_current_subnet.gateway | default('')) != sdn_attachment.value.sdn.gateway or
+      (proxmox_sdn_current_subnet.snat | default(false) | bool) != (sdn_attachment.value.sdn.snat | bool)
+    )
+  changed_when: true
+
+- name: Create missing SDN subnet for {{ sdn_attachment.value.sdn.vnet }}
+  ansible.builtin.command:
+    argv:
+      - pvesh
+      - create
+      - /cluster/sdn/vnets/{{ sdn_attachment.value.sdn.vnet }}/subnets
+      - --subnet
+      - "{{ sdn_attachment.value.sdn.subnet }}"
+      - --type
+      - subnet
+      - --gateway
+      - "{{ sdn_attachment.value.sdn.gateway }}"
+      - --snat
+      - "{{ (sdn_attachment.value.sdn.snat | bool) | ternary('1', '0') }}"
+  when: proxmox_sdn_current_subnet | length == 0
+  changed_when: true

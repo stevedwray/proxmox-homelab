@@ -9,19 +9,16 @@ these are reflections for future reference when revisiting decisions, patterns, 
 
 <!-- Add observations that apply across phases here -->
 
-1. **NetBox should be set up earlier and kept current with a Terraform provider integration.**
-   NetBox is currently hosted on `pve` and is referenced during Phase 04 for IPAM checks,
-   but it is not deployed as a tracked stack on `pve-test` until later in the phase order.
-   This creates a gap where early phases must query production NetBox or skip IPAM
-   validation entirely. NetBox should be one of the first stacks brought up on any new
-   node — before CI runners, Harbor, or application stacks — so that IP allocations and
-   DNS records are recorded from the start.
+1. **NetBox deployment has been moved into Phase 03b (infra_seg, alongside Harbor).**
+   A dedicated task (`03b-netbox-01-deploy-netbox.md`) and stack (`netbox-stack-test` /
+   VMID 143 / `10.57.3.12`) now exist. NetBox is deployed immediately after Harbor and
+   apt-cacher so all Phase 04 allocations can be recorded at deployment time.
 
-   Additionally, the `netbox-community/terraform-provider-netbox` Terraform provider
-   enables IaC-managed IPAM: IP addresses, prefixes, and device records can be
-   created/updated as part of the same Terraform run that creates an LXC. This removes
-   the manual step of updating NetBox after each deployment and keeps IPAM in sync with
-   actual state automatically.
+   **Still outstanding:** The `netbox-community/terraform-provider-netbox` Terraform
+   provider integration is not yet implemented. IP allocations, prefixes, and device
+   records must still be entered manually in NetBox after each deployment. Automating this
+   via the Terraform provider would remove the manual step and keep IPAM in sync with
+   actual state automatically — a candidate improvement for Phase 07 or a standalone task.
 
 2. **NPM (Nginx Proxy Manager) should be deployed early and updated per service as the
    project progresses.** NPM is the current front door for most internal services and
@@ -47,47 +44,33 @@ these are reflections for future reference when revisiting decisions, patterns, 
    management services might be co-located in a single "management" container, but the
    pattern here is one service per LXC throughout the project.
 
-2. The Portainer LXC connects directly to `vmbr0` (the physical LAN bridge) rather than
-   being placed in any SDN-managed zone. It sits outside the segmented network topology
-   created by the project's SDN code — it is a flat LAN citizen, not an SDN tenant.
+2. ~~The Portainer LXC was originally expected to sit on `vmbr0`~~ — **Resolved.**
+   `portainer-stack/stack.yaml` uses `network: zone: mgmt_seg` at `10.57.1.20/24`.
+   The chicken-and-egg concern (SDN zone must exist before Portainer, but Portainer
+   bootstraps everything) does not apply: Phase 00a-02 applies the SDN VLAN zones to
+   pve-test before Phase 00b deploys Portainer. LAN workstations reach Portainer via the
+   MikroTik static route for `10.57.1.0/24 → 192.168.1.40` (pve-test). Portainer agents
+   in `infra_seg`, `edge_seg`, and `build_seg` reach the server at `10.57.1.20` via
+   standard MikroTik inter-VLAN routing — no extra static routes required beyond those
+   already defined in `pve-test.yaml`. `mgmt_seg` now also uses the MikroTik as its
+   DNS entry point at `10.57.1.1`; the router serves split DNS for
+   `gibbsgreatly.xyz` on that interface and forwards public lookups via DoH.
 
-   This is a pragmatic trade-off rather than a deliberate architectural decision. Portainer
-   *could* live in an SDN zone (e.g. `mgmt_seg`) — the existing egress routing automation
-   used for `build_seg` would handle LAN reachability. The two complications that drive the
-   flat placement:
-   - Portainer agents in other zones need a routed path back to the server. Achievable with
-     the existing SDN automation, but requires additional routing rules.
-   - Bootstrap ordering: the SDN zone must exist before Portainer can be deployed, but
-     Portainer is what bootstraps everything else. This chicken-and-egg dependency needs
-     careful resolution.
-
-   The consequence is that the management plane (Portainer, NetBox, Harbor) is reachable
-   from anything on `192.168.1.0/24` with no SDN policy enforcement in front of it —
-   SDN isolation applies to application workloads but not to the management plane itself.
-   Stricter access control for Portainer would need to come from Traefik + Authentik
-   forward-auth (Phase 04), not from network segmentation.
-
-3. NetBox is hosted on `pve`, not `pve-test`. Any IPAM or allocation checks for Phase 04
-   must query the production NetBox instance at `192.168.1.30` even when the deploy target
-   is `pve-test`. Assuming NetBox is available locally on `pve-test` will cause false
-   failures during validation and can make an otherwise healthy setup look blocked.
+3. NetBox now has a dedicated pve-test stack (`netbox-stack-test` / VMID 143) placed in
+   `infra_seg` at `10.57.3.12`. It is deployed in Phase 03b alongside Harbor and apt-cacher.
+   The production NetBox at `192.168.1.30` is no longer the reference for pve-test
+   allocation checks. See task `docs/plan/tasks/03b-netbox-01-deploy-netbox.md`.
 
 ---
 
 ## Phase 01 — CI Runner Deployment
 
-1. **SonarCloud is not integrated into GitHub Actions.** `sonar-scanner` is documented as
-   a manual pre-merge step (CLAUDE.md) but is not invoked in any workflow. The project is
-   already configured (`sonar-project.properties` present, SonarCloud project exists) — the
-   only missing piece is a `sonar-scanner` job in `security-scan.yml` and a `SONAR_TOKEN`
-   Actions secret. Without CI integration, SonarCloud analysis only runs when explicitly
-   remembered, and PRs have no automatic quality gate.
-
-   Recommended addition to `security-scan.yml`:
-   - Use `SonarSource/sonarcloud-github-action`
-   - Pass `fetch-depth: 0` on checkout (required for blame/new-issue detection)
-   - Replace the hardcoded `sonar.branch.name=main` in `sonar-project.properties` with
-     `-Dsonar.branch.name=${{ github.ref_name }}` as a runtime arg
+1. ~~**SonarCloud is not integrated into GitHub Actions.**~~ **Resolved.** A `sonarcloud`
+   job has been added to `.github/workflows/security-scan.yml` using
+   `SonarSource/sonarcloud-github-action@v3.1.0` (SHA-pinned). Checkout uses
+   `fetch-depth: 0` for blame/new-issue detection. The branch name is passed dynamically
+   via `-Dsonar.branch.name=${{ github.ref_name }}`; the hardcoded `sonar.branch.name=main`
+   line has been removed from `sonar-project.properties`.
 
 2. **Shell scripts have no CI lint coverage.** `scripts/`, `populate-bitwarden.sh`,
    `sync-secrets.sh`, and several scripts inside `terraform/lxc/` are not checked by any
@@ -99,11 +82,10 @@ these are reflections for future reference when revisiting decisions, patterns, 
    find . -name '*.sh' -not -path './.git/*' | xargs shellcheck
    ```
 
-3. **Ansible lint only covers `terraform/lxc/ansible/playbooks/`.** The playbooks under
-   `ansible/` (initial setup, storage configuration, Proxmox host setup) are not linted in
-   CI. These are higher-risk than the stack playbooks — mistakes there affect physical hosts,
-   not containers. A second lint step targeting `ansible/` with `ansible/ansible.cfg` as the
-   config file would close this gap.
+3. ~~**Ansible lint only covers `terraform/lxc/ansible/playbooks/`.**~~ **Resolved.**
+   A second lint step targeting `ansible/00-initial-setup/` and `ansible/01-base-system/`
+   has been added to the `ansible-lint` job in `validate.yml`. The step runs from the
+   `ansible/` directory so `ansible/ansible.cfg` is discovered automatically.
 
 ---
 
@@ -118,30 +100,19 @@ these are reflections for future reference when revisiting decisions, patterns, 
 1. Harbor runs in its own dedicated LXC container, consistent with the one-service-per-LXC
    pattern established by Portainer.
 
-2. The Harbor LXC connects directly to `vmbr0` (the flat LAN bridge) — no `network:` block
-   in `stack.yaml`, so it inherits the default bridge. This is the same placement as
-   Portainer and carries the same trade-off: it is reachable from anything on
-   `192.168.1.0/24` with no SDN policy enforcement in front of it.
+2. ~~The Harbor LXC connects directly to `vmbr0`~~ — **Resolved.** Harbor (`harbor-stack/
+   stack.yaml`) now uses `network: zone: infra_seg`, placing it at `10.57.3.10/24` in
+   VLAN 40. All SDN zones reach Harbor through MikroTik routing to `10.57.3.0/24` via
+   the `all_zones → infra_seg` policy defined in `pve-test.yaml`. There is no
+   LAN-to-SDN egress gap for registry pulls. apt-cacher is placed identically at
+   `10.57.3.11/24` in `infra_seg`.
 
-   The consequence is wider here than for Portainer. Every other LXC that pulls images
-   from Harbor (`192.168.1.10`) must have a routed path to the LAN. LXCs on `vmbr0`
-   (infra/apps zones) have this by default; LXCs in SDN zones (`build_seg`, `apps_seg`,
-   etc.) need either SNAT enabled or explicit cross-zone routing. This is a known gap in
-   the current network intent model — the policies in `pve-test.yaml` cover intra-VNet
-   FORWARD rules, but not LAN-to-SDN egress routing for registry pulls.
-
-   A future improvement would be to place Harbor in a dedicated `registry_seg` SDN zone
-   with explicit inbound policies from all consumer zones, or to enable SNAT on each SDN
-   subnet so containers can reach the LAN-addressed Harbor without per-zone routing rules.
-
-3. **IP migration model for LAN-bridge stacks.** The greenfield design assigns the same
-   canonical `192.168.1.10` to Harbor on both nodes. Because both nodes share `vmbr0`,
-   only one can hold that IP at a time. Deploying Harbor to pve-test therefore requires
-   stopping the pve instance first (`pct stop 121` on pve). The override variable
-   `TF_VAR_stack_ip_address` exists in `terraform/lxc/variables.tf` and can be used via
-   `coalesce()` in `main.tf` if parallel operation at a temporary IP is ever needed — but
-   the primary migration path is a clean cut-over. This pattern applies to any future
-   LAN-bridge stack that already runs on pve at a canonical IP.
+3. ~~**IP migration model for LAN-bridge stacks.**~~ **Historical — no longer applies.**
+   Harbor uses distinct addresses on each node: `10.57.3.10` on pve-test (infra_seg) and
+   `192.168.1.10` on pve (vmbr0). There is no IP conflict and no need for a cut-over
+   sequence. The concern described here was specific to an earlier design where Harbor
+   shared `192.168.1.10` across nodes on a flat LAN bridge; that design has been
+   superseded by the SDN VLAN zone model.
 
 ---
 
@@ -245,9 +216,9 @@ these are reflections for future reference when revisiting decisions, patterns, 
      Proxmox VNet firewall controls inbound per-container rules only.
    - pve-test is a bare-metal laptop connected via a trunk port to the MikroTik. It
      is NOT a VM inside pve. All 16 GB RAM is available to pve-test containers.
-   - The Terraform SDN provisioner (`configure-network-sdn-vnet.yml`) handles Simple
-     zones only. VLAN zones must be created manually via pvesh until the playbook is
-     updated. This is documented as a known code gap.
+    - The Terraform SDN provisioner (`configure-network-sdn-vnet.yml`) handles Simple
+       zones only. VLAN zones are now applied by `ansible/00-initial-setup/proxmox-sdn-setup.yml`
+       until the Terraform-side playbook is updated. This remains a known code gap.
 
 2. **Harbor, apt-cacher-ng, and NetBox moved to a dedicated `infra_seg` zone.**
    Previously, Harbor and apt-cacher ran on `vmbr0` (flat LAN) at `192.168.1.10` and

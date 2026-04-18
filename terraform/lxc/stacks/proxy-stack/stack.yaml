@@ -1,0 +1,38 @@
+# Traefik reverse proxy — edge_seg zone
+hostname: proxy-stack
+ip_address: "10.57.2.10/24"
+gateway: "10.57.2.1"
+proxmox_node: pve-test
+network:
+  zone: edge_seg
+vmid: 153
+cores: 1
+memory: 512
+swap: 256
+rootfs_size: 8
+rootfs_storage: infrastructure-containers
+docker_storage_size: "5G"
+ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+tags:
+  - traefik
+  - proxy
+  - edge
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+  - authentik-stack
+provides:
+  - service: proxy-http
+    port: 80
+    protocol: tcp
+  - service: proxy-https
+    port: 443
+    protocol: tcp
+ansible_playbook: "deploy-proxy-stack"
+portainer_agent: true
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: "10.57.3.11"

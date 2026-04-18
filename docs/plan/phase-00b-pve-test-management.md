@@ -49,11 +49,11 @@ from scratch and validated independently.
 
 ## Acceptance Criteria
 
-- [ ] Portainer is running on `pve-test` at `10.57.1.20` (mgmt_seg)
-- [ ] Admin login works with `PORTAINER_ADMIN_PASSWORD`
-- [ ] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
-- [ ] Subsequent pve-test stack deploys target the mgmt_seg Portainer
-- [ ] Production Portainer is not required for any later pve-test work
+- [x] Portainer is running on `pve-test` at `10.57.1.20` (mgmt_seg)
+- [x] Admin login works with `PORTAINER_ADMIN_PASSWORD`
+- [x] `.env.pve-test` exports `TF_VAR_portainer_server_ip=10.57.1.20`
+- [x] Subsequent pve-test stack deploys target the mgmt_seg Portainer
+- [x] Production Portainer is not required for any later pve-test work
 
 ## Notes
 
@@ -61,3 +61,7 @@ from scratch and validated independently.
   This is possible because Phase 00a-02 (SDN zone setup) runs before this phase.
 - All later stack work should follow the phase/task docs rather than the archived `done/`
   runbooks
+- Verified live on 2026-04-16: Portainer VMID 120 is running on `tvmgmt` at `10.57.1.20`,
+  admin authentication succeeds with `PORTAINER_ADMIN_PASSWORD`, and
+  `terragrunt plan -detailed-exitcode` for `terraform/lxc/stacks/portainer-stack` returns
+  `0` with no changes.

@@ -13,6 +13,10 @@ on:
       - main
       - 'dev/pve-test'
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
+  cancel-in-progress: true
+
 jobs:
   terraform-fmt:
     name: Terraform format check
@@ -25,6 +29,23 @@ jobs:
 
       - name: Check formatting
         run: terraform fmt -check -recursive terraform/
+
+  shellcheck:
+    name: ShellCheck lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install ShellCheck
+        run: sudo apt-get install -y shellcheck
+
+      - name: Run ShellCheck
+        run: |
+          find . -name '*.sh' \
+            -not -path './.git/*' \
+            -not -path './_legacy/*' \
+            -not -path '*/.terragrunt-cache/*' \
+            | xargs shellcheck
 
   harbor-image-policy:
     name: Enforce Harbor-only image references
@@ -40,16 +61,14 @@ jobs:
             --include='*.yaml' \
             '^[[:space:]]*image:[[:space:]]*.*(docker\.io|ghcr\.io|quay\.io|registry\.k8s\.io)' \
             terraform/lxc/stacks/; then
-            echo "ERROR: Direct upstream registry references found. Use 192.168.1.10/... instead."
+            echo "ERROR: Direct upstream registry references found. Use 10.57.3.10/... instead."
             exit 1
           fi
           echo "OK — all image references use Harbor proxy."
 
   terraform-validate:
     name: Terraform validate
-    # Temporarily disabled while the pve-test self-hosted build runner is unavailable.
-    if: ${{ false }}
-    runs-on: [self-hosted, pve-test, build]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -85,9 +104,7 @@ jobs:
 
   ansible-lint:
     name: Ansible lint
-    # Temporarily disabled while the pve-test self-hosted build runner is unavailable.
-    if: ${{ false }}
-    runs-on: [self-hosted, pve-test, build]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
 
@@ -113,6 +130,16 @@ jobs:
         # which sets roles_path = roles (relative to this directory).
         working-directory: terraform/lxc/ansible
         run: ../../../.venv/bin/ansible-lint playbooks/
+
+      - name: Install host bootstrap Ansible collections
+        working-directory: ansible
+        run: ../.venv/bin/ansible-galaxy collection install -r requirements.yml
+
+      - name: Run ansible-lint on host bootstrap playbooks
+        # ansible/ contains higher-risk bootstrap playbooks that target physical Proxmox
+        # hosts. Run from ansible/ so ansible/ansible.cfg is discovered automatically.
+        working-directory: ansible
+        run: ../.venv/bin/ansible-lint 00-initial-setup/*.yml 01-base-system/*.yml
 
   sops-decrypt-check:
     name: SOPS decrypt verification

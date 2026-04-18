@@ -4,7 +4,7 @@
 # Updated for production storage layout and proper variable management
 
 - name: Create and configure Debian LXC template
-  hosts: proxmox_production
+  hosts: "{{ target_hosts | default('proxmox') }}"
   become: true
   gather_facts: true
   vars_files:
@@ -13,32 +13,32 @@
 
   vars:
     # Template configuration (can be overridden via extra vars)
-    template_id: "{{ debian_template.container_id | default(900) }}"
+    template_id: "{{ debian_template.container_id | default(910) }}"
     template_hostname: "{{ debian_template.hostname | default('debian-template-builder') }}"
-    template_ip: "{{ debian_template.ip | default('192.168.1.50') }}"
+    template_ip: "{{ debian_template.ip | default('192.168.1.54') }}"
     template_memory: "{{ debian_template.memory | default(2048) }}"
     template_cores: "{{ debian_template.cores | default(2) }}"
     template_disk: "{{ debian_template.disk | default('8G') }}"
 
     # Use infrastructure storage for template building (directory storage)
-    storage_pool: "{{ debian_template.storage_pool | default('infrastructure-storage') }}"
+    storage_pool: "{{ debian_template.storage_pool | default('infrastructure-containers') }}"
 
     # Base template and network settings
-    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-13-standard_13.0-1_amd64.tar.zst') }}"
+    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst') }}"
     base_template_file: "{{ base_template | regex_replace('^local:vztmpl/', '') }}"
     debian_template_version: "{{ (base_template_file.split('_') | length > 1) | ternary(base_template_file.split('_')[1], '13') }}"
     network_bridge: "{{ proxmox_network.bridge | default('vmbr0') }}"
     gateway_ip: "{{ proxmox_network.gateway | default('192.168.1.1') }}"
 
     # Template packaging settings
-    clone_id: "{{ debian_template.clone_id | default(800) }}"
+    clone_id: "{{ debian_template.clone_id | default(810) }}"
     clone_hostname: "{{ debian_template.clone_hostname | default('debian-template-clone') }}"
-    final_template_filename: "{{ debian_template.final_filename | default('debian-' ~ debian_template_version ~ '-docker-template.tar.gz') }}"
+    final_template_filename: "{{ debian_template.final_filename | default('debian-13.1-2-docker-template.tar.gz') }}"
     template_dumpdir: "{{ debian_template.dumpdir | default('/var/lib/vz/template/cache') }}"
     template_ssh_user: "{{ debian_template.ssh_user | default('automation') }}"
-    template_ssh_private_key_file: "{{ debian_template.ssh_private_key_file | default('~/.ssh/id_rsa') }}"
+    template_ssh_private_key_file: "{{ debian_template.ssh_private_key_file | default('~/.ssh/id_ed25519') }}"
     template_ssh_common_args: "{{ debian_template.ssh_common_args | default('-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null') }}"
-    template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_rsa.pub') }}"
+    template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_ed25519.pub') }}"
     enable_root_ssh_login: "{{ debian_template.enable_root_ssh_login | default(false) }}"
 
     # Feature flags
@@ -53,6 +53,7 @@
           - template_id is defined
           - template_ip is defined
           - storage_pool is defined
+          - final_template_filename == 'debian-13.1-2-docker-template.tar.gz'
         fail_msg: "Template configuration incomplete. Check debian_template variables."
 
     - name: Validate Docker channel selection
@@ -209,7 +210,7 @@
     install_docker: "{{ debian_template.install_docker | default(true) }}"
     install_portainer_agent: "{{ debian_template.install_portainer_agent | default(true) }}"
     cleanup_template: "{{ debian_template.cleanup_template | default(true) }}"
-    template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_rsa.pub') }}"
+    template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_ed25519.pub') }}"
     enable_root_console_autologin: "{{ debian_template.enable_root_console_autologin | default(false) }}"
     docker_channel: "{{ debian_template.docker_channel | default('debian') }}"
     docker_compose_cli: >-
@@ -592,7 +593,7 @@
           changed_when: false
 
 - name: Convert container to template and package
-  hosts: proxmox_production
+  hosts: "{{ target_hosts | default('proxmox') }}"
   become: true
   gather_facts: false
   vars_files:
@@ -600,13 +601,13 @@
     - ../group_vars/proxmox_production.yml
 
   vars:
-    template_id: "{{ debian_template.container_id | default(900) }}"
-    clone_id: "{{ debian_template.clone_id | default(800) }}"
+    template_id: "{{ debian_template.container_id | default(910) }}"
+    clone_id: "{{ debian_template.clone_id | default(810) }}"
     clone_hostname: "{{ debian_template.clone_hostname | default('debian-template-clone') }}"
-    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-13-standard_13.0-1_amd64.tar.zst') }}"
+    base_template: "{{ debian_template.base_template | default('local:vztmpl/debian-13-standard_13.1-2_amd64.tar.zst') }}"
     base_template_file: "{{ base_template | regex_replace('^local:vztmpl/', '') }}"
     debian_template_version: "{{ (base_template_file.split('_') | length > 1) | ternary(base_template_file.split('_')[1], '13') }}"
-    final_template_filename: "{{ debian_template.final_filename | default('debian-' ~ debian_template_version ~ '-docker-template.tar.gz') }}"
+    final_template_filename: "{{ debian_template.final_filename | default('debian-13.1-2-docker-template.tar.gz') }}"
     template_dumpdir: "{{ debian_template.dumpdir | default('/var/lib/vz/template/cache') }}"
 
   pre_tasks:

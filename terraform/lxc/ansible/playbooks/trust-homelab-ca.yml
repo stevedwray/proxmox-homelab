@@ -1,0 +1,39 @@
+---
+# WARNING: This playbook must only be run against managed service hosts.
+# Never run against end-user devices or browser endpoints.
+- name: Trust homelab root CA on managed hosts
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    homelab_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+    homelab_root_cert_remote: /usr/local/share/ca-certificates/homelab-root.crt
+
+  pre_tasks:
+    - name: Check that local homelab root cert exists
+      ansible.builtin.stat:
+        path: "{{ homelab_root_cert_local }}"
+      register: homelab_root_cert_stat
+      delegate_to: localhost
+      become: false
+      run_once: true
+
+    - name: Fail when local homelab root cert is missing
+      ansible.builtin.fail:
+        msg: "Local certificate {{ homelab_root_cert_local }} is required before trust distribution."
+      when: not homelab_root_cert_stat.stat.exists
+      run_once: true
+
+  tasks:
+    - name: Install homelab root certificate
+      ansible.builtin.copy:
+        src: "{{ homelab_root_cert_local }}"
+        dest: "{{ homelab_root_cert_remote }}"
+        mode: "0644"
+      register: cert_copy
+
+    - name: Refresh CA trust store when certificate changes
+      ansible.builtin.command:
+        cmd: update-ca-certificates
+      when: cert_copy.changed

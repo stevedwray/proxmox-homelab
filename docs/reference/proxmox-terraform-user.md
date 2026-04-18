@@ -49,7 +49,10 @@ That playbook prints:
 - `TF_VAR_pm_api_token_id`
 - `TF_VAR_pm_api_token_secret`
 
-Update `.env` or `.env.pve-test` with the new values after rotation.
+For the active `pve-test` workflow, `terraform/secrets.enc.yaml` is the source of truth for
+the token secret. Avoid keeping a second long-lived plaintext copy in `.env.pve-test` if the
+SOPS file is available locally; otherwise you must resync `.env.pve-test` immediately after
+rotation.
 
 ## Environment variables used by Terraform
 
@@ -61,6 +64,10 @@ Example:
 export TF_VAR_pm_api_token_id="automation@pve!terraform"
 export TF_VAR_pm_api_token_secret="<TOKEN_SECRET>"
 ```
+
+On the active development workstation, `.env.pve-test` may derive `PROXMOX_TOKEN_SECRET`
+from `terraform/secrets.enc.yaml` at source time so the shell always follows the SOPS-backed
+token source of truth.
 
 Additional environment values are typically loaded from the project’s local env files
 rather than copied into this document.

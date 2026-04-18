@@ -13,9 +13,11 @@
           - network_sdn_enable | bool
           - network_sdn_target == 'pve-test'
           - network_sdn_pve_host == 'pve-test.gibbsgreatly.xyz'
-          - network_sdn_zone_type == 'simple'
+          - network_sdn_zone_type in ['simple', 'vlan']
+          - network_sdn_zone_type != 'vlan' or (network_sdn_bridge | default('', true)) | length > 0
+          - network_sdn_zone_type != 'vlan' or (network_sdn_vlan_tag | string) | length > 0
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN attachment automation is restricted to pve-test simple zones and must not run on pve."
+        fail_msg: "SDN attachment automation is restricted to pve-test SDN zones and requires the current bridge/tag metadata for VLAN zones."
         success_msg: "SDN attachment automation is pinned to pve-test."
 
     - name: Read current SDN zones
@@ -29,18 +31,16 @@
       register: network_sdn_zones_result
       changed_when: false
 
-    - name: Create simple SDN zone when missing
+    - name: Create SDN zone when missing
       ansible.builtin.command:
-        argv:
-          - pvesh
-          - create
-          - /cluster/sdn/zones
-          - --zone
-          - "{{ network_sdn_zone }}"
-          - --type
-          - "{{ network_sdn_zone_type }}"
-          - --nodes
-          - "{{ network_sdn_nodes_csv }}"
+        argv: >-
+          {{
+            ['pvesh', 'create', '/cluster/sdn/zones',
+            '--zone', network_sdn_zone,
+            '--type', network_sdn_zone_type]
+            + ((network_sdn_zone_type == 'vlan') | ternary(['--bridge', network_sdn_bridge], []))
+            + ['--nodes', network_sdn_nodes_csv]
+          }}
       delegate_to: "{{ network_sdn_pve_host }}"
       vars:
         ansible_user: root
@@ -65,16 +65,14 @@
 
     - name: Create SDN VNet when missing
       ansible.builtin.command:
-        argv:
-          - pvesh
-          - create
-          - /cluster/sdn/vnets
-          - --vnet
-          - "{{ network_sdn_vnet }}"
-          - --zone
-          - "{{ network_sdn_zone }}"
-          - --alias
-          - "{{ network_sdn_vnet_alias }}"
+        argv: >-
+          {{
+            ['pvesh', 'create', '/cluster/sdn/vnets',
+            '--vnet', network_sdn_vnet,
+            '--zone', network_sdn_zone]
+            + ((network_sdn_zone_type == 'vlan') | ternary(['--tag', network_sdn_vlan_tag | string], []))
+            + ['--alias', network_sdn_vnet_alias]
+          }}
       delegate_to: "{{ network_sdn_pve_host }}"
       vars:
         ansible_user: root
@@ -104,7 +102,7 @@
           {{
             (
               network_sdn_subnets_result.stdout | default('[]') | from_json
-              | selectattr('subnet', 'equalto', network_sdn_subnet)
+              | selectattr('cidr', 'equalto', network_sdn_subnet)
               | list
             ) | first | default({})
           }}

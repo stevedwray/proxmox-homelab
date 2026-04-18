@@ -33,7 +33,8 @@ log_error() {
     return 0
 }
 
-# Update system packages
+# update_system is called by main() and may be redefined by the --no-update case.
+# shellcheck disable=SC2329
 update_system() {
     log_info "Updating system packages..."
     sudo apt-get update && sudo apt-get upgrade -y
@@ -57,10 +58,10 @@ install_terraform() {
     TERRAFORM_VERSION=$(curl -s https://api.github.com/repos/hashicorp/terraform/releases/latest | grep '"tag_name"' | cut -d'"' -f4 | sed 's/v//')
 
     # Download and install
-    wget -q https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-    unzip -q terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+    wget -q "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
+    unzip -q "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
     sudo mv terraform /usr/local/bin/
-    rm terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+    rm "terraform_${TERRAFORM_VERSION}_linux_amd64.zip"
 
     # Verify installation
     if terraform version >/dev/null 2>&1; then
@@ -81,6 +82,7 @@ install_ansible() {
         python3 -m venv ~/.ansible-venv
     fi
 
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
 
     # Install Ansible and required packages
@@ -125,8 +127,8 @@ configure_git() {
 
     # Prompt for Git configuration
     echo "Git configuration needed:"
-    read -p "Enter your Git username: " git_username
-    read -p "Enter your Git email: " git_email
+    read -r -p "Enter your Git username: " git_username
+    read -r -p "Enter your Git email: " git_email
 
     git config --global user.name "$git_username"
     git config --global user.email "$git_email"
@@ -149,7 +151,7 @@ setup_ssh_keys() {
     fi
 
     echo "SSH key generation:"
-    read -p "Enter your email for SSH key: " ssh_email
+    read -r -p "Enter your email for SSH key: " ssh_email
 
     # Create .ssh directory if it doesn't exist
     mkdir -p ~/.ssh
@@ -180,6 +182,7 @@ install_precommit() {
     log_info "Installing pre-commit hooks..."
 
     # Activate Ansible environment to get pip
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
 
     # Install pre-commit
@@ -199,18 +202,12 @@ install_precommit() {
 setup_environment() {
     log_info "Setting up environment configuration..."
 
-    if [[ -f .env ]]; then
-        log_success ".env file already exists"
-        return 0
-    fi
-
-    if [[ -f .env.template ]]; then
-        log_info "Copy .env.template to .env and configure your settings:"
-        echo "  cp .env.template .env"
-        echo "  nano .env"
-    else
-        log_warning "No .env.template found"
-    fi
+    log_info "Secrets are managed via SOPS — no .env file required."
+    log_info "All infrastructure credentials are stored in terraform/secrets.enc.yaml"
+    echo "  Ensure the age private key is present at ~/.config/sops/age/keys.txt"
+    echo "  Retrieve from Bitwarden: 'proxmox-homelab age private key'"
+    echo "  Then: mkdir -p ~/.config/sops/age && install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
+    echo "  Use ./with-secrets <command> to run any command with secrets injected."
     return 0
 }
 
@@ -226,6 +223,7 @@ test_installations() {
     fi
 
     # Test Ansible (need to activate environment first)
+    # shellcheck source=/dev/null
     source ~/.ansible-venv/bin/activate
     if ansible --version >/dev/null 2>&1; then
         log_success "Ansible: $(ansible --version | head -1)"
@@ -263,14 +261,16 @@ show_completion() {
     echo "  ✓ Pre-commit hooks (if config present)"
     echo
     log_info "Next steps:"
-    echo "1. Configure .env file with your Proxmox credentials:"
-    echo "   cp .env.template .env && nano .env"
+    echo "1. Ensure the age private key is present:"
+    echo "   mkdir -p ~/.config/sops/age"
+    echo "   install -m 600 /dev/stdin ~/.config/sops/age/keys.txt"
+    echo "   (Retrieve key from Bitwarden: 'proxmox-homelab age private key')"
     echo
-    echo "2. Test Proxmox connectivity:"
-    echo "   cd ansible && ansible -i inventory/test-lab.yml proxmox -m ping"
+    echo "2. Verify secret access:"
+    echo "   ./with-secrets env | grep TF_VAR_"
     echo
-    echo "3. Deploy test infrastructure:"
-    echo "   cd terraform/environments/test-vm && terraform init && terraform plan"
+    echo "3. Deploy infrastructure with secrets:"
+    echo "   cd terraform/lxc/stacks/<stack> && ../../../../with-secrets terragrunt apply"
     echo
     echo "4. Open in VSCode:"
     echo "   code proxmox-homelab.code-workspace"
@@ -306,6 +306,8 @@ main() {
 
 # Handle script arguments
 case "${1:-}" in
+    "")
+        ;;
     --help|-h)
         echo "Usage: $0 [OPTIONS]"
         echo

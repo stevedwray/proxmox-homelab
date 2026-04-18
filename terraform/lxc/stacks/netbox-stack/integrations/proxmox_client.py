@@ -9,7 +9,7 @@ import urllib.error
 
 class ProxmoxClient:
     """Thin wrapper around the Proxmox REST API.
-    
+
     Proxmox uses token auth in the format: PVEAPIToken=userid:token_secret
     Self-signed certificates are common in homelab environments.
     """
@@ -18,7 +18,7 @@ class ProxmoxClient:
         self.url = (url or os.environ.get("PROXMOX_URL") or f"https://{os.environ.get('PROXMOX_HOST')}:8006").rstrip("/")
         self.token_id = token_id or os.environ.get("PROXMOX_TOKEN_ID")
         self.token_secret = token_secret or os.environ.get("PROXMOX_TOKEN_SECRET")
-        
+
         if not self.token_id or not self.token_secret:
             raise ValueError(
                 "Proxmox auth requires PROXMOX_TOKEN_ID and PROXMOX_TOKEN_SECRET env vars"
@@ -28,7 +28,7 @@ class ProxmoxClient:
         """Make HTTP request to Proxmox API."""
         endpoint = f"{self.url}/api2/json{path}"
         body = json.dumps(data).encode() if data else None
-        
+
         req = urllib.request.Request(
             endpoint,
             data=body,
@@ -39,12 +39,12 @@ class ProxmoxClient:
                 "Accept": "application/json",
             },
         )
-        
+
         # Disable SSL cert verification for self-signed homelab certs
         ctx = ssl.create_default_context()
         ctx.check_hostname = False  # NOSONAR: intentional - homelab self-signed cert
         ctx.verify_mode = ssl.CERT_NONE  # NOSONAR: intentional - homelab self-signed cert
-        
+
         try:
             with urllib.request.urlopen(req, context=ctx) as resp:
                 if resp.status == 200:
@@ -85,14 +85,14 @@ class ProxmoxClient:
                 return resp.get("data", {}), "lxc"
         except RuntimeError:
             pass
-        
+
         try:
             resp = self.get(f"/nodes/{node}/qemu/{vmid}/config")
             if resp:
                 return resp.get("data", {}), "qemu"
         except RuntimeError:
             pass
-        
+
         return {}, None
 
     def get_node_status(self, node, vmid, vm_type):
@@ -198,7 +198,7 @@ def _parse_qemu_vm(client, node_name: str, qemu: dict) -> dict:
 
 def discover_from_proxmox(url=None, token_id=None, token_secret=None):
     """Discover all infrastructure from Proxmox API.
-    
+
     Returns dict structure:
     {
         "nodes": [{node info}, ...],
@@ -208,7 +208,7 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
     }
     """
     client = ProxmoxClient(url, token_id, token_secret)
-    
+
     nodes = client.get_nodes()
     containers = []
     storage = client.get_storage()
@@ -217,18 +217,18 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
     # Collect all containers and VMs from each node
     for node in nodes:
         node_name = node["node"]
-        
+
         # Get LXC containers
         for lxc in client.get_lxc_containers(node_name):
             containers.append(_parse_lxc_container(client, node_name, lxc))
-        
+
         # Get QEMU VMs
         for qemu in client.get_qemu_vms(node_name):
             containers.append(_parse_qemu_vm(client, node_name, qemu))
-        
+
         # Get network config for this node
         networks[node_name] = client.get_node_networks(node_name)
-    
+
     return {
         "nodes": nodes,
         "containers": containers,
@@ -240,17 +240,17 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
 if __name__ == "__main__":
     """Test connectivity and output discovered topology."""
     import pprint
-    
+
     try:
         print(f"Proxmox Host: {os.environ.get('PROXMOX_HOST')}")
         print(f"Proxmox Token ID: {os.environ.get('PROXMOX_TOKEN_ID')}")
-        
+
         data = discover_from_proxmox()
-        
+
         print(f"\nNodes: {len(data['nodes'])}")
         for node in data["nodes"]:
             print(f"  - {node['node']} ({node.get('cpu', 0):.2f} CPU, {node.get('maxcpu', 0)} cores, {node.get('memory', 0) / 1000000:.1f}GB RAM, {node.get('disk', 0) / 1000000:.1f}GB disk)")
-        
+
         print(f"\nContainers/VMs: {len(data['containers'])}")
         for c in data["containers"][:5]:  # Show first 5
             print(f"  - {c['name']} ({c['type']}, VMID {c['vmid']}, status: {c['status']})")
@@ -258,13 +258,13 @@ if __name__ == "__main__":
                 print(f"      mount: {mount['type']} → {mount.get('mp', mount.get('id', '?'))} on {mount['pool']} (size: {mount.get('size', '?')})")
         if len(data['containers']) > 5:
             print(f"  ... and {len(data['containers']) - 5} more")
-        
+
         print(f"\nStorage Pools: {len(data['storage'])}")
         for s in data["storage"][:5]:  # Show first 5
             print(f"  - {s['storage']} ({s['type']}, {s.get('enabled', 0)} enabled)")
         if len(data['storage']) > 5:
             print(f"  ... and {len(data['storage']) - 5} more")
-        
+
         print("\nNetworks by node:")
         for node_name, ifaces in data["networks"].items():
             print(f"  {node_name}: {len(ifaces)} interfaces")

@@ -2,6 +2,7 @@
 hostname: step-ca
 ip_address: "10.57.1.11/24"
 gateway: "10.57.1.1"
+proxmox_node: pve-test
 vmid: 152
 cores: 1
 memory: 512
@@ -13,8 +14,19 @@ tags:
   - step-ca
   - pki
   - infrastructure
+depends_on:
+  - apt-cacher-stack
+provides:
+  - service: step-ca-acme
+    port: 443
+    protocol: tcp
 
 network:
   zone: mgmt_seg
 
 ansible_playbook: "deploy-step-ca"
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: "10.57.3.11"

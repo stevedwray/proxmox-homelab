@@ -2,6 +2,7 @@
 hostname: harbor-stack
 ip_address: "10.57.3.10/24"
 gateway: "10.57.3.1"
+proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 121
@@ -17,11 +18,25 @@ tags:
   - registry
   - infrastructure
   - docker
+depends_on:
+  - portainer-stack
+provides:
+  - service: registry-http
+    port: 80
+    protocol: tcp
+  - service: registry-https
+    port: 443
+    protocol: tcp
 
 # Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
 extra_mount_path: "/var/lib/harbor"
 extra_mount_size: "100G"
 extra_mount_storage: infrastructure-containers
+
+# pve-test service IPs (explicit — do not rely on variable defaults)
+portainer_server_ip: "10.57.1.20"
+registry_host: "10.57.3.10"
+apt_cacher_host: ""  # No apt proxy on first Harbor deploy — pulls from Docker Hub directly
 
 # Deployment
 ansible_playbook: "deploy-harbor-stack"

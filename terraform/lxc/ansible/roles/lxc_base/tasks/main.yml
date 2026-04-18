@@ -1,9 +1,52 @@
 ---
+- name: Configure guest DNS resolver
+  ansible.builtin.copy:
+    dest: /etc/resolv.conf
+    content: |
+      nameserver {{ dns_server }}
+    owner: root
+    group: root
+    mode: "0644"
+  when: dns_server | default('', true) | string | length > 0
+
 - name: Configure apt to use apt-cacher-ng proxy
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/01proxy
     content: |
-      Acquire::http::Proxy "http://192.168.1.35:3142";
+      Acquire::http::Proxy "http://{{ apt_cacher_host }}:3142";
     owner: root
     group: root
     mode: "0644"
+  when:
+    - apt_cacher_host | default('', true) | string | length > 0
+    - ansible_host | default('', true) | string != apt_cacher_host | string
+
+- name: Remove apt-cacher-ng proxy config when disabled
+  ansible.builtin.file:
+    path: /etc/apt/apt.conf.d/01proxy
+    state: absent
+  when: >-
+    apt_cacher_host | default('', true) | string | length == 0
+    or ansible_host | default('', true) | string == apt_cacher_host | string
+
+- name: Check whether homelab root CA exists on the control node
+  ansible.builtin.stat:
+    path: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+  delegate_to: localhost
+  become: false
+  register: lxc_base_homelab_root_ca_local
+
+- name: Install homelab root CA on managed host
+  ansible.builtin.copy:
+    src: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+    dest: /usr/local/share/ca-certificates/homelab-root.crt
+    mode: "0644"
+  when: lxc_base_homelab_root_ca_local.stat.exists
+  register: lxc_base_homelab_root_ca_copy
+
+- name: Refresh CA trust store after root CA update
+  ansible.builtin.command:
+    cmd: update-ca-certificates
+  when:
+    - lxc_base_homelab_root_ca_local.stat.exists
+    - lxc_base_homelab_root_ca_copy.changed

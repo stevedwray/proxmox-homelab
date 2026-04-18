@@ -22,18 +22,6 @@ SDN_STACKS=(
   "net-artifacts-01"
 )
 
-ALL_STACKS=(
-  "net-app-01"
-  "net-svc-01"
-  "net-isolated-01"
-  "net-client-01"
-  "net-service-01"
-  "net-client-02"
-  "net-service-02"
-  "net-build-01"
-  "net-artifacts-01"
-)
-
 usage() {
   cat <<'EOF'
 Usage:

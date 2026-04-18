@@ -161,7 +161,11 @@
       Env: "{{ app_stack_env }}"
       Prune: "{{ app_stack_prune_on_update }}"
     status_code: 200
-    timeout: 180
+    timeout: 600
+  register: app_stack_update_result
+  retries: 3
+  delay: 20
+  until: app_stack_update_result.status == 200
   when: app_stack_existing_id is defined and app_stack_needs_update | bool
   delegate_to: localhost
 

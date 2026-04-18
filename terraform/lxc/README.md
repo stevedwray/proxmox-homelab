@@ -134,7 +134,7 @@ Terraform will create the LXC, generate inventory, and run the Ansible playbook 
 | `ansible_playbook` | No | — | Playbook to run after creation (omit for bare LXC) |
 | `portainer_agent` | No | `false` | Enable Portainer cleanup on destroy |
 | `app_stack_name` | No | Stack directory name | Name for the stack in Portainer |
-| `portainer_server_ip` | No | `192.168.1.4` | Central Portainer server IP |
+| `portainer_server_ip` | No | Variable default (`192.168.1.4`) | Central Portainer server IP; active shared roles prefer the generated inventory host var when present |
 | `tags` | No | `[<stack_name>]` | Proxmox tags |
 | `keyctl` | No | `false` | Enable keyctl feature flag on the LXC (requires root@pam on PVE) |
 | `rootfs_storage` | No | Variable default | Proxmox storage pool for root filesystem |
@@ -197,6 +197,21 @@ This preserves the VPN/TUN implementation guidance from the main branch while ke
 | `docker-base.yml` | `ansible_playbook: "docker-base"` | Target LXC | docker_base only (bare Docker, no Portainer) |
 | `cleanup.yml` | Terraform destroy (automatic) | localhost | Deletes Portainer stacks + endpoint via API |
 
+## Zone Members Index
+
+For the active `pve-test` path, Terraform can consume a generated zone-members
+index at `network/pve-test.zone-members.yaml` instead of inferring membership by
+rescanning every `stacks/*/stack.yaml` during each run.
+
+Regenerate it after changing `network.zone`, `ip_address`, or `gateway` values
+for active pve-test stacks:
+
+```bash
+python3 terraform/lxc/generate-zone-members-index.py \
+  --network-intent terraform/lxc/network/pve-test.yaml \
+  --output terraform/lxc/network/pve-test.zone-members.yaml
+```
+
 ## Terraform Resources
 
 For each stack, Terraform creates:
@@ -245,12 +260,73 @@ terraform destroy
 Use the disposable validation stacks on `pve-test` to exercise the network layer end to end.
 
 ```bash
+# Documentation-only metadata validation for active platform stacks
+./validate-stack-metadata.sh
+
+# Optional: verify active STACK_CONTRACT.md files include core boundary sections
+./validate-stack-metadata.sh --check-contract-sections
+
+# Optional: also check active STACK_CONTRACT.md files for obvious drift
+./validate-stack-metadata.sh --check-contract-docs
+
+# Optional: run both contract checks together
+./validate-stack-metadata.sh --check-contract-sections --check-contract-docs
+
+# Optional: emit machine-readable JSON for CI or AI consumers
+./validate-stack-metadata.sh --check-contract-sections --check-contract-docs --json
+
 # Single client/service check for the first SDN slice
 ./validate-network.sh
+
+# DNS contract check for one or more active stacks
+./validate-zone-dns.sh ci-runner-01 portainer-stack
 
 # Full 11-case bridge + SDN + isolated matrix
 ./validate-network-matrix.sh
 ```
+
+`validate-stack-metadata.sh` checks the active platform stacks added in the
+boundary-strengthening work. It currently validates only metadata shape:
+- `depends_on` exists, is a list, uses non-empty stack names, does not self-reference,
+  does not duplicate entries, and only points at the active pve-test stack set
+- `provides` exists, is a list, and each entry includes `service`, `port`, and
+  `protocol`
+- `provides.service` values use lowercase kebab-case and do not duplicate within a stack
+- `provides.port` values are integer TCP/UDP port numbers in the valid range
+- `provides.protocol` values are lowercase transport identifiers (`tcp` or `udp`)
+
+It is intentionally documentation/schema validation only. It does not affect Terraform
+ordering or deployment behavior.
+
+`validate-zone-dns.sh` is the shared DNS contract validator for SDN-attached LXCs.
+It reads each stack's generated `inventory.yml`, compares the stack's configured
+resolver to the zone gateway declared by network intent, confirms the guest is using
+that expected resolver, and verifies that the resolver actually answers a lookup from
+inside the guest. Use it after stack creation and before accepting any resolver
+exception such as a temporary public DNS override.
+
+The validator is layered so humans and AI agents can tell what kind of drift occurred:
+- `metadata`:
+  `stack.yaml` structure and references
+- `contract-sections`:
+  required `STACK_CONTRACT.md` section coverage for active stacks
+- `contract-docs`:
+  conservative text sync between declared dependencies/services and the contract text
+
+`--json` emits the same validation result as structured JSON with aggregate layer
+status, an explicit `validation_scope`, active-stack pass/fail summary,
+per-stack declared dependency/service metadata, and structured `issue_details`.
+This is intended for CI jobs and AI agents that need to route follow-up edits
+without parsing terminal prose.
+
+`--check-contract-sections` is a stricter presence/coverage check for active stacks only.
+It verifies that each active stack has a `STACK_CONTRACT.md` and includes the current
+core boundary sections: `## Provides` and `## Dependencies`.
+
+`--check-contract-docs` is a conservative sync check for active stacks only. It verifies
+that each active stack has a `STACK_CONTRACT.md` and that declared `depends_on` stack
+names and `provides.service` names appear in the contract text. It does not attempt to
+infer runtime-versus-provisioning semantics.
 
 `validate-network-matrix.sh` expects generated inventory files for:
 - `net-app-01`
@@ -259,6 +335,8 @@ Use the disposable validation stacks on `pve-test` to exercise the network layer
 - `net-service-01`
 - `net-client-02`
 - `net-service-02`
+- `net-build-01`
+- `net-artifacts-01`
 - `net-isolated-01`
 
 If one of those inventories is missing, apply the corresponding disposable test stack on `pve-test` first.

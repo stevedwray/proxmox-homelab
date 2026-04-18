@@ -33,13 +33,15 @@ locals {
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network               = try(local.stack.network, null)
   stack_network_zone          = try(local.stack.network.zone, null)
-  network_intent_default_path = "${local.lxc_root}/network/${var.proxmox_node}.yaml"
+  effective_proxmox_node      = try(local.stack.proxmox_node, var.proxmox_node)
+  network_intent_default_path = "${local.lxc_root}/network/${local.effective_proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
     local.network_intent_default_path
   )
 
-  network_intent = local.stack_network_zone != null ? yamldecode(file(local.effective_network_intent_path)) : null
+  network_intent                    = local.stack_network_zone != null ? yamldecode(file(local.effective_network_intent_path)) : null
+  effective_zone_members_index_path = trimsuffix(local.effective_network_intent_path, ".yaml") != local.effective_network_intent_path ? "${trimsuffix(local.effective_network_intent_path, ".yaml")}.zone-members.yaml" : "${local.effective_network_intent_path}.zone-members.yaml"
 
   resolved_zone_attachment_name = local.stack_network_zone != null ? local.network_intent.zones[local.stack_network_zone].attachment : null
   resolved_zone_attachment      = local.resolved_zone_attachment_name != null ? local.network_intent.attachments[local.resolved_zone_attachment_name] : null
@@ -48,8 +50,9 @@ locals {
   resolved_sdn_subnet           = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.subnet, null) : null
   resolved_sdn_gateway          = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.gateway, null) : null
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
+  effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
-  effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, var.proxmox_node)
+  effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
 
   effective_network_bridge = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.bridge, "vmbr0") : try(local.stack.network_bridge, "vmbr0")
@@ -62,11 +65,19 @@ locals {
       stack_name  = basename(dirname(relpath))
       zone        = try(yamldecode(file("${local.lxc_root}/${relpath}")).network.zone, null)
       ip_address  = split("/", yamldecode(file("${local.lxc_root}/${relpath}")).ip_address)[0]
+      gateway     = try(yamldecode(file("${local.lxc_root}/${relpath}")).gateway, null)
       description = try(yamldecode(file("${local.lxc_root}/${relpath}")).hostname, basename(dirname(relpath)))
     }
   ]
+  # When the network intent declares a per-zone gateway, use it to keep
+  # pve-test zone membership from silently absorbing stacks from other
+  # environments that happen to reuse the same zone name.
+  zone_gateways = local.stack_network_zone != null ? tomap({
+    for zone_name, zone in local.network_intent.zones :
+    zone_name => try(local.network_intent.attachments[zone.attachment].sdn.gateway, null)
+  }) : tomap({})
 
-  zone_members = try(tomap({
+  inferred_zone_members = local.stack_network_zone != null ? tomap({
     for zone_name, _zone in local.network_intent.zones :
     zone_name => [
       for member in local.all_zone_members : {
@@ -75,8 +86,14 @@ locals {
         description = member.description
       }
       if member.zone == zone_name
+      && (
+        try(local.zone_gateways[zone_name], null) == null ||
+        member.gateway == try(local.zone_gateways[zone_name], null)
+      )
     ]
-  }), tomap({}))
+  }) : tomap({})
+  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(file(local.effective_zone_members_index_path)) : null
+  zone_members                 = local.generated_zone_members_index != null ? try(tomap(local.generated_zone_members_index.zones), tomap({})) : local.inferred_zone_members
 
   inbound_zone_policies = try([
     for policy in local.network_intent.policies : policy
@@ -137,8 +154,8 @@ locals {
 
 check "network_intent_node_matches_proxmox_node" {
   assert {
-    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == var.proxmox_node
-    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but var.proxmox_node is '${var.proxmox_node}'. Ensure the correct intent file exists for this environment."
+    condition     = local.stack_network_zone == null || local.network_intent.proxmox.target_node == local.effective_proxmox_node
+    error_message = "Network intent file targets '${try(local.network_intent.proxmox.target_node, "unknown")}' but effective proxmox_node is '${local.effective_proxmox_node}'. Ensure the correct intent file exists for this environment."
   }
 }
 
@@ -194,9 +211,11 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_vmid       = try(local.stack.vmid, null)
     network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_bridge     = try(local.resolved_sdn_attachment.bridge, null)
     network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
     network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_vnet_alias = try(local.resolved_zone_attachment.description, try(local.resolved_sdn_attachment.alias, local.resolved_sdn_attachment.vnet))
+    network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
+    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
     network_sdn_subnet     = local.resolved_sdn_subnet
     network_sdn_gateway    = local.resolved_sdn_gateway
     network_sdn_snat       = local.resolved_sdn_snat
@@ -227,8 +246,8 @@ resource "null_resource" "configure_network_sdn_attachment" {
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
-      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
-      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
+      ANSIBLE_CONFIG               = lookup(self.triggers, "ansible_cfg", "./ansible.cfg")
+      ANSIBLE_ROLES_PATH           = lookup(self.triggers, "ansible_roles_path", "./roles")
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -251,8 +270,8 @@ EOF
 
     environment = {
       ANSIBLE_HOST_KEY_CHECKING    = "False"
-      ANSIBLE_CONFIG               = self.triggers.ansible_cfg
-      ANSIBLE_ROLES_PATH           = self.triggers.ansible_roles_path
+      ANSIBLE_CONFIG               = lookup(self.triggers, "ansible_cfg", "./ansible.cfg")
+      ANSIBLE_ROLES_PATH           = lookup(self.triggers, "ansible_roles_path", "./roles")
       ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
       ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
     }
@@ -286,6 +305,7 @@ module "lxc" {
   tags             = try(local.stack.tags, [local.stack_name])
   network_bridge   = local.effective_network_bridge
   network_firewall = local.effective_firewall == true
+  dns_servers      = local.effective_dns_server != null ? [local.effective_dns_server] : null
 
   extra_mount_path    = try(local.stack.extra_mount_path, null)
   extra_mount_size    = try(local.stack.extra_mount_size, null)
@@ -306,6 +326,11 @@ resource "local_file" "ansible_inventory" {
     ssh_key             = var.ssh_private_key_path
     ansible_playbook    = try(local.stack.ansible_playbook, "")
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
+    registry_host       = try(local.stack.registry_host, var.registry_host)
+    apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
+    dns_server          = local.effective_dns_server
+    network_zone        = coalesce(local.stack_network_zone, "")
+    contract_dns_server = local.resolved_sdn_gateway != null ? local.resolved_sdn_gateway : ""
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host
@@ -364,6 +389,37 @@ resource "local_file" "network_firewall_vars" {
 }
 
 # ---------------------------------------------------------------------------
+# Ensure the Proxmox host can reach SDN-attached guests for Ansible
+# provisioning. Without a direct route, ProxyJump sessions to VNet-backed
+# containers follow the LAN default route and fail with "No route to host".
+# ---------------------------------------------------------------------------
+resource "null_resource" "prime_sdn_host_route" {
+  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && try(local.stack.ansible_playbook, "") != "" && local.effective_pve_host != "" ? 1 : 0
+
+  triggers = {
+    container_id = module.lxc.container_id
+    guest_ip     = replace(module.lxc.ip_address, "/24", "")
+    pve_host     = local.effective_pve_host
+    subnet       = local.resolved_sdn_subnet
+    bridge       = local.effective_network_bridge
+    host_ip      = cidrhost(local.resolved_sdn_subnet, 254)
+  }
+
+  provisioner "local-exec" {
+    command = <<-EOT
+      ssh -F /dev/null \
+        -o BatchMode=yes \
+        -o StrictHostKeyChecking=no \
+        -o UserKnownHostsFile=/dev/null \
+        'root@${local.effective_pve_host}' \
+        'ip addr replace ${cidrhost(local.resolved_sdn_subnet, 254)}/${split("/", local.resolved_sdn_subnet)[1]} dev ${local.effective_network_bridge} && ip route replace ${local.resolved_sdn_subnet} dev ${local.effective_network_bridge} src ${cidrhost(local.resolved_sdn_subnet, 254)} && ip route get ${replace(module.lxc.ip_address, "/24", "")}'
+    EOT
+  }
+
+  depends_on = [module.lxc]
+}
+
+# ---------------------------------------------------------------------------
 # Ansible provisioning (only if ansible_playbook is set in stack.yaml)
 # ---------------------------------------------------------------------------
 resource "null_resource" "ansible_provision" {
@@ -392,7 +448,11 @@ resource "null_resource" "ansible_provision" {
     }
   }
 
-  depends_on = [local_file.ansible_inventory, null_resource.configure_keyctl]
+  depends_on = [
+    local_file.ansible_inventory,
+    null_resource.configure_keyctl,
+    null_resource.prime_sdn_host_route,
+  ]
 }
 
 # ---------------------------------------------------------------------------

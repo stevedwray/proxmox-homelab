@@ -13,9 +13,9 @@
           - network_sdn_enable | bool
           - network_sdn_target == 'pve-test'
           - network_sdn_pve_host == 'pve-test.gibbsgreatly.xyz'
-          - network_sdn_zone_type == 'simple'
+          - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN destroy automation is restricted to pve-test simple zones and must not run on pve."
+        fail_msg: "SDN destroy automation is restricted to pve-test SDN zones and must not run on pve."
         success_msg: "SDN destroy automation is pinned to pve-test."
 
     - name: Inspect pve-test LXC configs for remaining VNet bridge usage
