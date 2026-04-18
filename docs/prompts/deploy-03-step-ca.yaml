@@ -1,6 +1,6 @@
 ---
 id: dep-03-step-ca
-title: "Deploy step-ca internal CA (VMID 152)"
+title: "Deploy step-ca internal CA (VMID 152) — runtime gate"
 phase: "04"
 type: deployment
 status: pending
@@ -11,6 +11,8 @@ task_doc: docs/plan/tasks/04-core-services-04-deploy-step-ca.md
 github_issue: "#125"
 
 context: |
+  This is a runtime gate prompt.
+
   Mode 2 (rebuild) execution. Deploy step-ca as a systemd service (not Docker) at
   10.57.1.11 in mgmt_seg. step-ca issues ACME certificates for internal lab routes
   using the httpChallenge method — step-ca calls back to Traefik on port 80 to verify.
@@ -183,6 +185,5 @@ postconditions:
 notes:
   - If step ca root requires --fingerprint, check step-ca startup logs via
     'pct exec 152 -- journalctl -u step-ca --no-pager | grep fingerprint'
-  - CA rebuild impact: certs/homelab-root.crt changes on every rebuild. If Monitoring
-    is already deployed and references this cert, re-run trust-homelab-ca.yml on VMID 154 too.
+  - "CA rebuild impact: certs/homelab-root.crt changes on every rebuild. If Monitoring is already deployed and references this cert, re-run trust-homelab-ca.yml on VMID 154 too."
   - This deployment unblocks dep-04-monitoring

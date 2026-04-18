@@ -1,6 +1,6 @@
 ---
 id: dep-02-traefik
-title: "Deploy Traefik reverse proxy (VMID 153)"
+title: "Deploy Traefik reverse proxy (VMID 153) — runtime gate"
 phase: "04"
 type: deployment
 status: pending
@@ -11,6 +11,8 @@ task_doc: docs/plan/tasks/04-core-services-03-deploy-traefik.md
 github_issue: "#106"
 
 context: |
+  This is a runtime gate prompt.
+
   Mode 2 (rebuild) execution. Deploy Traefik in edge_seg as the platform's
   reverse proxy. Authentik must already be deployed and the Proxy Provider
   outpost must exist (created in dep-01-authentik Step 6).
@@ -160,7 +162,7 @@ postconditions:
     - id: staging-cert
       description: TLS cert is from LE staging CA
       verify: "curl -sv https://10.57.2.10/ 2>&1 | grep -i '(STAGING)'"
-      expect: "(STAGING) Let's Encrypt" in issuer
+      expect: "issuer contains '(STAGING) Let's Encrypt'"
 
     - id: no-token-on-disk
       description: No literal CF_DNS_API_TOKEN in compose file

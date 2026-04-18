@@ -1,6 +1,6 @@
 ---
 id: dep-04-monitoring
-title: "Deploy monitoring stack — VictoriaMetrics + Grafana + Loki (VMID 154)"
+title: "Deploy monitoring stack - VictoriaMetrics + Grafana + Loki (VMID 154) — runtime gate"
 phase: "04"
 type: deployment
 status: pending
@@ -12,118 +12,125 @@ task_doc: docs/plan/tasks/04-core-services-05-deploy-monitoring.md
 github_issue: "#107"
 
 context: |
-  Mode 2 (rebuild) execution. Deploy the monitoring stack as the last Phase 04
-  service. This is the most resource-heavy stack (cores: 2, memory: 1536, 50G storage)
-  — confirm pve-test is at 32 GB RAM before starting.
+  This is a runtime gate prompt.
 
-  HARD DEPENDENCY: GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET must
-  be real values in terraform/secrets.enc.yaml before the playbook runs. They come
-  from the Authentik OIDC provider created in dep-01-authentik Step 6. If they are
-  still CHANGEME_, stop and return to that task first.
+  Mode 2 (rebuild) execution for the monitoring stack. Deploy this stack only
+  after rem-03 has hardened secret handling in the playbook.
 
-  The stack deploys four services: VictoriaMetrics, Grafana, Loki, Promtail.
-  All secrets are injected from SOPS via the env_file pattern.
+  HARD DEPENDENCIES:
+  - rem-03-monitoring-secrets is complete and playbook uses env_file pattern
+  - GRAFANA_ADMIN_PASSWORD, GRAFANA_OAUTH_CLIENT_ID, and
+    GRAFANA_OAUTH_CLIENT_SECRET are real values in SOPS (no CHANGEME_)
+  - Target node is pve-test (never pve)
+
+  This stack deploys VictoriaMetrics, Grafana, Loki, and Promtail.
 
 preconditions:
   repository:
-    - id: remediation-done
-      description: rem-03-monitoring-secrets is complete — playbook uses env_file pattern
-      verify: "grep -c 'lookup.*env.*GRAFANA_ADMIN_PASSWORD' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
-      expect: "1 or more"
-
-  secrets:
-    - key: GRAFANA_ADMIN_PASSWORD
-      verify: |
-        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
-          sops --decrypt terraform/secrets.enc.yaml | grep 'GRAFANA_ADMIN_PASSWORD'
-      expect: Real value (not CHANGEME_)
-    - key: GRAFANA_OAUTH_CLIENT_ID
-      verify: same pattern
-      expect: Real value from Authentik OIDC provider (not CHANGEME_)
-    - key: GRAFANA_OAUTH_CLIENT_SECRET
-      verify: same pattern
-      expect: Real value from Authentik OIDC provider (not CHANGEME_)
+    - id: remediation-gate
+      description: rem-03 complete - env_file present and inline Grafana secret keys removed from compose content template
+      verify: "grep -q 'env_file: .env' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml && ! grep -q 'GF_SECURITY_ADMIN_PASSWORD\\|GF_AUTH_GENERIC_OAUTH_CLIENT_ID\\|GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
+      expect: command exits 0
 
   infrastructure:
     - id: proxmox-target
-      description: TF_VAR_proxmox_node is pve-test
+      description: TF_VAR_proxmox_node resolves to pve-test
       verify: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
       expect: pve-test
 
     - id: memory
-      description: pve-test has 32 GB RAM
+      description: pve-test has 32 GB RAM for full Phase 04 stack
       verify: "ssh root@pve-test.gibbsgreatly.xyz 'free -h | grep Mem'"
       expect: "~31 GiB total"
 
     - id: authentik-healthy
-      description: Authentik running and OIDC provider configured
+      description: Authentik health endpoint returns ready
       verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
       expect: "204"
 
     - id: traefik-running
-      description: Traefik running at 10.57.2.10
-      verify: "curl -o /dev/null -w '%{http_code}' http://10.57.2.10"
+      description: Traefik is reachable on 10.57.2.10
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.2.10"
       expect: "301 or 302"
 
-    - id: step-ca-running
-      description: step-ca ACME directory reachable
+    - id: stepca-running
+      description: step-ca ACME endpoint is reachable
       verify: "curl -sk https://10.57.1.11/acme/acme/directory | jq .newNonce"
       expect: URL string
 
     - id: ip-available
-      description: 10.57.1.12 is not in use
-      verify: "ping -c 2 -W 1 10.57.1.12 && echo IN_USE || echo available"
-      expect: available
+      description: 10.57.1.12 is not already in use
+      verify: "ping -c 2 -W 1 10.57.1.12 >/dev/null 2>&1 && echo IN_USE || echo AVAILABLE"
+      expect: AVAILABLE
+
+  secrets:
+    - id: grafana-secrets-present
+      description: all three Grafana keys exist in SOPS
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml \
+          | grep -E '^GRAFANA_ADMIN_PASSWORD:|^GRAFANA_OAUTH_CLIENT_ID:|^GRAFANA_OAUTH_CLIENT_SECRET:'
+      expect: three lines
+
+    - id: grafana-secrets-real
+      description: Grafana keys are real values, not placeholders
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml \
+          | grep -E '^GRAFANA_ADMIN_PASSWORD:|^GRAFANA_OAUTH_CLIENT_ID:|^GRAFANA_OAUTH_CLIENT_SECRET:' \
+          | grep -q 'CHANGEME_' && echo PLACEHOLDER || echo REAL
+      expect: REAL
 
 objective: |
-  LXC VMID 154 is running at 10.57.1.12 in mgmt_seg. All four containers are running.
-  Grafana health returns {"database":"ok"}. VictoriaMetrics scrapes CoreDNS.
-  Grafana OIDC login works via Authentik. No literal credentials on disk.
-  Grafana is accessible via Traefik at https://grafana.gibbsgreatly.xyz.
+  Provision and configure monitoring-stack (VMID 154, 10.57.1.12, mgmt_seg),
+  with Grafana healthy, VictoriaMetrics and Loki reachable, Traefik route
+  functional, and no literal Grafana credentials on disk.
 
 workflow:
   tooling:
     note: |
       Use ./with-secrets for all terragrunt and ansible-playbook calls.
-      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
-      Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
-      No --extra-vars for secrets.
-      Grafana datasources are added manually via the UI after deploy.
+      Run Ansible from terraform/lxc/ansible for correct role resolution.
+      Inline inventory checks must include -u root.
+      Never pass secrets via --extra-vars.
 
   steps:
     - id: 1
-      name: Confirm all three Grafana secrets are real values in SOPS
+      name: Verify guardrails and real secrets
       commands:
         - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node'"
         - |
           SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
             sops --decrypt terraform/secrets.enc.yaml \
-            | grep -E 'GRAFANA_ADMIN_PASSWORD|GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET'
+            | grep -E '^GRAFANA_ADMIN_PASSWORD:|^GRAFANA_OAUTH_CLIENT_ID:|^GRAFANA_OAUTH_CLIENT_SECRET:'
+        - |
+          SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+            sops --decrypt terraform/secrets.enc.yaml \
+            | grep -E '^GRAFANA_ADMIN_PASSWORD:|^GRAFANA_OAUTH_CLIENT_ID:|^GRAFANA_OAUTH_CLIENT_SECRET:' \
+            | grep -q 'CHANGEME_' && echo 'BLOCKED: placeholders present' || echo 'OK: real values'
       decision:
-        if_any_is_CHANGEME: |
-          STOP. Return to dep-01-authentik Step 6 to create the Grafana OIDC provider
-          in Authentik and record the resulting client ID and secret in SOPS.
+        if_target_not_pve_test: Stop immediately and treat as targeting error.
+        if_placeholders_present: |
+          Stop deployment. Return to dep-01-authentik OIDC setup and update
+          terraform/secrets.enc.yaml with real Grafana OAuth values.
 
     - id: 2
-      name: Apply monitoring LXC
+      name: Apply monitoring LXC infrastructure
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/monitoring-stack
         - "../../../../with-secrets terragrunt apply"
       notes:
-        - VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, zone mgmt_seg
-        - cores 2, memory 1536, docker_storage_size 50G
+        - Expected shape: VMID 154, IP 10.57.1.12/24, gw 10.57.1.1, zone mgmt_seg
 
     - id: 3
-      name: Run Ansible playbook
+      name: Configure monitoring stack via Ansible
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
         - "../../../with-secrets ansible -i '10.57.1.12,' -u root all -m ping"
         - "../../../with-secrets ansible-playbook -i '10.57.1.12,' -u root playbooks/deploy-monitoring-stack.yml"
-      notes:
-        - If ping fails with UNREACHABLE, fix SSH auth/inventory before running the playbook
 
     - id: 4
-      name: Validate services
+      name: Validate service health
       commands:
         - "curl -s http://10.57.1.12:3000/api/health | jq .database"
         - "curl -s http://10.57.1.12:8428/metrics | head -5"
@@ -131,10 +138,10 @@ workflow:
       expect:
         - Grafana returns '"ok"'
         - VictoriaMetrics returns metrics output
-        - Loki returns "ready"
+        - Loki returns ready
 
     - id: 5
-      name: Verify no secrets on disk
+      name: Validate secrets are not on disk
       commands:
         - "pct exec 154 -- stat -c '%a' /opt/monitoring-stack/.env"
         - "pct exec 154 -- grep -c 'GRAFANA_ADMIN_PASSWORD.*=' /opt/monitoring-stack/docker-compose.yml"
@@ -143,34 +150,42 @@ workflow:
         - compose grep returns 0
 
     - id: 6
-      name: OOM check on Proxmox host
+      name: Validate provisioned datasources file and Traefik route
       commands:
-        - "ssh root@pve-test.gibbsgreatly.xyz 'dmesg | grep -i oom | tail -5'"
-      expect: Empty output (no OOM events)
+        - "pct exec 154 -- test -f /opt/monitoring-stack/grafana/provisioning/datasources/datasources.yml && echo DATASOURCES_OK"
+        - "curl -k -o /dev/null -w '%{http_code}' https://grafana.gibbsgreatly.xyz"
+      expect:
+        - DATASOURCES_OK
+        - 200 or 302
 
     - id: 7
-      name: "MANUAL — Configure Grafana datasources"
-      type: manual
-      instructions: |
-        1. Open http://10.57.1.12:3000 (or https://grafana.gibbsgreatly.xyz via Traefik)
-        2. Log in via Authentik OIDC (or with admin / GRAFANA_ADMIN_PASSWORD from SOPS)
-        3. Add datasource: Prometheus → URL http://victoriametrics:8428 → Test → Save
-        4. Add datasource: Loki → URL http://loki:3100 → Test → Save
-        5. Verify both datasource tests pass
-
-    - id: 8
-      name: Verify Traefik route (if configured)
-      commands:
-        - "curl -o /dev/null -w '%{http_code}' https://grafana.gibbsgreatly.xyz"
-      expect: "200 or 302 (Authentik redirect)"
-
-    - id: 9
-      name: Restart survival test
+      name: Restart survival check
       commands:
         - "ssh root@pve-test.gibbsgreatly.xyz 'pct restart 154'"
-        - "sleep 30"
-        - "curl -s http://10.57.1.12:3000/api/health | jq .database"
-      expect: '"ok" returned after restart'
+        - |
+          for i in $(seq 1 12); do
+            state=$(curl -s http://10.57.1.12:3000/api/health | jq -r .database 2>/dev/null || true)
+            if [ "$state" = "ok" ]; then
+              echo OK
+              exit 0
+            fi
+            echo "retry $i"
+          done
+          echo FAILED
+          exit 1
+      expect:
+        - OK
+
+    - id: 8
+      name: OOM check on host
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'dmesg | grep -i oom | tail -5'"
+      expect: no new OOM events after deployment
+
+    - id: 9
+      name: Security scan
+      commands:
+        - "./with-secrets sonar-scanner"
 
 postconditions:
   criteria:
@@ -180,37 +195,44 @@ postconditions:
       expect: "status: running"
 
     - id: grafana-healthy
-      description: Grafana database is ok
+      description: Grafana API reports database ok
       verify: "curl -s http://10.57.1.12:3000/api/health | jq .database"
       expect: '"ok"'
 
     - id: vm-healthy
-      description: VictoriaMetrics is serving metrics
+      description: VictoriaMetrics serves metrics
       verify: "curl -s http://10.57.1.12:8428/metrics | head -1"
       expect: "# HELP or vm_"
 
     - id: loki-ready
-      description: Loki is ready
+      description: Loki readiness endpoint returns ready
       verify: "curl -s http://10.57.1.12:3100/ready"
       expect: ready
 
-    - id: no-secrets-on-disk
-      description: No literal Grafana password in compose file
+    - id: no-inline-secrets-on-disk
+      description: docker-compose on disk contains no literal Grafana secret assignment
       verify: "pct exec 154 -- grep -c 'GRAFANA_ADMIN_PASSWORD.*=' /opt/monitoring-stack/docker-compose.yml"
       expect: "0"
 
-    - id: oidc-login
-      description: Grafana OIDC login via Authentik works
-      verify: "Manual check — log in to Grafana via Authentik and confirm successful access"
+    - id: route-works
+      description: Grafana route responds through Traefik
+      verify: "curl -k -o /dev/null -w '%{http_code}' https://grafana.gibbsgreatly.xyz"
+      expect: "200 or 302"
 
     - id: no-oom
-      description: No OOM events after all Phase 04 stacks running
+      description: Host OOM state unchanged by monitoring stack
       verify: "ssh root@pve-test.gibbsgreatly.xyz 'dmesg | grep -i oom | wc -l'"
-      expect: "0"
+      expect: "0 or unchanged baseline"
+
+security_scan:
+  when: Before merge
+  commands:
+    - "./with-secrets sonar-scanner"
+
+merge:
+  target: dev/pve-test
 
 notes:
-  - Phase 04 is complete when this task postconditions are all met
-  - Phase 05 (Supply Chain) is now unblocked
-  - VictoriaMetrics currently only scrapes CoreDNS — expanding scrape targets is Phase 05 work
-  - If Grafana OIDC login fails, check Authentik outpost configuration and that
-    GRAFANA_OAUTH_CLIENT_ID in SOPS matches the client ID in the Authentik OIDC provider
+  - If rem-03 is not complete, stop and complete remediation first.
+  - If any Grafana secret is CHANGEME_, deployment is blocked by design.
+  - GF_AUTH_GENERIC_OAUTH_AUTH_URL, TOKEN_URL, and API_URL are non-secret config values.

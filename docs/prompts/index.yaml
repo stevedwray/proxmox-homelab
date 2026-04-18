@@ -21,10 +21,14 @@ prompts:
   # ── Phase 04 Remediation ────────────────────────────────────────────────────
   # These must be done before any clean rebuild pass. Current playbooks bake
   # credentials into on-disk files — they must be fixed first.
+  #
+  # Gate semantics:
+  # - remediation prompts are code-hardening gates (playbook/template correctness)
+  # - deployment prompts are runtime gates (real secrets, apply, health checks)
 
   - id: rem-01-authentik-secrets
     file: remediation-01-authentik-secrets.yaml
-    title: "Fix Authentik playbook — secrets injection via SOPS env_file"
+    title: "Fix Authentik playbook — code hardening gate for SOPS env_file pattern"
     type: remediation
     status: pending
     priority: 1
@@ -33,7 +37,7 @@ prompts:
 
   - id: rem-02-traefik-secrets
     file: remediation-02-traefik-secrets.yaml
-    title: "Fix Traefik playbook — secrets injection, LE staging CA, cert persistence"
+    title: "Fix Traefik playbook — code hardening gate for secrets and cert handling"
     type: remediation
     status: pending
     priority: 1
@@ -42,7 +46,7 @@ prompts:
 
   - id: rem-03-monitoring-secrets
     file: remediation-03-monitoring-secrets.yaml
-    title: "Fix Monitoring playbook — secrets injection via SOPS env_file"
+    title: "Fix Monitoring playbook — code hardening gate for SOPS env_file pattern"
     type: remediation
     status: pending
     priority: 1
@@ -51,7 +55,7 @@ prompts:
 
   - id: rem-04-step-ca-secrets
     file: remediation-04-step-ca-secrets.yaml
-    title: "Fix step-ca playbook — STEP_CA_PASSWORD from env, not extra-vars"
+    title: "Fix step-ca playbook — code hardening gate for env-based secrets"
     type: remediation
     status: pending
     priority: 2
@@ -63,7 +67,7 @@ prompts:
 
   - id: dep-01-authentik
     file: deploy-01-authentik.yaml
-    title: "Deploy Authentik identity provider (VMID 150)"
+    title: "Deploy Authentik identity provider (VMID 150) — runtime gate"
     type: deployment
     status: pending
     depends_on:
@@ -72,7 +76,7 @@ prompts:
 
   - id: dep-02-traefik
     file: deploy-02-traefik.yaml
-    title: "Deploy Traefik reverse proxy (VMID 153)"
+    title: "Deploy Traefik reverse proxy (VMID 153) — runtime gate"
     type: deployment
     status: pending
     depends_on:
@@ -82,7 +86,7 @@ prompts:
 
   - id: dep-03-step-ca
     file: deploy-03-step-ca.yaml
-    title: "Deploy step-ca internal CA (VMID 152)"
+    title: "Deploy step-ca internal CA (VMID 152) — runtime gate"
     type: deployment
     status: pending
     depends_on:
@@ -92,7 +96,7 @@ prompts:
 
   - id: dep-04-monitoring
     file: deploy-04-monitoring.yaml
-    title: "Deploy monitoring stack (VMID 154)"
+    title: "Deploy monitoring stack (VMID 154) — runtime gate with real SOPS values"
     type: deployment
     status: pending
     depends_on:
