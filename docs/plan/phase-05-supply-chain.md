@@ -227,6 +227,8 @@ Add these to the repository (Settings → Secrets → Actions):
 |---|---|
 | `HARBOR_ROBOT_USER` | Harbor robot account username for CI |
 | `HARBOR_ROBOT_PASSWORD` | Harbor robot account password |
+| `HARBOR_DOCKERHUB_USERNAME` | Docker Hub account used by CI source-image pulls to avoid anonymous rate limits |
+| `HARBOR_DOCKERHUB_PASSWORD` | Docker Hub token/password used by CI source-image pulls to avoid anonymous rate limits |
 | `COSIGN_KEY` | PEM-encoded encrypted cosign private key |
 | `COSIGN_PASSWORD` | Passphrase for the cosign private key |
 

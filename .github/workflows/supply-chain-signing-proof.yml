@@ -39,6 +39,8 @@ jobs:
         env:
           HARBOR_USER: ${{ secrets.HARBOR_ROBOT_USER }}
           HARBOR_PASS: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
+          DOCKERHUB_USER: ${{ secrets.HARBOR_DOCKERHUB_USERNAME }}
+          DOCKERHUB_PASS: ${{ secrets.HARBOR_DOCKERHUB_PASSWORD }}
           REQUESTED_PROJECT: ${{ github.event.inputs.target_project || vars.HARBOR_PROOF_TARGET_PROJECT || 'homelab' }}
           REQUESTED_IMAGE: ${{ github.event.inputs.target_image || vars.HARBOR_PROOF_TARGET_IMAGE || 'apps/phase05-signing-proof' }}
           TARGET_CANDIDATES: ${{ vars.HARBOR_PROOF_TARGET_CANDIDATES || '' }}
@@ -137,11 +139,19 @@ jobs:
             | tar -xz -C "$RUNNER_TEMP" crane
           chmod +x "$RUNNER_TEMP/crane"
 
-          AUTH_B64="$(printf '%s:%s' "$HARBOR_USER" "$HARBOR_PASS" | base64 -w0)"
+          HARBOR_AUTH_B64="$(printf '%s:%s' "$HARBOR_USER" "$HARBOR_PASS" | base64 -w0)"
           mkdir -p "$HOME/.docker"
-          cat > "$HOME/.docker/config.json" <<EOF
-          {"auths":{"10.57.3.10":{"auth":"${AUTH_B64}"}}}
+          if [[ -n "$DOCKERHUB_USER" && -n "$DOCKERHUB_PASS" ]]; then
+            DOCKERHUB_AUTH_B64="$(printf '%s:%s' "$DOCKERHUB_USER" "$DOCKERHUB_PASS" | base64 -w0)"
+            cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
           EOF
+          else
+            echo "HARBOR_DOCKERHUB_USERNAME/HARBOR_DOCKERHUB_PASSWORD are not set; Docker Hub source pulls may be rate limited." >&2
+            cat > "$HOME/.docker/config.json" <<EOF
+          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"}}}
+          EOF
+          fi
 
           "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
 
