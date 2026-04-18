@@ -1,0 +1,16 @@
+[Unit]
+Description=CoreDNS — Internal authoritative DNS server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/coredns -conf /etc/coredns/coredns.conf
+Restart=on-failure
+RestartSec=5s
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=coredns
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,26 @@
+$ORIGIN lab.gibbsgreatly.xyz.
+$TTL 5m
+
+@               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
+					2026041801 ; serial
+					1h         ; refresh
+					15m        ; retry
+					30d        ; expire
+					5m         ; minimum
+)
+
+@               IN  NS  ns1.lab.gibbsgreatly.xyz.
+ns1             IN  A   10.57.1.13
+
+; Phase 04 core services (mgmt_seg)
+authentik       A   10.57.1.10          ; identity provider
+step-ca         A   10.57.1.11          ; internal CA
+monitoring      A   10.57.1.12          ; observability stack
+
+; Phase 04 edge services (edge_seg)
+traefik         A   10.57.2.10          ; reverse proxy
+
+; Phase 06 application services — populated during app migration
+; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)
+; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)
+; jellyfin     A   10.60.0.30          (Jellyfin, migrated in Phase 06)
