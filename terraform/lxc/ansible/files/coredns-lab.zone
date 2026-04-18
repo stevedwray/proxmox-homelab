@@ -2,7 +2,7 @@ $ORIGIN lab.gibbsgreatly.xyz.
 $TTL 5m
 
 @               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
-					2026041801 ; serial
+					2026041802 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -16,6 +16,7 @@ ns1             IN  A   10.57.1.13
 authentik       A   10.57.1.10          ; identity provider
 step-ca         A   10.57.1.11          ; internal CA
 monitoring      A   10.57.1.12          ; observability stack
+grafana         A   10.57.1.12          ; Grafana (alias for monitoring stack)
 
 ; Phase 04 edge services (edge_seg)
 traefik         A   10.57.2.10          ; reverse proxy
