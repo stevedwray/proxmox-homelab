@@ -1,0 +1,159 @@
+---
+- name: Deploy CoreDNS authoritative nameserver
+  hosts: dns_stack
+  become: true
+  gather_facts: false
+
+  vars:
+    coredns_version: "1.10.1"
+    coredns_binary: "/usr/local/bin/coredns"
+    coredns_config_dir: "/etc/coredns"
+    coredns_install_dir: "/tmp/coredns-install"
+
+  pre_tasks:
+    - name: Wait for SSH to become available after container creation
+      ansible.builtin.wait_for_connection:
+        timeout: 300
+        delay: 2
+        sleep: 3
+
+    - name: Gather facts after the guest is reachable
+      ansible.builtin.setup:
+
+  roles:
+    - role: lxc_base
+
+  tasks:
+    - name: Check whether CoreDNS is already installed
+      ansible.builtin.stat:
+        path: "{{ coredns_binary }}"
+      register: coredns_binary_stat
+
+    - name: Install CoreDNS host dependencies
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - tar
+          - dnsutils
+        state: present
+        update_cache: true
+
+    - name: Download CoreDNS release
+      ansible.builtin.get_url:
+        url: "https://github.com/coredns/coredns/releases/download/v{{ coredns_version }}/coredns_{{ coredns_version }}_linux_amd64.tgz"
+        dest: "/tmp/coredns_{{ coredns_version }}_linux_amd64.tgz"
+        mode: "0644"
+      when: not coredns_binary_stat.stat.exists
+
+    - name: Create CoreDNS installation directory
+      ansible.builtin.file:
+        path: "{{ coredns_install_dir }}"
+        state: directory
+        mode: "0755"
+      when: not coredns_binary_stat.stat.exists
+
+    - name: Extract CoreDNS binary
+      ansible.builtin.unarchive:
+        src: "/tmp/coredns_{{ coredns_version }}_linux_amd64.tgz"
+        dest: "{{ coredns_install_dir }}"
+        remote_src: true
+      when: not coredns_binary_stat.stat.exists
+
+    - name: Copy CoreDNS binary to /usr/local/bin
+      ansible.builtin.copy:
+        src: "{{ coredns_install_dir }}/coredns"
+        dest: "{{ coredns_binary }}"
+        mode: "0755"
+        remote_src: true
+      when: not coredns_binary_stat.stat.exists
+
+    - name: Verify CoreDNS version
+      ansible.builtin.command: "{{ coredns_binary }} -version"
+      changed_when: false
+      register: coredns_version_output
+      failed_when: "'coredns' not in (coredns_version_output.stdout | lower)"
+
+    - name: Display CoreDNS version
+      ansible.builtin.debug:
+        msg: "CoreDNS installed: {{ coredns_version_output.stdout }}"
+
+    - name: Create CoreDNS configuration directory
+      ansible.builtin.file:
+        path: "{{ coredns_config_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Copy CoreDNS configuration file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/coredns.conf"
+        dest: "{{ coredns_config_dir }}/coredns.conf"
+        mode: "0644"
+
+    - name: Copy CoreDNS zone file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/coredns-lab.zone"
+        dest: "{{ coredns_config_dir }}/lab.zone"
+        mode: "0644"
+
+    - name: Copy CoreDNS systemd service file
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/coredns.service"
+        dest: /etc/systemd/system/coredns.service
+        mode: "0644"
+
+    - name: Reload systemd daemon
+      ansible.builtin.systemd:
+        daemon_reload: true
+
+    - name: Enable CoreDNS service at boot
+      ansible.builtin.systemd:
+        name: coredns
+        enabled: true
+
+    - name: Start CoreDNS service
+      ansible.builtin.systemd:
+        name: coredns
+        state: started
+
+    - name: Wait for CoreDNS to be ready
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 53
+        timeout: 30
+
+    - name: Verify CoreDNS service is active
+      ansible.builtin.command: systemctl is-active coredns
+      register: coredns_service_state
+      changed_when: false
+      failed_when: coredns_service_state.stdout != "active"
+
+    - name: Test authority query for traefik.lab.gibbsgreatly.xyz
+      ansible.builtin.command: dig @127.0.0.1 +short traefik.lab.gibbsgreatly.xyz
+      register: coredns_authority_test
+      changed_when: false
+
+    - name: Verify authority query returns expected address
+      ansible.builtin.assert:
+        that:
+          - coredns_authority_test.stdout == "10.57.2.10"
+        fail_msg: "Authority query did not return expected IP 10.57.2.10"
+
+    - name: Test recursive query for github.com
+      ansible.builtin.command: dig @127.0.0.1 +short github.com
+      register: coredns_recursion_test
+      changed_when: false
+
+    - name: Verify recursive query returns records
+      ansible.builtin.assert:
+        that:
+          - coredns_recursion_test.stdout | length > 0
+        fail_msg: "Recursive query for github.com returned no records"
+
+    - name: Clean up temporary installation files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "/tmp/coredns_{{ coredns_version }}_linux_amd64.tgz"
+        - "{{ coredns_install_dir }}"
