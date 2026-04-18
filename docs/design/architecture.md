@@ -1,48 +1,14 @@
----
+# Architecture
 
-stepsCompleted: [1, 2, 3, 4]
-inputDocuments:
-  - docs/design/GreenField.md
-  - docs/design/NetworkPlanning.md
-  - docs/design/Observations.md
-  - docs/design/PlanRevisionBrief.md
-  - docs/plan/README.md
-  - docs/plan/phase-00a-proxmox-host-bootstrap.md
-  - docs/plan/phase-00b-pve-test-management.md
-  - docs/plan/phase-01-ci-runner-deployment.md
-  - docs/plan/phase-02-memory-upgrade.md
-  - docs/plan/phase-03-code-quality.md
-  - docs/plan/phase-03b-harbor-setup.md
-  - docs/plan/phase-03c-artifact-proxy.md
-  - docs/plan/phase-04-core-shared-services.md
-  - docs/plan/phase-05-supply-chain.md
-  - docs/plan/phase-06-app-stacks.md
-  - docs/plan/phase-07-runtime-security.md
-  - docs/reference/proxmox-server-baseline.md
-  - docs/reference/proxmox-terraform-user.md
-  - docs/reference/sdn-segment-routing.md
-  - docs/reference/secrets-management.md
-workflowType: architecture
-project_name: homelab
-user_name: Stephen Wray
-date: '2026-04-15'
-documentStyle: thorough
-scope: full-system
-elicitationSessions:
-  - method: Red Team vs Blue Team
-    date: '2026-04-15'
-    findings: 7 attack vectors identified; 7 hardening constraints applied
-  - method: Architecture Decision Records
-    date: '2026-04-15'
-    findings: 6 ADRs documented (CI platform, reverse proxy, metrics, container mgmt, remote access, secrets runtime)
-  - method: STRIDE Threat Model
-    date: '2026-04-15'
-    findings: 32 threats identified across 9 asset classes; 4 P0, 9 P1, 7 P2, 8 P3; 4 deferred to Phase 07
----
+This is the authoritative architecture reference for the proxmox-homelab greenfield rebuild.
+It covers functional and non-functional requirements, security constraints, architecture decisions (ADRs),
+and the threat model.
 
-# Architecture Decision Document
+See also:
 
-_This document builds collaboratively through step-by-step discovery. Sections are appended as we work through each architectural decision together._
+- [Network design](network.md) — SDN zone model, IP allocation, MikroTik gateway
+- [Bootstrap sequence](bootstrap.md) — circular dependency resolution and stage model
+- [Development status](../plan/development-status.md) — rebuild confidence per component
 
 ---
 

@@ -1,0 +1,179 @@
+---
+id: dep-02-traefik
+title: "Deploy Traefik reverse proxy (VMID 153)"
+phase: "04"
+type: deployment
+status: pending
+depends_on:
+  - dep-01-authentik
+  - rem-02-traefik-secrets
+task_doc: docs/plan/tasks/04-core-services-03-deploy-traefik.md
+github_issue: "#106"
+
+context: |
+  Mode 2 (rebuild) execution. Deploy Traefik in edge_seg as the platform's
+  reverse proxy. Authentik must already be deployed and the Proxy Provider
+  outpost must exist (created in dep-01-authentik Step 6).
+
+  Traefik is configured with two ACME resolvers:
+  - letsencrypt: DNS-01 via Cloudflare, LE STAGING CA (for pve-test dev passes)
+  - step-ca: httpChallenge, internal, pre-configured but dormant until dep-03-step-ca
+
+  The certs directory is bind-mounted from the Proxmox host (/opt/traefik-certs)
+  so acme.json survives LXC rebuilds. The host directory must be created before apply.
+
+preconditions:
+  repository:
+    - id: remediation-done
+      description: rem-02-traefik-secrets is complete — staging CA, env_file, bind-mount
+      verify: |
+        grep -c 'acme-staging-v02' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
+        grep -c 'lookup.*env.*CF_DNS_API_TOKEN' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
+        grep -c 'traefik-certs' terraform/lxc/stacks/proxy-stack/stack.yaml
+      expect: All return 1 or more
+
+  secrets:
+    - key: CF_DNS_API_TOKEN
+      note: Cloudflare token — Zone:DNS:Edit for gibbsgreatly.xyz only (SEC-07)
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml | grep CF_DNS_API_TOKEN
+
+  infrastructure:
+    - id: proxmox-target
+      description: TF_VAR_proxmox_node is pve-test
+      verify: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
+      expect: pve-test
+
+    - id: authentik-healthy
+      description: Authentik running and healthy at 10.57.1.10
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "204"
+
+    - id: authentik-outpost
+      description: Traefik Proxy Provider outpost exists in Authentik
+      verify: "Manual check in Authentik admin UI → Outposts"
+
+    - id: ip-available
+      description: 10.57.2.10 is not in use
+      verify: "ping -c 2 -W 1 10.57.2.10 && echo IN_USE || echo available"
+      expect: available
+
+    - id: host-certs-dir
+      description: /opt/traefik-certs exists on pve-test host (for bind-mount)
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'ls -la /opt/traefik-certs'"
+      action_if_missing: "ssh root@pve-test.gibbsgreatly.xyz 'mkdir -p /opt/traefik-certs'"
+
+    - id: edge-zone
+      description: edge_seg SDN VLAN zone (tvedge) is applied on pve-test
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pvesh get /nodes/pve-test/sdn/zones'"
+      expect: tvedge listed
+
+objective: |
+  LXC VMID 153 is running at 10.57.2.10 in edge_seg. HTTP redirects to HTTPS.
+  TLS cert shows "(STAGING) Let's Encrypt". No literal CF_DNS_API_TOKEN on disk.
+  Certs directory is bind-mounted from Proxmox host. Authentik forward-auth
+  middleware is configured. Both resolver blocks are present in traefik.yml.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for all terragrunt and ansible-playbook calls.
+      No --extra-vars for secrets.
+      This is a deployment session — make no code changes.
+
+  steps:
+    - id: 1
+      name: Verify preconditions
+      commands:
+        - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node'"
+        - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+        - "ping -c 2 -W 1 10.57.2.10 || echo IP available"
+        - "ssh root@pve-test.gibbsgreatly.xyz 'ls -la /opt/traefik-certs 2>/dev/null || mkdir -p /opt/traefik-certs && echo created'"
+
+    - id: 2
+      name: Apply Traefik LXC
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/proxy-stack
+        - "../../../../with-secrets terragrunt apply"
+      notes:
+        - VMID 153, IP 10.57.2.10/24, gateway 10.57.2.1, zone edge_seg
+        - The apply must include the certs bind-mount from stack.yaml
+
+    - id: 3
+      name: Run Ansible playbook
+      commands:
+        - cd /home/steve/git/proxmox-homelab
+        - "./with-secrets ansible-playbook -i '10.57.2.10,' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+
+    - id: 4
+      name: Validate redirect and TLS
+      commands:
+        - "curl -o /dev/null -w '%{http_code}' http://10.57.2.10"
+        - "curl -sv https://10.57.2.10/dashboard/ 2>&1 | grep -i 'issuer'"
+      expect:
+        - HTTP returns 301 or 302
+        - Issuer shows "(STAGING) Let's Encrypt" — NOT Homelab CA, NOT production LE
+
+    - id: 5
+      name: Verify no secrets on disk
+      commands:
+        - "pct exec 153 -- stat -c '%a' /opt/proxy-stack/.env"
+        - "pct exec 153 -- grep CF_DNS_API_TOKEN /opt/proxy-stack/docker-compose.yml"
+        - "pct exec 153 -- grep caServer /opt/proxy-stack/traefik.yml"
+      expect:
+        - .env mode is 600
+        - docker-compose.yml shows only CF_DNS_API_TOKEN env var reference (no token value)
+        - traefik.yml shows acme-staging-v02 URL
+
+    - id: 6
+      name: Verify certs bind-mount
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct config 153 | grep mp'"
+        - "ssh root@pve-test.gibbsgreatly.xyz 'ls -la /opt/traefik-certs/'"
+      expect:
+        - pct config shows the mp0 bind-mount pointing to /opt/traefik-certs
+        - /opt/traefik-certs/letsencrypt/acme.json exists (or is being created)
+
+    - id: 7
+      name: Verify both resolver blocks in traefik.yml
+      commands:
+        - "pct exec 153 -- grep -A2 'certificatesResolvers' /opt/proxy-stack/traefik.yml"
+      expect: Both letsencrypt and step-ca blocks present
+
+postconditions:
+  criteria:
+    - id: lxc-running
+      description: VMID 153 is running
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct status 153'"
+      expect: "status: running"
+
+    - id: http-redirect
+      description: HTTP redirects to HTTPS
+      verify: "curl -o /dev/null -w '%{http_code}' http://10.57.2.10"
+      expect: "301 or 302"
+
+    - id: staging-cert
+      description: TLS cert is from LE staging CA
+      verify: "curl -sv https://10.57.2.10/ 2>&1 | grep -i '(STAGING)'"
+      expect: "(STAGING) Let's Encrypt" in issuer
+
+    - id: no-token-on-disk
+      description: No literal CF_DNS_API_TOKEN in compose file
+      verify: "pct exec 153 -- grep -c 'CF_DNS_API_TOKEN.*=.*[A-Za-z0-9]' /opt/proxy-stack/docker-compose.yml"
+      expect: "0"
+
+    - id: certs-bind-mounted
+      description: Certs directory is bind-mounted from Proxmox host
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct config 153 | grep traefik-certs'"
+      expect: mp entry showing /opt/traefik-certs bind-mount
+
+notes:
+  - CF_DNS_API_TOKEN must be scoped to Zone:DNS:Edit for gibbsgreatly.xyz ONLY (SEC-07)
+  - Rotate CF_DNS_API_TOKEN after each pve-test development pass
+  - Traefik takes 30–60 seconds to obtain the staging LE cert via DNS-01 challenge
+  - The step-ca resolver block is intentionally configured but dormant — it will not
+    contact 10.57.1.11 until a route explicitly uses certresolver=step-ca
+  - If the dashboard shows "Authentik login required", the Proxy Provider outpost is
+    working correctly — log in with the Authentik admin account from dep-01 Step 6
+  - This deployment unblocks dep-03-step-ca

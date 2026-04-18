@@ -1,61 +1,99 @@
 # 04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)
 
-## Status
+## Rebuild confidence
 
-PENDING
+| Criterion | State |
+| --- | --- |
+| IaC reproducible | Partial |
+| Secrets managed | **No** — `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, and `GRAFANA_OAUTH_CLIENT_SECRET` baked into compose file on disk |
+| Integrations wired | Partial |
+| Rebuild-safe | **No** |
+
+See [development-status.md](../development-status.md) for the full gap analysis.
 
 ## GitHub Issue
 
-https://github.com/stevedwray/proxmox-homelab/issues/107
+[stevedwray/proxmox-homelab#107](https://github.com/stevedwray/proxmox-homelab/issues/107)
 
 ## Phase
 
 Phase 04 — Core Shared Services
 
+## Known gaps preventing rebuild-safety
+
+1. **Secrets in plaintext.** `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, and
+   `GRAFANA_OAUTH_CLIENT_SECRET` are written into the compose file on disk inside the LXC.
+   The playbook must inject all secrets from SOPS via `./with-secrets` and write a
+   SOPS-sourced `.env` file that Docker Compose reads via `env_file`. No secret value may
+   appear in a committed or on-disk compose file.
+
+2. **Depends on Authentik OIDC provider existing in SOPS.** The Grafana OIDC client ID and
+   secret come from an Authentik OIDC provider that is created manually (in task 04-01
+   Step 7). On a rebuild, those values will not exist until Authentik is configured and the
+   resulting credentials have been added to `terraform/secrets.enc.yaml`. The monitoring
+   stack cannot be deployed in a rebuild until `GRAFANA_OAUTH_CLIENT_ID` and
+   `GRAFANA_OAUTH_CLIENT_SECRET` are in SOPS. This is blocked on `terraform-provider-authentik`
+   for full automation (see task 04-01).
+
+3. **Scrape targets are minimal.** Only CoreDNS (`10.57.1.13:9153`) is currently scraped.
+   No scrape targets for Traefik, Authentik, step-ca, Harbor, or pve-test node_exporter.
+   This is acceptable for the current development phase but should expand before Phase 05.
+
 ## Prerequisites
 
-- Task 04-01 complete — Authentik running (Grafana will use OIDC against it)
-- Task 04-03 complete — Traefik running at `10.57.2.10` (monitoring will be exposed via proxy)
-- Task 04-04 complete — step-ca running at `10.57.1.11` (Grafana uses the internal CA for its own cert via the step-ca resolver in Traefik)
-- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to the internal authoritative DNS server
+- Task 04-01 complete — Authentik running at `10.57.1.10`, first-boot complete
+- Task 04-01 Step 7 complete — Grafana OIDC provider created in Authentik UI, resulting
+  `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` recorded in
+  `terraform/secrets.enc.yaml`
+- Task 04-03 complete — Traefik running at `10.57.2.10`
+- Task 04-04 complete — step-ca running at `10.57.1.11` (CA trust distributed to managed hosts)
+- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to CoreDNS
 - Phase 02 complete — pve-test at 32 GB (this stack is the most resource-heavy)
-- Phase 03b complete — VictoriaMetrics, Grafana, Loki, Promtail images in Harbor proxy cache
-- `10.57.1.12` available (ping-verify before deploying; also check NetBox)
+- `10.57.1.12` available (ping-verify before deploying)
+- `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, `GRAFANA_OAUTH_CLIENT_SECRET` set to
+  real values in `terraform/secrets.enc.yaml`
 
 ## Network placement
 
 | Field | Value |
-|---|---|
+| --- | --- |
 | SDN zone | `mgmt_seg` |
 | Proxmox VNet | `tvmgmt` (VLAN 20, `10.57.1.0/24`, gw `10.57.1.1` on MikroTik) |
 | Container IP | `10.57.1.12` |
-| IP selection | Third allocatable host in `mgmt_seg` after Authentik (`10.57.1.10`) and step-ca (`10.57.1.11`). Verified available with ping and NetBox check before deploying. |
-| Cross-zone routing | Traefik (`10.57.2.10`) proxies Grafana dashboards from `edge_seg` to `mgmt_seg` (`10.57.1.12:3000`). MikroTik routes between VLAN 30 (edge_seg) and VLAN 20 (mgmt_seg). No inbound from LAN required — access is via Traefik only. |
-| Firewall intent | Inbound: port 3000 (Grafana), 8428 (VictoriaMetrics), 3100 (Loki) from `edge_seg` (Traefik) and `build_seg` (ci-runner-01 log shipping). Outbound: ports 80/443 to Harbor (`10.57.3.10`) and apt-cacher (`10.57.3.11`) via MikroTik routing to infra_seg. Promtail scrapes logs from the local LXC only. |
+| Cross-zone routing | Traefik (`10.57.2.10`) proxies Grafana from `edge_seg` to `mgmt_seg` (`10.57.1.12:3000`). No direct LAN access required — access is via Traefik only. |
+| Firewall intent | Inbound: port 3000 (Grafana), 8428 (VictoriaMetrics), 3100 (Loki) from `edge_seg` (Traefik) and `build_seg` (ci-runner-01 log shipping). Outbound: ports 80/443 to Harbor and apt-cacher via infra_seg. |
 
 ## Objective
 
-LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Grafana is primarily accessed via Traefik at `https://grafana.gibbsgreatly.xyz` with Authentik protection, the internal URL `http://10.57.1.12:3000` remains available for break-glass operations, VictoriaMetrics is scraping pve-test node_exporter, Loki is receiving logs from at least one LXC, and Grafana login works via Authentik OIDC.
+LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`. Grafana is
+primarily accessed via Traefik at `https://grafana.gibbsgreatly.xyz` with Authentik SSO
+protection. All secrets are injected from SOPS at deploy time — no credentials in any on-disk
+file. VictoriaMetrics scrapes CoreDNS. Loki receives logs from at least one LXC. Grafana
+login works via Authentik OIDC.
 
 Naming policy for this task:
 
-- Public/operator route remains `grafana.gibbsgreatly.xyz`.
-- Internal platform identity uses `grafana.lab.gibbsgreatly.xyz` with step-ca trust for managed internal clients.
+- Public/operator route: `grafana.gibbsgreatly.xyz`
+- Internal platform identity: `grafana.lab.gibbsgreatly.xyz`
 
 ## Scope
 
 - Create `terraform/lxc/stacks/monitoring-stack/stack.yaml`
 - Copy `harbor-stack/terragrunt.hcl` to `monitoring-stack/terragrunt.hcl`
-- Create `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`
-- Set `GRAFANA_ADMIN_PASSWORD` and `GRAFANA_OAUTH_CLIENT_SECRET` to real values in `terraform/secrets.enc.yaml`
-- Run `terragrunt apply` and the Ansible playbook
-- Configure VictoriaMetrics datasource and Loki datasource in Grafana
+- Create `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml` — secrets injected
+  from SOPS; compose file references env vars only via `env_file`
+- Confirm `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, `GRAFANA_OAUTH_CLIENT_SECRET`
+  are real values in `terraform/secrets.enc.yaml` before deploying
+- Run `./with-secrets terragrunt apply` and the Ansible playbook
+- Configure VictoriaMetrics and Loki datasources in Grafana
 
 ## Out of Scope
 
 - Provisioning all LXC node_exporters (add to base role in Phase 06 when LXCs are redeployed)
-- Full Grafana dashboard provisioning (incrementally added in subsequent phases)
+- Full Grafana dashboard provisioning (added incrementally in subsequent phases)
 - cAdvisor or container metrics (Phase 06)
+- Expanding VictoriaMetrics scrape targets beyond CoreDNS (Phase 05)
+- `terraform-provider-authentik` implementation — tracked in task 04-01
 
 ## Inputs
 
@@ -65,28 +103,30 @@ Naming policy for this task:
   - `10.57.3.10/dockerhub/grafana/grafana-oss:<pin>`
   - `10.57.3.10/dockerhub/grafana/loki:<pin>`
   - `10.57.3.10/dockerhub/grafana/promtail:<pin>`
-- Authentik OIDC client secret (created in Authentik UI after task 04-01)
+- `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` from `terraform/secrets.enc.yaml`
+  (created in Authentik UI in task 04-01 Step 7)
 
 ## Expected Outputs
 
-- `terraform/lxc/stacks/monitoring-stack/stack.yaml` (new)
-- `terraform/lxc/stacks/monitoring-stack/terragrunt.hcl` (new)
-- `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml` (new)
-- `terraform/secrets.enc.yaml` updated with real Grafana credential values
+- `terraform/lxc/stacks/monitoring-stack/stack.yaml`
+- `terraform/lxc/stacks/monitoring-stack/terragrunt.hcl`
+- `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml` — secrets via env_file
+- On-disk compose file at `/opt/monitoring-stack/docker-compose.yml` contains no literal credentials
 - LXC VMID 154 provisioned; all four containers running
 
 ## Constraints and Conventions
 
-- `stack.yaml` values: VMID 154, IP `10.57.1.12/24`, gateway `10.57.1.1`, `network: zone: mgmt_seg`, `cores: 2`, `memory: 1536`, `docker_storage_size: "50G"`
+- `stack.yaml` values: VMID 154, IP `10.57.1.12/24`, gateway `10.57.1.1`,
+  `network: zone: mgmt_seg`, `cores: 2`, `memory: 1536`, `docker_storage_size: "50G"`
 - All images via Harbor proxy — never direct pulls
 - VictoriaMetrics retention period: `90d`
-- Grafana OIDC integration with Authentik (generic OAuth) — `GF_AUTH_GENERIC_OAUTH_ENABLED: "true"`
-- Preferred Grafana access path is `https://grafana.gibbsgreatly.xyz` via Traefik; direct `http://10.57.1.12:3000` is operational fallback only
-- Internal identity naming for the monitoring service should follow `grafana.lab.gibbsgreatly.xyz`
-- Create the Authentik OIDC provider in Authentik UI before deploying Grafana
-- `GRAFANA_OAUTH_CLIENT_SECRET` comes from the Authentik OIDC provider config
-- Secrets injected via `./with-secrets bash -c 'ansible-playbook ... --extra-vars "..."'` — values come from `terraform/secrets.enc.yaml` via SOPS
-- **LAN ingress**: Grafana (port 3000) at `10.57.1.12` is accessed via Traefik proxy, not directly from LAN. Confirm Traefik can reach port 3000 before considering this task done.
+- Grafana OIDC: `GF_AUTH_GENERIC_OAUTH_ENABLED: "true"` — all OAuth config via env vars from SOPS
+- Preferred Grafana access path is `https://grafana.gibbsgreatly.xyz` via Traefik;
+  direct `http://10.57.1.12:3000` is operational fallback only
+- Secrets injection: `./with-secrets` wraps all commands; playbook writes a SOPS-sourced
+  `.env` file; Docker Compose reads it via `env_file`; no `--extra-vars` for secrets
+- **LAN ingress**: Grafana accessed via Traefik proxy — confirm Traefik can reach port 3000
+- `dns_server` must be set in `stack.yaml` for the monitoring LXC: `10.57.1.1` (`mgmt_seg` gateway)
 
 ## Acceptance Criteria
 
@@ -94,22 +134,22 @@ Naming policy for this task:
 - [ ] `curl -s http://10.57.1.12:3000/api/health` returns `{"database":"ok",...}`
 - [ ] VictoriaMetrics accessible at `http://10.57.1.12:8428`
 - [ ] Loki accessible at `http://10.57.1.12:3100/ready`
+- [ ] `/opt/monitoring-stack/docker-compose.yml` contains no literal credentials
 - [ ] Grafana datasource "VictoriaMetrics" configured and test passes
 - [ ] Grafana datasource "Loki" configured and test passes
 - [ ] Grafana admin login via Authentik OIDC works
-- [ ] Grafana route `https://grafana.gibbsgreatly.xyz` responds through Traefik and enforces Authentik access flow
-- [ ] `grafana.lab.gibbsgreatly.xyz` resolves via delegated `lab.gibbsgreatly.xyz` DNS path from SDN clients
-- [ ] Managed-host trust path for `grafana.lab.gibbsgreatly.xyz` validates via step-ca
-- [ ] VictoriaMetrics scraping at least pve-test node_exporter
+- [ ] Grafana route `https://grafana.gibbsgreatly.xyz` responds through Traefik and enforces
+  Authentik access flow
+- [ ] VictoriaMetrics scraping CoreDNS at `10.57.1.13:9153` (current minimum target set)
 - [ ] Loki receiving logs from at least one LXC (via Promtail)
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events
 - [ ] All Phase 04 stacks survive `pct restart <vmid>` and return healthy
-- [ ] `terraform/secrets.enc.yaml` has real values for `GRAFANA_ADMIN_PASSWORD` and `GRAFANA_OAUTH_CLIENT_SECRET` (not CHANGEME_)
+- [ ] `terraform/secrets.enc.yaml` has real values for all three Grafana secrets
 - [ ] Branch `feat/monitoring-stack` merged to `dev/pve-test`
 
 ### DNS delegation validation commands (required)
 
-Run these from a host that can query SDN zone gateways directly:
+Run from a host that can query SDN zone gateways directly:
 
 ```bash
 dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
@@ -119,36 +159,43 @@ dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
 dig @10.57.1.1 +short github.com
 ```
 
-Expected results:
-- All four `traefik.lab.gibbsgreatly.xyz` queries return delegated answers.
-- `github.com` still resolves through the same MikroTik resolver path.
+All four `traefik.lab.gibbsgreatly.xyz` queries must return delegated answers.
+`github.com` must still resolve through the MikroTik resolver path.
 
 ## Session Prompt
 
-```
+```text
 You are working in the proxmox-homelab repository at /home/steve/git/proxmox-homelab.
 
 TASK: Deploy VictoriaMetrics + Grafana + Loki + Promtail inside a new LXC (VMID 154)
-at 10.57.1.12 in mgmt_seg. This is the most resource-heavy stack — pve-test must be at 32 GB first.
+at 10.57.1.12 in mgmt_seg. This is the most resource-heavy stack — pve-test must be at
+32 GB first.
+
+IMPORTANT: All secret values are in terraform/secrets.enc.yaml and must be injected via
+./with-secrets. Do not pass Grafana credentials or OAuth secrets as --extra-vars.
+The playbook must write a .env file (read by Docker Compose via env_file) sourced from SOPS.
+No literal credentials on disk.
 
 CONTEXT:
 - Reference for stack.yaml format: terraform/lxc/stacks/harbor-stack/stack.yaml
 - Full spec: docs/plan/phase-04-core-shared-services.md (Service 4 section)
-- VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, network zone mgmt_seg, cores 2, memory 1536, docker_storage_size 50G
+- VMID 154, IP 10.57.1.12/24, gateway 10.57.1.1, network zone mgmt_seg, cores 2,
+  memory 1536, docker_storage_size 50G
 - Images (all via Harbor proxy cache at 10.57.3.10):
     10.57.3.10/dockerhub/victoriametrics/victoria-metrics:<pin>
     10.57.3.10/dockerhub/grafana/grafana-oss:<pin>
     10.57.3.10/dockerhub/grafana/loki:<pin>
     10.57.3.10/dockerhub/grafana/promtail:<pin>
-  Check Harbor UI for pre-pulled version tags from Phase 03b.
-- Authentik OIDC provider for Grafana must be created in Authentik UI at 10.57.1.10:9000 BEFORE
-  running this playbook. Record the client secret as GRAFANA_OAUTH_CLIENT_SECRET in .env.
+- GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET must already be in
+  terraform/secrets.enc.yaml before this task begins — they are created in Authentik UI
+  during task 04-01 Step 7. If they are still CHANGEME_ values, stop and complete that
+  step first. This is a known rebuild gap until terraform-provider-authentik is implemented.
 
-PREREQUISITES BRING-UP (pve-test is wiped between passes — bring up the full Phase 04 stack first):
+PREREQUISITES BRING-UP (bring up the full Phase 04 stack first):
 
 STEP 0 — Verify SDN zones are applied:
   pvesh get /nodes/pve-test/sdn/zones
-  # Expected: tvmgmt, tvedge, tvsegc all listed
+  # Expected: tvmgmt, tvedge, tvsegc, tvinfra all listed
 
 STEP 0b — Bring up harbor-stack:
   cd terraform/lxc/stacks/harbor-stack && ../../../../with-secrets terragrunt apply
@@ -160,100 +207,103 @@ STEP 0c — Bring up apt-cacher-stack:
   cd /home/steve/git/proxmox-homelab
   ./with-secrets ansible-playbook -i "10.57.3.11," terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml
 
-STEP 0d — Bring up authentik-stack:
-  cd terraform/lxc/stacks/authentik-stack && terragrunt apply
+STEP 0d — Bring up authentik-stack (and complete first-boot):
+  cd terraform/lxc/stacks/authentik-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ansible-playbook \
-    -i "10.57.1.10," \
-    terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml \
-    --extra-vars "authentik_secret_key=${AUTHENTIK_SECRET_KEY} authentik_postgres_password=${AUTHENTIK_POSTGRES_PASSWORD}"
+  ./with-secrets ansible-playbook -i "10.57.1.10," \
+    terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
   curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/
-  # Must return 204
+  # Must return 204.
+  # Complete first-boot and create Grafana OIDC provider (see task 04-01 Step 7).
+  # Confirm GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET are in SOPS.
 
 STEP 0e — Bring up proxy-stack (Traefik):
   cd terraform/lxc/stacks/proxy-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ./with-secrets bash -c 'ansible-playbook -i "10.57.2.10," \
-    terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml \
-    --extra-vars "cf_dns_api_token=${CF_DNS_API_TOKEN}"'
+  ./with-secrets ansible-playbook -i "10.57.2.10," \
+    terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
   curl -s -o /dev/null -w "%{http_code}" http://10.57.2.10
   # Must return 301 or 302
 
-STEP 0f — Bring up step-ca:
+STEP 0f — Bring up step-ca and distribute CA trust:
   cd terraform/lxc/stacks/step-ca-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ./with-secrets bash -c 'ansible-playbook -i "10.57.1.11," \
-    terraform/lxc/ansible/playbooks/deploy-step-ca.yml \
-    --extra-vars "step_ca_password=${STEP_CA_PASSWORD}"'
+  ./with-secrets ansible-playbook -i "10.57.1.11," \
+    terraform/lxc/ansible/playbooks/deploy-step-ca.yml
   curl -sk https://10.57.1.11/health
-  # Must return HTTP 200 before continuing
+  # Must return HTTP 200.
+  # Then run retroactive CA trust distribution (see task 04-04 Step 7).
 
-STEP 1 — Pre-requisite: create Authentik OIDC provider for Grafana:
-  In Authentik UI (http://10.57.1.10:9000), admin → Applications → Providers → OAuth2/OIDC:
-  - Name: Grafana
-  - Redirect URI: http://10.57.1.12:3000/login/generic_oauth
-  - Copy the client ID and secret to .env as GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET
-
-STEP 2 — Create branch:
+STEP 1 — Create branch:
   git checkout dev/pve-test && git pull
   git checkout -b feat/monitoring-stack
 
-STEP 3 — Check IP availability:
+STEP 2 — Check IP availability:
   ping -c 3 10.57.1.12
   # Must timeout (no response)
-  ./with-secrets curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://10.57.3.12/api/ipam/ip-addresses/?address=10.57.1.12" | jq .count
-  # Should be 0
+
+STEP 3 — Confirm secrets in SOPS:
+  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml \
+    | grep -E "GRAFANA_ADMIN_PASSWORD|GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET"
+  # All three must have real values (not CHANGEME_)
+  # If not, stop — update them in SOPS before continuing:
+  #   SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 
 STEP 4 — Create stack files:
   - terraform/lxc/stacks/monitoring-stack/stack.yaml
     (VMID 154, ip_address 10.57.1.12/24, gateway 10.57.1.1, network: {zone: mgmt_seg},
-     cores 2, memory 1536, docker_storage_size 50G)
+     cores 2, memory 1536, docker_storage_size 50G, dns_server 10.57.1.1)
   - terraform/lxc/stacks/monitoring-stack/terragrunt.hcl (copy from harbor-stack verbatim)
 
-STEP 5 — Set real Grafana secrets in terraform/secrets.enc.yaml:
-  SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
-  # Update these keys from CHANGEME_ to real values:
-  GRAFANA_ADMIN_PASSWORD         # initial Grafana admin password
-  GRAFANA_OAUTH_CLIENT_ID        # from Authentik OIDC provider (add as new key if absent)
-  GRAFANA_OAUTH_CLIENT_SECRET    # from Authentik OIDC provider
+STEP 5 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml:
+  The playbook must read all credentials from environment (injected by ./with-secrets).
+  Deploy at /opt/monitoring-stack/ with:
+  a) Write /opt/monitoring-stack/.env from SOPS-injected env (no literal values):
+       GRAFANA_ADMIN_PASSWORD={{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') }}
+       GRAFANA_OAUTH_CLIENT_ID={{ lookup('env', 'GRAFANA_OAUTH_CLIENT_ID') }}
+       GRAFANA_OAUTH_CLIENT_SECRET={{ lookup('env', 'GRAFANA_OAUTH_CLIENT_SECRET') }}
+  b) Write docker-compose.yml referencing env_file: .env (no literal secret values)
+     Services:
+     - victoriametrics: --storageDataPath=/storage --retentionPeriod=90d
+     - grafana: GF_SECURITY_ADMIN_PASSWORD, GF_AUTH_GENERIC_OAUTH_ENABLED=true,
+                GF_AUTH_GENERIC_OAUTH_CLIENT_ID, GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET,
+                GF_AUTH_GENERIC_OAUTH_AUTH_URL=http://10.57.1.10:9000/application/o/authorize/
+                GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://10.57.1.10:9000/application/o/token/
+     - loki: with /loki data volume
+     - promtail: scraping /var/log, pushing to loki:3100
+  c) docker compose up -d
 
-STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml:
-  Deploy at /opt/monitoring-stack/docker-compose.yml with:
-  - victoriametrics: --storageDataPath=/storage --retentionPeriod=90d
-  - grafana: with GF_SECURITY_ADMIN_PASSWORD, GF_AUTH_GENERIC_OAUTH_ENABLED=true,
-             GF_AUTH_GENERIC_OAUTH_CLIENT_ID, GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET,
-             GF_AUTH_GENERIC_OAUTH_AUTH_URL=http://10.57.1.10:9000/application/o/authorize/
-             GF_AUTH_GENERIC_OAUTH_TOKEN_URL=http://10.57.1.10:9000/application/o/token/
-  - loki: with /loki data volume
-  - promtail: scraping /var/log from host and configured to push to loki:3100
-
-STEP 7 — Deploy:
+STEP 6 — Deploy:
   cd terraform/lxc/stacks/monitoring-stack && ../../../../with-secrets terragrunt apply
   cd /home/steve/git/proxmox-homelab
-  ./with-secrets bash -c 'ansible-playbook -i "10.57.1.12," terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml \
-    --extra-vars "grafana_admin_password=${GRAFANA_ADMIN_PASSWORD} grafana_oauth_client_id=${GRAFANA_OAUTH_CLIENT_ID} grafana_oauth_client_secret=${GRAFANA_OAUTH_CLIENT_SECRET}"'
+  ./with-secrets ansible-playbook -i "10.57.1.12," \
+    terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
 
-STEP 8 — Validate:
+STEP 7 — Validate:
   curl -s http://10.57.1.12:3000/api/health | jq .database   # Expect: "ok"
   curl -s http://10.57.1.12:8428/metrics | head -5            # Expect: VM metrics
   curl -s http://10.57.1.12:3100/ready                        # Expect: ready
 
-STEP 9 — Configure Grafana datasources (Grafana UI at http://10.57.1.12:3000):
-  - Add datasource: Prometheus (or VictoriaMetrics) → URL http://victoriametrics:8428
+  # Verify no literal credentials in compose file:
+  pct exec 154 -- grep -i "GRAFANA_ADMIN_PASSWORD" /opt/monitoring-stack/docker-compose.yml
+  # Must show only env var reference, not a password value
+
+STEP 8 — Configure Grafana datasources (Grafana UI at http://10.57.1.12:3000):
+  - Add datasource: Prometheus/VictoriaMetrics → URL http://victoriametrics:8428
   - Add datasource: Loki → URL http://loki:3100
   - Test both datasources
 
-STEP 10 — OOM check on pve-test host:
-  ssh root@<pve-test-host> "dmesg | grep -i oom | tail -5"
-  # Should be empty (no new OOM events)
+STEP 9 — OOM check on pve-test host:
+  ssh root@pve-test.gibbsgreatly.xyz "dmesg | grep -i oom | tail -5"
+  # Should be empty (no new OOM events after monitoring stack deploy)
 
-STEP 11 — Commit and merge:
-  git add terraform/lxc/stacks/monitoring-stack/ terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
+STEP 10 — Commit and merge:
+  git add terraform/lxc/stacks/monitoring-stack/ \
+          terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
   git commit -m "feat(monitoring): deploy VictoriaMetrics + Grafana + Loki in mgmt_seg (VMID 154)"
   git checkout dev/pve-test && git merge feat/monitoring-stack
   git push origin dev/pve-test
 
-DONE WHEN: All four containers running, Grafana datasources test OK, Authentik OIDC login works,
-no OOM events on pve-test host. Phase 04 is complete. Phase 05 is now unblocked.
+DONE WHEN: All four containers running, compose file has no literal credentials, Grafana
+datasources test OK, Authentik OIDC login works, no OOM events. Phase 04 complete.
 ```

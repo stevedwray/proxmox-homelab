@@ -1,0 +1,151 @@
+---
+id: p06-04-migrate-arr-stack
+title: "Migrate arr stack to app_seg"
+phase: "06"
+type: deployment
+status: pending
+github_issue: "#116"
+task_doc: docs/plan/tasks/06-app-stacks-04-migrate-arr-stack.md
+
+context: |
+  The arr stack (Radarr, Sonarr, Prowlarr, Bazarr, and related tools) is currently
+  running somewhere in the existing setup. This migration moves all arr services into
+  a new LXC in app_seg, pulling all images from Harbor.
+
+  The arr stack is not DNS critical path — migration is lower risk than Pi-hole.
+  However, arr services typically share NAS/NFS mounts for media storage, which
+  need careful handling. The media library path must match after migration.
+
+  Discovery (p06-01) must have documented: current VMID, IP, config dirs,
+  NFS mounts, and image versions for each arr service.
+
+preconditions:
+  repository:
+    - id: discovery-done
+      description: arr stack details documented in phase-06-app-stacks.md
+      verify: "grep -i -E 'radarr|sonarr|prowlarr' docs/plan/phase-06-app-stacks.md"
+
+    - id: zones-ready
+      description: app_seg zone exists
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pvesh get /nodes/pve-test/sdn/zones'"
+      expect: app_seg listed
+
+    - id: stack-files
+      description: arr-stack/stack.yaml and deploy-arr-stack.yml exist
+      verify: |
+        ls terraform/lxc/stacks/arr-stack/stack.yaml
+        ls terraform/lxc/ansible/playbooks/deploy-arr-stack.yml
+
+  infrastructure:
+    - id: harbor-has-images
+      description: All arr images mirrored to Harbor
+      verify: "curl -s http://10.57.3.10/api/v2.0/repositories | jq '.[].name' | grep -E 'radarr|sonarr|prowlarr'"
+      action_if_missing: Mirror images from Docker Hub to Harbor before deploying
+
+    - id: nfs-accessible
+      description: NFS mount for media is reachable from app_seg subnet
+      verify: "Verify that 10.60.0.0/24 has access to the NAS IP where media lives"
+
+objective: |
+  All arr services (Radarr, Sonarr, Prowlarr, Bazarr) are running in a new LXC in
+  app_seg. Media paths match previous mount points. Services are accessible via
+  Traefik routes. Old arr stack container is destroyed. No media was lost.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for terragrunt and ansible-playbook.
+      NFS mounts must be declared in stack.yaml before terragrunt apply.
+      Keep old arr stack running until new one is verified.
+
+  steps:
+    - id: 1
+      name: Mirror arr images to Harbor (if not already done)
+      commands:
+        - "curl -s http://10.57.3.10/api/v2.0/repositories | jq '.[].name'"
+      notes:
+        - For any missing image, pull from Docker Hub, tag, push to Harbor
+
+    - id: 2
+      name: Backup arr service configs
+      commands:
+        - "scp -r root@<old-arr-ip>:/config /tmp/arr-config-backup/"
+      notes:
+        - Backup all per-service config directories (radarr, sonarr, prowlarr, bazarr)
+
+    - id: 3
+      name: Snapshot old arr LXC
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct snapshot <old-vmid> pre-migration'"
+
+    - id: 4
+      name: Apply new arr LXC
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/arr-stack
+        - "../../../../with-secrets terragrunt apply"
+      notes:
+        - stack.yaml must include NFS bind-mounts for media directories
+        - IP from discovery (assign new IP in 10.60.0.x range)
+
+    - id: 5
+      name: Run playbook and restore configs
+      commands:
+        - "./with-secrets ansible-playbook -i '<new-ip>,' terraform/lxc/ansible/playbooks/deploy-arr-stack.yml"
+        - "scp -r /tmp/arr-config-backup/* root@<new-ip>:/config/"
+        - "ssh root@<new-ip> 'docker compose restart'"
+
+    - id: 6
+      name: Verify services are healthy
+      commands:
+        - "curl -s http://<new-ip>:7878/api/v3/health | jq ."
+        - "curl -s http://<new-ip>:8989/api/v3/health | jq ."
+        - "curl -s http://<new-ip>:9696/api/v1/health | jq ."
+      expect: All return healthy status with no errors
+
+    - id: 7
+      name: Verify media library is accessible
+      commands:
+        - "ssh root@<new-ip> 'ls /data/media | head -10'"
+      expect: Media files visible at the expected path
+
+    - id: 8
+      name: Destroy old arr stack
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct stop <old-vmid> && pct destroy <old-vmid>'"
+
+    - id: 9
+      name: Commit
+      commands:
+        - git add terraform/lxc/stacks/arr-stack/ terraform/lxc/ansible/playbooks/deploy-arr-stack.yml
+        - |
+          git commit -m "feat(arr-stack): migrate arr stack to app_seg
+
+          Closes #116
+
+          Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+        - git checkout dev/pve-test && git merge feat/arr-stack
+        - git push origin dev/pve-test
+        - gh issue close 116 --comment "Fixed in $(git rev-parse HEAD)"
+
+postconditions:
+  criteria:
+    - id: services-healthy
+      description: All arr services report healthy
+      verify: "curl -s http://<new-ip>:7878/api/v3/health | jq ."
+      expect: No errors in health response
+
+    - id: media-accessible
+      description: Media library is accessible at the correct path
+      verify: "ssh root@<new-ip> 'ls /data/media | wc -l'"
+      expect: Non-zero count
+
+    - id: old-destroyed
+      description: Old arr stack LXC is destroyed
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct list | grep <old-vmid>'"
+      expect: No match
+
+notes:
+  - NFS mount paths in the new LXC must match what the arr services expect
+    (/data/media or whatever path was in use) — check the config backup
+  - Download clients (qBittorrent, etc.) may be part of the arr stack — include them
+  - Radarr/Sonarr may need their root folder paths updated if the new mount path differs

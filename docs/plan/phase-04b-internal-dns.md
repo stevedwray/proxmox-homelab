@@ -12,9 +12,9 @@ Deploy the authoritative DNS server for the internal `lab.gibbsgreatly.xyz` dele
 
 ## Current implementation status (2026-04-18)
 
-- Lightweight DNS implementation (CoreDNS or Dnsmasq) not yet deployed
-- MikroTik conditional forwarding configured but pointing to non-existent server
-- Phase 04 services relying on temporary static A records per `lab.gibbsgreatly.xyz` entry
+- ✅ **COMPLETE** — CoreDNS deployed at CT 151 (`10.57.1.13`), all acceptance criteria met
+- MikroTik FWD rule delegating `(^|\.)lab\.gibbsgreatly\.xyz$` → CoreDNS at `10.57.1.13` active
+- VictoriaMetrics scraping CoreDNS metrics; Grafana "CoreDNS down" alert provisioned
 
 ## Technical approach
 
@@ -98,19 +98,20 @@ This preserves existing DNS behavior outside the lab zone.
 
 ## Acceptance criteria
 
-- [ ] LXC `dns-stack` (VMID 151) running at `10.57.1.13`
-- [ ] CoreDNS service healthy: `systemctl is-active coredns` returns `active`
-- [ ] Authority validation: `dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz` returns `10.57.2.10`
-- [ ] Upstream validation: `dig @10.57.1.13 +short github.com` returns an IP (recursion works)
-- [ ] MikroTik forwarding rule active: `ip dns static print` shows FWD entry for `lab.gibbsgreatly.xyz`
-- [ ] All SDN zones resolve lab-zone names via their gateway resolver:
+- [x] LXC `dns-stack` (VMID 151) running at `10.57.1.13`
+- [x] CoreDNS service healthy: `systemctl is-active coredns` returns `active`
+- [x] Authority validation: `dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz` returns `10.57.2.10`
+- [x] Upstream validation: `dig @10.57.1.13 +short github.com` returns an IP (recursion works)
+- [x] MikroTik forwarding rule active: `ip dns static print` shows FWD entry for `lab.gibbsgreatly.xyz`
+- [x] All SDN zones resolve lab-zone names via their gateway resolver:
   - `dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz` → `10.57.2.10`
   - `dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz` → `10.57.2.10`
   - `dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz` → `10.57.2.10`
   - `dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz` → `10.57.2.10`
-- [ ] Non-lab queries still resolve: `dig @10.57.1.13 +short github.com` returns an IP
-- [ ] Traefik/authentik/step-ca/monitoring services all resolve via internal names (no IP fallback)
-- [ ] No OOM or resource issues on pve-test host
+- [x] Non-lab queries still resolve: `dig @10.57.1.13 +short github.com` returns an IP
+- [x] Traefik/authentik/step-ca/monitoring services all resolve via internal names (no IP fallback)
+- [x] No OOM or resource issues on pve-test host
+- [x] Monitoring/alerting configured: VictoriaMetrics scrapes CoreDNS at `10.57.1.13:9153`; Grafana "CoreDNS down" alert rule provisioned
 
 ---
 

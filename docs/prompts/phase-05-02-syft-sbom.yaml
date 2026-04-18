@@ -1,0 +1,167 @@
+---
+id: p05-02-syft-sbom
+title: "Install Syft on ci-runner and add SBOM generation job"
+phase: "05"
+type: development
+status: pending
+github_issue: "#109"
+task_doc: docs/plan/tasks/05-supply-chain-02-syft-sbom.md
+
+context: |
+  Phase 05 supply chain — SBOM generation. Syft produces a software bill of
+  materials in SPDX-JSON format from a Docker image. The SBOM is uploaded as a
+  GitHub Actions artifact with 90-day retention so it can be audited or fed into
+  downstream tooling.
+
+  Two changes are required:
+  1. Add a Syft install task to deploy-ci-runner.yml (pinned version)
+  2. Add a generate-sbom CI job that runs after a successful image build
+
+  The generate-sbom job runs on ci-runner-01 (self-hosted) and references
+  Harbor as the image source.
+
+preconditions:
+  repository:
+    - id: trivy-job-exists
+      description: Phase 05 Task 01 (Trivy image scan) is complete
+      verify: "grep -r 'trivy-image-scan' .github/workflows/"
+      expect: Match found
+
+  infrastructure:
+    - id: ci-runner
+      description: ci-runner-01 is registered and online
+      verify: "gh run list --workflow validate.yml --limit 1"
+      expect: Recent successful run on self-hosted runner
+
+    - id: harbor
+      description: Harbor healthy at 10.57.3.10
+      verify: "curl -s http://10.57.3.10/api/v2.0/ping"
+      expect: '"pong"'
+
+objective: |
+  Syft is installed at a pinned version on ci-runner-01 via the Ansible playbook.
+  A generate-sbom CI job exists that produces sbom.spdx.json and uploads it as
+  a GitHub Actions artifact named sbom-${{ github.sha }} with 90-day retention.
+
+branch: feat/syft-sbom
+
+workflow:
+  tooling:
+    note: |
+      Read/Edit/Write for code changes to playbook and workflow YAML.
+      ./with-secrets ansible-playbook to re-run the ci-runner playbook.
+      gh to check runner status.
+
+  steps:
+    - id: 1
+      name: Create branch
+      commands:
+        - git checkout dev/pve-test && git pull
+        - git checkout -b feat/syft-sbom
+
+    - id: 2
+      name: Check current Syft stable release
+      commands:
+        - "WebFetch: https://github.com/anchore/syft/releases/latest — note the version tag"
+      notes:
+        - Pin this version explicitly — do not use 'latest'
+
+    - id: 3
+      name: Add Syft install task to deploy-ci-runner.yml
+      commands:
+        - "Read: terraform/lxc/ansible/playbooks/deploy-ci-runner.yml"
+      change: |
+        Add after any existing tool install tasks (Cosign, Trivy, etc.):
+
+          - name: Install Syft <VERSION>
+            ansible.builtin.shell: |
+              curl -sSfL https://raw.githubusercontent.com/anchore/syft/main/install.sh | \
+                sh -s -- -b /usr/local/bin v<VERSION>
+            args:
+              creates: /usr/local/bin/syft
+
+    - id: 4
+      name: Re-run ci-runner playbook to install Syft
+      commands:
+        - "./with-secrets ansible-playbook -i '10.57.0.63,' terraform/lxc/ansible/playbooks/deploy-ci-runner.yml"
+        - "ssh root@10.57.0.63 'syft --version'"
+      expect: syft v<VERSION> printed
+
+    - id: 5
+      name: Read existing CI workflow structure
+      commands:
+        - "Glob: .github/workflows/*.yml"
+        - "Read: the build workflow that contains trivy-image-scan"
+      notes:
+        - Identify the build job name that generate-sbom should depend on
+        - If no image build job exists yet, document accordingly
+
+    - id: 6
+      name: Add generate-sbom job to workflow
+      change: |
+        Add to the build workflow after trivy-image-scan:
+
+          generate-sbom:
+            name: Generate SBOM
+            runs-on: [self-hosted, pve-test, build]
+            needs: [trivy-image-scan]
+            steps:
+              - name: Generate SBOM
+                run: |
+                  syft 10.57.3.10/<project>/<image>:${{ github.sha }} \
+                    --output spdx-json=sbom.spdx.json
+              - name: Upload SBOM artifact
+                uses: actions/upload-artifact@v4
+                with:
+                  name: sbom-${{ github.sha }}
+                  path: sbom.spdx.json
+                  retention-days: 90
+
+    - id: 7
+      name: Security scan
+      commands:
+        - "./with-secrets sonar-scanner"
+
+    - id: 8
+      name: Commit and merge
+      commands:
+        - git add terraform/lxc/ansible/playbooks/deploy-ci-runner.yml .github/workflows/
+        - |
+          git commit -m "feat(ci): install Syft on ci-runner and add SBOM generation job
+
+          Closes #109
+
+          Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+        - git checkout dev/pve-test && git merge feat/syft-sbom
+        - git push origin dev/pve-test
+        - gh issue close 109 --comment "Fixed in $(git rev-parse HEAD)"
+
+postconditions:
+  criteria:
+    - id: syft-installed
+      description: Syft binary at pinned version on ci-runner-01
+      verify: "ssh root@10.57.0.63 'syft --version'"
+      expect: syft v<VERSION>
+
+    - id: job-in-workflow
+      description: generate-sbom job exists in CI workflow
+      verify: "grep -r 'generate-sbom' .github/workflows/"
+      expect: Match found
+
+    - id: artifact-retention
+      description: Artifact upload uses 90-day retention
+      verify: "grep -A5 'upload-artifact' .github/workflows/ | grep retention-days"
+      expect: "90"
+
+    - id: sbom-format
+      description: SBOM format is spdx-json
+      verify: "grep 'spdx-json' .github/workflows/"
+      expect: Match found
+
+security_scan:
+  when: Before merging
+  commands:
+    - "./with-secrets sonar-scanner"
+
+merge:
+  target: dev/pve-test

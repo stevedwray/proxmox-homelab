@@ -1,0 +1,224 @@
+---
+id: p06-07-rootfs-scan
+title: "Add Trivy rootfs scheduled scan workflow"
+phase: "06"
+type: development
+status: pending
+github_issue: "#119"
+task_doc: docs/plan/tasks/06-app-stacks-07-rootfs-scan-schedule.md
+
+context: |
+  After all Phase 06 LXCs are deployed, a scheduled GitHub Actions workflow runs
+  weekly to scan every LXC filesystem for CVEs using Trivy rootfs. Results are
+  uploaded to the GitHub Security tab as SARIF.
+
+  The workflow SSHes from ci-runner-01 into each LXC, runs trivy rootfs /, and
+  uploads the resulting SARIF file. Trivy must also be added to the base LXC Ansible
+  role so future containers get it automatically.
+
+  All LXC IPs to scan (Phase 04 + Phase 06):
+  - Phase 04: 10.57.1.10 (Authentik), 10.57.1.11 (step-ca), 10.57.1.12 (Monitoring),
+              10.57.2.10 (Traefik), 10.57.3.11 (apt-cacher)
+  - Phase 04b: 10.57.1.13 (CoreDNS)
+  - Phase 06: 10.60.0.10 (Pi-hole), 10.60.0.20 (arr stack), 10.60.0.21 (Jellyfin),
+              10.61.0.10 (game services)
+
+preconditions:
+  repository:
+    - id: all-p06-lxcs-deployed
+      description: Tasks p06-03 through p06-06 are complete
+      verify: |
+        ssh root@pve-test.gibbsgreatly.xyz 'pct list | grep -c running'
+      expect: All Phase 06 LXCs are running
+
+    - id: trivy-on-runner
+      description: Trivy is installed on ci-runner-01 (done in Phase 05)
+      verify: "ssh root@10.57.0.63 'trivy --version'"
+
+    - id: base-role-exists
+      description: base-lxc Ansible role exists
+      verify: "ls terraform/lxc/ansible/roles/base-lxc/tasks/main.yml"
+
+  infrastructure:
+    - id: ci-runner-ssh-access
+      description: ci-runner-01 can SSH to all LXC IPs
+      verify: |
+        ssh root@10.57.0.63 'ssh -o StrictHostKeyChecking=accept-new root@10.57.1.10 hostname'
+      notes:
+        - SSH keys must be pre-distributed to all LXCs
+        - Or use StrictHostKeyChecking=accept-new for first-time connections
+
+objective: |
+  .github/workflows/rootfs-scan.yml exists with a matrix over all LXC IPs, running
+  every Monday at 03:00 UTC. Trivy is added to the base LXC role. At least one
+  manual workflow_dispatch run has been verified. SARIF results appear in GitHub
+  Security tab.
+
+branch: feat/rootfs-scan
+
+workflow:
+  tooling:
+    note: |
+      Read/Edit/Write for the workflow YAML and base-lxc role changes.
+      ./with-secrets ansible-playbook to push the Trivy install to Phase 06 LXCs.
+
+  steps:
+    - id: 1
+      name: Create branch
+      commands:
+        - git checkout dev/pve-test && git pull
+        - git checkout -b feat/rootfs-scan
+
+    - id: 2
+      name: Add Trivy install to base LXC Ansible role
+      commands:
+        - "Read: terraform/lxc/ansible/roles/base-lxc/tasks/main.yml"
+      change: |
+        Add Trivy install task (pin same version as Phase 05 image scan job):
+
+          - name: Install Trivy <VERSION>
+            ansible.builtin.shell: |
+              curl -sSfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | \
+                sh -s -- -b /usr/local/bin v<VERSION>
+            args:
+              creates: /usr/local/bin/trivy
+
+    - id: 3
+      name: Run base role against all Phase 06 LXCs to install Trivy
+      commands:
+        - |
+          for ip in 10.60.0.10 10.60.0.20 10.60.0.21 10.61.0.10; do
+            ./with-secrets ansible-playbook -i "$ip," \
+              terraform/lxc/ansible/playbooks/install-base-role.yml 2>/dev/null || \
+              ./with-secrets ansible-playbook -i "$ip," \
+              -e "target_host=$ip" terraform/lxc/ansible/roles/base-lxc/tasks/main.yml
+          done
+        - |
+          for ip in 10.60.0.10 10.60.0.20 10.60.0.21 10.61.0.10; do
+            ssh root@$ip 'trivy --version' && echo "$ip OK"
+          done
+
+    - id: 4
+      name: Verify ci-runner-01 can SSH to all LXC IPs
+      commands:
+        - |
+          for ip in 10.57.1.10 10.57.1.11 10.57.1.12 10.57.1.13 10.57.2.10 10.57.3.11 \
+                    10.60.0.10 10.60.0.20 10.60.0.21 10.61.0.10; do
+            ssh root@10.57.0.63 "ssh -o StrictHostKeyChecking=accept-new -o ConnectTimeout=3 root@$ip hostname 2>/dev/null" \
+              && echo "$ip reachable" || echo "$ip UNREACHABLE"
+          done
+      notes:
+        - Fix any unreachable LXCs before creating the workflow
+        - ci-runner-01 SSH key must be in /root/.ssh/authorized_keys on each LXC
+
+    - id: 5
+      name: Create rootfs-scan.yml workflow
+      change: |
+        Create .github/workflows/rootfs-scan.yml:
+
+          name: Trivy rootfs scan
+          on:
+            schedule:
+              - cron: "0 3 * * 1"   # Monday 03:00 UTC
+            workflow_dispatch:
+
+          jobs:
+            rootfs-scan:
+              name: Scan ${{ matrix.lxc }}
+              runs-on: [self-hosted, pve-test, build]
+              strategy:
+                fail-fast: false
+                matrix:
+                  lxc:
+                    - 10.57.1.10   # Authentik
+                    - 10.57.1.11   # step-ca
+                    - 10.57.1.12   # Monitoring
+                    - 10.57.1.13   # CoreDNS
+                    - 10.57.2.10   # Traefik
+                    - 10.57.3.11   # apt-cacher
+                    - 10.60.0.10   # Pi-hole
+                    - 10.60.0.20   # arr stack
+                    - 10.60.0.21   # Jellyfin
+                    - 10.61.0.10   # game services
+
+              steps:
+                - name: Run Trivy rootfs scan via SSH
+                  run: |
+                    ssh -o StrictHostKeyChecking=accept-new root@${{ matrix.lxc }} \
+                      "trivy rootfs --format sarif --output /tmp/trivy-rootfs.sarif /"
+                    scp root@${{ matrix.lxc }}:/tmp/trivy-rootfs.sarif \
+                      trivy-${{ matrix.lxc }}.sarif
+
+                - name: Upload SARIF
+                  uses: github/codeql-action/upload-sarif@v3
+                  if: always()
+                  with:
+                    sarif_file: trivy-${{ matrix.lxc }}.sarif
+                    category: rootfs-${{ matrix.lxc }}
+
+    - id: 6
+      name: Trigger manual run to verify
+      commands:
+        - "gh workflow run rootfs-scan.yml"
+        - "gh run watch"
+      expect: Workflow completes; SARIF results appear in Security tab
+
+    - id: 7
+      name: Security scan
+      commands:
+        - "./with-secrets sonar-scanner"
+
+    - id: 8
+      name: Commit and merge
+      commands:
+        - git add .github/workflows/rootfs-scan.yml terraform/lxc/ansible/roles/base-lxc/
+        - |
+          git commit -m "feat(ci): add Trivy rootfs scheduled scan, install in base LXC role
+
+          Closes #119
+
+          Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+        - git checkout dev/pve-test && git merge feat/rootfs-scan
+        - git push origin dev/pve-test
+        - gh issue close 119 --comment "Fixed in $(git rev-parse HEAD)"
+
+postconditions:
+  criteria:
+    - id: workflow-exists
+      description: rootfs-scan.yml in .github/workflows/
+      verify: "ls .github/workflows/rootfs-scan.yml"
+
+    - id: schedule-correct
+      description: Workflow scheduled for Monday 03:00 UTC
+      verify: "grep 'cron.*0 3' .github/workflows/rootfs-scan.yml"
+      expect: "cron: '0 3 * * 1'"
+
+    - id: all-ips-in-matrix
+      description: All Phase 04+06 LXC IPs in the matrix
+      verify: "grep -c '10\.57\|10\.60\|10\.61' .github/workflows/rootfs-scan.yml"
+      expect: 10 or more entries
+
+    - id: trivy-in-base-role
+      description: Trivy install task in base-lxc role
+      verify: "grep -c trivy terraform/lxc/ansible/roles/base-lxc/tasks/main.yml"
+      expect: "1 or more"
+
+    - id: manual-run-succeeded
+      description: At least one workflow_dispatch run completed successfully
+      verify: "gh run list --workflow rootfs-scan.yml --limit 1"
+      expect: Completed status
+
+security_scan:
+  when: Before merging
+  commands:
+    - "./with-secrets sonar-scanner"
+
+merge:
+  target: dev/pve-test
+
+notes:
+  - Trivy version pinned in base-lxc role must match the version in Phase 05 image scan job
+  - Add new LXC IPs to the matrix as new containers are deployed in future phases
+  - If a CRITICAL finding is found, create a GitHub issue to track remediation —
+    the workflow should not be suppressed/ignored
+  - Phase 06 is complete when this task is done and all previous Phase 06 tasks are merged
