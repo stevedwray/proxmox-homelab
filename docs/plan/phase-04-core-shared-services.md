@@ -80,6 +80,21 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 /ip address add address=10.57.1.1/24 interface=vlan20-mgmt
 /ip address add address=10.57.2.1/24 interface=vlan30-edge
 /ip address add address=10.57.3.1/24 interface=vlan40-infra
+
+# DNS delegation baseline for lab.gibbsgreatly.xyz (requires MikroTik admin credentials)
+# Phase 1 (no internal DNS authority deployed yet): static A records per platform name.
+/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-baseline
+
+# Phase 2 (when internal authoritative DNS exists): replace static records with a FWD entry.
+# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
+# /ip dns static remove [find comment=lab-zone-baseline]
+
+# Note: api-user (read group) cannot write DNS entries. Use admin credentials.
+# Via REST API (admin only):
+#   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
+#     -X POST https://192.168.1.1/rest/ip/dns/static/add \
+#     -H "Content-Type: application/json" \
+#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-baseline"}'
 ```
 
 **Proxmox one-time setup** — enable VLAN awareness on vmbr0:
@@ -765,8 +780,14 @@ The goal is deterministic, rebuild-safe execution with small, reviewable changes
 ### Validation commands (minimum set)
 
 ```bash
-# Resolver path checks (run from representative hosts in each zone)
+# Resolver path checks for delegated lab zone (one per SDN gateway resolver)
+dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
 dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+
+# Non-delegated public probe over the same resolver path
+# This confirms existing MikroTik static/recursive behavior is preserved.
 dig @10.57.1.1 +short github.com
 
 # Public ingress still works

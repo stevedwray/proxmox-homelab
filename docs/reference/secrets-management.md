@@ -87,6 +87,8 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 | `NETBOX_API_TOKEN_PEPPER` | NetBox API token pepper |
 | `NETBOX_SUPERUSER_PASSWORD` | NetBox superuser password |
 | `NETBOX_SUPERUSER_API_TOKEN` | NetBox superuser API token |
+| `MIKROTIK_ADMIN` | MikroTik admin automation username (preferred for write operations) |
+| `MIKROTIK_ADMIN_PASSWORD` | MikroTik admin automation password (preferred for write operations) |
 | `MIKROTIK_USER` | MikroTik API username |
 | `MIKROTIK_PASSWORD` | MikroTik API password |
 | `HARBOR_ADMIN_PASSWORD` | Harbor admin password |

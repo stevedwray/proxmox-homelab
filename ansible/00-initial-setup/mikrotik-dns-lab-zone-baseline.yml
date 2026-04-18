@@ -1,0 +1,208 @@
+---
+# mikrotik-dns-lab-zone-baseline.yml
+#
+# Applies the lab.gibbsgreatly.xyz DNS baseline to MikroTik and validates
+# delegated + public resolution through all four SDN gateway resolvers.
+#
+# Phase 1 (no internal DNS authority): static A records per platform name.
+# Phase 2 (when internal auth DNS exists): swap to type=FWD by running
+#   mikrotik-dns-lab-zone-delegate.yml (to be created when CoreDNS is deployed).
+#
+# Usage (run from the repo root):
+#   ./with-secrets bash -c '
+#     ansible-playbook ansible/00-initial-setup/mikrotik-dns-lab-zone-baseline.yml \
+#       --extra-vars "mikrotik_host=${MIKROTIK_HOST} mikrotik_user=${MIKROTIK_ADMIN} mikrotik_password=${MIKROTIK_ADMIN_PASSWORD}"
+#   '
+#
+# Required env vars (sourced via with-secrets from terraform/secrets.enc.yaml or .env):
+#   MIKROTIK_HOST            — MikroTik router IP or hostname
+#   MIKROTIK_ADMIN           — MikroTik admin automation username
+#   MIKROTIK_ADMIN_PASSWORD  — MikroTik admin automation password
+# Backward-compatible fallback:
+#   MIKROTIK_USER / MIKROTIK_PASSWORD
+#
+# After running this playbook, the following dig checks must pass from the operator workstation:
+#   dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
+#   dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
+#   dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
+#   dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
+#   dig @10.57.1.1 +short github.com                    # expect public IP (non-delegated path)
+
+- name: Apply lab.gibbsgreatly.xyz DNS baseline records to MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    # Lab zone baseline records — Phase 1: static A records per platform name.
+    # Add new platform names here; remove entries and switch to FWD in Phase 2.
+    lab_zone_records:
+      - name: "traefik.lab.gibbsgreatly.xyz"
+        address: "10.57.2.10"
+        comment: "lab-zone-baseline"
+
+    # Validation targets
+    delegated_probes:
+      - resolver: "10.57.0.1"
+        name: "traefik.lab.gibbsgreatly.xyz"
+        expected: "10.57.2.10"
+      - resolver: "10.57.1.1"
+        name: "traefik.lab.gibbsgreatly.xyz"
+        expected: "10.57.2.10"
+      - resolver: "10.57.2.1"
+        name: "traefik.lab.gibbsgreatly.xyz"
+        expected: "10.57.2.10"
+      - resolver: "10.57.3.1"
+        name: "traefik.lab.gibbsgreatly.xyz"
+        expected: "10.57.2.10"
+
+    public_probe_resolver: "10.57.1.1"
+    public_probe_name: "github.com"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Check existing lab-zone-baseline DNS entries
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: existing_dns
+      no_log: true
+
+    - name: Build set of existing lab-zone-baseline names
+      ansible.builtin.set_fact:
+        existing_lab_names: >-
+          {{
+            existing_dns.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', 'lab-zone-baseline')
+            | map(attribute='name')
+            | list
+          }}
+
+    - name: Add missing lab zone static A records
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          name: "{{ item.name }}"
+          type: "A"
+          address: "{{ item.address }}"
+          ttl: "5m"
+          comment: "{{ item.comment }}"
+        status_code: [200, 201]
+      loop: "{{ lab_zone_records }}"
+      when: item.name not in existing_lab_names
+      no_log: true
+
+    - name: Verify lab zone static A records exist on MikroTik
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: final_dns
+      no_log: true
+
+    - name: Assert each lab zone record is present
+      ansible.builtin.assert:
+        that:
+          - >-
+            final_dns.json
+            | selectattr('name', 'equalto', item.name)
+            | selectattr('address', 'equalto', item.address)
+            | list | length > 0
+        fail_msg: "DNS record {{ item.name }} → {{ item.address }} was not found on MikroTik after apply."
+        success_msg: "DNS record {{ item.name }} → {{ item.address }} confirmed on MikroTik."
+      loop: "{{ lab_zone_records }}"
+
+    - name: Probe delegated lab zone names through each SDN gateway resolver
+      ansible.builtin.command:
+        cmd: "dig @{{ item.resolver }} +short +time=5 +tries=2 {{ item.name }}"
+      register: delegated_results
+      loop: "{{ delegated_probes }}"
+      changed_when: false
+
+    - name: Assert delegated probes return expected IP
+      ansible.builtin.assert:
+        that:
+          - item.stdout | trim == item.item.expected
+        fail_msg: >-
+          Resolver {{ item.item.resolver }} returned '{{ item.stdout | trim }}'
+          for {{ item.item.name }}, expected {{ item.item.expected }}.
+          Check MikroTik DNS service is enabled (allow-remote-requests: yes)
+          and the VLAN firewall input chain allows UDP/TCP 53 from all zone subnets.
+        success_msg: >-
+          {{ item.item.resolver }} → {{ item.item.name }} = {{ item.stdout | trim }} ✓
+      loop: "{{ delegated_results.results }}"
+
+    - name: Probe public (non-delegated) name through mgmt_seg gateway resolver
+      ansible.builtin.command:
+        cmd: "dig @{{ public_probe_resolver }} +short +time=5 +tries=2 {{ public_probe_name }}"
+      register: public_probe_result
+      changed_when: false
+
+    - name: Assert public probe returns an answer (non-delegated path preserved)
+      ansible.builtin.assert:
+        that:
+          - public_probe_result.stdout | trim | length > 0
+        fail_msg: >-
+          Resolver {{ public_probe_resolver }} returned no answer for {{ public_probe_name }}.
+          MikroTik recursive forwarding path may be broken (DoH or upstream DNS issue).
+        success_msg: >-
+          {{ public_probe_resolver }} → {{ public_probe_name }} = {{ public_probe_result.stdout | trim }} ✓
+
+    - name: Print validation summary
+      ansible.builtin.debug:
+        msg:
+          - "=== DNS delegation baseline validation ==="
+          - "Delegated (lab.gibbsgreatly.xyz):"
+          - "  @10.57.0.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[0].stdout | trim }}"
+          - "  @10.57.1.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[1].stdout | trim }}"
+          - "  @10.57.2.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[2].stdout | trim }}"
+          - "  @10.57.3.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[3].stdout | trim }}"
+          - "Non-delegated (public probe):"
+          - "  @10.57.1.1 github.com = {{ public_probe_result.stdout | trim }}"

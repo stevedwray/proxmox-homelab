@@ -4,7 +4,8 @@
   gather_facts: false
 
   vars:
-    dns_validation_probe_name: "{{ network_dns_probe_name | default('github.com') }}"
+    dns_validation_delegated_probe_name: "{{ network_dns_delegated_probe_name | default('traefik.lab.gibbsgreatly.xyz') }}"
+    dns_validation_public_probe_name: "{{ network_dns_probe_name | default('github.com') }}"
     dns_validation_expected_resolver: >-
       {{
         contract_dns_server
@@ -53,24 +54,46 @@
         success_msg: >-
           {{ inventory_hostname }} is configured to use {{ dns_validation_expected_resolver }} as its resolver.
 
-    - name: Resolve probe name via expected resolver
+    - name: Resolve delegated probe name via expected resolver
       ansible.builtin.shell: |
         if command -v dig >/dev/null 2>&1; then
-          dig @"{{ dns_validation_expected_resolver }}" +time=3 +tries=1 +short "{{ dns_validation_probe_name }}" | grep -q .
+          dig @"{{ dns_validation_expected_resolver }}" +time=3 +tries=1 +short "{{ dns_validation_delegated_probe_name }}" | grep -q .
         else
-          getent hosts "{{ dns_validation_probe_name }}" >/dev/null
+          getent hosts "{{ dns_validation_delegated_probe_name }}" >/dev/null
         fi
       args:
         executable: /bin/bash
-      register: dns_validation_probe_result
+      register: dns_validation_delegated_probe_result
       changed_when: false
 
-    - name: Assert expected resolver answers queries
+    - name: Assert expected resolver answers delegated probe query
       ansible.builtin.assert:
         that:
-          - dns_validation_probe_result.rc == 0
+          - dns_validation_delegated_probe_result.rc == 0
         fail_msg: >-
-          {{ inventory_hostname }} could not resolve {{ dns_validation_probe_name }} via {{ dns_validation_expected_resolver }}.
-          Check the MikroTik VLAN interface, DNS service configuration, and zone firewall policy.
+          {{ inventory_hostname }} could not resolve delegated name {{ dns_validation_delegated_probe_name }} via {{ dns_validation_expected_resolver }}.
+          Check MikroTik conditional forwarding for lab.gibbsgreatly.xyz and delegated zone authority reachability.
         success_msg: >-
-          {{ inventory_hostname }} resolved {{ dns_validation_probe_name }} via {{ dns_validation_expected_resolver }}.
+          {{ inventory_hostname }} resolved delegated name {{ dns_validation_delegated_probe_name }} via {{ dns_validation_expected_resolver }}.
+
+    - name: Resolve public probe name via expected resolver
+      ansible.builtin.shell: |
+        if command -v dig >/dev/null 2>&1; then
+          dig @"{{ dns_validation_expected_resolver }}" +time=3 +tries=1 +short "{{ dns_validation_public_probe_name }}" | grep -q .
+        else
+          getent hosts "{{ dns_validation_public_probe_name }}" >/dev/null
+        fi
+      args:
+        executable: /bin/bash
+      register: dns_validation_public_probe_result
+      changed_when: false
+
+    - name: Assert expected resolver answers public probe query
+      ansible.builtin.assert:
+        that:
+          - dns_validation_public_probe_result.rc == 0
+        fail_msg: >-
+          {{ inventory_hostname }} could not resolve public probe {{ dns_validation_public_probe_name }} via {{ dns_validation_expected_resolver }}.
+          Check the MikroTik static DNS and recursive forwarding path for non-delegated names.
+        success_msg: >-
+          {{ inventory_hostname }} resolved public probe {{ dns_validation_public_probe_name }} via {{ dns_validation_expected_resolver }}.

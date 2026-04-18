@@ -141,6 +141,27 @@ Automation scope for this delegation model should include:
 * validate all SDN zones can resolve delegated internal names and public probe names through MikroTik
 * defer full recursive DoH migration off MikroTik to a later phase
 
+RouterOS command baseline for this delegation model:
+
+```text
+# Delegate only lab.gibbsgreatly.xyz to internal authoritative DNS
+# Replace <internal-auth-dns-ip> with your internal DNS authority for lab.gibbsgreatly.xyz
+/ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
+
+# Verify the delegation entry exists
+/ip dns static print where comment="delegate-lab-zone"
+```
+
+Resolver-path validation baseline:
+
+```bash
+dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short github.com
+```
+
 ---
 
 ## Pattern: adding a new segment

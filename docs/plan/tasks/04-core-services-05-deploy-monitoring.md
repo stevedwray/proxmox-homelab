@@ -107,6 +107,22 @@ Naming policy for this task:
 - [ ] `terraform/secrets.enc.yaml` has real values for `GRAFANA_ADMIN_PASSWORD` and `GRAFANA_OAUTH_CLIENT_SECRET` (not CHANGEME_)
 - [ ] Branch `feat/monitoring-stack` merged to `dev/pve-test`
 
+### DNS delegation validation commands (required)
+
+Run these from a host that can query SDN zone gateways directly:
+
+```bash
+dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short github.com
+```
+
+Expected results:
+- All four `traefik.lab.gibbsgreatly.xyz` queries return delegated answers.
+- `github.com` still resolves through the same MikroTik resolver path.
+
 ## Session Prompt
 
 ```
