@@ -11,6 +11,7 @@ Migrate existing application stacks (media/arr stack, Jellyfin, Pi-hole) from th
 - Phase 01 (CI runner) complete
 - Phase 02 complete or otherwise superseded by the current pve-test capacity baseline
 - Phase 04 complete — Authentik, step-ca, Traefik, and monitoring all running
+- **Phase 04b complete** — CoreDNS authoritative DNS server running at `10.57.1.13` with `lab.gibbsgreatly.xyz` zone delegated via MikroTik conditional forwarding
 - Phase 05 complete — Trivy, Syft, and Cosign pipeline work active
 - Harbor at `10.57.3.10` operational with projects and scanning configured
 - NetBox updated with current IP allocations
@@ -73,18 +74,29 @@ Do **not** do a big-bang migration of all services at once. Migrate one service 
 
 ---
 
-## Service 1 — Pi-hole (DNS)
+## Service 1 — Pi-hole (Ad-blocking DNS resolver)
 
-Pi-hole is the most critical application — if it fails, all internal DNS breaks. Migrate it **last in the day**, with a rollback plan ready (pointing resolvers back to the old IP).
+Pi-hole is a critical application for ad-blocking and recursive DNS resolution. **Important:** Internal authoritative DNS for `lab.gibbsgreatly.xyz` is provided by CoreDNS (deployed in Phase 04b) — Pi-hole is **not** responsible for that authority. Pi-hole serves as an ad-blocking resolver for client queries.
+
+Migrate Pi-hole **last in the day**, with a rollback plan ready (revert Pi-hole IP in CoreDNS zone if needed).
+
+### Role clarification
+
+| Service | Role | Deployed in |
+|---|---|---|
+| **CoreDNS** | Authority for `lab.gibbsgreatly.xyz`; forwards non-lab queries upstream | Phase 04b, `10.57.1.13` |
+| **Pi-hole** | Ad-blocking recursive resolver; optional secondary resolver for clients | Phase 06, `10.60.0.10` |
+
+Pi-hole can be the client's default resolver (for ad-blocking), while CoreDNS remains the authority for internal service naming.
 
 ### Stack file
 
 Create `terraform/lxc/stacks/pihole-stack/stack.yaml`:
 
 ```yaml
-# Pi-hole DNS resolver — internal-apps zone
+# Pi-hole ad-blocking DNS resolver — app_seg zone
 hostname: pihole-stack
-ip_address: "10.60.0.10/24"   # or keep at existing LAN IP if easier
+ip_address: "10.60.0.10/24"   # app_seg
 gateway: "10.60.0.1"
 vmid: 160
 cores: 1
@@ -96,17 +108,13 @@ docker_storage_size: "5G"
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 tags:
   - pihole
-  - dns
+  - dns-resolver
   - apps
   - docker
 
 ansible_playbook: "deploy-pihole-stack"
 portainer_agent: true
 ```
-
-**Transitional exception (optional):** Keep Pi-hole on `192.168.1.x` only if DNS cutover
-complexity makes that necessary during migration. The preferred target state is to place
-application workloads inside the SDN-defined application segment.
 
 ### Image: source from Harbor
 
