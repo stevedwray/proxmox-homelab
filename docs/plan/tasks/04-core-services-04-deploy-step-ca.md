@@ -36,6 +36,12 @@ LXC `step-ca` (VMID 152) is running at `10.57.1.11` in `mgmt_seg` and serving an
 
 This task does not change any existing browser-facing routes. Let's Encrypt remains the resolver for all routes configured in task 04-03. The step-ca resolver becomes available for opt-in use by internal management routes.
 
+Internal naming and trust policy for this task:
+
+- Internal shared-platform identities should use `*.lab.gibbsgreatly.xyz`.
+- Certificates for `*.lab.gibbsgreatly.xyz` are issued/trusted via step-ca on managed hosts.
+- Browser/operator ingress remains on `*.gibbsgreatly.xyz`.
+
 ## Scope
 
 - Create `terraform/lxc/stacks/step-ca-stack/stack.yaml`
@@ -94,6 +100,7 @@ This task does not change any existing browser-facing routes. Let's Encrypt rema
 - [ ] Homelab root CA trusted on Proxmox host `192.168.1.40`
 - [ ] Traefik `step-ca` resolver can reach ACME directory from inside the container:
   `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .` returns valid JSON
+- [ ] At least one internal shared-platform identity under `*.lab.gibbsgreatly.xyz` can be validated via step-ca trust on a managed host
 - [ ] Base LXC Ansible role includes CA trust task
 - [ ] No existing Let's Encrypt route has been changed or reassigned
 - [ ] Branch `feat/step-ca` merged to `dev/pve-test`

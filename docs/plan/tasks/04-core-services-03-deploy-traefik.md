@@ -18,6 +18,7 @@ Phase 04 — Core Shared Services
 - Phase 02 complete — pve-test at 32 GB
 - `10.57.2.10` available (ping-verify before deploying; also check NetBox)
 - `CF_DNS_API_TOKEN` set to its real value in `terraform/secrets.enc.yaml` — Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz`
+- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to the internal authoritative DNS server
 - SDN zones applied to pve-test and MikroTik static routes added (see Step 0 below)
 
 Note: step-ca is **not** a prerequisite for this task. The `step-ca` resolver is written into `traefik.yml` at deploy time but will not be used by any route until task 04-04 (step-ca) is complete. Traefik will not attempt to contact `10.57.1.11` until a route explicitly requests it.
@@ -36,6 +37,11 @@ Note: step-ca is **not** a prerequisite for this task. The `step-ca` resolver is
 ## Objective
 
 LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traefik dashboard is accessible over HTTPS with a valid Let's Encrypt wildcard cert, HTTP redirects to HTTPS, and the Authentik forward-auth middleware is configured. Both certificate resolver blocks (`letsencrypt` and `step-ca`) are present in `traefik.yml`. The `step-ca` resolver block is pre-configured and dormant, ready to activate when task 04-04 completes.
+
+Ingress naming policy for this task:
+
+- Public/operator ingress remains on `*.gibbsgreatly.xyz`.
+- Internal `*.lab.gibbsgreatly.xyz` names are platform-internal identities and are not the default browser ingress in this task.
 
 ## Scope
 
@@ -94,6 +100,7 @@ LXC `proxy-stack` (VMID 153) is running at `10.57.2.10` in `edge_seg`. The Traef
 - [ ] `dynamic/certs.yml` requesting wildcard `*.gibbsgreatly.xyz` from `letsencrypt` resolver
 - [ ] Both `certificatesResolvers.letsencrypt` and `certificatesResolvers.step-ca` blocks present in `traefik.yml`
 - [ ] `/certs/letsencrypt/acme.json` and `/certs/step-ca/acme.json` both have mode `0600`
+- [ ] Public ingress hostnames remain under `*.gibbsgreatly.xyz` (no migration to `*.lab.gibbsgreatly.xyz` for browser ingress)
 - [ ] Branch `feat/proxy-stack` merged to `dev/pve-test`
 
 ## Session Prompt

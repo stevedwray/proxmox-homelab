@@ -82,6 +82,11 @@ zone:
 This is the intended platform contract. Public resolvers such as `1.1.1.1` are not the
 target architecture for normal LXC operation.
 
+Resolver entry point and record authority are separate concerns. Zone clients use the
+MikroTik zone gateway IP as first-hop resolver. Specific internal zones can be delegated
+behind that resolver. For shared platform services, `lab.gibbsgreatly.xyz` is delegated
+to a dedicated internal DNS server while clients continue querying MikroTik.
+
 ### 2026-04-16 runner recovery note
 
 During the greenfield `ci-runner-01` recovery, `build_seg` was missing its MikroTik VLAN
@@ -121,6 +126,20 @@ deployment, that:
 When that work is taken on, keep the guest-side validator as the final end-to-end proof.
 Router API checks should supplement the platform contract, not replace runtime validation
 from inside the LXC.
+
+### Internal zone delegation model (`lab.gibbsgreatly.xyz`)
+
+* Client behavior remains unchanged: query MikroTik zone gateway resolver.
+* MikroTik forwards only `lab.gibbsgreatly.xyz` to an internal authoritative DNS server.
+* MikroTik may continue serving static records and current recursive behavior for non-delegated names.
+* This preserves stable client configuration while enabling platform DNS authority to move into code-managed services.
+
+Automation scope for this delegation model should include:
+
+* validate conditional forwarding exists for `lab.gibbsgreatly.xyz`
+* validate delegated authority answers from the configured internal DNS server
+* validate all SDN zones can resolve delegated internal names and public probe names through MikroTik
+* defer full recursive DoH migration off MikroTik to a later phase
 
 ---
 
@@ -212,6 +231,12 @@ pct exec <vmid> -- ping -c 3 8.8.8.8
 
 # Inter-zone routing — e.g. from a container in build_seg to new_seg
 pct exec 141 -- ping -c 3 10.57.4.<host>
+
+# Delegated internal zone check via zone resolver
+pct exec <vmid> -- dig @10.57.<zone>.1 +short traefik.lab.gibbsgreatly.xyz
+
+# Public probe check via the same resolver path
+pct exec <vmid> -- dig @10.57.<zone>.1 +short github.com
 ```
 
 ---

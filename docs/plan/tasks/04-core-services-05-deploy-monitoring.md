@@ -17,6 +17,7 @@ Phase 04 — Core Shared Services
 - Task 04-01 complete — Authentik running (Grafana will use OIDC against it)
 - Task 04-03 complete — Traefik running at `10.57.2.10` (monitoring will be exposed via proxy)
 - Task 04-04 complete — step-ca running at `10.57.1.11` (Grafana uses the internal CA for its own cert via the step-ca resolver in Traefik)
+- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to the internal authoritative DNS server
 - Phase 02 complete — pve-test at 32 GB (this stack is the most resource-heavy)
 - Phase 03b complete — VictoriaMetrics, Grafana, Loki, Promtail images in Harbor proxy cache
 - `10.57.1.12` available (ping-verify before deploying; also check NetBox)
@@ -35,6 +36,11 @@ Phase 04 — Core Shared Services
 ## Objective
 
 LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Grafana is primarily accessed via Traefik at `https://grafana.gibbsgreatly.xyz` with Authentik protection, the internal URL `http://10.57.1.12:3000` remains available for break-glass operations, VictoriaMetrics is scraping pve-test node_exporter, Loki is receiving logs from at least one LXC, and Grafana login works via Authentik OIDC.
+
+Naming policy for this task:
+
+- Public/operator route remains `grafana.gibbsgreatly.xyz`.
+- Internal platform identity uses `grafana.lab.gibbsgreatly.xyz` with step-ca trust for managed internal clients.
 
 ## Scope
 
@@ -76,6 +82,7 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 - VictoriaMetrics retention period: `90d`
 - Grafana OIDC integration with Authentik (generic OAuth) — `GF_AUTH_GENERIC_OAUTH_ENABLED: "true"`
 - Preferred Grafana access path is `https://grafana.gibbsgreatly.xyz` via Traefik; direct `http://10.57.1.12:3000` is operational fallback only
+- Internal identity naming for the monitoring service should follow `grafana.lab.gibbsgreatly.xyz`
 - Create the Authentik OIDC provider in Authentik UI before deploying Grafana
 - `GRAFANA_OAUTH_CLIENT_SECRET` comes from the Authentik OIDC provider config
 - Secrets injected via `./with-secrets bash -c 'ansible-playbook ... --extra-vars "..."'` — values come from `terraform/secrets.enc.yaml` via SOPS
@@ -91,6 +98,8 @@ LXC `monitoring-stack` (VMID 154) is running at `10.57.1.12` in `mgmt_seg`, Graf
 - [ ] Grafana datasource "Loki" configured and test passes
 - [ ] Grafana admin login via Authentik OIDC works
 - [ ] Grafana route `https://grafana.gibbsgreatly.xyz` responds through Traefik and enforces Authentik access flow
+- [ ] `grafana.lab.gibbsgreatly.xyz` resolves via delegated `lab.gibbsgreatly.xyz` DNS path from SDN clients
+- [ ] Managed-host trust path for `grafana.lab.gibbsgreatly.xyz` validates via step-ca
 - [ ] VictoriaMetrics scraping at least pve-test node_exporter
 - [ ] Loki receiving logs from at least one LXC (via Promtail)
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events

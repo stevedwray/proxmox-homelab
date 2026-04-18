@@ -10,6 +10,12 @@
 > clients use `10.57.1.1`, which serves split DNS for `gibbsgreatly.xyz` and
 > forwards public lookups via DoH.
 
+Decision refinement (2026-04-18): DNS is split by responsibility. The MikroTik
+remains the resolver entry point for all SDN clients using zone gateway IPs.
+Internal platform service authority is delegated to `lab.gibbsgreatly.xyz` on a
+dedicated internal DNS server via conditional forwarding. Public ingress names
+remain under `gibbsgreatly.xyz`.
+
 ## What the network stage is trying to achieve
 
 This stage is not mainly about “making VLANs.” It is about creating a **stable network contract** that your current and future LXCs/VMs can sit on top of, while Proxmox remains the control point for segmentation. Proxmox VE gives you the pieces for this through VLAN-aware Linux bridges, the integrated firewall, cluster-level security groups, and SDN constructs such as zones, VNets, and subnets. ([Proxmox Virtual Environment][1])
@@ -30,6 +36,9 @@ I’d set these rules first:
 * **Default deny east-west traffic.** Allow only the flows a service actually needs.
 * **Internet exposure only through an edge tier.**
 * **Management plane stays separate from app traffic.**
+* **Preserve DNS role separation.** Keep MikroTik as the client resolver entry point,
+  delegate internal platform authority to `lab.gibbsgreatly.xyz`, and keep public ingress
+  names under `gibbsgreatly.xyz`.
 * **Dev mirrors the logical network shape of prod, but with fewer guests and smaller address ranges.**
 
 That fits well with Proxmox’s model, because you can apply filtering at datacenter, node, VM, and container level, and re-use common rules via security groups. ([Proxmox Virtual Environment][2])
@@ -72,6 +81,14 @@ My suggested target zones:
 * **storage-backup** — optional dedicated backup/storage network if justified
 
 This matches how Proxmox SDN separates networking with zones, VNets, and subnets, while the firewall gives you the enforcement layer. ([Proxmox Virtual Environment][1])
+
+### DNS authority model
+
+* Public ingress hostnames stay under `gibbsgreatly.xyz`.
+* Internal shared-platform hostnames use `lab.gibbsgreatly.xyz`.
+* SDN clients keep using zone-local MikroTik gateway IPs for DNS.
+* MikroTik conditionally forwards `lab.gibbsgreatly.xyz` to an internal DNS server authoritative for that zone.
+* Internal zone hostnames are for platform identity and service-to-service usage, not default public browser entry.
 
 ### Deliverables
 
@@ -165,6 +182,7 @@ Use this if you want the network to become a **first-class managed platform laye
 3. Attach only new platform services to SDN first.
 4. Keep legacy services on existing networking temporarily.
 5. Gradually migrate existing services once rules are proven.
+7. Introduce internal DNS authority for `lab.gibbsgreatly.xyz` and configure MikroTik conditional forwarding while keeping MikroTik as first-hop resolver for all clients.
 
 ---
 
@@ -279,6 +297,14 @@ For you, I would start with **Design B**, and leave room to grow into parts of C
 ---
 
 # Recommended traffic policy shape
+
+## DNS policy shape
+
+* Public ingress: `service.gibbsgreatly.xyz` via Traefik.
+* Internal platform identity: `service.lab.gibbsgreatly.xyz`.
+* Internal names use step-ca trust from day one on managed hosts.
+* Direct container IP access is test-only and break-glass.
+* DoH migration away from MikroTik is deferred until internal DNS authority is stable.
 
 Regardless of option, I’d make the initial policy look like this:
 
@@ -412,6 +438,72 @@ Deploy one test app through:
 ### Milestone 5
 
 Introduce the same zone structure into prod alongside the existing network, then migrate service classes one by one.
+
+### Milestone 6
+
+* Stand up internal DNS service authoritative for `lab.gibbsgreatly.xyz`.
+* Configure MikroTik conditional forwarding for `lab.gibbsgreatly.xyz`.
+* Validate resolution from `build_seg`, `mgmt_seg`, `edge_seg`, and `infra_seg` clients.
+* Onboard first platform names: `traefik.lab.gibbsgreatly.xyz`, `authentik.lab.gibbsgreatly.xyz`, `grafana.lab.gibbsgreatly.xyz`, `step-ca.lab.gibbsgreatly.xyz`.
+* Confirm internal TLS trust paths with step-ca for internal names.
+
+## Architecture note - internal DNS zone strategy
+
+Status: Proposed
+
+Date: 2026-04-18
+
+### Context
+
+The shared platform is designed to be rebuild-safe on bare-slate Proxmox. DNS currently
+uses MikroTik as resolver entry point. Public ingress must remain stable. Internal platform
+identity needs a dedicated authority model.
+
+### Decision
+
+* Public ingress names remain under `gibbsgreatly.xyz`.
+* Internal shared-platform names use `lab.gibbsgreatly.xyz`.
+* MikroTik remains first-hop resolver for SDN clients.
+* MikroTik conditionally forwards `lab.gibbsgreatly.xyz` to an internal authoritative DNS server.
+* Internal names use step-ca trust by default on managed hosts.
+* DoH recursion migration to internal DNS is deferred.
+
+### DNS roles
+
+* MikroTik: resolver entry point for clients, conditional forwarding for `lab.gibbsgreatly.xyz`,
+  transitional static records and current recursive path.
+* Internal DNS server: authoritative source of truth for `lab.gibbsgreatly.xyz`.
+* Public DNS path: continues handling public ingress naming and existing ACME DNS-01 workflows.
+
+### Naming rules
+
+* Public/operator ingress endpoints: `service.gibbsgreatly.xyz`.
+* Internal platform identity endpoints: `service.lab.gibbsgreatly.xyz`.
+* Internal names are not default public browser entry points.
+
+### Certificate rules
+
+* Public ingress names follow existing public trust flow.
+* Internal `lab.gibbsgreatly.xyz` names use step-ca trust from day one.
+* Direct container IP access is test/bootstrap only.
+
+### MikroTik automation boundaries
+
+In scope now:
+
+* Conditional forwarding for `lab.gibbsgreatly.xyz`.
+* DNS listener/firewall prerequisites required for zone resolution.
+* Minimal transitional static records when necessary.
+
+Out of scope now:
+
+* Full replacement of MikroTik recursive DNS behavior.
+* Immediate DoH migration to internal DNS.
+
+### Consequences
+
+This model preserves stable client behavior, improves platform reproducibility, and allows
+DNS authority evolution without reworking client resolver conventions in each VLAN.
 
 If you want, the next step can be a **concrete proposed zone/VLAN/subnet matrix** tailored to your homelab workloads.
 
