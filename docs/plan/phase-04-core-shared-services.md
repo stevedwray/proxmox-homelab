@@ -575,7 +575,8 @@ The `step-ca` resolver block is already present in `traefik.yml` from task 04-03
 Verify the resolver is reachable from the Traefik container:
 
 ```bash
-pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
   https://10.57.1.11/acme/acme/directory | jq .
 # Expected: ACME directory JSON
 ```
@@ -720,7 +721,8 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] `step ca health --ca-url https://10.57.1.11` returns OK
 - [ ] Root CA cert saved to `certs/homelab-root.crt` in repository
 - [ ] Homelab root CA distributed to Traefik container and Proxmox host
-- [ ] Traefik `step-ca` resolver can reach ACME directory: `pct exec 153 -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
+- [ ] Traefik `step-ca` resolver can reach ACME directory:
+  `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] At least one internal management endpoint issued a cert from step-ca
 
 ### Monitoring
@@ -805,7 +807,8 @@ curl -I http://10.57.2.10
 curl -sk https://10.57.1.11/acme/acme/directory | jq . >/dev/null
 
 # Managed-host trust example
-pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
   https://10.57.1.11/acme/acme/directory | jq . >/dev/null
 ```
 

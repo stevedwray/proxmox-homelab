@@ -66,8 +66,8 @@ production consumes rate-limit quota and is only done when promoting to `pve`.
 **LE acme.json must be persisted outside the LXC.**
 The ACME cert storage lives inside the LXC filesystem. Rebuilding the LXC destroys the
 cert, triggering a new LE request. On pve-test with the staging CA this is harmless; on
-production it consumes rate-limit quota. The fix is a Proxmox host bind-mount for the
-`certs/letsencrypt/` directory in `stack.yaml`.
+production it consumes rate-limit quota. The fix is platform-supported `extra_mount_*`
+fields in `stack.yaml` so `/opt/proxy-stack/certs` is persisted.
 
 ## Authentik
 

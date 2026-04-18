@@ -141,7 +141,9 @@ workflow:
     - id: 7
       name: Verify Traefik resolver from inside container
       commands:
-        - "pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq ."
+        - "TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4==\"proxy-stack\" || $4==\"traefik\") {print $1; exit}')"
+        - "test -n \"$TRAEFIK_VMID\""
+        - "pct exec $TRAEFIK_VMID -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq ."
       expect: ACME directory JSON returned without TLS error
 
     - id: 8

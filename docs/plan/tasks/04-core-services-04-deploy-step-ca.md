@@ -137,7 +137,7 @@ containers. All secrets are injected from SOPS — `STEP_CA_PASSWORD` is never p
 - [ ] `certs/homelab-root.crt` committed to repository
 - [ ] Homelab root CA trusted on Traefik container and Proxmox host
 - [ ] Traefik `step-ca` resolver reaches ACME directory from inside container:
-      `pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .`
+      `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .`
       returns valid JSON with `newNonce`, `newAccount`, `newOrder` keys
 - [ ] Base LXC Ansible role includes CA trust task
 - [ ] No existing Let's Encrypt route changed or reassigned

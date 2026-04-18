@@ -27,15 +27,15 @@ Phase 04 — Core Shared Services
    via `env_file`. No secret value may appear in a committed or on-disk compose file.
 
 2. **LE cert not persisted.** The ACME cert storage (`certs/letsencrypt/acme.json`) lives
-   inside the LXC filesystem at `/opt/proxy-stack/certs/`. Rebuilding the LXC destroys it,
-   triggering a new LE cert request. On pve-test with the staging CA this is harmless; on
-   production it consumes rate-limit quota. Fix: add a Proxmox host bind-mount for the certs
-   directory in `stack.yaml` so the file survives LXC rebuild.
+  inside the LXC filesystem at `/opt/proxy-stack/certs/`. Rebuilding the LXC destroys it,
+  triggering a new LE cert request. On pve-test with the staging CA this is harmless; on
+  production it consumes rate-limit quota. Fix: add platform-supported `extra_mount_*`
+  fields in `stack.yaml` so `/opt/proxy-stack/certs` is backed by persistent storage.
 
    ```yaml
-   mounts:
-     - host_path: /opt/traefik-certs
-       container_path: /opt/proxy-stack/certs
+  extra_mount_path: "/opt/proxy-stack/certs"
+  extra_mount_size: "5G"
+  extra_mount_storage: infrastructure-containers
    ```
 
 3. **Authentik outpost not automated.** The `authentik` forwardAuth middleware points at
@@ -90,8 +90,8 @@ Ingress naming policy for this task:
 
 ## Scope
 
-- Create `terraform/lxc/stacks/proxy-stack/stack.yaml` — include Proxmox host bind-mount for
-  `certs/` directory (LE cert persistence)
+- Create `terraform/lxc/stacks/proxy-stack/stack.yaml` — include `extra_mount_*` fields for
+  `certs/` directory persistence (LE cert persistence)
 - Copy `harbor-stack/terragrunt.hcl` to `proxy-stack/terragrunt.hcl`
 - Create `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` — secrets injected from SOPS,
   compose file references env vars only
@@ -116,16 +116,18 @@ Ingress naming policy for this task:
 
 ## Expected Outputs
 
-- `terraform/lxc/stacks/proxy-stack/stack.yaml` with certs bind-mount
+- `terraform/lxc/stacks/proxy-stack/stack.yaml` with `extra_mount_*` cert persistence fields
 - `terraform/lxc/stacks/proxy-stack/terragrunt.hcl`
 - `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` — secrets via env_file from SOPS
 - LXC VMID 153 provisioned; Traefik running at `10.57.2.10`
-- Let's Encrypt staging cert for `*.gibbsgreatly.xyz` issued and stored in the bind-mounted
+- Let's Encrypt staging cert for `*.gibbsgreatly.xyz` issued and stored in the persisted
   certs directory (survives LXC rebuild)
 
 ## Constraints and Conventions
 
 - Traefik image via Harbor proxy — never direct docker.io pull
+- Stack field names must follow `terraform/lxc/PLATFORM_CONTRACT.md` (use only documented
+  keys such as `extra_mount_path`, `extra_mount_size`, `extra_mount_storage`)
 - Secrets: `./with-secrets` wraps all commands; playbook writes a SOPS-sourced `.env` file;
   Docker Compose reads it via `env_file`; no `--extra-vars` for secrets
 - Static config (`traefik.yml`): dashboard only over HTTPS; HTTP → HTTPS redirect on web
@@ -137,7 +139,9 @@ Ingress naming policy for this task:
   yet exist. This is intentional and safe. Traefik will not contact it unless a route uses
   `certresolver=step-ca`
 - `stack.yaml` values: VMID 153, IP `10.57.2.10/24`, gateway `10.57.2.1`, `network: zone: edge_seg`,
-  `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`, plus the certs bind-mount (see gaps above)
+  `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`, plus
+  `extra_mount_path: "/opt/proxy-stack/certs"`, `extra_mount_size: "5G"`,
+  `extra_mount_storage: infrastructure-containers`
 - **LAN ingress**: ports 80 and 443 at `10.57.2.10` must be reachable from `192.168.1.0/24`.
   Verify from workstation: HTTP port 80 redirects to HTTPS, port 443 serves a staging LE cert
 
@@ -154,7 +158,7 @@ Ingress naming policy for this task:
 - [ ] Both `certificatesResolvers.letsencrypt` and `certificatesResolvers.step-ca` blocks present
   in `traefik.yml`, using staging CA URL
 - [ ] ACME storage files have mode `0600`
-- [ ] Certs directory bind-mounted from Proxmox host (survives LXC rebuild)
+- [ ] Certs directory persisted using `extra_mount_*` storage fields (survives LXC rebuild)
 - [ ] Branch `feat/proxy-stack` merged to `dev/pve-test`
 
 ## Session Prompt
@@ -174,7 +178,11 @@ CONTEXT:
 - Full spec: docs/plan/phase-04-core-shared-services.md (Service 2 section)
 - VMID 153, IP 10.57.2.10/24, gateway 10.57.2.1, network zone edge_seg, cores 1, memory 512,
   docker_storage_size 5G
-- stack.yaml must include a bind-mount for certs persistence (see Known Gaps in this doc)
+- stack.yaml must include cert persistence via:
+    extra_mount_path: "/opt/proxy-stack/certs"
+    extra_mount_size: "5G"
+    extra_mount_storage: infrastructure-containers
+- stack.yaml keys must follow terraform/lxc/PLATFORM_CONTRACT.md
 - Traefik image: 10.57.3.10/dockerhub/library/traefik:<version>
 - Let's Encrypt: STAGING CA for all pve-test dev passes:
     caServer: https://acme-staging-v02.api.letsencrypt.org/directory
@@ -225,7 +233,10 @@ STEP 3 — Create stack files:
   - terraform/lxc/stacks/proxy-stack/stack.yaml
     (VMID 153, ip_address 10.57.2.10/24, gateway 10.57.2.1, network: {zone: edge_seg},
      cores 1, memory 512, docker_storage_size 5G,
-     plus bind-mount: host_path /opt/traefik-certs → container_path /opt/proxy-stack/certs)
+     plus extra mount:
+       extra_mount_path /opt/proxy-stack/certs
+       extra_mount_size 5G
+       extra_mount_storage infrastructure-containers)
   - terraform/lxc/stacks/proxy-stack/terragrunt.hcl (copy from harbor-stack verbatim)
 
 STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml:
@@ -270,7 +281,8 @@ STEP 6 — Validate TLS and redirect:
   # Expect: "(STAGING) Let's Encrypt" — NOT Homelab CA, NOT production LE
 
   # Verify no literal credentials in compose file:
-  pct exec 153 -- grep -i "CF_DNS_API_TOKEN" /opt/proxy-stack/docker-compose.yml
+  TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+  pct exec "$TRAEFIK_VMID" -- grep -i "CF_DNS_API_TOKEN" /opt/proxy-stack/docker-compose.yml
   # Must show only the env var reference, not a token value
 
 STEP 7 — Verify Authentik forward-auth (requires outpost from task 04-01 Step 7):
@@ -287,6 +299,6 @@ STEP 8 — Commit and merge:
   git push origin dev/pve-test
 
 DONE WHEN: LE staging cert valid in browser, compose file has no literal credentials,
-certs directory is bind-mounted, HTTP→HTTPS redirect working, step-ca resolver block present.
+certs directory is persisted via extra mount, HTTP→HTTPS redirect working, step-ca resolver block present.
 Task 04-04 (step-ca) is now unblocked.
 ```

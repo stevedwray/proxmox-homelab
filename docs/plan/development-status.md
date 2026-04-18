@@ -53,8 +53,8 @@ middleware is defined.
 2. **LE cert not persisted.** The ACME cert storage (`certs/letsencrypt/acme.json`) lives
    inside the LXC filesystem. Rebuilding the LXC destroys it, triggering a new LE cert
    request. On pve-test with the staging CA this is harmless; on production it consumes
-   rate-limit quota. Fix: add a Proxmox host bind-mount for the certs directory in
-   `stack.yaml` so the file survives LXC rebuild.
+   rate-limit quota. Fix: add platform-supported `extra_mount_*` fields in
+   `stack.yaml` so `/opt/proxy-stack/certs` survives LXC rebuild.
 
 3. **Authentik outpost not automated.** The `authentik` forwardAuth middleware points at
    `http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik`. This URL only works if
@@ -192,15 +192,15 @@ filesystem and is destroyed on rebuild.
 On pve-test with the **staging CA** this is benign — a new staging cert is issued freely.
 On production (`pve`) with the **production CA** this consumes LE rate-limit quota.
 
-Fix: add a Proxmox host bind-mount to the `proxy-stack` `stack.yaml`:
+Fix: add platform-supported `extra_mount_*` fields to the `proxy-stack` `stack.yaml`:
 
 ```yaml
-mounts:
-  - host_path: /opt/traefik-certs
-    container_path: /opt/proxy-stack/certs
+extra_mount_path: "/opt/proxy-stack/certs"
+extra_mount_size: "5G"
+extra_mount_storage: infrastructure-containers
 ```
 
-The host directory persists across LXC rebuilds. This must be in place before any
+The persisted mount path survives LXC rebuilds. This must be in place before any
 production deployment.
 
 ### CA trust distribution ordering

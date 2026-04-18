@@ -115,7 +115,7 @@ curl -sv https://10.57.2.10/dashboard/ 2>&1 | grep -i "issuer"
 **Known gaps:**
 
 - `CF_DNS_API_TOKEN` must be injected from SOPS (not extra-vars); compose file must use `env_file`
-- `stack.yaml` must include a Proxmox host bind-mount for `certs/` directory so the LE cert
+- `stack.yaml` must include platform-supported `extra_mount_*` fields so `/opt/proxy-stack/certs`
   survives LXC rebuild
 - Authentik Proxy Provider outpost must exist (created in step 1 above) before forward-auth works
 
@@ -151,7 +151,8 @@ curl -sk https://10.57.1.11/acme/acme/directory | jq .
 ./with-secrets ansible-playbook -i "192.168.1.40," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 # Verify resolver from inside Traefik container
-pct exec 153 -- curl -s \
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s \
   --cacert /usr/local/share/ca-certificates/homelab-root.crt \
   https://10.57.1.11/acme/acme/directory | jq .
 ```
@@ -233,7 +234,8 @@ curl -s http://10.57.1.12:3000/api/health | jq .database                       #
 
 # No literal credentials in compose files
 pct exec 150 -- grep -r "CHANGEME\|password.*=.*[a-zA-Z0-9]\{16\}" /opt/authentik-stack/
-pct exec 153 -- cat /opt/proxy-stack/docker-compose.yml | grep CF_DNS_API_TOKEN
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- cat /opt/proxy-stack/docker-compose.yml | grep CF_DNS_API_TOKEN
 pct exec 154 -- cat /opt/monitoring-stack/docker-compose.yml | grep GRAFANA_ADMIN_PASSWORD
 
 # Restart survival
@@ -299,4 +301,4 @@ Once all four services are deployed and validated on pve-test:
 2. Phase 05 (Supply Chain) — assumes Phase 04 services are stable
 3. Phase 06 (Application Migration) — assumes Phase 04 + Phase 05 complete
 4. Outstanding rebuild-safety work: secrets injection for Traefik/Authentik/Monitoring,
-   `terraform-provider-authentik`, LE cert persistence bind-mount
+  `terraform-provider-authentik`, LE cert persistence via `extra_mount_*`
