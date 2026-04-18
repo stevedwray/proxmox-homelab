@@ -52,6 +52,7 @@ workflow:
       VLAN zone creation via the proxmox-sdn-setup.yml Ansible playbook or Proxmox UI.
       Terraform does not support VLAN zones — do not attempt via terragrunt apply.
       MikroTik changes are manual — follow pve-test.yaml for the command pattern.
+      Run SSH preflight checks to pve-test before ansible-playbook execution.
 
   steps:
     - id: 1
@@ -83,6 +84,7 @@ workflow:
     - id: 4
       name: Apply SDN zones to Proxmox
       commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'hostname'"
         - "./with-secrets ansible-playbook ansible/00-initial-setup/proxmox-sdn-setup.yml"
         - "ssh root@pve-test.gibbsgreatly.xyz 'pvesh get /nodes/pve-test/sdn/zones'"
       expect: app_seg (tvapps or similar) and game_seg (tvgames or similar) listed

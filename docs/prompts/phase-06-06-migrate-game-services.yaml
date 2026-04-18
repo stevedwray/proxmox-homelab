@@ -47,6 +47,7 @@ workflow:
   tooling:
     note: |
       Use ./with-secrets for terragrunt and ansible-playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       Warn players before migration — game servers cause data loss if stopped mid-play.
       Back up world data before any destructive steps.
 
@@ -78,7 +79,9 @@ workflow:
     - id: 4
       name: Run playbook and restore world data
       commands:
-        - "./with-secrets ansible-playbook -i '<new-ip>,' terraform/lxc/ansible/playbooks/deploy-game-stack.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-game-stack.yml"
         - "scp -r /tmp/minecraft-world-backup/* root@<new-ip>:/data/minecraft/"
         - "ssh root@<new-ip> 'docker compose start'"
 

@@ -53,6 +53,7 @@ workflow:
     note: |
       Key generation runs on the workstation with the cosign CLI.
       ./with-secrets ansible-playbook to re-run ci-runner playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       gh to set GitHub Actions secrets.
       NEVER commit cosign.key — check git status before every git add.
 
@@ -122,7 +123,9 @@ workflow:
     - id: 8
       name: Re-run ci-runner playbook to install Cosign
       commands:
-        - "./with-secrets ansible-playbook -i '10.57.0.63,' terraform/lxc/ansible/playbooks/deploy-ci-runner.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '10.57.0.63,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.0.63,' playbooks/deploy-ci-runner.yml"
         - "ssh root@10.57.0.63 'cosign version'"
 
     - id: 9

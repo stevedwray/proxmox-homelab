@@ -49,6 +49,7 @@ workflow:
   tooling:
     note: |
       Use ./with-secrets for terragrunt and ansible-playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       If GPU passthrough is needed, it requires device: entries in stack.yaml.
       Keep old Jellyfin running until new one is verified.
 
@@ -85,7 +86,9 @@ workflow:
     - id: 5
       name: Run playbook and restore config
       commands:
-        - "./with-secrets ansible-playbook -i '<new-ip>,' terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-jellyfin-stack.yml"
         - "scp -r /tmp/jellyfin-config-backup/* root@<new-ip>:/config/jellyfin/"
         - "ssh root@<new-ip> 'docker compose restart'"
 

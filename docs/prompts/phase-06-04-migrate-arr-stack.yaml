@@ -55,6 +55,7 @@ workflow:
   tooling:
     note: |
       Use ./with-secrets for terragrunt and ansible-playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       NFS mounts must be declared in stack.yaml before terragrunt apply.
       Keep old arr stack running until new one is verified.
 
@@ -90,7 +91,9 @@ workflow:
     - id: 5
       name: Run playbook and restore configs
       commands:
-        - "./with-secrets ansible-playbook -i '<new-ip>,' terraform/lxc/ansible/playbooks/deploy-arr-stack.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-arr-stack.yml"
         - "scp -r /tmp/arr-config-backup/* root@<new-ip>:/config/"
         - "ssh root@<new-ip> 'docker compose restart'"
 

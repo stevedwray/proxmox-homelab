@@ -50,6 +50,7 @@ workflow:
     note: |
       Read/Edit/Write for code changes to playbook and workflow YAML.
       ./with-secrets ansible-playbook to re-run the ci-runner playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       gh to check runner status.
 
   steps:
@@ -83,9 +84,13 @@ workflow:
     - id: 4
       name: Re-run ci-runner playbook to install Syft
       commands:
-        - "./with-secrets ansible-playbook -i '10.57.0.63,' terraform/lxc/ansible/playbooks/deploy-ci-runner.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '10.57.0.63,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.0.63,' playbooks/deploy-ci-runner.yml"
         - "ssh root@10.57.0.63 'syft --version'"
-      expect: syft v<VERSION> printed
+      expect:
+        - ansible ping succeeds before playbook run
+        - syft v<VERSION> printed
 
     - id: 5
       name: Read existing CI workflow structure

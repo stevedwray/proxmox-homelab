@@ -61,6 +61,7 @@ workflow:
     note: |
       Read/Edit/Write for the workflow YAML and base-lxc role changes.
       ./with-secrets ansible-playbook to push the Trivy install to Phase 06 LXCs.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
 
   steps:
     - id: 1
@@ -86,12 +87,13 @@ workflow:
     - id: 3
       name: Run base role against all Phase 06 LXCs to install Trivy
       commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
         - |
           for ip in 10.60.0.10 10.60.0.20 10.60.0.21 10.61.0.10; do
-            ./with-secrets ansible-playbook -i "$ip," \
-              terraform/lxc/ansible/playbooks/install-base-role.yml 2>/dev/null || \
-              ./with-secrets ansible-playbook -i "$ip," \
-              -e "target_host=$ip" terraform/lxc/ansible/roles/base-lxc/tasks/main.yml
+            ../../../with-secrets ansible -i "$ip," all -m ping \
+              && ../../../with-secrets ansible-playbook -i "$ip," playbooks/install-base-role.yml 2>/dev/null || \
+              ../../../with-secrets ansible-playbook -i "$ip," \
+              -e "target_host=$ip" roles/base-lxc/tasks/main.yml
           done
         - |
           for ip in 10.60.0.10 10.60.0.20 10.60.0.21 10.61.0.10; do
