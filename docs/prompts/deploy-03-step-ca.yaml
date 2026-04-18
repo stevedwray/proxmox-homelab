@@ -68,6 +68,7 @@ workflow:
     note: |
       Use ./with-secrets for all terragrunt and ansible-playbook calls.
       Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
+      Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
       step-ca runs as a systemd service — there is no Docker Compose.
       trust-homelab-ca.yml runs against the IP of each already-deployed container.
 
@@ -92,8 +93,8 @@ workflow:
       name: Run Ansible playbook
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '10.57.1.11,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.57.1.11,' playbooks/deploy-step-ca.yml"
+        - "../../../with-secrets ansible -i '10.57.1.11,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.1.11,' -u root playbooks/deploy-step-ca.yml"
       notes:
         - If ping fails with UNREACHABLE, fix SSH auth/inventory before running the playbook
         - Playbook runs without --extra-vars for secrets
@@ -127,12 +128,12 @@ workflow:
         This is mandatory — containers deployed before step-ca will not trust the new CA.
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '10.57.2.10,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.57.2.10,' playbooks/trust-homelab-ca.yml"
-        - "../../../with-secrets ansible -i '10.57.1.10,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.57.1.10,' playbooks/trust-homelab-ca.yml"
-        - "../../../with-secrets ansible -i '192.168.1.40,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '192.168.1.40,' playbooks/trust-homelab-ca.yml"
+        - "../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/trust-homelab-ca.yml"
+        - "../../../with-secrets ansible -i '10.57.1.10,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.1.10,' -u root playbooks/trust-homelab-ca.yml"
+        - "../../../with-secrets ansible -i '192.168.1.40,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '192.168.1.40,' -u root playbooks/trust-homelab-ca.yml"
       notes:
         - Add any other LXC IPs that were deployed before step-ca
         - trust-homelab-ca.yml copies certs/homelab-root.crt and runs update-ca-certificates

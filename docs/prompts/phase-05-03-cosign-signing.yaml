@@ -124,8 +124,8 @@ workflow:
       name: Re-run ci-runner playbook to install Cosign
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '10.57.0.63,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.57.0.63,' playbooks/deploy-ci-runner.yml"
+        - "../../../with-secrets ansible -i '10.57.0.63,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.0.63,' -u root playbooks/deploy-ci-runner.yml"
         - "ssh root@10.57.0.63 'cosign version'"
 
     - id: 9

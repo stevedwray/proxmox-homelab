@@ -92,8 +92,8 @@ workflow:
       name: Run playbook and restore configs
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-arr-stack.yml"
+        - "../../../with-secrets ansible -i '<new-ip>,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' -u root playbooks/deploy-arr-stack.yml"
         - "scp -r /tmp/arr-config-backup/* root@<new-ip>:/config/"
         - "ssh root@<new-ip> 'docker compose restart'"
 

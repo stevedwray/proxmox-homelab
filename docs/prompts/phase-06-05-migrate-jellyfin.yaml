@@ -87,8 +87,8 @@ workflow:
       name: Run playbook and restore config
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-jellyfin-stack.yml"
+        - "../../../with-secrets ansible -i '<new-ip>,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' -u root playbooks/deploy-jellyfin-stack.yml"
         - "scp -r /tmp/jellyfin-config-backup/* root@<new-ip>:/config/jellyfin/"
         - "ssh root@<new-ip> 'docker compose restart'"
 

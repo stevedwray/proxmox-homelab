@@ -80,8 +80,8 @@ workflow:
       name: Run playbook and restore world data
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '<new-ip>,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '<new-ip>,' playbooks/deploy-game-stack.yml"
+        - "../../../with-secrets ansible -i '<new-ip>,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' -u root playbooks/deploy-game-stack.yml"
         - "scp -r /tmp/minecraft-world-backup/* root@<new-ip>:/data/minecraft/"
         - "ssh root@<new-ip> 'docker compose start'"
 

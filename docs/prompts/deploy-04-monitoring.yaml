@@ -45,6 +45,11 @@ preconditions:
       expect: Real value from Authentik OIDC provider (not CHANGEME_)
 
   infrastructure:
+    - id: proxmox-target
+      description: TF_VAR_proxmox_node is pve-test
+      verify: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
+      expect: pve-test
+
     - id: memory
       description: pve-test has 32 GB RAM
       verify: "ssh root@pve-test.gibbsgreatly.xyz 'free -h | grep Mem'"
@@ -81,6 +86,7 @@ workflow:
     note: |
       Use ./with-secrets for all terragrunt and ansible-playbook calls.
       Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
+      Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
       No --extra-vars for secrets.
       Grafana datasources are added manually via the UI after deploy.
 
@@ -88,6 +94,7 @@ workflow:
     - id: 1
       name: Confirm all three Grafana secrets are real values in SOPS
       commands:
+        - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node'"
         - |
           SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
             sops --decrypt terraform/secrets.enc.yaml \
@@ -110,8 +117,8 @@ workflow:
       name: Run Ansible playbook
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '10.57.1.12,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.57.1.12,' playbooks/deploy-monitoring-stack.yml"
+        - "../../../with-secrets ansible -i '10.57.1.12,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.1.12,' -u root playbooks/deploy-monitoring-stack.yml"
       notes:
         - If ping fails with UNREACHABLE, fix SSH auth/inventory before running the playbook
 
@@ -163,7 +170,7 @@ workflow:
         - "ssh root@pve-test.gibbsgreatly.xyz 'pct restart 154'"
         - "sleep 30"
         - "curl -s http://10.57.1.12:3000/api/health | jq .database"
-      expect: '"ok"' returned after restart
+      expect: '"ok" returned after restart'
 
 postconditions:
   criteria:

@@ -12,6 +12,9 @@ swap: 256
 rootfs_size: 8
 rootfs_storage: infrastructure-containers
 docker_storage_size: "5G"
+extra_mount_path: "/opt/proxy-stack/certs"
+extra_mount_size: "5G"
+extra_mount_storage: infrastructure-containers
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 tags:
   - traefik

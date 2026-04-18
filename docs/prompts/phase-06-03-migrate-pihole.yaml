@@ -118,8 +118,8 @@ workflow:
       name: Run Ansible playbook
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
-        - "../../../with-secrets ansible -i '10.60.0.10,' all -m ping"
-        - "../../../with-secrets ansible-playbook -i '10.60.0.10,' playbooks/deploy-pihole-stack.yml"
+        - "../../../with-secrets ansible -i '10.60.0.10,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.60.0.10,' -u root playbooks/deploy-pihole-stack.yml"
 
     - id: 6
       name: Restore Pi-hole config backup
