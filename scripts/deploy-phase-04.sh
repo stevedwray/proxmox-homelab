@@ -57,10 +57,14 @@ check_env() {
     return 1
   fi
 
+  # shellcheck disable=SC1091
   source .env
   if [ -f ".env.pve-test" ]; then
+    # shellcheck disable=SC1091
     source .env.pve-test
   fi
+
+  : "${TF_VAR_proxmox_node:=}"
 
   if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
     log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"

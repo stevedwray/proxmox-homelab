@@ -33,7 +33,8 @@ readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
 readonly ANSIBLE_CONFIG_FILE="${PROJECT_ROOT}/terraform/lxc/ansible/ansible.cfg"
 readonly ANSIBLE_ROLES_DIR="${PROJECT_ROOT}/terraform/lxc/ansible/roles"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
-readonly LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
+LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
+readonly LOG_DIR
 DRY_RUN="${DRY_RUN:-false}"  # Can be set by --dry-run flag
 
 # Logging functions
@@ -104,8 +105,12 @@ check_prerequisites() {
   fi
 
   # Source environment
+  # shellcheck disable=SC1091
   source .env 2>/dev/null || { log_error "Failed to source .env"; prereqs_ok=false; }
+  # shellcheck disable=SC1091
   [ -f ".env.pve-test" ] && source .env.pve-test 2>/dev/null
+
+  : "${TF_VAR_proxmox_node:=}"
 
   if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
     log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"
@@ -335,7 +340,7 @@ main() {
     DRY_RUN=true
     services_to_deploy=("${SERVICES[@]}")
     log_warn "DRY-RUN MODE: No changes will be applied"
-  elif [[ " ${SERVICES[*]} " =~ " ${DEPLOY_MODE}-stack " ]]; then
+  elif [[ " ${SERVICES[*]} " =~ ${DEPLOY_MODE}-stack ]]; then
     services_to_deploy=("${DEPLOY_MODE}-stack")
   else
     log_error "Invalid service: $DEPLOY_MODE"
