@@ -79,6 +79,7 @@ workflow:
   tooling:
     note: |
       Use ./with-secrets for all terragrunt and ansible-playbook calls.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       No --extra-vars for secrets.
       This is a deployment session — make no code changes.
 
@@ -103,8 +104,11 @@ workflow:
     - id: 3
       name: Run Ansible playbook
       commands:
-        - cd /home/steve/git/proxmox-homelab
-        - "./with-secrets ansible-playbook -i '10.57.2.10,' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '10.57.2.10,' all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.2.10,' playbooks/deploy-proxy-stack.yml"
+      notes:
+        - If ping fails with UNREACHABLE, fix SSH auth/inventory before running the playbook
 
     - id: 4
       name: Validate redirect and TLS
