@@ -1,0 +1,64 @@
+apiVersion: 1
+
+groups:
+  - orgId: 1
+    name: coredns
+    folder: homelab-alerts
+    interval: 1m
+    rules:
+      - uid: coredns-down-01
+        title: CoreDNS down
+        condition: C
+        data:
+          - refId: A
+            queryType: ''
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: P4169E866C3094E38
+            model:
+              expr: up{job="coredns"}
+              instant: true
+              intervalMs: 1000
+              maxDataPoints: 43200
+              refId: A
+          - refId: C
+            queryType: ''
+            relativeTimeRange:
+              from: 300
+              to: 0
+            datasourceUid: __expr__
+            model:
+              conditions:
+                - evaluator:
+                    params:
+                      - 1
+                    type: lt
+                  operator:
+                    type: and
+                  query:
+                    params:
+                      - A
+                  reducer:
+                    params: []
+                    type: last
+                  type: query
+              datasource:
+                type: __expr__
+                uid: __expr__
+              expression: A
+              refId: C
+              type: threshold
+        noDataState: Alerting
+        execErrState: Alerting
+        for: 2m
+        annotations:
+          summary: CoreDNS (10.57.1.13) is not responding to Prometheus scrape
+          description: >-
+            The CoreDNS instance at 10.57.1.13:9153 has not been scraped
+            successfully for 2 minutes. Internal lab-zone DNS resolution
+            (*.lab.gibbsgreatly.xyz) may be degraded.
+        labels:
+          severity: critical
+          service: coredns
+          zone: mgmt_seg
