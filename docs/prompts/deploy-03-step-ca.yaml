@@ -20,7 +20,7 @@ context: |
   CRITICAL REBUILD IMPACT: step ca init generates a NEW root CA keypair on every
   fresh LXC deployment. After this task:
   - certs/homelab-root.crt in the repo must be updated with the new root cert
-  - trust-homelab-ca.yml must be run against ALL already-deployed containers
+  - automatic trust distribution must run against ALL already-deployed managed hosts
     (retroactive CA trust distribution)
   - Any cert previously issued by the old CA becomes invalid
 
@@ -62,8 +62,9 @@ preconditions:
 objective: |
   LXC VMID 152 is running at 10.57.1.11. step-ca serves ACME at
   https://10.57.1.11/acme/acme/directory. certs/homelab-root.crt is updated in
-  the repo. Homelab root CA is trusted on Traefik container and Proxmox host.
-  Traefik step-ca resolver can reach the ACME directory from inside the container.
+  the repo. Homelab root CA is trusted on Traefik container and Proxmox host via
+  an automatic post-step-ca trust distribution step. Traefik step-ca resolver can
+  reach the ACME directory from inside the container.
 
 workflow:
   tooling:
@@ -72,7 +73,7 @@ workflow:
       Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
       step-ca runs as a systemd service — there is no Docker Compose.
-      trust-homelab-ca.yml runs against the IP of each already-deployed container.
+      trust-homelab-ca.yml is executed automatically against all already-deployed managed hosts after step-ca deploy.
 
   steps:
     - id: 1
@@ -124,9 +125,10 @@ workflow:
         - certs/homelab-root.crt is a public cert — safe to commit
 
     - id: 6
-      name: Retroactive CA trust distribution
+      name: Automatic retroactive CA trust distribution
       description: |
-        Run trust-homelab-ca.yml against every already-deployed LXC and the Proxmox host.
+        Trigger the standard post-step-ca automation that runs trust-homelab-ca.yml
+        against every already-deployed managed host.
         This is mandatory — containers deployed before step-ca will not trust the new CA.
       commands:
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
@@ -137,7 +139,7 @@ workflow:
         - "../../../with-secrets ansible -i '192.168.1.40,' -u root all -m ping"
         - "../../../with-secrets ansible-playbook -i '192.168.1.40,' -u root playbooks/trust-homelab-ca.yml"
       notes:
-        - Add any other LXC IPs that were deployed before step-ca
+        - Keep the managed-host target list in sync with deployment automation inputs
         - trust-homelab-ca.yml copies certs/homelab-root.crt and runs update-ca-certificates
         - WARNING — run only against managed service hosts, never end-user devices
 
@@ -185,5 +187,5 @@ postconditions:
 notes:
   - If step ca root requires --fingerprint, check step-ca startup logs via
     'pct exec 152 -- journalctl -u step-ca --no-pager | grep fingerprint'
-  - "CA rebuild impact: certs/homelab-root.crt changes on every rebuild. If Monitoring is already deployed and references this cert, re-run trust-homelab-ca.yml on VMID 154 too."
+  - "CA rebuild impact: certs/homelab-root.crt changes on every rebuild. Ensure automatic trust distribution includes VMID 154 if Monitoring is already deployed."
   - This deployment unblocks dep-04-monitoring

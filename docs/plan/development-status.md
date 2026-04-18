@@ -28,7 +28,7 @@ system automatically.
 | Portainer | 120 | Yes | Yes | No | No | SEC-02 (agent mTLS) not implemented; no Traefik/auth integration |
 | NetBox | 143 | Unknown | Unknown | No | Unknown | Playbook not validated from scratch; IPAM is manual; no Traefik route |
 | CI runner | 141 | Yes | Yes | Yes | **Partial** | GitHub runner token must be rotated and re-registered per rebuild |
-| step-ca | 152 | Yes | Partial | Yes | Partial | CA rebuild produces a new root cert — all previously issued certs become invalid; CA trust distribution not in rebuild sequence |
+| step-ca | 152 | Yes | Yes | Yes | Partial | CA rebuild produces a new root cert — all previously issued certs become invalid; automatic retroactive trust distribution is not yet enforced |
 | Traefik | 153 | Partial | **No** | Partial | **No** | See details below |
 | Authentik | 150 | Partial | **No** | Partial | **No** | See details below |
 | Monitoring | 154 | Partial | **No** | Partial | **No** | See details below |
@@ -122,7 +122,10 @@ is configured for Authentik OIDC. VictoriaMetrics scrapes CoreDNS metrics.
 ### step-ca (VMID 152)
 
 **What works:** Deploys correctly. ACME directory is reachable. Traefik queries it.
-The root CA cert is committed to the repo at `certs/homelab-root.crt`.
+The root CA cert is committed to the repo at `certs/homelab-root.crt`. Both
+`STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` are read from env vars
+injected by `./with-secrets`; the playbook writes local password files and does
+not require `--extra-vars` for secrets.
 
 **What is broken for rebuild:**
 
@@ -132,12 +135,13 @@ The root CA cert is committed to the repo at `certs/homelab-root.crt`.
    committed `certs/homelab-root.crt` also changes. This is tolerable during development
    but means the CA and all consumers of it must be rebuilt together.
 
-2. **CA trust distribution not in rebuild sequence.** The `trust-homelab-ca.yml` playbook
-   exists but is not called automatically during the rebuild sequence. Containers deployed
+2. **Automatic CA trust distribution not yet enforced in rebuild sequence.** The
+   `trust-homelab-ca.yml` playbook exists, but automation does not yet guarantee it runs
+   after step-ca deploy. Containers deployed
    before step-ca will not trust the new root CA until `trust-homelab-ca.yml` is run
    against them retroactively. The `lxc_base` role installs the CA cert if
    `certs/homelab-root.crt` exists locally — so this only works if step-ca is deployed
-   before any other LXC, or if a post-deploy trust-distribution step is added to the
+   before any other LXC, or if a post-deploy automatic trust-distribution step is added to the
    rebuild runbook.
 
 3. **No internal certs issued yet.** The step-ca ACME storage in Traefik is empty —
@@ -172,7 +176,7 @@ appear in a committed or on-disk compose file.
 The Authentik initial setup sequence is the primary blocker for a fully automated rebuild.
 The dependency chain is:
 
-```
+```text
 Authentik deployed → superuser created (manual) → API token in SOPS
   → terraform-provider-authentik runs → Proxy Provider + outpost created
   → Traefik forwardAuth works
@@ -215,6 +219,9 @@ The intended CA trust sequence during a rebuild is:
 This sequence is documented but not enforced. The rebuild runbook must include step 3
 explicitly, or containers deployed before step-ca will not trust internal certs.
 
+Target state: step 3 is executed automatically by deployment tooling immediately after
+step-ca deploy and before subsequent service deployments continue.
+
 ### MikroTik has no IaC
 
 DNS forwarding rules, inter-zone firewall ACLs, and VLAN configuration are all applied
@@ -250,7 +257,7 @@ The following conditions must all be true for a component to be considered rebui
 | Traefik | Secrets injection from SOPS; LE cert persistence; Authentik outpost automation |
 | Authentik | Secrets injection from SOPS; `terraform-provider-authentik` for initial config |
 | Monitoring | Secrets injection from SOPS; depends on Authentik automation first |
-| step-ca | CA trust distribution in rebuild sequence; decide on CA persistence strategy |
+| step-ca | Enforce automatic trust distribution in rebuild sequence; decide on CA persistence strategy |
 | Harbor | Validate robot account automation; validate image pre-seeding after rebuild |
 | NetBox | Validate playbook from scratch; add Traefik route |
 | Portainer | SEC-02 (agent mTLS); decision on Traefik integration scope |
@@ -268,7 +275,7 @@ This is the Mode 2 (deployment) sequence — see [bootstrap.md](../design/bootst
 4. Harbor (VMID 121) — `terragrunt apply` + `deploy-harbor-stack` (pulls from Docker Hub on first pass)
 5. apt-cacher (VMID 142) — `terragrunt apply` + `deploy-apt-cacher-stack`
 6. NetBox (VMID 143) — `terragrunt apply` + `deploy-netbox-stack`
-7. **step-ca (VMID 152)** — `terragrunt apply` + `deploy-step-ca` → fetch new root cert → `trust-homelab-ca.yml` against all deployed LXCs
+7. **step-ca (VMID 152)** — `terragrunt apply` + `deploy-step-ca` → fetch new root cert → automatic `trust-homelab-ca.yml` run against all deployed managed hosts
 8. Harbor image pre-seed — pull all Phase 04 images through Harbor proxy cache
 9. **Authentik (VMID 150)** — `terragrunt apply` + `deploy-authentik-stack` → `terraform-provider-authentik` configures providers and outpost automatically
 10. **Traefik (VMID 153)** — `terragrunt apply` + `deploy-proxy-stack` → LE staging cert obtained automatically

@@ -5,7 +5,7 @@
 | Criterion | State |
 | --- | --- |
 | IaC reproducible | Yes |
-| Secrets managed | Partial — `STEP_CA_PASSWORD` must flow from SOPS, not extra-vars |
+| Secrets managed | Yes — step-ca passwords flow from SOPS via `./with-secrets` env injection |
 | Integrations wired | Yes |
 | Rebuild-safe | Partial |
 
@@ -34,8 +34,9 @@ Phase 04 — Core Shared Services
      bind-mount. Survives LXC rebuild; issued certs remain valid. More complex to implement.
    This decision must be made and documented before the platform is considered production-ready.
 
-3. **CA trust distribution not in rebuild sequence.** The `trust-homelab-ca.yml` playbook
-   exists but is not called automatically during the rebuild sequence. Containers deployed
+3. **Automatic CA trust distribution not yet enforced in rebuild sequence.** The
+  `trust-homelab-ca.yml` playbook exists, but tooling does not yet guarantee it runs
+  automatically after step-ca deploy. Containers deployed
    before step-ca will not trust the new root CA until `trust-homelab-ca.yml` is run against
    them retroactively. The intended sequence is:
 
@@ -44,8 +45,8 @@ Phase 04 — Core Shared Services
    3. Run `trust-homelab-ca.yml` against all already-deployed LXCs (retroactive)
    4. All subsequent LXC deployments pick up the CA cert automatically via `lxc_base` role
 
-   This sequence is documented but not enforced. The rebuild runbook must include step 3
-   explicitly, or containers deployed before step-ca will not trust internal certs.
+  This sequence is documented but not yet enforced in tooling. The target state is that
+  step 3 runs automatically as a post-step-ca deployment action.
 
 ## Prerequisites
 
@@ -69,20 +70,20 @@ Phase 04 — Core Shared Services
 ## Objective
 
 LXC `step-ca` (VMID 152) is running at `10.57.1.11` in `mgmt_seg` and serving an ACME
-directory. The root CA cert is saved to `certs/homelab-root.crt` in the repository. The
-homelab root CA is trusted by the Traefik container and the Proxmox host. The `step-ca`
-resolver in Traefik can reach the ACME directory and is confirmed working from inside the
-container. The base LXC Ansible role is updated to distribute the root CA cert to all future
-containers. All secrets are injected from SOPS — `STEP_CA_PASSWORD` is never passed as an
-`--extra-vars` argument.
+directory. The root CA cert is saved to `certs/homelab-root.crt` in the repository. Automatic
+post-step-ca trust distribution updates Traefik, Proxmox host, and all already-deployed
+managed LXCs. The `step-ca` resolver in Traefik can reach the ACME directory and is confirmed
+working from inside the container. The base LXC Ansible role is updated to distribute the root
+CA cert to all future containers. All secrets are injected from SOPS — `STEP_CA_PASSWORD` is
+never passed as an `--extra-vars` argument.
 
 ## Scope
 
-- Create `terraform/lxc/stacks/step-ca-stack/stack.yaml`
-- Copy `harbor-stack/terragrunt.hcl` to `step-ca-stack/terragrunt.hcl`
-- Create `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` — secrets from SOPS via
+- Validate `terraform/lxc/stacks/step-ca-stack/stack.yaml`
+- Validate `terraform/lxc/stacks/step-ca-stack/terragrunt.hcl`
+- Maintain `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` — secrets from SOPS via
   `./with-secrets`; install step-ca as a systemd service (not Docker)
-- Create `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml` — reusable, idempotent
+- Maintain `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml` — reusable, idempotent
   playbook for distributing the root cert to a target host
 - Distribute root CA to Traefik container (VMID 153) and Proxmox host (192.168.1.40)
 - Update base LXC Ansible role to include root CA trust task
@@ -118,7 +119,8 @@ containers. All secrets are injected from SOPS — `STEP_CA_PASSWORD` is never p
   `network: zone: mgmt_seg`, `cores: 1`, `memory: 512` — no `docker_storage_size`
   (step-ca runs as a systemd service, not in Docker)
 - step-ca binary installed from Smallstep GitHub releases — pin version explicitly
-- `step ca init` must use `--provisioner acme` — this is what Traefik's ACME client expects
+- `step ca init` must leave ACME enabled and publish the ACME directory endpoint that
+  Traefik uses; the exact bootstrap flags may differ from the original sketch
 - CA private key is protected by `STEP_CA_PASSWORD` from SOPS — the playbook must read it
   from the environment injected by `./with-secrets`, not from `--extra-vars`
 - `certs/homelab-root.crt` is safe to commit — it is a public certificate, not a private key
@@ -136,6 +138,7 @@ containers. All secrets are injected from SOPS — `STEP_CA_PASSWORD` is never p
 - [ ] ACME directory reachable: `curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] `certs/homelab-root.crt` committed to repository
 - [ ] Homelab root CA trusted on Traefik container and Proxmox host
+- [ ] Automatic post-step-ca trust distribution executed successfully for all already-deployed managed hosts
 - [ ] Traefik `step-ca` resolver reaches ACME directory from inside container:
       `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt https://10.57.1.11/acme/acme/directory | jq .`
       returns valid JSON with `newNonce`, `newAccount`, `newOrder` keys
@@ -211,38 +214,33 @@ STEP 2 — Check IP availability:
   ping -c 3 10.57.1.11
   # Must timeout (no response)
 
-STEP 3 — Create stack files:
+STEP 3 — Validate stack files:
   - terraform/lxc/stacks/step-ca-stack/stack.yaml
     (VMID 152, ip_address 10.57.1.11/24, gateway 10.57.1.1, network: {zone: mgmt_seg},
      cores 1, memory 512 — no docker_storage_size)
-  - terraform/lxc/stacks/step-ca-stack/terragrunt.hcl (copy from harbor-stack verbatim)
+  - terraform/lxc/stacks/step-ca-stack/terragrunt.hcl
+  - Update only if the committed files drift from these values
 
-STEP 4 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-step-ca.yml:
-  The playbook must read STEP_CA_PASSWORD from environment (injected by ./with-secrets).
-  Tasks:
-  a) Install step CLI and step-ca binaries from Smallstep GitHub releases (pin version)
-  b) Create /etc/step-ca/ directory
-  c) Write STEP_CA_PASSWORD from env to /etc/step-ca/password.txt (mode 0600)
-  d) Bootstrap the CA:
-       step ca init \
-         --name "Homelab CA" \
-         --dns "step-ca,10.57.1.11" \
-         --address ":443" \
-         --provisioner "acme" \
-         --password-file /etc/step-ca/password.txt \
-         --non-interactive
-  e) Create systemd service for step-ca, enable and start it
-  f) Wait for CA healthy: retry until curl -sk https://10.57.1.11/health returns HTTP 200
-  g) Export root CA cert:
-       step ca root /tmp/homelab-root.crt --ca-url https://10.57.1.11
-     Fetch to control machine: save to certs/homelab-root.crt in repository root
+STEP 4 — Validate Ansible playbook terraform/lxc/ansible/playbooks/deploy-step-ca.yml:
+  The playbook must read STEP_CA_PASSWORD and STEP_CA_PROVISIONER_PASSWORD from
+  environment (injected by ./with-secrets).
+  Validate that it:
+  a) Installs pinned step CLI and step-ca binaries from Smallstep GitHub releases
+  b) Creates /etc/step-ca/
+  c) Writes local password files at mode 0600 before bootstrap
+  d) Bootstraps the CA with ACME enabled and without passing secrets on the command line
+  e) Creates the systemd service for step-ca, enables it, and starts it
+  f) Waits for CA health before continuing
+  g) Fetches the root CA cert back to certs/homelab-root.crt in the repository root
+  Update the playbook only if any of the above regresses.
 
-STEP 5 — Create terraform/lxc/ansible/playbooks/trust-homelab-ca.yml:
+STEP 5 — Validate terraform/lxc/ansible/playbooks/trust-homelab-ca.yml:
   # WARNING: Run only against managed service hosts — never end-user devices or browsers.
   Tasks:
   - copy src=certs/homelab-root.crt dest=/usr/local/share/ca-certificates/homelab-root.crt
   - command: update-ca-certificates
   Idempotent: safe to run multiple times.
+  Update only if the committed playbook drifts from this behavior.
 
 STEP 6 — Deploy step-ca LXC:
   cd terraform/lxc/stacks/step-ca-stack && ../../../../with-secrets terragrunt apply
@@ -250,7 +248,10 @@ STEP 6 — Deploy step-ca LXC:
   ./with-secrets ansible-playbook -i "10.57.1.11," \
     terraform/lxc/ansible/playbooks/deploy-step-ca.yml
 
-STEP 7 — Retroactive CA trust distribution (run against all already-deployed containers):
+STEP 7 — Retroactive CA trust distribution (automatic target behavior):
+  Trigger the standard post-step-ca automation to run trust-homelab-ca.yml against all
+  already-deployed managed hosts.
+  Temporary fallback until tooling is updated:
   # Traefik container
   ./with-secrets ansible-playbook -i "10.57.2.10," \
     terraform/lxc/ansible/playbooks/trust-homelab-ca.yml

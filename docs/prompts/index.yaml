@@ -55,9 +55,9 @@ prompts:
 
   - id: rem-04-step-ca-secrets
     file: remediation-04-step-ca-secrets.yaml
-    title: "Fix step-ca playbook — code hardening gate for env-based secrets"
+    title: "Validate step-ca secret handling — code hardening gate complete"
     type: remediation
-    status: pending
+    status: complete
     priority: 2
     blocks:
       - dep-03-step-ca

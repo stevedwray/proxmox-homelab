@@ -10,7 +10,7 @@ rebuild-safe and which have known gaps requiring manual steps.
 | --- | --- | --- |
 | Authentik | No | Secrets in plaintext; manual first-boot; outpost not automated |
 | Traefik | No | Secrets in plaintext; LE cert not persisted; Authentik outpost manual |
-| step-ca | Partial | CA rebuild invalidates all certs; trust distribution not enforced |
+| step-ca | Partial | CA rebuild invalidates all certs; automatic retroactive trust distribution not yet enforced in tooling |
 | Monitoring | No | Secrets in plaintext; depends on Authentik OIDC provider in SOPS |
 
 For the complete gap analysis see [development-status.md](../development-status.md).
@@ -21,7 +21,7 @@ The four Phase 04 services must be deployed in this order:
 
 1. **Authentik** (task 04-01) — identity provider; first-boot steps must be completed manually
 2. **Traefik** (task 04-03) — reverse proxy; depends on Authentik outpost existing
-3. **step-ca** (task 04-04) — internal CA; CA trust must be distributed retroactively
+3. **step-ca** (task 04-04) — internal CA; automatic post-deploy CA trust distribution must run retroactively
 4. **Monitoring** (task 04-05) — metrics and logs; depends on Grafana OIDC credentials in SOPS
 
 Infra services (Harbor, apt-cacher) and Portainer must already be running before any Phase 04
@@ -146,7 +146,8 @@ cd /home/steve/git/proxmox-homelab
 # Validate ACME directory
 curl -sk https://10.57.1.11/acme/acme/directory | jq .
 
-# Retroactive CA trust distribution — run against all already-deployed containers
+# Retroactive CA trust distribution — required post-step-ca action
+# Target behavior: this is executed automatically by deployment tooling.
 ./with-secrets ansible-playbook -i "10.57.2.10," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 ./with-secrets ansible-playbook -i "192.168.1.40," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
@@ -162,8 +163,9 @@ pct exec "$TRAEFIK_VMID" -- curl -s \
 - CA rebuild generates a new root keypair — all previously issued certs become invalid;
   `certs/homelab-root.crt` in the repo changes on each rebuild
 - CA persistence strategy not yet decided (regenerate vs persist encrypted keypair)
-- Retroactive trust distribution (the `trust-homelab-ca.yml` step above) is not automatically
-  enforced — must be run manually against all deployed containers
+- Automatic retroactive trust distribution after step-ca deploy is required but not yet
+  enforced in scripts; until tooling is updated, run the trust playbook against all
+  already-deployed managed hosts as a temporary workaround
 
 **Network**: Zone `mgmt_seg` · IP `10.57.1.11` · VMID `152` · Port `443`
 

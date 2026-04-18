@@ -505,16 +505,21 @@ ansible_playbook: "deploy-step-ca"
 
 ### Secrets required
 
+Document both variables in `.env.template`, but treat `terraform/secrets.enc.yaml`
+as the source of truth for real values:
+
 ```bash
 STEP_CA_PASSWORD=              # password protecting the root CA key
 STEP_CA_PROVISIONER_PASSWORD=  # ACME/JWK provisioner password
 ```
 
-Add both to `.env.template` and `.env`.
+The deploy path is `./with-secrets`, which injects both values as environment
+variables for the playbook. Do not pass them via `--extra-vars`.
 
 ### Ansible playbook
 
-Create `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`.
+Ensure `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` remains aligned with
+the env-injection pattern.
 
 1. Install `step-ca` binary from Smallstep GitHub releases (pin version)
 2. Install `step` CLI tool (same release)
