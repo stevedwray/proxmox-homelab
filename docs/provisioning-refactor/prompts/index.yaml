@@ -52,7 +52,7 @@ prompts:
     file: 05-manifest-validator.yaml
     title: "Implement side-effect-free edge manifest validator"
     type: development
-    status: pending
+    status: complete
     depends_on: [pr-04-edge-manifest-contract]
     task_doc: docs/provisioning-refactor/tasks/05-manifest-validator.md
 
@@ -60,7 +60,7 @@ prompts:
     file: 06-legacy-route-inventory.yaml
     title: "Implement read-only legacy route inventory"
     type: development
-    status: pending
+    status: complete
     depends_on: [pr-05-manifest-validator]
     task_doc: docs/provisioning-refactor/tasks/06-legacy-route-inventory.md
 
@@ -68,7 +68,7 @@ prompts:
     file: 07-traefik-renderer.yaml
     title: "Implement Traefik renderer"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - pr-05-manifest-validator
       - pr-06-legacy-route-inventory
