@@ -23,13 +23,13 @@ Harbor auth.
 
 1. Verify pve-test targeting.
 2. Add `harbor-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `harbor.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Apply generated DNS/Traefik state and remove the central Harbor route in the
-   same publish unit.
-5. Validate browser route.
-6. Validate Docker login/pull/push expectations when in scope.
-7. Re-run reconciler and confirm no-op.
+3. Run edge reconciler dry-run with `harbor.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Apply generated DNS and Traefik state; remove the central Harbor route in the
+   same deployment unit.
+6. Validate browser route and Docker login/pull/push expectations.
+7. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 

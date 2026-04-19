@@ -24,14 +24,15 @@ Move `authentik.lab.gibbsgreatly.xyz` to stack-owned provisioning with
 ## Operations
 
 1. Verify pve-test targeting.
-2. Add `authentik-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `authentik.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Apply generated DNS/Traefik state and remove the central Authentik route in
-   the same publish unit.
-5. Validate browser route through Traefik.
-6. Confirm no forward-auth middleware or self-protection object exists.
-7. Re-run reconciler and confirm no-op.
+2. Add `authentik-stack/edge.yaml` with `auth.mode: none`.
+3. Run edge reconciler dry-run with `authentik.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Apply generated DNS and Traefik state; remove the central Authentik route in
+   the same deployment unit.
+6. Validate browser route through Traefik.
+7. Confirm no forward-auth middleware or self-protection object exists.
+8. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 

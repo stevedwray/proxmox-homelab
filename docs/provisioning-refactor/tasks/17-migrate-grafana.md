@@ -23,12 +23,13 @@ Grafana native OIDC.
 
 1. Verify pve-test targeting.
 2. Add or update `monitoring-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `grafana.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Apply generated DNS/Traefik state and remove the central Grafana route in the
-   same publish unit.
-5. Validate browser route and Grafana OIDC redirect.
-6. Re-run reconciler and confirm no-op.
+3. Run edge reconciler dry-run with `grafana.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Apply generated DNS and Traefik state; remove the central Grafana route in
+   the same deployment unit.
+6. Validate browser route and Grafana OIDC redirect.
+7. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 

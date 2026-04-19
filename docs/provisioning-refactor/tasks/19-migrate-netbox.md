@@ -23,13 +23,14 @@ forward-auth.
 
 1. Verify pve-test targeting.
 2. Add `netbox-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `netbox.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Reconcile Authentik forward-auth objects if required.
-5. Apply generated DNS/Traefik state and remove the central NetBox route in the
-   same publish unit.
-6. Validate browser route, auth redirect, and API credential flow.
-7. Re-run reconciler and confirm no-op.
+3. Run edge reconciler dry-run with `netbox.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Reconcile Authentik forward-auth objects if required.
+6. Apply generated DNS and Traefik state; remove the central NetBox route in the
+   same deployment unit.
+7. Validate browser route, auth redirect, and API credential flow.
+8. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 

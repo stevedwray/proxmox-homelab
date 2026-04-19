@@ -141,7 +141,7 @@ For each service:
 2. Run edge reconciler dry-run with the migration host marked as the intended
    replacement.
 3. Apply only the required generated state.
-4. Remove that service's central legacy route in the same publish unit.
+4. Remove that service's central legacy route in the same deployment unit.
 5. Validate route, DNS, cert, and auth behavior.
 6. Re-run the reconciler and confirm no-op.
 7. Commit only after validation passes.
@@ -159,3 +159,27 @@ Apply mode requires:
 - healthy CoreDNS and Traefik checks
 - Authentik API token only when selected manifests require Authentik objects
 - no automatic Authentik deletes
+
+## Decision 10: One-Host Route Cutover Rule
+
+Generated routes must never accidentally duplicate live central routes.
+
+During cutover, exactly one intended replacement host per service is allowed:
+
+1. **Accidental duplicates fail**: The Traefik renderer checks generated routes
+   against both generated manifests and legacy central routes. If a generated
+   route has the same host as any legacy central route AND there is no explicit
+   `intendedReplacement` flag, the renderer fails dry-run with a clear error.
+
+2. **One explicit replacement allowed**: A migration task may pass exactly one
+   hostname as `intendedReplacement` to validate generated output without
+   blocking the dry-run. This hostname must match the generated route being
+   tested.
+
+3. **Same-unit atomic swap**: Live publish removes the central legacy route and
+   adds the generated route as the same deployment unit. Both operations must
+   succeed or both must fail.
+
+4. **No accidental survivors**: After live publish, a second reconciler run must
+   report no duplicate host and no pending generated changes, confirming the
+   cutover is complete.

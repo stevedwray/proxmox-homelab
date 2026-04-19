@@ -21,14 +21,19 @@ stack-owned model end to end.
 
 ## Operations
 
-1. Verify all six service manifests exist.
-2. Run manifest validator.
+1. Verify all six service manifests exist in `terraform/lxc/stacks/*/edge.yaml`.
+2. Run manifest validator and confirm all pass.
 3. Run edge reconciler dry-run for all manifests.
-4. Confirm central Traefik config contains only runtime, certificate, provider,
-   default store, and shared middleware config.
-5. Deploy generated state if not already current.
-6. Validate all DNS records, HTTPS routes, certificates, and auth behavior.
-7. Document and test rollback from the previous generated snapshot.
+4. Verify dry-run output contains NO `intendedReplacement` flags (all migrations
+   completed and flags removed).
+5. Verify dry-run finds NO accidental host collisions with central Traefik config.
+6. Confirm central Traefik config contains only runtime, entrypoint, certificate
+   provider, default store, and shared middleware config; no per-service routes.
+7. Deploy generated state from step 3 if not already current.
+8. Validate all six DNS records, HTTPS routes, certificates, and auth behavior.
+9. Re-run edge reconciler dry-run and confirm no-op (no pending changes, no
+   duplicates).
+10. Document and test rollback from the previous generated snapshot.
 
 ## Postconditions
 
@@ -38,7 +43,13 @@ stack-owned model end to end.
 ## Validation
 
 - All six browser hosts resolve to `10.57.2.10`.
-- Reconciler second run is a no-op.
+- Renderer dry-run output contains NO `intendedReplacement` flags.
+- Renderer dry-run reports NO duplicate hosts between generated and central
+  routes.
+- Reconciler second dry-run is a complete no-op (no pending changes).
+- All six services are accessible via their browser hostnames.
+- Certificate, DNS, and authentication behavior are correct for each service.
+- Rollback from the previous snapshot completes and is tested.
 
 ## Stop Conditions
 

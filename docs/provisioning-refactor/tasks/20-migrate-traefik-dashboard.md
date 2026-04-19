@@ -23,13 +23,14 @@ Move `traefik.lab.gibbsgreatly.xyz` to stack-owned provisioning using
 
 1. Verify pve-test targeting.
 2. Add or update `proxy-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `traefik.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Confirm renderer uses `api@internal` directly.
-5. Apply generated DNS/Traefik state and remove the central dashboard route in
-   the same publish unit.
-6. Validate dashboard route and Authentik redirect.
-7. Re-run reconciler and confirm no-op.
+3. Run edge reconciler dry-run with `traefik.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Confirm renderer uses `api@internal` directly.
+6. Apply generated DNS and Traefik state; remove the central dashboard route in
+   the same deployment unit.
+7. Validate dashboard route and Authentik redirect.
+8. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 

@@ -24,13 +24,14 @@ Authentik forward-auth.
 
 1. Verify pve-test targeting.
 2. Add `portainer-stack/edge.yaml`.
-3. Run edge reconciler dry-run with `portainer.lab.gibbsgreatly.xyz` as the
-   intended replacement host.
-4. Reconcile Authentik forward-auth objects if required.
-5. Apply generated DNS/Traefik state and remove the central Portainer route in
-   the same publish unit.
-6. Validate browser route and auth redirect.
-7. Re-run reconciler and confirm no-op.
+3. Run edge reconciler dry-run with `portainer.lab.gibbsgreatly.xyz` marked as
+   the intended replacement host.
+4. Verify dry-run finds no accidental duplicates.
+5. Reconcile Authentik forward-auth objects if required.
+6. Apply generated DNS and Traefik state; remove the central Portainer route in
+   the same deployment unit.
+7. Validate browser route and auth redirect.
+8. Re-run reconciler and confirm no-op (no pending changes, no duplicate host).
 
 ## Postconditions
 
