@@ -142,7 +142,7 @@
                     - X-authentik-email
             routers:
               traefik-dashboard:
-                rule: "Host(`traefik.gibbsgreatly.xyz`)"
+                rule: "Host(`traefik.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: api@internal
