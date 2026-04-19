@@ -246,9 +246,9 @@
                 defaultGeneratedCert:
                   resolver: letsencrypt
                   domain:
-                      main: "lab.gibbsgreatly.xyz"
+                    main: "lab.gibbsgreatly.xyz"
                     sans:
-                        - "*.lab.gibbsgreatly.xyz"
+                      - "*.lab.gibbsgreatly.xyz"
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
