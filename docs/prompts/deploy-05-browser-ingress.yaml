@@ -27,11 +27,11 @@ context: |
 
   DNS state before this session:
   - traefik.lab.gibbsgreatly.xyz → 10.57.2.10 (correct)
-  - grafana.gibbsgreatly.xyz → 10.57.2.10 (correct)
-  - authentik.gibbsgreatly.xyz → missing
-  - portainer.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
-  - harbor.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
-  - netbox.gibbsgreatly.xyz → missing
+  - grafana.lab.gibbsgreatly.xyz → 10.57.2.10 (correct)
+  - authentik.lab.gibbsgreatly.xyz → missing
+  - portainer.lab.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
+  - harbor.lab.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
+  - netbox.lab.gibbsgreatly.xyz → missing
 
   Browser ingress and certificate policy:
   - All browser-facing routes use certResolver: letsencrypt (LE staging on pve-test)
@@ -42,7 +42,7 @@ preconditions:
   repository:
     - id: rem-05-done
       description: rem-05-browser-ingress is complete — playbook has all six routes
-      verify: "grep -cE 'authentik\\.gibbsgreatly|portainer\\.gibbsgreatly|harbor\\.gibbsgreatly|netbox\\.gibbsgreatly' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+      verify: "grep -cE 'authentik\\.lab\\.gibbsgreatly|portainer\\.lab\\.gibbsgreatly|harbor\\.lab\\.gibbsgreatly|netbox\\.lab\\.gibbsgreatly' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
       expect: "4 or more matches"
 
     - id: branch
@@ -90,7 +90,7 @@ workflow:
         - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node'"
         - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
         - "ssh root@pve-test.gibbsgreatly.xyz 'pct status 153'"
-        - "for h in authentik portainer harbor netbox; do echo -n \"$h → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz || echo 'no record'; done"
+        - "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do echo -n \"$h → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz || echo 'no record'; done"
 
     - id: 2
       name: "MANUAL — Reconfigure Authentik Proxy Provider to domain-level mode"
@@ -101,7 +101,7 @@ workflow:
         3. Find the 'traefik-forwardauth' Proxy Provider and click Edit
         4. Change the Forward auth mode from "Forward auth (single application)"
            to "Forward auth (domain level)"
-        5. Set Cookie domain to: .gibbsgreatly.xyz
+        5. Set Cookie domain to: .lab.gibbsgreatly.xyz
         6. Save the provider
         7. Go to Admin UI → Applications → Outposts
         8. Find the outpost that uses traefik-forwardauth and click Update
@@ -130,39 +130,45 @@ workflow:
     - id: 5
       name: Verify new routes are live in Traefik dynamic config
       commands:
-        - "ssh root@pve-test.gibbsgreatly.xyz 'pct exec 153 -- grep -E \"authentik\\.gibbsgreatly|portainer\\.gibbsgreatly|harbor\\.gibbsgreatly|netbox\\.gibbsgreatly\" /opt/proxy-stack/dynamic/authentik.yml'"
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct exec 153 -- grep -E \"authentik\\.lab\\.gibbsgreatly|portainer\\.lab\\.gibbsgreatly|harbor\\.lab\\.gibbsgreatly|netbox\\.lab\\.gibbsgreatly\" /opt/proxy-stack/dynamic/authentik.yml'"
       expect: Four hostname matches
 
     - id: 6
-      name: Update MikroTik DNS static records
+      name: Update MikroTik DNS static records (REST API)
       commands:
         - |
-          ssh admin@192.168.1.1 '
-            /ip dns static add name=authentik.gibbsgreatly.xyz address=10.57.2.10
-            /ip dns static add name=netbox.gibbsgreatly.xyz address=10.57.2.10
-            /ip dns static set [find name=portainer.gibbsgreatly.xyz] address=10.57.2.10
-            /ip dns static set [find name=harbor.gibbsgreatly.xyz] address=10.57.2.10
-            /ip dns static print where name~"gibbsgreatly"
+          ./with-secrets bash -lc '
+            set -euo pipefail
+            host="${MIKROTIK_HOST:-192.168.1.1}"
+            user="${MIKROTIK_ADMIN:-${MIKROTIK_USER}}"
+            pass="${MIKROTIK_ADMIN_PASSWORD:-${MIKROTIK_PASSWORD}}"
+            base="https://${host}/rest/ip/dns/static"
+            for name in authentik.lab.gibbsgreatly.xyz netbox.lab.gibbsgreatly.xyz portainer.lab.gibbsgreatly.xyz harbor.lab.gibbsgreatly.xyz; do
+              ids=$(curl -sk --user "$user:$pass" "$base" | jq -r --arg n "$name" ''.[] | select(.name==$n) | .[".id"]'')
+              if [ -n "$ids" ]; then
+                while IFS= read -r id; do [ -z "$id" ] || curl -sk --user "$user:$pass" -X DELETE "$base/$id" >/dev/null; done <<< "$ids"
+              fi
+              curl -sk --user "$user:$pass" -H "Content-Type: application/json" -X POST "$base/add" --data "{\"name\":\"$name\",\"type\":\"A\",\"address\":\"10.57.2.10\",\"ttl\":\"5m\"}" >/dev/null
+            done
           '
       notes:
-        - If portainer.gibbsgreatly.xyz record does not exist, use 'add' instead of 'set'
-        - Same for harbor.gibbsgreatly.xyz
-        - Verify MikroTik SSH access before running (admin@192.168.1.1)
+        - Use API credentials from secrets: MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD
+        - Avoid MikroTik SSH for this task
 
     - id: 7
       name: Verify DNS resolves to Traefik for all six hostnames
       commands:
-        - "for h in traefik.lab grafana authentik portainer harbor netbox; do echo -n \"$h.gibbsgreatly.xyz → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
+        - "for h in traefik.lab grafana.lab authentik.lab portainer.lab harbor.lab netbox.lab; do echo -n \"$h.gibbsgreatly.xyz → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
       expect: All six return 10.57.2.10
 
     - id: 8
       name: Validate all six service URLs
       commands:
-        - "curl -skI --resolve authentik.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
-        - "curl -skI --resolve portainer.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
-        - "curl -skI --resolve harbor.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
-        - "curl -skI --resolve netbox.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
-        - "curl -skI --resolve grafana.gibbsgreatly.xyz:443:10.57.2.10 https://grafana.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve authentik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve portainer.lab.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
+        - "curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
+        - "curl -skI --resolve grafana.lab.gibbsgreatly.xyz:443:10.57.2.10 https://grafana.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
         - "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/dashboard/ | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
       expect:
         - authentik: 200 or 302
@@ -175,45 +181,45 @@ workflow:
     - id: 9
       name: Verify staging LE cert on all new routes
       commands:
-        - "for h in authentik portainer harbor netbox; do echo \"=== $h ===\"; curl -sv https://$h.gibbsgreatly.xyz 2>&1 | grep -i 'issuer'; done"
+        - "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do echo \"=== $h ===\"; curl -sv https://$h.gibbsgreatly.xyz 2>&1 | grep -i 'issuer'; done"
       expect: All show "(STAGING) Let's Encrypt" — NOT Homelab CA
 
 postconditions:
   criteria:
     - id: authentik-route
-      description: authentik.gibbsgreatly.xyz returns 200 or 302 via Traefik
-      verify: "curl -skI --resolve authentik.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
+      description: authentik.lab.gibbsgreatly.xyz returns 200 or 302 via Traefik
+      verify: "curl -skI --resolve authentik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
       expect: Match
 
     - id: portainer-forward-auth
-      description: portainer.gibbsgreatly.xyz redirects to Authentik authorize
-      verify: "curl -skI --resolve portainer.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
+      description: portainer.lab.gibbsgreatly.xyz redirects to Authentik authorize
+      verify: "curl -skI --resolve portainer.lab.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.lab.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
       expect: Authentik authorize URL in location header
 
     - id: harbor-route
-      description: harbor.gibbsgreatly.xyz returns 200 or 302 via Traefik
-      verify: "curl -skI --resolve harbor.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
+      description: harbor.lab.gibbsgreatly.xyz returns 200 or 302 via Traefik
+      verify: "curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
       expect: Match
 
     - id: netbox-forward-auth
-      description: netbox.gibbsgreatly.xyz redirects to Authentik authorize
-      verify: "curl -skI --resolve netbox.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
+      description: netbox.lab.gibbsgreatly.xyz redirects to Authentik authorize
+      verify: "curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
       expect: Authentik authorize URL in location header
 
     - id: dns-correct
       description: All four updated DNS records resolve to 10.57.2.10
-      verify: "for h in authentik portainer harbor netbox; do dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
+      verify: "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
       expect: Four lines each showing 10.57.2.10
 
     - id: staging-cert
       description: New routes serve LE staging cert (not step-ca, not production LE)
-      verify: "curl -sv https://portainer.gibbsgreatly.xyz 2>&1 | grep -i 'STAGING'"
-      expect: "(STAGING) Let's Encrypt" in issuer
+      verify: "curl -sv https://portainer.lab.gibbsgreatly.xyz 2>&1 | grep -i 'STAGING'"
+      expect: '"(STAGING) Let''s Encrypt" in issuer'
 
 notes:
   - Traefik file provider watches /etc/traefik/dynamic/ and hot-reloads — no container restart needed
   - If portainer returns 200 instead of 302, the Authentik outpost domain-level reconfiguration may
     not have taken effect yet — wait 60 seconds and retry
   - Harbor will return 200 (its own login page) — this is correct, no forward-auth on Harbor
-  - MikroTik SSH may require key-based auth — verify access before running DNS commands
+  - Prefer MikroTik REST API for DNS updates in this repo; SSH may be disabled for automation users
   - After DNS update, flush the local resolver if needed: resolvectl flush-caches

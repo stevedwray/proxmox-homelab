@@ -13,13 +13,13 @@ context: |
 
   The Traefik playbook currently writes only two routes to dynamic/authentik.yml:
   - traefik-dashboard (traefik.lab.gibbsgreatly.xyz)
-  - grafana (grafana.gibbsgreatly.xyz)
+  - grafana (grafana.lab.gibbsgreatly.xyz)
 
   Four more services are deployed and require routes:
-  - authentik.gibbsgreatly.xyz → 10.57.1.10:9000 (no middleware — Authentik is the IdP)
-  - portainer.gibbsgreatly.xyz → 10.57.1.20:9000 (authentik middleware)
-  - harbor.gibbsgreatly.xyz → 10.57.3.10 (no middleware — Harbor native auth)
-  - netbox.gibbsgreatly.xyz → 10.57.3.12:8080 (authentik middleware)
+  - authentik.lab.gibbsgreatly.xyz → 10.57.1.10:9000 (no middleware — Authentik is the IdP)
+  - portainer.lab.gibbsgreatly.xyz → 10.57.1.20:9000 (authentik middleware)
+  - harbor.lab.gibbsgreatly.xyz → 10.57.3.10 (no middleware — Harbor native auth)
+  - netbox.lab.gibbsgreatly.xyz → 10.57.3.12:8080 (authentik middleware)
 
   Auth policy rationale:
   - Authentik: cannot protect itself (circular dependency)
@@ -27,7 +27,7 @@ context: |
   - Harbor: native RBAC covers robot accounts and CI; forward-auth would break non-browser clients
   - NetBox: forward-auth gates browser UI; NetBox native auth used for API access
 
-  All new routes use certResolver: letsencrypt with the existing wildcard *.gibbsgreatly.xyz cert.
+  All browser routes use certResolver: letsencrypt with wildcard *.lab.gibbsgreatly.xyz.
 
 preconditions:
   repository:
@@ -65,11 +65,11 @@ workflow:
         In the "Write Authentik middleware and dashboard router config" task in deploy-proxy-stack.yml,
         extend the routers and services blocks to add:
 
-        Routers (all use certResolver: letsencrypt, domains main: gibbsgreatly.xyz sans: *.gibbsgreatly.xyz):
-          authentik:  Host(`authentik.gibbsgreatly.xyz`)    → authentik-backend    (no middleware)
-          portainer:  Host(`portainer.gibbsgreatly.xyz`)    → portainer-backend    (middleware: authentik)
-          harbor:     Host(`harbor.gibbsgreatly.xyz`)       → harbor-backend       (no middleware)
-          netbox:     Host(`netbox.gibbsgreatly.xyz`)       → netbox-backend       (middleware: authentik)
+        Routers (all use certResolver: letsencrypt, domains main: lab.gibbsgreatly.xyz sans: *.lab.gibbsgreatly.xyz):
+          authentik:  Host(`authentik.lab.gibbsgreatly.xyz`)    → authentik-backend    (no middleware)
+          portainer:  Host(`portainer.lab.gibbsgreatly.xyz`)    → portainer-backend    (middleware: authentik)
+          harbor:     Host(`harbor.lab.gibbsgreatly.xyz`)       → harbor-backend       (no middleware)
+          netbox:     Host(`netbox.lab.gibbsgreatly.xyz`)       → netbox-backend       (middleware: authentik)
 
         Services:
           authentik-backend: http://10.57.1.10:9000

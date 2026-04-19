@@ -151,33 +151,33 @@
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               grafana:
-                rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
+                rule: "Host(`{{ grafana_edge_host | default('grafana.lab.gibbsgreatly.xyz') }}`)"
                 entryPoints:
                   - websecure
                 service: grafana-backend
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               authentik:
-                rule: "Host(`authentik.gibbsgreatly.xyz`)"
+                rule: "Host(`authentik.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: authentik-backend
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               portainer:
-                rule: "Host(`portainer.gibbsgreatly.xyz`)"
+                rule: "Host(`portainer.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: portainer-backend
@@ -186,22 +186,22 @@
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               harbor:
-                rule: "Host(`harbor.gibbsgreatly.xyz`)"
+                rule: "Host(`harbor.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: harbor-backend
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               netbox:
-                rule: "Host(`netbox.gibbsgreatly.xyz`)"
+                rule: "Host(`netbox.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: netbox-backend
@@ -210,9 +210,9 @@
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
             services:
               grafana-backend:
                 loadBalancer:
@@ -246,9 +246,9 @@
                 defaultGeneratedCert:
                   resolver: letsencrypt
                   domain:
-                    main: "gibbsgreatly.xyz"
+                      main: "lab.gibbsgreatly.xyz"
                     sans:
-                      - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
