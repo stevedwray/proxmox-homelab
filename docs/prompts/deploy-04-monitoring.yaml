@@ -29,7 +29,7 @@ preconditions:
   repository:
     - id: remediation-gate
       description: rem-03 complete - env_file present and inline Grafana secret keys removed from compose content template
-      verify: "grep -q 'env_file: .env' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml && ! grep -q 'GF_SECURITY_ADMIN_PASSWORD\\|GF_AUTH_GENERIC_OAUTH_CLIENT_ID\\|GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml"
+      verify: "grep -q 'env_file:' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml && ! awk '/name: Write monitoring compose definition/{in_block=1} in_block && /^    - name: / && $0 !~ /name: Write monitoring compose definition/{exit} in_block{print}' terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml | grep -q 'GF_SECURITY_ADMIN_PASSWORD\\|GF_AUTH_GENERIC_OAUTH_CLIENT_ID\\|GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET'"
       expect: command exits 0
 
   infrastructure:

@@ -46,9 +46,9 @@ prompts:
 
   - id: rem-03-monitoring-secrets
     file: remediation-03-monitoring-secrets.yaml
-    title: "Fix Monitoring playbook — code hardening gate for SOPS env_file pattern"
+    title: "Validate Monitoring playbook — code hardening gate complete"
     type: remediation
-    status: pending
+    status: complete
     priority: 1
     blocks:
       - dep-04-monitoring

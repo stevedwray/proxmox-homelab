@@ -31,7 +31,7 @@ system automatically.
 | step-ca | 152 | Yes | Yes | Yes | Partial | CA rebuild produces a new root cert — all previously issued certs become invalid; automatic retroactive trust distribution is not yet enforced |
 | Traefik | 153 | Partial | **No** | Partial | **No** | See details below |
 | Authentik | 150 | Partial | **No** | Partial | **No** | See details below |
-| Monitoring | 154 | Partial | **No** | Partial | **No** | See details below |
+| Monitoring | 154 | Partial | Yes | Partial | **No** | Depends on Authentik OIDC provider + minimal scrape targets |
 
 ---
 
@@ -104,16 +104,13 @@ is configured for Authentik OIDC. VictoriaMetrics scrapes CoreDNS metrics.
 
 **What is broken for rebuild:**
 
-1. **Secrets in plaintext.** `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, and
-   `GRAFANA_OAUTH_CLIENT_SECRET` are all written into the compose file on disk.
-
-2. **Depends on Authentik OIDC provider existing.** The Grafana OIDC client ID and secret
+1. **Depends on Authentik OIDC provider existing.** The Grafana OIDC client ID and secret
    come from an Authentik OIDC provider that was created manually. On a rebuild, those
    values will not exist until Authentik is configured (see Authentik gap above). Monitoring
    cannot be deployed in a rebuild until the Authentik OIDC provider is created and
    `GRAFANA_OAUTH_CLIENT_ID` / `GRAFANA_OAUTH_CLIENT_SECRET` are in SOPS.
 
-3. **VictoriaMetrics scrape config is minimal.** Only CoreDNS (`10.57.1.13:9153`) is
+2. **VictoriaMetrics scrape config is minimal.** Only CoreDNS (`10.57.1.13:9153`) is
    scraped. No scrape targets for other platform services. This is acceptable for the
    current development phase but should expand before Phase 05.
 
@@ -158,11 +155,11 @@ not require `--extra-vars` for secrets.
 time by `with-secrets`. Compose files reference environment variables only — no literal
 credentials on disk inside any LXC.
 
-**Current reality:** Traefik, Authentik, and Monitoring all have credentials baked into
+**Current reality:** Traefik and Authentik still have credentials baked into
 their compose files on disk inside the LXC. The playbooks write these files with the secret
 values embedded rather than injecting them from SOPS.
 
-**Impact:** Every component with secrets fails the rebuild-safe test. A playbook re-run
+**Impact:** Components with unremediated secret handling fail the rebuild-safe test. A playbook re-run
 against an existing LXC would also overwrite the compose file with the same hardcoded
 values — there is no SOPS injection step.
 

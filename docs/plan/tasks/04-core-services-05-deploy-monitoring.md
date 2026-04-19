@@ -5,7 +5,7 @@
 | Criterion | State |
 | --- | --- |
 | IaC reproducible | Partial |
-| Secrets managed | **No** — `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, and `GRAFANA_OAUTH_CLIENT_SECRET` baked into compose file on disk |
+| Secrets managed | Yes — Grafana secrets flow from SOPS via `./with-secrets` into `/opt/monitoring-stack/.env` (0600) and Compose `env_file` |
 | Integrations wired | Partial |
 | Rebuild-safe | **No** |
 
@@ -21,13 +21,7 @@ Phase 04 — Core Shared Services
 
 ## Known gaps preventing rebuild-safety
 
-1. **Secrets in plaintext.** `GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`, and
-   `GRAFANA_OAUTH_CLIENT_SECRET` are written into the compose file on disk inside the LXC.
-   The playbook must inject all secrets from SOPS via `./with-secrets` and write a
-   SOPS-sourced `.env` file that Docker Compose reads via `env_file`. No secret value may
-   appear in a committed or on-disk compose file.
-
-2. **Depends on Authentik OIDC provider existing in SOPS.** The Grafana OIDC client ID and
+1. **Depends on Authentik OIDC provider existing in SOPS.** The Grafana OIDC client ID and
    secret come from an Authentik OIDC provider that is created manually (in task 04-01
    Step 7). On a rebuild, those values will not exist until Authentik is configured and the
    resulting credentials have been added to `terraform/secrets.enc.yaml`. The monitoring
@@ -35,7 +29,7 @@ Phase 04 — Core Shared Services
    `GRAFANA_OAUTH_CLIENT_SECRET` are in SOPS. This is blocked on `terraform-provider-authentik`
    for full automation (see task 04-01).
 
-3. **Scrape targets are minimal.** Only CoreDNS (`10.57.1.13:9153`) is currently scraped.
+2. **Scrape targets are minimal.** Only CoreDNS (`10.57.1.13:9153`) is currently scraped.
    No scrape targets for Traefik, Authentik, step-ca, Harbor, or pve-test node_exporter.
    This is acceptable for the current development phase but should expand before Phase 05.
 
