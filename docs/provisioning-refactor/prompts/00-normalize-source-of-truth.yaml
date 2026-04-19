@@ -2,7 +2,7 @@
 id: pr-00-normalize-source-of-truth
 title: "Normalize provisioning-refactor source of truth"
 type: documentation
-status: pending
+status: complete
 task_doc: docs/provisioning-refactor/tasks/00-normalize-source-of-truth.md
 
 context: |

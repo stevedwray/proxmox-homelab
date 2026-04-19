@@ -9,7 +9,7 @@ prompts:
     file: 00-normalize-source-of-truth.yaml
     title: "Normalize provisioning-refactor source of truth"
     type: documentation
-    status: pending
+    status: complete
     task_doc: docs/provisioning-refactor/tasks/00-normalize-source-of-truth.md
 
   - id: pr-01-bootstrap-order
