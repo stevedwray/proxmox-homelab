@@ -165,11 +165,75 @@
                     - main: "gibbsgreatly.xyz"
                       sans:
                         - "*.gibbsgreatly.xyz"
+              authentik:
+                rule: "Host(`authentik.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: authentik-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+              portainer:
+                rule: "Host(`portainer.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: portainer-backend
+                middlewares:
+                  - authentik
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+              harbor:
+                rule: "Host(`harbor.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: harbor-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
+              netbox:
+                rule: "Host(`netbox.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: netbox-backend
+                middlewares:
+                  - authentik
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "gibbsgreatly.xyz"
+                      sans:
+                        - "*.gibbsgreatly.xyz"
             services:
               grafana-backend:
                 loadBalancer:
                   servers:
                     - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
+              authentik-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.1.10:9000"
+              portainer-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.1.20:9000"
+              harbor-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.3.10"
+              netbox-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.3.12:8080"
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:
