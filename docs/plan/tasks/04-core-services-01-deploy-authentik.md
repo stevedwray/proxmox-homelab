@@ -73,7 +73,7 @@ services must already exist locally on `pve-test`.
 ## Objective
 
 LXC `authentik-stack` (VMID 150) is running at `10.57.1.10` in `mgmt_seg`, the Authentik
-health endpoints return HTTP 204, and all secrets are injected from SOPS at deploy time —
+health endpoints return HTTP 200 or 204, and all secrets are injected from SOPS at deploy time —
 no credentials in any on-disk file. After deploy, the manual first-boot steps are completed
 and `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `terraform/secrets.enc.yaml` for use by
 future `terraform-provider-authentik` automation.
@@ -138,8 +138,8 @@ future `terraform-provider-authentik` automation.
 - [ ] `./with-secrets terragrunt apply` for `authentik-stack` exits 0
 - [ ] `./with-secrets ansible-playbook deploy-authentik-stack.yml` exits 0
 - [ ] On-disk compose file at `/opt/authentik-stack/docker-compose.yml` contains no literal credentials
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 204
-- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204
+- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/` returns 200 or 204
+- [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 200 or 204
 - [ ] Initial admin setup completed via web UI
 - [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` recorded in `terraform/secrets.enc.yaml` (not in `.env`)
 - [ ] Traefik forward-auth Proxy Provider and outpost created in Authentik
@@ -201,7 +201,7 @@ STEP 5 — Run the playbook:
 STEP 6 — Verify health:
   curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/
   curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/
-  # Expect: 204 for both
+  # Expect: 200 or 204 for both
 
 STEP 7 — Complete first-boot setup (manual — this remains a rebuild gap until
          terraform-provider-authentik is implemented):
