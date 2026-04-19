@@ -78,6 +78,20 @@ no credentials in any on-disk file. After deploy, the manual first-boot steps ar
 and `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `terraform/secrets.enc.yaml` for use by
 future `terraform-provider-authentik` automation.
 
+## Browser ingress and certificate policy
+
+Authentik is a browser-facing service and must be accessed through Traefik with a Let's
+Encrypt certificate. Internal step-ca certificates are not valid for browser-facing routes.
+
+- Canonical browser URL: `https://authentik.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy: route is not protected by Traefik forward-auth middleware (Authentik is the IdP)
+- Temporary bootstrap URL by IP is allowed only for first-boot recovery and should not be the
+  steady-state operator path
+
+This task owns the ingress contract for Authentik. The corresponding Traefik route wiring is
+implemented in the Traefik stack configuration and validated when both components are running.
+
 ## Scope
 
 - Create or verify `terraform/lxc/stacks/authentik-stack/stack.yaml`
@@ -145,6 +159,8 @@ future `terraform-provider-authentik` automation.
 - [ ] Traefik forward-auth Proxy Provider and outpost created in Authentik
 - [ ] `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` recorded in
   `terraform/secrets.enc.yaml` (not in `.env`)
+- [ ] Browser ingress contract documented and implemented for `authentik.gibbsgreatly.xyz` via Traefik
+- [ ] Browser cert for `authentik.gibbsgreatly.xyz` is issued by Let's Encrypt (staging on pve-test, production on pve)
 
 ## Session Prompt
 

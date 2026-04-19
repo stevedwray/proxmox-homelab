@@ -48,6 +48,21 @@ LXC `portainer-stack` (VMID 120) is running on `pve-test` at `10.57.1.20` on `mg
 Portainer is reachable from the management network and provides the standalone management
 endpoint for all later `pve-test` stacks.
 
+## Browser ingress and certificate policy
+
+Portainer is a browser-facing operator UI and must have an explicit Traefik ingress plan with
+Let's Encrypt certificates for normal operator access.
+
+- Canonical browser URL: `https://portainer.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy decision required: either direct Portainer auth only, or Traefik forward-auth
+  middleware in front of Portainer (must be decided and documented before Phase 04 closeout)
+- Direct IP access (`http://10.57.1.20:9000`) is bootstrap/debug only and not the steady-state
+  browser entrypoint
+
+Because this task executes before Traefik exists, it defines the ingress contract and required
+outcome. Route implementation and cert issuance are completed once the Traefik stack is online.
+
 ## Scope
 
 - Verify or create the Debian Docker LXC template needed by `terraform/lxc`
@@ -100,6 +115,8 @@ endpoint for all later `pve-test` stacks.
 - [x] Portainer admin login works with `PORTAINER_ADMIN_PASSWORD`
 - [x] Portainer shows the local Docker environment as an endpoint
 - [x] Follow-on environment configuration sets `TF_VAR_portainer_server_ip=10.57.1.20` in `.env.pve-test`
+- [ ] Browser ingress contract documented for `portainer.gibbsgreatly.xyz` with LE cert requirement
+- [ ] Traefik route and browser cert for Portainer validated once Traefik is deployed
 
 ## Completion Notes
 

@@ -44,6 +44,20 @@ LXC `netbox-stack` (VMID 143) is running at `10.57.3.12` in `infra_seg`. The Net
 web interface is accessible and an initial superuser exists. All subsequent Phase 03b, 03c,
 and Phase 04 deployments record their IP allocations in NetBox before deploying.
 
+## Browser ingress and certificate policy
+
+NetBox is a browser-facing operator UI and must have a Traefik ingress route with a Let's
+Encrypt certificate for normal access.
+
+- Canonical browser URL: `https://netbox.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy decision required: NetBox native auth only, or additional Authentik front-door
+  protection; whichever is chosen must be recorded in this task and Traefik route config
+- Direct IP access (`http://10.57.3.12`) is bootstrap/debug only and not the steady-state URL
+
+This task owns the NetBox ingress contract; Traefik wiring and cert issuance are validated once
+the Traefik stack is active.
+
 ## Scope
 
 - Run `terragrunt apply` for `terraform/lxc/stacks/netbox-stack/`
@@ -74,6 +88,7 @@ and Phase 04 deployments record their IP allocations in NetBox before deploying.
 - NetBox UI accessible on port 80
 - `infra_seg` subnets and existing IP allocations recorded
 - All subsequent new LXC deployments record their IP in NetBox before applying
+- Browser ingress contract defined for NetBox with LE certificate policy
 
 ## Constraints and Conventions
 
@@ -89,3 +104,12 @@ NetBox records what is allocated. Deploying it after Harbor and apt-cacher are a
 running means retroactively entering those allocations — but that is acceptable. Deploying
 it before Phase 04 means every new container from Authentik onward can be registered at
 allocation time, which is the target practice.
+
+## Acceptance Criteria
+
+- [ ] VMID 143 running at `10.57.3.12`
+- [ ] NetBox UI reachable at `http://10.57.3.12` for bootstrap validation
+- [ ] Initial NetBox superuser exists
+- [ ] `infra_seg` prefix and baseline allocations recorded in NetBox
+- [ ] Browser ingress contract documented for `netbox.gibbsgreatly.xyz` with LE cert requirement
+- [ ] Traefik route and browser cert for NetBox validated once Traefik is deployed
