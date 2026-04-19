@@ -1,168 +1,313 @@
 # Provisioning Refactor Task Sequence
 
-Each task below is intended to be small enough for one AI-agent session. Tasks
-are ordered to reduce ambiguity before implementation begins.
+Each task is intended to be one short-lived branch/session. Keep changes inside
+the listed files unless the task document explicitly expands scope. Stop when a
+precondition is not met or validation reveals a new issue outside the task.
 
-## Task 00: Normalize Planning Docs
+## A. Planning Reset
+
+### Task 00: Normalize Source Of Truth
 
 Type: documentation
 
-Objective: Make this directory the explicit source of truth and document that
-older Phase 04 browser-ingress docs are legacy context for this refactor.
+Objective: Make `docs/provisioning-refactor/` the active source of truth and
+mark old Phase 04c/MikroTik DNS reconciliation instructions as legacy context.
 
-Prompt: [prompts/00-normalize-planning-docs.yaml](prompts/00-normalize-planning-docs.yaml)
+Files: `README.md`, `decisions.md`, `task-sequence.md`, `prompts/index.yaml`,
+`../plan/phase-04c-stack-owned-ingress-auth-dns.md`,
+`../prompts/index.yaml`.
 
-Task doc: [tasks/00-normalize-planning-docs.md](tasks/00-normalize-planning-docs.md)
+Task doc: [tasks/00-normalize-source-of-truth.md](tasks/00-normalize-source-of-truth.md)
 
-## Task 01: Define Edge Manifest Contract
+Prompt: [prompts/00-normalize-source-of-truth.yaml](prompts/00-normalize-source-of-truth.yaml)
+
+### Task 01: Document Edge Bootstrap Order
+
+Type: documentation
+
+Objective: Define Stage 3a order: CoreDNS seed zone -> Traefik runtime ->
+step-ca -> Authentik direct first boot/API token -> edge reconciler.
+
+Files: `../design/bootstrap.md`, `decisions.md`,
+`tasks/01-bootstrap-order.md`, matching prompt.
+
+Task doc: [tasks/01-bootstrap-order.md](tasks/01-bootstrap-order.md)
+
+Prompt: [prompts/01-bootstrap-order.yaml](prompts/01-bootstrap-order.yaml)
+
+### Task 02: Define DNS Ownership Transition
+
+Type: documentation
+
+Objective: Specify CoreDNS seed records versus generated browser records, and
+the one-host-at-a-time replacement model.
+
+Files: `decisions.md`, `tasks/08-coredns-renderer.md`, matching prompt.
+
+Task doc: [tasks/02-dns-ownership-transition.md](tasks/02-dns-ownership-transition.md)
+
+Prompt: [prompts/02-dns-ownership-transition.yaml](prompts/02-dns-ownership-transition.yaml)
+
+### Task 03: Define Cutover Semantics
+
+Type: documentation
+
+Objective: Fix generated-vs-legacy route collision semantics with an explicit
+one-host replacement workflow.
+
+Files: `decisions.md`, `tasks/07-traefik-renderer.md`, migration task docs.
+
+Task doc: [tasks/03-cutover-semantics.md](tasks/03-cutover-semantics.md)
+
+Prompt: [prompts/03-cutover-semantics.yaml](prompts/03-cutover-semantics.yaml)
+
+## B. Contract And Tooling
+
+### Task 04: EdgeManifest Contract
 
 Type: documentation/specification
 
-Objective: Define the full v1alpha1 `EdgeManifest` contract, validation rules,
-and fixtures for all six current browser services.
+Objective: Define `EdgeManifest` v1alpha1, fixtures, error catalog, and
+auth/backend compatibility.
 
-Prompt: [prompts/01-edge-manifest-contract.yaml](prompts/01-edge-manifest-contract.yaml)
+Files: `edge-manifest-v1alpha1.md`, `fixtures/`, task doc.
 
-Task doc: [tasks/01-edge-manifest-contract.md](tasks/01-edge-manifest-contract.md)
+Task doc: [tasks/04-edge-manifest-contract.md](tasks/04-edge-manifest-contract.md)
 
-## Task 02: Implement Manifest Validator
+Prompt: [prompts/04-edge-manifest-contract.yaml](prompts/04-edge-manifest-contract.yaml)
 
-Type: development
-
-Objective: Implement a local validator for `edge.yaml` files with no deployment
-side effects.
-
-Prompt: [prompts/02-manifest-validator.yaml](prompts/02-manifest-validator.yaml)
-
-Task doc: [tasks/02-manifest-validator.md](tasks/02-manifest-validator.md)
-
-## Task 03: Implement Traefik Renderer
+### Task 05: Manifest Validator
 
 Type: development
 
-Objective: Render deterministic per-stack Traefik dynamic config from valid
-manifests and detect collisions with legacy central routes.
+Objective: Implement side-effect-free validation for
+`terraform/lxc/stacks/*/edge.yaml`.
 
-Prompt: [prompts/03-traefik-renderer.yaml](prompts/03-traefik-renderer.yaml)
+Files: `terraform/lxc/edge_manifest.py`,
+`terraform/lxc/validate-edge-manifests.py`,
+`terraform/lxc/test_edge_manifest.py`.
 
-Task doc: [tasks/03-traefik-renderer.md](tasks/03-traefik-renderer.md)
+Task doc: [tasks/05-manifest-validator.md](tasks/05-manifest-validator.md)
 
-## Task 04: Implement DNS Zone Renderer
+Prompt: [prompts/05-manifest-validator.yaml](prompts/05-manifest-validator.yaml)
 
-Type: development
-
-Objective: Render CoreDNS lab-zone records from manifests and validate MikroTik
-conditional forwarding.
-
-Prompt: [prompts/04-dns-zone-renderer.yaml](prompts/04-dns-zone-renderer.yaml)
-
-Task doc: [tasks/04-dns-zone-renderer.md](tasks/04-dns-zone-renderer.md)
-
-## Task 05: Discover Authentik State
+### Task 06: Legacy Route Inventory
 
 Type: development/read-only
 
-Objective: Query Authentik and produce a drift report that maps manifest auth
-intent to current providers, applications, and outposts.
+Objective: Extract current central Traefik host rules for collision and
+replacement checks.
 
-Prompt: [prompts/05-authentik-discovery.yaml](prompts/05-authentik-discovery.yaml)
+Files: `terraform/lxc/edge_manifest.py` or
+`terraform/lxc/extract-legacy-edge-hosts.py`, tests.
 
-Task doc: [tasks/05-authentik-discovery.md](tasks/05-authentik-discovery.md)
+Task doc: [tasks/06-legacy-route-inventory.md](tasks/06-legacy-route-inventory.md)
 
-## Task 06: Implement Authentik Reconciler
+Prompt: [prompts/06-legacy-route-inventory.yaml](prompts/06-legacy-route-inventory.yaml)
 
-Type: development
-
-Objective: Implement idempotent create/update behavior for Authentik objects
-needed by stack-owned routes. Deletes remain out of scope.
-
-Prompt: [prompts/06-authentik-reconciler.yaml](prompts/06-authentik-reconciler.yaml)
-
-Task doc: [tasks/06-authentik-reconciler.md](tasks/06-authentik-reconciler.md)
-
-## Task 07: Wire Proxy Deployment To Generated Files
+### Task 07: Traefik Renderer
 
 Type: development
 
-Objective: Update the proxy deployment workflow so generated per-stack files
-are published to `/opt/proxy-stack/dynamic/stacks/` while central config remains
-shared-only.
+Objective: Render deterministic per-stack dynamic config to a dry-run output
+directory.
 
-Prompt: [prompts/07-proxy-generated-file-wiring.yaml](prompts/07-proxy-generated-file-wiring.yaml)
+Files: `terraform/lxc/render-edge-traefik.py`, tests.
 
-Task doc: [tasks/07-proxy-generated-file-wiring.md](tasks/07-proxy-generated-file-wiring.md)
+Task doc: [tasks/07-traefik-renderer.md](tasks/07-traefik-renderer.md)
 
-## Task 08: Migrate Portainer
+Prompt: [prompts/07-traefik-renderer.yaml](prompts/07-traefik-renderer.yaml)
 
-Type: deployment
+### Task 08: CoreDNS Renderer
 
-Objective: Move `portainer.lab.gibbsgreatly.xyz` to stack-owned provisioning.
+Type: development
 
-Prompt: [prompts/08-migrate-portainer.yaml](prompts/08-migrate-portainer.yaml)
+Objective: Render deterministic full lab-zone output from seed records plus
+validated browser manifests.
 
-Task doc: [tasks/08-migrate-portainer.md](tasks/08-migrate-portainer.md)
+Files: `terraform/lxc/render-edge-coredns.py`, tests.
 
-## Task 09: Migrate NetBox
+Task doc: [tasks/08-coredns-renderer.md](tasks/08-coredns-renderer.md)
 
-Type: deployment
+Prompt: [prompts/08-coredns-renderer.yaml](prompts/08-coredns-renderer.yaml)
 
-Objective: Move `netbox.lab.gibbsgreatly.xyz` to stack-owned provisioning.
+### Task 09: Authentik Discovery
 
-Prompt: [prompts/09-migrate-netbox.yaml](prompts/09-migrate-netbox.yaml)
+Type: development/read-only
 
-Task doc: [tasks/09-migrate-netbox.md](tasks/09-migrate-netbox.md)
+Objective: Query Authentik read-only and map manifest auth intent to existing
+apps, providers, and outposts.
 
-## Task 10: Migrate Harbor
+Files: `terraform/lxc/discover-authentik-edge.py`, tests with mocked API.
 
-Type: deployment
+Task doc: [tasks/09-authentik-discovery.md](tasks/09-authentik-discovery.md)
 
-Objective: Move `harbor.lab.gibbsgreatly.xyz` to stack-owned provisioning while
-preserving native Harbor auth and non-browser registry clients.
+Prompt: [prompts/09-authentik-discovery.yaml](prompts/09-authentik-discovery.yaml)
 
-Prompt: [prompts/10-migrate-harbor.yaml](prompts/10-migrate-harbor.yaml)
+### Task 10: Authentik Reconciler
 
-Task doc: [tasks/10-migrate-harbor.md](tasks/10-migrate-harbor.md)
+Type: development
 
-## Task 11: Migrate Authentik
+Objective: Add create/update-only Authentik reconciliation with explicit
+ownership labels/names.
+
+Files: `terraform/lxc/reconcile-authentik-edge.py`, tests.
+
+Task doc: [tasks/10-authentik-reconciler.md](tasks/10-authentik-reconciler.md)
+
+Prompt: [prompts/10-authentik-reconciler.yaml](prompts/10-authentik-reconciler.yaml)
+
+### Task 11: Edge Reconciler
+
+Type: development
+
+Objective: Add one command that runs preflight, validate, render, plan, and
+optional apply for DNS, Traefik, and Authentik.
+
+Files: `terraform/lxc/reconcile-edge.py`, tests, `README.md` usage.
+
+Task doc: [tasks/11-edge-reconciler.md](tasks/11-edge-reconciler.md)
+
+Prompt: [prompts/11-edge-reconciler.yaml](prompts/11-edge-reconciler.yaml)
+
+## C. Runtime Wiring
+
+### Task 12: CoreDNS Publish Wiring
+
+Type: development
+
+Objective: Let CoreDNS deployment consume generated zone output, validate it,
+publish it, and reload/restart safely.
+
+Files: `terraform/lxc/ansible/playbooks/deploy-coredns.yml`,
+`terraform/lxc/ansible/files/coredns-lab.zone` if seed cleanup is needed.
+
+Task doc: [tasks/12-coredns-publish-wiring.md](tasks/12-coredns-publish-wiring.md)
+
+Prompt: [prompts/12-coredns-publish-wiring.yaml](prompts/12-coredns-publish-wiring.yaml)
+
+### Task 13: Proxy Generated File Wiring
+
+Type: development
+
+Objective: Prepare `/opt/proxy-stack/dynamic/stacks` and keep shared middleware
+central while legacy routes remain.
+
+Files: `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`.
+
+Task doc: [tasks/13-proxy-generated-file-wiring.md](tasks/13-proxy-generated-file-wiring.md)
+
+Prompt: [prompts/13-proxy-generated-file-wiring.yaml](prompts/13-proxy-generated-file-wiring.yaml)
+
+### Task 14: Shared Edge Validation Runbook
+
+Type: documentation
+
+Objective: Document preflight checks, validation commands, expected outputs, and
+rollback for edge reconciliation.
+
+Files: `runbook.md`, migration task docs.
+
+Task doc: [tasks/14-shared-validation-runbook.md](tasks/14-shared-validation-runbook.md)
+
+Prompt: [prompts/14-shared-validation-runbook.yaml](prompts/14-shared-validation-runbook.yaml)
+
+## D. Stack Migration Order
+
+### Task 15: Migrate Authentik Route
 
 Type: deployment
 
 Objective: Move `authentik.lab.gibbsgreatly.xyz` to stack-owned provisioning
-without introducing forward-auth recursion.
+with `auth.mode: none`.
 
-Prompt: [prompts/11-migrate-authentik.yaml](prompts/11-migrate-authentik.yaml)
+Files: `terraform/lxc/stacks/authentik-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
 
-Task doc: [tasks/11-migrate-authentik.md](tasks/11-migrate-authentik.md)
+Task doc: [tasks/15-migrate-authentik.md](tasks/15-migrate-authentik.md)
 
-## Task 12: Migrate Grafana
+Prompt: [prompts/15-migrate-authentik.yaml](prompts/15-migrate-authentik.yaml)
 
-Type: deployment
-
-Objective: Move `grafana.lab.gibbsgreatly.xyz` to stack-owned provisioning
-while preserving native Grafana OIDC.
-
-Prompt: [prompts/12-migrate-grafana.yaml](prompts/12-migrate-grafana.yaml)
-
-Task doc: [tasks/12-migrate-grafana.md](tasks/12-migrate-grafana.md)
-
-## Task 13: Migrate Traefik Dashboard
+### Task 16: Migrate Harbor Route
 
 Type: deployment
 
-Objective: Move `traefik.lab.gibbsgreatly.xyz` to stack-owned provisioning
-using the special `api@internal` backend target.
+Objective: Move `harbor.lab.gibbsgreatly.xyz` to stack-owned provisioning with
+native Harbor auth.
 
-Prompt: [prompts/13-migrate-traefik-dashboard.yaml](prompts/13-migrate-traefik-dashboard.yaml)
+Files: `terraform/lxc/stacks/harbor-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
 
-Task doc: [tasks/13-migrate-traefik-dashboard.md](tasks/13-migrate-traefik-dashboard.md)
+Task doc: [tasks/16-migrate-harbor.md](tasks/16-migrate-harbor.md)
 
-## Task 14: Final Cutover Cleanup
+Prompt: [prompts/16-migrate-harbor.yaml](prompts/16-migrate-harbor.yaml)
+
+### Task 17: Migrate Grafana Route
 
 Type: deployment
 
-Objective: Remove remaining central per-service route ownership and validate
-the stack-owned model end to end.
+Objective: Move `grafana.lab.gibbsgreatly.xyz` to stack-owned provisioning with
+native Grafana OIDC.
 
-Prompt: [prompts/14-final-cutover-cleanup.yaml](prompts/14-final-cutover-cleanup.yaml)
+Files: `terraform/lxc/stacks/monitoring-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
 
-Task doc: [tasks/14-final-cutover-cleanup.md](tasks/14-final-cutover-cleanup.md)
+Task doc: [tasks/17-migrate-grafana.md](tasks/17-migrate-grafana.md)
+
+Prompt: [prompts/17-migrate-grafana.yaml](prompts/17-migrate-grafana.yaml)
+
+### Task 18: Migrate Portainer Route
+
+Type: deployment
+
+Objective: Move `portainer.lab.gibbsgreatly.xyz` to stack-owned provisioning
+with forward-auth.
+
+Files: `terraform/lxc/stacks/portainer-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
+
+Task doc: [tasks/18-migrate-portainer.md](tasks/18-migrate-portainer.md)
+
+Prompt: [prompts/18-migrate-portainer.yaml](prompts/18-migrate-portainer.yaml)
+
+### Task 19: Migrate NetBox Route
+
+Type: deployment
+
+Objective: Move `netbox.lab.gibbsgreatly.xyz` to stack-owned provisioning with
+forward-auth.
+
+Files: `terraform/lxc/stacks/netbox-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
+
+Task doc: [tasks/19-migrate-netbox.md](tasks/19-migrate-netbox.md)
+
+Prompt: [prompts/19-migrate-netbox.yaml](prompts/19-migrate-netbox.yaml)
+
+### Task 20: Migrate Traefik Dashboard
+
+Type: deployment
+
+Objective: Move `traefik.lab.gibbsgreatly.xyz` to stack-owned provisioning with
+`api@internal` and forward-auth.
+
+Files: `terraform/lxc/stacks/proxy-stack/edge.yaml`,
+`terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`, generated artifacts.
+
+Task doc: [tasks/20-migrate-traefik-dashboard.md](tasks/20-migrate-traefik-dashboard.md)
+
+Prompt: [prompts/20-migrate-traefik-dashboard.yaml](prompts/20-migrate-traefik-dashboard.yaml)
+
+### Task 21: Final Cutover Cleanup
+
+Type: deployment
+
+Objective: Remove remaining central per-service route ownership and validate the
+stack-owned model end to end.
+
+Files: `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`,
+`tasks/21-final-cutover-cleanup.md`, `runbook.md`.
+
+Task doc: [tasks/21-final-cutover-cleanup.md](tasks/21-final-cutover-cleanup.md)
+
+Prompt: [prompts/21-final-cutover-cleanup.yaml](prompts/21-final-cutover-cleanup.yaml)

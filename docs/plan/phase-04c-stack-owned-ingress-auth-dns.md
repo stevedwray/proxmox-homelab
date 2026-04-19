@@ -1,5 +1,11 @@
 # Phase 04c — Stack-Owned Ingress, DNS, and Auth Integration
 
+> **Legacy context:** The active refactor plan has moved to
+> [`docs/provisioning-refactor/`](../provisioning-refactor/README.md). Use that
+> directory for task order, prompt selection, DNS ownership, bootstrap ordering,
+> and migration semantics. This file is retained as historical Phase 04c
+> context only.
+
 ## Goal
 
 Refactor edge ownership so each service stack defines and deploys its own ingress/auth/dns intent, while central Traefik remains only the runtime gateway.
@@ -27,7 +33,8 @@ Out of scope:
 
 - Phase 04 core services are operational on pve-test
 - Browser ingress baseline is currently functional
-- MikroTik API credentials available via secure env injection
+- CoreDNS delegated lab-zone authority is available; MikroTik remains the
+  resolver/conditional forwarder
 - Authentik admin API token workflow established
 
 ## Deliverables
@@ -42,7 +49,8 @@ Out of scope:
 
 1. 04c-01: Edge contract and schema
 2. 04c-02: Traefik stack manifest renderer
-3. 04c-03: DNS reconciler (MikroTik API)
+3. 04c-03: DNS reconciler (legacy; superseded by CoreDNS zone renderer in
+   `docs/provisioning-refactor/`)
 4. 04c-04: Authentik reconciler
 5. 04c-05: Incremental stack migrations
 6. 04c-06: Cutover and legacy cleanup

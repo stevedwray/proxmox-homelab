@@ -1,0 +1,25 @@
+---
+id: pr-10-authentik-reconciler
+title: "Implement create/update-only Authentik reconciler"
+type: development
+status: pending
+depends_on:
+  - pr-09-authentik-discovery
+task_doc: docs/provisioning-refactor/tasks/10-authentik-reconciler.md
+
+context: |
+  Deletes are out of scope. Write only owned objects.
+
+objective: |
+  Create or update Authentik objects needed by stack-owned routes.
+
+workflow:
+  steps:
+    - Define ownership labels or names.
+    - Add dry-run plan output.
+    - Implement create/update apply mode.
+    - Add idempotence tests.
+
+postconditions:
+  criteria:
+    - Second apply is a no-op and deletes are only reported.

@@ -1,5 +1,26 @@
 # Provisioning Refactor Decisions
 
+## Decision 0: Bootstrap-Aware Edge Reconciliation
+
+Edge reconciliation is not part of Terraform apply.
+
+Terraform provisions LXCs and runs each stack's normal Ansible playbook. The
+stack-owned `edge.yaml` manifests are consumed by an explicit edge reconciler
+after the edge foundation is healthy.
+
+Fresh Mode 2 rebuilds use Stage 3a:
+
+1. CoreDNS with a seed `lab.gibbsgreatly.xyz` zone.
+2. Traefik runtime with static entrypoints, providers, certificate resolvers,
+   default store, and shared middleware only.
+3. step-ca.
+4. Authentik via direct IP first boot, followed by API token bootstrap.
+5. Edge reconciler dry-run and apply.
+
+The reconciler must fail closed in apply mode if CoreDNS, Traefik, or required
+Authentik API access is unavailable. It must not silently skip work based on
+health checks.
+
 ## Decision 1: pve-test Browser Domain
 
 All pve-test browser-facing routes use:
@@ -25,9 +46,14 @@ MikroTik remains:
 MikroTik static DNS records should not be used as the long-term per-service
 record store for browser routes under `lab.gibbsgreatly.xyz`.
 
-The DNS reconciliation task is therefore a CoreDNS zone rendering/reload task
-plus MikroTik delegation validation. It is not a MikroTik static-record
-reconciliation task for lab browser hostnames.
+CoreDNS has two classes of records:
+
+- Seed or non-browser records required before the edge reconciler is available.
+- Generated browser edge records derived from stack-owned manifests.
+
+Generated browser records must target the Traefik edge IP `10.57.2.10`. During
+migration, any direct service record for the same browser hostname is replaced
+one host at a time.
 
 ## Decision 3: Stack-Owned Manifest Path
 
@@ -37,7 +63,7 @@ Each stack that exposes browser routes owns an edge manifest at:
 terraform/lxc/stacks/<stack>/edge.yaml
 ```
 
-`stack.yaml` remains the LXC platform metadata contract. It should not grow
+`stack.yaml` remains the LXC platform metadata contract. It must not grow
 browser ingress, DNS, or Authentik provisioning fields as part of this refactor.
 
 ## Decision 4: Manifest API Version
@@ -71,6 +97,10 @@ Per-service routers and services move to generated files under:
 During migration, generated routes must be checked against both generated
 manifests and legacy central routes to prevent duplicate host rules.
 
+One-host replacement is explicit: a migration task may allow exactly the host it
+is replacing while it validates generated output, but live publish must remove
+the central route and add the generated route as the same deployment unit.
+
 ## Decision 6: Auth Modes
 
 The contract must support at least these modes:
@@ -102,10 +132,24 @@ The migration unit is one browser service per branch/session.
 For each service:
 
 1. Add manifest.
-2. Render Traefik/DNS/Auth state.
-3. Deploy or apply only the required generated state.
-4. Validate route, DNS, cert, and auth behavior.
-5. Remove that service's central legacy route.
-6. Commit only after validation passes.
+2. Run edge reconciler dry-run with the migration host marked as the intended
+   replacement.
+3. Apply only the required generated state.
+4. Remove that service's central legacy route in the same publish unit.
+5. Validate route, DNS, cert, and auth behavior.
+6. Re-run the reconciler and confirm no-op.
+7. Commit only after validation passes.
 
 Do not migrate multiple services in one session unless explicitly requested.
+
+## Decision 9: Apply Defaults
+
+All edge tooling defaults to dry-run.
+
+Apply mode requires:
+
+- explicit `--apply` or equivalent
+- pve-test targeting preflight
+- healthy CoreDNS and Traefik checks
+- Authentik API token only when selected manifests require Authentik objects
+- no automatic Authentik deletes

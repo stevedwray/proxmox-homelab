@@ -1,83 +1,66 @@
 # Findings Addressed
 
-This document maps the review findings to concrete changes in the provisioning
-refactor plan.
+This document maps the review findings to the current bootstrap-aware
+provisioning refactor plan.
 
 ## Finding 1: DNS Ownership Was Split
 
-Resolution: [decisions.md](decisions.md) makes CoreDNS the record authority for
-`lab.gibbsgreatly.xyz` and keeps MikroTik as resolver/conditional forwarder.
+Resolution: CoreDNS is the record authority for `lab.gibbsgreatly.xyz`.
+MikroTik remains resolver, conditional forwarder, and network policy point.
 
 Task impact:
 
-- Task 04 renders CoreDNS records from manifests.
-- Task 04 validates MikroTik delegation instead of managing MikroTik static
-  records for lab browser hosts.
+- Task 02 defines the seed/generated DNS transition.
+- Task 08 renders CoreDNS zone output.
+- Task 12 wires CoreDNS publish/reload behavior.
 
-## Finding 2: Hostname Policy Was Inconsistent
+## Finding 2: Bootstrap Order Was Missing
 
-Resolution: pve-test hostnames are standardized on
-`*.lab.gibbsgreatly.xyz`.
-
-Task impact:
-
-- Task 01 documents the legacy Phase 04 conflict.
-- Task 02 validator rejects pve-test manifests outside
-  `.lab.gibbsgreatly.xyz`.
-- Fixtures include all six pve-test browser services.
-
-## Finding 3: Central Proxy Routes Would Collide With Generated Routes
-
-Resolution: migration requires generated plus legacy duplicate-host detection.
+Resolution: Stage 3a is now documented as CoreDNS seed zone -> Traefik runtime
+-> step-ca -> Authentik direct first boot/API token -> edge reconciler.
 
 Task impact:
 
-- Task 03 renderer must fail if generated routes collide with central legacy
-  routes.
-- Task 08 removes one central route only after the generated route is validated.
+- Task 01 documents Stage 3a in `docs/design/bootstrap.md`.
+- Edge apply mode is unavailable until the foundation is healthy.
 
-## Finding 4: Contract Fixtures Were Too Narrow
+## Finding 3: Terraform Two-Pass Detection Was Risky
 
-Resolution: the contract task includes all six current browser services:
-
-- Authentik
-- Portainer
-- Harbor
-- NetBox
-- Grafana
-- Traefik dashboard
+Resolution: Terraform provisions LXCs only. Edge reconciliation is an explicit,
+dry-run-first operator command.
 
 Task impact:
 
-- Task 01 requires valid fixtures for all six.
-- Task 01 requires special backend modeling for `api@internal`.
+- Task 11 implements the edge reconciler.
+- Apply mode requires explicit operator intent and health preflight.
+
+## Finding 4: Generated Routes Collided With Legacy Central Routes
+
+Resolution: Migration uses an explicit one-host intended-replacement workflow.
+
+Task impact:
+
+- Task 03 documents cutover semantics.
+- Task 06 inventories legacy routes.
+- Task 07 enforces renderer collision rules.
+- Tasks 15 through 20 replace one service route at a time.
 
 ## Finding 5: Authentik Automation Was Too Broad
 
-Resolution: Authentik work is split into discovery and apply tasks.
+Resolution: Authentik work stays split into read-only discovery and
+create/update-only reconciliation.
 
 Task impact:
 
-- Task 05 is read-only object discovery and drift reporting.
-- Task 06 implements write-capable upserts only after discovery is documented.
+- Task 09 is read-only discovery.
+- Task 10 is create/update reconciliation only.
+- Deletes remain out of scope.
 
-## Finding 6: Renderer Validation Was Too Weak
+## Finding 6: Manifest Location Was Ambiguous
 
-Resolution: renderer validation must parse and semantically inspect generated
-Traefik dynamic config.
-
-Task impact:
-
-- Task 03 requires YAML syntax validation plus semantic checks for routers,
-  services, middleware references, duplicate names, duplicate hosts, and TLS
-  resolver policy.
-
-## Finding 7: Manifest Location Was Ambiguous
-
-Resolution: [decisions.md](decisions.md) defines
-`terraform/lxc/stacks/<stack>/edge.yaml` as the standard path.
+Resolution: `terraform/lxc/stacks/<stack>/edge.yaml` is the only manifest path.
 
 Task impact:
 
-- Task 01 documents the path.
-- Task 02 implements discovery for that path only.
+- Task 04 documents the contract.
+- Task 05 discovers only that path.
