@@ -112,10 +112,12 @@ workflow:
       name: Validate redirect and TLS
       commands:
         - "curl -o /dev/null -w '%{http_code}' http://10.57.2.10"
-        - "curl -sv https://10.57.2.10/dashboard/ 2>&1 | grep -i 'issuer'"
+        - "curl -sv https://10.57.2.10/ 2>&1 | grep -i 'issuer'"
+        - "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/dashboard/ | grep -E 'HTTP/[0-9.]+ 302|location:'"
       expect:
         - HTTP returns 301 or 302
         - Issuer shows "(STAGING) Let's Encrypt" — NOT Homelab CA, NOT production LE
+        - Dashboard returns 302 redirect to Authentik for traefik.lab.gibbsgreatly.xyz
 
     - id: 5
       name: Verify no secrets on disk
@@ -180,6 +182,6 @@ notes:
   - Traefik takes 30–60 seconds to obtain the staging LE cert via DNS-01 challenge
   - The step-ca resolver block is intentionally configured but dormant — it will not
     contact 10.57.1.11 until a route explicitly uses certresolver=step-ca
-  - If the dashboard shows "Authentik login required", the Proxy Provider outpost is
+  - If https://traefik.lab.gibbsgreatly.xyz/dashboard/ shows "Authentik login required", the Proxy Provider outpost is
     working correctly — log in with the Authentik admin account from dep-01 Step 6
   - This deployment unblocks dep-03-step-ca
