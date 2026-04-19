@@ -28,10 +28,13 @@ readonly NC='\033[0m'  # No Color
 
 # Configuration
 readonly SERVICES=("authentik-stack" "proxy-stack" "step-ca-stack" "monitoring-stack")
+readonly STEP_CA_TRUST_STACKS=("authentik-stack" "proxy-stack" "monitoring-stack")
 readonly STACK_DIR="terraform/lxc/stacks"
 readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
 readonly ANSIBLE_CONFIG_FILE="${PROJECT_ROOT}/terraform/lxc/ansible/ansible.cfg"
 readonly ANSIBLE_ROLES_DIR="${PROJECT_ROOT}/terraform/lxc/ansible/roles"
+readonly DEV_INVENTORY_FILE="${PROJECT_ROOT}/ansible/inventory/dev.yml"
+readonly STEP_CA_TRUST_PLAYBOOK="${PROJECT_ROOT}/${ANSIBLE_DIR}/trust-homelab-ca.yml"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -238,6 +241,135 @@ deploy_stack_application() {
   fi
 }
 
+ansible_target_reachable() {
+  local inventory_path=$1
+  local limit_target=$2
+  local label=$3
+  local log_slug=$4
+  local -a limit_args=()
+
+  if [ -n "$limit_target" ]; then
+    limit_args=(--limit "$limit_target")
+  fi
+
+  if env \
+    ANSIBLE_CONFIG="$ANSIBLE_CONFIG_FILE" \
+    ANSIBLE_ROLES_PATH="$ANSIBLE_ROLES_DIR" \
+    "$PROJECT_ROOT/with-secrets" ansible \
+    -i "$inventory_path" \
+    "${limit_args[@]}" \
+    all -m ping \
+    > "$LOG_DIR/${log_slug}-ping.log" 2>&1; then
+    log_success "$label reachable"
+    return 0
+  fi
+
+  log_warn "$label not reachable, skipping trust distribution"
+  return 1
+}
+
+run_trust_playbook() {
+  local inventory_path=$1
+  local limit_target=$2
+  local label=$3
+  local log_slug=$4
+  local -a limit_args=()
+
+  if [ -n "$limit_target" ]; then
+    limit_args=(--limit "$limit_target")
+  fi
+
+  log_info "Refreshing homelab root CA trust on $label"
+
+  if env \
+    ANSIBLE_CONFIG="$ANSIBLE_CONFIG_FILE" \
+    ANSIBLE_ROLES_PATH="$ANSIBLE_ROLES_DIR" \
+    "$PROJECT_ROOT/with-secrets" ansible-playbook \
+    -i "$inventory_path" \
+    "${limit_args[@]}" \
+    "$STEP_CA_TRUST_PLAYBOOK" \
+    > "$LOG_DIR/${log_slug}-trust.log" 2>&1; then
+    log_success "Homelab root CA trust refreshed on $label"
+    return 0
+  fi
+
+  log_error "Failed to refresh homelab root CA trust on $label (see $LOG_DIR/${log_slug}-trust.log)"
+  return 1
+}
+
+verify_step_ca_from_proxy_stack() {
+  local proxy_inventory="$PROJECT_ROOT/$STACK_DIR/proxy-stack/inventory.yml"
+
+  if [ ! -f "$proxy_inventory" ]; then
+    log_warn "Proxy inventory missing, skipping in-container step-ca verification"
+    return 0
+  fi
+
+  if ! ansible_target_reachable "$proxy_inventory" "" "proxy-stack" "proxy-stack-step-ca-check"; then
+    return 0
+  fi
+
+  log_info "Verifying step-ca ACME directory from inside proxy-stack"
+  if env \
+    ANSIBLE_CONFIG="$ANSIBLE_CONFIG_FILE" \
+    ANSIBLE_ROLES_PATH="$ANSIBLE_ROLES_DIR" \
+    "$PROJECT_ROOT/with-secrets" ansible \
+    -i "$proxy_inventory" \
+    all -m shell \
+    -a "curl -s https://10.57.1.11/acme/acme/directory | grep -q 'newNonce'" \
+    > "$LOG_DIR/proxy-stack-step-ca-verify.log" 2>&1; then
+    log_success "proxy-stack can reach the step-ca ACME directory with trusted TLS"
+    return 0
+  fi
+
+  log_error "proxy-stack could not verify the step-ca ACME directory (see $LOG_DIR/proxy-stack-step-ca-verify.log)"
+  return 1
+}
+
+run_step_ca_trust_distribution() {
+  local trust_failures=0
+
+  log_step "Post-step-ca Trust Distribution"
+
+  if [ ! -f "$STEP_CA_TRUST_PLAYBOOK" ]; then
+    log_error "Trust playbook not found: $STEP_CA_TRUST_PLAYBOOK"
+    return 1
+  fi
+
+  if [ ! -f "$PROJECT_ROOT/certs/homelab-root.crt" ]; then
+    log_error "Expected root certificate missing: $PROJECT_ROOT/certs/homelab-root.crt"
+    return 1
+  fi
+
+  local stack
+  for stack in "${STEP_CA_TRUST_STACKS[@]}"; do
+    local inventory_path="$PROJECT_ROOT/$STACK_DIR/$stack/inventory.yml"
+    if [ ! -f "$inventory_path" ]; then
+      log_warn "Inventory missing for $stack, skipping trust distribution"
+      continue
+    fi
+
+    if ansible_target_reachable "$inventory_path" "" "$stack" "$stack"; then
+      run_trust_playbook "$inventory_path" "" "$stack" "$stack" || trust_failures=$((trust_failures + 1))
+    fi
+  done
+
+  if [ -f "$DEV_INVENTORY_FILE" ] \
+    && ansible_target_reachable "$DEV_INVENTORY_FILE" "pve-test.gibbsgreatly.xyz" "pve-test Proxmox host" "pve-test-host"; then
+    run_trust_playbook "$DEV_INVENTORY_FILE" "pve-test.gibbsgreatly.xyz" "pve-test Proxmox host" "pve-test-host" \
+      || trust_failures=$((trust_failures + 1))
+  fi
+
+  verify_step_ca_from_proxy_stack || trust_failures=$((trust_failures + 1))
+
+  if [ "$trust_failures" -gt 0 ]; then
+    log_error "Post-step-ca trust distribution completed with $trust_failures failure(s)"
+    return 1
+  fi
+
+  log_success "Post-step-ca trust distribution completed"
+}
+
 validate_service() {
   local service=$1
 
@@ -306,6 +438,13 @@ deploy_service() {
   # Validate
   if ! validate_service "$service"; then
     log_warn "Validation may have timed out (this is normal for initial startup)"
+  fi
+
+  if [ "$service" = "step-ca-stack" ] && [ "$DRY_RUN" = false ]; then
+    if ! run_step_ca_trust_distribution; then
+      log_error "Post-step-ca trust distribution failed"
+      return 1
+    fi
   fi
 
   log_success "$service deployment complete"

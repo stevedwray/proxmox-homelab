@@ -34,19 +34,19 @@ Phase 04 — Core Shared Services
      bind-mount. Survives LXC rebuild; issued certs remain valid. More complex to implement.
    This decision must be made and documented before the platform is considered production-ready.
 
-3. **Automatic CA trust distribution not yet enforced in rebuild sequence.** The
-  `trust-homelab-ca.yml` playbook exists, but tooling does not yet guarantee it runs
-  automatically after step-ca deploy. Containers deployed
-   before step-ca will not trust the new root CA until `trust-homelab-ca.yml` is run against
-   them retroactively. The intended sequence is:
+3. **Automatic CA trust distribution depends on using the orchestration path.** The
+  `trust-homelab-ca.yml` playbook is now invoked automatically by
+  `scripts/deploy-phase-04-orchestrate.sh` after step-ca deploy. Containers deployed
+   before step-ca will still miss the new root CA if step-ca is run directly with ad hoc
+   Terragrunt and Ansible commands and the retroactive trust step is skipped. The required sequence is:
 
    1. Deploy step-ca (generates new root CA)
    2. Fetch `certs/homelab-root.crt` from step-ca and commit to repo
    3. Run `trust-homelab-ca.yml` against all already-deployed LXCs (retroactive)
    4. All subsequent LXC deployments pick up the CA cert automatically via `lxc_base` role
 
-  This sequence is documented but not yet enforced in tooling. The target state is that
-  step 3 runs automatically as a post-step-ca deployment action.
+  This sequence is enforced by the Phase 04 orchestration script. Direct manual runs must
+  still execute step 3 explicitly.
 
 ## Prerequisites
 
@@ -86,7 +86,7 @@ never passed as an `--extra-vars` argument.
 - Maintain `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml` — reusable, idempotent
   playbook for distributing the root cert to a target host
 - Distribute root CA to Traefik container (VMID 153) and Proxmox host (192.168.1.40)
-- Update base LXC Ansible role to include root CA trust task
+- Confirm base LXC Ansible role continues to include the root CA trust task for future containers
 - Verify Traefik `step-ca` resolver can reach the ACME directory from inside the container
 
 ## Out of Scope
@@ -110,7 +110,7 @@ never passed as an `--extra-vars` argument.
 - `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` — secrets via with-secrets
 - `terraform/lxc/ansible/playbooks/trust-homelab-ca.yml`
 - `certs/homelab-root.crt` committed to repository (public cert — safe to commit)
-- Base LXC Ansible role updated with CA trust task
+- Base LXC Ansible role still includes the CA trust task for future containers
 - LXC VMID 152 provisioned; step-ca running at `10.57.1.11`
 
 ## Constraints and Conventions
@@ -248,10 +248,10 @@ STEP 6 — Deploy step-ca LXC:
   ./with-secrets ansible-playbook -i "10.57.1.11," \
     terraform/lxc/ansible/playbooks/deploy-step-ca.yml
 
-STEP 7 — Retroactive CA trust distribution (automatic target behavior):
-  Trigger the standard post-step-ca automation to run trust-homelab-ca.yml against all
-  already-deployed managed hosts.
-  Temporary fallback until tooling is updated:
+STEP 7 — Retroactive CA trust distribution:
+  Preferred path: run step-ca through scripts/deploy-phase-04-orchestrate.sh so the
+  post-step-ca trust distribution happens automatically.
+  Manual fallback for direct terragrunt/ansible runs:
   # Traefik container
   ./with-secrets ansible-playbook -i "10.57.2.10," \
     terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
@@ -266,13 +266,9 @@ STEP 8 — Verify resolver from inside Traefik container:
     https://10.57.1.11/acme/acme/directory | jq .
   # Expected: ACME directory JSON with newNonce, newAccount, newOrder keys
 
-STEP 9 — Update base LXC Ansible role:
-  Add to terraform/lxc/ansible/roles/base-lxc/tasks/main.yml:
-    - name: Trust homelab root CA
-      copy:
-        src: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
-        dest: /usr/local/share/ca-certificates/homelab-root.crt
-      notify: update-ca-certificates
+STEP 9 — Confirm future-container trust wiring:
+  Validate terraform/lxc/ansible/roles/lxc_base/tasks/main.yml still installs
+  certs/homelab-root.crt and refreshes update-ca-certificates when the repo cert exists.
 
 STEP 10 — Commit and merge:
   git add terraform/lxc/stacks/step-ca-stack/ \

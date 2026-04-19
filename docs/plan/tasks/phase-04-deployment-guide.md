@@ -147,7 +147,8 @@ cd /home/steve/git/proxmox-homelab
 curl -sk https://10.57.1.11/acme/acme/directory | jq .
 
 # Retroactive CA trust distribution — required post-step-ca action
-# Target behavior: this is executed automatically by deployment tooling.
+# scripts/deploy-phase-04-orchestrate.sh executes this automatically.
+# Manual fallback if you are not using that orchestration path:
 ./with-secrets ansible-playbook -i "10.57.2.10," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 ./with-secrets ansible-playbook -i "192.168.1.40," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
@@ -163,9 +164,9 @@ pct exec "$TRAEFIK_VMID" -- curl -s \
 - CA rebuild generates a new root keypair — all previously issued certs become invalid;
   `certs/homelab-root.crt` in the repo changes on each rebuild
 - CA persistence strategy not yet decided (regenerate vs persist encrypted keypair)
-- Automatic retroactive trust distribution after step-ca deploy is required but not yet
-  enforced in scripts; until tooling is updated, run the trust playbook against all
-  already-deployed managed hosts as a temporary workaround
+- Automatic retroactive trust distribution after step-ca deploy is implemented in
+  scripts/deploy-phase-04-orchestrate.sh; direct manual step-ca runs still require the
+  trust playbook against all already-deployed managed hosts
 
 **Network**: Zone `mgmt_seg` · IP `10.57.1.11` · VMID `152` · Port `443`
 

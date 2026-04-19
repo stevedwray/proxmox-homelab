@@ -132,14 +132,13 @@ not require `--extra-vars` for secrets.
    committed `certs/homelab-root.crt` also changes. This is tolerable during development
    but means the CA and all consumers of it must be rebuilt together.
 
-2. **Automatic CA trust distribution not yet enforced in rebuild sequence.** The
-   `trust-homelab-ca.yml` playbook exists, but automation does not yet guarantee it runs
-   after step-ca deploy. Containers deployed
-   before step-ca will not trust the new root CA until `trust-homelab-ca.yml` is run
-   against them retroactively. The `lxc_base` role installs the CA cert if
-   `certs/homelab-root.crt` exists locally — so this only works if step-ca is deployed
-   before any other LXC, or if a post-deploy automatic trust-distribution step is added to the
-   rebuild runbook.
+2. **Automatic CA trust distribution now depends on using the orchestration path.** The
+   `trust-homelab-ca.yml` playbook is invoked automatically by
+   `scripts/deploy-phase-04-orchestrate.sh` after step-ca deploy. Containers deployed
+   before step-ca will still miss the new root CA if step-ca is run directly and the
+   retroactive trust step is skipped. The `lxc_base` role installs the CA cert if
+   `certs/homelab-root.crt` exists locally, so future containers continue to pick it up
+   automatically once the repo cert has been fetched.
 
 3. **No internal certs issued yet.** The step-ca ACME storage in Traefik is empty —
    no `lab.gibbsgreatly.xyz` routes exist that request a step-ca cert. This is expected
@@ -213,11 +212,9 @@ The intended CA trust sequence during a rebuild is:
 3. Run `trust-homelab-ca.yml` against all already-deployed LXCs (retroactive)
 4. All subsequent LXC deployments pick up the CA cert automatically via `lxc_base`
 
-This sequence is documented but not enforced. The rebuild runbook must include step 3
-explicitly, or containers deployed before step-ca will not trust internal certs.
-
-Target state: step 3 is executed automatically by deployment tooling immediately after
-step-ca deploy and before subsequent service deployments continue.
+This sequence is enforced by `scripts/deploy-phase-04-orchestrate.sh`. Direct manual
+step-ca runs still need to include step 3 explicitly, or containers deployed before
+step-ca will not trust internal certs.
 
 ### MikroTik has no IaC
 

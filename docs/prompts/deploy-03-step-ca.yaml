@@ -73,7 +73,8 @@ workflow:
       Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
       Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
       step-ca runs as a systemd service — there is no Docker Compose.
-      trust-homelab-ca.yml is executed automatically against all already-deployed managed hosts after step-ca deploy.
+      scripts/deploy-phase-04-orchestrate.sh executes trust-homelab-ca.yml automatically after step-ca deploy.
+      If you run step-ca directly with terragrunt/ansible instead of the orchestration script, you must still run the retroactive trust distribution step yourself.
 
   steps:
     - id: 1
@@ -127,10 +128,13 @@ workflow:
     - id: 6
       name: Automatic retroactive CA trust distribution
       description: |
-        Trigger the standard post-step-ca automation that runs trust-homelab-ca.yml
+        If you are using scripts/deploy-phase-04-orchestrate.sh, this step is handled automatically.
+        If you are running step-ca directly, trigger trust-homelab-ca.yml
         against every already-deployed managed host.
         This is mandatory — containers deployed before step-ca will not trust the new CA.
       commands:
+        - "./scripts/deploy-phase-04-orchestrate.sh step-ca"
+        - "# Manual fallback if you are not using the orchestration script:"
         - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
         - "../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping"
         - "../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/trust-homelab-ca.yml"
@@ -139,7 +143,7 @@ workflow:
         - "../../../with-secrets ansible -i '192.168.1.40,' -u root all -m ping"
         - "../../../with-secrets ansible-playbook -i '192.168.1.40,' -u root playbooks/trust-homelab-ca.yml"
       notes:
-        - Keep the managed-host target list in sync with deployment automation inputs
+        - The orchestration script currently targets Authentik, Traefik, Monitoring if reachable, plus the pve-test Proxmox host
         - trust-homelab-ca.yml copies certs/homelab-root.crt and runs update-ca-certificates
         - WARNING — run only against managed service hosts, never end-user devices
 
