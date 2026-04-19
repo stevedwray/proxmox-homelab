@@ -6,6 +6,10 @@ status: complete
 depends_on:
   - pr-00-normalize-source-of-truth
 task_doc: docs/provisioning-refactor/tasks/01-bootstrap-order.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   Edge manifests cannot be reconciled until the edge foundation exists.

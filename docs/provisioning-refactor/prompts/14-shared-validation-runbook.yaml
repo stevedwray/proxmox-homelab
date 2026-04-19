@@ -8,6 +8,10 @@ depends_on:
   - pr-12-coredns-publish-wiring
   - pr-13-proxy-generated-file-wiring
 task_doc: docs/provisioning-refactor/tasks/14-shared-validation-runbook.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   Migration tasks should share the same preflight, validation, and rollback

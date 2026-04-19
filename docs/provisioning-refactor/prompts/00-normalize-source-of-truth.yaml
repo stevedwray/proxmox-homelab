@@ -4,6 +4,10 @@ title: "Normalize provisioning-refactor source of truth"
 type: documentation
 status: complete
 task_doc: docs/provisioning-refactor/tasks/00-normalize-source-of-truth.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   This is a documentation-only task. docs/provisioning-refactor is the active

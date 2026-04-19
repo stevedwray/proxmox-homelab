@@ -6,6 +6,10 @@ status: pending
 depends_on:
   - pr-18-migrate-portainer
 task_doc: docs/provisioning-refactor/tasks/19-migrate-netbox.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   Migrate exactly one host: netbox.lab.gibbsgreatly.xyz.

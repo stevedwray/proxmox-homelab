@@ -6,6 +6,10 @@ status: pending
 depends_on:
   - pr-05-manifest-validator
 task_doc: docs/provisioning-refactor/tasks/08-coredns-renderer.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   CoreDNS is authoritative for lab.gibbsgreatly.xyz.

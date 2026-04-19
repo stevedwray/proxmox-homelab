@@ -6,6 +6,10 @@ status: pending
 depends_on:
   - pr-15-migrate-authentik
 task_doc: docs/provisioning-refactor/tasks/16-migrate-harbor.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   Migrate exactly one host: harbor.lab.gibbsgreatly.xyz.

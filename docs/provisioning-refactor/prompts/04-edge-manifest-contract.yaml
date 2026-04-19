@@ -9,6 +9,10 @@ depends_on:
   - pr-02-dns-ownership-transition
   - pr-03-cutover-semantics
 task_doc: docs/provisioning-refactor/tasks/04-edge-manifest-contract.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   The validator, renderers, and reconcilers depend on this contract.

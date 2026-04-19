@@ -7,6 +7,10 @@ depends_on:
   - pr-05-manifest-validator
   - pr-06-legacy-route-inventory
 task_doc: docs/provisioning-refactor/tasks/07-traefik-renderer.md
+validation_note: |
+  When this task changes Python, shell, or YAML files, run SonarCloud through
+  ./with-secrets because the Sonar token is stored in SOPS:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
   Render dry-run Traefik dynamic config only. Do not deploy or remove central
