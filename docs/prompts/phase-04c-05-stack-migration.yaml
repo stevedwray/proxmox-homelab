@@ -1,0 +1,51 @@
+---
+id: p04c-05-stack-migration
+title: "Migrate browser stacks to stack-owned ingress/auth/dns"
+phase: "04c"
+type: deployment
+status: pending
+depends_on:
+  - p04c-02-traefik-renderer
+  - p04c-03-dns-reconciler
+  - p04c-04-authentik-reconciler
+task_doc: docs/plan/tasks/04c-stack-owned-ingress-05-stack-migration.md
+
+context: |
+  Execute service-by-service migration from central route ownership to stack-owned manifests.
+  Run one service per session to minimize blast radius.
+
+objective: |
+  Migrate Portainer, NetBox, Harbor, Authentik, Grafana, and Traefik dashboard with
+  route/auth/dns validation after each move.
+
+workflow:
+  steps:
+    - id: 1
+      name: Select one service for this session
+      commands:
+        - "Choose next service from migration order"
+
+    - id: 2
+      name: Apply manifest-driven route + dns + auth
+      commands:
+        - "Render and deploy stack route"
+        - "Reconcile DNS for selected host"
+        - "Reconcile Authentik when auth.mode needs it"
+
+    - id: 3
+      name: Validate and remove central route for selected service
+      commands:
+        - "Run curl --resolve checks"
+        - "Confirm expected auth behavior"
+        - "Delete corresponding central legacy route"
+
+postconditions:
+  criteria:
+    - id: per-service-cutover
+      description: Selected service fully works via stack-owned path and no longer relies on central route
+      verify: "Curl/dig/auth checks"
+      expect: Pass
+
+notes:
+  - Keep pve-test targeting guardrails in place.
+  - Do not migrate multiple services in one deployment session unless explicitly requested.
