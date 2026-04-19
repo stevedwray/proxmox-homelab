@@ -8,6 +8,9 @@ Terraform provisions LXCs and runs each stack's normal Ansible playbook. The
 stack-owned `edge.yaml` manifests are consumed by an explicit edge reconciler
 after the edge foundation is healthy.
 
+Terraform does not detect edge service readiness and must not run a hidden
+second pass for edge state.
+
 Fresh Mode 2 rebuilds use Stage 3a:
 
 1. CoreDNS with a seed `lab.gibbsgreatly.xyz` zone.
@@ -16,6 +19,9 @@ Fresh Mode 2 rebuilds use Stage 3a:
 3. step-ca.
 4. Authentik via direct IP first boot, followed by API token bootstrap.
 5. Edge reconciler dry-run and apply.
+
+Direct-IP access is the bootstrap fallback for foundational services until the
+edge reconciler is active.
 
 The reconciler must fail closed in apply mode if CoreDNS, Traefik, or required
 Authentik API access is unavailable. It must not silently skip work based on
