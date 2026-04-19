@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: bad-auth-mode-edge
+  stack: test-stack
+spec:
+  routes:
+    - name: bad-auth-mode
+      host: bad-auth-mode.lab.gibbsgreatly.xyz
+      backend:
+        type: url
+        url: http://10.57.1.33:8080
+      dns:
+        enabled: true
+        target: 10.57.2.10
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: saml

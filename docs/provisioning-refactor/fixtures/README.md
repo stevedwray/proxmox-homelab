@@ -1,57 +1,47 @@
-# Fixture Notes
+# EdgeManifest Fixture Notes
 
-This directory is reserved for Task 04 fixture files.
+Task 04 fixtures are split into valid and invalid examples for validator
+implementation and unit test coverage.
 
-Task 04 should add:
+## Directory Layout
 
-- valid manifests for all six current browser services
-- invalid manifests for validator failure cases
-- expected error catalog
+- `valid/`: manifests that must pass validation
+- `invalid/`: manifests that must fail validation
+- `error-catalog.md`: stable machine-readable error code mapping
 
-The examples below are illustrative only and are not the final contract.
+## Valid Fixtures
 
-```yaml
-apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
-kind: EdgeManifest
-metadata:
-  name: portainer-edge
-  stack: portainer-stack
-spec:
-  routes:
-    - name: portainer
-      host: portainer.lab.gibbsgreatly.xyz
-      backend:
-        type: url
-        url: http://10.57.1.20:9000
-      dns:
-        enabled: true
-        target: 10.57.2.10
-        ttl: 5m
-      tls:
-        resolver: letsencrypt
-      auth:
-        mode: forwardAuth
-```
+- `valid/authentik.yaml`
+- `valid/harbor.yaml`
+- `valid/grafana.yaml`
+- `valid/portainer.yaml`
+- `valid/netbox.yaml`
+- `valid/traefik-dashboard.yaml`
 
-```yaml
-apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
-kind: EdgeManifest
-metadata:
-  name: traefik-dashboard-edge
-  stack: proxy-stack
-spec:
-  routes:
-    - name: traefik-dashboard
-      host: traefik.lab.gibbsgreatly.xyz
-      backend:
-        type: traefikService
-        service: api@internal
-      dns:
-        enabled: true
-        target: 10.57.2.10
-        ttl: 5m
-      tls:
-        resolver: letsencrypt
-      auth:
-        mode: forwardAuth
-```
+All valid fixtures use:
+
+- `apiVersion: homelab.gibbsgreatly.xyz/v1alpha1`
+- `kind: EdgeManifest`
+- hostnames under `*.lab.gibbsgreatly.xyz`
+- `dns.target: 10.57.2.10`
+
+## Invalid Fixtures
+
+- `invalid/duplicate-host-a.yaml`
+- `invalid/duplicate-host-b.yaml`
+- `invalid/bad-domain.yaml`
+- `invalid/missing-backend.yaml`
+- `invalid/bad-auth-mode.yaml`
+- `invalid/authentik-self-forward-auth.yaml`
+- `invalid/harbor-forward-auth.yaml`
+- `invalid/bad-url-scheme.yaml`
+- `invalid/invalid-traefik-service.yaml`
+
+The duplicate-host case is intentional and requires loading both files in the
+same validation run to trigger the cross-manifest uniqueness error.
+
+## Validator Expectations
+
+- Valid fixtures pass with no errors.
+- Invalid fixtures fail with stable codes from `error-catalog.md`.
+- Validation is side-effect free and does not perform deployment actions.

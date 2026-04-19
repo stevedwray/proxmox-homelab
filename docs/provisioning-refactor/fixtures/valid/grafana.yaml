@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: grafana-edge
+  stack: monitoring-stack
+spec:
+  routes:
+    - name: grafana
+      host: grafana.lab.gibbsgreatly.xyz
+      backend:
+        type: url
+        url: http://10.57.1.24:3000
+      dns:
+        enabled: true
+        target: 10.57.2.10
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth

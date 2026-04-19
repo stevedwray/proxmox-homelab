@@ -1,0 +1,17 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: missing-backend-edge
+  stack: test-stack
+spec:
+  routes:
+    - name: missing-backend
+      host: missing-backend.lab.gibbsgreatly.xyz
+      dns:
+        enabled: true
+        target: 10.57.2.10
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
