@@ -46,6 +46,20 @@ LXC `harbor-stack` (VMID 121) is running at `10.57.3.10` in `infra_seg` and resp
 the Harbor API. This is the first registry in the greenfield build and becomes the image
 source for all later Phase 03c/04/05 tasks.
 
+## Browser ingress and certificate policy
+
+Harbor has a browser-facing operator UI and must have a Traefik ingress route with
+Let's Encrypt certificates.
+
+- Canonical browser URL: `https://harbor.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy: **Harbor native auth** — do not front-door with Authentik forward-auth. Harbor's
+  project-level RBAC, robot accounts, and CI image pull/push would all break if forward-auth
+  were placed in front. Harbor native auth remains authoritative for all access.
+- Direct IP/API checks (`http://10.57.3.10`) remain valid for bootstrap and health probes only
+
+Route wiring is implemented in task `04-core-services-06-browser-ingress-wiring`.
+
 ## Scope
 
 - Verify SDN prerequisites for `infra_seg`
@@ -89,6 +103,8 @@ source for all later Phase 03c/04/05 tasks.
 - [ ] `ansible-playbook deploy-harbor-stack.yml` exits 0
 - [ ] `curl -s http://10.57.3.10/api/v2.0/ping` returns `Pong`
 - [ ] Harbor UI login works with `admin` / `HARBOR_ADMIN_PASSWORD`
+- [ ] Browser ingress contract documented for `harbor.gibbsgreatly.xyz` with LE cert requirement
+- [ ] Traefik route and browser cert for Harbor validated (task 04-core-services-06)
 
 ## Session Prompt
 

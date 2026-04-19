@@ -31,7 +31,11 @@ Not assigned yet.
    - Access the first-boot web UI at `http://10.57.1.10:9000/if/flow/initial-setup/`
    - Create the superuser account using `AUTHENTIK_SUPERUSER_PASSWORD` from SOPS
    - Generate an API token and add it to `terraform/secrets.enc.yaml` as `AUTHENTIK_SUPERUSER_API_TOKEN`
-   - Create a Proxy Provider + outpost for Traefik forward-auth
+   - Create a Proxy Provider + outpost for Traefik forward-auth — configure the provider in
+     **"Forward auth (domain level)"** mode with cookie domain `.gibbsgreatly.xyz`. This allows
+     one outpost to protect all `*.gibbsgreatly.xyz` subdomains (Traefik dashboard, Portainer,
+     NetBox). Single-application mode only covers one redirect URI and cannot scale across
+     multiple services.
    - Create an OIDC provider for Grafana (produces `GRAFANA_OAUTH_CLIENT_ID` and
      `GRAFANA_OAUTH_CLIENT_SECRET`, which must also be added to SOPS)
 
@@ -77,6 +81,20 @@ health endpoints return HTTP 200 or 204, and all secrets are injected from SOPS 
 no credentials in any on-disk file. After deploy, the manual first-boot steps are completed
 and `AUTHENTIK_SUPERUSER_API_TOKEN` is recorded in `terraform/secrets.enc.yaml` for use by
 future `terraform-provider-authentik` automation.
+
+## Browser ingress and certificate policy
+
+Authentik is a browser-facing service and must be accessed through Traefik with a Let's
+Encrypt certificate. Internal step-ca certificates are not valid for browser-facing routes.
+
+- Canonical browser URL: `https://authentik.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy: **no Traefik middleware** — Authentik is the identity provider; it cannot use
+  its own forward-auth (circular dependency)
+- Temporary bootstrap URL by IP (`http://10.57.1.10:9000`) is allowed only for first-boot
+  setup and health checks
+
+Route wiring is implemented in task `04-core-services-06-browser-ingress-wiring`.
 
 ## Scope
 
@@ -142,7 +160,10 @@ future `terraform-provider-authentik` automation.
 - [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 200 or 204
 - [ ] Initial admin setup completed via web UI
 - [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` recorded in `terraform/secrets.enc.yaml` (not in `.env`)
-- [ ] Traefik forward-auth Proxy Provider and outpost created in Authentik
+- [ ] Traefik forward-auth Proxy Provider created in domain-level mode with cookie domain `.gibbsgreatly.xyz`
+- [ ] Outpost created and assigned the traefik-forwardauth provider
+- [ ] Browser ingress contract documented for `authentik.gibbsgreatly.xyz` (no Traefik middleware)
+- [ ] Traefik route and browser cert for Authentik validated (task 04-core-services-06)
 - [ ] `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` recorded in
   `terraform/secrets.enc.yaml` (not in `.env`)
 

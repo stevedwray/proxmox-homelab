@@ -223,9 +223,57 @@ ssh root@pve-test.gibbsgreatly.xyz "dmesg | grep -i oom | tail -5"
 
 ---
 
+## 5. Browser Ingress Wiring (all services via Traefik + Authentik)
+
+See [04-core-services-06-browser-ingress-wiring.md](04-core-services-06-browser-ingress-wiring.md)
+for the full task spec. Run after all four Phase 04 services are deployed.
+
+Two-gate sequence — run rem-05 first (code gate), then dep-05 (runtime gate):
+
+```bash
+# dep-05 step 1 — Reconfigure Authentik Proxy Provider (manual, Authentik Admin UI)
+# Edit 'traefik-forwardauth' Proxy Provider:
+#   Mode: Forward auth (domain level)
+#   Cookie domain: .gibbsgreatly.xyz
+#   Update the outpost to reload config
+
+# dep-05 step 2 — Redeploy Traefik to push new routes
+cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping
+../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/deploy-proxy-stack.yml
+
+# dep-05 step 3 — Update MikroTik DNS static records
+ssh admin@192.168.1.1 '
+  /ip dns static add name=authentik.gibbsgreatly.xyz address=10.57.2.10
+  /ip dns static add name=netbox.gibbsgreatly.xyz address=10.57.2.10
+  /ip dns static set [find name=portainer.gibbsgreatly.xyz] address=10.57.2.10
+  /ip dns static set [find name=harbor.gibbsgreatly.xyz] address=10.57.2.10
+'
+
+# dep-05 step 4 — Validate all six routes
+for h in traefik.lab grafana authentik portainer harbor netbox; do
+  echo -n "$h.gibbsgreatly.xyz → "
+  curl -skI --resolve $h.gibbsgreatly.xyz:443:10.57.2.10 https://$h.gibbsgreatly.xyz \
+    | grep -E 'HTTP/[0-9.]+ [0-9]+'
+done
+```
+
+**Auth policy summary:**
+
+| Service | Auth |
+| --- | --- |
+| Traefik dashboard | Authentik forward-auth |
+| Grafana | Grafana OIDC (no Traefik middleware) |
+| Authentik | None (it is the IdP) |
+| Portainer | Authentik forward-auth |
+| Harbor | Harbor native auth |
+| NetBox | Authentik forward-auth |
+
+---
+
 ## Validation checklist
 
-After all four services are deployed:
+After all five steps are complete:
 
 ```bash
 # Container health
