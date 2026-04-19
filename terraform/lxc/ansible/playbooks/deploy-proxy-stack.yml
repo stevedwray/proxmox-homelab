@@ -69,6 +69,12 @@
         - "{{ proxy_compose_dir }}/certs/letsencrypt/acme.json"
         - "{{ proxy_compose_dir }}/certs/step-ca/acme.json"
 
+    - name: Copy homelab root CA cert for Traefik container trust
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
+        dest: "{{ proxy_compose_dir }}/certs/homelab-root.crt"
+        mode: "0644"
+
     - name: Write compose secrets env file
       ansible.builtin.copy:
         dest: "{{ proxy_compose_dir }}/.env"
@@ -149,11 +155,7 @@
                 middlewares:
                   - authentik
                 tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "gibbsgreatly.xyz"
-                      sans:
-                        - "*.gibbsgreatly.xyz"
+                  certResolver: step-ca
               grafana:
                 rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
                 entryPoints:
@@ -197,6 +199,8 @@
               container_name: traefik
               restart: unless-stopped
               env_file: .env
+              environment:
+                - LEGO_CA_CERTIFICATES=/certs/homelab-root.crt
               ports:
                 - "80:80"
                 - "443:443"
@@ -206,6 +210,7 @@
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
+                - ./certs/homelab-root.crt:/certs/homelab-root.crt:ro
 
     - name: Validate Traefik compose configuration
       ansible.builtin.command:
