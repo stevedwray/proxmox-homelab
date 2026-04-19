@@ -84,9 +84,8 @@ from SOPS at deploy time — no literal credentials on disk.
 
 Ingress naming policy for this task:
 
-- Public/operator ingress remains on `*.gibbsgreatly.xyz`.
-- Internal `*.lab.gibbsgreatly.xyz` names are platform-internal identities and are not the
-  default browser ingress in this task.
+- Traefik operator ingress is `traefik.lab.gibbsgreatly.xyz`.
+- Internal service identities may continue to use `*.lab.gibbsgreatly.xyz` where applicable.
 
 ## Scope
 
@@ -151,7 +150,7 @@ Ingress naming policy for this task:
 - [ ] `curl -o /dev/null -w "%{http_code}" http://10.57.2.10` returns 301 or 302
 - [ ] `curl -sk https://10.57.2.10` does not error (TLS handshake succeeds)
 - [ ] TLS cert shows issuer `(STAGING) Let's Encrypt` — must not show `Homelab CA` or production LE
-- [ ] Traefik dashboard accessible at `https://10.57.2.10/dashboard/` (protected by Authentik SSO)
+- [ ] Traefik dashboard accessible at `https://traefik.lab.gibbsgreatly.xyz/dashboard/` (protected by Authentik SSO)
 - [ ] `/opt/proxy-stack/docker-compose.yml` contains no literal credentials
 - [ ] Authentik forward-auth middleware present in `dynamic/authentik.yml`
 - [ ] `dynamic/certs.yml` requesting wildcard `*.gibbsgreatly.xyz` from `letsencrypt` resolver
@@ -277,8 +276,12 @@ STEP 6 — Validate TLS and redirect:
   curl -o /dev/null -w "%{http_code}" http://10.57.2.10
   # Expect 301 or 302
 
-  curl -sv https://10.57.2.10/dashboard/ 2>&1 | grep -i "issuer"
+  curl -sv https://10.57.2.10/ 2>&1 | grep -i "issuer"
   # Expect: "(STAGING) Let's Encrypt" — NOT Homelab CA, NOT production LE
+
+  curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 \
+    https://traefik.lab.gibbsgreatly.xyz/dashboard/
+  # Expect: 302 redirect to Authentik authorize flow
 
   # Verify no literal credentials in compose file:
   TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
@@ -288,7 +291,7 @@ STEP 6 — Validate TLS and redirect:
 STEP 7 — Verify Authentik forward-auth (requires outpost from task 04-01 Step 7):
   # The middleware is configured in dynamic/authentik.yml.
   # The Authentik Proxy Provider outpost must already exist — this is a manual rebuild step.
-  # Accessing https://10.57.2.10/dashboard/ should redirect through Authentik login.
+  # Accessing https://traefik.lab.gibbsgreatly.xyz/dashboard/ should redirect through Authentik login.
   # NOTE: This step remains manual until terraform-provider-authentik is implemented.
 
 STEP 8 — Commit and merge:
