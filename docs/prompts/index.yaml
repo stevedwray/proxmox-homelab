@@ -30,7 +30,7 @@ prompts:
     file: remediation-01-authentik-secrets.yaml
     title: "Fix Authentik playbook — code hardening gate for SOPS env_file pattern"
     type: remediation
-    status: pending
+    status: complete
     priority: 1
     blocks:
       - dep-01-authentik
@@ -39,7 +39,7 @@ prompts:
     file: remediation-02-traefik-secrets.yaml
     title: "Fix Traefik playbook — code hardening gate for secrets and cert handling"
     type: remediation
-    status: pending
+    status: complete
     priority: 1
     blocks:
       - dep-02-traefik
