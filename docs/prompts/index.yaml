@@ -15,6 +15,10 @@
 #   pending      - not started
 #   in-progress  - partially complete
 #   complete     - done and merged
+#
+# Active source of truth for stack-owned edge provisioning refactor:
+#   docs/provisioning-refactor/prompts/index.yaml
+# This file keeps older Phase 04c prompt entries as legacy/superseded context.
 
 prompts:
 

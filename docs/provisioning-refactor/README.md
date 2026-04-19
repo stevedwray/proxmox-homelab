@@ -71,9 +71,11 @@ See [decisions.md](decisions.md) for details.
 ## Files
 
 - [decisions.md](decisions.md) records design decisions agents must follow.
-- [task-sequence.md](task-sequence.md) lists the complete atomic sequence.
+- [task-sequence.md](task-sequence.md) lists the complete 22-task atomic sequence.
 - [tasks/](tasks/) contains detailed task documents.
 - [prompts/](prompts/) contains matching agent prompts.
+- [prompts/index.yaml](prompts/index.yaml) is the ordered prompt registry for
+   the full 22-task sequence.
 - [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
 - [runbook.md](runbook.md) will contain shared validation and rollback commands.
 

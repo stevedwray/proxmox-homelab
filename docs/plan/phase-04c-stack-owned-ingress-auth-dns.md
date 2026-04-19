@@ -5,6 +5,11 @@
 > directory for task order, prompt selection, DNS ownership, bootstrap ordering,
 > and migration semantics. This file is retained as historical Phase 04c
 > context only.
+>
+> **Hostname note:** Treat apex-style `*.gibbsgreatly.xyz` examples in older
+> Phase 04 docs as legacy context when they conflict with
+> `*.lab.gibbsgreatly.xyz` decisions in
+> [`docs/provisioning-refactor/decisions.md`](../provisioning-refactor/decisions.md).
 
 ## Goal
 
