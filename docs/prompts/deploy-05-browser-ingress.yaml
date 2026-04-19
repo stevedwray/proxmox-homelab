@@ -1,0 +1,225 @@
+---
+id: dep-05-browser-ingress
+title: "Wire browser-facing service UIs through Traefik and Authentik — runtime gate"
+phase: "04"
+type: deployment
+status: pending
+depends_on:
+  - rem-05-browser-ingress
+  - dep-02-traefik
+github_issue: "#144"
+task_doc: docs/plan/tasks/04-core-services-06-browser-ingress-wiring.md
+
+context: |
+  This is a runtime gate prompt.
+
+  rem-05-browser-ingress added four routes to the Traefik playbook. This session:
+  1. Reconfigures the Authentik Proxy Provider outpost to domain-level mode
+  2. Redeploys Traefik to push the new routes
+  3. Updates MikroTik DNS records
+  4. Validates all six service URLs
+
+  Authentik outpost mode change is a manual step — terraform-provider-authentik not yet built.
+  The existing traefik-forwardauth Proxy Provider must be changed from
+  "Forward auth (single application)" to "Forward auth (domain level)" in the Authentik UI.
+  Domain-level mode sets a shared auth cookie for .gibbsgreatly.xyz and covers all subdomains
+  without per-application redirect URI configuration.
+
+  DNS state before this session:
+  - traefik.lab.gibbsgreatly.xyz → 10.57.2.10 (correct)
+  - grafana.lab.gibbsgreatly.xyz → 10.57.2.10 (correct)
+  - authentik.lab.gibbsgreatly.xyz → missing
+  - portainer.lab.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
+  - harbor.lab.gibbsgreatly.xyz → 192.168.1.4 (stale — must update)
+  - netbox.lab.gibbsgreatly.xyz → missing
+
+  Browser ingress and certificate policy:
+  - All browser-facing routes use certResolver: letsencrypt (LE staging on pve-test)
+  - step-ca certificates must not be used for any of these routes
+  - TLS terminates at Traefik; all backends served over plain HTTP
+
+preconditions:
+  repository:
+    - id: rem-05-done
+      description: rem-05-browser-ingress is complete — playbook has all six routes
+      verify: "grep -cE 'authentik\\.lab\\.gibbsgreatly|portainer\\.lab\\.gibbsgreatly|harbor\\.lab\\.gibbsgreatly|netbox\\.lab\\.gibbsgreatly' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+      expect: "4 or more matches"
+
+    - id: branch
+      description: On dev/pve-test (rem-05 merged) or feat/browser-ingress-wiring
+      verify: "git branch --show-current"
+
+  secrets:
+    - key: CF_DNS_API_TOKEN
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml | grep CF_DNS_API_TOKEN
+      expect: Real value present
+
+  infrastructure:
+    - id: proxmox-target
+      verify: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
+      expect: pve-test
+
+    - id: authentik-healthy
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "200 or 204"
+
+    - id: traefik-running
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct status 153'"
+      expect: "status: running"
+
+objective: |
+  All six browser-facing service URLs return valid HTTPS responses through Traefik.
+  Authentik, Portainer, and NetBox are protected by Authentik domain-level forward-auth.
+  Harbor and Grafana use their own native auth. All DNS records resolve to 10.57.2.10.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for all terragrunt and ansible-playbook calls.
+      Run ansible commands from terraform/lxc/ansible/ so roles_path resolves correctly.
+      Always pass -u root for direct ansible/ansible-playbook runs with inline IP inventory.
+      Never pass secrets via --extra-vars; never source .env.
+      This is a deployment session — do not make code changes beyond what rem-05 already merged.
+
+  steps:
+    - id: 1
+      name: Verify preconditions
+      commands:
+        - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node'"
+        - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct status 153'"
+        - "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do echo -n \"$h → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz || echo 'no record'; done"
+
+    - id: 2
+      name: "MANUAL — Reconfigure Authentik Proxy Provider to domain-level mode"
+      type: manual
+      instructions: |
+        1. Open http://10.57.1.10:9000 and log in as admin
+        2. Go to Admin UI → Applications → Providers
+        3. Find the 'traefik-forwardauth' Proxy Provider and click Edit
+        4. Change the Forward auth mode from "Forward auth (single application)"
+           to "Forward auth (domain level)"
+        5. Set Cookie domain to: .lab.gibbsgreatly.xyz
+        6. Save the provider
+        7. Go to Admin UI → Applications → Outposts
+        8. Find the outpost that uses traefik-forwardauth and click Update
+           (this triggers the outpost to reload its configuration)
+        9. Wait ~30 seconds for the outpost to apply the new config
+
+        NOTE: After this change, the existing traefik.lab.gibbsgreatly.xyz dashboard protection
+        continues to work. The domain-level mode is a superset of single-application mode.
+
+    - id: 3
+      name: Ping Traefik LXC before playbook
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping"
+
+    - id: 4
+      name: Redeploy Traefik playbook to push new routes
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/deploy-proxy-stack.yml"
+      notes:
+        - Playbook is idempotent — safe to run against a running Traefik
+        - Traefik file provider watches /etc/traefik/dynamic/ and reloads automatically
+        - No container restart required — Traefik picks up config changes within seconds
+
+    - id: 5
+      name: Verify new routes are live in Traefik dynamic config
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct exec 153 -- grep -E \"authentik\\.lab\\.gibbsgreatly|portainer\\.lab\\.gibbsgreatly|harbor\\.lab\\.gibbsgreatly|netbox\\.lab\\.gibbsgreatly\" /opt/proxy-stack/dynamic/authentik.yml'"
+      expect: Four hostname matches
+
+    - id: 6
+      name: Update MikroTik DNS static records (REST API)
+      commands:
+        - |
+          ./with-secrets bash -lc '
+            set -euo pipefail
+            host="${MIKROTIK_HOST:-192.168.1.1}"
+            user="${MIKROTIK_ADMIN:-${MIKROTIK_USER}}"
+            pass="${MIKROTIK_ADMIN_PASSWORD:-${MIKROTIK_PASSWORD}}"
+            base="https://${host}/rest/ip/dns/static"
+            for name in authentik.lab.gibbsgreatly.xyz netbox.lab.gibbsgreatly.xyz portainer.lab.gibbsgreatly.xyz harbor.lab.gibbsgreatly.xyz; do
+              ids=$(curl -sk --user "$user:$pass" "$base" | jq -r --arg n "$name" ''.[] | select(.name==$n) | .[".id"]'')
+              if [ -n "$ids" ]; then
+                while IFS= read -r id; do [ -z "$id" ] || curl -sk --user "$user:$pass" -X DELETE "$base/$id" >/dev/null; done <<< "$ids"
+              fi
+              curl -sk --user "$user:$pass" -H "Content-Type: application/json" -X POST "$base/add" --data "{\"name\":\"$name\",\"type\":\"A\",\"address\":\"10.57.2.10\",\"ttl\":\"5m\"}" >/dev/null
+            done
+          '
+      notes:
+        - Use API credentials from secrets: MIKROTIK_ADMIN/MIKROTIK_ADMIN_PASSWORD
+        - Avoid MikroTik SSH for this task
+
+    - id: 7
+      name: Verify DNS resolves to Traefik for all six hostnames
+      commands:
+        - "for h in traefik.lab grafana.lab authentik.lab portainer.lab harbor.lab netbox.lab; do echo -n \"$h.gibbsgreatly.xyz → \"; dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
+      expect: All six return 10.57.2.10
+
+    - id: 8
+      name: Validate all six service URLs
+      commands:
+        - "curl -skI --resolve authentik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve portainer.lab.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
+        - "curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
+        - "curl -skI --resolve grafana.lab.gibbsgreatly.xyz:443:10.57.2.10 https://grafana.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ [0-9]+'"
+        - "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/dashboard/ | grep -E 'HTTP/[0-9.]+ [0-9]+|[Ll]ocation:'"
+      expect:
+        - authentik: 200 or 302
+        - portainer: 302 to Authentik authorize URL
+        - harbor: 200 or 302
+        - netbox: 302 to Authentik authorize URL
+        - grafana: 200 or 302
+        - traefik: 302 to Authentik authorize URL
+
+    - id: 9
+      name: Verify staging LE cert on all new routes
+      commands:
+        - "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do echo \"=== $h ===\"; curl -sv https://$h.gibbsgreatly.xyz 2>&1 | grep -i 'issuer'; done"
+      expect: All show "(STAGING) Let's Encrypt" — NOT Homelab CA
+
+postconditions:
+  criteria:
+    - id: authentik-route
+      description: authentik.lab.gibbsgreatly.xyz returns 200 or 302 via Traefik
+      verify: "curl -skI --resolve authentik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
+      expect: Match
+
+    - id: portainer-forward-auth
+      description: portainer.lab.gibbsgreatly.xyz redirects to Authentik authorize
+      verify: "curl -skI --resolve portainer.lab.gibbsgreatly.xyz:443:10.57.2.10 https://portainer.lab.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
+      expect: Authentik authorize URL in location header
+
+    - id: harbor-route
+      description: harbor.lab.gibbsgreatly.xyz returns 200 or 302 via Traefik
+      verify: "curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302)'"
+      expect: Match
+
+    - id: netbox-forward-auth
+      description: netbox.lab.gibbsgreatly.xyz redirects to Authentik authorize
+      verify: "curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz | grep 'location:' | grep 'authentik\\|application/o/authorize'"
+      expect: Authentik authorize URL in location header
+
+    - id: dns-correct
+      description: All four updated DNS records resolve to 10.57.2.10
+      verify: "for h in authentik.lab portainer.lab harbor.lab netbox.lab; do dig +short @192.168.1.1 $h.gibbsgreatly.xyz; done"
+      expect: Four lines each showing 10.57.2.10
+
+    - id: staging-cert
+      description: New routes serve LE staging cert (not step-ca, not production LE)
+      verify: "curl -sv https://portainer.lab.gibbsgreatly.xyz 2>&1 | grep -i 'STAGING'"
+      expect: '"(STAGING) Let''s Encrypt" in issuer'
+
+notes:
+  - Traefik file provider watches /etc/traefik/dynamic/ and hot-reloads — no container restart needed
+  - If portainer returns 200 instead of 302, the Authentik outpost domain-level reconfiguration may
+    not have taken effect yet — wait 60 seconds and retry
+  - Harbor will return 200 (its own login page) — this is correct, no forward-auth on Harbor
+  - Prefer MikroTik REST API for DNS updates in this repo; SSH may be disabled for automation users
+  - After DNS update, flush the local resolver if needed: resolvectl flush-caches

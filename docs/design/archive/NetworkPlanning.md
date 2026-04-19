@@ -441,7 +441,7 @@ Introduce the same zone structure into prod alongside the existing network, then
 
 ### Milestone 6
 
-* Stand up internal DNS service authoritative for `lab.gibbsgreatly.xyz`.
+* Stand up internal DNS service authoritative for `lab.gibbsgreatly.xyz` (Phase 04b deployment).
 * Configure MikroTik conditional forwarding for `lab.gibbsgreatly.xyz`.
 * Validate resolution from `build_seg`, `mgmt_seg`, `edge_seg`, and `infra_seg` clients.
 * Onboard first platform names: `traefik.lab.gibbsgreatly.xyz`, `authentik.lab.gibbsgreatly.xyz`, `grafana.lab.gibbsgreatly.xyz`, `step-ca.lab.gibbsgreatly.xyz`.

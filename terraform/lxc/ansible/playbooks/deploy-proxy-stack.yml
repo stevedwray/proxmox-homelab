@@ -45,7 +45,6 @@
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
     traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
-    cf_dns_api_token: "{{ lookup('env', 'CF_DNS_API_TOKEN') | mandatory('CF_DNS_API_TOKEN env var is not set') }}"
 
   tasks:
     - name: Create Traefik directory structure
@@ -69,6 +68,13 @@
       loop:
         - "{{ proxy_compose_dir }}/certs/letsencrypt/acme.json"
         - "{{ proxy_compose_dir }}/certs/step-ca/acme.json"
+
+    - name: Write compose secrets env file
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          CF_DNS_API_TOKEN={{ lookup('env', 'CF_DNS_API_TOKEN') | mandatory('CF_DNS_API_TOKEN env var is not set') }}
 
     - name: Write Traefik static configuration
       ansible.builtin.copy:
@@ -136,7 +142,7 @@
                     - X-authentik-email
             routers:
               traefik-dashboard:
-                rule: "Host(`traefik.gibbsgreatly.xyz`)"
+                rule: "Host(`traefik.lab.gibbsgreatly.xyz`)"
                 entryPoints:
                   - websecure
                 service: api@internal
@@ -145,25 +151,89 @@
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
               grafana:
-                rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
+                rule: "Host(`{{ grafana_edge_host | default('grafana.lab.gibbsgreatly.xyz') }}`)"
                 entryPoints:
                   - websecure
                 service: grafana-backend
                 tls:
                   certResolver: letsencrypt
                   domains:
-                    - main: "gibbsgreatly.xyz"
+                    - main: "lab.gibbsgreatly.xyz"
                       sans:
-                        - "*.gibbsgreatly.xyz"
+                        - "*.lab.gibbsgreatly.xyz"
+              authentik:
+                rule: "Host(`authentik.lab.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: authentik-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "lab.gibbsgreatly.xyz"
+                      sans:
+                        - "*.lab.gibbsgreatly.xyz"
+              portainer:
+                rule: "Host(`portainer.lab.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: portainer-backend
+                middlewares:
+                  - authentik
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "lab.gibbsgreatly.xyz"
+                      sans:
+                        - "*.lab.gibbsgreatly.xyz"
+              harbor:
+                rule: "Host(`harbor.lab.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: harbor-backend
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "lab.gibbsgreatly.xyz"
+                      sans:
+                        - "*.lab.gibbsgreatly.xyz"
+              netbox:
+                rule: "Host(`netbox.lab.gibbsgreatly.xyz`)"
+                entryPoints:
+                  - websecure
+                service: netbox-backend
+                middlewares:
+                  - authentik
+                tls:
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "lab.gibbsgreatly.xyz"
+                      sans:
+                        - "*.lab.gibbsgreatly.xyz"
             services:
               grafana-backend:
                 loadBalancer:
                   servers:
                     - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
+              authentik-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.1.10:9000"
+              portainer-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.1.20:9000"
+              harbor-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.3.10"
+              netbox-backend:
+                loadBalancer:
+                  servers:
+                    - url: "http://10.57.3.12:8080"
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:
@@ -176,9 +246,9 @@
                 defaultGeneratedCert:
                   resolver: letsencrypt
                   domain:
-                    main: "gibbsgreatly.xyz"
+                    main: "lab.gibbsgreatly.xyz"
                     sans:
-                      - "*.gibbsgreatly.xyz"
+                      - "*.lab.gibbsgreatly.xyz"
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -190,11 +260,10 @@
               image: {{ traefik_image }}
               container_name: traefik
               restart: unless-stopped
+              env_file: .env
               ports:
                 - "80:80"
                 - "443:443"
-              environment:
-                CF_DNS_API_TOKEN: "{{ cf_dns_api_token }}"
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./traefik.yml:/etc/traefik/traefik.yml:ro

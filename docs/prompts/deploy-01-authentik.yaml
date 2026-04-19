@@ -1,0 +1,224 @@
+---
+id: dep-01-authentik
+title: "Deploy Authentik identity provider (VMID 150) — runtime gate"
+phase: "04"
+type: deployment
+status: complete
+depends_on:
+  - rem-01-authentik-secrets
+task_doc: docs/plan/tasks/04-core-services-01-deploy-authentik.md
+github_issue: ""
+
+context: |
+  COMPLETE — Runtime gate validated on 2026-04-19.
+
+  This is a runtime gate prompt.
+
+  Mode 2 (rebuild) execution. Deploy Authentik as the first management-segment
+  service. All prerequisite infra services (Portainer, Harbor, apt-cacher) must
+  already be running. Authentik must be deployed before Traefik, step-ca, and
+  Monitoring because:
+  - Traefik forwardAuth middleware points at Authentik
+  - Monitoring Grafana OIDC points at Authentik
+
+  IMPORTANT: This deployment has three mandatory manual steps after the playbook runs
+  (known rebuild gaps — not automatable until terraform-provider-authentik is built):
+  1. First-boot web UI setup and admin account creation
+  2. Create Proxy Provider + outpost (unblocks Traefik)
+  3. Create Grafana OIDC provider (unblocks Monitoring)
+  These manual steps produce secrets that must be recorded in terraform/secrets.enc.yaml.
+
+preconditions:
+  repository:
+    - id: remediation-done
+      description: rem-01-authentik-secrets is complete — playbook uses env_file pattern
+      verify: "grep -c 'lookup.*env.*AUTHENTIK_SECRET_KEY' terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml"
+      expect: "1 or more matches"
+    - id: branch
+      description: Working on dev/pve-test (this is a deployment execution, not a code change)
+      verify: "git branch --show-current"
+
+  secrets:
+    - key: AUTHENTIK_SECRET_KEY
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml | grep 'AUTHENTIK_SECRET_KEY'
+      expect: Real value present (not CHANGEME_)
+    - key: AUTHENTIK_POSTGRES_PASSWORD
+      verify: same pattern
+    - key: AUTHENTIK_SUPERUSER_PASSWORD
+      verify: same pattern
+
+  infrastructure:
+    - id: proxmox-target
+      description: TF_VAR_proxmox_node is pve-test
+      verify: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
+      expect: pve-test
+
+    - id: portainer
+      description: Portainer running at 10.57.1.20
+      verify: "curl -s http://10.57.1.20:9000/api/system/status | jq .version"
+
+    - id: harbor
+      description: Harbor healthy at 10.57.3.10
+      verify: "curl -s http://10.57.3.10/api/v2.0/ping"
+      expect: '"pong"'
+
+    - id: apt-cacher
+      description: apt-cacher-ng healthy at 10.57.3.11
+      verify: "curl -s http://10.57.3.11:3142/acng-report.html > /dev/null && echo ok"
+
+    - id: sdn-zones
+      description: mgmt_seg and infra_seg SDN VLAN zones applied on pve-test
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pvesh get /nodes/pve-test/sdn/zones'"
+      expect: tvmgmt and tvinfra zones listed
+
+    - id: ip-available
+      description: 10.57.1.10 is not in use
+      verify: "ping -c 2 -W 1 10.57.1.10 && echo IN_USE || echo available"
+      expect: available
+
+    - id: template
+      description: LXC template exists in storage
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pvesm list storage-template | grep debian-13.1-2-docker-template'"
+      expect: Match found
+
+objective: |
+  LXC VMID 150 is running at 10.57.1.10, Authentik health endpoints return 200 or 204,
+  all secrets are injected from SOPS (no literal values on disk), first-boot
+  setup is complete, AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS, and the Proxy
+  Provider outpost and Grafana OIDC provider are created.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for all terragrunt and ansible-playbook calls.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
+      Inline IP inventories default to the local shell username; always pass -u root for direct ansible/ansible-playbook validation runs.
+      Never source .env directly. No --extra-vars for secrets.
+      This is a deployment session — make no code changes; report if code issues are found.
+
+  steps:
+    - id: 1
+      name: Verify preconditions
+      commands:
+        - "./with-secrets bash -c 'echo Node=$TF_VAR_proxmox_node Workspace=$TF_WORKSPACE'"
+        - "curl -s http://10.57.3.10/api/v2.0/ping"
+        - "ping -c 2 -W 1 10.57.1.10 || echo IP available"
+
+    - id: 2
+      name: Apply Authentik LXC
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/authentik-stack
+        - "../../../../with-secrets terragrunt apply"
+      notes:
+        - Review the plan output before confirming apply
+        - VMID 150, IP 10.57.1.10, zone mgmt_seg
+
+    - id: 3
+      name: Run Ansible playbook
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '10.57.1.10,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '10.57.1.10,' -u root playbooks/deploy-authentik-stack.yml"
+      notes:
+        - If ping fails with UNREACHABLE, fix SSH auth/inventory before running the playbook
+        - Playbook must complete without errors
+        - If playbook fails due to secrets pattern, stop and fix rem-01-authentik-secrets first
+
+    - id: 4
+      name: Verify health
+      commands:
+        - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/live/"
+        - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "200 or 204 for both (allow 3 minutes for first startup)"
+
+    - id: 5
+      name: Verify no secrets on disk
+      commands:
+        - "pct exec 150 -- grep -c CHANGEME /opt/authentik-stack/docker-compose.yml"
+        - "pct exec 150 -- stat -c '%a' /opt/authentik-stack/.env"
+      expect:
+        - compose grep returns 0
+        - .env mode is 600
+
+    - id: 6
+      name: "MANUAL — Complete first-boot setup"
+      type: manual
+      instructions: |
+        1. Open http://10.57.1.10:9000/if/flow/initial-setup/ in a browser
+        2. Set the admin username and use AUTHENTIK_SUPERUSER_PASSWORD from SOPS
+        3. After login, go to Admin UI → Directory → Tokens and API Keys
+        4. Create a new API token
+        5. Record the token in terraform/secrets.enc.yaml:
+             SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
+             Set AUTHENTIK_SUPERUSER_API_TOKEN to the real token value
+        6. In Admin UI → Applications → Providers → Create → Proxy Provider:
+             - Name: traefik-forwardauth
+             - Forward auth (single application) mode
+             - Allowed redirect URIs: https://10.57.2.10/.*
+           Then create an Outpost → type Proxy → assign the traefik-forwardauth provider
+        7. In Admin UI → Applications → Providers → Create → OAuth2/OIDC Provider:
+             - Name: grafana
+             - Redirect URI: http://10.57.1.12:3000/login/generic_oauth
+             - Copy the resulting Client ID and Client Secret
+           Add to terraform/secrets.enc.yaml:
+             GRAFANA_OAUTH_CLIENT_ID: <client-id>
+             GRAFANA_OAUTH_CLIENT_SECRET: <client-secret>
+
+    - id: 7
+      name: Verify SOPS has all tokens
+      commands:
+        - |
+          SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+            sops --decrypt terraform/secrets.enc.yaml \
+            | grep -E 'AUTHENTIK_SUPERUSER_API_TOKEN|GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET'
+      expect: Three lines with real values (not CHANGEME_)
+
+postconditions:
+  criteria:
+    - id: lxc-running
+      description: VMID 150 is running
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct status 150'"
+      expect: "status: running"
+
+    - id: health-live
+      description: Authentik live health returns 200 or 204
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/live/"
+      expect: "200 or 204"
+
+    - id: health-ready
+      description: Authentik ready health returns 200 or 204
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "200 or 204"
+
+    - id: no-literals-on-disk
+      description: Compose file has no literal credential values
+      verify: "pct exec 150 -- grep -c CHANGEME /opt/authentik-stack/docker-compose.yml"
+      expect: "0"
+
+    - id: api-token-in-sops
+      description: AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS with a real value
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml | grep AUTHENTIK_SUPERUSER_API_TOKEN
+      expect: Real token value (not CHANGEME_)
+
+    - id: outpost-created
+      description: Traefik forward-auth Proxy Provider outpost exists in Authentik
+      verify: "Manual check — verify in Authentik admin UI → Outposts"
+
+    - id: grafana-oidc-in-sops
+      description: GRAFANA_OAUTH_CLIENT_ID and SECRET are in SOPS
+      verify: |
+        SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt \
+          sops --decrypt terraform/secrets.enc.yaml \
+          | grep -E 'GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET'
+      expect: Two lines with real values
+
+notes:
+  - Authentik startup takes 2–3 minutes on first run — health checks may return 5xx initially
+  - AUTHENTIK_SUPERUSER_API_TOKEN is stored in SOPS only — never in .env
+  - The Proxy Provider outpost must be created before Traefik forwardAuth will work
+  - The Grafana OIDC provider must be created before the Monitoring deployment will work
+  - This task unblocks dep-02-traefik and dep-04-monitoring

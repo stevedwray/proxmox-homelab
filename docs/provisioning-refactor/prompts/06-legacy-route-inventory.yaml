@@ -1,0 +1,25 @@
+---
+id: pr-06-legacy-route-inventory
+title: "Implement read-only legacy route inventory"
+type: development
+status: pending
+depends_on:
+  - pr-05-manifest-validator
+task_doc: docs/provisioning-refactor/tasks/06-legacy-route-inventory.md
+
+context: |
+  Renderer collision checks need current central host rules.
+
+objective: |
+  Extract legacy Host(...) rules from deploy-proxy-stack.yml without modifying
+  the playbook.
+
+workflow:
+  steps:
+    - Add read-only extraction.
+    - Report host, router, and source location where possible.
+    - Add tests for current central routes.
+
+postconditions:
+  criteria:
+    - Tooling can support intended replacement host checks.

@@ -5,7 +5,7 @@
 Environment configuration is split into two tiers:
 
 | Tier | What goes here | File | Committed? |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | Non-secret config | Hostnames, node names, IP addresses, usernames, workspace names | `.env` | No (gitignored) |
 | Secrets | Passwords, tokens, API keys | `terraform/secrets.enc.yaml` | Yes (SOPS-encrypted) |
 
@@ -58,16 +58,19 @@ install -m 600 /dev/stdin ~/.config/sops/age/keys.txt
 ```
 
 ### Inspect secrets
+
 ```bash
 SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml
 ```
 
 ### Edit a secret (re-encrypts on save)
+
 ```bash
 SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 ```
 
 ### Add a new secret
+
 1. `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml`
 2. Add `KEY_NAME: value` in your `$EDITOR`
 3. Save — sops re-encrypts automatically
@@ -75,40 +78,43 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 
 ### Secret inventory
 
-| Key | Purpose |
-|---|---|
-| `TF_VAR_pm_api_token_secret` | Proxmox API token secret |
-| `TF_VAR_lxc_password` | Default LXC root password |
-| `TF_VAR_portainer_admin_password` | Portainer initial admin |
-| `NETBOX_DB_PASSWORD` | NetBox PostgreSQL password |
-| `NETBOX_REDIS_PASSWORD` | NetBox Redis password |
-| `NETBOX_REDIS_CACHE_PASSWORD` | NetBox Redis cache password |
-| `NETBOX_SECRET_KEY` | NetBox Django secret key |
-| `NETBOX_API_TOKEN_PEPPER` | NetBox API token pepper |
-| `NETBOX_SUPERUSER_PASSWORD` | NetBox superuser password |
-| `NETBOX_SUPERUSER_API_TOKEN` | NetBox superuser API token |
-| `MIKROTIK_ADMIN` | MikroTik admin automation username (preferred for write operations) |
-| `MIKROTIK_ADMIN_PASSWORD` | MikroTik admin automation password (preferred for write operations) |
-| `MIKROTIK_USER` | MikroTik API username |
-| `MIKROTIK_PASSWORD` | MikroTik API password |
-| `HARBOR_ADMIN_PASSWORD` | Harbor admin password |
-| `HARBOR_DB_PASSWORD` | Harbor PostgreSQL password |
-| `HARBOR_DOCKERHUB_USERNAME` | DockerHub pull-through account |
-| `HARBOR_DOCKERHUB_PASSWORD` | DockerHub pull-through password |
-| `NPM_DB_PASSWORD` | Nginx Proxy Manager DB password |
-| `SONAR_TOKEN` | SonarCloud analysis token |
-| `SNYK_TOKEN` | Snyk IaC scan token |
-| `AUTHENTIK_SECRET_KEY` | Authentik Django secret key |
-| `AUTHENTIK_POSTGRES_PASSWORD` | Authentik PostgreSQL password |
-| `AUTHENTIK_SUPERUSER_PASSWORD` | Authentik initial admin password |
-| `AUTHENTIK_SUPERUSER_API_TOKEN` | Authentik API token |
-| `CF_DNS_API_TOKEN` | Cloudflare DNS API token (step-ca ACME) |
-| `STEP_CA_PASSWORD` | step-ca root CA key password |
-| `STEP_CA_PROVISIONER_PASSWORD` | step-ca ACME provisioner password |
-| `GRAFANA_ADMIN_PASSWORD` | Grafana admin password |
-| `GRAFANA_OAUTH_CLIENT_SECRET` | Grafana OAuth client secret |
+| Key | Purpose | Used by |
+| --- | --- | --- |
+| `TF_VAR_pm_api_token_secret` | Proxmox API token secret | Terraform |
+| `TF_VAR_lxc_password` | Default LXC root password | Terraform |
+| `TF_VAR_portainer_admin_password` | Portainer initial admin | deploy-portainer-stack |
+| `NETBOX_DB_PASSWORD` | NetBox PostgreSQL password | deploy-netbox-stack |
+| `NETBOX_REDIS_PASSWORD` | NetBox Redis password | deploy-netbox-stack |
+| `NETBOX_REDIS_CACHE_PASSWORD` | NetBox Redis cache password | deploy-netbox-stack |
+| `NETBOX_SECRET_KEY` | NetBox Django secret key | deploy-netbox-stack |
+| `NETBOX_API_TOKEN_PEPPER` | NetBox API token pepper | deploy-netbox-stack |
+| `NETBOX_SUPERUSER_PASSWORD` | NetBox superuser password | deploy-netbox-stack |
+| `NETBOX_SUPERUSER_API_TOKEN` | NetBox superuser API token | Ansible NetBox API calls |
+| `MIKROTIK_ADMIN` | MikroTik admin username (write operations) | Manual / future IaC |
+| `MIKROTIK_ADMIN_PASSWORD` | MikroTik admin password (write operations) | Manual / future IaC |
+| `MIKROTIK_USER` | MikroTik read-only API username | Manual |
+| `MIKROTIK_PASSWORD` | MikroTik read-only API password | Manual |
+| `HARBOR_ADMIN_PASSWORD` | Harbor admin password | deploy-harbor-stack |
+| `HARBOR_DB_PASSWORD` | Harbor PostgreSQL password | deploy-harbor-stack |
+| `HARBOR_ROBOT_USER` | Harbor robot account username | All stack playbooks (image pull auth) |
+| `HARBOR_ROBOT_PASSWORD` | Harbor robot account password | All stack playbooks (image pull auth) |
+| `HARBOR_DOCKERHUB_USERNAME` | DockerHub pull-through account | Harbor proxy cache config |
+| `HARBOR_DOCKERHUB_PASSWORD` | DockerHub pull-through password | Harbor proxy cache config |
+| `SONAR_TOKEN` | SonarCloud analysis token | CI / `sonar-scanner` |
+| `SNYK_TOKEN` | Snyk IaC scan token | CI / `snyk iac test` |
+| `AUTHENTIK_SECRET_KEY` | Authentik Django secret key (must never change) | deploy-authentik-stack |
+| `AUTHENTIK_POSTGRES_PASSWORD` | Authentik PostgreSQL password | deploy-authentik-stack |
+| `AUTHENTIK_SUPERUSER_PASSWORD` | Authentik initial admin password | deploy-authentik-stack |
+| `AUTHENTIK_SUPERUSER_API_TOKEN` | Authentik API token for IaC automation | terraform-provider-authentik |
+| `CF_DNS_API_TOKEN` | Cloudflare DNS API token — `Zone:DNS:Edit` for `gibbsgreatly.xyz` only (SEC-07) | deploy-proxy-stack (Traefik DNS-01) |
+| `STEP_CA_PASSWORD` | step-ca root CA key password | deploy-step-ca |
+| `STEP_CA_PROVISIONER_PASSWORD` | step-ca ACME provisioner password | deploy-step-ca |
+| `GRAFANA_ADMIN_PASSWORD` | Grafana admin password | deploy-monitoring-stack |
+| `GRAFANA_OAUTH_CLIENT_ID` | Grafana OAuth client ID (from Authentik OIDC provider) | deploy-monitoring-stack |
+| `GRAFANA_OAUTH_CLIENT_SECRET` | Grafana OAuth client secret (from Authentik OIDC provider) | deploy-monitoring-stack |
 
-Keys marked `CHANGEME_*` are placeholders for services not yet deployed.
+**SEC-07 reminder:** The Cloudflare API token (`CF_DNS_API_TOKEN`) must be scoped to
+`Zone:DNS:Edit` for `gibbsgreatly.xyz` only. Rotate after each development pass.
 
 ## CI
 
@@ -120,6 +126,7 @@ It uses the `SOPS_AGE_KEY` GitHub Actions secret (set via `gh secret set SOPS_AG
 The public key is committed in `.sops.yaml`. The private key is **never committed**.
 
 ### Rotate the age key
+
 ```bash
 age-keygen -o ~/.config/sops/age/keys-new.txt
 

@@ -1,0 +1,24 @@
+---
+id: pr-03-cutover-semantics
+title: "Define one-host route cutover semantics"
+type: documentation
+status: pending
+depends_on:
+  - pr-01-bootstrap-order
+task_doc: docs/provisioning-refactor/tasks/03-cutover-semantics.md
+
+context: |
+  Generated routes must not accidentally duplicate legacy central routes.
+
+objective: |
+  Define the intended-replacement host workflow for one-service migrations.
+
+workflow:
+  steps:
+    - Update decisions, renderer task, and migration tasks.
+    - Make accidental duplicates fail.
+    - Allow exactly one explicit intended replacement host per migration.
+
+postconditions:
+  criteria:
+    - Migration tasks can validate generated routes without allowing duplicate live routers.

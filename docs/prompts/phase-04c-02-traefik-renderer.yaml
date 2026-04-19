@@ -1,0 +1,51 @@
+---
+id: p04c-02-traefik-renderer
+title: "Implement Traefik dynamic config renderer from stack manifests"
+phase: "04c"
+type: development
+status: pending
+depends_on:
+  - p04c-01-edge-contract
+task_doc: docs/plan/tasks/04c-stack-owned-ingress-02-traefik-renderer.md
+
+context: |
+  Build manifest discovery + validation + rendering into per-stack Traefik dynamic files.
+  Keep central Traefik runtime/static config unchanged.
+
+objective: |
+  Generate deterministic Traefik router/service outputs from stack manifests without
+  central per-service route edits.
+
+workflow:
+  tooling:
+    note: "Use repository-native tooling and preserve existing Ansible patterns."
+
+  steps:
+    - id: 1
+      name: Add manifest discovery and validation hook
+      commands:
+        - "Discover manifests from standard stack paths"
+        - "Validate each manifest against v1alpha1 contract"
+
+    - id: 2
+      name: Render per-stack Traefik files
+      commands:
+        - "Generate routers/services/tls blocks for each stack"
+        - "Write deterministic output to /opt/proxy-stack/dynamic/stacks/<stack>.yml"
+
+    - id: 3
+      name: Validate outputs
+      commands:
+        - "Run compose config validation for proxy stack"
+        - "Run YAML/syntax checks on generated files"
+
+postconditions:
+  criteria:
+    - id: no-central-edits-needed
+      description: New stack route onboarding works without editing central route template
+      verify: "Demonstrate with one sample manifest"
+      expect: Route appears via generated stack file
+
+notes:
+  - Fail fast on duplicate hostname collisions.
+  - Prefer dry-run mode before apply mode.

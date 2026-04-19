@@ -1,0 +1,119 @@
+---
+id: rem-05-browser-ingress
+title: "Add all browser service routes to Traefik playbook — code hardening gate"
+phase: "04"
+type: remediation
+status: pending
+github_issue: "#144"
+task_doc: docs/plan/tasks/04-core-services-06-browser-ingress-wiring.md
+
+context: |
+  This is a code hardening gate — fix the playbook so it is rebuild-safe.
+  Do NOT run against pve-test in this session. The deployment gate (dep-05) does that.
+
+  The Traefik playbook currently writes only two routes to dynamic/authentik.yml:
+  - traefik-dashboard (traefik.lab.gibbsgreatly.xyz)
+  - grafana (grafana.lab.gibbsgreatly.xyz)
+
+  Four more services are deployed and require routes:
+  - authentik.lab.gibbsgreatly.xyz → 10.57.1.10:9000 (no middleware — Authentik is the IdP)
+  - portainer.lab.gibbsgreatly.xyz → 10.57.1.20:9000 (authentik middleware)
+  - harbor.lab.gibbsgreatly.xyz → 10.57.3.10 (no middleware — Harbor native auth)
+  - netbox.lab.gibbsgreatly.xyz → 10.57.3.12:8080 (authentik middleware)
+
+  Auth policy rationale:
+  - Authentik: cannot protect itself (circular dependency)
+  - Portainer: forward-auth gates browser UI; Portainer native auth still used for API/agents
+  - Harbor: native RBAC covers robot accounts and CI; forward-auth would break non-browser clients
+  - NetBox: forward-auth gates browser UI; NetBox native auth used for API access
+
+  All browser routes use certResolver: letsencrypt with wildcard *.lab.gibbsgreatly.xyz.
+
+preconditions:
+  repository:
+    - id: branch
+      description: On feat/browser-ingress-wiring, not dev/pve-test
+      verify: "git branch --show-current"
+      expect: "feat/browser-ingress-wiring"
+
+    - id: existing-routes
+      description: Two existing routes present in the playbook
+      verify: "grep -c 'traefik-dashboard\\|grafana' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+      expect: "2 or more matches"
+
+objective: |
+  deploy-proxy-stack.yml authentik.yml template contains all six service routes.
+  docker compose config -q passes on the updated template (validated via ansible --check or
+  a local compose validate). No deployment to pve-test in this session.
+
+workflow:
+  tooling:
+    note: |
+      This is a code-only session. Edit deploy-proxy-stack.yml only.
+      Do not run ansible-playbook or terragrunt apply.
+      Validate the YAML structure is correct (proper indentation, valid Traefik syntax).
+
+  steps:
+    - id: 1
+      name: Read current playbook and confirm existing routes
+      commands:
+        - "grep -n 'routers:\\|services:\\|rule:\\|url:' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+
+    - id: 2
+      name: Add four routes to the authentik.yml template in the playbook
+      description: |
+        In the "Write Authentik middleware and dashboard router config" task in deploy-proxy-stack.yml,
+        extend the routers and services blocks to add:
+
+        Routers (all use certResolver: letsencrypt, domains main: lab.gibbsgreatly.xyz sans: *.lab.gibbsgreatly.xyz):
+          authentik:  Host(`authentik.lab.gibbsgreatly.xyz`)    → authentik-backend    (no middleware)
+          portainer:  Host(`portainer.lab.gibbsgreatly.xyz`)    → portainer-backend    (middleware: authentik)
+          harbor:     Host(`harbor.lab.gibbsgreatly.xyz`)       → harbor-backend       (no middleware)
+          netbox:     Host(`netbox.lab.gibbsgreatly.xyz`)       → netbox-backend       (middleware: authentik)
+
+        Services:
+          authentik-backend: http://10.57.1.10:9000
+          portainer-backend: http://10.57.1.20:9000
+          harbor-backend:    http://10.57.3.10
+          netbox-backend:    http://10.57.3.12:8080
+
+    - id: 3
+      name: Validate YAML syntax
+      commands:
+        - "python3 -c \"import yaml, sys; yaml.safe_load(open('terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml').read()); print('YAML valid')\""
+
+    - id: 4
+      name: Confirm all six hostnames present in the template
+      commands:
+        - "grep -E 'traefik\\.lab\\.|grafana\\.|authentik\\.|portainer\\.|harbor\\.|netbox\\.' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+      expect: Six hostname matches
+
+    - id: 5
+      name: Commit
+      commands:
+        - "git add terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+        - |
+          git commit -m "feat(traefik): add authentik, portainer, harbor, netbox routes to proxy playbook
+
+          Closes #144 (code gate — dep-05 covers runtime validation)"
+
+postconditions:
+  criteria:
+    - id: six-routes
+      description: All six hostnames in the playbook template
+      verify: "grep -cE 'gibbsgreatly\\.xyz' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml"
+      expect: "6 or more matches"
+
+    - id: auth-middleware-correct
+      description: portainer and netbox have authentik middleware; authentik and harbor do not
+      verify: |
+        grep -A5 'portainer:' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml | grep -c 'authentik'
+        grep -A5 'netbox:' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml | grep -c 'authentik'
+        grep -A5 '"authentik":' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml | grep -c 'middlewares'
+        grep -A5 'harbor:' terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml | grep -c 'middlewares'
+      expect: "1, 1, 0, 0 respectively"
+
+    - id: yaml-valid
+      description: Playbook YAML parses cleanly
+      verify: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml').read()); print('ok')\""
+      expect: ok

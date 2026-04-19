@@ -1,0 +1,25 @@
+---
+id: pr-13-proxy-generated-file-wiring
+title: "Wire proxy deployment to generated files"
+type: development
+status: pending
+depends_on:
+  - pr-07-traefik-renderer
+task_doc: docs/provisioning-refactor/tasks/13-proxy-generated-file-wiring.md
+
+context: |
+  Generated per-stack files must be loadable while central legacy routes remain.
+
+objective: |
+  Prepare /opt/proxy-stack/dynamic/stacks and keep shared middleware central.
+
+workflow:
+  steps:
+    - Create the dynamic stacks directory.
+    - Preserve shared middleware.
+    - Do not remove legacy per-service routes.
+    - Validate Traefik file-provider behavior.
+
+postconditions:
+  criteria:
+    - One-service migration tasks can publish generated route files.

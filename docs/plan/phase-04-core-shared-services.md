@@ -18,6 +18,8 @@ Deploy in this order. Authentik must be running before Traefik (auth middleware 
 - [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
 - [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
 
+**Next phase:** [Phase 04b — Internal DNS authority](phase-04b-internal-dns.md) (deploys CoreDNS for `lab.gibbsgreatly.xyz` delegation)
+
 ## Current implementation status (2026-04-17)
 
 - Authentik stack intent exists in `terraform/lxc/stacks/authentik-stack/stack.yaml` and corresponding playbook `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml`.
@@ -59,7 +61,7 @@ step-ca is **not a prerequisite for Traefik**. Traefik is deployed first using o
 - Harbor is running at `10.57.3.10` in `infra_seg` (deployed earlier)
 - NetBox is running at `10.57.3.12` in `infra_seg` (deployed earlier)
 - Cloudflare API token with `Zone:DNS:Edit` scope for `gibbsgreatly.xyz` available — add as `CF_DNS_API_TOKEN` in `.env`
-- MikroTik resolver conditionally forwards `lab.gibbsgreatly.xyz` to an internal DNS server authoritative for that zone
+- **MikroTik resolver will conditionally forward `lab.gibbsgreatly.xyz` to an internal DNS server** — this is set up in Phase 04b (see Phase 04b task for details; Phase 04 uses temporary static A records during this phase)
 - The stack deployment pattern is understood — see `terraform/lxc/stacks/harbor-stack/` and `terraform/lxc/stacks/netbox-stack/` as reference implementations
 - `.env` is sourced with Proxmox API credentials
 - **SDN zones applied to pve-test** — `mgmt_seg`, `edge_seg`, and `build_seg` must exist before any Phase 04 container is deployed (see SDN setup below)
@@ -81,20 +83,26 @@ pve-test uses Proxmox SDN **VLAN zones**. The MikroTik is the L3 gateway for all
 /ip address add address=10.57.2.1/24 interface=vlan30-edge
 /ip address add address=10.57.3.1/24 interface=vlan40-infra
 
-# DNS delegation baseline for lab.gibbsgreatly.xyz (requires MikroTik admin credentials)
-# Phase 1 (no internal DNS authority deployed yet): static A records per platform name.
-/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-baseline
+# DNS delegation baseline for lab.gibbsgreatly.xyz (THREE-PHASE APPROACH)
+# Phase 1 (Phase 04): During core services deployment, use static A records per platform name.
+/ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=authentik.lab.gibbsgreatly.xyz type=A address=10.57.1.10 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=step-ca.lab.gibbsgreatly.xyz type=A address=10.57.1.11 ttl=5m comment=lab-zone-phase1
+/ip dns static add name=monitoring.lab.gibbsgreatly.xyz type=A address=10.57.1.12 ttl=5m comment=lab-zone-phase1
 
-# Phase 2 (when internal authoritative DNS exists): replace static records with a FWD entry.
-# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
-# /ip dns static remove [find comment=lab-zone-baseline]
+# Phase 2 (Phase 04b): When CoreDNS is deployed, replace static records with a FWD entry.
+# /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=10.57.1.13 comment="lab-zone-fwd"
+# /ip dns static remove [find comment=lab-zone-phase1]
+
+# Phase 3 (Phase 06+): When Pi-hole is deployed, CoreDNS zone can be updated with app-stack records.
+#   App stacks via CoreDNS authority; ad-blocking via Pi-hole (separate function)
 
 # Note: api-user (read group) cannot write DNS entries. Use admin credentials.
 # Via REST API (admin only):
 #   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
 #     -X POST https://192.168.1.1/rest/ip/dns/static/add \
 #     -H "Content-Type: application/json" \
-#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-baseline"}'
+#     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-phase1"}'
 ```
 
 **Proxmox one-time setup** — enable VLAN awareness on vmbr0:
@@ -497,16 +505,21 @@ ansible_playbook: "deploy-step-ca"
 
 ### Secrets required
 
+Document both variables in `.env.template`, but treat `terraform/secrets.enc.yaml`
+as the source of truth for real values:
+
 ```bash
 STEP_CA_PASSWORD=              # password protecting the root CA key
 STEP_CA_PROVISIONER_PASSWORD=  # ACME/JWK provisioner password
 ```
 
-Add both to `.env.template` and `.env`.
+The deploy path is `./with-secrets`, which injects both values as environment
+variables for the playbook. Do not pass them via `--extra-vars`.
 
 ### Ansible playbook
 
-Create `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`.
+Ensure `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` remains aligned with
+the env-injection pattern.
 
 1. Install `step-ca` binary from Smallstep GitHub releases (pin version)
 2. Install `step` CLI tool (same release)
@@ -567,7 +580,8 @@ The `step-ca` resolver block is already present in `traefik.yml` from task 04-03
 Verify the resolver is reachable from the Traefik container:
 
 ```bash
-pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
   https://10.57.1.11/acme/acme/directory | jq .
 # Expected: ACME directory JSON
 ```
@@ -712,7 +726,8 @@ Update NetBox to record all new services, IPs, and their relationships.
 - [ ] `step ca health --ca-url https://10.57.1.11` returns OK
 - [ ] Root CA cert saved to `certs/homelab-root.crt` in repository
 - [ ] Homelab root CA distributed to Traefik container and Proxmox host
-- [ ] Traefik `step-ca` resolver can reach ACME directory: `pct exec 153 -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
+- [ ] Traefik `step-ca` resolver can reach ACME directory:
+  `TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}') && pct exec "$TRAEFIK_VMID" -- curl -sk https://10.57.1.11/acme/acme/directory` returns JSON
 - [ ] At least one internal management endpoint issued a cert from step-ca
 
 ### Monitoring
@@ -797,9 +812,22 @@ curl -I http://10.57.2.10
 curl -sk https://10.57.1.11/acme/acme/directory | jq . >/dev/null
 
 # Managed-host trust example
-pct exec 153 -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s --cacert /usr/local/share/ca-certificates/homelab-root.crt \
   https://10.57.1.11/acme/acme/directory | jq . >/dev/null
 ```
+
+---
+
+## Next phase after Phase 04 completion
+
+**Phase 04b — Internal DNS Authority** must be deployed before Phase 06 application migration begins. This task:
+- Deploys CoreDNS to `10.57.1.13` in `mgmt_seg`
+- Converts MikroTik static A records to a conditional FWD rule
+- Validates all SDN zones can resolve lab-zone names
+- Prepares zone file structure for Phase 06 app onboarding
+
+See [Phase 04b task docs](tasks/04b-core-services-02-deploy-internal-dns.md).
 
 ### Prompt template: implementation slice
 

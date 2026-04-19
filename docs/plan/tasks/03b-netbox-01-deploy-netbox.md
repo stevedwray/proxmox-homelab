@@ -44,6 +44,20 @@ LXC `netbox-stack` (VMID 143) is running at `10.57.3.12` in `infra_seg`. The Net
 web interface is accessible and an initial superuser exists. All subsequent Phase 03b, 03c,
 and Phase 04 deployments record their IP allocations in NetBox before deploying.
 
+## Browser ingress and certificate policy
+
+NetBox is a browser-facing operator UI and must have a Traefik ingress route with
+Let's Encrypt certificates.
+
+- Canonical browser URL: `https://netbox.gibbsgreatly.xyz`
+- Resolver policy: `certResolver: letsencrypt`
+- Auth policy: **Authentik forward-auth** — Traefik intercepts browser requests and requires an
+  active Authentik session before proxying. NetBox native auth remains active for API token
+  access; forward-auth gates the browser UI only.
+- Direct IP access (`http://10.57.3.12`) is bootstrap/debug only and not the steady-state URL
+
+Route wiring is implemented in task `04-core-services-06-browser-ingress-wiring`.
+
 ## Scope
 
 - Run `terragrunt apply` for `terraform/lxc/stacks/netbox-stack/`
@@ -82,6 +96,14 @@ and Phase 04 deployments record their IP allocations in NetBox before deploying.
 - `keyctl: true` is set in `stack.yaml` — required by the netbox-docker compose stack
 - After deployment, always check NetBox (not just IPAM assumption) before assigning an
   IP to any new container in any zone
+
+## Acceptance Criteria
+
+- [ ] VMID 143 running at `10.57.3.12`
+- [ ] NetBox UI reachable at `http://10.57.3.12` (port 8080) for bootstrap validation
+- [ ] `infra_seg` subnets and existing IP allocations recorded
+- [ ] Browser ingress contract documented for `netbox.gibbsgreatly.xyz` with LE cert requirement
+- [ ] Traefik route and browser cert for NetBox validated (task 04-core-services-06)
 
 ## Why this task belongs in Phase 03b
 

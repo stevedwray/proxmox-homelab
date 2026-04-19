@@ -143,6 +143,16 @@
               url: http://loki:3100
               editable: true
 
+    - name: Write monitoring secrets env file
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_password }}
+          GF_AUTH_GENERIC_OAUTH_CLIENT_ID={{ grafana_oauth_client_id }}
+          GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET={{ grafana_oauth_client_secret }}
+      no_log: true
+
     - name: Write monitoring compose definition
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/docker-compose.yml"
@@ -165,15 +175,14 @@
               image: {{ grafana_image }}
               container_name: grafana
               restart: unless-stopped
+              env_file:
+                - .env
               ports:
                 - "3000:3000"
               environment:
-                GF_SECURITY_ADMIN_PASSWORD: "{{ grafana_admin_password }}"
                 GF_SERVER_ROOT_URL: "{{ grafana_public_url | default('https://grafana.gibbsgreatly.xyz') }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
                 GF_AUTH_GENERIC_OAUTH_NAME: "Authentik"
-                GF_AUTH_GENERIC_OAUTH_CLIENT_ID: "{{ grafana_oauth_client_id }}"
-                GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET: "{{ grafana_oauth_client_secret }}"
                 GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
                 GF_AUTH_GENERIC_OAUTH_AUTH_URL: "http://10.57.1.10:9000/application/o/authorize/"
                 GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://10.57.1.10:9000/application/o/token/"

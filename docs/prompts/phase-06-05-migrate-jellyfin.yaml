@@ -1,0 +1,149 @@
+---
+id: p06-05-migrate-jellyfin
+title: "Migrate Jellyfin to app_seg"
+phase: "06"
+type: deployment
+status: pending
+github_issue: "#117"
+task_doc: docs/plan/tasks/06-app-stacks-05-migrate-jellyfin.md
+
+context: |
+  Jellyfin is the media server. It is currently running somewhere in the existing setup
+  and may have GPU/hardware transcoding passthrough (check p06-01 discovery notes).
+
+  Migration to app_seg. Jellyfin requires:
+  - Access to the media library (same NFS mount as arr stack)
+  - Potentially GPU passthrough if hardware transcoding is enabled
+  - Sufficient storage for thumbnails/metadata (not NFS — local to the LXC)
+
+  GPU passthrough in Terraform requires extra configuration in stack.yaml.
+  If Jellyfin uses hardware transcoding, document the device IDs from the discovery.
+
+preconditions:
+  repository:
+    - id: discovery-done
+      description: Jellyfin VMID, IP, GPU passthrough, config, media paths documented
+      verify: "grep -i jellyfin docs/plan/phase-06-app-stacks.md"
+
+    - id: stack-files
+      description: jellyfin-stack/stack.yaml and deploy-jellyfin-stack.yml exist
+      verify: |
+        ls terraform/lxc/stacks/jellyfin-stack/stack.yaml
+        ls terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml
+
+  infrastructure:
+    - id: harbor-has-jellyfin
+      description: Jellyfin image mirrored to Harbor
+      verify: "curl -s http://10.57.3.10/api/v2.0/repositories | jq '.[].name' | grep jellyfin"
+
+    - id: media-accessible
+      description: Media NFS mount accessible from 10.60.0.0/24
+      verify: "Check MikroTik ACLs allow app_seg to reach NAS IP"
+
+objective: |
+  Jellyfin is running in a new LXC in app_seg. Media library is accessible.
+  Hardware transcoding works (if applicable). Jellyfin UI is accessible via
+  Traefik at https://jellyfin.gibbsgreatly.xyz. Old Jellyfin container is destroyed.
+
+workflow:
+  tooling:
+    note: |
+      Use ./with-secrets for terragrunt and ansible-playbook.
+      Run ansible commands from terraform/lxc/ansible so roles_path resolves correctly.
+      If GPU passthrough is needed, it requires device: entries in stack.yaml.
+      Keep old Jellyfin running until new one is verified.
+
+  steps:
+    - id: 1
+      name: Check for GPU passthrough requirement
+      commands:
+        - "grep -i gpu docs/plan/phase-06-app-stacks.md"
+        - "ssh root@<old-jellyfin-ip> 'docker exec jellyfin ls /dev/dri 2>/dev/null && echo has-gpu || echo no-gpu'"
+      decision:
+        if_gpu: |
+          Add device passthrough to stack.yaml. Check the Proxmox LXC device
+          passthrough documentation for the correct stack.yaml syntax.
+          Identify GPU device IDs: ssh root@pve-test.gibbsgreatly.xyz 'ls /dev/dri'
+
+    - id: 2
+      name: Backup Jellyfin config
+      commands:
+        - "scp -r root@<old-jellyfin-ip>:/config/jellyfin /tmp/jellyfin-config-backup/"
+      notes:
+        - Includes metadata, library database, users, settings
+
+    - id: 3
+      name: Snapshot old LXC
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct snapshot <old-vmid> pre-migration'"
+
+    - id: 4
+      name: Apply new Jellyfin LXC
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/stacks/jellyfin-stack
+        - "../../../../with-secrets terragrunt apply"
+
+    - id: 5
+      name: Run playbook and restore config
+      commands:
+        - cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+        - "../../../with-secrets ansible -i '<new-ip>,' -u root all -m ping"
+        - "../../../with-secrets ansible-playbook -i '<new-ip>,' -u root playbooks/deploy-jellyfin-stack.yml"
+        - "scp -r /tmp/jellyfin-config-backup/* root@<new-ip>:/config/jellyfin/"
+        - "ssh root@<new-ip> 'docker compose restart'"
+
+    - id: 6
+      name: Verify Jellyfin is healthy
+      commands:
+        - "curl -s http://<new-ip>:8096/health"
+        - "curl -s http://<new-ip>:8096/System/Info/Public | jq .ServerName"
+      expect: Health OK, server name matches expected
+
+    - id: 7
+      name: Verify media library and transcoding
+      instructions: |
+        1. Open http://<new-ip>:8096 in browser
+        2. Log in with admin credentials
+        3. Verify library scan shows expected media
+        4. Play a file — verify transcoding works (check hardware if applicable)
+
+    - id: 8
+      name: Destroy old Jellyfin
+      commands:
+        - "ssh root@pve-test.gibbsgreatly.xyz 'pct stop <old-vmid> && pct destroy <old-vmid>'"
+
+    - id: 9
+      name: Commit
+      commands:
+        - git add terraform/lxc/stacks/jellyfin-stack/ terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml
+        - |
+          git commit -m "feat(jellyfin): migrate Jellyfin to app_seg
+
+          Closes #117
+
+          Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>"
+        - git checkout dev/pve-test && git merge feat/jellyfin-stack
+        - git push origin dev/pve-test
+        - gh issue close 117 --comment "Fixed in $(git rev-parse HEAD)"
+
+postconditions:
+  criteria:
+    - id: healthy
+      description: Jellyfin health endpoint returns OK
+      verify: "curl -s http://<new-ip>:8096/health"
+      expect: Healthy response
+
+    - id: media-library
+      description: Media library is accessible and scanning
+      verify: "Manual check in Jellyfin UI"
+
+    - id: old-destroyed
+      description: Old Jellyfin LXC is destroyed
+      verify: "ssh root@pve-test.gibbsgreatly.xyz 'pct list | grep <old-vmid>'"
+      expect: No match
+
+notes:
+  - Jellyfin stores thumbnails and metadata in its config dir — these do not need to be
+    on NFS but the config backup/restore should include them
+  - Hardware transcoding device passthrough syntax varies between Proxmox versions
+  - If Jellyfin config is large (many libraries), the restore may take several minutes

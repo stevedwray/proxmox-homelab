@@ -1,0 +1,27 @@
+---
+id: pr-14-shared-validation-runbook
+title: "Document shared edge validation runbook"
+type: documentation
+status: pending
+depends_on:
+  - pr-11-edge-reconciler
+  - pr-12-coredns-publish-wiring
+  - pr-13-proxy-generated-file-wiring
+task_doc: docs/provisioning-refactor/tasks/14-shared-validation-runbook.md
+
+context: |
+  Migration tasks should share the same preflight, validation, and rollback
+  vocabulary.
+
+objective: |
+  Write docs/provisioning-refactor/runbook.md.
+
+workflow:
+  steps:
+    - Document pve-test targeting checks.
+    - Document DNS, Traefik, Authentik, HTTPS, cert, and auth validation.
+    - Document generated snapshot rollback.
+
+postconditions:
+  criteria:
+    - Commands include expected outcomes and stop conditions.

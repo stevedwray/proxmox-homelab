@@ -22,8 +22,13 @@
 Run the appropriate scan(s) before merging any branch, based on what changed:
 
 | Change type | Command |
-|---|---|
+| --- | --- |
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
 | Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
 
 If a scan returns new issues, **stop and present options** — do not merge until the issues are resolved or explicitly accepted by the user.
+
+## Execution Guardrails
+
+- Before any `terragrunt apply` or deployment validation run, verify `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` returns `pve-test`; otherwise stop and treat it as a targeting error.
+- For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.

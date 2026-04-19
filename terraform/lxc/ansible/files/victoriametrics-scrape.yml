@@ -1,0 +1,7 @@
+scrape_configs:
+  - job_name: coredns
+    static_configs:
+      - targets:
+          - 10.57.1.13:9153
+    metrics_path: /metrics
+    scrape_interval: 30s

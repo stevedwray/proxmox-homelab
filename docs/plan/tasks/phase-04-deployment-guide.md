@@ -1,439 +1,354 @@
-# Phase 04: Core Shared Services Deployment Guide
+# Phase 04: Core Shared Services — Deployment Guide
 
-> **Status**: Ready for deployment
-> **Prerequisites**: ✓ All verified
-> **Branch**: `feat/phase-04-core-services`
-> **Services**: Authentik (identity) → Traefik (proxy) → step-ca (CA) → Monitoring (metrics/logs)
+This guide covers the deployment sequence for Phase 04 services on pve-test. Before starting,
+read [development-status.md](../development-status.md) to understand which components are
+rebuild-safe and which have known gaps requiring manual steps.
 
-## Quick Start
+## Current rebuild confidence
+
+| Service | Rebuild-safe | Primary gap |
+| --- | --- | --- |
+| Authentik | No | Secrets in plaintext; manual first-boot; outpost not automated |
+| Traefik | No | Secrets in plaintext; LE cert not persisted; Authentik outpost manual |
+| step-ca | Partial | CA rebuild invalidates all certs; automatic retroactive trust distribution not yet enforced in tooling |
+| Monitoring | No | Secrets in plaintext; depends on Authentik OIDC provider in SOPS |
+
+For the complete gap analysis see [development-status.md](../development-status.md).
+
+## Deployment order
+
+The four Phase 04 services must be deployed in this order:
+
+1. **Authentik** (task 04-01) — identity provider; first-boot steps must be completed manually
+2. **Traefik** (task 04-03) — reverse proxy; depends on Authentik outpost existing
+3. **step-ca** (task 04-04) — internal CA; automatic post-deploy CA trust distribution must run retroactively
+4. **Monitoring** (task 04-05) — metrics and logs; depends on Grafana OIDC credentials in SOPS
+
+Infra services (Harbor, apt-cacher) and Portainer must already be running before any Phase 04
+service is deployed.
+
+## Secrets model
+
+All secret values are in `terraform/secrets.enc.yaml`. The `./with-secrets` wrapper decrypts
+and injects them as environment variables. **Never use `source .env` or pass secrets via
+`--extra-vars`.**
+
+Verify the target node before any operation:
 
 ```bash
-cd /home/steve/git/proxmox-homelab
-
-# Source environment for pve-test
-source .env && source .env.pve-test
-echo "Target node: $TF_VAR_proxmox_node"  # Should show: pve-test
-
-# Deploy all services in sequence
-bash scripts/deploy-phase-04-orchestrate.sh
+./with-secrets bash -c 'echo "Node: $TF_VAR_proxmox_node; Workspace: $TF_WORKSPACE"'
+# Must print: Node: pve-test; Workspace: pve-test
 ```
 
-## Manual Step-by-Step Deployment
+---
 
-If you prefer to deploy each service individually with visibility into each step:
+## 1. Authentik (Identity Provider)
 
-### 1. Authentik (Identity Provider)
+See [04-core-services-01-deploy-authentik.md](04-core-services-01-deploy-authentik.md) for
+the full task spec.
 
 **Location**: `terraform/lxc/stacks/authentik-stack/`
 
 ```bash
-# Setup environment
 cd /home/steve/git/proxmox-homelab
-source .env && source .env.pve-test
+
+# Apply LXC
 cd terraform/lxc/stacks/authentik-stack
+../../../../with-secrets terragrunt apply
 
-# Initialize Terragrunt
-terragrunt init
-
-# Plan infrastructure (review output)
-terragrunt plan
-
-# Apply infrastructure  (creates LXC container VMID 150, IP 10.57.1.10)
-terragrunt apply -auto-approve
-
-# Deploy application via Ansible
+# Deploy application
 cd /home/steve/git/proxmox-homelab
 ./with-secrets ansible-playbook \
-  -i terraform/lxc/stacks/authentik-stack/inventory.yml \
+  -i "10.57.1.10," \
   terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
 
 # Validate health
-curl -s http://10.57.1.10:9000/-/health/live/    # Expect: HTTP 204
-curl -s http://10.57.1.10:9000/-/health/ready/   # Expect: HTTP 204
-
-# Initialize via web UI (if 204 responses received)
-# Visit: http://10.57.1.10:9000/if/flow/initial-setup/
-# Create admin account with AUTHENTIK_SUPERUSER_PASSWORD from SOPS
+curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/
+curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/
+# Expect: 204 for both
 ```
 
-**Secrets Used**:
-- `AUTHENTIK_SECRET_KEY` — from SOPS
-- `AUTHENTIK_POSTGRES_PASSWORD` — from SOPS
-- `AUTHENTIK_SUPERUSER_PASSWORD` — from SOPS
-- `AUTHENTIK_SUPERUSER_API_TOKEN` — from SOPS
+**Manual steps required after deploy (known rebuild gaps):**
 
-**Network**:
-- Zone: `mgmt_seg`
-- IP: `10.57.1.10`
-- VMID: `150`
-- Ports: `9000` (HTTP), `9443` (HTTPS)
+1. Visit `http://10.57.1.10:9000/if/flow/initial-setup/`
+2. Create admin account using `AUTHENTIK_SUPERUSER_PASSWORD` from SOPS
+3. Create API token → add as `AUTHENTIK_SUPERUSER_API_TOKEN` in `terraform/secrets.enc.yaml`
+4. Create Proxy Provider + outpost for Traefik forward-auth (unblocks Traefik deploy)
+5. Create OIDC provider for Grafana → add resulting `GRAFANA_OAUTH_CLIENT_ID` and
+   `GRAFANA_OAUTH_CLIENT_SECRET` to `terraform/secrets.enc.yaml` (unblocks Monitoring deploy)
 
-**Expected Resources**:
-- PostgreSQL 16 database
-- Redis cache
-- Authentik server & worker containers
+These manual steps are the primary blocker for a fully automated rebuild.
+`terraform-provider-authentik` is the automation path — not yet implemented.
+
+**Network**: Zone `mgmt_seg` · IP `10.57.1.10` · VMID `150` · Ports `9000` (HTTP), `9443` (HTTPS)
 
 ---
 
-### 2. Traefik (Reverse Proxy)
+## 2. Traefik (Reverse Proxy)
+
+See [04-core-services-03-deploy-traefik.md](04-core-services-03-deploy-traefik.md) for the
+full task spec.
 
 **Location**: `terraform/lxc/stacks/proxy-stack/`
 
 ```bash
-# Setup environment
 cd /home/steve/git/proxmox-homelab
-source .env && source .env.pve-test
+
+# Apply LXC
 cd terraform/lxc/stacks/proxy-stack
+../../../../with-secrets terragrunt apply
 
-# Initialize Terragrunt
-terragrunt init
-
-# Plan infrastructure
-terragrunt plan
-
-# Apply infrastructure (creates LXC container VMID 153, IP 10.57.2.10)
-terragrunt apply -auto-approve
-
-# Deploy application via Ansible
+# Deploy application
 cd /home/steve/git/proxmox-homelab
 ./with-secrets ansible-playbook \
-  -i terraform/lxc/stacks/proxy-stack/inventory.yml \
+  -i "10.57.2.10," \
   terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
 
-# Validate routing (check Docker compose health)
-docker ps  # From proxy-stack container after SSH
+# Validate
+curl -o /dev/null -w "%{http_code}" http://10.57.2.10
+# Expect: 301 or 302 (HTTP → HTTPS redirect)
 
-# Test ports (from LAN)
-curl -I http://10.57.2.10/dashboard/  # Traefik dashboard
+curl -sv https://10.57.2.10/dashboard/ 2>&1 | grep -i "issuer"
+# Expect: "(STAGING) Let's Encrypt" — staging CA for all pve-test dev passes
 ```
 
-**Dependencies**:
-- Must deploy AFTER Authentik (configured in stack.yaml)
-- Requires Authentik running for forward-auth middleware
+**Known gaps:**
 
-**Network**:
-- Zone: `edge_seg`
-- IP: `10.57.2.10`
-- VMID: `153`
-- Ports: `80` (HTTP), `443` (HTTPS) — exposed to LAN via MikroTik
+- `CF_DNS_API_TOKEN` must be injected from SOPS (not extra-vars); compose file must use `env_file`
+- `stack.yaml` must include platform-supported `extra_mount_*` fields so `/opt/proxy-stack/certs`
+  survives LXC rebuild
+- Authentik Proxy Provider outpost must exist (created in step 1 above) before forward-auth works
 
-**ACME Certificates**:
-- Primary: Let's Encrypt (via Cloudflare DNS-01)
-- Secondary: step-ca (internal) — configured but inactive until step-ca deployed
-- Wildcard: `*.gibbsgreatly.xyz`
-
-**Note**: step-ca resolver references are safe to keep even if step-ca not yet ready. Traefik only contacts resolvers for routes that explicitly request them.
+**Network**: Zone `edge_seg` · IP `10.57.2.10` · VMID `153` · Ports `80`, `443`
 
 ---
 
-### 3. step-ca (Internal Certificate Authority)
+## 3. step-ca (Internal Certificate Authority)
 
-**Location**: `terraform/lxc/stacks/step-ca-stack/`
+See [04-core-services-04-deploy-step-ca.md](04-core-services-04-deploy-step-ca.md) for the
+full task spec.
+
+**Location**: `terraform/lxc/stacks/step-ca-stack/` (systemd service — not Docker)
 
 ```bash
-# Setup environment
 cd /home/steve/git/proxmox-homelab
-source .env && source .env.pve-test
+
+# Apply LXC
 cd terraform/lxc/stacks/step-ca-stack
+../../../../with-secrets terragrunt apply
 
-# Initialize Terragrunt
-terragrunt init
-
-# Plan infrastructure
-terragrunt plan
-
-# Apply infrastructure (creates LXC container VMID 152, IP 10.57.1.11)
-terragrunt apply -auto-approve
-
-# Deploy application via Ansible
+# Deploy application
 cd /home/steve/git/proxmox-homelab
 ./with-secrets ansible-playbook \
-  -i terraform/lxc/stacks/step-ca-stack/inventory.yml \
+  -i "10.57.1.11," \
   terraform/lxc/ansible/playbooks/deploy-step-ca.yml
-
-# Trust CA certificate on control machine and other services
-./with-secrets ansible-playbook \
-  -i terraform/lxc/stacks/step-ca-stack/inventory.yml \
-  terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
 
 # Validate ACME directory
 curl -sk https://10.57.1.11/acme/acme/directory | jq .
 
-# Traefik will automatically activate step-ca resolver once CA is active
+# Retroactive CA trust distribution — required post-step-ca action
+# Target behavior: this is executed automatically by deployment tooling.
+./with-secrets ansible-playbook -i "10.57.2.10," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
+./with-secrets ansible-playbook -i "192.168.1.40," terraform/lxc/ansible/playbooks/trust-homelab-ca.yml
+
+# Verify resolver from inside Traefik container
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- curl -s \
+  --cacert /usr/local/share/ca-certificates/homelab-root.crt \
+  https://10.57.1.11/acme/acme/directory | jq .
 ```
 
-**Network**:
-- Zone: `mgmt_seg`
-- IP: `10.57.1.11`
-- VMID: `152`
-- Port: `443` (HTTPS)
+**Known gaps:**
 
-**ACME Directory**:
-- URL: `https://10.57.1.11/acme/acme/directory`
-- Used by: Traefik (for internal routes), CI runner, other internal services
+- CA rebuild generates a new root keypair — all previously issued certs become invalid;
+  `certs/homelab-root.crt` in the repo changes on each rebuild
+- CA persistence strategy not yet decided (regenerate vs persist encrypted keypair)
+- Automatic retroactive trust distribution after step-ca deploy is required but not yet
+  enforced in scripts; until tooling is updated, run the trust playbook against all
+  already-deployed managed hosts as a temporary workaround
 
-**CA Certificate Distribution**:
-- Distributed to Traefik container
-- Distributed to CI runner
-- Distributed to Ansible control machine
-- Installed in any container calling internal services directly
+**Network**: Zone `mgmt_seg` · IP `10.57.1.11` · VMID `152` · Port `443`
 
 ---
 
-### 4. Monitoring Stack (VictoriaMetrics + Grafana + Loki)
+## 4. Monitoring Stack (VictoriaMetrics + Grafana + Loki)
+
+See [04-core-services-05-deploy-monitoring.md](04-core-services-05-deploy-monitoring.md) for
+the full task spec.
+
+**Prerequisite:** `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` must already be
+in `terraform/secrets.enc.yaml` before running the playbook. Confirm with:
+
+```bash
+SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml \
+  | grep -E "GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET"
+```
+
+If either value is still `CHANGEME_`, return to step 1 and complete the Authentik OIDC
+provider setup.
 
 **Location**: `terraform/lxc/stacks/monitoring-stack/`
 
 ```bash
-# Setup environment
 cd /home/steve/git/proxmox-homelab
-source .env && source .env.pve-test
+
+# Apply LXC
 cd terraform/lxc/stacks/monitoring-stack
+../../../../with-secrets terragrunt apply
 
-# Initialize Terragrunt
-terragrunt init
-
-# Plan infrastructure
-terragrunt plan
-
-# Apply infrastructure (creates LXC container VMID 154, IP 10.57.1.12, 50GB storage)
-terragrunt apply -auto-approve
-
-# Deploy application via Ansible
+# Deploy application
 cd /home/steve/git/proxmox-homelab
 ./with-secrets ansible-playbook \
-  -i terraform/lxc/stacks/monitoring-stack/inventory.yml \
+  -i "10.57.1.12," \
   terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
 
-# Access Grafana dashboard
-# URL: http://10.57.1.12:3000/
-# Credentials: admin / (check logs or SOPS)
+# Validate
+curl -s http://10.57.1.12:3000/api/health | jq .database   # Expect: "ok"
+curl -s http://10.57.1.12:8428/metrics | head -5            # Expect: VM metrics output
+curl -s http://10.57.1.12:3100/ready                        # Expect: ready
 
-# Verify metrics collection
-curl -s http://10.57.1.12:8428/api/v1/query?query=up | jq .
-curl -s http://10.57.1.12:3100/loki/api/v1/query?query={} | jq .
+# OOM check
+ssh root@pve-test.gibbsgreatly.xyz "dmesg | grep -i oom | tail -5"
+# Should be empty
 ```
 
-**Network**:
-- Zone: `mgmt_seg`
-- IP: `10.57.1.12`
-- VMID: `154`
-- Ports: `8428` (VictoriaMetrics), `3100` (Loki), `3000` (Grafana)
-- Storage: `50GB` (docker_storage_size)
+**Known gaps:**
 
-**Services**:
-- **VictoriaMetrics** — Time series database
-  - API: `:8428`
-  - Query: `http://10.57.1.12:8428/api/v1/query`
+- All three Grafana secrets (`GRAFANA_ADMIN_PASSWORD`, `GRAFANA_OAUTH_CLIENT_ID`,
+  `GRAFANA_OAUTH_CLIENT_SECRET`) must come from SOPS via `env_file`, not extra-vars or hardcoded
+- Grafana datasources must be added manually via the Grafana UI after deploy
+- VictoriaMetrics currently only scrapes CoreDNS — expand before Phase 05
 
-- **Grafana** — Metrics visualization
-  - Web UI: `http://10.57.1.12:3000/`
-  - Default creds: `admin/admin` (change after first login)
-
-- **Loki** — Log aggregation
-  - API: `:3100`
-  - Query: `http://10.57.1.12:3100/loki/api/v1/query`
-
-**Dependencies**:
-- Must deploy LAST (depends on all other services)
-- Configured to collect metrics from Authentik, Traefik, step-ca
+**Network**: Zone `mgmt_seg` · IP `10.57.1.12` · VMID `154` · Ports `8428`, `3100`, `3000` (Grafana via Traefik)
 
 ---
 
-## Validation Checklist
+## 5. Browser Ingress Wiring (all services via Traefik + Authentik)
 
-After each service deployment, verify:
+See [04-core-services-06-browser-ingress-wiring.md](04-core-services-06-browser-ingress-wiring.md)
+for the full task spec. Run after all four Phase 04 services are deployed.
 
-### Infrastructure Level
+Two-gate sequence — run rem-05 first (code gate), then dep-05 (runtime gate):
+
 ```bash
-# Verify container created on pve-test
-pct list | grep -E "authentik|proxy-stack|step-ca|monitoring"
+# dep-05 step 1 — Reconfigure Authentik Proxy Provider (manual, Authentik Admin UI)
+# Edit 'traefik-forwardauth' Proxy Provider:
+#   Mode: Forward auth (domain level)
+#   Cookie domain: .gibbsgreatly.xyz
+#   Update the outpost to reload config
 
-# Verify IP assignments
-for ip in 10.57.1.10 10.57.2.10 10.57.1.11 10.57.1.12; do
-  ping -c 1 $ip && echo "✓ $ip reachable" || echo "✗ $ip unreachable"
-done
+# dep-05 step 2 — Redeploy Traefik to push new routes
+cd /home/steve/git/proxmox-homelab/terraform/lxc/ansible
+../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping
+../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/deploy-proxy-stack.yml
 
-# Check NetBox for IP conflicts
-for ip in 10.57.1.10 10.57.2.10 10.57.1.11 10.57.1.12; do
-  curl -s -H "Authorization: Token ${NETBOX_API_TOKEN}" \
-    "http://10.57.3.12/api/ipam/ip-addresses/?address=$ip" | jq '.count'
+# dep-05 step 3 — Update MikroTik DNS static records
+ssh admin@192.168.1.1 '
+  /ip dns static add name=authentik.gibbsgreatly.xyz address=10.57.2.10
+  /ip dns static add name=netbox.gibbsgreatly.xyz address=10.57.2.10
+  /ip dns static set [find name=portainer.gibbsgreatly.xyz] address=10.57.2.10
+  /ip dns static set [find name=harbor.gibbsgreatly.xyz] address=10.57.2.10
+'
+
+# dep-05 step 4 — Validate all six routes
+for h in traefik.lab grafana authentik portainer harbor netbox; do
+  echo -n "$h.gibbsgreatly.xyz → "
+  curl -skI --resolve $h.gibbsgreatly.xyz:443:10.57.2.10 https://$h.gibbsgreatly.xyz \
+    | grep -E 'HTTP/[0-9.]+ [0-9]+'
 done
 ```
 
-### Application Level
+**Auth policy summary:**
+
+| Service | Auth |
+| --- | --- |
+| Traefik dashboard | Authentik forward-auth |
+| Grafana | Grafana OIDC (no Traefik middleware) |
+| Authentik | None (it is the IdP) |
+| Portainer | Authentik forward-auth |
+| Harbor | Harbor native auth |
+| NetBox | Authentik forward-auth |
+
+---
+
+## Validation checklist
+
+After all five steps are complete:
+
 ```bash
-# Authentik health
-curl -s http://10.57.1.10:9000/-/health/live/ -w "\n%{http_code}\n"
+# Container health
+curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/live/   # 204
+curl -o /dev/null -w "%{http_code}" http://10.57.2.10                          # 301/302
+curl -sk https://10.57.1.11/health                                              # 200
+curl -s http://10.57.1.12:3000/api/health | jq .database                       # "ok"
 
-# Traefik dashboard (requires network access)
-curl -I http://10.57.2.10/dashboard
+# No literal credentials in compose files
+pct exec 150 -- grep -r "CHANGEME\|password.*=.*[a-zA-Z0-9]\{16\}" /opt/authentik-stack/
+TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4=="proxy-stack" || $4=="traefik") {print $1; exit}')
+pct exec "$TRAEFIK_VMID" -- cat /opt/proxy-stack/docker-compose.yml | grep CF_DNS_API_TOKEN
+pct exec 154 -- cat /opt/monitoring-stack/docker-compose.yml | grep GRAFANA_ADMIN_PASSWORD
 
-# step-ca ACME directory
-curl -sk https://10.57.1.11/acme/acme/directory | jq .nonce_url
-
-# Monitoring services
-curl -s http://10.57.1.12:8428/api/v1/targets?state=active | jq '.activeTargets | length'
+# Restart survival
+for vmid in 150 153 152 154; do pct restart $vmid; done
+# Then re-run the health checks above
 ```
 
 ---
 
-## Security Scanning Before Merge
-
-After all services are deployed and validated:
+## Security scanning before merging
 
 ```bash
-# Terraform IaC Security Scan
+# Terraform IaC scan
 /home/steve/.local/bin/snyk iac test terraform/
 
-# Code Quality Scan
-source .env && sonar-scanner
+# Code quality scan
+./with-secrets sonar-scanner
 ```
 
-If any new issues are detected, resolve or document them before merging.
-
----
-
-## Commit Strategy
-
-```bash
-# Commit per-service after successful deployment + validation
-git add -A
-git commit -m "feat(phase-04): deploy authentik identity provider
-
-- Created Authentik LXC container (VMID 150, 10.57.1.10)
-- PostgreSQL 16 + Redis deployment via Docker Compose
-- Secrets from SOPS (no env secrets in repo)
-- Health endpoints validated"
-
-git commit -m "feat(phase-04): deploy traefik reverse proxy
-
-- Created Traefik LXC container (VMID 153, 10.57.2.10)
-- Dual ACME resolvers configured (Let's Encrypt + step-ca)
-- Authentik forward-auth middleware active
-- Ports 80/443 exposed to LAN"
-
-# ... continue for step-ca and monitoring
-
-# After all services deployed and fully validated
-git push origin feat/phase-04-core-services
-```
-
-Then either:
-- Create PR from `feat/phase-04-core-services` → `dev/pve-test`
-- Merge locally and test on pve-test
-- PR `dev/pve-test` → `main`
+Stop and present options if either scan reports new issues.
 
 ---
 
 ## Troubleshooting
 
-### Terragrunt Init Fails
-```bash
-# Ensure correct node target
-echo $TF_VAR_proxmox_node  # Should be: pve-test
+**Terragrunt targets wrong node:**
 
-# Clear cache and retry
-rm -rf terraform/lxc/stacks/*/force-copy .terragrunt-cache
-terragrunt init
+```bash
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+# Must be pve-test — if not, check .env
 ```
 
-### Ansible Playbook Fails
+**Ansible playbook fails — check secrets available:**
+
 ```bash
-# Check secrets are available
 ./with-secrets env | grep AUTHENTIK_
-
-# Run playbook with verbose output
-./with-secrets ansible-playbook -vvv \
-  -i terraform/lxc/stacks/authentik-stack/inventory.yml \
-  terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
+./with-secrets env | grep GRAFANA_
 ```
 
-### Container Unreachable
-```bash
-# SSH into container
-ssh -i ~/.ssh/id_ed25519 root@10.57.1.10
+**Container unreachable — check networking inside container:**
 
-# Check networking inside container
+```bash
+ssh root@10.57.1.10    # or whichever IP
 ip -4 addr show
-route -n
-
-# Check Docker services
+ip route show
 docker ps -a
-docker logs service-name
 ```
 
-### Health Checks Return 5xx
-```bash
-# Wait for service initialization (first 2-3 minutes typical)
-watch -n 2 'curl -s http://10.57.1.10:9000/-/health/ready/ && echo "✓" || echo "✗"'
-
-# Check container logs
-docker logs authentik-server
-docker logs authentik-worker
-```
-
----
-
-## References
-
-- **Stack Configurations**: `terraform/lxc/stacks/*/stack.yaml`
-- **Docker Compose Files**: `terraform/lxc/stacks/*/docker-compose.yml`
-- **Ansible Playbooks**: `terraform/lxc/ansible/playbooks/deploy-*.yml`
-- **Terraform Modules**: `terraform/lxc/`
-- **Networking**: See `docs/plan/` for SDN and MikroTik routing details
-- **SOPS Secrets**: `terraform/secrets.enc.yaml` (access via `./with-secrets`)
-
----
-
-## Next Steps After Phase 04
-
-Once all four services are deployed, tested, and validated on pve-test:
-
-1. **Merge to dev/pve-test**: All services should continue running and be fully functional
-2. **Phase 05 (Supply Chain)**: Assumes Phase 04 services are stable
-3. **Phase 06 (Application Migration)**: Assumes Phase 04 + Phase 05 complete
-4. **Issue #114 Completion**: SDN zone routing between services
-
-**Current Status**: Prerequisites verified ✓ | Ready to deploy ✓
-
----
-
-## Example: Full Deployment Session
+**Authentik health returns 5xx — wait for initialization:**
 
 ```bash
-#!/bin/bash
-# Complete Phase 04 deployment with logs
-
-cd /home/steve/git/proxmox-homelab
-source .env && source .env.pve-test
-
-services=(authent authentik proxy step-ca monitoring)
-logfile="/tmp/phase-04-deployment-$(date +%s).log"
-
-for service in "${services[@]}"; do
-  stack_name="${service}-stack"
-  echo "$(date): Starting $stack_name deployment" | tee -a "$logfile"
-
-  cd "terraform/lxc/stacks/$stack_name"
-  terragrunt init 2>&1 | tee -a "$logfile"
-  terragrunt apply -auto-approve 2>&1 | tee -a "$logfile"
-
-  cd /home/steve/git/proxmox-homelab
-  ./with-secrets ansible-playbook \
-    -i "terraform/lxc/stacks/${stack_name}/inventory.yml" \
-    "terraform/lxc/ansible/playbooks/deploy-${service}.yml" \
-    2>&1 | tee -a "$logfile"
-
-  echo "$(date): Completed $stack_name deployment" | tee -a "$logfile"
-  sleep 60  # Wait before next service
-done
-
-echo "Phase 04 deployment complete. Log: $logfile"
+watch -n 5 'curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/'
+# First 2–3 minutes after deploy is normal startup time
 ```
 
-deployed, tested, and validated on pve-test:
+---
 
-1. **Merge to dev/pve-test**: All services should continue running and be fully functional
-2. **Phase 05** assumes Phase 04 is stable
-3. **Phase 06** assumes both 04 and 05 complete
+## Next steps after Phase 04
+
+Once all four services are deployed and validated on pve-test:
+
+1. Merge all feature branches to `dev/pve-test`
+2. Phase 05 (Supply Chain) — assumes Phase 04 services are stable
+3. Phase 06 (Application Migration) — assumes Phase 04 + Phase 05 complete
+4. Outstanding rebuild-safety work: secrets injection for Traefik/Authentik/Monitoring,
+  `terraform-provider-authentik`, LE cert persistence via `extra_mount_*`
