@@ -21,6 +21,17 @@ context: |
   - letsencrypt: DNS-01 via Cloudflare, LE STAGING CA (for pve-test dev passes)
   - step-ca: httpChallenge, internal, pre-configured but dormant until dep-03-step-ca
 
+  Browser ingress and certificate policy:
+  - Any URL intended for browser access must route via certResolver=letsencrypt
+  - step-ca certificates are internal-only and must not be used for browser routes
+  - Canonical browser hostnames to preserve in dynamic config:
+    - traefik.lab.gibbsgreatly.xyz
+    - grafana.gibbsgreatly.xyz
+    - authentik.gibbsgreatly.xyz
+    - portainer.gibbsgreatly.xyz
+    - harbor.gibbsgreatly.xyz
+    - netbox.gibbsgreatly.xyz
+
   The certs directory is persisted using platform-supported stack fields:
   extra_mount_path, extra_mount_size, extra_mount_storage.
 
@@ -71,6 +82,7 @@ objective: |
   TLS cert shows "(STAGING) Let's Encrypt". No literal CF_DNS_API_TOKEN on disk.
   Certs directory is persisted via extra mount fields. Authentik forward-auth
   middleware is configured. Both resolver blocks are present in traefik.yml.
+  Browser-facing routes use letsencrypt resolver; step-ca remains internal-only.
 
 workflow:
   tooling:
@@ -149,6 +161,15 @@ workflow:
         - "pct exec $TRAEFIK_VMID -- grep -A2 'certificatesResolvers' /opt/proxy-stack/traefik.yml"
       expect: Both letsencrypt and step-ca blocks present
 
+    - id: 8
+      name: Verify browser ingress route contracts in dynamic config
+      commands:
+        - "TRAEFIK_VMID=$(pct list | awk 'NR>1 && ($4==\"proxy-stack\" || $4==\"traefik\") {print $1; exit}')"
+        - "test -n \"$TRAEFIK_VMID\""
+        - "pct exec $TRAEFIK_VMID -- grep -E 'traefik\.lab\.gibbsgreatly\.xyz|grafana\.gibbsgreatly\.xyz|authentik\.gibbsgreatly\.xyz|portainer\.gibbsgreatly\.xyz|harbor\.gibbsgreatly\.xyz|netbox\.gibbsgreatly\.xyz' /opt/proxy-stack/authentik.yml"
+      notes:
+        - If a component hostname is not yet deployed in this environment, track it as a planned gap in that component task and do not bind it to step-ca.
+
 postconditions:
   criteria:
     - id: lxc-running
@@ -182,6 +203,7 @@ notes:
   - Traefik takes 30–60 seconds to obtain the staging LE cert via DNS-01 challenge
   - The step-ca resolver block is intentionally configured but dormant — it will not
     contact 10.57.1.11 until a route explicitly uses certresolver=step-ca
+  - Browser-facing routes for Authentik, Portainer, Harbor, NetBox, Grafana, and Traefik must stay on letsencrypt resolver
   - If https://traefik.lab.gibbsgreatly.xyz/dashboard/ shows "Authentik login required", the Proxy Provider outpost is
     working correctly — log in with the Authentik admin account from dep-01 Step 6
   - This deployment unblocks dep-03-step-ca

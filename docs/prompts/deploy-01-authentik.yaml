@@ -28,6 +28,11 @@ context: |
   3. Create Grafana OIDC provider (unblocks Monitoring)
   These manual steps produce secrets that must be recorded in terraform/secrets.enc.yaml.
 
+  Browser ingress policy for this component:
+  - Canonical operator URL is https://authentik.gibbsgreatly.xyz via Traefik
+  - Browser certificate must come from letsencrypt resolver (staging on pve-test)
+  - step-ca certificates are internal only and must not be used for browser-facing Authentik access
+
 preconditions:
   repository:
     - id: remediation-done
@@ -88,6 +93,8 @@ objective: |
   all secrets are injected from SOPS (no literal values on disk), first-boot
   setup is complete, AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS, and the Proxy
   Provider outpost and Grafana OIDC provider are created.
+  The steady-state browser URL is https://authentik.gibbsgreatly.xyz via Traefik
+  with a letsencrypt certificate.
 
 workflow:
   tooling:
@@ -215,6 +222,11 @@ postconditions:
           sops --decrypt terraform/secrets.enc.yaml \
           | grep -E 'GRAFANA_OAUTH_CLIENT_ID|GRAFANA_OAUTH_CLIENT_SECRET'
       expect: Two lines with real values
+
+    - id: browser-url-policy
+      description: Authentik browser URL and cert policy are satisfied
+      verify: "curl -skI --resolve authentik.gibbsgreatly.xyz:443:10.57.2.10 https://authentik.gibbsgreatly.xyz | grep -E 'HTTP/[0-9.]+ (200|302|401|403)'"
+      expect: Response returned through Traefik route (cert must be letsencrypt, not step-ca)
 
 notes:
   - Authentik startup takes 2–3 minutes on first run — health checks may return 5xx initially

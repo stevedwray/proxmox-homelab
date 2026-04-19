@@ -155,7 +155,9 @@
                 middlewares:
                   - authentik
                 tls:
-                  certResolver: step-ca
+                  certResolver: letsencrypt
+                  domains:
+                    - main: "*.lab.gibbsgreatly.xyz"
               grafana:
                 rule: "Host(`{{ grafana_edge_host | default('grafana.gibbsgreatly.xyz') }}`)"
                 entryPoints:
@@ -199,8 +201,6 @@
               container_name: traefik
               restart: unless-stopped
               env_file: .env
-              environment:
-                - LEGO_CA_CERTIFICATES=/certs/homelab-root.crt
               ports:
                 - "80:80"
                 - "443:443"
@@ -210,7 +210,7 @@
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
-                - ./certs/homelab-root.crt:/certs/homelab-root.crt:ro
+                - /etc/ssl/certs:/etc/ssl/certs:ro
 
     - name: Validate Traefik compose configuration
       ansible.builtin.command:
