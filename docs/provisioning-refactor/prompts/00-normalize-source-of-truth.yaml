@@ -1,0 +1,26 @@
+---
+id: pr-00-normalize-source-of-truth
+title: "Normalize provisioning-refactor source of truth"
+type: documentation
+status: pending
+task_doc: docs/provisioning-refactor/tasks/00-normalize-source-of-truth.md
+
+context: |
+  This is a documentation-only task. docs/provisioning-refactor is the active
+  source of truth for stack-owned edge provisioning.
+
+objective: |
+  Mark stale Phase 04c/MikroTik DNS paths as legacy context and make the new
+  sequence discoverable.
+
+workflow:
+  steps:
+    - Read the task doc and decisions file.
+    - Update only the listed documentation and prompt-index files.
+    - Validate that no active refactor instruction points at MikroTik static DNS
+      as the long-term browser record store.
+
+postconditions:
+  criteria:
+    - Only documentation/prompt-index files changed.
+    - Future agents can find the new 22-task sequence.

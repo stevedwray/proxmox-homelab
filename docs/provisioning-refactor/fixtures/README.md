@@ -1,8 +1,8 @@
 # Fixture Notes
 
-This directory is reserved for Task 01 fixture files.
+This directory is reserved for Task 04 fixture files.
 
-Task 01 should add:
+Task 04 should add:
 
 - valid manifests for all six current browser services
 - invalid manifests for validator failure cases

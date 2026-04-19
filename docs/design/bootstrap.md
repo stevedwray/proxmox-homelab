@@ -15,10 +15,10 @@ discarded. The temporary environment does not embody the target security posture
 bridge. Security controls are tightened at each transition and the bridge itself is torn
 down once the crossing is complete.
 
-This document defines three deployment stages. Stage 0 is a workstation-only prerequisite.
-Stage 1 is the temporary bridge. Stage 2 is the permanent platform foundation. Stage 3 and
-beyond (Phase 04+) build on that foundation with full security controls active from the
-outset.
+This document defines deployment stages. Stage 0 is a workstation-only prerequisite.
+Stage 1 is the temporary bridge. Stage 2 is the permanent platform foundation. Stage 3a
+brings up the edge foundation that other browser-facing services depend on. Stage 3b and
+beyond build on that foundation with full security controls active from the outset.
 
 ---
 
@@ -197,17 +197,65 @@ permitted once Stage 2 is complete.
 
 ---
 
-## Stage 3 — Full platform (Phase 04 and later)
+## Stage 3a — Edge foundation
 
 ### Purpose
 
-Deploy all remaining shared services and application stacks on the Stage 2 foundation.
-Stage 3 maps to Phase 04 and later in the execution plan. There is no new infrastructure
-category introduced — the model established in Stage 2 extends without modification to
-Authentik, Traefik, step-ca, monitoring, and beyond. Harbor-sourced images, robot account
-authentication, and `with-secrets` apply to every deployment from this point.
+Bring up the DNS, ingress, certificate, and identity services that stack-owned
+browser provisioning depends on. This stage resolves the bootstrap problem for
+the edge reconciler: manifests cannot be applied until CoreDNS, Traefik, and
+Authentik API access exist.
 
-CI-gated deployments also become active in Stage 3: the permanent CI runner (Stage 2) gates
+### Deployment order
+
+Stage 3a order is load-bearing in Mode 2:
+
+1. **CoreDNS** (`dns-stack`, VMID 151, `10.57.1.13`) with a seed
+   `lab.gibbsgreatly.xyz` zone. The seed zone contains only bootstrap and
+   non-browser records required before generated browser records exist.
+2. **Traefik** (`proxy-stack`, VMID 153, `10.57.2.10`) with static runtime
+   configuration: entrypoints, providers, certificate resolvers, default store,
+   and shared middleware definitions. Per-service browser routes are not
+   considered stack-owned until the edge reconciler publishes generated files.
+3. **step-ca** (`step-ca-stack`, VMID 152, `10.57.1.11`). ACME challenge paths
+   that depend on Traefik are validated only after Traefik and the required
+   MikroTik policy are in place.
+4. **Authentik** (`authentik-stack`, VMID 150, `10.57.1.10`) via direct IP
+   first boot. The operator completes first setup and stores the automation API
+   token in SOPS before Authentik reconciliation is allowed.
+
+### Edge reconciler activation
+
+The stack-owned edge reconciler is disabled during Stage 3a until:
+
+- CoreDNS answers authoritative queries for `lab.gibbsgreatly.xyz`
+- MikroTik conditionally forwards `lab.gibbsgreatly.xyz` to CoreDNS
+- Traefik is running and can load file-provider dynamic config
+- Authentik is healthy and an API token is available for routes that need
+  Authentik objects
+
+Terraform does not detect this state and does not perform a hidden second pass.
+The operator runs the explicit edge reconciler after Stage 3a exits.
+
+### Exit condition
+
+- CoreDNS, Traefik, step-ca, and Authentik are deployed on pve-test.
+- Authentik direct first boot is complete and the automation API token is stored.
+- Edge reconciliation can run in dry-run mode and report planned DNS, Traefik,
+  and Authentik changes.
+
+---
+
+## Stage 3b — Full platform (Phase 04 and later)
+
+### Purpose
+
+Deploy all remaining shared services and application stacks on the Stage 2 and Stage 3a
+foundation. Stage 3b maps to Phase 04 and later in the execution plan after the edge
+foundation exists. Harbor-sourced images, robot account authentication, `with-secrets`, and
+explicit edge reconciliation apply to every deployment from this point.
+
+CI-gated deployments also become active in Stage 3b: the permanent CI runner (Stage 2) gates
 Phase 05 supply chain jobs (Trivy scan, Syft SBOM, Cosign signing) that must pass before
 image promotion in Harbor. This is the final security control not yet present in Stage 2.
 
@@ -215,7 +263,7 @@ image promotion in Harbor. This is the final security control not yet present in
 
 ## Security controls by stage
 
-| Control | Stage 0 | Stage 1 | Stage 2 | Stage 3+ |
+| Control | Stage 0 | Stage 1 | Stage 2 | Stage 3a+ |
 |---|---|---|---|---|
 | `with-secrets` for operator secret delivery | Yes | Yes | Yes | Yes |
 | Harbor as image source | N/A | No | Yes | Yes |
@@ -240,7 +288,8 @@ mandatory source for all image pulls.
 | Stage 0 | Phase 03d | Workstation and repository tooling only |
 | Stage 1 | Phase 00c Part A | Proxmox — temporary bootstrap containers |
 | Stage 2 | Phase 00c Part B | Proxmox — permanent container replacement |
-| Stage 3+ | Phase 04 and later | Full platform and application stacks |
+| Stage 3a | Phase 04 edge foundation | CoreDNS, Traefik, step-ca, Authentik first boot |
+| Stage 3b+ | Phase 04 and later | Full platform and application stacks |
 
 Phase 00c covers both Stage 1 and Stage 2. Phase 03d (Stage 0) is not part of Phase 00c —
 it is an independent, workstation-only task that can be completed at any time before first

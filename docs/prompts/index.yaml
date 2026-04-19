@@ -127,44 +127,50 @@ prompts:
     task_doc: docs/plan/tasks/04-core-services-06-browser-ingress-wiring.md
 
   # ── Phase 04c — Stack-Owned Ingress/Auth/DNS ──────────────────────────────
+  # Legacy prompt entries retained for historical context. New work must use
+  # docs/provisioning-refactor/prompts/index.yaml.
 
   - id: p04c-01-edge-contract
     file: phase-04c-01-edge-contract.yaml
-    title: "Define stack-owned edge manifest contract and validation rules"
+    title: "LEGACY: Define stack-owned EdgeManifest contract and validation rules"
     type: development
     status: pending
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-01-edge-contract.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   - id: p04c-02-traefik-renderer
     file: phase-04c-02-traefik-renderer.yaml
-    title: "Implement Traefik dynamic config renderer from stack manifests"
+    title: "LEGACY: Implement Traefik dynamic config renderer from stack manifests"
     type: development
     status: pending
     depends_on:
       - p04c-01-edge-contract
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-02-traefik-renderer.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   - id: p04c-03-dns-reconciler
     file: phase-04c-03-dns-reconciler.yaml
-    title: "Implement MikroTik DNS reconciliation from stack manifests"
+    title: "LEGACY: MikroTik DNS reconciliation from stack manifests"
     type: development
     status: pending
     depends_on:
       - p04c-01-edge-contract
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-03-dns-reconciler.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   - id: p04c-04-authentik-reconciler
     file: phase-04c-04-authentik-reconciler.yaml
-    title: "Implement Authentik reconciliation from stack auth metadata"
+    title: "LEGACY: Implement Authentik reconciliation from stack auth metadata"
     type: development
     status: pending
     depends_on:
       - p04c-01-edge-contract
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-04-authentik-reconciler.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   - id: p04c-05-stack-migration
     file: phase-04c-05-stack-migration.yaml
-    title: "Migrate browser stacks to stack-owned ingress/auth/dns"
+    title: "LEGACY: Migrate browser stacks to stack-owned ingress/auth/dns"
     type: deployment
     status: pending
     depends_on:
@@ -172,15 +178,17 @@ prompts:
       - p04c-03-dns-reconciler
       - p04c-04-authentik-reconciler
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-05-stack-migration.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   - id: p04c-06-cutover-cleanup
     file: phase-04c-06-cutover-cleanup.yaml
-    title: "Remove legacy central route ownership and finalize cutover"
+    title: "LEGACY: Remove legacy central route ownership and finalize cutover"
     type: deployment
     status: pending
     depends_on:
       - p04c-05-stack-migration
     task_doc: docs/plan/tasks/04c-stack-owned-ingress-06-cutover-cleanup.md
+    superseded_by: docs/provisioning-refactor/prompts/index.yaml
 
   # ── Phase 05 — Supply Chain Security ────────────────────────────────────────
 

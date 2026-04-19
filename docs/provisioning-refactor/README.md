@@ -1,69 +1,81 @@
 # Provisioning Refactor Plan
 
-This directory is the source of truth for the planned refactor that moves
-browser-facing provisioning intent out of central proxy/DNS/Auth runbooks and
-into stack-owned manifests.
+This directory is the source of truth for the stack-owned edge provisioning
+refactor. Older Phase 04 browser-ingress and Phase 04c planning files are
+legacy context only when they conflict with this directory.
 
-The objective is to let small AI-agent tasks migrate one stack at a time while
-keeping pve-test safe, observable, and easy to roll back.
+The objective is to move browser-facing DNS, Traefik, and Authentik intent out
+of central runbooks and into stack-owned manifests while preserving a safe
+bootstrap path for a fresh pve-test rebuild.
 
 ## Target Model
 
-Each browser-facing stack owns one manifest at:
+Terraform provisions LXCs from `stack.yaml`. Browser edge intent lives in one
+manifest per browser-facing stack:
 
 ```text
 terraform/lxc/stacks/<stack>/edge.yaml
 ```
 
-The manifest declares:
-
-- canonical browser hostnames
-- backend target or special Traefik service target
-- DNS record intent
-- TLS resolver policy
-- Authentik/Traefik auth mode
-- validation expectations
-
-Shared platform components consume those manifests:
+The explicit edge reconciler consumes those manifests after the edge foundation
+is healthy:
 
 - Traefik renderer writes per-stack dynamic files.
-- DNS renderer updates the code-managed internal lab zone.
-- Authentik reconciler manages provider/app/outpost intent where needed.
-- Migration tasks remove central legacy routes only after the generated path is
-  validated.
+- CoreDNS renderer updates the code-managed `lab.gibbsgreatly.xyz` zone.
+- Authentik discovery/reconciliation manages provider, application, and outpost
+  intent where needed.
+- Migration tasks replace one legacy central route at a time.
+
+Terraform must not detect edge service readiness, run a hidden second pass, or
+reconcile edge state. Edge reconciliation is a separate operator action with
+dry-run as the default.
+
+## Bootstrap Model
+
+Fresh Mode 2 deployment uses this order:
+
+1. Stage 0-2 from [bootstrap.md](../design/bootstrap.md): workstation,
+   temporary/permanent Portainer, Harbor, and CI runner.
+2. Stage 3a edge foundation: CoreDNS seed zone, Traefik runtime, step-ca, then
+   Authentik direct first boot and API-token bootstrap.
+3. Edge reconciler becomes active only after CoreDNS, Traefik, and Authentik API
+   access are healthy.
+4. Foundational browser routes converge into stack-owned manifests.
+5. All later browser-facing services use `edge.yaml` plus the reconciler as the
+   normal path.
+
+Direct-IP access remains the bootstrap fallback for foundational services until
+their browser routes are reconciled.
 
 ## Scope Boundaries
 
-This refactor is documentation and task planning first. Functional code changes
-must happen in later feature branches, one task at a time.
+The plan is pve-test only. Production `pve` targeting is out of scope until the
+pve-test model is proven.
 
-The plan is pve-test only. Production `pve` targeting is intentionally out of
-scope until the pve-test model is proven.
+Each task is intentionally small enough for one short-lived branch/session. Do
+not combine migration tasks unless explicitly requested.
 
 ## Important Decisions
 
 - Browser hostnames on pve-test use `*.lab.gibbsgreatly.xyz`.
-- The internal lab DNS authority is CoreDNS. MikroTik remains the client
-  resolver and conditional forwarder, not the per-service record owner.
-- Existing Phase 04 browser-ingress prompts are treated as legacy context for
-  this refactor. New work should follow this directory.
-- Generated Traefik files must not duplicate legacy central host rules during
-  migration.
-- Authentik automation is split into read-only discovery before write-capable
-  reconciliation.
+- Generated browser DNS records target Traefik at `10.57.2.10`.
+- CoreDNS is the `lab.gibbsgreatly.xyz` authority; MikroTik remains resolver,
+  conditional forwarder, and network policy point.
+- `stack.yaml` remains the LXC metadata contract and does not gain browser edge
+  fields.
+- Authentik deletes are never automatic in this refactor.
+- Apply mode requires explicit operator intent; dry-run is the default.
 
 See [decisions.md](decisions.md) for details.
 
 ## Files
 
-- [findings-addressed.md](findings-addressed.md) maps the review findings to
-  concrete plan changes.
 - [decisions.md](decisions.md) records design decisions agents must follow.
-- [task-sequence.md](task-sequence.md) lists the complete sequence of small
-  implementation tasks.
+- [task-sequence.md](task-sequence.md) lists the complete atomic sequence.
 - [tasks/](tasks/) contains detailed task documents.
 - [prompts/](prompts/) contains matching agent prompts.
-- [fixtures/](fixtures/) contains example manifest shapes for the contract task.
+- [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
+- [runbook.md](runbook.md) will contain shared validation and rollback commands.
 
 ## How Agents Should Use This
 

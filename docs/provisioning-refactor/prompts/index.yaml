@@ -5,135 +5,194 @@
 # Use one prompt per AI-agent session.
 
 prompts:
-  - id: pr-00-normalize-planning-docs
-    file: 00-normalize-planning-docs.yaml
-    title: "Normalize provisioning-refactor planning docs"
+  - id: pr-00-normalize-source-of-truth
+    file: 00-normalize-source-of-truth.yaml
+    title: "Normalize provisioning-refactor source of truth"
     type: documentation
     status: pending
-    task_doc: docs/provisioning-refactor/tasks/00-normalize-planning-docs.md
+    task_doc: docs/provisioning-refactor/tasks/00-normalize-source-of-truth.md
 
-  - id: pr-01-edge-manifest-contract
-    file: 01-edge-manifest-contract.yaml
-    title: "Define stack-owned EdgeManifest contract"
+  - id: pr-01-bootstrap-order
+    file: 01-bootstrap-order.yaml
+    title: "Document Stage 3a edge bootstrap order"
     type: documentation
     status: pending
-    task_doc: docs/provisioning-refactor/tasks/01-edge-manifest-contract.md
+    depends_on: [pr-00-normalize-source-of-truth]
+    task_doc: docs/provisioning-refactor/tasks/01-bootstrap-order.md
 
-  - id: pr-02-manifest-validator
-    file: 02-manifest-validator.yaml
-    title: "Implement edge manifest validator"
+  - id: pr-02-dns-ownership-transition
+    file: 02-dns-ownership-transition.yaml
+    title: "Define CoreDNS seed/generated DNS ownership transition"
+    type: documentation
+    status: pending
+    depends_on: [pr-01-bootstrap-order]
+    task_doc: docs/provisioning-refactor/tasks/02-dns-ownership-transition.md
+
+  - id: pr-03-cutover-semantics
+    file: 03-cutover-semantics.yaml
+    title: "Define one-host route cutover semantics"
+    type: documentation
+    status: pending
+    depends_on: [pr-01-bootstrap-order]
+    task_doc: docs/provisioning-refactor/tasks/03-cutover-semantics.md
+
+  - id: pr-04-edge-manifest-contract
+    file: 04-edge-manifest-contract.yaml
+    title: "Define EdgeManifest v1alpha1 contract"
+    type: documentation
+    status: pending
+    depends_on:
+      - pr-00-normalize-source-of-truth
+      - pr-01-bootstrap-order
+      - pr-02-dns-ownership-transition
+      - pr-03-cutover-semantics
+    task_doc: docs/provisioning-refactor/tasks/04-edge-manifest-contract.md
+
+  - id: pr-05-manifest-validator
+    file: 05-manifest-validator.yaml
+    title: "Implement side-effect-free edge manifest validator"
+    type: development
+    status: pending
+    depends_on: [pr-04-edge-manifest-contract]
+    task_doc: docs/provisioning-refactor/tasks/05-manifest-validator.md
+
+  - id: pr-06-legacy-route-inventory
+    file: 06-legacy-route-inventory.yaml
+    title: "Implement read-only legacy route inventory"
+    type: development
+    status: pending
+    depends_on: [pr-05-manifest-validator]
+    task_doc: docs/provisioning-refactor/tasks/06-legacy-route-inventory.md
+
+  - id: pr-07-traefik-renderer
+    file: 07-traefik-renderer.yaml
+    title: "Implement Traefik renderer"
     type: development
     status: pending
     depends_on:
-      - pr-01-edge-manifest-contract
-    task_doc: docs/provisioning-refactor/tasks/02-manifest-validator.md
+      - pr-05-manifest-validator
+      - pr-06-legacy-route-inventory
+    task_doc: docs/provisioning-refactor/tasks/07-traefik-renderer.md
 
-  - id: pr-03-traefik-renderer
-    file: 03-traefik-renderer.yaml
-    title: "Implement Traefik dynamic config renderer"
+  - id: pr-08-coredns-renderer
+    file: 08-coredns-renderer.yaml
+    title: "Implement CoreDNS renderer"
     type: development
     status: pending
-    depends_on:
-      - pr-02-manifest-validator
-    task_doc: docs/provisioning-refactor/tasks/03-traefik-renderer.md
+    depends_on: [pr-05-manifest-validator]
+    task_doc: docs/provisioning-refactor/tasks/08-coredns-renderer.md
 
-  - id: pr-04-dns-zone-renderer
-    file: 04-dns-zone-renderer.yaml
-    title: "Implement CoreDNS zone renderer from manifests"
-    type: development
-    status: pending
-    depends_on:
-      - pr-02-manifest-validator
-    task_doc: docs/provisioning-refactor/tasks/04-dns-zone-renderer.md
-
-  - id: pr-05-authentik-discovery
-    file: 05-authentik-discovery.yaml
+  - id: pr-09-authentik-discovery
+    file: 09-authentik-discovery.yaml
     title: "Implement read-only Authentik discovery"
     type: development
     status: pending
-    depends_on:
-      - pr-02-manifest-validator
-    task_doc: docs/provisioning-refactor/tasks/05-authentik-discovery.md
+    depends_on: [pr-05-manifest-validator]
+    task_doc: docs/provisioning-refactor/tasks/09-authentik-discovery.md
 
-  - id: pr-06-authentik-reconciler
-    file: 06-authentik-reconciler.yaml
-    title: "Implement Authentik reconciler"
+  - id: pr-10-authentik-reconciler
+    file: 10-authentik-reconciler.yaml
+    title: "Implement create/update-only Authentik reconciler"
+    type: development
+    status: pending
+    depends_on: [pr-09-authentik-discovery]
+    task_doc: docs/provisioning-refactor/tasks/10-authentik-reconciler.md
+
+  - id: pr-11-edge-reconciler
+    file: 11-edge-reconciler.yaml
+    title: "Implement edge reconciler"
     type: development
     status: pending
     depends_on:
-      - pr-05-authentik-discovery
-    task_doc: docs/provisioning-refactor/tasks/06-authentik-reconciler.md
+      - pr-07-traefik-renderer
+      - pr-08-coredns-renderer
+      - pr-10-authentik-reconciler
+    task_doc: docs/provisioning-refactor/tasks/11-edge-reconciler.md
 
-  - id: pr-07-proxy-generated-file-wiring
-    file: 07-proxy-generated-file-wiring.yaml
-    title: "Wire proxy deployment to generated dynamic files"
+  - id: pr-12-coredns-publish-wiring
+    file: 12-coredns-publish-wiring.yaml
+    title: "Wire CoreDNS deployment to generated zones"
     type: development
     status: pending
-    depends_on:
-      - pr-03-traefik-renderer
-    task_doc: docs/provisioning-refactor/tasks/07-proxy-generated-file-wiring.md
+    depends_on: [pr-08-coredns-renderer]
+    task_doc: docs/provisioning-refactor/tasks/12-coredns-publish-wiring.md
 
-  - id: pr-08-migrate-portainer
-    file: 08-migrate-portainer.yaml
-    title: "Migrate Portainer to stack-owned provisioning"
+  - id: pr-13-proxy-generated-file-wiring
+    file: 13-proxy-generated-file-wiring.yaml
+    title: "Wire proxy deployment to generated files"
+    type: development
+    status: pending
+    depends_on: [pr-07-traefik-renderer]
+    task_doc: docs/provisioning-refactor/tasks/13-proxy-generated-file-wiring.md
+
+  - id: pr-14-shared-validation-runbook
+    file: 14-shared-validation-runbook.yaml
+    title: "Document shared edge validation runbook"
+    type: documentation
+    status: pending
+    depends_on:
+      - pr-11-edge-reconciler
+      - pr-12-coredns-publish-wiring
+      - pr-13-proxy-generated-file-wiring
+    task_doc: docs/provisioning-refactor/tasks/14-shared-validation-runbook.md
+
+  - id: pr-15-migrate-authentik
+    file: 15-migrate-authentik.yaml
+    title: "Migrate Authentik route"
+    type: deployment
+    status: pending
+    depends_on: [pr-14-shared-validation-runbook]
+    task_doc: docs/provisioning-refactor/tasks/15-migrate-authentik.md
+
+  - id: pr-16-migrate-harbor
+    file: 16-migrate-harbor.yaml
+    title: "Migrate Harbor route"
+    type: deployment
+    status: pending
+    depends_on: [pr-15-migrate-authentik]
+    task_doc: docs/provisioning-refactor/tasks/16-migrate-harbor.md
+
+  - id: pr-17-migrate-grafana
+    file: 17-migrate-grafana.yaml
+    title: "Migrate Grafana route"
+    type: deployment
+    status: pending
+    depends_on: [pr-15-migrate-authentik]
+    task_doc: docs/provisioning-refactor/tasks/17-migrate-grafana.md
+
+  - id: pr-18-migrate-portainer
+    file: 18-migrate-portainer.yaml
+    title: "Migrate Portainer route"
+    type: deployment
+    status: pending
+    depends_on: [pr-15-migrate-authentik]
+    task_doc: docs/provisioning-refactor/tasks/18-migrate-portainer.md
+
+  - id: pr-19-migrate-netbox
+    file: 19-migrate-netbox.yaml
+    title: "Migrate NetBox route"
+    type: deployment
+    status: pending
+    depends_on: [pr-18-migrate-portainer]
+    task_doc: docs/provisioning-refactor/tasks/19-migrate-netbox.md
+
+  - id: pr-20-migrate-traefik-dashboard
+    file: 20-migrate-traefik-dashboard.yaml
+    title: "Migrate Traefik dashboard route"
     type: deployment
     status: pending
     depends_on:
-      - pr-04-dns-zone-renderer
-      - pr-06-authentik-reconciler
-      - pr-07-proxy-generated-file-wiring
-    task_doc: docs/provisioning-refactor/tasks/08-migrate-portainer.md
+      - pr-18-migrate-portainer
+      - pr-19-migrate-netbox
+    task_doc: docs/provisioning-refactor/tasks/20-migrate-traefik-dashboard.md
 
-  - id: pr-09-migrate-netbox
-    file: 09-migrate-netbox.yaml
-    title: "Migrate NetBox to stack-owned provisioning"
+  - id: pr-21-final-cutover-cleanup
+    file: 21-final-cutover-cleanup.yaml
+    title: "Finalize stack-owned cutover"
     type: deployment
     status: pending
     depends_on:
-      - pr-08-migrate-portainer
-    task_doc: docs/provisioning-refactor/tasks/09-migrate-netbox.md
-
-  - id: pr-10-migrate-harbor
-    file: 10-migrate-harbor.yaml
-    title: "Migrate Harbor to stack-owned provisioning"
-    type: deployment
-    status: pending
-    depends_on:
-      - pr-09-migrate-netbox
-    task_doc: docs/provisioning-refactor/tasks/10-migrate-harbor.md
-
-  - id: pr-11-migrate-authentik
-    file: 11-migrate-authentik.yaml
-    title: "Migrate Authentik to stack-owned provisioning"
-    type: deployment
-    status: pending
-    depends_on:
-      - pr-10-migrate-harbor
-    task_doc: docs/provisioning-refactor/tasks/11-migrate-authentik.md
-
-  - id: pr-12-migrate-grafana
-    file: 12-migrate-grafana.yaml
-    title: "Migrate Grafana to stack-owned provisioning"
-    type: deployment
-    status: pending
-    depends_on:
-      - pr-11-migrate-authentik
-    task_doc: docs/provisioning-refactor/tasks/12-migrate-grafana.md
-
-  - id: pr-13-migrate-traefik-dashboard
-    file: 13-migrate-traefik-dashboard.yaml
-    title: "Migrate Traefik dashboard to stack-owned provisioning"
-    type: deployment
-    status: pending
-    depends_on:
-      - pr-12-migrate-grafana
-    task_doc: docs/provisioning-refactor/tasks/13-migrate-traefik-dashboard.md
-
-  - id: pr-14-final-cutover-cleanup
-    file: 14-final-cutover-cleanup.yaml
-    title: "Finalize stack-owned provisioning cutover"
-    type: deployment
-    status: pending
-    depends_on:
-      - pr-13-migrate-traefik-dashboard
-    task_doc: docs/provisioning-refactor/tasks/14-final-cutover-cleanup.md
+      - pr-16-migrate-harbor
+      - pr-17-migrate-grafana
+      - pr-20-migrate-traefik-dashboard
+    task_doc: docs/provisioning-refactor/tasks/21-final-cutover-cleanup.md

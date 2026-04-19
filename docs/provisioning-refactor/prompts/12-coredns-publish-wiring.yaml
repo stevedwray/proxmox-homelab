@@ -1,0 +1,26 @@
+---
+id: pr-12-coredns-publish-wiring
+title: "Wire CoreDNS deployment to generated zones"
+type: development
+status: pending
+depends_on:
+  - pr-08-coredns-renderer
+task_doc: docs/provisioning-refactor/tasks/12-coredns-publish-wiring.md
+
+context: |
+  CoreDNS must be able to consume validated generated zone output.
+
+objective: |
+  Add safe generated-zone publish/reload behavior while preserving the seed-zone
+  default.
+
+workflow:
+  steps:
+    - Add optional generated zone source.
+    - Validate before publish.
+    - Reload/restart CoreDNS safely.
+    - Validate authoritative answers.
+
+postconditions:
+  criteria:
+    - Generated DNS can be deployed without router static-record edits.
