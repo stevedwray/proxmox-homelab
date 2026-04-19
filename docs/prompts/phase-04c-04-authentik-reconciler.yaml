@@ -1,0 +1,51 @@
+---
+id: p04c-04-authentik-reconciler
+title: "Implement Authentik reconciliation from stack auth metadata"
+phase: "04c"
+type: development
+status: pending
+depends_on:
+  - p04c-01-edge-contract
+task_doc: docs/plan/tasks/04c-stack-owned-ingress-04-authentik-reconciler.md
+
+context: |
+  Replace manual Authentik provider/app/outpost setup with manifest-driven reconciliation.
+
+objective: |
+  Ensure routes that require forward-auth or OIDC metadata are backed by consistent
+  Authentik configuration without manual UI drift.
+
+preconditions:
+  infrastructure:
+    - id: authentik-health
+      verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
+      expect: "200 or 204"
+
+workflow:
+  steps:
+    - id: 1
+      name: Define object mapping from manifest to Authentik
+      commands:
+        - "Map auth.mode to provider/app/outpost requirements"
+
+    - id: 2
+      name: Implement idempotent lookup and upsert
+      commands:
+        - "Create or update provider/app as needed"
+        - "Ensure outpost association for forward-auth"
+
+    - id: 3
+      name: Validate behavior with one forward-auth route
+      commands:
+        - "Check redirect flow reaches Authentik authorize endpoint"
+
+postconditions:
+  criteria:
+    - id: no-manual-ui-step
+      description: Re-run reconcile keeps Authentik config aligned without manual edits
+      verify: "Run reconcile twice and compare outputs"
+      expect: Second run no-op
+
+notes:
+  - Preserve domain-level cookie policy for `.lab.gibbsgreatly.xyz`.
+  - Avoid destructive delete operations by default.

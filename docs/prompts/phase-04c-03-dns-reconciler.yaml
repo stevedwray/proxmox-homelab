@@ -1,0 +1,60 @@
+---
+id: p04c-03-dns-reconciler
+title: "Implement MikroTik DNS reconciliation from stack manifests"
+phase: "04c"
+type: development
+status: pending
+depends_on:
+  - p04c-01-edge-contract
+task_doc: docs/plan/tasks/04c-stack-owned-ingress-03-dns-reconciler.md
+
+context: |
+  Convert stack manifest DNS intent into idempotent MikroTik REST API reconciliation.
+
+objective: |
+  Build a safe DNS reconciler that computes add/update/delete actions and applies them
+  for managed records only.
+
+preconditions:
+  secrets:
+    - key: MIKROTIK_ADMIN
+      verify: "./with-secrets bash -c 'test -n \"$MIKROTIK_ADMIN\" && echo set'"
+      expect: set
+    - key: MIKROTIK_ADMIN_PASSWORD
+      verify: "./with-secrets bash -c 'test -n \"$MIKROTIK_ADMIN_PASSWORD\" && echo set'"
+      expect: set
+
+workflow:
+  steps:
+    - id: 1
+      name: Build desired-state extraction from manifests
+      commands:
+        - "Parse dns.enabled records and normalize TTL/target"
+
+    - id: 2
+      name: Implement current-state fetch and diff planner
+      commands:
+        - "Read MikroTik records via REST API"
+        - "Compute create/update/delete plan"
+
+    - id: 3
+      name: Implement apply with safeguards
+      commands:
+        - "Restrict to managed record scope"
+        - "Provide dry-run and apply mode"
+
+    - id: 4
+      name: Validate idempotence
+      commands:
+        - "Run reconciler twice and verify zero changes on second pass"
+
+postconditions:
+  criteria:
+    - id: dns-idempotent
+      description: Second run has no diff when records match desired state
+      verify: "Re-run reconcile and inspect diff output"
+      expect: No changes
+
+notes:
+  - Use API credentials only, never SSH CLI path.
+  - No hardcoded secrets in code or docs.

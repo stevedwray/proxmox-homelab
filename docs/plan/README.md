@@ -27,6 +27,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | None — workstation only |
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | Phase 00c, 03c, 03d complete |
 | 04b | [Internal DNS Authority (CoreDNS)](phase-04b-internal-dns.md) | Phase 04 complete |
+| 04c | [Stack-Owned Ingress/Auth/DNS Refactor](phase-04c-stack-owned-ingress-auth-dns.md) | Phase 04 complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | Phase 04, 05 complete |
 | 07 | [Runtime Security and Secrets Management](phase-07-runtime-security.md) | Phase 06 complete — placeholder, not yet planned |
