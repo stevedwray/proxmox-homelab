@@ -19,12 +19,12 @@ context: |
   - Traefik forwardAuth middleware points at Authentik
   - Monitoring Grafana OIDC points at Authentik
 
-  IMPORTANT: This deployment has two mandatory manual steps after the playbook runs
+  IMPORTANT: This deployment has three mandatory manual steps after the playbook runs
   (known rebuild gaps — not automatable until terraform-provider-authentik is built):
   1. First-boot web UI setup and admin account creation
   2. Create Proxy Provider + outpost (unblocks Traefik)
   3. Create Grafana OIDC provider (unblocks Monitoring)
-  Both steps produce secrets that must be recorded in terraform/secrets.enc.yaml.
+  These manual steps produce secrets that must be recorded in terraform/secrets.enc.yaml.
 
 preconditions:
   repository:

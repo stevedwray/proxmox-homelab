@@ -93,9 +93,14 @@ future `terraform-provider-authentik` automation.
 ## Out of Scope for this task (known gaps — see above)
 
 - `terraform-provider-authentik` implementation — listed as the automation path, not yet built
-- Traefik forward-auth Proxy Provider and outpost creation — must be done manually post-deploy
-  until `terraform-provider-authentik` is implemented
-- Grafana OIDC provider creation — manual post-deploy step, see monitoring task
+
+## In Scope Manual Runtime Gates
+
+- Traefik forward-auth Proxy Provider and outpost creation are required in this task's
+  manual first-boot sequence
+- Grafana OIDC provider creation is required in this task's manual first-boot sequence
+- `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` must be recorded in
+  `terraform/secrets.enc.yaml` before marking this task complete
 
 ## Inputs
 
@@ -110,6 +115,9 @@ future `terraform-provider-authentik` automation.
 - Authentik health endpoints healthy
 - Compose file on disk contains only env var references — no literal credentials
 - `AUTHENTIK_SUPERUSER_API_TOKEN` recorded in `terraform/secrets.enc.yaml` after first boot
+- Traefik forward-auth Proxy Provider outpost created in Authentik
+- Grafana OIDC provider created and its client credentials recorded in
+  `terraform/secrets.enc.yaml`
 
 ## Constraints and Conventions
 
@@ -134,6 +142,9 @@ future `terraform-provider-authentik` automation.
 - [ ] `curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/health/ready/` returns 204
 - [ ] Initial admin setup completed via web UI
 - [ ] `AUTHENTIK_SUPERUSER_API_TOKEN` recorded in `terraform/secrets.enc.yaml` (not in `.env`)
+- [ ] Traefik forward-auth Proxy Provider and outpost created in Authentik
+- [ ] `GRAFANA_OAUTH_CLIENT_ID` and `GRAFANA_OAUTH_CLIENT_SECRET` recorded in
+  `terraform/secrets.enc.yaml` (not in `.env`)
 
 ## Session Prompt
 
@@ -207,5 +218,6 @@ STEP 7 — Complete first-boot setup (manual — this remains a rebuild gap unti
     GRAFANA_OAUTH_CLIENT_ID and GRAFANA_OAUTH_CLIENT_SECRET (unblocks task 04-05)
 
 DONE WHEN: Authentik is healthy at 10.57.1.10, compose file has no literal credentials,
-AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS, and the Proxy Provider outpost is created.
+AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS, the Proxy Provider outpost is created, and
+Grafana OIDC client credentials are stored in SOPS.
 ```
