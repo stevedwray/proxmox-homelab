@@ -112,5 +112,6 @@
           Authentik is healthy at http://{{ ansible_host }}:9000/.
           Complete the initial setup wizard at
           http://{{ ansible_host }}:9000/if/flow/initial-setup/
-          using AUTHENTIK_SUPERUSER_PASSWORD from .env, then create
-          AUTHENTIK_SUPERUSER_API_TOKEN and store it in .env.
+          using AUTHENTIK_SUPERUSER_PASSWORD from terraform/secrets.enc.yaml
+          (via SOPS), then create AUTHENTIK_SUPERUSER_API_TOKEN and store it in
+          terraform/secrets.enc.yaml.

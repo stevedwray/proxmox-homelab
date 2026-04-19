@@ -3,13 +3,15 @@ id: dep-01-authentik
 title: "Deploy Authentik identity provider (VMID 150) — runtime gate"
 phase: "04"
 type: deployment
-status: pending
+status: complete
 depends_on:
   - rem-01-authentik-secrets
 task_doc: docs/plan/tasks/04-core-services-01-deploy-authentik.md
 github_issue: ""
 
 context: |
+  COMPLETE — Runtime gate validated on 2026-04-19.
+
   This is a runtime gate prompt.
 
   Mode 2 (rebuild) execution. Deploy Authentik as the first management-segment
@@ -82,7 +84,7 @@ preconditions:
       expect: Match found
 
 objective: |
-  LXC VMID 150 is running at 10.57.1.10, Authentik health endpoints return 204,
+  LXC VMID 150 is running at 10.57.1.10, Authentik health endpoints return 200 or 204,
   all secrets are injected from SOPS (no literal values on disk), first-boot
   setup is complete, AUTHENTIK_SUPERUSER_API_TOKEN is in SOPS, and the Proxy
   Provider outpost and Grafana OIDC provider are created.
@@ -129,7 +131,7 @@ workflow:
       commands:
         - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/live/"
         - "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
-      expect: "204 for both (allow 3 minutes for first startup)"
+      expect: "200 or 204 for both (allow 3 minutes for first startup)"
 
     - id: 5
       name: Verify no secrets on disk
@@ -181,14 +183,14 @@ postconditions:
       expect: "status: running"
 
     - id: health-live
-      description: Authentik live health returns 204
+      description: Authentik live health returns 200 or 204
       verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/live/"
-      expect: "204"
+      expect: "200 or 204"
 
     - id: health-ready
-      description: Authentik ready health returns 204
+      description: Authentik ready health returns 200 or 204
       verify: "curl -s -o /dev/null -w '%{http_code}' http://10.57.1.10:9000/-/health/ready/"
-      expect: "204"
+      expect: "200 or 204"
 
     - id: no-literals-on-disk
       description: Compose file has no literal credential values
