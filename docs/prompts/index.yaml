@@ -88,7 +88,7 @@ prompts:
     file: deploy-03-step-ca.yaml
     title: "Deploy step-ca internal CA (VMID 152) — runtime gate"
     type: deployment
-    status: pending
+    status: complete
     depends_on:
       - dep-02-traefik
       - rem-04-step-ca-secrets
@@ -98,7 +98,7 @@ prompts:
     file: deploy-04-monitoring.yaml
     title: "Deploy monitoring stack (VMID 154) — runtime gate with real SOPS values"
     type: deployment
-    status: pending
+    status: complete
     depends_on:
       - dep-03-step-ca
       - rem-03-monitoring-secrets
