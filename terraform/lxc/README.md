@@ -285,6 +285,36 @@ Use the disposable validation stacks on `pve-test` to exercise the network layer
 ./validate-network-matrix.sh
 ```
 
+### Edge Manifest Validation
+
+Use the EdgeManifest validator to check stack-owned ingress manifests against the
+v1alpha1 contract. The validator is read-only and side-effect free: it only
+discovers and validates `stacks/*/edge.yaml` files.
+
+```bash
+# Discover and validate all stack manifests under terraform/lxc/stacks/*/edge.yaml
+python3 terraform/lxc/validate-edge-manifests.py
+
+# Emit machine-readable JSON output
+python3 terraform/lxc/validate-edge-manifests.py --json
+
+# Validate explicit manifests (useful in CI for changed files)
+python3 terraform/lxc/validate-edge-manifests.py \
+  terraform/lxc/stacks/portainer-stack/edge.yaml \
+  terraform/lxc/stacks/harbor-stack/edge.yaml
+
+# Validate fixtures directly
+python3 terraform/lxc/validate-edge-manifests.py docs/provisioning-refactor/fixtures/valid/*.yaml
+
+# Run unit tests for the validator
+python3 -m unittest terraform/lxc/test_edge_manifest.py
+```
+
+Expected behavior:
+- valid manifests pass with exit code 0
+- invalid manifests fail with stable error codes (for example: `EMV001`-`EMV008`)
+- duplicate-host detection is cross-manifest (run with multiple manifests together)
+
 `validate-stack-metadata.sh` checks the active platform stacks added in the
 boundary-strengthening work. It currently validates only metadata shape:
 - `depends_on` exists, is a list, uses non-empty stack names, does not self-reference,
