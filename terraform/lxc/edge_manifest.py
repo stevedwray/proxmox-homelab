@@ -20,6 +20,10 @@ TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")
 TRAEFIK_SERVICE_REF_PATTERN = re.compile(
     r"^[A-Za-z0-9][A-Za-z0-9_.-]*@[A-Za-z0-9][A-Za-z0-9_.-]*$"
 )
+LEGACY_HOST_RULE_PATTERN = re.compile(r"Host\(`([^`]+)`\)")
+JINJA_DEFAULT_HOST_PATTERN = re.compile(
+    r"^\{\{\s*[^}]*\|\s*default\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}$"
+)
 
 
 @dataclass(frozen=True)
@@ -67,6 +71,200 @@ class ValidationResult:
             "issue_count": len(self.issues),
             "issues": [issue.to_dict() for issue in self.issues],
         }
+
+
+@dataclass(frozen=True)
+class LegacyRouteIssue:
+    """Machine-readable extraction issue for legacy route inventory."""
+
+    code: str
+    message: str
+    source: str | None = None
+    line: int | None = None
+    router: str | None = None
+
+    def to_dict(self) -> dict[str, object]:
+        return {k: v for k, v in asdict(self).items() if v is not None}
+
+
+@dataclass(frozen=True)
+class LegacyRouteRecord:
+    """Extracted legacy central Traefik host rule metadata."""
+
+    host: str
+    router: str
+    source: str
+    line: int
+
+    def to_dict(self) -> dict[str, object]:
+        return asdict(self)
+
+
+@dataclass(frozen=True)
+class LegacyRouteInventoryResult:
+    """Read-only legacy route inventory extraction result."""
+
+    routes: tuple[LegacyRouteRecord, ...]
+    issues: tuple[LegacyRouteIssue, ...]
+
+    @property
+    def ok(self) -> bool:
+        return not self.issues
+
+    def to_dict(self) -> dict[str, object]:
+        status = "passed" if self.ok else "failed"
+        return {
+            "status": status,
+            "route_count": len(self.routes),
+            "routes": [route.to_dict() for route in self.routes],
+            "issue_count": len(self.issues),
+            "issues": [issue.to_dict() for issue in self.issues],
+        }
+
+
+def extract_legacy_routes(playbook_path: Path) -> LegacyRouteInventoryResult:
+    """Extract central legacy Host(...) router rules from a Traefik playbook."""
+
+    try:
+        content = playbook_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return LegacyRouteInventoryResult(
+            routes=(),
+            issues=(
+                LegacyRouteIssue(
+                    code="LRI100",
+                    message=f"failed to read legacy playbook: {exc}",
+                    source=str(playbook_path),
+                ),
+            ),
+        )
+
+    routes, issues = _extract_legacy_routes_from_text(content, str(playbook_path))
+    routes.sort(key=lambda route: (route.router, route.host, route.line))
+    issues.sort(key=lambda issue: (issue.code, issue.source or "", issue.line or 0, issue.router or ""))
+    return LegacyRouteInventoryResult(routes=tuple(routes), issues=tuple(issues))
+
+
+def _extract_legacy_routes_from_text(
+    content: str,
+    source: str,
+) -> tuple[list[LegacyRouteRecord], list[LegacyRouteIssue]]:
+    routes: list[LegacyRouteRecord] = []
+    issues: list[LegacyRouteIssue] = []
+
+    in_routers = False
+    routers_indent = -1
+    current_router: str | None = None
+
+    for line_number, raw_line in enumerate(content.splitlines(), start=1):
+        stripped = raw_line.strip()
+        indent = len(raw_line) - len(raw_line.lstrip(" "))
+
+        if stripped == "routers:":
+            in_routers = True
+            routers_indent = indent
+            current_router = None
+            continue
+
+        if _is_router_block_exit(in_routers, stripped, indent, routers_indent):
+            in_routers = False
+            current_router = None
+
+        if not in_routers:
+            continue
+
+        router_name = _match_router_name(stripped, indent, routers_indent)
+        if router_name is not None:
+            current_router = router_name
+            continue
+
+        route, issue = _extract_route_from_rule(
+            current_router=current_router,
+            stripped=stripped,
+            source=source,
+            line_number=line_number,
+        )
+        if route is None and issue is None:
+            continue
+
+        if issue is not None:
+            issues.append(issue)
+            continue
+
+        routes.append(route)
+
+    return routes, issues
+
+
+def _is_router_block_exit(
+    in_routers: bool,
+    stripped: str,
+    indent: int,
+    routers_indent: int,
+) -> bool:
+    return in_routers and bool(stripped) and indent <= routers_indent
+
+
+def _match_router_name(stripped: str, indent: int, routers_indent: int) -> str | None:
+    router_match = re.match(r"^([A-Za-z0-9][A-Za-z0-9_.-]*):\s*$", stripped)
+    if router_match is None or indent != routers_indent + 2:
+        return None
+    return router_match.group(1)
+
+
+def _extract_route_from_rule(
+    current_router: str | None,
+    stripped: str,
+    source: str,
+    line_number: int,
+) -> tuple[LegacyRouteRecord | None, LegacyRouteIssue | None]:
+    if current_router is None or not stripped.startswith("rule:"):
+        return None, None
+
+    host_match = LEGACY_HOST_RULE_PATTERN.search(stripped)
+    if host_match is None:
+        return None, LegacyRouteIssue(
+            code="LRI101",
+            message="router rule must include Host(`...`)",
+            source=source,
+            line=line_number,
+            router=current_router,
+        )
+
+    raw_host = host_match.group(1).strip()
+    host = _resolve_legacy_host(raw_host)
+    if host is None:
+        return None, LegacyRouteIssue(
+            code="LRI102",
+            message=(
+                "router Host(...) value must be a literal host or a "
+                "Jinja default('host') expression"
+            ),
+            source=source,
+            line=line_number,
+            router=current_router,
+        )
+
+    return (
+        LegacyRouteRecord(
+            host=host,
+            router=current_router,
+            source=source,
+            line=line_number,
+        ),
+        None,
+    )
+
+
+def _resolve_legacy_host(raw_host: str) -> str | None:
+    if "{{" not in raw_host:
+        return raw_host
+
+    default_match = JINJA_DEFAULT_HOST_PATTERN.match(raw_host)
+    if default_match is None:
+        return None
+
+    return default_match.group(1)
 
 
 def discover_edge_manifests(stacks_dir: Path) -> list[Path]:

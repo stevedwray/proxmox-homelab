@@ -19,6 +19,7 @@ assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
 SPEC.loader.exec_module(MODULE)
 discover_edge_manifests = MODULE.discover_edge_manifests
+extract_legacy_routes = MODULE.extract_legacy_routes
 validate_manifests = MODULE.validate_manifests
 
 
@@ -131,6 +132,70 @@ spec:
 
         self.assertFalse(result.ok)
         self.assertIn("EMV009", {issue.code for issue in result.issues})
+
+
+class TestExtractLegacyRoutes(unittest.TestCase):
+    def test_extracts_current_legacy_routes_from_playbook(self):
+        playbook_path = (
+            REPO_ROOT
+            / "terraform"
+            / "lxc"
+            / "ansible"
+            / "playbooks"
+            / "deploy-proxy-stack.yml"
+        )
+
+        result = extract_legacy_routes(playbook_path)
+
+        self.assertTrue(result.ok)
+        extracted = {route.router: route.host for route in result.routes}
+        self.assertEqual(
+            {
+                "authentik": "authentik.lab.gibbsgreatly.xyz",
+                "grafana": "grafana.lab.gibbsgreatly.xyz",
+                "harbor": "harbor.lab.gibbsgreatly.xyz",
+                "netbox": "netbox.lab.gibbsgreatly.xyz",
+                "portainer": "portainer.lab.gibbsgreatly.xyz",
+                "traefik-dashboard": "traefik.lab.gibbsgreatly.xyz",
+            },
+            extracted,
+        )
+        self.assertTrue(all(route.source.endswith("deploy-proxy-stack.yml") for route in result.routes))
+        self.assertTrue(all(route.line > 0 for route in result.routes))
+
+    def test_reports_malformed_host_rule(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "deploy-proxy-stack.yml"
+            playbook.write_text(
+                """http:
+  routers:
+    bad-router:
+      rule: \"Host(bad.lab.gibbsgreatly.xyz)\"
+""",
+                encoding="utf-8",
+            )
+
+            result = extract_legacy_routes(playbook)
+
+        self.assertFalse(result.ok)
+        self.assertIn("LRI101", {issue.code for issue in result.issues})
+
+    def test_reports_unresolvable_host_template(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            playbook = Path(tmpdir) / "deploy-proxy-stack.yml"
+            playbook.write_text(
+                """http:
+  routers:
+    templated-router:
+      rule: \"Host(`{{ custom_edge_host }}`)\"
+""",
+                encoding="utf-8",
+            )
+
+            result = extract_legacy_routes(playbook)
+
+        self.assertFalse(result.ok)
+        self.assertIn("LRI102", {issue.code for issue in result.issues})
 
 
 if __name__ == "__main__":
