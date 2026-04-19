@@ -1,0 +1,39 @@
+---
+id: pr-01-edge-manifest-contract
+title: "Define stack-owned EdgeManifest contract"
+type: documentation
+status: pending
+task_doc: docs/provisioning-refactor/tasks/01-edge-manifest-contract.md
+
+context: |
+  Define the v1alpha1 EdgeManifest contract before implementation begins.
+  Include fixtures for all six current browser services.
+
+objective: |
+  Produce an unambiguous contract and fixture set for
+  terraform/lxc/stacks/<stack>/edge.yaml manifests.
+
+workflow:
+  steps:
+    - id: schema
+      name: Define schema
+      commands:
+        - "Document apiVersion, kind, metadata, spec.routes[]"
+        - "Define backend types: url and traefikService"
+        - "Define auth modes: none, forwardAuth, native, oidc"
+    - id: validation-rules
+      name: Define validation rules
+      commands:
+        - "Document hostname suffix and uniqueness rules"
+        - "Document backend/auth compatibility"
+        - "Document TLS resolver and DNS target rules"
+    - id: fixtures
+      name: Add fixtures
+      commands:
+        - "Create valid fixtures for Authentik, Portainer, Harbor, NetBox, Grafana, Traefik dashboard"
+        - "Create invalid fixtures and expected error catalog"
+
+postconditions:
+  criteria:
+    - id: complete-contract
+      description: Another agent can implement the validator without guessing fields

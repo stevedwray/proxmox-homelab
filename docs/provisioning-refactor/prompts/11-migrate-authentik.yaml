@@ -1,0 +1,42 @@
+---
+id: pr-11-migrate-authentik
+title: "Migrate Authentik to stack-owned provisioning"
+type: deployment
+status: pending
+depends_on:
+  - pr-10-migrate-harbor
+task_doc: docs/provisioning-refactor/tasks/11-migrate-authentik.md
+
+context: |
+  Migrate exactly one service: authentik.lab.gibbsgreatly.xyz. Authentik must not
+  protect itself with forward-auth.
+
+objective: |
+  Authentik route and DNS are stack-owned with auth mode none.
+
+workflow:
+  steps:
+    - id: preflight
+      name: Verify pve-test targeting
+      commands:
+        - "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
+    - id: manifest
+      name: Add Authentik edge manifest
+      commands:
+        - "Create terraform/lxc/stacks/authentik-stack/edge.yaml"
+    - id: apply
+      name: Render, publish, and validate
+      commands:
+        - "Run validator"
+        - "Render Traefik and DNS"
+        - "Confirm no self-protection objects"
+        - "Validate route"
+    - id: cleanup
+      name: Remove legacy Authentik route only
+      commands:
+        - "Delete central Authentik router/service after generated path works"
+
+postconditions:
+  criteria:
+    - id: no-recursion
+      description: Authentik route has no forward-auth recursion
