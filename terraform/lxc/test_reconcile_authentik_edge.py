@@ -6,6 +6,7 @@ import importlib.util
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 
@@ -53,10 +54,27 @@ class FakeClient:
         applications: list[dict] | None = None,
         providers: list[dict] | None = None,
         outposts: list[dict] | None = None,
+        flows: list[dict] | None = None,
     ) -> None:
         self.applications = list(applications or [])
         self.providers = list(providers or [])
         self.outposts = list(outposts or [])
+        self.flows = list(
+            flows
+            if flows is not None
+            else [
+                {
+                    "pk": "flow-authz-default",
+                    "slug": "default-provider-authorization-implicit-consent",
+                    "designation": "authorization",
+                },
+                {
+                    "pk": "flow-invalidation-default",
+                    "slug": "default-provider-invalidation-flow",
+                    "designation": "invalidation",
+                },
+            ]
+        )
         self.request_methods: list[str] = []
         self.writes: list[tuple[str, str, dict]] = []
         self._next_id = 1000
@@ -76,6 +94,10 @@ class FakeClient:
     def fetch_outposts(self):
         self.request_methods.append("GET")
         return self.outposts
+
+    def fetch_flows(self):
+        self.request_methods.append("GET")
+        return self.flows
 
     def create_proxy_provider(self, payload: dict):
         self.request_methods.append("POST")
@@ -277,6 +299,104 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertGreater(len(result.stop_conditions), 0)
         self.assertEqual(0, result.write_count)
         self.assertEqual([], client.writes)
+
+    def test_provider_payload_uses_resolved_flow_pks(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "portainer.yaml"
+            _write_manifest(
+                manifest,
+                stack="portainer-stack",
+                route="portainer",
+                host="portainer.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient()
+
+            result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual("flow-authz-default", payload["authorization_flow"])
+        self.assertEqual("flow-invalidation-default", payload["invalidation_flow"])
+
+    def test_missing_required_flow_fails_preflight_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "portainer.yaml"
+            _write_manifest(
+                manifest,
+                stack="portainer-stack",
+                route="portainer",
+                host="portainer.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                flows=[
+                    {
+                        "pk": "flow-authz-default",
+                        "slug": "default-provider-authorization-implicit-consent",
+                        "designation": "authorization",
+                    }
+                ]
+            )
+
+            result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(0, result.write_count)
+        self.assertEqual([], client.writes)
+        self.assertTrue(any(issue.code == "AKR003" for issue in result.issues))
+
+    def test_flow_slug_override_is_honored(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                flows=[
+                    {
+                        "pk": "flow-authz-custom",
+                        "slug": "custom-authz",
+                        "designation": "authorization",
+                    },
+                    {
+                        "pk": "flow-invalidation-custom",
+                        "slug": "custom-invalidation",
+                        "designation": "invalidation",
+                    },
+                ]
+            )
+
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    MODULE.AUTHORIZATION_FLOW_SLUG_ENV: "custom-authz",
+                    MODULE.INVALIDATION_FLOW_SLUG_ENV: "custom-invalidation",
+                },
+                clear=False,
+            ):
+                auth_override = MODULE._resolve_slug_override(MODULE.AUTHORIZATION_FLOW_SLUG_ENV)
+                invalidation_override = MODULE._resolve_slug_override(MODULE.INVALIDATION_FLOW_SLUG_ENV)
+                result = reconcile_authentik(
+                    [manifest],
+                    client,
+                    apply=True,
+                    authorization_flow_slug_override=auth_override,
+                    invalidation_flow_slug_override=invalidation_override,
+                )
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual("flow-authz-custom", payload["authorization_flow"])
+        self.assertEqual("flow-invalidation-custom", payload["invalidation_flow"])
 
 
 if __name__ == "__main__":

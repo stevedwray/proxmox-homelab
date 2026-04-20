@@ -18,12 +18,18 @@ import urllib.request
 
 DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
+AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
+INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"
 COOKIE_DOMAIN = ".lab.gibbsgreatly.xyz"
 SHARED_OUTPOST_TYPE = "proxy"
-# Authentik flow UUIDs — implicit-consent authorization and provider invalidation flows.
-# These match the flows used by the existing legacy traefik-forwardauth-provider.
-AUTHORIZATION_FLOW_UUID = "16080fe7-2ab0-48b4-a688-410b301898ed"
-INVALIDATION_FLOW_UUID = "532d5ee0-846b-4643-9cc8-58ad2cc944c7"
+DEFAULT_AUTHORIZATION_FLOW_SLUGS = (
+    "default-provider-authorization-implicit-consent",
+    "default-provider-authorization-explicit-consent",
+)
+DEFAULT_INVALIDATION_FLOW_SLUGS = (
+    "default-provider-invalidation-flow",
+    "default-invalidation-flow",
+)
 # Minimum outpost config — Authentik requires this field on creation.
 OUTPOST_DEFAULT_CONFIG = {
     "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
@@ -131,6 +137,9 @@ class AuthentikApiClient:
 
     def fetch_outposts(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/outposts/instances/")
+
+    def fetch_flows(self) -> list[dict[str, Any]]:
+        return self._get_paginated("/api/v3/flows/instances/")
 
     def create_proxy_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(f"{self.base_url}/api/v3/providers/proxy/", "POST", payload)
@@ -282,6 +291,11 @@ def _resolve_token(token_env: str) -> tuple[str | None, ReconcileIssue | None]:
     )
 
 
+def _resolve_slug_override(env_name: str) -> str | None:
+    value = os.environ.get(env_name, "").strip()
+    return value or None
+
+
 def _as_issue(issue: DiscoveryIssue) -> ReconcileIssue:
     return ReconcileIssue(
         code=issue.code,
@@ -335,16 +349,112 @@ def _resolve_single_owned_candidate(
     return candidate, None
 
 
-def _provider_payload(intent: RouteIntent) -> dict[str, Any]:
+def _provider_payload(
+    intent: RouteIntent,
+    *,
+    authorization_flow_pk: str,
+    invalidation_flow_pk: str,
+) -> dict[str, Any]:
     return {
         "name": intent.provider_name,
         "external_host": f"https://{intent.host}",
         "cookie_domain": COOKIE_DOMAIN,
         "mode": "forward_domain",
         "intercept_header_auth": True,
-        "authorization_flow": AUTHORIZATION_FLOW_UUID,
-        "invalidation_flow": INVALIDATION_FLOW_UUID,
+        "authorization_flow": authorization_flow_pk,
+        "invalidation_flow": invalidation_flow_pk,
     }
+
+
+def _flow_pk(flow: dict[str, Any]) -> str | None:
+    return _DISCOVER._as_id(flow.get("pk") or flow.get("id"))
+
+
+def _resolve_flow_by_slug(
+    *,
+    flows: list[dict[str, Any]],
+    flow_kind: str,
+    designation: str,
+    override_slug: str | None,
+    default_slugs: tuple[str, ...],
+    issue_code: str,
+) -> tuple[str | None, ReconcileIssue | None]:
+    if override_slug:
+        matched = [flow for flow in flows if str(flow.get("slug", "")) == override_slug]
+        if not matched:
+            return None, ReconcileIssue(
+                code=issue_code,
+                message=(
+                    f"missing required {flow_kind} flow: slug '{override_slug}' from {flow_kind} "
+                    f"override was not found (designation={designation})"
+                ),
+            )
+        flow_id = _flow_pk(matched[0])
+        if not flow_id:
+            return None, ReconcileIssue(
+                code=issue_code,
+                message=(
+                    f"missing required {flow_kind} flow: slug '{override_slug}' resolved but has no id"
+                ),
+            )
+        return flow_id, None
+
+    for slug in default_slugs:
+        matched = [flow for flow in flows if str(flow.get("slug", "")) == slug]
+        if not matched:
+            continue
+        flow_id = _flow_pk(matched[0])
+        if flow_id:
+            return flow_id, None
+
+    designation_slugs = sorted(
+        {
+            str(flow.get("slug", ""))
+            for flow in flows
+            if str(flow.get("designation", "")) == designation and flow.get("slug")
+        }
+    )
+    return None, ReconcileIssue(
+        code=issue_code,
+        message=(
+            f"missing required {flow_kind} flow: looked for default slugs {list(default_slugs)} "
+            f"(designation={designation}); available designation slugs={designation_slugs}"
+        ),
+    )
+
+
+def _resolve_proxy_flow_ids(
+    client: Any,
+    *,
+    authorization_flow_slug_override: str | None,
+    invalidation_flow_slug_override: str | None,
+) -> tuple[tuple[str, str] | None, tuple[ReconcileIssue, ...]]:
+    flows = client.fetch_flows()
+
+    authorization_flow_pk, auth_issue = _resolve_flow_by_slug(
+        flows=flows,
+        flow_kind="authorization",
+        designation="authorization",
+        override_slug=authorization_flow_slug_override,
+        default_slugs=DEFAULT_AUTHORIZATION_FLOW_SLUGS,
+        issue_code="AKR002",
+    )
+    invalidation_flow_pk, invalidation_issue = _resolve_flow_by_slug(
+        flows=flows,
+        flow_kind="invalidation",
+        designation="invalidation",
+        override_slug=invalidation_flow_slug_override,
+        default_slugs=DEFAULT_INVALIDATION_FLOW_SLUGS,
+        issue_code="AKR003",
+    )
+
+    issues = tuple(issue for issue in (auth_issue, invalidation_issue) if issue is not None)
+    if issues:
+        return None, issues
+
+    assert authorization_flow_pk is not None
+    assert invalidation_flow_pk is not None
+    return (authorization_flow_pk, invalidation_flow_pk), ()
 
 
 def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[str, Any]:
@@ -497,6 +607,8 @@ def reconcile_authentik(
     client: Any,
     *,
     apply: bool,
+    authorization_flow_slug_override: str | None = None,
+    invalidation_flow_slug_override: str | None = None,
 ) -> ReconcileResult:
     intents, validation_issues = _DISCOVER._build_route_intents(manifest_paths)
     if validation_issues:
@@ -530,7 +642,27 @@ def reconcile_authentik(
     write_count = 0
     consumed: dict[str, set[str]] = {"application": set(), "provider": set(), "outpost": set()}
     required_provider_ids: set[str] = set()
-    has_forwardauth = False
+    has_forwardauth = any(intent.auth_mode == "forwardAuth" for intent in intents)
+
+    authorization_flow_pk: str | None = None
+    invalidation_flow_pk: str | None = None
+    if has_forwardauth:
+        flow_ids, flow_issues = _resolve_proxy_flow_ids(
+            client,
+            authorization_flow_slug_override=authorization_flow_slug_override,
+            invalidation_flow_slug_override=invalidation_flow_slug_override,
+        )
+        if flow_issues:
+            return ReconcileResult(
+                apply=apply,
+                actions=(),
+                issues=flow_issues,
+                stop_conditions=(),
+                request_methods=tuple(client.request_methods),
+                write_count=0,
+            )
+        assert flow_ids is not None
+        authorization_flow_pk, invalidation_flow_pk = flow_ids
 
     intents = sorted(intents, key=lambda item: (item.stack, item.route, item.host))
     for intent in intents:
@@ -579,11 +711,16 @@ def reconcile_authentik(
                 )
             continue
 
-        has_forwardauth = True
         app_obj, provider_obj, route_stops = _resolve_forwardauth_candidates(intent, applications, providers)
         stop_conditions.extend(route_stops)
 
-        provider_payload = _provider_payload(intent)
+        assert authorization_flow_pk is not None
+        assert invalidation_flow_pk is not None
+        provider_payload = _provider_payload(
+            intent,
+            authorization_flow_pk=authorization_flow_pk,
+            invalidation_flow_pk=invalidation_flow_pk,
+        )
         provider_id: str | None = None
 
         if provider_obj is None:
@@ -822,7 +959,13 @@ def main() -> int:
         token=token,
         verify_tls=not args.no_verify_tls,
     )
-    result = reconcile_authentik(manifest_paths, client, apply=args.apply)
+    result = reconcile_authentik(
+        manifest_paths,
+        client,
+        apply=args.apply,
+        authorization_flow_slug_override=_resolve_slug_override(AUTHORIZATION_FLOW_SLUG_ENV),
+        invalidation_flow_slug_override=_resolve_slug_override(INVALIDATION_FLOW_SLUG_ENV),
+    )
 
     if args.json:
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
