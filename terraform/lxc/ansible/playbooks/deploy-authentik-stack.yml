@@ -24,6 +24,7 @@
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
+    authentik_superuser_api_token: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | mandatory('AUTHENTIK_SUPERUSER_API_TOKEN env var is not set') }}"
 
   tasks:
     - name: Create Authentik compose directory
@@ -46,6 +47,8 @@
           AUTHENTIK_SECRET_KEY={{ authentik_secret_key }}
           AUTHENTIK_POSTGRES_PASSWORD={{ authentik_postgres_password }}
           AUTHENTIK_SUPERUSER_PASSWORD={{ authentik_superuser_password }}
+          AUTHENTIK_BOOTSTRAP_PASSWORD={{ authentik_superuser_password }}
+          AUTHENTIK_BOOTSTRAP_TOKEN={{ authentik_superuser_api_token }}
           REGISTRY_HOST={{ authentik_registry_host }}
       no_log: true
 
@@ -106,12 +109,10 @@
       delay: 10
       until: authentik_ready_health.status in [200, 204]
 
-    - name: Remind operator to complete initial setup
+    - name: Confirm bootstrap credentials were injected
       ansible.builtin.debug:
         msg: >-
           Authentik is healthy at http://{{ ansible_host }}:9000/.
-          Complete the initial setup wizard at
-          http://{{ ansible_host }}:9000/if/flow/initial-setup/
-          using AUTHENTIK_SUPERUSER_PASSWORD from terraform/secrets.enc.yaml
-          (via SOPS), then create AUTHENTIK_SUPERUSER_API_TOKEN and store it in
-          terraform/secrets.enc.yaml.
+          AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
+          injected from SOPS via .env. The akadmin account and API token are
+          created automatically on first boot — no manual setup wizard required.
