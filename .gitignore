@@ -1,3 +1,5 @@
+# Operational cutover evidence snapshots (local only)
+docs/provisioning-refactor/snapshots/
 # Environment files
 storage-audit
 .env
