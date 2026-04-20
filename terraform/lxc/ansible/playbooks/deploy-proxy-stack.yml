@@ -54,7 +54,8 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "{{ proxy_compose_dir }}", mode: "0750" }
-        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
+        - { path: "{{ proxy_compose_dir }}/dynamic/stacks", mode: "0755" }
         - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
         - { path: "{{ proxy_compose_dir }}/certs/step-ca", mode: "0700" }
@@ -119,6 +120,8 @@
             docker:
               exposedByDefault: false
             file:
+              # Includes central dynamic files and generated per-stack files under
+              # /etc/traefik/dynamic/stacks/*.yml.
               directory: "/etc/traefik/dynamic/"
               watch: true
 
@@ -159,17 +162,6 @@
                 entryPoints:
                   - websecure
                 service: grafana-backend
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
-              authentik:
-                rule: "Host(`authentik.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: authentik-backend
                 tls:
                   certResolver: letsencrypt
                   domains:
@@ -218,10 +210,6 @@
                 loadBalancer:
                   servers:
                     - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
-              authentik-backend:
-                loadBalancer:
-                  servers:
-                    - url: "http://10.57.1.10:9000"
               portainer-backend:
                 loadBalancer:
                   servers:

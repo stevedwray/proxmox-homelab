@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: authentik-edge
+  stack: authentik-stack
+spec:
+  routes:
+    - name: authentik
+      host: authentik.lab.gibbsgreatly.xyz
+      backend:
+        type: url
+        url: http://10.57.1.10:9000
+      dns:
+        enabled: true
+        target: 10.57.2.10
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: none

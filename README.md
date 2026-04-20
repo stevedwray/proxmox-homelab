@@ -70,6 +70,10 @@ python3 terraform/lxc/reconcile-edge.py --json
 Detailed command options and expected behavior are documented in
 `terraform/lxc/README.md`.
 
+For shared migration validation, rollback, and stop conditions used by the
+stack-owned edge route tasks, see
+`docs/provisioning-refactor/runbook.md`.
+
 ## Key documents
 
 ### Architecture and planning

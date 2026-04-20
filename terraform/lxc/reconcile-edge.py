@@ -9,12 +9,11 @@ import json
 import os
 from dataclasses import dataclass
 from pathlib import Path
-import ssl
+import socket
 import subprocess
 import sys
 import tempfile
 from typing import Any
-import urllib.request
 
 import yaml
 
@@ -42,8 +41,11 @@ RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "rec
 
 
 TARGET_PREFLIGHT_COMMAND: tuple[str, ...] = ("./with-secrets", "bash", "-c", "echo $TF_VAR_proxmox_node")
-DEFAULT_TRAEFIK_HEALTH_URL = "http://10.57.2.10:8080/ping"
-DEFAULT_COREDNS_HEALTH_URL = "http://10.57.2.11:8080/health"
+DEFAULT_TRAEFIK_PROBE_HOST = "10.57.2.10"
+DEFAULT_TRAEFIK_PROBE_PORT = 443
+DEFAULT_COREDNS_PROBE_SERVER = "10.57.1.13"
+DEFAULT_COREDNS_PROBE_NAME = "traefik.lab.gibbsgreatly.xyz"
+DEFAULT_COREDNS_PROBE_EXPECTED = "10.57.2.10"
 NOT_RUN_DRY_RUN = "not run (dry-run mode)"
 
 
@@ -145,14 +147,30 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Disable TLS verification for Authentik and health checks.",
     )
     parser.add_argument(
-        "--traefik-health-url",
-        default=DEFAULT_TRAEFIK_HEALTH_URL,
-        help="Traefik health endpoint required in apply mode.",
+        "--traefik-probe-host",
+        default=DEFAULT_TRAEFIK_PROBE_HOST,
+        help="Traefik host required to accept TCP connections in apply mode.",
     )
     parser.add_argument(
-        "--coredns-health-url",
-        default=DEFAULT_COREDNS_HEALTH_URL,
-        help="CoreDNS health endpoint required in apply mode.",
+        "--traefik-probe-port",
+        type=int,
+        default=DEFAULT_TRAEFIK_PROBE_PORT,
+        help="Traefik TCP port required to be reachable in apply mode.",
+    )
+    parser.add_argument(
+        "--coredns-probe-server",
+        default=DEFAULT_COREDNS_PROBE_SERVER,
+        help="Authoritative CoreDNS server IP for apply-mode dig validation.",
+    )
+    parser.add_argument(
+        "--coredns-probe-name",
+        default=DEFAULT_COREDNS_PROBE_NAME,
+        help="DNS name queried during apply-mode authoritative CoreDNS probe.",
+    )
+    parser.add_argument(
+        "--coredns-probe-expected",
+        default=DEFAULT_COREDNS_PROBE_EXPECTED,
+        help="Expected IPv4 answer in apply-mode authoritative CoreDNS probe.",
     )
     parser.add_argument(
         "--apply",
@@ -337,35 +355,63 @@ def _run_pve_target_preflight() -> tuple[bool, str]:
     return True, "target preflight passed (pve-test)"
 
 
-def _http_health_check(url: str) -> HealthCheckResult:
-    request = urllib.request.Request(url, method="GET")
-
+def _tcp_health_check(host: str, port: int) -> HealthCheckResult:
+    probe_target = f"tcp://{host}:{port}"
     try:
-        with urllib.request.urlopen(request, timeout=8) as response:
-            status = response.getcode()
-            if 200 <= status < 300:
-                return HealthCheckResult(
-                    name="",
-                    url=url,
-                    ok=True,
-                    status_code=status,
-                    detail="health probe succeeded",
-                )
+        with socket.create_connection((host, port), timeout=5):
             return HealthCheckResult(
                 name="",
-                url=url,
-                ok=False,
-                status_code=status,
-                detail=f"unexpected status code {status}",
+                url=probe_target,
+                ok=True,
+                status_code=None,
+                detail="tcp reachability probe succeeded",
             )
     except Exception as exc:
         return HealthCheckResult(
             name="",
-            url=url,
+            url=probe_target,
             ok=False,
             status_code=None,
-            detail=f"health probe failed: {exc}",
+            detail=f"tcp reachability probe failed: {exc}",
         )
+
+
+def _dns_authority_health_check(server: str, name: str, expected: str) -> HealthCheckResult:
+    probe_target = f"dig @{server} +short {name}"
+    result = subprocess.run(
+        ["dig", f"@{server}", "+short", name],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or f"dig exited {result.returncode}"
+        return HealthCheckResult(
+            name="",
+            url=probe_target,
+            ok=False,
+            status_code=None,
+            detail=f"authoritative dns probe failed: {detail}",
+        )
+
+    answers = [line.strip() for line in result.stdout.splitlines() if line.strip()]
+    if expected in answers:
+        return HealthCheckResult(
+            name="",
+            url=probe_target,
+            ok=True,
+            status_code=None,
+            detail=f"authoritative dns probe succeeded (answer includes {expected})",
+        )
+
+    return HealthCheckResult(
+        name="",
+        url=probe_target,
+        ok=False,
+        status_code=None,
+        detail=f"authoritative dns probe returned {answers or ['<empty>']}, expected {expected}",
+    )
 
 
 def _build_failed_result(
@@ -400,7 +446,7 @@ def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckRes
     if not target_ok:
         issues.append(EdgeIssue(code="EGR200", message=target_detail))
 
-    traefik_probe = _http_health_check(args.traefik_health_url)
+    traefik_probe = _tcp_health_check(args.traefik_probe_host, args.traefik_probe_port)
     traefik_health = HealthCheckResult(
         name="traefik",
         url=traefik_probe.url,
@@ -411,7 +457,11 @@ def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckRes
     if not traefik_health.ok:
         issues.append(EdgeIssue(code="EGR201", message=f"Traefik health check failed: {traefik_health.detail}"))
 
-    coredns_probe = _http_health_check(args.coredns_health_url)
+    coredns_probe = _dns_authority_health_check(
+        args.coredns_probe_server,
+        args.coredns_probe_name,
+        args.coredns_probe_expected,
+    )
     coredns_health = HealthCheckResult(
         name="coredns",
         url=coredns_probe.url,
@@ -528,14 +578,14 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
         target_detail = NOT_RUN_DRY_RUN
         traefik_health = HealthCheckResult(
             name="traefik",
-            url=args.traefik_health_url,
+            url=f"tcp://{args.traefik_probe_host}:{args.traefik_probe_port}",
             ok=True,
             status_code=None,
             detail=NOT_RUN_DRY_RUN,
         )
         coredns_health = HealthCheckResult(
             name="coredns",
-            url=args.coredns_health_url,
+            url=f"dig @{args.coredns_probe_server} +short {args.coredns_probe_name}",
             ok=True,
             status_code=None,
             detail=NOT_RUN_DRY_RUN,
