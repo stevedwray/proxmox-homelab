@@ -8,22 +8,24 @@ default expectation but still require confirmation during preflight.
 
 | Variable | Value |
 |---|---|
-| Operator approving destructive test | REQUIRES_OPERATOR_INPUT |
-| Planned start time | REQUIRES_OPERATOR_INPUT |
-| Planned stop/rollback deadline | REQUIRES_OPERATOR_INPUT |
-| Communication channel/status notes location | REQUIRES_OPERATOR_INPUT |
-| Maximum acceptable pve-test outage | REQUIRES_OPERATOR_INPUT |
+| Operator approving destructive test | Steve Dray (approval not granted yet; planning-only) |
+| Planned start time | Not scheduled; planning session only (2026-04-21) |
+| Planned stop/rollback deadline | Not scheduled; set during destructive go/no-go gate |
+| Communication channel/status notes location | `docs/teardown-test/` planning documents on this branch |
+| Maximum acceptable pve-test outage | Not approved yet; must be explicitly set before destructive execution |
+| Initial approval posture | Approved for documentation/planning only. Destroy/apply/live publish are not approved in this step. |
 
 ## Git And Targeting
 
 | Variable | Value |
 |---|---|
 | Branch to test | `dev/pve-test` |
-| Commit SHA to test | REQUIRES_OPERATOR_INPUT |
+| Commit SHA to test | `d95324aeed1832fafa30af3354e75e044e3f08a3` |
 | Target guard expected value | `pve-test` |
 | Command for target guard | `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` |
-| SOPS/age key confirmed present | VERIFY |
-| `./with-secrets` confirmed working | VERIFY |
+| Target guard actual output (2026-04-21) | `pve-test` |
+| SOPS/age key confirmed present | `./with-secrets` execution succeeded in this session; treat as provisional until preflight rerun in Task 04 |
+| `./with-secrets` confirmed working | yes; guard command returned expected output |
 
 ## Scope
 
@@ -74,7 +76,7 @@ default expectation but still require confirmation during preflight.
 | Expected browser DNS target | `10.57.2.10` |
 | Resolver command for authoritative checks | `dig @10.57.1.13 +short <host>` |
 | Resolver command for delegated checks | `dig @10.57.1.1 +short <host>` |
-| MikroTik conditional forwarder confirmed | VERIFY |
+| MikroTik conditional forwarder confirmed | Assumed as documented contract for planning; revalidate during Task 10 live checks |
 
 ## Rebuild Order Approval
 
