@@ -22,6 +22,20 @@
           else {}
         )
       }}
+  pre_tasks:
+    - name: Check for invalid empty Docker insecure registry
+      ansible.builtin.command:
+        cmd: grep -Eq '"insecure-registries"[[:space:]]*:[[:space:]]*\[[[:space:]]*""[[:space:]]*\]' /etc/docker/daemon.json
+      register: portainer_invalid_docker_daemon_config
+      changed_when: false
+      failed_when: false
+
+    - name: Replace invalid Docker daemon config before docker_base starts Docker
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ docker_daemon_config_base | to_nice_json }}\n"
+      when: portainer_invalid_docker_daemon_config.rc == 0
   roles:
     - lxc_base
     - docker_base
