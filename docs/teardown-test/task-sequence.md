@@ -2,7 +2,9 @@
 
 Each task is intended for one short-lived branch/session. Tasks 05 and later
 contain destructive or live deployment operations and require explicit operator
-approval at their gates.
+approval at their gates. [operations-plan.md](operations-plan.md) breaks this
+task list down further into single-stack and single-handoff components with the
+allowed file touch set for each component.
 
 | Step | Task | Type | Preconditions | Postconditions |
 |---:|---|---|---|---|

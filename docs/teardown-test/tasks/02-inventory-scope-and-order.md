@@ -11,6 +11,7 @@ Produce the exact stack scope and rebuild order for the rehearsal.
 ## Files
 
 - `docs/teardown-test/variables.md`
+- `docs/teardown-test/inventory.md`
 - `docs/teardown-test/runbook.md`
 - `terraform/lxc/stacks/*/stack.yaml`
 - `docs/design/bootstrap.md` (read-only)
@@ -30,7 +31,8 @@ Produce the exact stack scope and rebuild order for the rehearsal.
    order.
 5. Decide whether each conflict is code to fix, an execution override, or a
    documentation correction.
-6. Write the final approved deploy order into `variables.md`.
+6. Write the stack inventory to `inventory.md`.
+7. Write the final approved deploy and destroy order into `variables.md`.
 
 ## Postconditions
 

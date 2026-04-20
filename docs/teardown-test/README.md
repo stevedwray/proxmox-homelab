@@ -81,6 +81,8 @@ Production `pve` is out of scope.
 - [decisions.md](decisions.md) records decisions that govern the test.
 - [variables.md](variables.md) lists answers required before execution.
 - [task-sequence.md](task-sequence.md) lists the atomic test plan.
+- [operations-plan.md](operations-plan.md) breaks the test into single-stack
+  and single-handoff execution components with file touch sets.
 - [runbook.md](runbook.md) contains the operator command flow.
 - [tasks/](tasks/) contains detailed task documents.
 - [prompts/](prompts/) contains matching AI-agent prompts.
@@ -90,8 +92,10 @@ Production `pve` is out of scope.
 
 1. Read this README, [decisions.md](decisions.md), and
    [variables.md](variables.md).
-2. Select exactly one task from [task-sequence.md](task-sequence.md).
-3. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
-4. Keep changes inside that task's declared scope.
-5. Stop when a task reaches a destructive gate unless the task explicitly
+2. Use [operations-plan.md](operations-plan.md) to identify the next atomic
+   component and its allowed file touch set.
+3. Select the matching task from [task-sequence.md](task-sequence.md).
+4. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
+5. Keep changes inside that task's declared scope.
+6. Stop when a task reaches a destructive gate unless the task explicitly
    includes operator-approved execution.

@@ -11,6 +11,7 @@ Gate destructive work on explicit backup, restore, or accepted data-loss policy.
 ## Files
 
 - `docs/teardown-test/variables.md`
+- `docs/teardown-test/backup-plan.md`
 - `docs/teardown-test/runbook.md`
 
 ## Preconditions
@@ -20,10 +21,10 @@ Gate destructive work on explicit backup, restore, or accepted data-loss policy.
 ## Operations
 
 1. For every selected persistent service, record backup source and restore
-   procedure.
+   procedure in `backup-plan.md`.
 2. Run or verify a restore dry-run where practical.
 3. Mark data loss acceptable only with explicit operator approval.
-4. Record backup IDs/paths in the evidence directory.
+4. Record backup IDs/paths in `variables.md` and the evidence directory.
 
 ## Postconditions
 

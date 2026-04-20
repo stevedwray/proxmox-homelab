@@ -85,8 +85,8 @@ candidate below reflects the current bootstrap model after removing the
 | Order | Stack | Command owner | Notes |
 |---:|---|---|---|
 | 1 | `portainer-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation |
-| 2 | `harbor-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation |
-| 3 | `apt-cacher-stack` | REQUIRES_OPERATOR_INPUT | Foundation utility for later apt-backed deploys |
+| 2 | `apt-cacher-stack` | REQUIRES_OPERATOR_INPUT | Independent foundation utility for later apt-backed deploys |
+| 3 | `harbor-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 registry foundation; depends on Portainer |
 | 4 | `ci-runner-01` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation if included |
 | 5 | `dns-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a CoreDNS seed authority |
 | 6 | `proxy-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a Traefik runtime; no Authentik dependency |
