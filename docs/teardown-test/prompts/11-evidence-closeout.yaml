@@ -1,0 +1,27 @@
+---
+id: tt-11-evidence-closeout
+title: "Close out evidence and follow-ups"
+type: documentation
+status: pending
+depends_on:
+  - tt-10-end-to-end-validation
+task_doc: docs/teardown-test/tasks/11-evidence-closeout.md
+
+context: |
+  Runtime evidence should be summarized without accidentally committing secrets
+  or bulky snapshots.
+
+objective: |
+  Produce the final test summary and follow-up list.
+
+workflow:
+  steps:
+    - Summarize commit, scope, operator, and execution window.
+    - Summarize destroy/deploy/validation results.
+    - Record evidence directory path.
+    - Record follow-up work.
+    - Verify no secrets or bulky runtime snapshots are staged.
+
+postconditions:
+  criteria:
+    - The teardown/deploy rehearsal has durable closeout documentation.

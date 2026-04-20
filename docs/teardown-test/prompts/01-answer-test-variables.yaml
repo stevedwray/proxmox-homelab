@@ -1,0 +1,25 @@
+---
+id: tt-01-answer-test-variables
+title: "Answer teardown test variables"
+type: documentation
+status: pending
+depends_on:
+  - tt-00-normalize-completion-state
+task_doc: docs/teardown-test/tasks/01-answer-test-variables.md
+
+context: |
+  Destructive execution is blocked until variables.md has explicit answers.
+
+objective: |
+  Fill operator, scope, targeting, resolver, and approval variables.
+
+workflow:
+  steps:
+    - Read variables.md and decisions.md.
+    - Fill known values and leave only non-gating unknowns as TBD.
+    - Clearly identify any remaining variable that blocks destruction.
+    - Do not execute teardown or deploy commands.
+
+postconditions:
+  criteria:
+    - Destructive-gate variables are answered or the task stops with a clear blocker list.

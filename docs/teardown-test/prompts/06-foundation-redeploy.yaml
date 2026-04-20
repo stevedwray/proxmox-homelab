@@ -1,0 +1,26 @@
+---
+id: tt-06-foundation-redeploy
+title: "Redeploy foundation services"
+type: deployment
+status: pending
+depends_on:
+  - tt-05-destroy-rehearsal
+task_doc: docs/teardown-test/tasks/06-foundation-redeploy.md
+
+context: |
+  Foundation services must be healthy before edge foundation and application
+  stacks can rebuild.
+
+objective: |
+  Redeploy the approved Stage 1/2 foundation stack set.
+
+workflow:
+  steps:
+    - Deploy stacks in the approved order from variables.md.
+    - Validate Portainer, Harbor, apt-cacher, and CI runner if in scope.
+    - Capture command output and health evidence.
+    - Stop if a foundation service misses its exit condition.
+
+postconditions:
+  criteria:
+    - Foundation services are running and ready for Stage 3a.

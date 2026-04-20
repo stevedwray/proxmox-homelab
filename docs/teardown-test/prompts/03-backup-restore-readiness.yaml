@@ -1,0 +1,26 @@
+---
+id: tt-03-backup-restore-readiness
+title: "Verify backup and restore readiness"
+type: operational-planning
+status: pending
+depends_on:
+  - tt-02-inventory-scope-and-order
+task_doc: docs/teardown-test/tasks/03-backup-restore-readiness.md
+
+context: |
+  The rehearsal can destroy persistent services. Backups or explicit data-loss
+  approval gate the destructive step.
+
+objective: |
+  Record backup sources, restore readiness, and data-loss approvals.
+
+workflow:
+  steps:
+    - Fill the persistent data policy table in variables.md.
+    - Record backup IDs or paths for selected services.
+    - Document restore dry-run evidence where available.
+    - Stop if a persistent service has neither backup confidence nor data-loss approval.
+
+postconditions:
+  criteria:
+    - Destroy is gated on explicit persistent-state policy.
