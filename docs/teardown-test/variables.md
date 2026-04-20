@@ -39,24 +39,27 @@ default expectation but still require confirmation during preflight.
 
 ## Persistent Data Policy
 
-OP-03 state: BLOCKED pending explicit backup/restore confidence or explicit
-accepted data-loss policy for each persistent service. See
+OP-03 state: APPROVED FOR LATER DESTRUCTIVE APPROVAL PACKET. See
 `docs/teardown-test/backup-plan.md`.
+
+This is a policy gate approval only. It does not authorize destroy/apply/live
+publish.
 
 | Service | Backup source | Restore confidence or restore test plan | Data-loss policy | Pre-destroy evidence path | Gate status |
 |---|---|---|---|---|---|
-| Portainer | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/portainer/` | BLOCKED |
-| Harbor | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/harbor/` | BLOCKED |
-| Authentik | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/authentik/` | BLOCKED |
-| NetBox | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/netbox/` | BLOCKED |
-| Monitoring/Grafana/Loki/VictoriaMetrics | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/monitoring/` | BLOCKED |
-| Traefik ACME/cert storage | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/traefik-certs/` | BLOCKED |
-| step-ca authority material | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/step-ca/` | BLOCKED |
-| CI runner registration/state | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/ci-runner/` | BLOCKED |
-| apt-cacher cache | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/apt-cacher/` | BLOCKED |
+| step-ca authority material | VMID 152 LXC backup plus authority-material capture | Required high confidence; restore drill plan includes CA/ACME issuance smoke test | Data loss not acceptable | `docs/teardown-test/evidence/${STAMP}/backups/step-ca/` | READY (policy approved) |
+| Authentik | VMID 150 LXC backup plus `/opt/authentik-stack` config snapshot | Restore plan: health, admin login/API token workflow, provider/app checks | Data loss not acceptable | `docs/teardown-test/evidence/${STAMP}/backups/authentik/` | READY (policy approved) |
+| Harbor | VMID 121 LXC backup plus `/opt/harbor-stack` config and policy export evidence | Restore plan: `/v2/` auth challenge and sample pull/push | Registry/config loss not acceptable; Trivy cache loss acceptable | `docs/teardown-test/evidence/${STAMP}/backups/harbor/` | READY (policy approved) |
+| NetBox | VMID 143 LXC backup plus `/opt/netbox-stack` config snapshot | Restore plan: service/API auth and reference object checks | Data loss not acceptable | `docs/teardown-test/evidence/${STAMP}/backups/netbox/` | READY (policy approved) |
+| Monitoring/Grafana/Loki/VictoriaMetrics | VMID 154 LXC backup plus Grafana config/dashboard export as needed | Restore plan: Grafana login plus Loki/VM health checks | Historical metrics/log loss acceptable; core config loss not acceptable | `docs/teardown-test/evidence/${STAMP}/backups/monitoring/` | READY (policy approved) |
+| Portainer | VMID 120 LXC backup plus `/opt/portainer` config snapshot | Restore plan: service health, login/API, endpoint visibility | Data loss acceptable if restore path fails | `docs/teardown-test/evidence/${STAMP}/backups/portainer/` | READY (policy approved) |
+| Traefik ACME/cert storage | VMID 153 LXC backup plus `/opt/proxy-stack/certs` capture | Restore plan: TLS route checks and re-issuance verification | ACME cache/state loss acceptable if re-issuance works | `docs/teardown-test/evidence/${STAMP}/backups/traefik-certs/` | READY (policy approved) |
+| CI runner registration/state | Re-registration/token procedure capture; optional VMID 141 LXC backup | Restore plan: redeploy runner, online check, test workflow execution | Data loss acceptable (recreatable) | `docs/teardown-test/evidence/${STAMP}/backups/ci-runner/` | READY (policy approved) |
+| apt-cacher cache | Optional VMID 142 LXC backup; config capture if customized | Restore plan: redeploy and verify port 3142 plus client cache use | Data loss acceptable (cache disposable) | `docs/teardown-test/evidence/${STAMP}/backups/apt-cacher/` | READY (policy approved) |
 
-Stop condition for all services: stop if backup source is missing and neither
-restore confidence nor explicit accepted data loss is approved.
+Stop condition for all services: stop if required evidence is missing for the
+approved policy (backup artifact for non-loss services, or documented accepted
+data-loss posture for recreatable services).
 
 ## Bootstrap Inputs
 
