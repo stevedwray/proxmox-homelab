@@ -5,6 +5,7 @@ type: deployment
 status: pending
 depends_on:
   - pr-15-migrate-authentik
+  - pr-17a-edge-validation-hardening
 task_doc: docs/provisioning-refactor/tasks/18-migrate-portainer.md
 validation_note: |
   When this task changes Python, shell, or YAML files, run SonarCloud through
