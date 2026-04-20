@@ -31,7 +31,7 @@ Gate destructive work on explicit backup, restore, or accepted data-loss policy.
 
 ## Validation
 
-- `rg -n "TBD" docs/teardown-test/variables.md`
+- `rg -n "REQUIRES_OPERATOR_INPUT|VERIFY" docs/teardown-test/variables.md`
 
 ## Stop Conditions
 

@@ -16,7 +16,7 @@ objective: |
 workflow:
   steps:
     - Read variables.md and decisions.md.
-    - Fill known values and leave only non-gating unknowns as TBD.
+    - Fill known values and leave only non-gating unknowns explicitly marked.
     - Clearly identify any remaining variable that blocks destruction.
     - Do not execute teardown or deploy commands.
 

@@ -29,9 +29,12 @@ Stage 3a remains:
 5. edge reconciler activation
 
 Any current `stack.yaml` dependency that conflicts with this order must be
-handled before teardown. In particular, verify whether `proxy-stack` can be
-deployed before Authentik in a fresh rebuild despite any metadata dependency on
-`authentik-stack`.
+handled before teardown.
+
+The known `proxy-stack` conflict is resolved by keeping Traefik independent of
+`authentik-stack` in `stack.yaml`. Traefik may define the shared Authentik
+forward-auth middleware before Authentik is reachable. Authentik availability is
+required when protected routes are exercised, not for Traefik runtime bootstrap.
 
 ## Decision 4: Edge Artifacts Are Regenerated
 
@@ -73,7 +76,22 @@ no manifest arguments are the authoritative post-apply convergence check:
 `--no-verify-tls` remains acceptable for this rehearsal until the lab CA bundle
 follow-up is complete.
 
-## Decision 7: Evidence Is Kept Separate From Source
+## Decision 7: Orphaned Stack State Is Out Of Scope By Default
+
+Directories with inventory or Terraform state but no active `stack.yaml` are not
+part of the default teardown/deploy scope. `headscale-stack` currently falls
+into this category and must remain out of scope unless a later task restores an
+active `stack.yaml` or explicitly plans state cleanup.
+
+## Decision 8: Certificate Resolver Policy Is Current-State First
+
+The proxy stack currently writes the default wildcard certificate store with
+`resolver: letsencrypt`. This rehearsal validates the current state unless
+[variables.md](variables.md) explicitly changes the certificate resolver policy.
+Switching the default wildcard resolver to `step-ca` is a separate design change
+and must not be smuggled into the teardown test.
+
+## Decision 9: Evidence Is Kept Separate From Source
 
 Runtime snapshots and large evidence bundles are not committed unless explicitly
 requested. Store them under an ignored timestamped directory and summarize key

@@ -19,6 +19,8 @@ workflow:
     - Read stack.yaml files for selected stacks.
     - Compare current dependencies with docs/design/bootstrap.md.
     - Pay special attention to Stage 3a ordering.
+    - Confirm proxy-stack does not depend on authentik-stack.
+    - Keep headscale-stack out of scope unless an active stack.yaml/state plan exists.
     - Update variables.md and runbook if the approved order changes.
     - Do not execute teardown or deploy commands.
 

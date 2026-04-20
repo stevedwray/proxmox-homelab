@@ -21,17 +21,18 @@ Fill the required variables and open questions that gate destructive execution.
 
 1. Fill execution window and operator approval fields.
 2. Confirm branch, commit SHA, target guard, and `with-secrets` availability.
-3. Decide whether disposable validation and `test-*` stacks are in scope.
+3. Confirm whether disposable validation and `test-*` stacks stay out of scope.
 4. Fill resolver contract values.
 5. Fill initial stack order proposal for review.
 
 ## Postconditions
 
-- No destructive-gate `TBD` remains in `variables.md`.
+- No destructive-gate `REQUIRES_OPERATOR_INPUT` or `VERIFY` value remains
+  unresolved in `variables.md`.
 
 ## Validation
 
-- `rg -n "TBD" docs/teardown-test/variables.md`
+- `rg -n "REQUIRES_OPERATOR_INPUT|VERIFY" docs/teardown-test/variables.md`
 
 ## Stop Conditions
 

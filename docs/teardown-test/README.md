@@ -13,6 +13,13 @@ Do not execute teardown or deploy commands until the variables in
 [variables.md](variables.md) are answered, backups are verified, and the
 operator has explicitly approved the destructive window.
 
+## Current Status
+
+Planning is the only approved phase. The known Stage 3a `proxy-stack` ordering
+conflict has been resolved in source, but the test remains non-executable until
+Task 01 through Task 03 close every `REQUIRES_OPERATOR_INPUT` and `VERIFY` gate
+in [variables.md](variables.md).
+
 ## Target Outcome
 
 At the end of the test:
@@ -48,6 +55,8 @@ The default platform stack set is:
 
 Disposable network validation stacks, `test-*` stacks, and `.hold/` stacks are
 out of scope unless explicitly enabled in [variables.md](variables.md).
+`headscale-stack` currently has inventory/state but no active `stack.yaml`; it
+is out of scope until it is restored as an active stack or explicitly cleaned up.
 
 Production `pve` is out of scope.
 

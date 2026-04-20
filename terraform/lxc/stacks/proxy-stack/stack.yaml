@@ -24,7 +24,9 @@ tags:
 depends_on:
   - harbor-stack
   - apt-cacher-stack
-  - authentik-stack
+# Do not depend on authentik-stack here. Traefik is part of the Stage 3a edge
+# foundation and must be able to start before Authentik direct first boot/API
+# token bootstrap. Forward-auth calls only require Authentik at request time.
 provides:
   - service: proxy-http
     port: 80

@@ -12,7 +12,7 @@ Produce the exact stack scope and rebuild order for the rehearsal.
 
 - `docs/teardown-test/variables.md`
 - `docs/teardown-test/runbook.md`
-- `terraform/lxc/stacks/*/stack.yaml` (read-only)
+- `terraform/lxc/stacks/*/stack.yaml`
 - `docs/design/bootstrap.md` (read-only)
 
 ## Preconditions
@@ -24,10 +24,13 @@ Produce the exact stack scope and rebuild order for the rehearsal.
 1. List selected stacks, VMIDs, IPs, zones, and `depends_on` entries.
 2. Classify each stack as Stage 1/2 foundation, Stage 3a edge foundation, or
    Stage 3b remaining platform.
-3. Identify any dependency that conflicts with the documented bootstrap order.
-4. Decide whether the conflict is code to fix, an execution override, or a
+3. Verify `proxy-stack` remains independent of `authentik-stack` so Traefik can
+   bootstrap before Authentik.
+4. Identify any other dependency that conflicts with the documented bootstrap
+   order.
+5. Decide whether each conflict is code to fix, an execution override, or a
    documentation correction.
-5. Write the final approved deploy order into `variables.md`.
+6. Write the final approved deploy order into `variables.md`.
 
 ## Postconditions
 
@@ -42,3 +45,5 @@ Produce the exact stack scope and rebuild order for the rehearsal.
 
 - Stop if `proxy-stack`, `authentik-stack`, CoreDNS, or step-ca ordering cannot
   be made consistent with the bootstrap model.
+- Stop if `headscale-stack` is moved into scope without an active `stack.yaml`
+  and a state plan.

@@ -1,64 +1,68 @@
 # Variables And Open Questions
 
-Every `TBD` entry must be answered before destructive execution.
+This file is intentionally a gate. Any value marked `REQUIRES_OPERATOR_INPUT`
+must be answered before destructive execution. Values marked `VERIFY` have a
+default expectation but still require confirmation during preflight.
 
 ## Execution Window
 
 | Variable | Value |
 |---|---|
-| Operator approving destructive test | TBD |
-| Planned start time | TBD |
-| Planned stop/rollback deadline | TBD |
-| Communication channel/status notes location | TBD |
-| Maximum acceptable pve-test outage | TBD |
+| Operator approving destructive test | REQUIRES_OPERATOR_INPUT |
+| Planned start time | REQUIRES_OPERATOR_INPUT |
+| Planned stop/rollback deadline | REQUIRES_OPERATOR_INPUT |
+| Communication channel/status notes location | REQUIRES_OPERATOR_INPUT |
+| Maximum acceptable pve-test outage | REQUIRES_OPERATOR_INPUT |
 
 ## Git And Targeting
 
 | Variable | Value |
 |---|---|
 | Branch to test | `dev/pve-test` |
-| Commit SHA to test | TBD |
+| Commit SHA to test | REQUIRES_OPERATOR_INPUT |
 | Target guard expected value | `pve-test` |
 | Command for target guard | `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` |
-| SOPS/age key confirmed present | TBD |
-| `./with-secrets` confirmed working | TBD |
+| SOPS/age key confirmed present | VERIFY |
+| `./with-secrets` confirmed working | VERIFY |
 
 ## Scope
 
 | Stack group | Include? | Notes |
 |---|---:|---|
 | Platform stacks listed in README | yes | Default scope |
-| Disposable `net-*` validation stacks | TBD | Usually no for platform rebuild |
-| `test-docker` and `test-lxc` | TBD | Usually no |
+| Disposable `net-*` validation stacks | no | Excluded from platform rebuild unless explicitly enabled later |
+| `test-docker` and `test-lxc` | no | Excluded from platform rebuild unless explicitly enabled later |
 | `.hold/` stacks | no | Out of scope unless explicitly moved active |
-| `headscale-stack` inventory without active `stack.yaml` | TBD | Clarify current status |
+| `headscale-stack` inventory without active `stack.yaml` | no | Orphaned inventory/state only; out of scope until active `stack.yaml` or cleanup plan exists |
 
 ## Persistent Data Policy
 
 | Service | Backup source | Restore test done? | Data loss acceptable? |
 |---|---|---:|---:|
-| Portainer | TBD | TBD | TBD |
-| Harbor | TBD | TBD | TBD |
-| Authentik | TBD | TBD | TBD |
-| NetBox | TBD | TBD | TBD |
-| Monitoring/Grafana/Loki/VictoriaMetrics | TBD | TBD | TBD |
-| Traefik ACME/cert storage | TBD | TBD | TBD |
-| step-ca authority material | TBD | TBD | TBD |
-| CI runner registration/state | TBD | TBD | TBD |
-| apt-cacher cache | TBD | TBD | TBD |
+| Portainer | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| Harbor | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| Authentik | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| NetBox | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| Monitoring/Grafana/Loki/VictoriaMetrics | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| Traefik ACME/cert storage | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| step-ca authority material | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| CI runner registration/state | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+| apt-cacher cache | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
 
 ## Bootstrap Inputs
 
 | Variable | Value |
 |---|---|
-| LXC template available | TBD |
-| Harbor bootstrap image source policy | TBD |
-| Docker Hub fallback allowed for Stage 1/2 | TBD |
-| Harbor robot credentials available through SOPS | TBD |
-| Cloudflare DNS token available through SOPS | TBD |
-| Authentik superuser/API token bootstrap procedure | TBD |
-| step-ca bootstrap password/authority material available | TBD |
-| GitHub runner token/registration procedure | TBD |
+| LXC template available | VERIFY `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` |
+| Harbor bootstrap image source policy | REQUIRES_OPERATOR_INPUT |
+| Docker Hub fallback allowed for Stage 1/2 | REQUIRES_OPERATOR_INPUT |
+| Harbor robot credentials available through SOPS | VERIFY |
+| Cloudflare DNS token available through SOPS | VERIFY |
+| Authentik superuser/API token bootstrap procedure | REQUIRES_OPERATOR_INPUT |
+| step-ca bootstrap password/authority material available | REQUIRES_OPERATOR_INPUT |
+| GitHub runner token/registration procedure | REQUIRES_OPERATOR_INPUT |
+| Local lab CA bundle installed for Authentik API TLS | no; use `--no-verify-tls` for this rehearsal unless fixed first |
+| Proxy wildcard/default certificate resolver policy | current state: `letsencrypt`; changing to `step-ca` is out of scope |
 
 ## Network And Resolver Contract
 
@@ -70,21 +74,27 @@ Every `TBD` entry must be answered before destructive execution.
 | Expected browser DNS target | `10.57.2.10` |
 | Resolver command for authoritative checks | `dig @10.57.1.13 +short <host>` |
 | Resolver command for delegated checks | `dig @10.57.1.1 +short <host>` |
-| MikroTik conditional forwarder confirmed | TBD |
+| MikroTik conditional forwarder confirmed | VERIFY |
 
 ## Rebuild Order Approval
 
-The final stack order must be written here before execution.
+The final stack order must be confirmed in Task 02 before execution. The
+candidate below reflects the current bootstrap model after removing the
+`proxy-stack` dependency on `authentik-stack`.
 
 | Order | Stack | Command owner | Notes |
 |---:|---|---|---|
-| 1 | TBD | TBD | Stage 1/2 foundation |
-| 2 | TBD | TBD | Stage 1/2 foundation |
-| 3 | TBD | TBD | Stage 3a edge foundation |
-| 4 | TBD | TBD | Stage 3a edge foundation |
-| 5 | TBD | TBD | Stage 3a edge foundation |
-| 6 | TBD | TBD | Stage 3a edge foundation |
-| 7+ | TBD | TBD | Stage 3b remaining stacks |
+| 1 | `portainer-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation |
+| 2 | `harbor-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation |
+| 3 | `apt-cacher-stack` | REQUIRES_OPERATOR_INPUT | Foundation utility for later apt-backed deploys |
+| 4 | `ci-runner-01` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation if included |
+| 5 | `dns-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a CoreDNS seed authority |
+| 6 | `proxy-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a Traefik runtime; no Authentik dependency |
+| 7 | `step-ca-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a internal CA |
+| 8 | `authentik-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a direct first boot/API token |
+| 9 | edge reconciliation activation | REQUIRES_OPERATOR_INPUT | Not a Terraform stack; publish generated DNS/Traefik/Auth state |
+| 10 | `monitoring-stack` | REQUIRES_OPERATOR_INPUT | Stage 3b |
+| 11 | `netbox-stack` | REQUIRES_OPERATOR_INPUT | Stage 3b |
 
 ## Success Criteria
 
