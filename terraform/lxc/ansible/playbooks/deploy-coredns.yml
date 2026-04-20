@@ -9,6 +9,11 @@
     coredns_binary: "/usr/local/bin/coredns"
     coredns_config_dir: "/etc/coredns"
     coredns_install_dir: "/tmp/coredns-install"
+    coredns_seed_zone_src: "{{ playbook_dir }}/../files/coredns-lab.zone"
+    coredns_generated_zone_src: ""
+    coredns_zone_src: "{{ (coredns_generated_zone_src | trim) if (coredns_generated_zone_src | trim | length > 0) else coredns_seed_zone_src }}"
+    coredns_zone_file: "{{ coredns_config_dir }}/lab.zone"
+    coredns_zone_stage_file: "{{ coredns_config_dir }}/lab.zone.candidate"
 
   pre_tasks:
     - name: Wait for SSH to become available after container creation
@@ -36,6 +41,7 @@
           - curl
           - tar
           - dnsutils
+          - bind9-utils
         state: present
         update_cache: true
 
@@ -89,18 +95,67 @@
         src: "{{ playbook_dir }}/../files/coredns.conf"
         dest: "{{ coredns_config_dir }}/coredns.conf"
         mode: "0644"
+      notify: Restart CoreDNS service
 
-    - name: Copy CoreDNS zone file
+    - name: Check selected CoreDNS zone source on control node
+      ansible.builtin.stat:
+        path: "{{ coredns_zone_src }}"
+      delegate_to: localhost
+      become: false
+      register: coredns_zone_source_stat
+
+    - name: Assert selected CoreDNS zone source exists
+      ansible.builtin.assert:
+        that:
+          - coredns_zone_source_stat.stat.exists
+          - coredns_zone_source_stat.stat.isreg
+        fail_msg: >-
+          CoreDNS zone source {{ coredns_zone_src }} does not exist or is not a regular file.
+          Leave coredns_generated_zone_src unset to use the seed zone default.
+
+    - name: Stage CoreDNS zone file candidate
       ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../files/coredns-lab.zone"
-        dest: "{{ coredns_config_dir }}/lab.zone"
+        src: "{{ coredns_zone_src }}"
+        dest: "{{ coredns_zone_stage_file }}"
         mode: "0644"
+
+    - name: Validate staged CoreDNS zone syntax
+      ansible.builtin.command:
+        argv:
+          - named-checkzone
+          - lab.gibbsgreatly.xyz
+          - "{{ coredns_zone_stage_file }}"
+      changed_when: false
+
+    - name: Read staged CoreDNS zone for bootstrap guardrails
+      ansible.builtin.slurp:
+        src: "{{ coredns_zone_stage_file }}"
+      register: coredns_zone_stage
+
+    - name: Assert staged CoreDNS zone preserves bootstrap authority records
+      ansible.builtin.assert:
+        that:
+          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+SOA\\s+')
+          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+NS\\s+ns1\\.lab\\.gibbsgreatly\\.xyz\\.')
+          - (coredns_zone_stage.content | b64decode) is search('(?m)^ns1\\s+IN\\s+A\\s+')
+        fail_msg: >-
+          Staged CoreDNS zone is missing required bootstrap authority records.
+          Refusing to publish because this would remove required non-browser DNS records.
+
+    - name: Publish CoreDNS zone file from staged candidate
+      ansible.builtin.copy:
+        src: "{{ coredns_zone_stage_file }}"
+        dest: "{{ coredns_zone_file }}"
+        mode: "0644"
+        remote_src: true
+      notify: Restart CoreDNS service
 
     - name: Copy CoreDNS systemd service file
       ansible.builtin.copy:
         src: "{{ playbook_dir }}/../files/coredns.service"
         dest: /etc/systemd/system/coredns.service
         mode: "0644"
+      notify: Restart CoreDNS service
 
     - name: Reload systemd daemon
       ansible.builtin.systemd:
@@ -115,6 +170,9 @@
       ansible.builtin.systemd:
         name: coredns
         state: started
+
+    - name: Apply pending CoreDNS configuration changes
+      ansible.builtin.meta: flush_handlers
 
     - name: Wait for CoreDNS to be ready
       ansible.builtin.wait_for:
@@ -161,3 +219,9 @@
       loop:
         - "/tmp/coredns_{{ coredns_version }}_linux_amd64.tgz"
         - "{{ coredns_install_dir }}"
+
+  handlers:
+    - name: Restart CoreDNS service
+      ansible.builtin.systemd:
+        name: coredns
+        state: restarted
