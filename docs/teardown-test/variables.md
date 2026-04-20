@@ -78,25 +78,29 @@ default expectation but still require confirmation during preflight.
 | Resolver command for delegated checks | `dig @10.57.1.1 +short <host>` |
 | MikroTik conditional forwarder confirmed | Assumed as documented contract for planning; revalidate during Task 10 live checks |
 
-## Rebuild Order Approval
+## Approved Deploy And Destroy Order (OP-02)
 
-The final stack order must be confirmed in Task 02 before execution. The
-candidate below reflects the current bootstrap model after removing the
-`proxy-stack` dependency on `authentik-stack`.
+Task 02 freezes the deploy and destroy order below for this rehearsal scope.
+This does not grant destructive approval. Destroy/apply/live publish remain
+blocked by the later approval gates.
 
-| Order | Stack | Command owner | Notes |
+| Order | Stack/unit | Command owner | Notes |
 |---:|---|---|---|
-| 1 | `portainer-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation |
-| 2 | `apt-cacher-stack` | REQUIRES_OPERATOR_INPUT | Independent foundation utility for later apt-backed deploys |
-| 3 | `harbor-stack` | REQUIRES_OPERATOR_INPUT | Stage 1/2 registry foundation; depends on Portainer |
-| 4 | `ci-runner-01` | REQUIRES_OPERATOR_INPUT | Stage 1/2 foundation if included |
-| 5 | `dns-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a CoreDNS seed authority |
-| 6 | `proxy-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a Traefik runtime; no Authentik dependency |
-| 7 | `step-ca-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a internal CA |
-| 8 | `authentik-stack` | REQUIRES_OPERATOR_INPUT | Stage 3a direct first boot/API token |
-| 9 | edge reconciliation activation | REQUIRES_OPERATOR_INPUT | Not a Terraform stack; publish generated DNS/Traefik/Auth state |
-| 10 | `monitoring-stack` | REQUIRES_OPERATOR_INPUT | Stage 3b |
-| 11 | `netbox-stack` | REQUIRES_OPERATOR_INPUT | Stage 3b |
+| 1 | `portainer-stack` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation |
+| 2 | `apt-cacher-stack` | operator using `./with-secrets terragrunt` | Independent foundation utility for later apt-backed deploys |
+| 3 | `harbor-stack` | operator using `./with-secrets terragrunt` | Stage 1/2 registry foundation; depends on Portainer |
+| 4 | `ci-runner-01` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation if included |
+| 5 | `dns-stack` | operator using `./with-secrets terragrunt` | Stage 3a CoreDNS seed authority |
+| 6 | `proxy-stack` | operator using `./with-secrets terragrunt` | Stage 3a Traefik runtime; no Authentik dependency |
+| 7 | `step-ca-stack` | operator using `./with-secrets terragrunt` | Stage 3a internal CA |
+| 8 | `authentik-stack` | operator using `./with-secrets terragrunt` | Stage 3a direct first boot/API token |
+| 9 | edge reconciliation activation | operator using `./with-secrets` plus Ansible publish commands | Not a Terraform stack; publish generated DNS/Traefik/Auth state |
+| 10 | `monitoring-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
+| 11 | `netbox-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
+
+Approved destroy order is reverse stack order, excluding edge activation:
+
+`netbox-stack -> monitoring-stack -> authentik-stack -> step-ca-stack -> proxy-stack -> dns-stack -> ci-runner-01 -> harbor-stack -> apt-cacher-stack -> portainer-stack`
 
 ## Success Criteria
 
