@@ -168,17 +168,6 @@
                     - main: "lab.gibbsgreatly.xyz"
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
-              authentik:
-                rule: "Host(`authentik.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: authentik-backend
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
               portainer:
                 rule: "Host(`portainer.lab.gibbsgreatly.xyz`)"
                 entryPoints:
@@ -221,10 +210,6 @@
                 loadBalancer:
                   servers:
                     - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
-              authentik-backend:
-                loadBalancer:
-                  servers:
-                    - url: "http://10.57.1.10:9000"
               portainer-backend:
                 loadBalancer:
                   servers:
