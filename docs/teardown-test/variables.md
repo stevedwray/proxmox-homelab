@@ -39,17 +39,24 @@ default expectation but still require confirmation during preflight.
 
 ## Persistent Data Policy
 
-| Service | Backup source | Restore test done? | Data loss acceptable? |
-|---|---|---:|---:|
-| Portainer | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| Harbor | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| Authentik | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| NetBox | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| Monitoring/Grafana/Loki/VictoriaMetrics | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| Traefik ACME/cert storage | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| step-ca authority material | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| CI runner registration/state | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
-| apt-cacher cache | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT | REQUIRES_OPERATOR_INPUT |
+OP-03 state: BLOCKED pending explicit backup/restore confidence or explicit
+accepted data-loss policy for each persistent service. See
+`docs/teardown-test/backup-plan.md`.
+
+| Service | Backup source | Restore confidence or restore test plan | Data-loss policy | Pre-destroy evidence path | Gate status |
+|---|---|---|---|---|---|
+| Portainer | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/portainer/` | BLOCKED |
+| Harbor | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/harbor/` | BLOCKED |
+| Authentik | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/authentik/` | BLOCKED |
+| NetBox | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/netbox/` | BLOCKED |
+| Monitoring/Grafana/Loki/VictoriaMetrics | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/monitoring/` | BLOCKED |
+| Traefik ACME/cert storage | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/traefik-certs/` | BLOCKED |
+| step-ca authority material | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/step-ca/` | BLOCKED |
+| CI runner registration/state | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/ci-runner/` | BLOCKED |
+| apt-cacher cache | Not approved yet | Not approved yet | Not approved yet | `docs/teardown-test/evidence/${STAMP}/backups/apt-cacher/` | BLOCKED |
+
+Stop condition for all services: stop if backup source is missing and neither
+restore confidence nor explicit accepted data loss is approved.
 
 ## Bootstrap Inputs
 

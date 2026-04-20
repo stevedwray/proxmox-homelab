@@ -67,6 +67,16 @@ Capture the evidence directory:
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 EVIDENCE_DIR="docs/teardown-test/evidence/${STAMP}"
 mkdir -p "$EVIDENCE_DIR"
+mkdir -p \
+	"$EVIDENCE_DIR/backups/portainer" \
+	"$EVIDENCE_DIR/backups/harbor" \
+	"$EVIDENCE_DIR/backups/authentik" \
+	"$EVIDENCE_DIR/backups/netbox" \
+	"$EVIDENCE_DIR/backups/monitoring" \
+	"$EVIDENCE_DIR/backups/traefik-certs" \
+	"$EVIDENCE_DIR/backups/step-ca" \
+	"$EVIDENCE_DIR/backups/ci-runner" \
+	"$EVIDENCE_DIR/backups/apt-cacher"
 ```
 
 Record:
@@ -74,7 +84,7 @@ Record:
 - approved commit SHA
 - target guard output
 - stack scope
-- backup IDs/paths for persistent services
+- backup IDs/paths for persistent services per `backup-plan.md`
 - restore test evidence or written data-loss approval
 
 Stop if any persistent service lacks either a verified backup/restore path or
