@@ -82,16 +82,20 @@ Run from repository root (apply-mode gate probes):
 ```bash
 timeout 5 bash -lc '</dev/tcp/10.57.2.10/443'
 dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
 ```
 
 Expected outcome:
 - TCP connect to `10.57.2.10:443` succeeds.
 - Authoritative CoreDNS answer for `traefik.lab.gibbsgreatly.xyz` includes
 	`10.57.2.10`.
+- Delegated resolver answer for `traefik.lab.gibbsgreatly.xyz` includes
+	`10.57.2.10`.
 
 Stop condition:
 - Traefik TCP reachability probe fails.
 - CoreDNS authoritative `dig` probe fails or returns an unexpected answer.
+- Delegated resolver `dig` probe fails or returns an unexpected answer.
 
 ## 2. Shared Dry-Run Flow (Task 11 Reconciler Contract)
 
@@ -143,7 +147,11 @@ cp -a terraform/lxc/.generated/traefik/. "$SNAP_DIR/traefik/" 2>/dev/null || tru
 cp -a terraform/lxc/.generated/coredns/coredns-lab.zone "$SNAP_DIR/coredns/" 2>/dev/null || true
 
 ./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/authentik.yml dest=$SNAP_DIR/live/ flat=yes" || true
-./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/stacks dest=$SNAP_DIR/live/ flat=no" || true
+./with-secrets ansible -i '10.57.2.10,' -u root all -m shell -a "tar -C /opt/proxy-stack/dynamic -cf /tmp/proxy-dynamic.tar ." || true
+./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/tmp/proxy-dynamic.tar dest=$SNAP_DIR/live/ flat=yes" || true
+mkdir -p "$SNAP_DIR/live/dynamic"
+tar -xf "$SNAP_DIR/live/proxy-dynamic.tar" -C "$SNAP_DIR/live/dynamic" 2>/dev/null || true
+rm -f "$SNAP_DIR/live/proxy-dynamic.tar"
 ./with-secrets ansible -i '10.57.1.13,' -u root all -m fetch -a "src=/etc/coredns/lab.zone dest=$SNAP_DIR/live/coredns-lab.zone flat=yes" || true
 
 echo "snapshot=$SNAP_DIR"
@@ -174,7 +182,7 @@ Expected outcome:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible-playbook -i '10.57.1.13,' -u root playbooks/deploy-coredns.yml \
+../../../with-secrets ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml \
 	-e coredns_generated_zone_src=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone
 ```
 
@@ -225,7 +233,8 @@ Run from `terraform/lxc/ansible`:
 
 ```bash
 ../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping
-../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root --check playbooks/deploy-proxy-stack.yml
+../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root --check playbooks/deploy-proxy-stack.yml \
+	-e traefik_generated_source_dir=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik
 ```
 
 Expected outcome:
@@ -240,14 +249,18 @@ Stop condition:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/deploy-proxy-stack.yml
-../../../with-secrets ansible -i '10.57.2.10,' -u root all -a "docker compose -f /opt/proxy-stack/docker-compose.yml config -q"
+../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml \
+	-e traefik_generated_source_dir=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik
+../../../with-secrets ansible -i ../stacks/proxy-stack/inventory.yml proxy_stack -u root -a "docker compose -f /opt/proxy-stack/docker-compose.yml config -q"
+../../../with-secrets ansible -i ../stacks/proxy-stack/inventory.yml proxy_stack -u root -m shell -a "ls -1 /opt/proxy-stack/dynamic/*.yml"
 ```
 
 Expected outcome:
 - Deploy succeeds.
 - `docker compose ... config -q` passes.
 - Traefik file provider remains healthy and watching `/etc/traefik/dynamic/`.
+- Generated per-stack files are present under `/opt/proxy-stack/dynamic/*.yml`
+	(active watched directory).
 
 Stop condition:
 - Compose config validation fails.
@@ -343,8 +356,8 @@ Run from `terraform/lxc/ansible` (replace snapshot path):
 
 ```bash
 SNAP_DIR=/home/steve/git/proxmox-homelab/docs/provisioning-refactor/snapshots/<timestamp>
-../../../with-secrets ansible -i '10.57.2.10,' -u root all -m copy -a "src=$SNAP_DIR/live/10.57.2.10/opt/proxy-stack/dynamic/stacks/ dest=/opt/proxy-stack/dynamic/stacks/ mode=0640"
-../../../with-secrets ansible-playbook -i '10.57.2.10,' -u root playbooks/deploy-proxy-stack.yml
+../../../with-secrets ansible -i '10.57.2.10,' -u root all -m copy -a "src=$SNAP_DIR/live/dynamic/ dest=/opt/proxy-stack/dynamic/ mode=0640"
+../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml
 ```
 
 Expected outcome:

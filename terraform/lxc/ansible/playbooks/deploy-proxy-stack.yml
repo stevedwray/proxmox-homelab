@@ -45,6 +45,10 @@
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
     traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
+    # Optional control-node source dir for generated per-stack Traefik files.
+    # When provided, files are published into /opt/proxy-stack/dynamic/ so the
+    # active file provider always loads them.
+    traefik_generated_source_dir: ""
 
   tasks:
     - name: Create Traefik directory structure
@@ -120,8 +124,8 @@
             docker:
               exposedByDefault: false
             file:
-              # Includes central dynamic files and generated per-stack files under
-              # /etc/traefik/dynamic/stacks/*.yml.
+              # Active watched directory for all dynamic files.
+              # Generated per-stack files must be published into this directory.
               directory: "/etc/traefik/dynamic/"
               watch: true
 
@@ -228,6 +232,31 @@
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
+
+    - name: Check requested generated Traefik source directory on control node
+      ansible.builtin.stat:
+        path: "{{ traefik_generated_source_dir }}"
+      register: traefik_generated_source_dir_stat
+      delegate_to: localhost
+      become: false
+      when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Assert generated Traefik source directory is valid when provided
+      ansible.builtin.assert:
+        that:
+          - traefik_generated_source_dir_stat.stat.exists
+          - traefik_generated_source_dir_stat.stat.isdir
+        fail_msg: >-
+          traefik_generated_source_dir={{ traefik_generated_source_dir }} must
+          exist on the control node and be a directory.
+      when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Publish generated Traefik files into active dynamic directory
+      ansible.builtin.copy:
+        src: "{{ traefik_generated_source_dir }}/"
+        dest: "{{ proxy_compose_dir }}/dynamic/"
+        mode: "0640"
+      when: traefik_generated_source_dir | trim | length > 0
 
     - name: Validate Traefik compose configuration
       ansible.builtin.command:
