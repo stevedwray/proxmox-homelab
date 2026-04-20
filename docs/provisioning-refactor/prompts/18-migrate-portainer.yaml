@@ -2,7 +2,7 @@
 id: pr-18-migrate-portainer
 title: "Migrate Portainer route"
 type: deployment
-status: pending
+status: complete
 depends_on:
   - pr-15-migrate-authentik
   - pr-17a-edge-validation-hardening

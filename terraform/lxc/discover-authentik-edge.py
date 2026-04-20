@@ -25,6 +25,8 @@ DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 OWNED_NAME_PREFIX = "edge-"
 SHARED_FORWARD_OUTPOST = "edge-forwardauth-outpost"
+LEGACY_SHARED_FORWARD_PROVIDER = "traefik-forwardauth-provider"
+LEGACY_SHARED_EMBEDDED_OUTPOST = "authentik Embedded Outpost"
 
 
 @dataclass(frozen=True)
@@ -560,6 +562,56 @@ def _classify_forward_auth_route(
     if out_missing:
         missing = True
 
+    # Compatibility mode for the existing shared Traefik forward-auth model.
+    # If route-owned objects are absent but legacy shared provider/outpost are
+    # present and linked, classify as matching to avoid false migration drift.
+    if not ambiguous and missing and not differing:
+        legacy_provider_candidates = _pick_candidates(
+            inventory.providers,
+            [
+                lambda item: _get_name(item) == LEGACY_SHARED_FORWARD_PROVIDER,
+                lambda item: str(item.get("mode", "")).lower() == "forward_domain"
+                and bool(item.get("intercept_header_auth", False)),
+            ],
+        )
+        if len(legacy_provider_candidates) == 1:
+            legacy_provider = legacy_provider_candidates[0]
+            legacy_provider_id = _as_id(legacy_provider.get("pk") or legacy_provider.get("id"))
+            legacy_outpost_candidates = _pick_candidates(
+                inventory.outposts,
+                [
+                    lambda item: _get_name(item) == LEGACY_SHARED_EMBEDDED_OUTPOST,
+                    lambda item, linked_provider=legacy_provider_id: linked_provider is not None
+                    and linked_provider in _provider_references(item),
+                ],
+            )
+            if len(legacy_outpost_candidates) == 1 and legacy_provider_id is not None:
+                legacy_outpost = legacy_outpost_candidates[0]
+                legacy_outpost_id = _as_id(legacy_outpost.get("pk") or legacy_outpost.get("id"))
+                legacy_identifiers = [
+                    ObjectRef(
+                        kind="provider",
+                        id=legacy_provider_id,
+                        name=_get_name(legacy_provider),
+                    )
+                ]
+                if legacy_outpost_id is not None:
+                    legacy_identifiers.append(
+                        ObjectRef(
+                            kind="outpost",
+                            id=legacy_outpost_id,
+                            name=_get_name(legacy_outpost),
+                        )
+                    )
+                return _RouteClassification(
+                    classification="matching",
+                    reasons=[
+                        "route is covered by legacy shared Traefik forward-auth provider/outpost"
+                    ],
+                    identifiers=legacy_identifiers,
+                    stop_condition=None,
+                )
+
     stop_condition: str | None = None
     if ambiguous:
         classification = "ambiguous"
@@ -628,6 +680,19 @@ def _classify_non_managed_auth_route(
 
     app: dict[str, Any] | None = app_candidates[0] if len(app_candidates) == 1 else None
     provider: dict[str, Any] | None = provider_candidates[0] if len(provider_candidates) == 1 else None
+
+    if app is not None or provider is not None:
+        app_name = _get_name(app) if app is not None else ""
+        provider_name = _get_name(provider) if provider is not None else ""
+        if app_name == "Traefik Dashboard" and provider_name == LEGACY_SHARED_FORWARD_PROVIDER:
+            return _RouteClassification(
+                classification="matching",
+                reasons=[
+                    "legacy shared Traefik forward-auth app/provider are retained for compatibility"
+                ],
+                identifiers=[],
+                stop_condition=None,
+            )
 
     if app is not None or provider is not None:
         return _RouteClassification(

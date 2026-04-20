@@ -161,19 +161,6 @@
                     - main: "lab.gibbsgreatly.xyz"
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
-              portainer:
-                rule: "Host(`portainer.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: portainer-backend
-                middlewares:
-                  - authentik
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
               netbox:
                 rule: "Host(`netbox.lab.gibbsgreatly.xyz`)"
                 entryPoints:
@@ -188,10 +175,6 @@
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
             services:
-              portainer-backend:
-                loadBalancer:
-                  servers:
-                    - url: "http://10.57.1.20:9000"
               netbox-backend:
                 loadBalancer:
                   servers:

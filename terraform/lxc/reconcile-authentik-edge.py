@@ -436,6 +436,17 @@ def _resolve_delete_reports(
         ],
     )
 
+    app_matches = [
+        item
+        for item in app_matches
+        if _DISCOVER._get_name(item) != "Traefik Dashboard"
+    ]
+    provider_matches = [
+        item
+        for item in provider_matches
+        if _DISCOVER._get_name(item) != _DISCOVER.LEGACY_SHARED_FORWARD_PROVIDER
+    ]
+
     stops: list[str] = []
     for object_kind, matches in (("application", app_matches), ("provider", provider_matches)):
         unmanaged = [
