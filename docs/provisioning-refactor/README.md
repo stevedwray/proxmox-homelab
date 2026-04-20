@@ -77,7 +77,8 @@ See [decisions.md](decisions.md) for details.
 - [prompts/index.yaml](prompts/index.yaml) is the ordered prompt registry for
    the full 22-task sequence.
 - [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
-- [runbook.md](runbook.md) will contain shared validation and rollback commands.
+- [runbook.md](runbook.md) is the shared validation and rollback contract for
+   Task 15 through Task 21 route migrations.
 
 ## How Agents Should Use This
 
