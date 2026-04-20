@@ -157,17 +157,6 @@
                     - main: "lab.gibbsgreatly.xyz"
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
-              grafana:
-                rule: "Host(`{{ grafana_edge_host | default('grafana.lab.gibbsgreatly.xyz') }}`)"
-                entryPoints:
-                  - websecure
-                service: grafana-backend
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
               portainer:
                 rule: "Host(`portainer.lab.gibbsgreatly.xyz`)"
                 entryPoints:
@@ -195,10 +184,6 @@
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
             services:
-              grafana-backend:
-                loadBalancer:
-                  servers:
-                    - url: "{{ monitoring_grafana_url | default('http://10.57.1.12:3000') }}"
               portainer-backend:
                 loadBalancer:
                   servers:
