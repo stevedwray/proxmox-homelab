@@ -481,11 +481,23 @@ def _run_authentik_phase(
     args: argparse.Namespace,
     applied: bool,
     has_preflight_issues: bool,
-) -> tuple[dict[str, object] | None, dict[str, object] | None, list[EdgeIssue]]:
+) -> tuple[dict[str, object] | None, dict[str, object] | None, dict[str, object] | None, list[EdgeIssue]]:
+    """Run Authentik discovery and reconcile phases.
+
+    Returns: (discovery_dict, post_apply_discovery_dict, reconcile_dict, issues)
+
+    In dry-run mode, or when preflight issues prevented the apply, post_apply_discovery_dict
+    is None and EGR211 is evaluated against the pre-apply discovery snapshot.
+
+    In apply mode with a successful reconcile, post_apply_discovery_dict is the result of a
+    fresh discovery run after the apply; EGR211 is evaluated against that post-apply result
+    rather than the stale pre-apply snapshot.
+    """
     issues: list[EdgeIssue] = []
     token = os.environ.get(args.token_env, "").strip()
     if not token:
         return (
+            None,
             None,
             None,
             [
@@ -518,12 +530,28 @@ def _run_authentik_phase(
     )
     reconcile_dict = reconcile.to_dict()
 
-    if not discovery.ok:
+    # In apply mode, if reconcile succeeded, re-run discovery to obtain a post-apply
+    # convergence result.  The pre-apply discovery is kept for audit, but EGR211 is
+    # evaluated against the post-apply snapshot so that expected pre-apply drift that was
+    # fully resolved by the apply does not force a spurious top-level failure.
+    post_apply_discovery_dict: dict[str, object] | None = None
+    effective_discovery_ok = discovery.ok
+    if applied and not has_preflight_issues and reconcile.ok:
+        post_apply_client = DISCOVER_AUTHENTIK.AuthentikApiClient(
+            base_url=args.authentik_url,
+            token=token,
+            verify_tls=not args.no_verify_tls,
+        )
+        post_apply_discovery = DISCOVER_AUTHENTIK.discover_authentik_drift(manifest_paths, post_apply_client)
+        post_apply_discovery_dict = post_apply_discovery.to_dict()
+        effective_discovery_ok = post_apply_discovery.ok
+
+    if not effective_discovery_ok:
         issues.append(EdgeIssue(code="EGR211", message="Authentik discovery reported drift/issues"))
     if not reconcile.ok:
         issues.append(EdgeIssue(code="EGR212", message="Authentik reconcile plan/apply failed"))
 
-    return discovery_dict, reconcile_dict, issues
+    return discovery_dict, post_apply_discovery_dict, reconcile_dict, issues
 
 
 def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
@@ -569,6 +597,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
 
     needs_authentik = _selected_manifests_require_authentik(manifest_paths)
     discovery_dict: dict[str, object] | None = None
+    post_apply_discovery_dict: dict[str, object] | None = None
     reconcile_dict: dict[str, object] | None = None
 
     if applied:
@@ -592,7 +621,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
         )
 
     if needs_authentik:
-        discovery_dict, reconcile_dict, auth_issues = _run_authentik_phase(
+        discovery_dict, post_apply_discovery_dict, reconcile_dict, auth_issues = _run_authentik_phase(
             manifest_paths=manifest_paths,
             args=args,
             applied=applied,
@@ -629,6 +658,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
         "authentik": {
             "required": needs_authentik,
             "discovery": discovery_dict,
+            "post_apply_discovery": post_apply_discovery_dict,
             "reconcile": reconcile_dict,
         },
         "issues": [issue.to_dict() for issue in issues],
