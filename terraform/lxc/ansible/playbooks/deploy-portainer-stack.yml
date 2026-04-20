@@ -7,7 +7,21 @@
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    docker_registry_host: "{{ registry_host | default('') | trim }}"
+    docker_daemon_config_base:
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+      storage-driver: overlay2
+    docker_daemon_config: >-
+      {{
+        docker_daemon_config_base | combine(
+          {'insecure-registries': [docker_registry_host]}
+          if docker_registry_host | length > 0
+          else {}
+        )
+      }}
   roles:
     - lxc_base
     - docker_base
@@ -17,16 +31,7 @@
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
         mode: "0644"
-        content: |
-          {
-            "insecure-registries": ["{{ docker_registry_host }}"],
-            "log-driver": "json-file",
-            "log-opts": {
-              "max-size": "10m",
-              "max-file": "3"
-            },
-            "storage-driver": "overlay2"
-          }
+        content: "{{ docker_daemon_config | to_nice_json }}\n"
       notify: Restart Docker
 
     - name: Flush handlers to apply Docker daemon config
