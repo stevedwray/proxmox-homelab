@@ -315,6 +315,36 @@ Expected behavior:
 - invalid manifests fail with stable error codes (for example: `EMV001`-`EMV008`)
 - duplicate-host detection is cross-manifest (run with multiple manifests together)
 
+### Edge Reconciler
+
+Use the unified edge reconciler to run validation, render output generation,
+and Authentik discovery/reconciliation planning in one command. The command is
+dry-run first by default and only mutates Authentik objects when `--apply` is
+explicitly set.
+
+```bash
+# Dry-run (default): validate + render + Authentik plan/discovery (when needed)
+python3 terraform/lxc/reconcile-edge.py --json
+
+# Dry-run with explicit migration replacement host
+python3 terraform/lxc/reconcile-edge.py \
+  terraform/lxc/stacks/traefik-stack/edge.yaml \
+  --intended-replacement-host traefik.lab.gibbsgreatly.xyz \
+  --json
+
+# Apply mode: requires pve-test targeting preflight and healthy CoreDNS/Traefik checks
+./with-secrets python3 terraform/lxc/reconcile-edge.py --apply --json
+```
+
+Behavior summary:
+- defaults to dry-run; `--apply` is required for mutation
+- validates manifests before any render/reconcile action
+- renders Traefik and CoreDNS generated outputs
+- runs Authentik discovery/reconcile only when selected manifests include
+  `auth.mode: forwardAuth`
+- requires Authentik token only when Authentik objects are needed
+- never mutates Terraform state
+
 `validate-stack-metadata.sh` checks the active platform stacks added in the
 boundary-strengthening work. It currently validates only metadata shape:
 - `depends_on` exists, is a list, uses non-empty stack names, does not self-reference,
