@@ -54,7 +54,8 @@
         mode: "{{ item.mode }}"
       loop:
         - { path: "{{ proxy_compose_dir }}", mode: "0750" }
-        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0750" }
+        - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
+        - { path: "{{ proxy_compose_dir }}/dynamic/stacks", mode: "0755" }
         - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
         - { path: "{{ proxy_compose_dir }}/certs/step-ca", mode: "0700" }
@@ -119,6 +120,8 @@
             docker:
               exposedByDefault: false
             file:
+              # Includes central dynamic files and generated per-stack files under
+              # /etc/traefik/dynamic/stacks/*.yml.
               directory: "/etc/traefik/dynamic/"
               watch: true
 
