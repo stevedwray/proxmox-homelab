@@ -135,7 +135,7 @@ spec:
 
 
 class TestExtractLegacyRoutes(unittest.TestCase):
-    def test_extracts_current_legacy_routes_from_playbook(self):
+    def test_current_playbook_has_no_legacy_routes(self):
         playbook_path = (
             REPO_ROOT
             / "terraform"
@@ -149,19 +149,7 @@ class TestExtractLegacyRoutes(unittest.TestCase):
 
         self.assertTrue(result.ok)
         extracted = {route.router: route.host for route in result.routes}
-        self.assertEqual(
-            {
-                "authentik": "authentik.lab.gibbsgreatly.xyz",
-                "grafana": "grafana.lab.gibbsgreatly.xyz",
-                "harbor": "harbor.lab.gibbsgreatly.xyz",
-                "netbox": "netbox.lab.gibbsgreatly.xyz",
-                "portainer": "portainer.lab.gibbsgreatly.xyz",
-                "traefik-dashboard": "traefik.lab.gibbsgreatly.xyz",
-            },
-            extracted,
-        )
-        self.assertTrue(all(route.source.endswith("deploy-proxy-stack.yml") for route in result.routes))
-        self.assertTrue(all(route.line > 0 for route in result.routes))
+        self.assertEqual({}, extracted)
 
     def test_reports_malformed_host_rule(self):
         with tempfile.TemporaryDirectory() as tmpdir:

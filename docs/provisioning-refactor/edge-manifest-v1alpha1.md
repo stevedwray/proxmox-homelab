@@ -147,6 +147,9 @@ backend:
 - `service` field is required
 - Format: `<service-name>@<provider>` where provider is typically `internal`
 - Service reference must exist in Traefik configuration before rendering
+- Renderers must emit the service reference directly on the router. They must
+  not synthesize a `loadBalancer` service for `traefikService` backends such as
+  `api@internal`.
 
 ---
 

@@ -18,6 +18,28 @@ context: |
 objective: |
   Move dashboard route/DNS/Auth to stack-owned provisioning using api@internal.
 
+settings: |
+  apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+  kind: EdgeManifest
+  metadata:
+    name: proxy-edge
+    stack: proxy-stack
+  spec:
+    routes:
+      - name: traefik-dashboard
+        host: traefik.lab.gibbsgreatly.xyz
+        backend:
+          type: traefikService
+          service: api@internal
+        dns:
+          enabled: true
+          target: 10.57.2.10
+          ttl: 5m
+        tls:
+          resolver: letsencrypt
+        auth:
+          mode: forwardAuth
+
 workflow:
   steps:
     - Verify pve-test targeting.
@@ -30,3 +52,6 @@ workflow:
 postconditions:
   criteria:
     - Dashboard route is generated and all migrated routes still work.
+    - Full baseline reconcile-edge.py run, with no manifest args, passes with zero issues.
+    - Generated route includes Authentik forward-auth middleware.
+    - api@internal renders as a Traefik service reference, not a load balancer URL.

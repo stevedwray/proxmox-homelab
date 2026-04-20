@@ -34,16 +34,29 @@ class TestReconcileEdge(unittest.TestCase):
 
             args = MODULE.parse_args([str(manifest), "--apply", "--json"])
 
+            healthy_tcp = MODULE.HealthCheckResult(
+                name="stub",
+                url="tcp://example.local:443",
+                ok=True,
+                status_code=None,
+                detail="ok",
+            )
+            healthy_dns = MODULE.HealthCheckResult(
+                name="stub",
+                url="dig @example.local +short example.local",
+                ok=True,
+                status_code=None,
+                detail="ok",
+            )
+
             with mock.patch.object(MODULE, "_run_pve_target_preflight", return_value=(False, "wrong target")):
-                with mock.patch.object(MODULE, "_http_health_check") as probe_mock:
-                    probe_mock.return_value = MODULE.HealthCheckResult(
-                        name="stub",
-                        url="http://example.local",
-                        ok=True,
-                        status_code=200,
-                        detail="ok",
-                    )
-                    result = MODULE.reconcile_edge(args)
+                with mock.patch.object(MODULE, "_tcp_health_check", return_value=healthy_tcp):
+                    with mock.patch.object(
+                        MODULE,
+                        "_dns_authority_health_check",
+                        return_value=healthy_dns,
+                    ):
+                        result = MODULE.reconcile_edge(args)
 
         self.assertEqual("failed", result["status"])
         self.assertTrue(any(issue["code"] == "EGR200" for issue in result["issues"]))

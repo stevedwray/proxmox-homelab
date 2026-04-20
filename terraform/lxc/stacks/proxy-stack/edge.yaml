@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: proxy-edge
+  stack: proxy-stack
+spec:
+  routes:
+    - name: traefik-dashboard
+      host: traefik.lab.gibbsgreatly.xyz
+      backend:
+        type: traefikService
+        service: api@internal
+      dns:
+        enabled: true
+        target: 10.57.2.10
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth

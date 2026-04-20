@@ -132,7 +132,7 @@
           log:
             level: INFO
 
-    - name: Write Authentik middleware and dashboard router config
+    - name: Write shared Authentik middleware config
       ansible.builtin.copy:
         dest: "{{ proxy_compose_dir }}/dynamic/authentik.yml"
         mode: "0640"
@@ -147,21 +147,6 @@
                     - X-authentik-username
                     - X-authentik-groups
                     - X-authentik-email
-            routers:
-              traefik-dashboard:
-                rule: "Host(`traefik.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: api@internal
-                middlewares:
-                  - authentik
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
-            services: {}
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:

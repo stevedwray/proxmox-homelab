@@ -61,7 +61,18 @@ class TestRenderEdgeTraefik(unittest.TestCase):
         self.assertIn("LRI101", {issue.code for issue in result.issues})
 
     def test_fails_collision_without_intended_replacement(self):
-        result = render_traefik_dry_run([VALID_DIR / "traefik-dashboard.yaml"], self.legacy_playbook)
+        with tempfile.TemporaryDirectory() as tmpdir:
+            legacy_path = Path(tmpdir) / "deploy-proxy-stack.yml"
+            legacy_path.write_text(
+                """http:
+  routers:
+    traefik-dashboard:
+      rule: \"Host(`traefik.lab.gibbsgreatly.xyz`)\"
+""",
+                encoding="utf-8",
+            )
+
+            result = render_traefik_dry_run([VALID_DIR / "traefik-dashboard.yaml"], legacy_path)
 
         self.assertFalse(result.ok)
         self.assertIn("RTR200", {issue.code for issue in result.issues})

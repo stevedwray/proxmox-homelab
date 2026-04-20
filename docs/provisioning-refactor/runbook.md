@@ -113,6 +113,11 @@ Expected outcome:
 - JSON includes `"status": "passed"`.
 - JSON `issues` is empty.
 
+After more than one `forwardAuth` service has been migrated, use this
+all-manifest form for post-cutover convergence. Single-manifest reconciler runs
+can report owned Authentik objects from other migrated stacks as unmanaged
+because those manifests are outside the selected scope.
+
 ### 2.2 Migration dry-run (single intended replacement host)
 
 Run from repository root (replace stack and host):
@@ -329,6 +334,8 @@ Expected outcome:
 - Passed status.
 - No remaining accidental duplicate-host issues.
 - No migration residue; run is functionally no-op for the completed migration.
+- After multiple `forwardAuth` migrations, convergence is checked with no
+	manifest arguments so all migrated Authentik-owned routes are in scope.
 
 Stop condition:
 - Any pending migration drift remains.
