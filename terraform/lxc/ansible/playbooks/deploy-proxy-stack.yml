@@ -161,24 +161,7 @@
                     - main: "lab.gibbsgreatly.xyz"
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
-              netbox:
-                rule: "Host(`netbox.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: netbox-backend
-                middlewares:
-                  - authentik
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
-            services:
-              netbox-backend:
-                loadBalancer:
-                  servers:
-                    - url: "http://10.57.3.12:8080"
+            services: {}
 
     - name: Write wildcard certificate request config
       ansible.builtin.copy:

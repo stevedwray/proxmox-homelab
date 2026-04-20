@@ -20,6 +20,17 @@ DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 COOKIE_DOMAIN = ".lab.gibbsgreatly.xyz"
 SHARED_OUTPOST_TYPE = "proxy"
+# Authentik flow UUIDs — implicit-consent authorization and provider invalidation flows.
+# These match the flows used by the existing legacy traefik-forwardauth-provider.
+AUTHORIZATION_FLOW_UUID = "16080fe7-2ab0-48b4-a688-410b301898ed"
+INVALIDATION_FLOW_UUID = "532d5ee0-846b-4643-9cc8-58ad2cc944c7"
+# Minimum outpost config — Authentik requires this field on creation.
+OUTPOST_DEFAULT_CONFIG = {
+    "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
+    "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
+    "log_level": "info",
+    "authentik_host_insecure": False,
+}
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DISCOVER_MODULE_PATH = SCRIPT_DIR / "discover-authentik-edge.py"
@@ -329,6 +340,10 @@ def _provider_payload(intent: RouteIntent) -> dict[str, Any]:
         "name": intent.provider_name,
         "external_host": f"https://{intent.host}",
         "cookie_domain": COOKIE_DOMAIN,
+        "mode": "forward_domain",
+        "intercept_header_auth": True,
+        "authorization_flow": AUTHORIZATION_FLOW_UUID,
+        "invalidation_flow": INVALIDATION_FLOW_UUID,
     }
 
 
@@ -339,7 +354,10 @@ def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[s
         "meta_launch_url": f"https://{intent.host}/",
     }
     if provider_id:
-        payload["provider"] = provider_id
+        try:
+            payload["provider"] = int(provider_id)
+        except (ValueError, TypeError):
+            payload["provider"] = provider_id
     return payload
 
 
@@ -668,7 +686,8 @@ def reconcile_authentik(
                     )
                 )
                 if apply and not route_stops and not stop_conditions and app_id:
-                    updated = client.update_application(app_id, app_patch)
+                    app_slug = app_obj.get("slug") or intent.app_slug
+                    updated = client.update_application(app_slug, app_patch)
                     write_count += 1
                     app_obj.update(updated)
             else:
@@ -704,6 +723,7 @@ def reconcile_authentik(
                     "name": SHARED_FORWARD_OUTPOST,
                     "type": SHARED_OUTPOST_TYPE,
                     "providers": sorted(required_provider_ids),
+                    "config": OUTPOST_DEFAULT_CONFIG,
                 }
                 created = client.create_outpost(payload)
                 write_count += 1
