@@ -148,7 +148,7 @@ prompts:
     file: 16-migrate-harbor.yaml
     title: "Migrate Harbor route"
     type: deployment
-    status: pending
+    status: complete
     depends_on: [pr-15-migrate-authentik]
     task_doc: docs/provisioning-refactor/tasks/16-migrate-harbor.md
 

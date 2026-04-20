@@ -181,17 +181,6 @@
                     - main: "lab.gibbsgreatly.xyz"
                       sans:
                         - "*.lab.gibbsgreatly.xyz"
-              harbor:
-                rule: "Host(`harbor.lab.gibbsgreatly.xyz`)"
-                entryPoints:
-                  - websecure
-                service: harbor-backend
-                tls:
-                  certResolver: letsencrypt
-                  domains:
-                    - main: "lab.gibbsgreatly.xyz"
-                      sans:
-                        - "*.lab.gibbsgreatly.xyz"
               netbox:
                 rule: "Host(`netbox.lab.gibbsgreatly.xyz`)"
                 entryPoints:
@@ -214,10 +203,6 @@
                 loadBalancer:
                   servers:
                     - url: "http://10.57.1.20:9000"
-              harbor-backend:
-                loadBalancer:
-                  servers:
-                    - url: "http://10.57.3.10"
               netbox-backend:
                 loadBalancer:
                   servers:
