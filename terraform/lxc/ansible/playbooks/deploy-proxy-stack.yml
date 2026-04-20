@@ -59,7 +59,6 @@
       loop:
         - { path: "{{ proxy_compose_dir }}", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/dynamic", mode: "0755" }
-        - { path: "{{ proxy_compose_dir }}/dynamic/stacks", mode: "0755" }
         - { path: "{{ proxy_compose_dir }}/certs", mode: "0750" }
         - { path: "{{ proxy_compose_dir }}/certs/letsencrypt", mode: "0700" }
         - { path: "{{ proxy_compose_dir }}/certs/step-ca", mode: "0700" }
@@ -201,6 +200,11 @@
           traefik_generated_source_dir={{ traefik_generated_source_dir }} must
           exist on the control node and be a directory.
       when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Remove legacy generated Traefik stacks directory
+      ansible.builtin.file:
+        path: "{{ proxy_compose_dir }}/dynamic/stacks"
+        state: absent
 
     - name: Publish generated Traefik files into active dynamic directory
       ansible.builtin.copy:
