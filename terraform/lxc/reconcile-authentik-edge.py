@@ -7,6 +7,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import ssl
@@ -27,6 +28,7 @@ _DISCOVER_SPEC = importlib.util.spec_from_file_location("discover_authentik_edge
 if _DISCOVER_SPEC is None or _DISCOVER_SPEC.loader is None:
     raise RuntimeError("failed to load discover-authentik-edge.py")
 _DISCOVER = importlib.util.module_from_spec(_DISCOVER_SPEC)
+sys.modules["discover_authentik_edge"] = _DISCOVER
 _DISCOVER_SPEC.loader.exec_module(_DISCOVER)
 
 RouteIntent = _DISCOVER.RouteIntent

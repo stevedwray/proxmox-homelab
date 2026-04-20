@@ -58,6 +58,41 @@ Expected outcome:
 Stop condition:
 - Any manifest validation failure.
 
+Run from repository root:
+
+```bash
+if grep -R -qE 'mode:\s*forwardAuth' terraform/lxc/stacks/*/edge.yaml; then
+	./with-secrets bash -c 'test -n "$AUTHENTIK_SUPERUSER_API_TOKEN" && echo AUTHENTIK_SUPERUSER_API_TOKEN=present'
+else
+	echo "No forwardAuth routes selected; Authentik token preflight not required."
+fi
+```
+
+Expected outcome:
+- When any selected route uses `auth.mode: forwardAuth`, output confirms
+	`AUTHENTIK_SUPERUSER_API_TOKEN=present`.
+- When no selected route uses forwardAuth, token preflight is explicitly skipped.
+
+Stop condition:
+- A selected forwardAuth route exists and
+	`AUTHENTIK_SUPERUSER_API_TOKEN` is missing/empty.
+
+Run from repository root (apply-mode gate probes):
+
+```bash
+timeout 5 bash -lc '</dev/tcp/10.57.2.10/443'
+dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
+```
+
+Expected outcome:
+- TCP connect to `10.57.2.10:443` succeeds.
+- Authoritative CoreDNS answer for `traefik.lab.gibbsgreatly.xyz` includes
+	`10.57.2.10`.
+
+Stop condition:
+- Traefik TCP reachability probe fails.
+- CoreDNS authoritative `dig` probe fails or returns an unexpected answer.
+
 ## 2. Shared Dry-Run Flow (Task 11 Reconciler Contract)
 
 ### 2.1 Baseline dry-run (all manifests)
@@ -72,6 +107,7 @@ Expected outcome:
 - JSON includes `"mode": "dry-run"`.
 - JSON includes `"terraform_state_mutation": false`.
 - JSON includes `"status": "passed"`.
+- JSON `issues` is empty.
 
 ### 2.2 Migration dry-run (single intended replacement host)
 
@@ -88,6 +124,7 @@ Expected outcome:
 - Status is passed.
 - No accidental duplicate-host collision errors.
 - Renderer accepts only the one explicit intended replacement host.
+- No unexpected generated changes outside the targeted migration host.
 
 Stop condition:
 - Any failed status.
@@ -107,7 +144,7 @@ cp -a terraform/lxc/.generated/coredns/coredns-lab.zone "$SNAP_DIR/coredns/" 2>/
 
 ./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/authentik.yml dest=$SNAP_DIR/live/ flat=yes" || true
 ./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/stacks dest=$SNAP_DIR/live/ flat=no" || true
-./with-secrets ansible -i '10.57.2.11,' -u root all -m fetch -a "src=/etc/coredns/lab.zone dest=$SNAP_DIR/live/coredns-lab.zone flat=yes" || true
+./with-secrets ansible -i '10.57.1.13,' -u root all -m fetch -a "src=/etc/coredns/lab.zone dest=$SNAP_DIR/live/coredns-lab.zone flat=yes" || true
 
 echo "snapshot=$SNAP_DIR"
 ```
@@ -126,7 +163,7 @@ Stop condition:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible -i '10.57.2.11,' -u root all -m ping
+../../../with-secrets ansible -i '10.57.1.13,' -u root all -m ping
 ```
 
 Expected outcome:
@@ -137,7 +174,7 @@ Expected outcome:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible-playbook -i '10.57.2.11,' -u root playbooks/deploy-coredns.yml \
+../../../with-secrets ansible-playbook -i '10.57.1.13,' -u root playbooks/deploy-coredns.yml \
 	-e coredns_generated_zone_src=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone
 ```
 
@@ -155,7 +192,7 @@ Stop condition:
 Run from repository root:
 
 ```bash
-dig @10.57.2.11 +short traefik.lab.gibbsgreatly.xyz
+dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
 dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
 dig @10.57.1.1 +short authentik.lab.gibbsgreatly.xyz
 ```
@@ -223,14 +260,30 @@ Run from repository root:
 ```bash
 for h in traefik grafana authentik portainer harbor netbox; do
 	echo "== $h.lab.gibbsgreatly.xyz =="
-	curl -skI --resolve "$h.lab.gibbsgreatly.xyz:443:10.57.2.10" "https://$h.lab.gibbsgreatly.xyz" | grep -E 'HTTP/|location:|server:'
+	curl -sSI --resolve "$h.lab.gibbsgreatly.xyz:443:10.57.2.10" "https://$h.lab.gibbsgreatly.xyz" | grep -E 'HTTP/|location:|server:'
 done
 ```
 
 Expected outcome:
 - Each route returns an HTTP response via Traefik.
-- Protected routes redirect to/through Authentik as designed.
+- Route behavior matches `auth.mode` in the stack `edge.yaml`:
+	`forwardAuth` routes redirect to/through Authentik and `none` routes do not.
 - Authentik route itself does not self-protect (no forward-auth recursion).
+
+Run from repository root:
+
+```bash
+for h in traefik grafana authentik portainer harbor netbox; do
+	echo "== cert $h.lab.gibbsgreatly.xyz =="
+	echo | openssl s_client -connect 10.57.2.10:443 -servername "$h.lab.gibbsgreatly.xyz" 2>/dev/null \
+		| openssl x509 -noout -subject -issuer -ext subjectAltName
+done
+```
+
+Expected outcome:
+- Certificate SAN includes `DNS:*.lab.gibbsgreatly.xyz` (or explicit host entry
+	for the migrated route).
+- Issuer chain and certificate subject match expected lab certificate policy.
 
 Run from repository root:
 
@@ -246,6 +299,7 @@ Expected outcome:
 Stop condition:
 - Redirect loops.
 - Any route returns no response over Traefik.
+- TLS trust fails or certificate SAN/issuer is not the expected value.
 - Authentik API/discovery is unavailable.
 
 ## 7. Post-Apply Convergence Check
@@ -276,7 +330,7 @@ Run from `terraform/lxc/ansible` (replace snapshot path):
 
 ```bash
 SNAP_DIR=/home/steve/git/proxmox-homelab/docs/provisioning-refactor/snapshots/<timestamp>
-../../../with-secrets ansible-playbook -i '10.57.2.11,' -u root playbooks/deploy-coredns.yml \
+../../../with-secrets ansible-playbook -i '10.57.1.13,' -u root playbooks/deploy-coredns.yml \
 	-e coredns_generated_zone_src="$SNAP_DIR/live/coredns-lab.zone"
 ```
 
@@ -311,9 +365,12 @@ Stop and present options (do not continue) when any of the following occur:
 - pve-test preflight fails.
 - A command labeled as validation is discovered to be mutating.
 - Reconciler reports failed status or collision issues.
+- Apply-mode Traefik/CoreDNS health preflight checks fail.
 - CoreDNS guardrail assertions fail.
 - Traefik compose/file-provider validation fails.
+- Duplicate route ownership or unexpected generated-file changes are detected.
 - Route/auth checks indicate redirect recursion or route blackhole.
+- DNS, certificate, or auth behavior regresses from pre-migration baseline.
 - Rollback cannot restore previous known-good state.
 
 ## 10. Minimum Evidence to Attach to Every Migration Task
