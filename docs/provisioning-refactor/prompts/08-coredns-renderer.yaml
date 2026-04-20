@@ -2,7 +2,7 @@
 id: pr-08-coredns-renderer
 title: "Implement CoreDNS renderer"
 type: development
-status: pending
+status: complete
 depends_on:
   - pr-05-manifest-validator
 task_doc: docs/provisioning-refactor/tasks/08-coredns-renderer.md

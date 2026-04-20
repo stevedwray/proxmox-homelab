@@ -54,6 +54,22 @@ At a high level, the current workflow is:
 4. Run Terraform/Terragrunt from `terraform/lxc/`
 5. Let Terraform create LXCs and invoke Ansible-based provisioning
 
+## Edge Reconciler
+
+For stack-owned browser ingress manifests under `terraform/lxc/stacks/*/edge.yaml`,
+use the dry-run-first unified reconciler:
+
+```bash
+# Dry-run (default)
+python3 terraform/lxc/reconcile-edge.py --json
+
+# Apply mode (requires pve-test preflight + service health checks)
+./with-secrets python3 terraform/lxc/reconcile-edge.py --apply --json
+```
+
+Detailed command options and expected behavior are documented in
+`terraform/lxc/README.md`.
+
 ## Key documents
 
 ### Architecture and planning
