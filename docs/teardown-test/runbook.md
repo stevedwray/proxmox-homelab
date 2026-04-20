@@ -5,7 +5,7 @@ using it for destructive work.
 
 ## 0. Non-Destructive Preflight
 
-Run from repository root:
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 
 ```bash
 git status --short
@@ -25,6 +25,8 @@ Stop if any expected value does not match.
 
 ## 1. Source Validation
 
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
 ```bash
 python3 terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/*/edge.yaml
 python3 -m unittest \
@@ -41,9 +43,12 @@ Expected:
 
 - all commands pass
 
-## 2. Refresh Generated Edge Artifacts
+## 2. Refresh Generated Edge Artifacts (Ignored Runtime Output)
 
-Remove stale ignored artifacts or render into a fresh location:
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+These commands mutate only ignored runtime artifacts under
+`terraform/lxc/.generated/`.
 
 ```bash
 rm -rf terraform/lxc/.generated/traefik terraform/lxc/.generated/coredns
@@ -61,11 +66,15 @@ Expected:
 
 ## 3. Backup Gate
 
-Capture the evidence directory:
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+Capture the evidence directory and log naming base:
 
 ```bash
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
 EVIDENCE_DIR="docs/teardown-test/evidence/${STAMP}"
+LOG_DIR="$EVIDENCE_DIR/logs"
+
 mkdir -p "$EVIDENCE_DIR"
 mkdir -p \
 	"$EVIDENCE_DIR/backups/portainer" \
@@ -77,6 +86,11 @@ mkdir -p \
 	"$EVIDENCE_DIR/backups/step-ca" \
 	"$EVIDENCE_DIR/backups/ci-runner" \
 	"$EVIDENCE_DIR/backups/apt-cacher"
+mkdir -p "$LOG_DIR"
+
+# Optional aggregate operator log.
+RUN_LOG="$LOG_DIR/runbook-${STAMP}.log"
+echo "runbook stamp=${STAMP}" | tee -a "$RUN_LOG"
 ```
 
 Record:
@@ -91,6 +105,8 @@ Stop if any persistent service lacks either a verified backup/restore path or
 explicit data-loss approval.
 
 ## 4. Destroy Gate
+
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 
 Before any destroy:
 
@@ -114,21 +130,35 @@ Operator must explicitly approve the destructive window after seeing:
 
 ## 5. Destroy Execution
 
-Use the approved stack order from [variables.md](variables.md). Destroy in the
-reverse of the approved deployment order unless the task document calls out a
-service-specific exception.
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 
-For each stack:
+Exact approved destroy order from [inventory.md](inventory.md):
+
+1. `netbox-stack`
+2. `monitoring-stack`
+3. `authentik-stack`
+4. `step-ca-stack`
+5. `proxy-stack`
+6. `dns-stack`
+7. `ci-runner-01`
+8. `harbor-stack`
+9. `apt-cacher-stack`
+10. `portainer-stack`
+
+For each stack, run guard -> destroy -> VMID verify and capture evidence:
 
 ```bash
-cd terraform/lxc/stacks/<stack>
-../../../with-secrets terragrunt destroy -auto-approve
-```
+# Repeat per approved stack in the exact order above.
+STACK="<stack>"
+VMID="<vmid>"
 
-After each destroy:
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 
-```bash
-ssh -F /dev/null root@pve-test.gibbsgreatly.xyz "pct list | grep -F '<vmid>' || true"
+(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt destroy -auto-approve) \
+  2>&1 | tee "$LOG_DIR/destroy-${STACK}.log"
+
+ssh -F /dev/null root@pve-test.gibbsgreatly.xyz "pct list | grep -F '${VMID}' || true" \
+  2>&1 | tee "$LOG_DIR/verify-destroy-${STACK}.log"
 ```
 
 Expected:
@@ -138,11 +168,25 @@ Expected:
 
 ## 6. Foundation Redeploy
 
-Deploy in the approved order. For each stack:
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+Exact approved deploy order from [inventory.md](inventory.md), Stage 1/2 subset
+for this section:
+
+1. `portainer-stack`
+2. `apt-cacher-stack`
+3. `harbor-stack`
+4. `ci-runner-01`
+
+For each stack in this section, run guard -> apply -> capture evidence:
 
 ```bash
-cd terraform/lxc/stacks/<stack>
-../../../with-secrets terragrunt apply -auto-approve
+STACK="<stack>"
+
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt apply -auto-approve) \
+  2>&1 | tee "$LOG_DIR/deploy-${STACK}.log"
 ```
 
 Validate service health using the stack-specific checks in the task files and
@@ -150,7 +194,9 @@ current runbooks.
 
 ## 7. Edge Foundation Redeploy
 
-Deploy Stage 3a in the approved order:
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+Deploy exact Stage 3a order from [inventory.md](inventory.md):
 
 1. `dns-stack`
 2. `proxy-stack`
@@ -160,9 +206,22 @@ Deploy Stage 3a in the approved order:
 If current Terraform metadata prevents this order, stop and resolve the
 dependency conflict before continuing.
 
-Required checks:
+For each Stage 3a stack, run guard -> apply -> capture evidence:
 
 ```bash
+STACK="<stack>"
+
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt apply -auto-approve) \
+  2>&1 | tee "$LOG_DIR/deploy-${STACK}.log"
+```
+
+Live validation block for Stage 3a (guard immediately before checks):
+
+```bash
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
 dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
 dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
 curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz
@@ -171,39 +230,71 @@ curl -sk -o /dev/null -w '%{http_code}\n' http://10.57.1.10:9000/-/health/live/
 
 ## 8. Edge Reconciliation Activation
 
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
 Regenerate artifacts after Stage 3a:
 
 ```bash
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
 python3 terraform/lxc/render-edge-traefik.py --json
 python3 terraform/lxc/render-edge-coredns.py --json
-./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --apply --json
+./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --apply --json \
+  2>&1 | tee "$LOG_DIR/reconcile-edge-apply.log"
 ```
 
 Publish generated CoreDNS:
 
 ```bash
-cd terraform/lxc/ansible
-../../../with-secrets ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml \
-	-e coredns_generated_zone_src=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/ansible && ../../../with-secrets ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml \
+	-e coredns_generated_zone_src=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone) \
+  2>&1 | tee "$LOG_DIR/publish-coredns.log"
 ```
 
 Publish generated Traefik:
 
 ```bash
-cd terraform/lxc/ansible
-../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml \
-	-e traefik_generated_source_dir=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/ansible && ../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml \
+	-e traefik_generated_source_dir=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik) \
+  2>&1 | tee "$LOG_DIR/publish-traefik.log"
 ```
 
 ## 9. Remaining Platform Redeploy
 
-Deploy the remaining selected Stage 3b stacks in approved dependency order.
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+Deploy exact remaining order from [inventory.md](inventory.md):
+
+10. `monitoring-stack`
+11. `netbox-stack`
+
+For each stack in this section, run guard -> apply -> capture evidence:
+
+```bash
+STACK="<stack>"
+
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt apply -auto-approve) \
+  2>&1 | tee "$LOG_DIR/deploy-${STACK}.log"
+```
+
 After each deploy, run its direct service health check and the browser route
 check if it is browser-facing.
 
 ## 10. Final Validation
 
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+Live validation block (guard immediately before checks):
+
 ```bash
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
 for h in authentik harbor grafana portainer netbox traefik; do
 	echo "== $h =="
 	dig @10.57.1.13 +short "$h.lab.gibbsgreatly.xyz"
@@ -237,3 +328,30 @@ Stop and present options when:
 - Authentik API token is unavailable when needed
 - a browser route regresses
 - final reconciler dry-run is not clean
+
+When any stop condition triggers, halt immediately and do not continue to the
+next stack.
+
+## 12. Rollback Direction (Planning)
+
+Working directory: repository root (`/home/steve/git/proxmox-homelab`).
+
+If failure occurs after destroy has started:
+
+1. Re-run target guard and confirm `pve-test`.
+2. Stop further destroy operations.
+3. Resume apply from the most recently destroyed required dependency in approved
+   deploy order.
+4. Capture rollback command output under `$LOG_DIR/rollback-<stack>.log`.
+5. Re-run the relevant service health checks before any additional action.
+
+Rollback apply command template:
+
+```bash
+STACK="<stack>"
+
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+
+(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt apply -auto-approve) \
+  2>&1 | tee "$LOG_DIR/rollback-${STACK}.log"
+```
