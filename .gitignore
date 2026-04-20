@@ -33,6 +33,7 @@ override.tf.json
 # Generated Terraform outputs in stack dirs
 **/stacks/*/inventory.yml
 **/stacks/*/network-*-vars.yml
+terraform/lxc/.generated/
 
 # Ansible
 *.retry
