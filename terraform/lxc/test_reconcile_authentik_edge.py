@@ -334,6 +334,102 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertTrue(any(issue.code == "AKR004" for issue in result.issues))
 
+    def test_dry_run_accepts_forwardauth_redirect_status(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 1,
+                        "name": "edge-netbox-stack-netbox-provider",
+                        "external_host": "https://netbox.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 2,
+                        "name": "edge-netbox-stack-netbox-app",
+                        "slug": "edge-netbox-stack-netbox",
+                        "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz/",
+                        "provider": 1,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 3,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [1],
+                    }
+                ],
+            )
+            client.base_url = "http://auth.local"
+            client.verify_tls = True
+
+            with patch.object(MODULE, "_probe_forwardauth_endpoint", return_value=(302, None)):
+                result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertTrue(result.ok)
+        self.assertFalse(any(issue.code == "AKR004" for issue in result.issues))
+
+    def test_dry_run_reports_probe_connectivity_failure_clearly(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 1,
+                        "name": "edge-netbox-stack-netbox-provider",
+                        "external_host": "https://netbox.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 2,
+                        "name": "edge-netbox-stack-netbox-app",
+                        "slug": "edge-netbox-stack-netbox",
+                        "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz/",
+                        "provider": 1,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 3,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [1],
+                    }
+                ],
+            )
+            client.base_url = "http://auth.local"
+            client.verify_tls = True
+
+            with patch.object(
+                MODULE,
+                "_probe_forwardauth_endpoint",
+                return_value=(None, "[Errno 111] Connection refused"),
+            ):
+                result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertFalse(result.ok)
+        probe_issues = [issue for issue in result.issues if issue.code == "AKR004"]
+        self.assertEqual(1, len(probe_issues))
+        self.assertIn("connectivity failure", probe_issues[0].message)
+
     def test_non_forwardauth_reports_delete_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "authentik.yaml"

@@ -475,6 +475,51 @@ def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckRes
     return target_detail, traefik_health, coredns_health, issues
 
 
+def _discovery_has_route_drift(discovery: dict[str, object] | None) -> bool:
+    if not isinstance(discovery, dict):
+        return False
+
+    route_results = discovery.get("route_results")
+    if isinstance(route_results, list):
+        for route_result in route_results:
+            if not isinstance(route_result, dict):
+                continue
+            if str(route_result.get("classification", "")).strip() != "matching":
+                return True
+
+    issue_count = discovery.get("issue_count")
+    stop_condition_count = discovery.get("stop_condition_count")
+    if isinstance(issue_count, int) and issue_count > 0:
+        return True
+    if isinstance(stop_condition_count, int) and stop_condition_count > 0:
+        return True
+
+    return False
+
+
+def _is_probe_connectivity_only_failure(reconcile: dict[str, object] | None) -> bool:
+    if not isinstance(reconcile, dict):
+        return False
+
+    issues = reconcile.get("issues")
+    if not isinstance(issues, list) or not issues:
+        return False
+
+    saw_probe_issue = False
+    for issue in issues:
+        if not isinstance(issue, dict):
+            return False
+        code = str(issue.get("code", "")).strip()
+        message = str(issue.get("message", "")).lower()
+        if code != "AKR004":
+            return False
+        if "connectivity failure" not in message:
+            return False
+        saw_probe_issue = True
+
+    return saw_probe_issue
+
+
 def _run_authentik_phase(
     *,
     manifest_paths: list[Path],
@@ -535,7 +580,7 @@ def _run_authentik_phase(
     # evaluated against the post-apply snapshot so that expected pre-apply drift that was
     # fully resolved by the apply does not force a spurious top-level failure.
     post_apply_discovery_dict: dict[str, object] | None = None
-    effective_discovery_ok = discovery.ok
+    effective_discovery = discovery_dict
     if applied and not has_preflight_issues and reconcile.ok:
         post_apply_client = DISCOVER_AUTHENTIK.AuthentikApiClient(
             base_url=args.authentik_url,
@@ -544,12 +589,20 @@ def _run_authentik_phase(
         )
         post_apply_discovery = DISCOVER_AUTHENTIK.discover_authentik_drift(manifest_paths, post_apply_client)
         post_apply_discovery_dict = post_apply_discovery.to_dict()
-        effective_discovery_ok = post_apply_discovery.ok
+        effective_discovery = post_apply_discovery_dict
 
-    if not effective_discovery_ok:
+    if _discovery_has_route_drift(effective_discovery):
         issues.append(EdgeIssue(code="EGR211", message="Authentik discovery reported drift/issues"))
     if not reconcile.ok:
-        issues.append(EdgeIssue(code="EGR212", message="Authentik reconcile plan/apply failed"))
+        if _is_probe_connectivity_only_failure(reconcile_dict):
+            issues.append(
+                EdgeIssue(
+                    code="EGR213",
+                    message="Authentik forward-auth probe connectivity failed",
+                )
+            )
+        else:
+            issues.append(EdgeIssue(code="EGR212", message="Authentik reconcile plan/apply failed"))
 
     return discovery_dict, post_apply_discovery_dict, reconcile_dict, issues
 

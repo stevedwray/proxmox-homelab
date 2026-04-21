@@ -8,6 +8,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from dataclasses import asdict, dataclass
 from pathlib import Path
 import ssl
@@ -630,14 +631,32 @@ def _probe_forwardauth_endpoint(
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
 
-    try:
-        with urllib.request.urlopen(request, context=context) as response:
-            code = response.getcode()
-            return (int(code) if isinstance(code, int) else None), None
-    except urllib.error.HTTPError as exc:
-        return int(exc.code), None
-    except Exception as exc:  # pragma: no cover - integration-path failures only
-        return None, str(exc)
+    # Forward-auth commonly replies with redirects. Do not follow redirects here;
+    # the redirect status itself is the signal that the endpoint is serving.
+    class _NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[override]
+            return None
+
+    handlers: list[urllib.request.BaseHandler] = [_NoRedirectHandler()]
+    if context is not None:
+        handlers.append(urllib.request.HTTPSHandler(context=context))
+    opener = urllib.request.build_opener(*handlers)
+
+    last_error: str | None = None
+    for attempt in range(3):
+        if attempt > 0:
+            time.sleep(0.25)
+
+        try:
+            with opener.open(request) as response:
+                code = response.getcode()
+                return (int(code) if isinstance(code, int) else None), None
+        except urllib.error.HTTPError as exc:
+            return int(exc.code), None
+        except Exception as exc:  # pragma: no cover - integration-path failures only
+            last_error = str(exc)
+
+    return None, last_error
 
 
 def _validate_forwardauth_endpoint_serving(
@@ -661,7 +680,10 @@ def _validate_forwardauth_endpoint_serving(
             issues.append(
                 ReconcileIssue(
                     code="AKR004",
-                    message=f"forward-auth endpoint probe failed for host {host}: {error}",
+                    message=(
+                        "forward-auth endpoint probe connectivity failure for host "
+                        f"{host}: {error}"
+                    ),
                     route="forwardAuth",
                     object_kind="outpost",
                     object_name=SHARED_FORWARD_OUTPOST,

@@ -96,7 +96,7 @@ class DiscoveryResult:
 
     @property
     def ok(self) -> bool:
-        if self.issues or self.stop_conditions or self.unmanaged:
+        if self.issues or self.stop_conditions:
             return False
         return all(route.classification == "matching" for route in self.route_results)
 

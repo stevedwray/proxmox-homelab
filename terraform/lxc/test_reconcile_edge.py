@@ -172,6 +172,26 @@ def _reconcile_failed() -> mock.MagicMock:
     return result
 
 
+def _reconcile_probe_connectivity_failed() -> mock.MagicMock:
+    result = mock.MagicMock()
+    result.ok = False
+    result.to_dict.return_value = {
+        "status": "failed",
+        "write_count": 0,
+        "action_count": 0,
+        "stop_condition_count": 0,
+        "issue_count": 1,
+        "mode": "dry-run",
+        "issues": [
+            {
+                "code": "AKR004",
+                "message": "forward-auth endpoint probe connectivity failure for host netbox.lab.gibbsgreatly.xyz: [Errno 111] Connection refused",
+            }
+        ],
+    }
+    return result
+
+
 class TestReconcileEdgeApplyAuthentikStatus(unittest.TestCase):
     """Tests for post-apply Authentik convergence status gating."""
 
@@ -348,3 +368,31 @@ spec:
         self.assertTrue(any(i["code"] == "EGR211" for i in result["issues"]))
         # No post-apply discovery in dry-run mode.
         self.assertIsNone(result["authentik"]["post_apply_discovery"])
+
+    def test_dry_run_probe_connectivity_failure_is_not_reported_as_drift(self):
+        """Dry-run: connectivity-only probe failure reports EGR213 and does not report EGR211."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "test-reconcile-edge.yaml"
+            manifest.write_text(self._FORWARDAUTH_MANIFEST_YAML, encoding="utf-8")
+            args = MODULE.parse_args([str(manifest), "--json"])  # no --apply
+
+            with (
+                mock.patch.dict("os.environ", {self._TOKEN_ENV: "fake-token"}),
+                mock.patch.object(MODULE.DISCOVER_AUTHENTIK, "AuthentikApiClient"),
+                mock.patch.object(MODULE.RECONCILE_AUTHENTIK, "AuthentikApiClient"),
+                mock.patch.object(
+                    MODULE.DISCOVER_AUTHENTIK,
+                    "discover_authentik_drift",
+                    return_value=_discovery_ok(),
+                ),
+                mock.patch.object(
+                    MODULE.RECONCILE_AUTHENTIK,
+                    "reconcile_authentik",
+                    return_value=_reconcile_probe_connectivity_failed(),
+                ),
+            ):
+                result = MODULE.reconcile_edge(args)
+
+        self.assertEqual("failed", result["status"])
+        self.assertTrue(any(i["code"] == "EGR213" for i in result["issues"]))
+        self.assertFalse(any(i["code"] == "EGR211" for i in result["issues"]))
