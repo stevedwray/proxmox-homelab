@@ -223,7 +223,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                 outposts=[
                     {
                         "pk": 33,
-                        "name": "edge-forwardauth-outpost",
+                        "name": "authentik Embedded Outpost",
                         "type": "proxy",
                         "providers": [],
                     }
@@ -237,6 +237,102 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertIn(("provider", "update"), operations)
         self.assertIn(("application", "update"), operations)
         self.assertIn(("outpost", "update"), operations)
+
+    def test_prefers_embedded_outpost_when_legacy_custom_outpost_exists(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "portainer.yaml"
+            _write_manifest(
+                manifest,
+                stack="portainer-stack",
+                route="portainer",
+                host="portainer.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 201,
+                        "name": "edge-portainer-stack-portainer-provider",
+                        "external_host": "https://portainer.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 202,
+                        "name": "edge-portainer-stack-portainer-app",
+                        "slug": "edge-portainer-stack-portainer",
+                        "meta_launch_url": "https://portainer.lab.gibbsgreatly.xyz/",
+                        "provider": 201,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 203,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [],
+                    },
+                    {
+                        "pk": 204,
+                        "name": "edge-forwardauth-outpost",
+                        "type": "proxy",
+                        "providers": [201],
+                    },
+                ],
+            )
+
+            result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertTrue(result.ok)
+        outpost_actions = [a for a in result.actions if a.object_kind == "outpost"]
+        self.assertEqual(1, len(outpost_actions))
+        self.assertEqual("authentik Embedded Outpost", outpost_actions[0].object_name)
+        self.assertEqual("update", outpost_actions[0].operation)
+
+    def test_dry_run_reports_issue_when_forwardauth_endpoint_404(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 1,
+                        "name": "edge-netbox-stack-netbox-provider",
+                        "external_host": "https://netbox.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 2,
+                        "name": "edge-netbox-stack-netbox-app",
+                        "slug": "edge-netbox-stack-netbox",
+                        "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz/",
+                        "provider": 1,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 3,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [1],
+                    }
+                ],
+            )
+            client.base_url = "http://auth.local"
+            client.verify_tls = True
+
+            with patch.object(MODULE, "_probe_forwardauth_endpoint", return_value=(404, None)):
+                result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertFalse(result.ok)
+        self.assertTrue(any(issue.code == "AKR004" for issue in result.issues))
 
     def test_non_forwardauth_reports_delete_only(self):
         with tempfile.TemporaryDirectory() as tmpdir:

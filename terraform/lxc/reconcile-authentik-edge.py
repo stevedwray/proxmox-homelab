@@ -13,6 +13,7 @@ from pathlib import Path
 import ssl
 from typing import Any
 from urllib.parse import urljoin
+import urllib.error
 import urllib.request
 
 
@@ -37,6 +38,8 @@ OUTPOST_DEFAULT_CONFIG = {
     "log_level": "info",
     "authentik_host_insecure": False,
 }
+FORWARDAUTH_ENDPOINT_PATH = "/outpost.goauthentik.io/auth/traefik"
+FORWARDAUTH_ACCEPTED_STATUS = {200, 202, 204, 302, 303, 307, 308, 401, 403}
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DISCOVER_MODULE_PATH = SCRIPT_DIR / "discover-authentik-edge.py"
@@ -602,6 +605,97 @@ def _find_single_shared_outpost(
     return None, None
 
 
+def _probe_forwardauth_endpoint(
+    *,
+    base_url: str,
+    host: str,
+    verify_tls: bool,
+) -> tuple[int | None, str | None]:
+    endpoint = f"{base_url.rstrip('/')}{FORWARDAUTH_ENDPOINT_PATH}"
+    request = urllib.request.Request(
+        endpoint,
+        method="HEAD",
+        headers={
+            "X-Forwarded-Proto": "https",
+            "X-Forwarded-Host": host,
+            "X-Forwarded-Uri": "/",
+            "X-Forwarded-Method": "GET",
+            "X-Forwarded-For": "10.57.2.10",
+        },
+    )
+
+    context = None
+    if not verify_tls:
+        context = ssl.create_default_context()
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+
+    try:
+        with urllib.request.urlopen(request, context=context) as response:
+            code = response.getcode()
+            return (int(code) if isinstance(code, int) else None), None
+    except urllib.error.HTTPError as exc:
+        return int(exc.code), None
+    except Exception as exc:  # pragma: no cover - integration-path failures only
+        return None, str(exc)
+
+
+def _validate_forwardauth_endpoint_serving(
+    client: Any,
+    intents: list[RouteIntent],
+) -> tuple[ReconcileIssue, ...]:
+    base_url = getattr(client, "base_url", None)
+    verify_tls = getattr(client, "verify_tls", None)
+    if not isinstance(base_url, str) or not isinstance(verify_tls, bool):
+        return ()
+
+    issues: list[ReconcileIssue] = []
+    hosts = sorted({intent.host for intent in intents if intent.auth_mode == "forwardAuth"})
+    for host in hosts:
+        status, error = _probe_forwardauth_endpoint(
+            base_url=base_url,
+            host=host,
+            verify_tls=verify_tls,
+        )
+        if error is not None:
+            issues.append(
+                ReconcileIssue(
+                    code="AKR004",
+                    message=f"forward-auth endpoint probe failed for host {host}: {error}",
+                    route="forwardAuth",
+                    object_kind="outpost",
+                    object_name=SHARED_FORWARD_OUTPOST,
+                )
+            )
+            continue
+        if status == 404:
+            issues.append(
+                ReconcileIssue(
+                    code="AKR004",
+                    message=(
+                        "forward-auth endpoint returned 404 for host "
+                        f"{host} at {FORWARDAUTH_ENDPOINT_PATH}; outpost is not serving"
+                    ),
+                    route="forwardAuth",
+                    object_kind="outpost",
+                    object_name=SHARED_FORWARD_OUTPOST,
+                )
+            )
+            continue
+        if status is None or status not in FORWARDAUTH_ACCEPTED_STATUS:
+            issues.append(
+                ReconcileIssue(
+                    code="AKR004",
+                    message=f"forward-auth endpoint returned unexpected status {status} for host {host}",
+                    route="forwardAuth",
+                    object_kind="outpost",
+                    object_name=SHARED_FORWARD_OUTPOST,
+                )
+            )
+
+    return tuple(issues)
+
+
 def reconcile_authentik(
     manifest_paths: list[Path],
     client: Any,
@@ -638,6 +732,7 @@ def reconcile_authentik(
     outposts = list(inventory.outposts)
 
     actions: list[ReconcileAction] = []
+    issues: list[ReconcileIssue] = []
     stop_conditions: list[str] = []
     write_count = 0
     consumed: dict[str, set[str]] = {"application": set(), "provider": set(), "outpost": set()}
@@ -922,11 +1017,14 @@ def reconcile_authentik(
         # Writes are prevented by guarded apply branches above.
         pass
 
+    if has_forwardauth and not apply:
+        issues.extend(_validate_forwardauth_endpoint_serving(client, intents))
+
     actions.sort(key=lambda action: (action.stack, action.route, action.object_kind, action.object_name, action.operation))
     return ReconcileResult(
         apply=apply,
         actions=tuple(actions),
-        issues=(),
+        issues=tuple(issues),
         stop_conditions=tuple(stop_conditions),
         request_methods=tuple(client.request_methods),
         write_count=write_count,

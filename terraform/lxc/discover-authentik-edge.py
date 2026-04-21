@@ -24,9 +24,11 @@ from edge_manifest import discover_edge_manifests, load_manifest, validate_manif
 DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 OWNED_NAME_PREFIX = "edge-"
-SHARED_FORWARD_OUTPOST = "edge-forwardauth-outpost"
+LEGACY_MANAGED_SHARED_FORWARD_OUTPOST = "edge-forwardauth-outpost"
 LEGACY_SHARED_FORWARD_PROVIDER = "traefik-forwardauth-provider"
 LEGACY_SHARED_EMBEDDED_OUTPOST = "authentik Embedded Outpost"
+# Prefer the embedded outpost because it is served directly by the Authentik server.
+SHARED_FORWARD_OUTPOST = LEGACY_SHARED_EMBEDDED_OUTPOST
 
 
 @dataclass(frozen=True)
@@ -542,18 +544,31 @@ def _classify_forward_auth_route(
     if app_differing:
         differing = True
 
-    outpost_candidates = _pick_candidates(
+    named_outpost_candidates = _pick_candidates(
         inventory.outposts,
         [
             lambda item, expected_name=intent.outpost_name: _get_name(item) == expected_name,
-            lambda item, linked_provider=provider_id_for_links: linked_provider is not None
-            and linked_provider in _provider_references(item),
         ],
     )
-    if len(outpost_candidates) > 1:
+    if len(named_outpost_candidates) > 1:
         ambiguous = True
-        reasons.append("multiple outpost candidates matched this route")
-    outpost = outpost_candidates[0] if len(outpost_candidates) == 1 else None
+        reasons.append("multiple named outpost candidates matched this route")
+
+    outpost: dict[str, Any] | None
+    if len(named_outpost_candidates) == 1:
+        outpost = named_outpost_candidates[0]
+    else:
+        linked_outpost_candidates = _pick_candidates(
+            inventory.outposts,
+            [
+                lambda item, linked_provider=provider_id_for_links: linked_provider is not None
+                and linked_provider in _provider_references(item),
+            ],
+        )
+        if len(linked_outpost_candidates) > 1:
+            ambiguous = True
+            reasons.append("multiple linked outpost candidates matched this route")
+        outpost = linked_outpost_candidates[0] if len(linked_outpost_candidates) == 1 else None
     out_reasons, out_ids, out_differing, out_missing = _check_outpost_match(intent, outpost, provider_id_for_links)
     reasons.extend(out_reasons)
     identifiers.extend(out_ids)

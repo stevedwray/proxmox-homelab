@@ -106,7 +106,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                 outposts=[
                     {
                         "pk": 301,
-                        "name": "edge-forwardauth-outpost",
+                        "name": "authentik Embedded Outpost",
                         "type": "proxy",
                         "providers": [201],
                     }
