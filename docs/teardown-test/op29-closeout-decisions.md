@@ -38,3 +38,30 @@ During OP-06..OP-28 execution, the following certificate changed:
 
 **Created:** 2026-04-21
 **Related:** OP-06..OP-28 execution, step-ca-stack teardown/rebuild
+
+## 2026-04-22 Cycle Update (Stamp 20260422-044416)
+
+### Verified Current State
+
+- Branch: docs/teardown-test-execution-variables
+- SDN safety fix present at HEAD: `23dea28` (`fix(sdn): guard subnet delete behind safe vnet gate`)
+- OP-28 final validation: passed
+- `certs/homelab-root.crt` remains modified and unstaged
+
+### Additional Follow-ups Captured
+
+1. Reconciler default Authentik URL behavior
+   - Default URL path still fails discovery with HTTP 404 in OP-25 flows.
+   - Direct URL `http://10.57.1.10:9000` works for apply/dry-run.
+   - Recommendation: change reconciler default for rehearsal contexts or require explicit `--authentik-url` in runbook commands.
+
+2. Portainer final validation probe
+   - Initial OP-28 direct probe targeted wrong port and produced false failure.
+   - Correct target is Portainer API on port 9000.
+   - Recommendation: update runbook validation script/snippet to lock `http://10.57.1.20:9000/api/system/status`.
+
+### Recommended Decision For Root Cert Drift
+
+- Preferred: Track the new public root cert in git when and only when operator confirms step-ca rotation is intended for this cycle.
+- If rotation was not intended, restore file to previous committed version and document non-persistent CA behavior as a defect.
+- Until explicit approval: keep `certs/homelab-root.crt` unstaged.
