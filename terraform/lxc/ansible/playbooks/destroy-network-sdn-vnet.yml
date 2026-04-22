@@ -44,6 +44,33 @@
       register: network_sdn_vnets_result
       changed_when: false
 
+    - name: Compute SDN safe-delete gate
+      ansible.builtin.set_fact:
+        network_sdn_vnet_exists: >-
+          {{
+            (network_sdn_vnets_result.stdout | from_json
+            | selectattr('vnet', 'equalto', network_sdn_vnet)
+            | list | length) > 0
+          }}
+        network_sdn_has_remaining_bridge_users: >-
+          {{ (network_sdn_remaining_bridge_usage.stdout | trim) != '' }}
+        network_sdn_safe_to_delete_vnet: >-
+          {{
+            (network_sdn_remaining_bridge_usage.stdout | trim) == '' and
+            (network_sdn_vnets_result.stdout | from_json
+            | selectattr('vnet', 'equalto', network_sdn_vnet)
+            | list | length) > 0
+          }}
+
+    - name: Skip SDN subnet and VNet deletion because active bridge users remain
+      ansible.builtin.debug:
+        msg: >-
+          Skipping subnet/VNet delete for {{ network_sdn_vnet }} because active
+          LXC bridge users still exist: {{ network_sdn_remaining_bridge_usage.stdout_lines }}
+      when:
+        - network_sdn_vnet_exists | bool
+        - network_sdn_has_remaining_bridge_users | bool
+
     - name: Read current SDN subnets
       ansible.builtin.command:
         cmd: pvesh get /cluster/sdn/vnets/{{ network_sdn_vnet }}/subnets --output-format json
@@ -53,6 +80,7 @@
         ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       register: network_sdn_subnets_result
+      when: network_sdn_safe_to_delete_vnet | bool
       changed_when: false
 
     - name: Delete SDN subnets when present
@@ -66,10 +94,12 @@
         ansible_user: root
         ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      loop: "{{ network_sdn_subnets_result.stdout | from_json }}"
+      loop: "{{ (network_sdn_subnets_result.stdout | default('[]')) | from_json }}"
       loop_control:
         label: "{{ item.subnet }}"
-      when: (network_sdn_subnets_result.stdout | from_json | length) > 0
+      when:
+        - network_sdn_safe_to_delete_vnet | bool
+        - ((network_sdn_subnets_result.stdout | default('[]')) | from_json | length) > 0
       register: network_sdn_subnet_delete
       changed_when: true
 
@@ -84,11 +114,7 @@
         ansible_user: root
         ansible_ssh_private_key_file: "{{ network_sdn_ssh_key }}"
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
-      when: >-
-        (network_sdn_remaining_bridge_usage.stdout | trim) == '' and
-        (network_sdn_vnets_result.stdout | from_json
-        | selectattr('vnet', 'equalto', network_sdn_vnet)
-        | list | length) > 0
+      when: network_sdn_safe_to_delete_vnet | bool
       register: network_sdn_vnet_delete
       changed_when: true
 
