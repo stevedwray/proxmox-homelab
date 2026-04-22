@@ -24,9 +24,21 @@ Run the appropriate scan(s) before merging any branch, based on what changed:
 | Change type | Command |
 | --- | --- |
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
-| Code files modified (Python, shell, YAML) | `source .env && sonar-scanner` |
+| Code files modified (Python, shell, YAML) | `./with-secrets /home/steve/.local/bin/sonar-scanner` |
 
 If a scan returns new issues, **stop and present options** — do not merge until the issues are resolved or explicitly accepted by the user.
+
+## Workspace Operating Patterns
+
+- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus SOPS-backed secrets from `terraform/secrets.enc.yaml`; do not rely on `source .env` for secret-bearing workflows.
+- Treat `.env` as gitignored non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in `terraform/secrets.enc.yaml` via SOPS.
+- New Terraform secrets in SOPS should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, rather than adding a separate mapping layer.
+- Edit SOPS secrets with `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml`. Do not decrypt secrets into plaintext files or commit private age keys.
+- `with-secrets` defaults to the `pve-test` workflow and refuses non-`pve-test` targets unless `ALLOW_PVE=true` is explicitly set for intentional production work.
+- GitHub Actions secrets are for CI-only values and CI SOPS decryption. Local infrastructure automation should prefer SOPS plus `with-secrets`.
+- Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
+- Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
+- Keep runtime evidence, logs, backups, and large snapshots under ignored timestamped evidence directories; summarize results in tracked docs instead of committing bulky artifacts or secrets.
 
 ## Execution Guardrails
 
