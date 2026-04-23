@@ -33,12 +33,14 @@ terraform/lxc/stacks/netbox-stack/stack.yaml
 
 - Task 00a complete.
 - Task 00b complete.
+- Task 00c complete.
 
 ## Current Status Note
 
-- Task 07 is unblocked by Task 00b. Downstream task-complete dry-plan checks
-  now use the platform-only helper, and `portainer_agent` assertions should
-  target only intended `stack.yaml` files.
+- Task 07 is unblocked by Task 00c. Downstream task-complete dry-plan checks
+  now use the hardened non-interactive platform-only helper, and
+  `portainer_agent` assertions should target only intended `stack.yaml`
+  files.
 
 ## Background
 

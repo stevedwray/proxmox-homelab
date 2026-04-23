@@ -23,8 +23,10 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | # | Title | Status | Preconditions |
 |---|---|---|---|
 | 00a | Establish scoped Terragrunt validation baseline | `complete` | None |
-| 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `pending` | 00a |
-| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | 00a |
+| 00b | Split downstream validation scope from the 00a baseline helper | `complete` | 00a |
+| 00c | Harden downstream plan validation and null-resource expectations | `complete` | 00a, 00b |
+| 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `pending` | 00a, 00b, 00c |
+| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | 00a, 00b, 00c |
 
 ## B. Playbook Capability
 
@@ -55,8 +57,10 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 ```text
 00a (scoped validation baseline)
-├── 00 (inventory handoff)
-└── 07 (stack classification)
+└── 00b (validation split)
+    └── 00c (validation hardening)
+        ├── 00 (inventory handoff)
+        └── 07 (stack classification)
 
 00 (inventory handoff)
 └── 01 (direct_stack)

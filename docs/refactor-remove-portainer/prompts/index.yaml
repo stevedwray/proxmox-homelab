@@ -19,16 +19,24 @@ prompts:
     file: 00b-split-downstream-validation-scope.yaml
     title: "Split downstream validation scope from the 00a baseline helper"
     type: development
-    status: pending
+    status: complete
     depends_on: [rp-00a-plan-baseline]
     task_doc: docs/refactor-remove-portainer/tasks/00b-split-downstream-validation-scope.md
+
+  - id: rp-00c-validation-hardening
+    file: 00c-harden-downstream-plan-validation.yaml
+    title: "Harden downstream plan validation and null-resource expectations"
+    type: development
+    status: complete
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+    task_doc: docs/refactor-remove-portainer/tasks/00c-harden-downstream-plan-validation.md
 
   - id: rp-00-inventory-template
     file: 00-update-inventory-template.yaml
     title: "Establish inventory handoff contract"
     type: development
     status: pending
-    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
     task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
 
   - id: rp-01-direct-stack-role
@@ -92,7 +100,7 @@ prompts:
     title: "Classify stack execution intent explicitly"
     type: development
     status: pending
-    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
     task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
 
   - id: rp-08-remove-local-exec
