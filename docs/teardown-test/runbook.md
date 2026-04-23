@@ -3,6 +3,13 @@
 This runbook is an execution skeleton. Fill [variables.md](variables.md) before
 using it for destructive work.
 
+**Primary path:** Use `scripts/teardown-deploy-test.sh` for all phases. The
+harness handles target-guard enforcement, approval-packet validation, evidence
+capture, and inventory-derived stack ordering. Sections 5–9 below are the
+equivalent manual fallback for environments where the harness is unavailable.
+Keep them in sync with harness behavior; prefer the harness over the manual
+commands.
+
 ## 0. Non-Destructive Preflight
 
 Working directory: repository root (`/home/steve/git/proxmox-homelab`).
@@ -69,7 +76,8 @@ These commands mutate only ignored runtime artifacts under
 rm -rf terraform/lxc/.generated/traefik terraform/lxc/.generated/coredns
 python3 terraform/lxc/render-edge-traefik.py --json
 python3 terraform/lxc/render-edge-coredns.py --json
-./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --json
+./with-secrets python3 terraform/lxc/reconcile-edge.py \
+	--authentik-url http://10.57.1.10:9000 --no-verify-tls --json
 ```
 
 Expected:
@@ -182,7 +190,8 @@ VMID="<vmid>"
 (cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt destroy -auto-approve) \
   2>&1 | tee "$LOG_DIR/destroy-${STACK}.log"
 
-ssh -F /dev/null root@pve-test.gibbsgreatly.xyz "pct list | grep -F '${VMID}' || true" \
+ssh -F /dev/null root@pve-test.gibbsgreatly.xyz \
+  "if pct status '${VMID}' >/dev/null 2>&1; then echo 'VMID still present' >&2; exit 1; fi" \
   2>&1 | tee "$LOG_DIR/verify-destroy-${STACK}.log"
 ```
 
@@ -264,7 +273,8 @@ Regenerate artifacts after Stage 3a:
 
 python3 terraform/lxc/render-edge-traefik.py --json
 python3 terraform/lxc/render-edge-coredns.py --json
-./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --apply --json \
+./with-secrets python3 terraform/lxc/reconcile-edge.py \
+	--authentik-url http://10.57.1.10:9000 --no-verify-tls --apply --json \
   2>&1 | tee "$LOG_DIR/reconcile-edge-apply.log"
 ```
 
@@ -328,7 +338,8 @@ for h in authentik harbor grafana portainer netbox traefik; do
 done
 
 curl -skI https://harbor.lab.gibbsgreatly.xyz/v2/
-./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --json
+./with-secrets python3 terraform/lxc/reconcile-edge.py \
+	--authentik-url http://10.57.1.10:9000 --no-verify-tls --json
 ```
 
 Expected:
