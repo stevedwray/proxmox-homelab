@@ -1,0 +1,70 @@
+---
+id: rp-06-netbox-playbook
+title: "Update netbox playbook — replace app_stack with direct_stack"
+type: development
+status: pending
+depends_on: [rp-01-direct-stack-role]
+task_doc: docs/refactor-remove-portainer/tasks/06-update-netbox-playbook.md
+validation_note: |
+  Run ansible-lint on the playbook after editing.
+  Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  NetBox is the only Tier 1 playbook that uses all three Portainer roles: portainer_agent
+  (Play 1), portainer_api + app_stack (Play 3). It is the most substantial playbook
+  change in this refactor.
+
+  The playbook has four plays:
+    Play 1: Docker base + portainer_agent
+    Play 2: Copy NetBox Python config files to /srv/docker/netbox/configuration/
+    Play 3: portainer_api + app_stack deploy via Portainer
+    Play 4: docker exec superuser creation and API token provisioning
+
+  Play 2 must not be modified. Play 4 must be updated to fix the container name (see
+  below). Play 3 is replaced with a direct_stack play.
+
+  CRITICAL — container name change: Portainer named the container netbox-stack-netbox-1
+  (from app_stack_name defaulting to netbox-stack). direct_stack with compose dir
+  /srv/docker/netbox names the project netbox, so the container becomes netbox-netbox-1.
+  Play 4 references this container name and must be updated.
+
+objective: |
+  Remove portainer_agent from Play 1 and add mask task. Replace Play 3 with a
+  direct_stack play preserving all env vars. Update Play 4 container name reference.
+
+workflow:
+  steps:
+    - Read the full playbook terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml
+      and confirm the four-play structure described in the context section.
+    - "In Play 1: remove portainer_agent from roles list, remove portainer_agent_* vars,
+      add service mask task from task document, rename play to Configure Docker base."
+    - Confirm Play 2 is unchanged (copies config files to /srv/docker/netbox/configuration/).
+    - Read the full Play 3 and record the exact list of env vars in app_stack_env before
+      removing anything.
+    - Replace Play 3 entirely with a direct_stack play as specified in the task document.
+      Use direct_stack_name netbox, direct_stack_compose_dir /srv/docker/netbox. The
+      direct_stack_env list must contain exactly the same env vars as app_stack_env did
+      (five NETBOX_* vars plus REGISTRY_HOST).
+    - "In Play 4: update netbox_container from {{ app_stack_name }}-netbox-1 to
+      netbox-netbox-1. Remove any remaining app_stack_name reference from Play 4."
+    - Run ansible-lint.
+    - Add a run_logged "syntax-check-deploy-netbox-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document.
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
+
+postconditions:
+  criteria:
+    - grep -in "portainer|app_stack" returns only the mask task service name string.
+    - ansible-lint passes.
+    - direct_stack_env contains the same five NETBOX_* vars plus REGISTRY_HOST.
+    - Play 4 uses netbox-netbox-1 as the container name.
+    - Play 2 config file copy tasks are unmodified.
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-netbox-stack.
+
+stop_conditions:
+  - app_stack_env contains env vars beyond the six listed in the task document — report
+    the full list before proceeding.
+  - Play 4 container name does not match the pattern app_stack_name-netbox-1 — report
+    the actual variable expression before updating.
+  - stacks/netbox-stack/docker-compose.yml does not exist at the path used in Play 3
+    lookup — report the actual path found.

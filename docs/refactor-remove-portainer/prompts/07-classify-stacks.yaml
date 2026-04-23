@@ -1,0 +1,59 @@
+---
+id: rp-07-classify-stacks
+title: "Classify stack execution intent explicitly"
+type: development
+status: pending
+depends_on: []
+task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
+validation_note: |
+  deployment_tier is metadata-only, but portainer_agent still affects
+  stack_cleanup. Confirm there are no LXC infrastructure changes after editing.
+
+context: |
+  The deployment_tier field classifies each stack for provision.sh and makes intent
+  explicit. Every stack.yaml must declare it explicitly — there are no silent defaults.
+  This task is independent and can run before or after the playbook-update tasks.
+
+  The following five platform stacks do not use Portainer roles directly, but they
+  are still covered by the masking sweep in Task 06a:
+    portainer-stack, step-ca-stack, dns-stack, apt-cacher-stack, ci-runner-01
+
+  The following five platform stacks have direct Portainer-path playbook changes in
+  Tasks 02-06:
+    harbor-stack, authentik-stack, monitoring-stack, proxy-stack, netbox-stack
+
+  All ten must have deployment_tier: platform and portainer_agent: false in stack.yaml.
+
+objective: |
+  Add deployment_tier: platform and portainer_agent: false to all ten platform
+  stack.yaml files. Confirm terraform shows no LXC infrastructure change after
+  the change.
+
+workflow:
+  steps:
+    - Read each of the ten platform stack.yaml files before editing.
+    - "For each platform stack, add or set deployment_tier: platform and portainer_agent: false.
+      If portainer_agent is already true, set it to false."
+    - "For any Phase 06 app stack stack.yaml files that exist (pihole-stack, arr-stack,
+      jellyfin-stack, game-stack), add deployment_tier: apps."
+    - Do not edit test-docker, test-lxc, or net-* stacks.
+    - Run terragrunt run-all plan to confirm no LXC infrastructure changes.
+    - "Create terraform/lxc/test_stack_classification.py as specified in the task document
+      (two tests: deployment_tier platform for all 10 stacks; portainer_agent false for all 10)."
+    - "Add test_stack_classification.py to the run_logged edge-unit-tests python3 -m unittest
+      invocation in run_source_preflight_checks in scripts/teardown-deploy-test.sh. Note that
+      test_inventory_template.py should already be present from Task 00."
+    - Run python3 -m unittest terraform/lxc/test_stack_classification.py to confirm it passes.
+
+postconditions:
+  criteria:
+    - "All ten platform stacks have deployment_tier: platform and portainer_agent: false."
+    - "No platform stack has portainer_agent: true."
+    - Terraform shows no LXC infrastructure changes.
+    - python3 -m unittest terraform/lxc/test_stack_classification.py passes.
+    - scripts/teardown-deploy-test.sh source-preflight includes test_stack_classification.py.
+
+stop_conditions:
+  - "A platform stack has portainer_agent: true but no corresponding playbook in
+    Tasks 02-06 or Task 06a — report the inconsistency before setting it to false."
+  - Terraform plan shows any LXC infrastructure change after the edits.

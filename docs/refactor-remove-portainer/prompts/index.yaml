@@ -1,0 +1,117 @@
+---
+# Portainer Removal Refactor — Prompt Index
+#
+# Each prompt maps one-to-one to docs/refactor-remove-portainer/tasks/.
+# Use one prompt per executor session.
+# Read README.md, decisions.md, and runbook.md before starting any task.
+# Background architecture: 01-revised-architecture.md, 02-terraform-ansible-separation.md
+
+prompts:
+  - id: rp-00-inventory-template
+    file: 00-update-inventory-template.yaml
+    title: "Establish inventory handoff contract"
+    type: development
+    status: pending
+    depends_on: []
+    task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
+
+  - id: rp-01-direct-stack-role
+    file: 01-direct-stack-role.yaml
+    title: "Create direct_stack Ansible role"
+    type: development
+    status: pending
+    depends_on: [rp-00-inventory-template]
+    task_doc: docs/refactor-remove-portainer/tasks/01-create-direct-stack-role.md
+
+  - id: rp-02-harbor-playbook
+    file: 02-harbor-playbook.yaml
+    title: "Update harbor playbook — remove Portainer plays"
+    type: development
+    status: pending
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/02-update-harbor-playbook.md
+
+  - id: rp-03-authentik-playbook
+    file: 03-authentik-playbook.yaml
+    title: "Update authentik playbook — remove portainer_agent"
+    type: development
+    status: pending
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/03-update-authentik-playbook.md
+
+  - id: rp-04-monitoring-playbook
+    file: 04-monitoring-playbook.yaml
+    title: "Update monitoring playbook — remove portainer_agent"
+    type: development
+    status: pending
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/04-update-monitoring-playbook.md
+
+  - id: rp-05-proxy-playbook
+    file: 05-proxy-playbook.yaml
+    title: "Update proxy playbook — remove portainer_agent"
+    type: development
+    status: pending
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/05-update-proxy-playbook.md
+
+  - id: rp-06-netbox-playbook
+    file: 06-netbox-playbook.yaml
+    title: "Update netbox playbook — replace app_stack with direct_stack"
+    type: development
+    status: pending
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/06-update-netbox-playbook.md
+
+  - id: rp-06a-mask-remaining-tier1-playbooks
+    file: 06a-mask-remaining-tier1-playbooks.yaml
+    title: "Add Tier 1 service masking to remaining playbooks"
+    type: development
+    status: pending
+    depends_on: []
+    task_doc: docs/refactor-remove-portainer/tasks/06a-mask-remaining-tier1-playbooks.md
+
+  - id: rp-07-classify-stacks
+    file: 07-classify-stacks.yaml
+    title: "Classify stack execution intent explicitly"
+    type: development
+    status: pending
+    depends_on: []
+    task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
+
+  - id: rp-08-remove-local-exec
+    file: 08-remove-local-exec.yaml
+    title: "Remove ansible_provision null_resource from Terraform"
+    type: development
+    status: pending
+    depends_on:
+      - rp-02-harbor-playbook
+      - rp-03-authentik-playbook
+      - rp-04-monitoring-playbook
+      - rp-05-proxy-playbook
+      - rp-06-netbox-playbook
+      - rp-06a-mask-remaining-tier1-playbooks
+    task_doc: docs/refactor-remove-portainer/tasks/08-remove-terraform-local-exec.md
+
+  - id: rp-09-provision-script
+    file: 09-provision-script.yaml
+    title: "Create explicit Ansible orchestration path"
+    type: development
+    status: pending
+    depends_on:
+      - rp-00-inventory-template
+      - rp-07-classify-stacks
+      - rp-08-remove-local-exec
+    task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
+
+  - id: rp-10-update-docs
+    file: 10-update-docs.yaml
+    title: "Sync documentation to the runbook-backed method"
+    type: documentation
+    status: pending
+    depends_on:
+      - rp-06a-mask-remaining-tier1-playbooks
+      - rp-07-classify-stacks
+      - rp-08-remove-local-exec
+      - rp-09-provision-script
+    task_doc: docs/refactor-remove-portainer/tasks/10-update-docs.md

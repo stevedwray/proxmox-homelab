@@ -1,0 +1,71 @@
+---
+id: rp-01-direct-stack-role
+title: "Create direct_stack Ansible role"
+type: development
+status: pending
+depends_on: [rp-00-inventory-template]
+task_doc: docs/refactor-remove-portainer/tasks/01-create-direct-stack-role.md
+validation_note: |
+  Run ansible-lint on the new role. Confirm community.docker.docker_compose_v2 is
+  available. Run SonarCloud if any Python/shell files were created:
+  ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  Platform containers must be deployable without Portainer. The existing app_stack role
+  deploys stacks via the Portainer API. A new role, direct_stack, replaces it for
+  platform stacks that need a clean compose deployment mechanism. Its variable interface
+  mirrors app_stack so playbooks can switch with minimal changes.
+
+  The deployment mechanism is community.docker.docker_compose_v2 with state: present.
+  This is the same module used by the existing Tier 1 playbooks (authentik, monitoring,
+  proxy). state: present ensures containers are running even if the compose file has
+  not changed since the last run — correctly handling the reboot case.
+
+  This role is mandatory for the NetBox playbook update (Task 06). Other Tier 1
+  playbooks (harbor, authentik, monitoring, proxy) already deploy via their own inline
+  mechanisms and do not need to adopt direct_stack in this refactor.
+
+objective: |
+  Create terraform/lxc/ansible/roles/direct_stack/ with defaults/main.yml and
+  tasks/main.yml using community.docker.docker_compose_v2 state: present.
+
+workflow:
+  steps:
+    - Read terraform/lxc/ansible/roles/app_stack/defaults/main.yml and
+      terraform/lxc/ansible/roles/app_stack/tasks/main.yml before writing anything.
+      Note the {name, value} dict structure for env vars.
+    - Create defaults/main.yml with variables named to mirror app_stack:
+      direct_stack_name (default: inventory_hostname),
+      direct_stack_compose_dir (default: /opt/{{ direct_stack_name }}),
+      direct_stack_compose_path (default: {{ direct_stack_compose_dir }}/docker-compose.yml),
+      direct_stack_compose_content (default: empty string — caller must set),
+      direct_stack_env (default: empty list — {name, value} dicts),
+      direct_stack_prune_on_update (default: true).
+    - Create tasks/main.yml:
+      1. Ensure compose directory exists (mode 0750).
+      2. Write .env file from direct_stack_env dicts (mode 0600, no_log: true).
+      3. Slurp current compose file if exists (failed_when: false), compute SHA256.
+         Compute SHA256 of direct_stack_compose_content.
+      4. Write compose file only when SHA256 differs (mode 0640).
+      5. When compose file was written: validate with docker compose config -q
+         (changed_when: false).
+      6. Deploy unconditionally using community.docker.docker_compose_v2 with
+         state: present and remove_orphans: {{ direct_stack_prune_on_update }}.
+         This is NOT gated on SHA256 change — it runs every invocation to guarantee
+         running state.
+    - Run ansible-lint terraform/lxc/ansible/roles/direct_stack/
+    - Confirm: grep -r "portainer|app_stack" terraform/lxc/ansible/roles/direct_stack/
+      returns no output.
+
+postconditions:
+  criteria:
+    - Role passes ansible-lint with no errors.
+    - community.docker.docker_compose_v2 is the deployment mechanism, not a shell command.
+    - state: present runs unconditionally (not only when compose file changed).
+    - No reference to Portainer or app_stack in the role.
+
+stop_conditions:
+  - community.docker.docker_compose_v2 is not available in the Ansible collection.
+    Report the collection version and do not substitute raw docker compose commands.
+  - app_stack uses a different env dict structure than {name, value}.
+    Report before writing direct_stack.
