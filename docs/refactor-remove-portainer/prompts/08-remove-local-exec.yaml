@@ -9,15 +9,17 @@ depends_on:
   - rp-04-monitoring-playbook
   - rp-05-proxy-playbook
   - rp-06-netbox-playbook
+  - rp-06a-mask-remaining-tier1-playbooks
 task_doc: docs/refactor-remove-portainer/tasks/08-remove-terraform-local-exec.md
 validation_note: |
   Run Snyk IaC after this task:
   /home/steve/.local/bin/snyk iac test terraform/
 
 context: |
-  Terraform currently invokes Ansible for stack configuration via null_resource.
-  ansible_provision. All platform playbooks have been updated (Tasks 02-06) so Ansible
-  can be run independently. This task removes that local-exec invocation.
+  Terraform currently invokes Ansible for stack configuration via
+  null_resource.ansible_provision. All Tier 1 playbooks have been updated
+  (Tasks 02-06 and 06a) so Ansible can run independently. This task removes
+  the LXC local-exec invocation.
 
   IMPORTANT: main.tf contains five other null_resources that call ansible-playbook for
   Proxmox host-level infrastructure operations. These must be retained:
@@ -29,7 +31,8 @@ context: |
 
 objective: |
   Remove null_resource.ansible_provision from terraform/lxc/main.tf. Retain all five
-  infrastructure null_resources. Confirm plan shows only that resource's removal.
+  infrastructure null_resources. Confirm plan shows only that resource's removal
+  plus any expected dependency cleanup, with no LXC infrastructure change.
 
 workflow:
   steps:
@@ -45,7 +48,7 @@ workflow:
       resource or local_file.ansible_inventory.
     - Run terraform fmt on main.tf.
     - Run terragrunt run-all plan — must show only null_resource.ansible_provision[0]
-      removal, no infrastructure changes.
+      removal plus any expected dependency cleanup, with no LXC infrastructure changes.
     - Run snyk iac test terraform/.
 
 postconditions:
@@ -53,7 +56,7 @@ postconditions:
     - grep -n ansible_provision terraform/lxc/main.tf returns no resource declarations.
     - All five infrastructure null_resources are present and unchanged.
     - local_file.ansible_inventory still passes ansible_playbook to the template.
-    - terraform plan is clean.
+    - terraform plan shows no LXC infrastructure changes.
     - Snyk IaC clean.
 
 stop_conditions:

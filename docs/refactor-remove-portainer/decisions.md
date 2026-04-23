@@ -1,149 +1,137 @@
 # Decisions — Portainer Removal Refactor
 
-These decisions are the binding contract for all executor sessions. Every task
-references the decisions it implements. Stop and report to the architecture session
-if any task requires violating a decision.
+These decisions are the binding contract for the Portainer-removal refactor.
+If any task, prompt, or background document conflicts with a decision here,
+stop and return to the architecture session.
 
----
+## Decision 0: This package is the operational source of truth
 
-## Decision 0: Portainer is app-tier only
+`docs/refactor-remove-portainer/` is the active execution package for this
+refactor.
 
-Portainer is retained in the homelab but narrowed to application stacks only.
-Platform and infrastructure containers (Harbor, Authentik, step-ca, Traefik, CoreDNS,
-monitoring, NetBox, apt-cacher-ng, CI runner, the Portainer server itself) do not
-install a Portainer agent and are not deployed via the Portainer API.
+- `README.md`, `decisions.md`, `task-sequence.md`, and `runbook.md` are the
+  control documents.
+- `tasks/` and `prompts/` define the atomic executor work units.
+- `01-revised-architecture.md` and `02-terraform-ansible-separation.md` are
+  background reference only.
+- `03-refactor-plan.md` is a legacy draft and must not override this package.
 
-**Why:** The Portainer agent exposes the Docker socket to the Portainer server. For
-platform containers holding PKI (step-ca), identity (Authentik), the container registry
-(Harbor), and observability state (monitoring), Docker socket cross-zone exposure is an
-unacceptable blast radius if Portainer is compromised. Additionally, deploying any
-platform service via the Portainer API requires Portainer to be healthy first —
-creating a bootstrap circularity the current codebase works around with a `block/rescue`
-hack. Removing the dependency eliminates both problems.
+## Decision 1: One task equals one branch/session
 
-**Portainer's value** for app-tier stacks (interactive start/stop/restart,
-troubleshooting, manual recovery) is real and is explicitly preserved.
+Each implementation task is intentionally atomic.
 
-**Applies to:** Tasks 02–06, 07
+- One task per short-lived branch/session.
+- Do not combine tasks unless the architecture session explicitly updates the
+  sequence to do so.
+- When validation exposes a new issue outside the current task boundary, stop
+  and report it rather than widening scope.
 
----
+## Decision 2: Portainer is app-tier only
 
-## Decision 1: Platform stacks deploy via Ansible-managed Docker Compose
+Portainer stays in the homelab, but only as a management UI for Tier 2
+application stacks.
 
-Platform container stacks are deployed using `community.docker.docker_compose_v2` with
-`state: present`. This is the already-proven mechanism in the existing Tier 1 playbooks
-(authentik, monitoring, proxy, harbor via harbor_installer). It is not raw `docker
-compose` shell commands.
+Platform and infrastructure containers do not:
 
-`state: present` ensures containers are running regardless of whether compose file
-content has changed since the last run. This is the correct idempotency model: a
-container stopped by a reboot is restarted on the next Ansible run without requiring a
-compose file content change.
+- install a Portainer agent
+- register a Portainer endpoint
+- deploy via the Portainer API
 
-**Why:** The existing platform playbooks already use this module and it works correctly.
-Raw `docker compose up -d` gated on a SHA256 content check is fragile and will silently
-leave stopped containers down after a host reboot.
+This applies to Harbor, Authentik, monitoring, proxy, NetBox, step-ca,
+CoreDNS, apt-cacher-ng, CI runner, and the Portainer server itself.
 
-**Applies to:** Task 01, 02–06
+## Decision 3: Terraform and Ansible are separate phases
 
----
+Terraform provisions infrastructure. Ansible configures the inside of the LXC.
+Neither phase invokes the other for LXC stack configuration.
 
-## Decision 2: Terraform and Ansible are separate phases
+Terraform still retains host-level Proxmox automation that is genuinely part of
+infrastructure provisioning:
 
-Terraform provisions LXC infrastructure. Ansible configures everything inside the
-container. Neither phase invokes the other.
+- `configure_network_sdn_attachment`
+- `configure_keyctl`
+- `prime_sdn_host_route`
+- `configure_network_firewall`
+- `configure_network_vnet_firewall`
 
-Terraform generates `stacks/<stack>/inventory.yml` as the handoff artefact. The
-`ansible_playbook` field from `stack.yaml` is rendered into inventory.yml so that
-`provision.sh` can determine which playbook to run for each stack.
+Terraform removes the LXC playbook runner:
 
-The following Terraform `null_resource` blocks call `ansible-playbook` and are
-**retained** because they configure Proxmox host-level infrastructure, not LXC
-container internals:
-- `configure_network_sdn_attachment` — SDN VNet create/destroy
-- `configure_keyctl` — Proxmox host keyctl feature flag
-- `prime_sdn_host_route` — SDN host route for Ansible reachability
-- `configure_network_firewall` — Proxmox firewall rules
-- `configure_network_vnet_firewall` — Proxmox VNet firewall rules
+- `null_resource.ansible_provision`
 
-The following `null_resource` block is **removed**:
-- `null_resource.ansible_provision` — the LXC stack playbook runner (~line 425 in
-  `terraform/lxc/main.tf`)
+## Decision 4: Generated inventory is the explicit handoff artifact
 
-**Why:** Configuration can be re-run without touching Terraform state. Ansible runs
-natively parallel across hosts. A Terraform error means a provisioning problem; an
-Ansible error means a configuration problem. The boundary is explicit rather than
-hidden inside Terraform's dependency graph.
+Terraform-generated `stacks/<stack>/inventory.yml` is the handoff from
+provisioning to configuration.
 
-**Applies to:** Tasks 08, 09
+It must carry the values Ansible orchestration needs, including:
 
----
+- connection information
+- shared host vars
+- `ansible_playbook`
 
-## Decision 3: `stack.yaml` is the single source of execution intent
+`scripts/provision.sh` consumes generated inventories rather than reading hidden
+Terraform internals.
 
-`stack.yaml` is canonical for stack identity, resource sizing, dependency ordering, and
-execution mapping. The following fields drive the Ansible orchestration layer:
+## Decision 5: `stack.yaml` is the single source of execution intent
 
-- `deployment_tier` — required; must be `platform` or `apps`; no silent defaults
-- `ansible_playbook` — required for any stack that Ansible configures; used by
-  `provision.sh` to determine which playbook to run
-- `depends_on` — optional; used by `provision.sh` for ordering
+`stack.yaml` remains canonical for stack identity, dependency metadata, and
+orchestration intent.
 
-Stacks with no `ansible_playbook` set are skipped by `provision.sh` with a SKIP
-message (not an error).
+For this refactor, the important orchestration fields are:
 
-**Why:** `stack.yaml` is already read by Terraform. Having a single file as the
-authoritative source prevents drift between the Terraform module, the inventory,
-and the Ansible orchestrator.
+- `deployment_tier`
+- `ansible_playbook`
+- `depends_on`
 
-**Applies to:** Tasks 00, 07, 09
+The orchestration layer must derive behavior from stack metadata rather than
+from hardcoded stack lists wherever practical. If current metadata cannot yet
+express a required ordering or rule, the task must document that gap explicitly.
 
----
+## Decision 6: `deployment_tier` must be explicit
 
-## Decision 4: `direct_stack` is the standard role for simple platform stacks
+Every active stack that participates in the new orchestration path must declare:
 
-A new Ansible role `direct_stack` implements compose deployment for platform stacks
-whose Docker setup is straightforward (write compose file, write .env, run `state:
-present`). It uses `community.docker.docker_compose_v2` internally (per Decision 1).
+- `deployment_tier: platform`, or
+- `deployment_tier: apps`
 
-Its variable interface mirrors `app_stack` to minimise the diff when updating playbooks.
+There are no silent defaults in the target model. Missing `deployment_tier` is
+a configuration error for the orchestration layer.
 
-For existing Tier 1 playbooks with complex bespoke deployment logic (harbor_installer,
-inline config file generation), the playbooks keep their existing Docker deployment
-mechanism. `direct_stack` is mandatory only for:
-- NetBox, which currently uses `app_stack` and requires a direct replacement
-- Any new platform stacks created after this refactor
+## Decision 7: `direct_stack` is a limited replacement, not a forced rewrite
 
-**Why:** NetBox is the only current Tier 1 stack that uses `app_stack`. Creating
-`direct_stack` provides a clean, tested replacement. Forcing all existing complex
-playbooks to adopt it is unnecessary risk for this refactor.
+`direct_stack` exists to replace the Tier 1 use of `app_stack` where a direct
+compose deployment abstraction is needed.
 
-**Applies to:** Tasks 01, 06
+It is mandatory for:
 
----
+- NetBox
+- future simple platform stacks that fit the role
 
-## Decision 5: `deployment_tier` must be explicit in every `stack.yaml`
+It is not mandatory for every existing platform playbook with bespoke logic.
+Existing working playbook-specific logic may stay in place when that is the
+lower-risk option.
 
-Every active `stack.yaml` file must declare `deployment_tier: platform` or
-`deployment_tier: apps`. There are no silent defaults. An absent `deployment_tier` is
-treated as a configuration error by `provision.sh`.
+## Decision 8: Tier 1 playbooks must actively suppress the agent service
 
-**Why:** Silent defaults create ambiguity. Any new stack added without an explicit tier
-classification should be caught as an error, not silently assumed to be a platform
-stack.
+The single-template model is retained. Tier 1 safety is enforced in playbooks,
+not by maintaining two different LXC templates.
 
-**Applies to:** Task 07
+Every Tier 1 playbook must contain the standard mask task for
+`portainer-agent.service`, including the playbooks that never used the
+`portainer_agent` role directly:
 
----
+- `deploy-harbor-stack.yml`
+- `deploy-authentik-stack.yml`
+- `deploy-monitoring-stack.yml`
+- `deploy-proxy-stack.yml`
+- `deploy-netbox-stack.yml`
+- `deploy-portainer-stack.yml`
+- `deploy-step-ca.yml`
+- `deploy-coredns.yml`
+- `deploy-apt-cacher-stack.yml`
+- `deploy-ci-runner.yml`
 
-## Decision 6: Single LXC OS template; Tier 1 playbooks mask the agent service
-
-One Debian 13 Docker template is maintained. The Portainer agent systemd service unit
-(`portainer-agent.service`) is baked into this template but is masked by Tier 1
-playbooks so it never starts.
-
-Every Tier 1 playbook (harbor, authentik, monitoring, proxy, netbox, portainer server,
-step-ca, CoreDNS, apt-cacher, CI runner) must contain a task that masks the service:
+The standard task is:
 
 ```yaml
 - name: Mask portainer-agent service (platform tier — no agent on this host)
@@ -154,53 +142,44 @@ step-ca, CoreDNS, apt-cacher, CI runner) must contain a task that masks the serv
   failed_when: false
 ```
 
-`failed_when: false` is required because step-ca, CoreDNS, and apt-cacher-ng do not
-use Docker and may not have the service unit at all.
+## Decision 9: Platform bootstrap order is explicit and preserved
 
-Tier 2 (app) playbooks call the `portainer_agent` role as before. The role writes the
-compose file and starts/enables the service.
+`scripts/provision.sh` must preserve the approved platform bootstrap order for
+`pve-test`:
 
-**Why:** The two-template approach adds a build-before-apply bootstrap dependency that
-breaks the teardown/rebuild test sequence. Masking the service via Ansible is simpler,
-requires no additional infrastructure, and produces the same security outcome.
-The role's own code (`tasks/main.yml` line 52) already notes the service must be
-pre-installed in the template.
+1. `portainer-stack`
+2. `harbor-stack`
+3. `apt-cacher-stack`
+4. `ci-runner-01`
+5. `dns-stack`
+6. `step-ca-stack`
+7. `authentik-stack`
+8. `proxy-stack`
+9. `monitoring-stack`
+10. `netbox-stack`
 
-**Applies to:** Tasks 02–06
+Tasks may improve how this order is derived, but they must not silently change
+the effective order without architecture approval.
 
----
+## Decision 10: Validation and rebuild gates are shared, not ad hoc
 
-## Decision 7: Bootstrap order is preserved from teardown/rebuild choreography
+Validation is part of the method, not an optional appendix.
 
-`provision.sh` runs platform stacks in the following order, which is compatible with
-the Stage 3a bootstrap sequence from `docs/design/bootstrap.md`:
+- Every executor task runs the validation listed in its task document.
+- Shared vocabulary, preflight expectations, rebuild checks, and rollback
+  handling live in `runbook.md`.
+- A task is not complete if it requires violating the runbook or skipping a
+  declared stop condition.
 
-```
-portainer-stack      (needs nothing; Portainer server itself)
-harbor-stack         (needs nothing; image registry for all others)
-apt-cacher-stack     (needs nothing; apt proxy)
-ci-runner-01         (needs harbor)
-dns-stack            (needs nothing; CoreDNS)
-step-ca-stack        (needs nothing; PKI)
-authentik-stack      (needs harbor)
-proxy-stack          (needs step-ca for cert resolver; needs harbor)
-monitoring-stack     (needs harbor)
-netbox-stack         (needs harbor)
-```
+## Decision 11: Final success is a full pve-test rebuild
 
-Changing this order requires explicit approval from the architecture session.
+The final gate for the refactor is not just unit validation or a clean plan.
+The refactor is only proven when the package can support the documented
+end-to-end `pve-test` rebuild flow:
 
-**Applies to:** Task 09
-
----
-
-## Decision 8: Validation gates per task
-
-Every executor session must run all validation commands listed in the task document
-before reporting completion. Sessions that hit a stop condition report the condition,
-the relevant file and line, and stop. They do not attempt to resolve the condition
-unless a resolution is explicitly described in the task document.
-
-The architecture session updates the next prompt based on reported stop conditions.
-
-**Applies to:** All tasks
+1. destroy infrastructure
+2. provision infrastructure
+3. run platform configuration explicitly
+4. validate platform services
+5. confirm Portainer has no platform endpoints
+6. re-run configuration and confirm idempotent behavior

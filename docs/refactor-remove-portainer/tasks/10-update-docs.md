@@ -1,4 +1,4 @@
-# Task 10: Update platform documentation
+# Task 10: Create shared validation runbook and sync documentation
 
 ## Type
 
@@ -6,104 +6,87 @@ Documentation
 
 ## Objective
 
-Update `PLATFORM_CONTRACT.md`, `docs/design/architecture.md`, and
-`terraform/lxc/README.md` to reflect the new two-phase deployment model and the Tier 1
-/ Tier 2 Portainer split. Correct any text that implies Terraform invokes Ansible.
+Bring the Portainer-removal package up to the same documentation method used by
+`docs/provisioning-refactor/`:
+
+- clear source-of-truth ordering
+- shared validation/runbook contract
+- explicit task sequencing
+- background-vs-operational document separation
+
+Then update repo-level docs that still describe the old Portainer-everywhere or
+Terraform-runs-Ansible model.
 
 ## Files
 
+- `docs/refactor-remove-portainer/README.md`
+- `docs/refactor-remove-portainer/decisions.md`
+- `docs/refactor-remove-portainer/task-sequence.md`
+- `docs/refactor-remove-portainer/runbook.md` (create if missing)
+- `docs/refactor-remove-portainer/01-revised-architecture.md`
+- `docs/refactor-remove-portainer/02-terraform-ansible-separation.md`
+- `docs/refactor-remove-portainer/03-refactor-plan.md`
 - `terraform/lxc/PLATFORM_CONTRACT.md`
 - `docs/design/architecture.md`
 - `terraform/lxc/README.md`
-- `docs/plan/README.md` (if it references Terraform invoking Ansible)
+- `docs/plan/README.md` (if needed)
 
 ## Preconditions
 
-- Tasks 07, 08, 09 complete.
+- Task 06a complete.
+- Task 07 complete.
+- Task 08 complete.
+- Task 09 complete.
 
 ## Operations
 
-1. Read all four files in full before editing.
-
-**`terraform/lxc/PLATFORM_CONTRACT.md`:**
-
-2. Add `direct_stack` to the shared Ansible roles list with description: "Deploys a
-   Docker Compose stack directly via `community.docker.docker_compose_v2`. Used by
-   simple platform stacks and as the `app_stack` replacement for NetBox."
-
-3. Note that `app_stack` and `portainer_api` are **Tier 2 (apps) only**.
-
-4. Add `deployment_tier` to the `stack.yaml` field reference table:
-   - Field: `deployment_tier`
-   - Required: Yes
-   - Values: `platform` or `apps`
-   - Description: Determines deployment method and Portainer agent behaviour.
-     `platform`: direct Ansible Compose deployment, no agent.
-     `apps`: Portainer API deployment, agent installed.
-
-5. Update the `portainer_agent` row: note it is meaningful for Tier 2 stacks only.
-   Platform stacks must set `portainer_agent: false`.
-
-6. Update the `portainer_server_ip` platform variable: note it is Tier 2 only.
-
-**`docs/design/architecture.md` — ADR-04:**
-
-7. Locate ADR-04 (Container Management Plane). Update the decision text:
-   - Previous: Portainer is observability-only (read access); agents deployed across
-     all zones with step-ca mutual TLS.
-   - Revised: Portainer is a management UI for Tier 2 application stacks only.
-     Platform (Tier 1) containers do not install the Portainer agent and are not
-     deployed via the Portainer API.
-
-8. Update the rationale: Docker socket exposure on PKI/IAM/registry containers is
-   unacceptable; bootstrap circularity eliminated.
-
-9. Update SEC-02 scope in the security constraints table to Tier 2 application stacks
-   only.
-
-**`terraform/lxc/README.md`:**
-
-10. Add a "Deployment model" section describing the two-phase workflow:
-    ```
-    Phase 1 — Infrastructure: ./with-secrets terragrunt run-all apply
-    Phase 2 — Configuration:  ./with-secrets ./scripts/provision.sh [--tier platform|apps] [--stack <name>]
-    ```
-    Include the full rebuild sequence from `task-sequence.md`.
-
-**`docs/plan/README.md`:**
-
-11. Search for text implying Terraform invokes Ansible (e.g. references to
-    `local-exec`, Ansible running automatically after `apply`). Correct any such
-    text to reflect the two-phase model.
+1. Read the package control docs and the repo-level docs in full before editing.
+2. Ensure the package control docs clearly state:
+   - this directory is the operational source of truth
+   - one task equals one branch/session
+   - `runbook.md` is the shared validation contract
+   - `01`/`02` are background reference and `03` is legacy draft context
+3. Ensure task sequencing covers all Tier 1 playbooks, including the
+   service-mask-only group.
+4. Update repo-level docs so they reflect the target model:
+   - Tier 1 platform stacks do not use Portainer agents
+   - Terraform and Ansible are separate phases for LXC configuration
+   - `direct_stack`, `deployment_tier`, and the explicit orchestration path are
+     documented where appropriate
+5. Correct any stale path references to old plan docs when the current repo path
+   is under `docs/plan/`.
+6. Do not make code changes as part of this task.
 
 ## Postconditions
 
-- No documentation states that Terraform invokes Ansible for stack configuration.
-- ADR-04 reflects the Tier 1/Tier 2 Portainer split.
-- `PLATFORM_CONTRACT.md` lists `direct_stack`, `deployment_tier`, and notes Tier 2
-  scope for `app_stack`, `portainer_api`, and `portainer_server_ip`.
+- The Portainer-removal package reads like an execution package, not a loose
+  design note collection.
+- `runbook.md` exists and defines shared validation/rebuild vocabulary.
+- Background docs are clearly marked as background/legacy.
+- Repo-level docs no longer describe the old Portainer-everywhere or
+  Terraform-runs-Ansible model once the refactor is complete.
 
 ## Validation
 
 ```bash
-# No remaining local-exec Ansible references in updated docs
-rg -n "local-exec.*ansible|ansible.*local-exec" \
+rg -n "source of truth|runbook|one task|background|legacy draft" \
+  docs/refactor-remove-portainer
+
+rg -n "Terraform invokes Ansible|local-exec.*ansible|Portainer agents across all zones|observability-only" \
   terraform/lxc/PLATFORM_CONTRACT.md \
-  terraform/lxc/README.md \
   docs/design/architecture.md \
+  terraform/lxc/README.md \
   docs/plan/README.md
-# Expected: no output
-
-# direct_stack and deployment_tier appear in PLATFORM_CONTRACT.md
-grep -n "direct_stack\|deployment_tier" terraform/lxc/PLATFORM_CONTRACT.md
-# Expected: at least 2 lines
-
-# SonarCloud scan
-source .env && sonar-scanner
 ```
+
+Expected outcome:
+
+- the package control docs clearly describe the new method
+- stale repo-level wording is removed or updated
 
 ## Stop Conditions
 
-- Stop if ADR-04 does not exist in `docs/design/architecture.md` — report the
-  actual ADR numbering before editing.
-- Stop if `docs/plan/README.md` does not exist — skip that file and report.
+- Stop if a repo-level document still cannot be updated cleanly without making
+  implementation decisions that belong in another task.
+- Stop if a background document must remain contradictory for historical
+  reasons; add a status note instead of silently rewriting history.

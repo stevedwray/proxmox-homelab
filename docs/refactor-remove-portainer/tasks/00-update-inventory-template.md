@@ -11,6 +11,10 @@ variable but never renders it into the output file. `provision.sh` (Task 09) rea
 this field from generated inventories to determine which playbook to run for each
 stack. Without this change, `provision.sh` will silently skip every stack.
 
+This task establishes the inventory handoff contract described in
+`decisions.md` and should be treated as a contract task, not just a template
+edit.
+
 ## Files
 
 - `terraform/lxc/templates/inventory.tpl`
@@ -80,10 +84,10 @@ Other optional fields use a conditional block pattern:
                content = f.read()
            self.assertIn("ansible_playbook:", content)
 
-       def test_generated_aptcacher_inventory_has_no_playbook(self):
-           path = "terraform/lxc/stacks/apt-cacher-stack/inventory.yml"
+       def test_generated_test_lxc_inventory_has_no_playbook(self):
+           path = "terraform/lxc/stacks/test-lxc/inventory.yml"
            if not os.path.exists(path):
-               self.skipTest("apt-cacher-stack inventory not yet generated")
+               self.skipTest("test-lxc inventory not yet generated")
            with open(path) as f:
                content = f.read()
            self.assertNotIn("ansible_playbook:", content)
@@ -113,8 +117,9 @@ Other optional fields use a conditional block pattern:
   ansible_playbook: deploy-harbor-stack
   ```
 - Stacks with no `ansible_playbook` set produce no such line.
-- `terraform plan` after this change shows only `local_file.ansible_inventory` content
-  diffs for stacks that have `ansible_playbook` set — no infrastructure changes.
+- `terraform plan` after this change shows only `local_file.ansible_inventory`
+  content diffs for stacks that have `ansible_playbook` set — no LXC or other
+  infrastructure changes.
 - `python3 -m unittest terraform/lxc/test_inventory_template.py` passes.
 - `scripts/teardown-deploy-test.sh source-preflight` includes `test_inventory_template.py`
   in the `edge-unit-tests` step and it passes.
@@ -129,8 +134,8 @@ Other optional fields use a conditional block pattern:
 grep "ansible_playbook" terraform/lxc/stacks/harbor-stack/inventory.yml
 
 # Verify a stack without ansible_playbook set does not have the line
-grep "ansible_playbook" terraform/lxc/stacks/apt-cacher-stack/inventory.yml
-# Expected: no output (apt-cacher has no ansible_playbook in stack.yaml)
+grep "ansible_playbook" terraform/lxc/stacks/test-lxc/inventory.yml
+# Expected: no output (test-lxc has no ansible_playbook in stack.yaml)
 
 python3 -m unittest terraform/lxc/test_inventory_template.py
 # Expected: at minimum test_template_renders_ansible_playbook_conditionally passes
@@ -142,5 +147,5 @@ python3 -m unittest terraform/lxc/test_inventory_template.py
   existing rendering and do nothing.
 - Stop if the template uses a different indentation style from what is shown above —
   report the actual indentation before editing.
-- Stop if `terraform plan` shows any infrastructure changes (LXC resource changes) as
-  a result of this edit.
+- Stop if `terraform plan` shows any infrastructure changes (beyond
+  `local_file.ansible_inventory` content updates) as a result of this edit.

@@ -1,12 +1,12 @@
 ---
 id: rp-00-inventory-template
-title: "Update inventory.tpl to render ansible_playbook"
+title: "Establish inventory handoff contract"
 type: development
 status: pending
 task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
 validation_note: |
   After editing: run ./with-secrets terragrunt run-all plan and confirm no
-  infrastructure changes. After apply, grep the harbor-stack inventory.
+  LXC infrastructure changes. After apply, grep the harbor-stack inventory.
 
 context: |
   Terraform generates an inventory.yml per stack from terraform/lxc/templates/inventory.tpl.
@@ -14,6 +14,7 @@ context: |
   renders it into the output file. The provision.sh orchestrator (a later task) reads
   ansible_playbook from the generated inventory to determine which playbook to run.
   Without this field in the inventory, provision.sh will silently skip every stack.
+  This task establishes the explicit Terraform-to-Ansible handoff contract.
 
 objective: |
   Add a conditional rendering block for ansible_playbook to inventory.tpl so that
@@ -28,11 +29,11 @@ workflow:
     - Add the ansible_playbook conditional block after the stack_name line, before
       the vmid line, preserving the exact indentation of the surrounding YAML host
       vars block.
-    - Run ./with-secrets terragrunt run-all plan to confirm no infrastructure changes.
+    - Run ./with-secrets terragrunt run-all plan to confirm no LXC infrastructure changes.
     - If pve-test is up and inventories exist, run terragrunt apply and then grep the
       harbor-stack inventory for ansible_playbook.
     - Create terraform/lxc/test_inventory_template.py as specified in the task document
-      (three tests: template conditional check, harbor inventory has playbook, apt-cacher
+      (three tests: template conditional check, harbor inventory has playbook, test-lxc
       inventory has no playbook).
     - Add test_inventory_template.py to the run_logged "edge-unit-tests" python3 -m unittest
       invocation in run_source_preflight_checks in scripts/teardown-deploy-test.sh.
@@ -40,7 +41,7 @@ workflow:
 
 postconditions:
   criteria:
-    - terraform plan is clean (no infrastructure changes).
+    - terraform plan shows no LXC infrastructure changes.
     - A stack with ansible_playbook in stack.yaml produces that field in its inventory.
     - A stack without ansible_playbook does not produce the field in its inventory.
     - python3 -m unittest terraform/lxc/test_inventory_template.py passes.
@@ -48,4 +49,4 @@ postconditions:
 
 stop_conditions:
   - ansible_playbook is already in inventory.tpl — report and do nothing.
-  - terraform plan shows any infrastructure change after the edit.
+  - terraform plan shows any LXC infrastructure change after the edit.

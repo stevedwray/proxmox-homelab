@@ -11,6 +11,9 @@ Every active `stack.yaml` must explicitly declare `deployment_tier: platform` or
 `portainer_agent: false` for all platform stacks and confirm `portainer_agent: true`
 for any Tier 2 stacks.
 
+This is an execution-intent task. It establishes the metadata that the future
+orchestration path depends on.
+
 ## Files (platform stacks — all must be updated)
 
 ```
@@ -33,18 +36,21 @@ terraform/lxc/stacks/netbox-stack/stack.yaml
 ## Background
 
 `deployment_tier` is metadata consumed by `provision.sh` (Task 09) to determine
-deployment order and method. Adding it to `stack.yaml` causes no Terraform plan diff
-— Terraform does not read this field. Confirm this understanding before saving.
+deployment order and method. Terraform does not read `deployment_tier`, but it
+does read `portainer_agent` for `null_resource.stack_cleanup`, so a plan may
+show cleanup-resource metadata changes for stacks that currently still declare
+`portainer_agent: true`. That is acceptable for this task as long as no LXC
+infrastructure changes appear.
 
-The following stacks have Ansible playbooks that already deploy without Portainer and
-require no further playbook changes (confirmed by reading the actual playbook files):
+The following stacks do not currently use Portainer roles directly, but they are
+still part of the Tier 1 masking sweep in Task 06a:
 - `portainer-stack` — playbook has no portainer_agent role
 - `step-ca-stack` — playbook uses systemd, no Docker, no portainer
 - `dns-stack` — playbook uses systemd, no Docker, no portainer
 - `apt-cacher-stack` — playbook uses apt, no Docker, no portainer
 - `ci-runner-01` — playbook has no portainer_agent role
 
-The following stacks have playbooks being updated in Tasks 02–06:
+The following stacks have direct Portainer-path playbook changes in Tasks 02–06:
 - `harbor-stack`, `authentik-stack`, `monitoring-stack`, `proxy-stack`, `netbox-stack`
 
 ## Operations
@@ -66,8 +72,9 @@ The following stacks have playbooks being updated in Tasks 02–06:
 
 5. Do not edit `test-docker`, `test-lxc`, or `net-*` stacks.
 
-6. Confirm `terraform plan` shows no diff after these edits (Terraform does not read
-   `deployment_tier`).
+6. Confirm `terraform plan` shows no LXC infrastructure diff after these edits.
+   Metadata-only changes tied to `portainer_agent` / `stack_cleanup` are
+   acceptable in the current implementation boundary.
 
 7. Create `terraform/lxc/test_stack_classification.py`:
 
@@ -140,7 +147,7 @@ The following stacks have playbooks being updated in Tasks 02–06:
 
 - Every platform stack has `deployment_tier: platform` and `portainer_agent: false`.
 - No platform stack has `portainer_agent: true`.
-- Terraform plan is clean.
+- Terraform plan shows no LXC infrastructure changes.
 - `python3 -m unittest terraform/lxc/test_stack_classification.py` passes.
 - `scripts/teardown-deploy-test.sh source-preflight` includes `test_stack_classification.py`
   in the `edge-unit-tests` step and it passes.
@@ -174,8 +181,9 @@ grep -rn "portainer_agent: true" terraform/lxc/stacks/portainer-stack/ \
   terraform/lxc/stacks/netbox-stack/
 # Expected: no output
 
-./with-secrets terragrunt run-all plan 2>&1 | grep -c "No changes"
-# Expected: count equals the number of stack modules
+./with-secrets terragrunt run-all plan
+# Expected: no LXC infrastructure changes. stack_cleanup/null_resource metadata
+# diffs may appear for stacks that are switching portainer_agent from true to false.
 
 python3 -m unittest terraform/lxc/test_stack_classification.py
 # Expected: two tests pass, each covering all 10 platform stacks
@@ -183,7 +191,8 @@ python3 -m unittest terraform/lxc/test_stack_classification.py
 
 ## Stop Conditions
 
-- Stop if a platform stack currently has `portainer_agent: true` but the corresponding
-  playbook is NOT in the list of playbooks being updated in Tasks 02–06 — report the
+- Stop if a platform stack currently has `portainer_agent: true` but the
+  corresponding playbook is not covered by Tasks 02–06 or Task 06a — report the
   inconsistency before setting it to `false`.
-- Stop if `terraform plan` shows any infrastructure change after these edits.
+- Stop if `terraform plan` shows any LXC infrastructure change after these
+  edits.

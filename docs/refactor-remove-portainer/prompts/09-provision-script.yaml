@@ -1,10 +1,11 @@
 ---
 id: rp-09-provision-script
-title: "Create scripts/provision.sh"
+title: "Create explicit Ansible orchestration path"
 type: development
 status: pending
 depends_on:
   - rp-00-inventory-template
+  - rp-07-classify-stacks
   - rp-08-remove-local-exec
 task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
 validation_note: |
@@ -21,29 +22,30 @@ context: |
   The script must set the same ANSIBLE_* environment variables that the removed
   null_resource.ansible_provision was setting in main.tf.
 
-  Platform stack order (from decisions.md Decision 7):
-    portainer-stack, harbor-stack, apt-cacher-stack, ci-runner-01,
-    dns-stack, step-ca-stack, authentik-stack, proxy-stack,
-    monitoring-stack, netbox-stack
+  The task package now treats stack.yaml as the source of orchestration intent.
+  Use deployment_tier and depends_on from stack metadata wherever practical, while
+  preserving the approved current platform bootstrap order from decisions.md.
 
 objective: |
-  Create scripts/provision.sh with --tier, --stack, and --check flags. Script reads
-  ansible_playbook from generated inventory.yml and runs each playbook in order.
+  Create scripts/provision.sh with --tier, --stack, and --check flags. The script
+  reads ansible_playbook from generated inventory.yml and derives target stacks
+  from stack metadata rather than from a stale hardcoded list.
 
 workflow:
   steps:
     - Read a generated inventory.yml (e.g. terraform/lxc/stacks/harbor-stack/inventory.yml)
       to confirm ansible_playbook is present as a host var and determine the exact yq
       path to extract it from the nested YAML structure.
+    - Read stack.yaml metadata to determine deployment_tier / depends_on handling.
     - Check the removed local-exec block in git history or from main.tf to confirm the
       exact ANSIBLE_* environment variable values (ANSIBLE_HOST_KEY_CHECKING, ANSIBLE_CONFIG,
       ANSIBLE_ROLES_PATH, ANSIBLE_LOCAL_TEMP, ANSIBLE_SSH_CONTROL_PATH_DIR).
-    - Create scripts/provision.sh using the template in the task document. Adjust the
-      yq path for ansible_playbook if the actual inventory structure differs from the
-      template.
+    - Create scripts/provision.sh using the task document as the contract. Adjust the
+      yq path for ansible_playbook if the actual inventory structure differs.
     - Make the script executable with chmod +x.
     - Run shellcheck scripts/provision.sh — fix any issues.
-    - Test the SKIP path by running with a stack that has no ansible_playbook.
+    - Test the SKIP path with a stack that has no ansible_playbook, such as test-lxc
+      if inventory exists.
     - If pve-test is up, test with --check --stack harbor-stack.
     - Update stack_apply in scripts/teardown-deploy-test.sh as specified in the task
       document: after the run_logged "deploy-${stack}" terragrunt apply call and before
@@ -55,12 +57,15 @@ postconditions:
     - shellcheck passes with no errors or warnings.
     - Script outputs SKIP for stacks with no inventory.yml.
     - Script outputs SKIP for stacks with no ansible_playbook in inventory.
+    - Script derives orchestration targets from stack metadata.
     - ./with-secrets ./scripts/provision.sh --check --stack harbor-stack exits 0.
     - stack_apply in scripts/teardown-deploy-test.sh calls provision.sh after terragrunt apply.
 
 stop_conditions:
   - ansible_playbook is not in the generated inventory despite Task 00 being complete
     — report the inventory structure and inventory.tpl content.
+  - The script design requires a silent hardcoded stack list that cannot be justified
+    from stack metadata and decisions.md — report the gap before proceeding.
   - yq is not installed or the path expression fails — report yq version and the
     actual inventory structure.
   - shellcheck reports errors that cannot be fixed without changing the script design

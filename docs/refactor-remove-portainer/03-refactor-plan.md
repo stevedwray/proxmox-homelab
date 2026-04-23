@@ -1,5 +1,13 @@
 # Refactor Plan — Terraform/Ansible Separation + Platform Portainer Removal
 
+> Legacy draft note
+>
+> This file is retained as historical planning context only.
+>
+> Do not execute from this document. The active task package is now the rest of
+> `docs/refactor-remove-portainer/`, especially `README.md`, `decisions.md`,
+> `task-sequence.md`, `runbook.md`, `tasks/`, and `prompts/`.
+
 **Status:** Draft — not yet merged into proxmox-homelab
 **Prerequisites:** Documents 01 and 02 reviewed and agreed
 **Branch strategy:** Cut `refactor/provision-separation` from `dev/pve-test`; merge back when complete

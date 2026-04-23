@@ -16,9 +16,9 @@ After this change, `terragrunt apply` provisions infrastructure only.
 
 ## Preconditions
 
-- Tasks 02, 03, 04, 05, 06 complete — all platform playbooks updated. Removing the
-  local-exec invocation before playbooks are Portainer-free would leave no mechanism
-  to run the old deployment path.
+- Tasks 02, 03, 04, 05, 06, and 06a complete — all Tier 1 playbooks updated.
+  Removing the local-exec invocation before the playbooks and masking coverage
+  are ready would leave the task package in an incomplete boundary state.
 
 ## Background
 

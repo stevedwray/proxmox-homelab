@@ -1,0 +1,46 @@
+---
+id: rp-06a-mask-remaining-tier1-playbooks
+title: "Add Tier 1 service masking to remaining playbooks"
+type: development
+status: pending
+depends_on: []
+task_doc: docs/refactor-remove-portainer/tasks/06a-mask-remaining-tier1-playbooks.md
+validation_note: |
+  Add the standard portainer-agent.service mask task to the remaining Tier 1
+  playbooks and run ansible-lint on the edited files.
+
+context: |
+  The refactor uses a single-template model. Tier 1 safety comes from playbooks
+  explicitly masking portainer-agent.service, not from a separate template.
+
+  Five playbooks still need that task even though they never used the Portainer
+  roles directly:
+    deploy-portainer-stack.yml
+    deploy-step-ca.yml
+    deploy-coredns.yml
+    deploy-apt-cacher-stack.yml
+    deploy-ci-runner.yml
+
+objective: |
+  Add the standard Tier 1 service-mask task to the five remaining non-agent
+  platform playbooks without introducing any new Portainer logic.
+
+workflow:
+  steps:
+    - Read each target playbook in full before editing.
+    - Add the standard systemd mask task for portainer-agent.service with
+      failed_when: false.
+    - Place it early in the playbook without restructuring unrelated logic.
+    - Do not add portainer_agent, portainer_api, or app_stack behavior.
+    - Run ansible-lint on the edited playbooks.
+
+postconditions:
+  criteria:
+    - All five playbooks contain the standard service-mask task.
+    - No new Portainer deployment or registration logic is introduced.
+    - ansible-lint passes.
+
+stop_conditions:
+  - A playbook already contains a conflicting portainer-agent.service management task
+    — report it before editing.
+  - Adding the mask task requires restructuring unrelated playbook logic.

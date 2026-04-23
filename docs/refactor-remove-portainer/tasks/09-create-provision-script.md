@@ -11,6 +11,11 @@ as the mechanism for running playbooks after `terragrunt apply`. It reads the ge
 `inventory.yml` files that Terraform produces and runs each stack's playbook in
 dependency order: platform stacks first, then app stacks.
 
+This task should follow the same contract-driven method used in
+`docs/provisioning-refactor/`: derive orchestration intent from declared
+metadata where possible, fail clearly on ambiguity, and keep apply behavior
+explicit.
+
 ## Files
 
 - `scripts/provision.sh` (create)
@@ -18,6 +23,7 @@ dependency order: platform stacks first, then app stacks.
 ## Preconditions
 
 - Task 00 complete — `inventory.tpl` renders `ansible_playbook`.
+- Task 07 complete — active stacks now declare `deployment_tier`.
 - Task 08 complete — Terraform no longer invokes Ansible for stack configuration.
 - At least one stack with `ansible_playbook` set in `stack.yaml` has had
   `terragrunt apply` run so a real `inventory.yml` exists to test against.
@@ -34,20 +40,19 @@ ANSIBLE_LOCAL_TEMP           = "/tmp/.ansible/tmp"
 ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
 ```
 
-The `ansible_playbook` field is a host var in the generated inventory (after Task 00).
-The yq path to read it is:
+The `ansible_playbook` field is a host var in the generated inventory (after
+Task 00). One working yq path in the current inventory layout is:
 `.all.children | to_entries | .[0].value.hosts | to_entries | .[0].value.ansible_playbook // ""`
 
 This path handles the inventory structure where the host group name is the stack name
 with hyphens replaced by underscores and the hostname is the container hostname.
 Verify the path against a real inventory before writing the final script.
 
-Platform stack order (from decisions.md Decision 7):
-```
-portainer-stack, harbor-stack, apt-cacher-stack, ci-runner-01,
-dns-stack, step-ca-stack, authentik-stack, proxy-stack,
-monitoring-stack, netbox-stack
-```
+`stack.yaml` remains the source of execution intent. The script should discover
+candidate stacks from `terraform/lxc/stacks/*/stack.yaml`, use
+`deployment_tier` to filter platform vs apps, and use `depends_on` plus the
+documented platform bootstrap order from `decisions.md` to preserve the current
+approved sequence.
 
 ## Operations
 
@@ -60,102 +65,20 @@ monitoring-stack, netbox-stack
    confirm the exact `ansible_dir`, `ansible_cfg`, `ansible_roles_path` values that
    were used.
 
-3. Create `scripts/provision.sh`:
+3. Create `scripts/provision.sh`.
 
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
+   Required behavior:
+   - discover stack directories from `terraform/lxc/stacks/`
+   - read `deployment_tier` and `depends_on` from `stack.yaml`
+   - read `ansible_playbook` from generated `inventory.yml`
+   - support `--tier`, `--stack`, and `--check`
+   - skip stacks with no inventory or no `ansible_playbook`
+   - preserve the approved current platform bootstrap order from `decisions.md`
+     for `pve-test`
+   - fail clearly if the discovered metadata cannot produce a valid order
 
-REPO_ROOT="$(git rev-parse --show-toplevel)"
-ANSIBLE_DIR="${REPO_ROOT}/terraform/lxc/ansible"
-STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
-
-TIER="all"
-TARGET_STACK=""
-CHECK_MODE=""
-
-while [[ $# -gt 0 ]]; do
-  case $1 in
-    --tier)  TIER="$2";         shift 2 ;;
-    --stack) TARGET_STACK="$2"; shift 2 ;;
-    --check) CHECK_MODE="--check"; shift ;;
-    *) echo "Unknown option: $1" >&2; exit 1 ;;
-  esac
-done
-
-run_playbook() {
-  local stack_dir="$1"
-  local stack_name
-  stack_name="$(basename "${stack_dir}")"
-  local inventory="${stack_dir}/inventory.yml"
-
-  if [[ ! -f "${inventory}" ]]; then
-    echo "SKIP ${stack_name}: no inventory.yml (run terragrunt apply first)"
-    return 0
-  fi
-
-  # Extract ansible_playbook from the generated inventory host vars.
-  # Adjust the yq path here if the inventory structure differs.
-  local playbook
-  playbook="$(yq '.all.children | to_entries | .[0].value.hosts | to_entries | .[0].value.ansible_playbook // ""' \
-    "${inventory}" 2>/dev/null || true)"
-
-  if [[ -z "${playbook}" ]]; then
-    echo "SKIP ${stack_name}: no ansible_playbook in inventory"
-    return 0
-  fi
-
-  echo "--- Provisioning ${stack_name} (playbook: ${playbook}) ---"
-  ANSIBLE_HOST_KEY_CHECKING=False \
-  ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg" \
-  ANSIBLE_ROLES_PATH="${ANSIBLE_DIR}/roles" \
-  ANSIBLE_LOCAL_TEMP="/tmp/.ansible/tmp" \
-  ANSIBLE_SSH_CONTROL_PATH_DIR="/tmp/.ansible/cp" \
-    ansible-playbook ${CHECK_MODE} \
-      -i "${inventory}" \
-      "${ANSIBLE_DIR}/playbooks/${playbook}.yml"
-}
-
-PLATFORM_STACKS=(
-  portainer-stack
-  harbor-stack
-  apt-cacher-stack
-  ci-runner-01
-  dns-stack
-  step-ca-stack
-  authentik-stack
-  proxy-stack
-  monitoring-stack
-  netbox-stack
-)
-
-APP_STACKS=(
-  pihole-stack
-  arr-stack
-  jellyfin-stack
-  game-stack
-)
-
-if [[ -n "${TARGET_STACK}" ]]; then
-  run_playbook "${STACKS_DIR}/${TARGET_STACK}"
-  exit 0
-fi
-
-if [[ "${TIER}" == "platform" || "${TIER}" == "all" ]]; then
-  for stack in "${PLATFORM_STACKS[@]}"; do
-    [[ -d "${STACKS_DIR}/${stack}" ]] && run_playbook "${STACKS_DIR}/${stack}"
-  done
-fi
-
-if [[ "${TIER}" == "apps" || "${TIER}" == "all" ]]; then
-  for stack in "${APP_STACKS[@]}"; do
-    [[ -d "${STACKS_DIR}/${stack}" ]] && run_playbook "${STACKS_DIR}/${stack}"
-  done
-fi
-```
-
-4. If the actual `yq` path to `ansible_playbook` differs from what is shown in step 3,
-   use the correct path.
+4. If the actual `yq` path to `ansible_playbook` differs from what is shown
+   above, use the correct path and document it in the script comments.
 
 5. Make the script executable: `chmod +x scripts/provision.sh`
 
@@ -188,8 +111,10 @@ fi
 - `./with-secrets ./scripts/provision.sh --check --stack harbor-stack` exits 0
   (or non-zero only due to a real Ansible finding, not a script error).
 - Script outputs a SKIP message for a stack with no inventory.yml and continues.
-- Script outputs a SKIP message for a stack with no `ansible_playbook` in inventory
-  and continues.
+- Script outputs a SKIP message for a stack with no `ansible_playbook` in
+  inventory and continues.
+- Script derives target stacks from stack metadata rather than from a stale
+  hardcoded list.
 - `stack_apply` in `scripts/teardown-deploy-test.sh` calls `provision.sh --stack <stack>`
   after `terragrunt apply`.
 
@@ -199,8 +124,8 @@ fi
 shellcheck scripts/provision.sh
 
 # Test skip behaviour on a stack with no ansible_playbook
-./with-secrets ./scripts/provision.sh --check --stack apt-cacher-stack
-# Expected: "SKIP apt-cacher-stack: no ansible_playbook in inventory"
+./with-secrets ./scripts/provision.sh --check --stack test-lxc
+# Expected: "SKIP test-lxc: no ansible_playbook in inventory" (if inventory exists)
 
 # Test against a real stack if pve-test is up
 ./with-secrets ./scripts/provision.sh --check --stack harbor-stack
@@ -213,6 +138,9 @@ grep -A12 "^stack_apply" scripts/teardown-deploy-test.sh | grep "provision.sh"
 
 - Stop if `ansible_playbook` is not present in the generated inventory.yml even after
   Task 00 — report the inventory structure and the `inventory.tpl` content.
+- Stop if the orchestration logic requires a hardcoded stack list that cannot be
+  justified from current stack metadata and `decisions.md` — report the gap
+  rather than hardcoding silently.
 - Stop if the yq expression to extract `ansible_playbook` returns the wrong value or
   errors — report the inventory structure and the yq version (`yq --version`).
 - Stop if `shellcheck` reports errors — fix them before reporting completion.

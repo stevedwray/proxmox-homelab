@@ -1,5 +1,15 @@
 # Revised Architecture Overview
 
+> Status note
+>
+> This document is background architecture context for the Portainer-removal
+> refactor. The operational source of truth is now
+> `docs/refactor-remove-portainer/README.md`, `decisions.md`,
+> `task-sequence.md`, and `runbook.md`.
+>
+> If this document conflicts with those control documents, the control
+> documents win.
+
 **Status:** Draft — not yet merged into proxmox-homelab
 **Supersedes:** `docs/design/architecture.md` ADR-04 and the deployment model implicit in `terraform/lxc/PLATFORM_CONTRACT.md`
 

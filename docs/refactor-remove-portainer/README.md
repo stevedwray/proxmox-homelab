@@ -1,79 +1,98 @@
 # Portainer Removal Refactor
 
-This directory is the source of truth for the platform provisioning refactor that removes
-Portainer from the Tier 1 (platform) deployment path and separates Terraform provisioning
+This directory is the source of truth for the refactor that removes Portainer
+from the Tier 1 platform deployment path and separates Terraform provisioning
 from Ansible configuration.
 
-The architecture background documents (`01-revised-architecture.md`,
-`02-terraform-ansible-separation.md`) remain valid reference material. The operational
-package in this directory supersedes `03-refactor-plan.md` for all execution purposes.
+If any older Portainer-removal note conflicts with this directory, this
+directory wins.
 
----
+## Method
 
-## Objective
+This package now follows the same operating method used successfully in
+`docs/provisioning-refactor/`:
 
-Remove Portainer from every platform stack deployment path. Platform services (Harbor,
-Authentik, Traefik, monitoring, NetBox, step-ca, CoreDNS, apt-cacher-ng, CI runner,
-Portainer server itself) are deployed directly by Ansible using Docker Compose on-host.
-Portainer is retained as a management UI for application stacks only.
+- decision-first: binding rules are written down in `decisions.md` before task
+  execution
+- one task per branch/session: each task is intentionally atomic
+- task-sequenced: executor sessions follow `task-sequence.md`, not ad hoc work
+- validation-driven: every implementation task has explicit validation and stop
+  conditions
+- rollback-aware: shared validation and rebuild vocabulary lives in
+  `runbook.md`
+- architecture-session controlled: executor sessions do not widen scope on
+  their own
 
-Separate Terraform and Ansible into two explicit sequential phases: Terraform provisions
-infrastructure, Ansible configures it. Neither phase invokes the other.
+## Target Model
 
----
+The target state is:
 
-## Governing contract
+- Portainer remains in the homelab, but only as a management UI for Tier 2 app
+  stacks.
+- Platform stacks deploy directly by Ansible on-host using existing compose or
+  stack-specific playbook logic.
+- Terraform provisions infrastructure and generates inventories.
+- Ansible configuration runs as a separate operator action via
+  `scripts/provision.sh`.
+- Terraform must not perform a hidden second pass for LXC configuration.
 
-Read [decisions.md](decisions.md) before opening any task or prompt. Every decision in
-that file is binding for all executor sessions. Stop and report to the architecture
-session if any task conflicts with a decision.
+## Scope Boundaries
 
----
+- Scope is `pve-test` only.
+- Production `pve` is out of scope until the `pve-test` model is proven.
+- This package describes documentation, implementation, and validation work for
+  the refactor, but each execution task remains a single branch/session unit.
+- Do not combine tasks unless the architecture session explicitly says to do so.
 
-## Scope
+## Background Documents
 
-- `pve-test` only. Production `pve` targeting is out of scope until pve-test is proven.
-- Each task is small enough for one short-lived branch and one executor session.
-- Do not combine tasks unless explicitly instructed.
+These files remain useful, but they are not the operational source of truth:
 
----
+- [01-revised-architecture.md](01-revised-architecture.md) — background
+  architecture context
+- [02-terraform-ansible-separation.md](02-terraform-ansible-separation.md) —
+  background separation model
+- [03-refactor-plan.md](03-refactor-plan.md) — legacy draft plan; reference
+  only when it does not conflict with this package
 
-## Execution model
+When there is any conflict:
 
-This refactor uses two AI session types:
-
-**Architecture session** (high-context, sophisticated model — this session):
-- Maintains this directory as the source of truth.
-- Reads executor session output and updates the next prompt accordingly.
-- Does not execute code changes.
-
-**Executor session** (lower-cost implementation model):
-- Receives exactly one prompt per session.
-- Reads the named task document and the decisions file before doing anything.
-- Reports back: what was done, validation output, any stop conditions hit, any
-  unexpected findings.
-- Does not skip validation steps or combine tasks.
-
----
-
-## How to run a task
-
-1. Open the architecture session.
-2. Check [task-sequence.md](task-sequence.md) for the next pending task.
-3. Confirm its preconditions are met (prior tasks complete and validated).
-4. Open the matching prompt from [prompts/index.yaml](prompts/index.yaml).
-5. Paste the prompt into a new executor session.
-6. Read the executor session output.
-7. Update task status in [task-sequence.md](task-sequence.md).
-8. If the executor hit a stop condition or unexpected finding, update the next prompt
-   before proceeding.
-
----
+1. `decisions.md`
+2. `task-sequence.md`
+3. task documents and prompts
+4. `runbook.md`
+5. background documents
 
 ## Files
 
-- [decisions.md](decisions.md) — binding design decisions; read first
-- [task-sequence.md](task-sequence.md) — full task list with dependency graph and status
-- [tasks/](tasks/) — detailed task documents (one per executor session)
-- [prompts/](prompts/) — executor prompts (one per task, matching tasks/ one-to-one)
+- [decisions.md](decisions.md) — binding technical and process decisions
+- [task-sequence.md](task-sequence.md) — ordered atomic execution plan
+- [runbook.md](runbook.md) — shared validation, rebuild, and rollback contract
+- [tasks/](tasks/) — one detailed task document per executor session
+- [prompts/](prompts/) — matching executor prompts
 - [prompts/index.yaml](prompts/index.yaml) — ordered prompt registry
+
+## How To Use This Package
+
+1. Read this file and [decisions.md](decisions.md).
+2. Select exactly one task from [task-sequence.md](task-sequence.md).
+3. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
+4. Keep changes inside the task's declared scope.
+5. Run the task's required validation.
+6. Stop and report back if validation reveals a new issue outside task scope.
+
+## Session Roles
+
+Architecture session:
+
+- owns this package
+- updates decisions, sequencing, and prompts
+- resolves stop conditions
+- does not widen an executor task after the fact without updating docs
+
+Executor session:
+
+- executes exactly one task
+- reads this README, `decisions.md`, the task doc, and the matching prompt
+- reports validation output, stop conditions, and unexpected findings
+- does not silently fix unrelated issues

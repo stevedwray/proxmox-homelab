@@ -1,105 +1,93 @@
-# Task Sequence — Portainer Removal Refactor
+# Portainer Removal Refactor Task Sequence
 
-Tasks must be executed in the order shown. Each task's preconditions name the tasks
-that must be complete and validated before it can begin.
+Each task is one short-lived branch/session. Keep changes inside the listed
+scope unless the task document explicitly expands it.
 
-Tasks marked as independent have no preconditions and can begin immediately. Where
-multiple independent tasks exist, prefer sequential execution over parallel to keep
-the executor feedback loop clean.
+Follow the same execution discipline as `docs/provisioning-refactor/`:
 
----
+- read `README.md`, `decisions.md`, and `runbook.md` first
+- select exactly one task
+- use the matching prompt
+- stop when preconditions are not met
+- stop when validation reveals a new issue outside the current task boundary
 
-## Status legend
+## Status Legend
 
 - `pending` — not started
 - `in-progress` — executor session active
-- `complete` — executor session finished and validation passed
-- `blocked` — stop condition hit; waiting for architecture session
+- `complete` — task validation passed
+- `blocked` — stop condition hit; architecture session must update the package
 
----
-
-## Tasks
+## A. Contracts And Metadata
 
 | # | Title | Status | Preconditions |
 |---|---|---|---|
-| 00 | Update `inventory.tpl` to render `ansible_playbook` | `pending` | None |
+| 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `pending` | None |
+| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | None |
+
+## B. Playbook Capability
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
 | 01 | Create `direct_stack` Ansible role | `pending` | 00 |
 | 02 | Update harbor playbook | `pending` | 01 |
 | 03 | Update authentik playbook | `pending` | 01 |
 | 04 | Update monitoring playbook | `pending` | 01 |
 | 05 | Update proxy playbook | `pending` | 01 |
 | 06 | Update netbox playbook | `pending` | 01 |
-| 07 | Classify all `stack.yaml` files | `pending` | None (independent) |
-| 08 | Remove `ansible_provision` from Terraform | `pending` | 02, 03, 04, 05, 06 |
-| 09 | Create `scripts/provision.sh` | `pending` | 00, 08 |
-| 10 | Update platform documentation | `pending` | 07, 08, 09 |
+| 06a | Add Tier 1 service masking to remaining non-agent playbooks | `pending` | None |
 
----
+## C. Orchestration Boundary
 
-## Dependency graph
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 08 | Remove Terraform LXC playbook runner (`ansible_provision`) | `pending` | 02, 03, 04, 05, 06, 06a |
+| 09 | Create `scripts/provision.sh` orchestration path | `pending` | 00, 07, 08 |
 
-```
-00 (inventory.tpl)
-└── 01 (direct_stack role)
+## D. Validation And Documentation
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 10 | Create shared validation runbook and sync documentation | `pending` | 06a, 07, 08, 09 |
+
+## Dependency Graph
+
+```text
+00 (inventory handoff)
+└── 01 (direct_stack)
     ├── 02 (harbor)
     ├── 03 (authentik)
     ├── 04 (monitoring)
     ├── 05 (proxy)
     └── 06 (netbox)
-        └── (all 02–06 complete)
-            └── 08 (remove local-exec)
-                └── 09 (provision.sh)  ← also needs 00
-                    └── 10 (docs)  ← also needs 07
 
-07 (classify stacks) — independent
+06a (mask remaining Tier 1 playbooks) ─┐
+07  (stack classification)             ├── 08 (remove Terraform playbook runner)
+                                        └── 09 (provision.sh)  ← also needs 00 and 08
+
+10 (runbook + docs sync) ← needs 06a, 07, 08, 09
 ```
 
----
+## Tier 1 Playbook Coverage Reference
 
-## Playbook compliance reference
+The task package must account for all Tier 1 playbooks, not only the five that
+currently use Portainer roles directly.
 
-The following Tier 1 playbooks require changes. Review this before executing any
-playbook task (02–06).
+| Playbook | Current Portainer coupling | Required refactor action |
+|---|---|---|
+| `deploy-harbor-stack.yml` | `portainer_agent`, `portainer_api` | remove Portainer coupling; add service mask |
+| `deploy-authentik-stack.yml` | `portainer_agent` | remove Portainer coupling; add service mask |
+| `deploy-monitoring-stack.yml` | `portainer_agent` | remove Portainer coupling; add service mask |
+| `deploy-proxy-stack.yml` | `portainer_agent` | remove Portainer coupling; add service mask |
+| `deploy-netbox-stack.yml` | `portainer_agent`, `portainer_api`, `app_stack` | replace with direct deployment; add service mask |
+| `deploy-portainer-stack.yml` | no role coupling | add service mask |
+| `deploy-step-ca.yml` | no role coupling | add service mask |
+| `deploy-coredns.yml` | no role coupling | add service mask |
+| `deploy-apt-cacher-stack.yml` | no role coupling | add service mask |
+| `deploy-ci-runner.yml` | no role coupling | add service mask |
 
-| Playbook | `portainer_agent` | `portainer_api` | `app_stack` | Changes needed |
-|---|---|---|---|---|
-| `deploy-harbor-stack.yml` | Yes (Play 1) | Yes (Play 2) | No | Remove Play 1 portainer_agent role; remove Play 2 entirely; mask service |
-| `deploy-authentik-stack.yml` | Yes (Play 1) | No | No | Remove portainer_agent from Play 1; mask service |
-| `deploy-monitoring-stack.yml` | Yes (Play 1) | No | No | Remove portainer_agent from Play 1; mask service |
-| `deploy-proxy-stack.yml` | Yes (Play 1) | No | No | Remove portainer_agent from Play 1; mask service |
-| `deploy-netbox-stack.yml` | Yes (Play 1) | Yes (Play 3) | Yes (Play 3) | Remove portainer_agent from Play 1; replace Plays 3 with direct_stack; mask service |
-| `deploy-portainer-stack.yml` | No | No | No | Add service mask only |
-| `deploy-step-ca.yml` | No | No | No | Add service mask only |
-| `deploy-coredns.yml` | No | No | No | Add service mask only |
-| `deploy-apt-cacher-stack.yml` | No | No | No | Add service mask only |
-| `deploy-ci-runner.yml` | No | No | No | Add service mask only |
+## Final Gate
 
----
-
-## Full rebuild validation sequence
-
-After all tasks are complete, validate with a full pve-test wipe-and-rebuild:
-
-```bash
-# 1. Destroy all LXCs
-./with-secrets terragrunt run-all destroy
-
-# 2. Provision all LXC infrastructure
-./with-secrets terragrunt run-all apply
-
-# 3. Configure platform tier
-./with-secrets ./scripts/provision.sh --tier platform
-
-# 4. Smoke test platform services
-curl -sf http://10.57.3.10/api/v2.0/ping          # Harbor
-curl -sf http://10.57.1.11/health                  # step-ca
-curl -sf http://10.57.2.10/ping                    # Traefik
-
-# 5. Confirm Portainer has zero registered environments after platform provisioning
-# Portainer UI → Environments: should show only the local Docker socket endpoint,
-# no agent-based endpoints.
-
-# 6. Verify provision.sh is idempotent
-./with-secrets ./scripts/provision.sh --tier platform
-# Expected: no changed tasks on second run
-```
+After all tasks are complete, use [runbook.md](runbook.md) for the full
+`pve-test` rebuild gate. Do not mark the overall refactor complete on
+source-only validation alone.

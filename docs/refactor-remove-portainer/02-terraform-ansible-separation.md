@@ -1,5 +1,13 @@
 # Terraform / Ansible Separation Model
 
+> Status note
+>
+> This document is background design context only. The active execution package
+> for the refactor is `docs/refactor-remove-portainer/`.
+>
+> In particular, `README.md`, `decisions.md`, `task-sequence.md`, task docs,
+> and `runbook.md` override this document when there is any conflict.
+
 **Status:** Draft — not yet merged into proxmox-homelab
 
 ---
