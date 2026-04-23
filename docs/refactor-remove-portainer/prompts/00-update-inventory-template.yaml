@@ -31,12 +31,20 @@ workflow:
     - Run ./with-secrets terragrunt run-all plan to confirm no infrastructure changes.
     - If pve-test is up and inventories exist, run terragrunt apply and then grep the
       harbor-stack inventory for ansible_playbook.
+    - Create terraform/lxc/test_inventory_template.py as specified in the task document
+      (three tests: template conditional check, harbor inventory has playbook, apt-cacher
+      inventory has no playbook).
+    - Add test_inventory_template.py to the run_logged "edge-unit-tests" python3 -m unittest
+      invocation in run_source_preflight_checks in scripts/teardown-deploy-test.sh.
+    - Run python3 -m unittest terraform/lxc/test_inventory_template.py to confirm it passes.
 
 postconditions:
   criteria:
     - terraform plan is clean (no infrastructure changes).
     - A stack with ansible_playbook in stack.yaml produces that field in its inventory.
     - A stack without ansible_playbook does not produce the field in its inventory.
+    - python3 -m unittest terraform/lxc/test_inventory_template.py passes.
+    - scripts/teardown-deploy-test.sh source-preflight includes test_inventory_template.py.
 
 stop_conditions:
   - ansible_playbook is already in inventory.tpl — report and do nothing.

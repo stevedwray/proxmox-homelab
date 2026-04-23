@@ -60,10 +60,26 @@ live/ready health checks. All of this is load-bearing for the bootstrap sequence
 
 4. Do not touch Play 2.
 
+5. Register a playbook syntax check in the teardown-test harness. In
+   `scripts/teardown-deploy-test.sh`, inside `run_source_preflight_checks`, add
+   the following before the closing `}`:
+
+   ```bash
+   run_logged "syntax-check-deploy-authentik-stack" \
+       bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+         ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+         ansible-playbook --syntax-check \
+           '${ANSIBLE_DIR}/playbooks/deploy-authentik-stack.yml'"
+   ```
+
+   `ANSIBLE_DIR` is defined at line 21 of the harness as `"${TERRAFORM_LXC}/ansible"`.
+
 ## Postconditions
 
 - Playbook deploys Authentik with no Portainer dependency.
 - Play 2 with its health checks and bootstrap credential injection is intact.
+- `scripts/teardown-deploy-test.sh source-preflight` runs `syntax-check-deploy-authentik-stack`
+  and it passes.
 
 ## Validation
 
@@ -73,6 +89,9 @@ grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
 # — grep -i portainer will match it; confirm the only hit is the mask task itself)
 
 ansible-lint terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
+
+scripts/teardown-deploy-test.sh source-preflight
+# Expected: syntax-check-deploy-authentik-stack passes
 ```
 
 ## Stop Conditions

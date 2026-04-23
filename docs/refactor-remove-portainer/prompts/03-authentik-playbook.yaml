@@ -38,12 +38,16 @@ workflow:
       mask task at the end. Rename the play to Configure Docker base."
     - Do not change Play 2 in any way.
     - Run ansible-lint.
+    - Add a run_logged "syntax-check-deploy-authentik-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document.
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
 
 postconditions:
   criteria:
     - grep -in portainer returns only the mask task service name string.
     - ansible-lint passes.
     - Play 2 health checks and bootstrap credential injection are intact.
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-authentik-stack.
 
 stop_conditions:
   - portainer_agent role appears in Play 2 — report before proceeding.

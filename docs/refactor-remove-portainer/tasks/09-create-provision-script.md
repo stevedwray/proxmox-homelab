@@ -166,6 +166,22 @@ fi
    ./with-secrets ./scripts/provision.sh --check --stack harbor-stack
    ```
 
+8. Update `stack_apply` in the teardown-test harness to call `provision.sh` after
+   `terragrunt apply`. In `scripts/teardown-deploy-test.sh`, find `stack_apply()`
+   (at line 956). After the `run_logged "deploy-${stack}"` terragrunt apply block
+   and before `validate_stack_smoke "${spec}"`, insert:
+
+   ```bash
+   guard_pve_test
+   run_logged "provision-${stack}" \
+     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
+   ```
+
+   `WITH_SECRETS` is at line 19 (`"${REPO_ROOT}/with-secrets"`), `REPO_ROOT` at line 18.
+   This ensures every `deploy-foundation`, `deploy-edge`, and `deploy-platform` phase
+   runs Ansible after Terraform. Stacks with no `ansible_playbook` emit a SKIP and
+   continue without error.
+
 ## Postconditions
 
 - `shellcheck scripts/provision.sh` passes with no errors or warnings.
@@ -174,6 +190,8 @@ fi
 - Script outputs a SKIP message for a stack with no inventory.yml and continues.
 - Script outputs a SKIP message for a stack with no `ansible_playbook` in inventory
   and continues.
+- `stack_apply` in `scripts/teardown-deploy-test.sh` calls `provision.sh --stack <stack>`
+  after `terragrunt apply`.
 
 ## Validation
 
@@ -186,6 +204,9 @@ shellcheck scripts/provision.sh
 
 # Test against a real stack if pve-test is up
 ./with-secrets ./scripts/provision.sh --check --stack harbor-stack
+
+grep -A12 "^stack_apply" scripts/teardown-deploy-test.sh | grep "provision.sh"
+# Expected: provision.sh appears in the stack_apply function body
 ```
 
 ## Stop Conditions

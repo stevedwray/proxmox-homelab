@@ -66,11 +66,29 @@ will fail the rebuild validation.
 
 5. Update the comment block at the top of the file to remove the Portainer references.
 
+6. Register a playbook syntax check in the teardown-test harness. In
+   `scripts/teardown-deploy-test.sh`, inside `run_source_preflight_checks`, add
+   the following before the closing `}`:
+
+   ```bash
+   run_logged "syntax-check-deploy-harbor-stack" \
+       bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+         ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+         ansible-playbook --syntax-check \
+           '${ANSIBLE_DIR}/playbooks/deploy-harbor-stack.yml'"
+   ```
+
+   `ANSIBLE_DIR` is defined at line 21 of the harness as `"${TERRAFORM_LXC}/ansible"`.
+   This check runs on every `source-preflight` and catches YAML/structural errors
+   without needing live infrastructure.
+
 ## Postconditions
 
 - Playbook deploys Harbor with no Portainer dependency.
 - `harbor_installer` and `harbor_postconfigure` roles are intact and unmodified.
 - Play count is reduced from 4 to 3.
+- `scripts/teardown-deploy-test.sh source-preflight` runs `syntax-check-deploy-harbor-stack`
+  and it passes.
 
 ## Validation
 
@@ -79,6 +97,9 @@ grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
 # Expected: no output (the comment at top may reference portainer — remove it)
 
 ansible-lint terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+
+scripts/teardown-deploy-test.sh source-preflight
+# Expected: syntax-check-deploy-harbor-stack passes
 ```
 
 ## Stop Conditions

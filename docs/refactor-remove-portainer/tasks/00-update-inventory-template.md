@@ -53,6 +53,58 @@ Other optional fields use a conditional block pattern:
    `ansible_playbook` set in `stack.yaml` should produce no `ansible_playbook` line
    in the inventory, and `provision.sh` will SKIP them.
 
+4. Create `terraform/lxc/test_inventory_template.py`:
+
+   ```python
+   import os
+   import unittest
+
+
+   class TestInventoryTemplate(unittest.TestCase):
+       TEMPLATE_PATH = "terraform/lxc/templates/inventory.tpl"
+
+       def test_template_renders_ansible_playbook_conditionally(self):
+           with open(self.TEMPLATE_PATH) as f:
+               content = f.read()
+           self.assertIn(
+               "%{ if ansible_playbook",
+               content,
+               "inventory.tpl must render ansible_playbook conditionally",
+           )
+
+       def test_generated_harbor_inventory_has_playbook(self):
+           path = "terraform/lxc/stacks/harbor-stack/inventory.yml"
+           if not os.path.exists(path):
+               self.skipTest("harbor-stack inventory not yet generated")
+           with open(path) as f:
+               content = f.read()
+           self.assertIn("ansible_playbook:", content)
+
+       def test_generated_aptcacher_inventory_has_no_playbook(self):
+           path = "terraform/lxc/stacks/apt-cacher-stack/inventory.yml"
+           if not os.path.exists(path):
+               self.skipTest("apt-cacher-stack inventory not yet generated")
+           with open(path) as f:
+               content = f.read()
+           self.assertNotIn("ansible_playbook:", content)
+   ```
+
+5. Register the test in the teardown-test harness. In `scripts/teardown-deploy-test.sh`,
+   inside `run_source_preflight_checks`, extend the `run_logged "edge-unit-tests"`
+   invocation to include `terraform/lxc/test_inventory_template.py` as a seventh file:
+
+   ```bash
+   run_logged "edge-unit-tests" \
+       python3 -m unittest \
+         terraform/lxc/test_edge_manifest.py \
+         terraform/lxc/test_render_edge_traefik.py \
+         terraform/lxc/test_render_edge_coredns.py \
+         terraform/lxc/test_discover_authentik_edge.py \
+         terraform/lxc/test_reconcile_authentik_edge.py \
+         terraform/lxc/test_reconcile_edge.py \
+         terraform/lxc/test_inventory_template.py
+   ```
+
 ## Postconditions
 
 - Any stack whose `stack.yaml` has `ansible_playbook: deploy-harbor-stack` (or any
@@ -63,6 +115,9 @@ Other optional fields use a conditional block pattern:
 - Stacks with no `ansible_playbook` set produce no such line.
 - `terraform plan` after this change shows only `local_file.ansible_inventory` content
   diffs for stacks that have `ansible_playbook` set — no infrastructure changes.
+- `python3 -m unittest terraform/lxc/test_inventory_template.py` passes.
+- `scripts/teardown-deploy-test.sh source-preflight` includes `test_inventory_template.py`
+  in the `edge-unit-tests` step and it passes.
 
 ## Validation
 
@@ -76,6 +131,9 @@ grep "ansible_playbook" terraform/lxc/stacks/harbor-stack/inventory.yml
 # Verify a stack without ansible_playbook set does not have the line
 grep "ansible_playbook" terraform/lxc/stacks/apt-cacher-stack/inventory.yml
 # Expected: no output (apt-cacher has no ansible_playbook in stack.yaml)
+
+python3 -m unittest terraform/lxc/test_inventory_template.py
+# Expected: at minimum test_template_renders_ansible_playbook_conditionally passes
 ```
 
 ## Stop Conditions

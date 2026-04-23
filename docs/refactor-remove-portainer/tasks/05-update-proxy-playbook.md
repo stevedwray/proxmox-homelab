@@ -63,10 +63,26 @@ files. All of this is load-bearing for the edge infrastructure.
 
 4. Do not touch Play 2.
 
+5. Register a playbook syntax check in the teardown-test harness. In
+   `scripts/teardown-deploy-test.sh`, inside `run_source_preflight_checks`, add
+   the following before the closing `}`:
+
+   ```bash
+   run_logged "syntax-check-deploy-proxy-stack" \
+       bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+         ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+         ansible-playbook --syntax-check \
+           '${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml'"
+   ```
+
+   `ANSIBLE_DIR` is defined at line 21 of the harness as `"${TERRAFORM_LXC}/ansible"`.
+
 ## Postconditions
 
 - Playbook deploys Traefik with no Portainer dependency.
 - All Traefik-specific configuration steps in Play 2 are intact.
+- `scripts/teardown-deploy-test.sh source-preflight` runs `syntax-check-deploy-proxy-stack`
+  and it passes.
 
 ## Validation
 
@@ -75,6 +91,9 @@ grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
 # The only acceptable match is the mask task's service name string
 
 ansible-lint terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
+
+scripts/teardown-deploy-test.sh source-preflight
+# Expected: syntax-check-deploy-proxy-stack passes
 ```
 
 ## Stop Conditions

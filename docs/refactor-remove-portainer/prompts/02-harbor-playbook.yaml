@@ -42,6 +42,10 @@ workflow:
     - Update the comment block at the top of the file to remove Portainer references.
     - Do not change Play 3 or Play 4 in any way.
     - Run ansible-lint.
+    - Add a run_logged "syntax-check-deploy-harbor-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document (bash -lc with
+      ANSIBLE_ROLES_PATH and ANSIBLE_CONFIG set, ansible-playbook --syntax-check).
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
 
 postconditions:
   criteria:
@@ -49,6 +53,7 @@ postconditions:
     - ansible-lint passes.
     - harbor_installer and harbor_postconfigure roles are present and unchanged.
     - Play count is 3 (was 4).
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-harbor-stack.
 
 stop_conditions:
   - Play 2 contains any task that is not a pure portainer_api role call — report the

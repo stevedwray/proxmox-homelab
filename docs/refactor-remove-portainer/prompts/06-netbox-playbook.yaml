@@ -48,6 +48,9 @@ workflow:
     - "In Play 4: update netbox_container from {{ app_stack_name }}-netbox-1 to
       netbox-netbox-1. Remove any remaining app_stack_name reference from Play 4."
     - Run ansible-lint.
+    - Add a run_logged "syntax-check-deploy-netbox-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document.
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
 
 postconditions:
   criteria:
@@ -56,6 +59,7 @@ postconditions:
     - direct_stack_env contains the same five NETBOX_* vars plus REGISTRY_HOST.
     - Play 4 uses netbox-netbox-1 as the container name.
     - Play 2 config file copy tasks are unmodified.
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-netbox-stack.
 
 stop_conditions:
   - app_stack_env contains env vars beyond the six listed in the task document — report

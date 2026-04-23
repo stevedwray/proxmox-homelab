@@ -45,6 +45,10 @@ workflow:
     - Run shellcheck scripts/provision.sh — fix any issues.
     - Test the SKIP path by running with a stack that has no ansible_playbook.
     - If pve-test is up, test with --check --stack harbor-stack.
+    - Update stack_apply in scripts/teardown-deploy-test.sh as specified in the task
+      document: after the run_logged "deploy-${stack}" terragrunt apply call and before
+      validate_stack_smoke, add guard_pve_test and run_logged "provision-${stack}" calling
+      ./with-secrets ./scripts/provision.sh --stack "${stack}".
 
 postconditions:
   criteria:
@@ -52,6 +56,7 @@ postconditions:
     - Script outputs SKIP for stacks with no inventory.yml.
     - Script outputs SKIP for stacks with no ansible_playbook in inventory.
     - ./with-secrets ./scripts/provision.sh --check --stack harbor-stack exits 0.
+    - stack_apply in scripts/teardown-deploy-test.sh calls provision.sh after terragrunt apply.
 
 stop_conditions:
   - ansible_playbook is not in the generated inventory despite Task 00 being complete

@@ -69,11 +69,81 @@ The following stacks have playbooks being updated in Tasks 02–06:
 6. Confirm `terraform plan` shows no diff after these edits (Terraform does not read
    `deployment_tier`).
 
+7. Create `terraform/lxc/test_stack_classification.py`:
+
+   ```python
+   import os
+   import unittest
+   import yaml
+
+   PLATFORM_STACKS = [
+       "portainer-stack",
+       "harbor-stack",
+       "apt-cacher-stack",
+       "ci-runner-01",
+       "dns-stack",
+       "step-ca-stack",
+       "authentik-stack",
+       "proxy-stack",
+       "monitoring-stack",
+       "netbox-stack",
+   ]
+
+
+   class TestStackClassification(unittest.TestCase):
+       STACKS_DIR = "terraform/lxc/stacks"
+
+       def _load_stack_yaml(self, stack):
+           path = os.path.join(self.STACKS_DIR, stack, "stack.yaml")
+           with open(path) as f:
+               return yaml.safe_load(f)
+
+       def test_platform_stacks_have_deployment_tier_platform(self):
+           for stack in PLATFORM_STACKS:
+               with self.subTest(stack=stack):
+                   data = self._load_stack_yaml(stack)
+                   self.assertEqual(
+                       data.get("deployment_tier"), "platform",
+                       f"{stack}/stack.yaml must have deployment_tier: platform",
+                   )
+
+       def test_platform_stacks_have_portainer_agent_false(self):
+           for stack in PLATFORM_STACKS:
+               with self.subTest(stack=stack):
+                   data = self._load_stack_yaml(stack)
+                   self.assertFalse(
+                       data.get("portainer_agent", False),
+                       f"{stack}/stack.yaml must have portainer_agent: false",
+                   )
+   ```
+
+8. Register the test in the teardown-test harness. In `scripts/teardown-deploy-test.sh`,
+   inside `run_source_preflight_checks`, extend the `run_logged "edge-unit-tests"`
+   invocation to include `terraform/lxc/test_stack_classification.py`:
+
+   ```bash
+   run_logged "edge-unit-tests" \
+       python3 -m unittest \
+         terraform/lxc/test_edge_manifest.py \
+         terraform/lxc/test_render_edge_traefik.py \
+         terraform/lxc/test_render_edge_coredns.py \
+         terraform/lxc/test_discover_authentik_edge.py \
+         terraform/lxc/test_reconcile_authentik_edge.py \
+         terraform/lxc/test_reconcile_edge.py \
+         terraform/lxc/test_inventory_template.py \
+         terraform/lxc/test_stack_classification.py
+   ```
+
+   Note: `test_inventory_template.py` was added by Task 00 and should already be present.
+
 ## Postconditions
 
 - Every platform stack has `deployment_tier: platform` and `portainer_agent: false`.
 - No platform stack has `portainer_agent: true`.
 - Terraform plan is clean.
+- `python3 -m unittest terraform/lxc/test_stack_classification.py` passes.
+- `scripts/teardown-deploy-test.sh source-preflight` includes `test_stack_classification.py`
+  in the `edge-unit-tests` step and it passes.
 
 ## Validation
 
@@ -106,6 +176,9 @@ grep -rn "portainer_agent: true" terraform/lxc/stacks/portainer-stack/ \
 
 ./with-secrets terragrunt run-all plan 2>&1 | grep -c "No changes"
 # Expected: count equals the number of stack modules
+
+python3 -m unittest terraform/lxc/test_stack_classification.py
+# Expected: two tests pass, each covering all 10 platform stacks
 ```
 
 ## Stop Conditions

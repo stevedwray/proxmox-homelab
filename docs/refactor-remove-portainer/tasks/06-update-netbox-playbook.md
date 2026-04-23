@@ -106,6 +106,20 @@ updated** to use the new container name.
 
    Remove any remaining reference to `app_stack_name` in Play 4.
 
+6. Register a playbook syntax check in the teardown-test harness. In
+   `scripts/teardown-deploy-test.sh`, inside `run_source_preflight_checks`, add
+   the following before the closing `}`:
+
+   ```bash
+   run_logged "syntax-check-deploy-netbox-stack" \
+       bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+         ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+         ansible-playbook --syntax-check \
+           '${ANSIBLE_DIR}/playbooks/deploy-netbox-stack.yml'"
+   ```
+
+   `ANSIBLE_DIR` is defined at line 21 of the harness as `"${TERRAFORM_LXC}/ansible"`.
+
 ## Postconditions
 
 - Playbook deploys NetBox via `direct_stack` with no Portainer API dependency.
@@ -113,6 +127,8 @@ updated** to use the new container name.
   the compose stack starts (Play 2 runs before Play 3 in playbook order).
 - Play 4 uses container name `netbox-netbox-1`.
 - No reference to `portainer_api`, `app_stack`, or `portainer_agent` roles remains.
+- `scripts/teardown-deploy-test.sh source-preflight` runs `syntax-check-deploy-netbox-stack`
+  and it passes.
 
 ## Validation
 
@@ -121,6 +137,9 @@ grep -in "portainer\|app_stack" terraform/lxc/ansible/playbooks/deploy-netbox-st
 # Expected: only the mask task's service name string
 
 ansible-lint terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml
+
+scripts/teardown-deploy-test.sh source-preflight
+# Expected: syntax-check-deploy-netbox-stack passes
 ```
 
 ## Stop Conditions
