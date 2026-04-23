@@ -57,6 +57,10 @@ patterns are:
   baseline dry-plan proof
 - `./scripts/validate-portainer-refactor-platform-plan.sh` for downstream
   platform-refactor task-complete dry-plan checks
+  Before Task 08 removes `null_resource.ansible_provision`, downstream checks
+  may allow orchestration-only null-resource churn that is driven by inventory
+  content changes, but they must still reject any actual LXC infrastructure
+  drift and must run non-interactively.
 - `terraform fmt -check` for Terraform edits
 - `ansible-lint` for playbook or role edits
   Run it from `terraform/lxc/ansible/` so local roles resolve via the repo's
@@ -70,6 +74,8 @@ Expected outcome:
 
 - only the diffs described by the task appear
 - no unrelated LXC infrastructure changes appear in Terraform plans
+- documented orchestration-only null-resource churn is acceptable only when the
+  task doc explicitly allows it
 - lint and unit checks pass
 
 Stop condition:

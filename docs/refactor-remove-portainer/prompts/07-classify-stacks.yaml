@@ -3,11 +3,12 @@ id: rp-07-classify-stacks
 title: "Classify stack execution intent explicitly"
 type: development
 status: pending
-depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
 task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
 validation_note: |
   deployment_tier is metadata-only, but portainer_agent still affects
-  stack_cleanup. Confirm there are no LXC infrastructure changes after editing.
+  stack_cleanup. Confirm there are no LXC infrastructure changes after editing,
+  using the hardened non-interactive platform-only helper.
   For `portainer_agent: true` checks, target only intended stack.yaml files.
 
 context: |

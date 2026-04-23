@@ -183,3 +183,36 @@ end-to-end `pve-test` rebuild flow:
 4. validate platform services
 5. confirm Portainer has no platform endpoints
 6. re-run configuration and confirm idempotent behavior
+
+## Decision 12: Baseline validation and downstream task validation are distinct
+
+The refactor uses two different dry-plan gates for two different purposes.
+
+- `scripts/validate-portainer-refactor-plan.sh` is the broader baseline helper
+  introduced by Task 00a. It proves the shared `pve-test` planning baseline for
+  the platform stacks plus `test-docker` and `test-lxc`, while excluding the
+  root `terraform/lxc` unit and the legacy `net-*` validation stacks.
+- `scripts/validate-portainer-refactor-platform-plan.sh` is the downstream
+  task-complete helper introduced by Task 00b. It proves only the ten Tier 1
+  platform stacks and intentionally excludes `test-docker` and `test-lxc` so
+  downstream tasks are not blocked by legitimate create plans or absent
+  apply-time artifacts.
+- Task documents must name which helper they require. Executors should stop if
+  a downstream task tries to reuse the broader baseline helper as a narrower
+  task-complete gate.
+
+## Decision 13: Downstream plan checks may allow orchestration-only null-resource churn
+
+Before Task 08 removes `null_resource.ansible_provision`, some downstream
+contract changes legitimately alter the generated inventory content that this
+null resource tracks in its `triggers`.
+
+- A task like Task 00 may therefore produce `local_file.ansible_inventory`
+  content diffs plus `null_resource.ansible_provision` replacement plans that
+  are driven only by `inventory_content`.
+- Those diffs are orchestration-only churn, not LXC infrastructure changes, and
+  should not block downstream validation by themselves.
+- Downstream validation must still stop on any actual LXC infrastructure drift,
+  unexpected null-resource behavior beyond the documented orchestration churn,
+  or interactive validation paths that prevent a clean non-interactive dry run.
+- Shared helper scripts for downstream validation must run non-interactively.

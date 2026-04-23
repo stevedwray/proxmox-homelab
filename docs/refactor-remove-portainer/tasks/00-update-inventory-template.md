@@ -23,11 +23,15 @@ edit.
 
 - Task 00a complete.
 - Task 00b complete.
+- Task 00c complete.
 
 ## Current Status Note
 
-- Task 00 is unblocked by Task 00b. Downstream task-complete dry-plan checks
-  now use the platform-only helper that excludes `test-docker` and `test-lxc`.
+- Task 00 is unblocked by Task 00c. Downstream task-complete dry-plan checks
+  now use the hardened non-interactive platform-only helper that excludes
+  `test-docker` and `test-lxc`, and they allow documented
+  `inventory_content`-driven `null_resource.ansible_provision` replacement
+  until Task 08 removes that resource.
 
 ## Background
 
@@ -124,8 +128,9 @@ Other optional fields use a conditional block pattern:
   ```
 - Stacks with no `ansible_playbook` set produce no such line.
 - `terraform plan` after this change shows only `local_file.ansible_inventory`
-  content diffs for stacks that have `ansible_playbook` set — no LXC or other
-  infrastructure changes.
+  content diffs plus acceptable `null_resource.ansible_provision` replacement
+  driven by `inventory_content` for stacks that have `ansible_playbook` set —
+  no LXC or other infrastructure changes.
 - `python3 -m unittest terraform/lxc/test_inventory_template.py` passes.
 - `scripts/teardown-deploy-test.sh source-preflight` includes `test_inventory_template.py`
   in the `edge-unit-tests` step and it passes.
@@ -135,6 +140,9 @@ Other optional fields use a conditional block pattern:
 ```bash
 # Check the template renders correctly (dry-run via plan)
 ./scripts/validate-portainer-refactor-platform-plan.sh
+# Expected: no LXC infrastructure changes. local_file.ansible_inventory diffs
+# and null_resource.ansible_provision replacement driven by inventory_content
+# are acceptable until Task 08 removes that null_resource.
 
 # Optional local evidence only when generated inventory.yml files already exist
 # in the current workspace (for example, after apply).
@@ -156,4 +164,6 @@ python3 -m unittest terraform/lxc/test_inventory_template.py
 - Stop if the template uses a different indentation style from what is shown above —
   report the actual indentation before editing.
 - Stop if `terraform plan` shows any infrastructure changes (beyond
-  `local_file.ansible_inventory` content updates) as a result of this edit.
+  acceptable `local_file.ansible_inventory` content updates and
+  `null_resource.ansible_provision` replacement driven by `inventory_content`)
+  as a result of this edit.

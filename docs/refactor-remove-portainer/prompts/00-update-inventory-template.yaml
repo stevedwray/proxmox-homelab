@@ -3,12 +3,15 @@ id: rp-00-inventory-template
 title: "Establish inventory handoff contract"
 type: development
 status: pending
-depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
 task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
 validation_note: |
   After editing: run ./scripts/validate-portainer-refactor-platform-plan.sh and
-  confirm no LXC infrastructure changes. Generated inventory grep checks are
-  optional evidence only when inventory.yml files already exist locally.
+  confirm no LXC infrastructure changes. local_file.ansible_inventory diffs and
+  null_resource.ansible_provision replacement driven only by inventory_content
+  are acceptable orchestration-only churn until Task 08. Generated inventory
+  grep checks are optional evidence only when inventory.yml files already exist
+  locally.
 
 context: |
   Terraform generates an inventory.yml per stack from terraform/lxc/templates/inventory.tpl.
@@ -32,7 +35,9 @@ workflow:
       the vmid line, preserving the exact indentation of the surrounding YAML host
       vars block.
     - Run ./scripts/validate-portainer-refactor-platform-plan.sh to confirm no LXC
-      infrastructure changes for downstream platform stacks.
+      infrastructure changes for downstream platform stacks. local_file.ansible_inventory
+      diffs and null_resource.ansible_provision replacement driven only by inventory_content
+      are acceptable for this task until Task 08.
     - If inventory.yml files already exist locally (for example, after apply), grep the
       harbor-stack inventory for ansible_playbook as optional evidence.
     - Create terraform/lxc/test_inventory_template.py as specified in the task document
@@ -52,4 +57,5 @@ postconditions:
 
 stop_conditions:
   - ansible_playbook is already in inventory.tpl — report and do nothing.
-  - terraform plan shows any LXC infrastructure change after the edit.
+  - terraform plan shows any LXC infrastructure change after the edit, or any
+    unexpected null-resource behavior beyond inventory_content-driven ansible_provision replacement.
