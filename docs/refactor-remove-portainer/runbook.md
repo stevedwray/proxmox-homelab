@@ -53,7 +53,8 @@ Stop condition:
 Use the task document as the source of truth for exact commands, but the common
 patterns are:
 
-- `terragrunt run-all plan` or equivalent plan-only check
+- `./scripts/validate-portainer-refactor-plan.sh` for Portainer-removal
+  Terraform/Terragrunt task-complete dry-plan checks
 - `terraform fmt -check` for Terraform edits
 - `ansible-lint` for playbook or role edits
   Run it from `terraform/lxc/ansible/` so local roles resolve via the repo's

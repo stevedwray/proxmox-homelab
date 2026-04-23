@@ -3,9 +3,10 @@ id: rp-00-inventory-template
 title: "Establish inventory handoff contract"
 type: development
 status: pending
+depends_on: [rp-00a-plan-baseline]
 task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
 validation_note: |
-  After editing: run ./with-secrets terragrunt run-all plan and confirm no
+  After editing: run ./scripts/validate-portainer-refactor-plan.sh and confirm no
   LXC infrastructure changes. After apply, grep the harbor-stack inventory.
 
 context: |
@@ -29,7 +30,7 @@ workflow:
     - Add the ansible_playbook conditional block after the stack_name line, before
       the vmid line, preserving the exact indentation of the surrounding YAML host
       vars block.
-    - Run ./with-secrets terragrunt run-all plan to confirm no LXC infrastructure changes.
+    - Run ./scripts/validate-portainer-refactor-plan.sh to confirm no LXC infrastructure changes.
     - If pve-test is up and inventories exist, run terragrunt apply and then grep the
       harbor-stack inventory for ansible_playbook.
     - Create terraform/lxc/test_inventory_template.py as specified in the task document

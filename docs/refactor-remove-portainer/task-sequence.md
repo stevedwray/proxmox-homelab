@@ -22,8 +22,9 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 | # | Title | Status | Preconditions |
 |---|---|---|---|
-| 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `pending` | None |
-| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | None |
+| 00a | Establish scoped Terragrunt validation baseline | `complete` | None |
+| 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `pending` | 00a |
+| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | 00a |
 
 ## B. Playbook Capability
 
@@ -53,6 +54,10 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 ## Dependency Graph
 
 ```text
+00a (scoped validation baseline)
+├── 00 (inventory handoff)
+└── 07 (stack classification)
+
 00 (inventory handoff)
 └── 01 (direct_stack)
     ├── 02 (harbor)
