@@ -82,6 +82,27 @@ If the execution environment blocks network access to `pve-test`, treat a
 `live-preflight` failure as an environment/access blocker and do not weaken the
 checks.
 
+Use the read-only platform status phase when you need a current inventory-based
+view of the in-scope containers:
+
+```bash
+scripts/teardown-deploy-test.sh platform-status
+```
+
+`platform-status` checks the approved inventory from
+`docs/teardown-test/inventory.md` against each stack's `stack.yaml`, verifies
+the `pve-test` target guard, captures `pct status`, Docker container snapshots,
+listener snapshots, and a stack-specific direct health probe where one is
+defined. It writes both a human table and machine-readable reports under the
+evidence stamp:
+
+- `logs/platform-status.log`
+- `logs/platform-status.tsv`
+- `logs/platform-status.json`
+
+This phase is read-only. A degraded or missing stack is reported in the table;
+the phase itself is an observation pass, not a repair action.
+
 Use `approval-preflight` as the go/no-go check before preparing any destructive
 approval packet:
 
@@ -138,6 +159,29 @@ Mutating phases require both `--execute` and an approval phrase containing:
 approve pve-test teardown deploy test
 ```
 
+`destroy` and `cycle` also require an approval packet:
+
+```bash
+scripts/teardown-deploy-test.sh destroy --execute \
+  --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24" \
+  --approval-packet docs/teardown-test/packets/20260423-010203.md \
+  --stamp 20260423-010203
+```
+
+Minimum approval packet checks for destructive phases:
+
+- packet file exists
+- packet references the active `--stamp` value
+- packet references `pve-test`
+- packet references the current commit SHA or an approved commit SHA
+- packet includes outage/window metadata
+- packet includes rollback deadline metadata
+- packet includes backup evidence references for `step-ca`, `authentik`, `harbor`, `netbox`, `monitoring`, and `portainer`
+- packet includes recreatable-service backup evidence or explicit data-loss/recreate approval
+
+When accepted, the harness logs the packet path and records its SHA256 under the
+evidence stamp (`logs/approval-packet.sha256`).
+
 Example:
 
 ```bash
@@ -156,9 +200,9 @@ Available live phases:
 | `deploy-platform` | Applies monitoring and NetBox. |
 | `cycle` | Runs destroy through final validation in order. |
 
-The harness does not replace operator judgment. Before `destroy` or `cycle`,
-confirm that backup evidence exists for non-loss services and that the operator
-has accepted the outage window and rollback deadline.
+The harness does not replace operator judgment. The packet gate blocks ad hoc
+destructive commands, but operators should still review the packet before each
+run.
 
 ## Resume Model
 

@@ -139,14 +139,24 @@ Acceptance:
   without reading every log.
 - Resume suggestions are generated from the state file.
 
-### 4. Active Next Step: Encode Backup And Approval Gates
+### 4. In Progress: Encode Backup And Approval Gates
 
 The script currently checks for an approval phrase, but it does not verify backup
 evidence or operator window metadata.
 
-Next step:
+Current implementation:
 
-- Require an approval packet file for `destroy` and `cycle`.
+- `scripts/teardown-deploy-test.sh` now requires `--approval-packet PATH` for
+  `destroy` and `cycle`.
+- The harness validates minimum packet metadata before any Terragrunt destroy:
+  stamp, `pve-test` target, commit reference, outage/window, rollback deadline,
+  non-loss backup evidence references, and recreatable-service approval/evidence.
+- The harness records approval packet SHA256 under the evidence stamp.
+
+Remaining next step:
+
+- Keep refining packet schema/validation so language is less heuristic and more
+  structured.
 - Validate that the packet contains:
   - evidence stamp
   - approved commit SHA

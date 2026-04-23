@@ -23,6 +23,21 @@ Expected:
 
 Stop if any expected value does not match.
 
+For a read-only inventory snapshot of the current `pve-test` containers before
+or after a cycle, run:
+
+```bash
+scripts/teardown-deploy-test.sh platform-status
+```
+
+Expected:
+
+- the target guard reports `pve-test`
+- every in-scope stack is listed with VMID, IP, `pct` state, direct health
+  status, and evidence log paths
+- the generated `platform-status.tsv` and `platform-status.json` files are kept
+  under the command's evidence stamp
+
 ## 1. Source Validation
 
 Working directory: repository root (`/home/steve/git/proxmox-homelab`).
@@ -127,6 +142,16 @@ Operator must explicitly approve the destructive window after seeing:
 - backup evidence
 - stack list to destroy
 - rollback deadline
+
+Harness execution for destructive phases now requires an approval packet in
+addition to `--execute` and `--approval-text`:
+
+```bash
+scripts/teardown-deploy-test.sh destroy --execute \
+	--approval-text "I approve pve-test teardown deploy test validation only" \
+	--approval-packet docs/teardown-test/packets/<stamp>.md \
+	--stamp <stamp>
+```
 
 ## 5. Destroy Execution
 

@@ -7,6 +7,7 @@
 #   approval-preflight clean-tree go/no-go preflight for destructive approval
 #   preflight          backwards-compatible alias for source + live preflight
 #   plan               show inventory-derived stack plans
+#   platform-status    show read-only current stack/container state
 #   status             summarize machine-readable checkpoint state for a stamp
 #   final-validation   live read-only service and route checks
 #
@@ -21,8 +22,8 @@ ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 PVE_TEST_HOST="pve-test.gibbsgreatly.xyz"
-AUTHENTIK_URL="http://10.57.1.10:9000"
 APPROVAL_TEXT=""
+APPROVAL_PACKET=""
 EXECUTE=false
 REQUIRE_CLEAN=false
 PHASE=""
@@ -38,6 +39,7 @@ TRACKED_PHASES=(
   "approval-preflight"
   "preflight"
   "plan"
+  "platform-status"
   "destroy"
   "deploy-foundation"
   "deploy-edge"
@@ -82,6 +84,8 @@ BROWSER_HOSTS=(
   "traefik"
 )
 
+BROWSER_DNS_TARGET_IP="10.57.2.10"
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -93,6 +97,7 @@ Phases:
   approval-preflight  Run clean-tree source + live preflight under one stamp.
   preflight           Backwards-compatible alias for source-preflight + live-preflight.
   plan                Show inventory-derived deploy/destroy stack plans.
+  platform-status     Show read-only current stack/container state.
   status              Show checkpoint state and suggested next phase for a stamp.
   destroy             Destroy approved platform stacks in reverse order.
   deploy-foundation   Apply Stage 1/2 foundation stacks.
@@ -107,6 +112,8 @@ Options:
       Required for destroy, deploy-*, activate-edge, and cycle.
   --approval-text TEXT
       Required with --execute. Must contain: approve pve-test teardown deploy test
+  --approval-packet PATH
+    Required for destroy and cycle. Must reference stamp/commit/backup approvals.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -120,6 +127,7 @@ Examples:
   scripts/teardown-deploy-test.sh approval-preflight
   scripts/teardown-deploy-test.sh preflight
   scripts/teardown-deploy-test.sh plan
+  scripts/teardown-deploy-test.sh platform-status
   scripts/teardown-deploy-test.sh status --stamp 20260423-010203
   scripts/teardown-deploy-test.sh final-validation
   scripts/teardown-deploy-test.sh deploy-edge --execute \
@@ -412,6 +420,44 @@ run_logged() {
   fi
 }
 
+run_dns_answer_check() {
+  local name="$1"
+  local resolver="$2"
+  local fqdn="$3"
+  local expected_answer="$4"
+
+  # shellcheck disable=SC2016
+  run_logged "${name}" \
+    bash -lc '
+      set -euo pipefail
+
+      resolver="$1"
+      fqdn="$2"
+      expected_answer="$3"
+
+      mapfile -t answers < <(dig "@${resolver}" +short "${fqdn}" | sed "/^[[:space:]]*$/d")
+
+      if (( ${#answers[@]} == 0 )); then
+        observed="<empty>"
+      else
+        observed="$(printf "%s\n" "${answers[@]}" | paste -sd "," -)"
+      fi
+
+      printf "resolver=%s\n" "${resolver}"
+      printf "fqdn=%s\n" "${fqdn}"
+      printf "expected=%s\n" "${expected_answer}"
+      printf "observed=%s\n" "${observed}"
+
+      if (( ${#answers[@]} != 1 )) || [[ "${answers[0]}" != "${expected_answer}" ]]; then
+        printf "DNS assertion failed for %s via %s: expected exactly %s, observed %s\n" \
+          "${fqdn}" "${resolver}" "${expected_answer}" "${observed}" >&2
+        exit 1
+      fi
+
+      printf "DNS assertion passed for %s via %s\n" "${fqdn}" "${resolver}"
+    ' _ "${resolver}" "${fqdn}" "${expected_answer}"
+}
+
 guard_pve_test() {
   local output
   # shellcheck disable=SC2016
@@ -682,6 +728,8 @@ def selected_order() -> list[str]:
             for stack in deploy_order
             if stack_rows.get(stack, {}).get("stage") == "Stage 3b platform"
         ]
+    if group == "all":
+        return deploy_order
     if group == "destroy":
         return destroy_order
     raise SystemExit(f"unknown stack group: {group}")
@@ -740,6 +788,25 @@ load_stack_specs() {
   mapfile -t target <<<"${output}"
 }
 
+get_authentik_url() {
+  local output stack ip
+
+  if ! output="$(resolve_stack_specs all)"; then
+    log "ERROR failed to resolve stack specs for authentik_url derivation"
+    return 1
+  fi
+
+  while IFS=: read -r stack _ ip; do
+    if [[ "${stack}" == "authentik-stack" ]]; then
+      printf 'http://%s:9000\n' "${ip}"
+      return 0
+    fi
+  done <<<"${output}"
+
+  log "ERROR authentik-stack not found in resolved stack specs"
+  return 1
+}
+
 require_execute_approval() {
   local approval_lc
   approval_lc="${APPROVAL_TEXT,,}"
@@ -763,6 +830,114 @@ require_execute_approval() {
       "${PHASE} requires approval text containing: approve pve-test teardown deploy test"
     return 1
   fi
+}
+
+approval_packet_line_for_service() {
+  local packet_path="$1"
+  local service_regex="$2"
+
+  grep -Eim1 "${service_regex}" "${packet_path}" || true
+}
+
+line_has_evidence_marker() {
+  local line="$1"
+
+  [[ "${line}" =~ (backup|snapshot|restore|evidence|artifact|path|id|ticket|ref) ]]
+}
+
+validate_approval_packet() {
+  local packet_path
+  local packet_hash_file
+  local packet_sha
+  local current_commit
+  local service line
+  local -a missing_items
+  local -a non_loss_services=(
+    "step-ca:step[- ]?ca"
+    "authentik:authentik"
+    "harbor:harbor"
+    "netbox:netbox"
+    "monitoring:monitoring"
+    "portainer:portainer"
+  )
+
+  if [[ -z "${APPROVAL_PACKET}" ]]; then
+    log "ERROR ${PHASE} requires --approval-packet PATH"
+    set_phase_failure_context \
+      "require-approval-packet" \
+      "scripts/teardown-deploy-test.sh ${PHASE} --approval-packet <path>" \
+      "${RUN_LOG}" \
+      "${PHASE} requires --approval-packet"
+    return 1
+  fi
+
+  packet_path="$(realpath "${APPROVAL_PACKET}" 2>/dev/null || true)"
+  if [[ -z "${packet_path}" || ! -f "${packet_path}" ]]; then
+    log "ERROR approval packet not found: ${APPROVAL_PACKET}"
+    set_phase_failure_context \
+      "validate-approval-packet" \
+      "test -f ${APPROVAL_PACKET}" \
+      "${RUN_LOG}" \
+      "approval packet not found"
+    return 1
+  fi
+
+  current_commit="$(git_current_commit)"
+
+  if ! grep -Fqi "${STAMP}" "${packet_path}"; then
+    missing_items+=("stamp reference (${STAMP})")
+  fi
+
+  if ! grep -Eiq "(^|[^[:alnum:]])pve-test([^[:alnum:]]|$)" "${packet_path}"; then
+    missing_items+=("pve-test target reference")
+  fi
+
+  if ! grep -Fqi "${current_commit}" "${packet_path}" \
+    && ! grep -Eiq "approved[[:space:]-]*commit([[:space:]_-]*sha)?[[:space:]:=]+[0-9a-f]{7,40}" "${packet_path}"; then
+    missing_items+=("current commit or approved commit SHA reference")
+  fi
+
+  if ! grep -Eiq "(outage|maintenance[[:space:]]+window|window)" "${packet_path}"; then
+    missing_items+=("outage/window field or heading")
+  fi
+
+  if ! grep -Eiq "rollback.*deadline|deadline.*rollback" "${packet_path}"; then
+    missing_items+=("rollback deadline field or heading")
+  fi
+
+  for service in "${non_loss_services[@]}"; do
+    local service_name="${service%%:*}"
+    local service_pattern="${service#*:}"
+    line="$(approval_packet_line_for_service "${packet_path}" "${service_pattern}")"
+    if [[ -z "${line}" ]] || ! line_has_evidence_marker "${line,,}"; then
+      missing_items+=("backup evidence reference for ${service_name}")
+    fi
+  done
+
+  if ! grep -Eiq "(recreat|data[[:space:]-]*loss).*(approv|accept|acknowledg|allowed)" "${packet_path}" \
+    && ! grep -Eiq "(apt[- ]?cacher|ci[- ]?runner|dns|proxy).*(backup|snapshot|restore|evidence|artifact|path|id|ticket|ref)" "${packet_path}"; then
+    missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
+  fi
+
+  if (( ${#missing_items[@]} > 0 )); then
+    {
+      log "ERROR approval packet validation failed: ${packet_path}"
+      printf '[%s] Missing approval packet items:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "${RUN_LOG}"
+      printf -- '- %s\n' "${missing_items[@]}" | tee -a "${RUN_LOG}"
+    } >/dev/null
+    set_phase_failure_context \
+      "validate-approval-packet" \
+      "validate_approval_packet ${packet_path}" \
+      "${RUN_LOG}" \
+      "approval packet missing required metadata"
+    return 1
+  fi
+
+  packet_hash_file="${LOG_DIR}/approval-packet.sha256"
+  packet_sha="$(sha256sum "${packet_path}" | awk '{print $1}')"
+  printf '%s  %s\n' "${packet_sha}" "${packet_path}" >"${packet_hash_file}"
+  log "approval packet accepted: ${packet_path}"
+  log "approval packet sha256: ${packet_sha} (recorded in ${packet_hash_file})"
 }
 
 stack_name() {
@@ -822,6 +997,10 @@ validate_stack_smoke() {
     harbor-stack)
       run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
       ;;
+    ci-runner-01)
+      run_logged "health-${stack}" \
+        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
+      ;;
     dns-stack)
       run_logged "health-${stack}-authoritative" dig "@${ip}" +short traefik.lab.gibbsgreatly.xyz
       run_logged "health-${stack}-delegated" dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
@@ -842,6 +1021,258 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz/
       ;;
   esac
+}
+
+run_status_capture() {
+  local logfile="$1"
+  shift
+
+  mkdir -p "${LOG_DIR}"
+  if "$@" >"${logfile}" 2>&1; then
+    return 0
+  fi
+  return "$?"
+}
+
+probe_stack_health() {
+  local stack="$1"
+  local vmid="$2"
+  local ip="$3"
+
+  PLATFORM_HEALTH_STATUS="skipped"
+  PLATFORM_HEALTH_DETAIL="no stack-specific probe"
+  PLATFORM_HEALTH_LOG=""
+
+  case "${stack}" in
+    portainer-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/api/system/status"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="portainer api ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="portainer api failed"
+      fi
+      ;;
+    apt-cacher-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsSI "http://${ip}:3142/"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="apt-cacher http failed"
+      fi
+      ;;
+    harbor-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" == '401' ]]"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="registry v2 challenge ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="registry v2 challenge failed"
+      fi
+      ;;
+    ci-runner-01)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="github actions runner service running"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="github actions runner service not found running"
+      fi
+      ;;
+    dns-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "dig '@${ip}' +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="authoritative dns ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="authoritative dns failed"
+      fi
+      ;;
+    proxy-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="traefik https responds"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="traefik https failed"
+      fi
+      ;;
+    step-ca-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -skf "https://${ip}/acme/acme/directory"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="acme directory ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="acme directory failed"
+      fi
+      ;;
+    authentik-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/-/health/live/"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="authentik health ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="authentik health failed"
+      fi
+      ;;
+    monitoring-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="grafana and victoriametrics ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="grafana or victoriametrics failed"
+      fi
+      ;;
+    netbox-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="netbox http ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="netbox http failed"
+      fi
+      ;;
+  esac
+}
+
+write_platform_status_json() {
+  local tsv_path="$1"
+  local json_path="$2"
+
+  python3 - "${tsv_path}" "${json_path}" <<'PY'
+import csv
+import json
+import sys
+from pathlib import Path
+
+tsv_path = Path(sys.argv[1])
+json_path = Path(sys.argv[2])
+
+rows = []
+with tsv_path.open(encoding="utf-8", newline="") as handle:
+    reader = csv.DictReader(handle, delimiter="\t")
+    for row in reader:
+        rows.append(row)
+
+summary = {
+    "total": len(rows),
+    "healthy": sum(1 for row in rows if row["overall"] == "healthy"),
+    "running": sum(1 for row in rows if row["overall"] == "running"),
+    "degraded": sum(1 for row in rows if row["overall"] == "degraded"),
+    "stopped": sum(1 for row in rows if row["overall"] == "stopped"),
+    "missing": sum(1 for row in rows if row["overall"] == "missing"),
+}
+
+json_path.write_text(
+    json.dumps({"summary": summary, "stacks": rows}, indent=2, sort_keys=True) + "\n",
+    encoding="utf-8",
+)
+PY
+}
+
+generate_platform_status_report() {
+  local spec stack vmid ip pct_log docker_log listeners_log pct_status health_status health_detail health_log overall
+  local report_tsv="${LOG_DIR}/platform-status.tsv"
+  local report_json="${LOG_DIR}/platform-status.json"
+  local report_log="${LOG_DIR}/platform-status.log"
+  local -a specs=("$@")
+
+  printf 'stack\tvmid\tip\tpct_status\thealth\toverall\tdetail\tpct_log\tdocker_log\tlisteners_log\thealth_log\n' >"${report_tsv}"
+
+  for spec in "${specs[@]}"; do
+    stack="$(stack_name "${spec}")"
+    vmid="$(stack_vmid "${spec}")"
+    ip="$(stack_ip "${spec}")"
+    pct_log="${LOG_DIR}/platform-status-${stack}-pct.log"
+    docker_log="${LOG_DIR}/platform-status-${stack}-docker.log"
+    listeners_log="${LOG_DIR}/platform-status-${stack}-listeners.log"
+
+    if run_status_capture "${pct_log}" ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct status '${vmid}'"; then
+      pct_status="$(awk -F': ' '/^status:/ {print $2; exit}' "${pct_log}")"
+      if [[ -z "${pct_status}" ]]; then
+        pct_status="unknown"
+      fi
+    else
+      pct_status="missing"
+    fi
+
+    health_status="skipped"
+    health_detail="container not running"
+    health_log=""
+    : >"${docker_log}"
+    : >"${listeners_log}"
+
+    if [[ "${pct_status}" == "running" ]]; then
+      run_status_capture "${docker_log}" \
+        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+          "pct exec '${vmid}' -- sh -lc 'if command -v docker >/dev/null 2>&1; then docker ps --format \"{{.Names}}|{{.Status}}|{{.Ports}}\"; else echo docker-unavailable; fi'" || true
+      run_status_capture "${listeners_log}" \
+        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+          "pct exec '${vmid}' -- sh -lc 'if command -v ss >/dev/null 2>&1; then ss -ltnp; else echo ss-unavailable; fi'" || true
+
+      probe_stack_health "${stack}" "${vmid}" "${ip}"
+      health_status="${PLATFORM_HEALTH_STATUS}"
+      health_detail="${PLATFORM_HEALTH_DETAIL}"
+      health_log="${PLATFORM_HEALTH_LOG}"
+    fi
+
+    if [[ "${pct_status}" == "missing" ]]; then
+      overall="missing"
+    elif [[ "${pct_status}" != "running" ]]; then
+      overall="stopped"
+    elif [[ "${health_status}" == "ok" ]]; then
+      overall="healthy"
+    elif [[ "${health_status}" == "skipped" ]]; then
+      overall="running"
+    else
+      overall="degraded"
+    fi
+
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+      "${stack}" \
+      "${vmid}" \
+      "${ip}" \
+      "${pct_status}" \
+      "${health_status}" \
+      "${overall}" \
+      "${health_detail}" \
+      "${pct_log}" \
+      "${docker_log}" \
+      "${listeners_log}" \
+      "${health_log}" >>"${report_tsv}"
+  done
+
+  write_platform_status_json "${report_tsv}" "${report_json}"
+
+  {
+    printf 'Platform status for %s\n' "${STAMP}"
+    printf '\n'
+    printf '%-20s %-5s %-12s %-10s %-8s %-9s %s\n' \
+      "STACK" "VMID" "IP" "PCT" "HEALTH" "OVERALL" "DETAIL"
+    tail -n +2 "${report_tsv}" | while IFS=$'\t' read -r stack vmid ip pct_status health_status overall health_detail _; do
+      printf '%-20s %-5s %-12s %-10s %-8s %-9s %s\n' \
+        "${stack}" "${vmid}" "${ip}" "${pct_status}" "${health_status}" "${overall}" "${health_detail}"
+    done
+    printf '\nTSV: %s\nJSON: %s\n' "${report_tsv}" "${report_json}"
+  } | tee "${report_log}" | tee -a "${RUN_LOG}"
 }
 
 create_evidence_dirs() {
@@ -881,6 +1312,7 @@ run_source_preflight_checks() {
 }
 
 run_live_preflight_checks() {
+  local authentik_url
   guard_pve_test
   run_logged "dns-authoritative-traefik" \
     bash -lc "dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"
@@ -890,9 +1322,10 @@ run_live_preflight_checks() {
     bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
     curl -fsS "http://10.57.1.10:9000/-/health/live/"
+  authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${AUTHENTIK_URL}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --no-verify-tls --json
 }
 
 phase_source_preflight() {
@@ -962,11 +1395,25 @@ phase_plan() {
   log_stack_plan "destroy" "${destroy_specs[@]}"
 }
 
+phase_platform_status() {
+  local -a specs
+
+  create_evidence_dirs
+  log "evidence_dir=${EVIDENCE_DIR}"
+  record_working_tree_state
+  record_branch_and_commit
+  guard_pve_test
+  load_stack_specs all specs
+  set_current_phase_stack_specs "${specs[@]}"
+  generate_platform_status_report "${specs[@]}"
+}
+
 phase_destroy() {
   local spec
   local -a specs
   create_evidence_dirs
   require_execute_approval
+  validate_approval_packet
   require_clean_tree
   load_stack_specs destroy specs
   set_current_phase_stack_specs "${specs[@]}"
@@ -1005,15 +1452,17 @@ phase_deploy_edge() {
 }
 
 phase_activate_edge() {
+  local authentik_url
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
   guard_pve_test
+  authentik_url="$(get_authentik_url)" || return 1
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${AUTHENTIK_URL}" --no-verify-tls --apply --json
+      --authentik-url "${authentik_url}" --no-verify-tls --apply --json
 
   guard_pve_test
   run_logged "publish-coredns" \
@@ -1025,7 +1474,7 @@ phase_activate_edge() {
 
   run_logged "reconcile-edge-post-activate-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${AUTHENTIK_URL}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --no-verify-tls --json
 }
 
 phase_deploy_platform() {
@@ -1043,15 +1492,16 @@ phase_deploy_platform() {
 }
 
 phase_final_validation() {
-  local host fqdn
+  local host fqdn authentik_url
   create_evidence_dirs
   record_working_tree_state
   guard_pve_test
+  authentik_url="$(get_authentik_url)" || return 1
 
   for host in "${BROWSER_HOSTS[@]}"; do
     fqdn="${host}.lab.gibbsgreatly.xyz"
-    run_logged "dns-authoritative-${host}" dig @10.57.1.13 +short "${fqdn}"
-    run_logged "dns-delegated-${host}" dig @10.57.1.1 +short "${fqdn}"
+    run_dns_answer_check "dns-authoritative-${host}" "10.57.1.13" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
+    run_dns_answer_check "dns-delegated-${host}" "10.57.1.1" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:10.57.2.10" "https://${fqdn}/"
   done
 
@@ -1060,11 +1510,12 @@ phase_final_validation() {
   run_logged "authentik-direct-health" curl -fsS http://10.57.1.10:9000/-/health/live/
   run_logged "final-reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${AUTHENTIK_URL}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --no-verify-tls --json
 }
 
 phase_cycle() {
   require_execute_approval
+  validate_approval_packet
   run_phase_handler "destroy" phase_destroy
   run_phase_handler "deploy-foundation" phase_deploy_foundation
   run_phase_handler "deploy-edge" phase_deploy_edge
@@ -1192,6 +1643,15 @@ parse_args() {
         APPROVAL_TEXT="${2:-}"
         shift 2
         ;;
+      --approval-packet)
+        if [[ $# -lt 2 ]]; then
+          printf 'Missing value for --approval-packet\n\n' >&2
+          usage
+          exit 1
+        fi
+        APPROVAL_PACKET="${2:-}"
+        shift 2
+        ;;
       --stamp)
         if [[ $# -lt 2 ]]; then
           printf 'Missing value for --stamp\n\n' >&2
@@ -1241,6 +1701,9 @@ main() {
       ;;
     plan)
       run_phase_handler "plan" phase_plan
+      ;;
+    platform-status)
+      run_phase_handler "platform-status" phase_platform_status
       ;;
     status)
       phase_status
