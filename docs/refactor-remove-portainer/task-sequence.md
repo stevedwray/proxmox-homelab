@@ -35,7 +35,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 04 | Update monitoring playbook | `pending` | 01 |
 | 05 | Update proxy playbook | `pending` | 01 |
 | 06 | Update netbox playbook | `pending` | 01 |
-| 06a | Add Tier 1 service masking to remaining non-agent playbooks | `pending` | None |
+| 06a | Add Tier 1 service masking to remaining non-agent playbooks | `complete` | None |
 
 ## C. Orchestration Boundary
 

@@ -67,7 +67,7 @@ prompts:
     file: 06a-mask-remaining-tier1-playbooks.yaml
     title: "Add Tier 1 service masking to remaining playbooks"
     type: development
-    status: pending
+    status: complete
     depends_on: []
     task_doc: docs/refactor-remove-portainer/tasks/06a-mask-remaining-tier1-playbooks.md
 

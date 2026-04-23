@@ -2,12 +2,13 @@
 id: rp-06a-mask-remaining-tier1-playbooks
 title: "Add Tier 1 service masking to remaining playbooks"
 type: development
-status: pending
+status: complete
 depends_on: []
 task_doc: docs/refactor-remove-portainer/tasks/06a-mask-remaining-tier1-playbooks.md
 validation_note: |
   Add the standard portainer-agent.service mask task to the remaining Tier 1
-  playbooks and run ansible-lint on the edited files.
+  playbooks and run ansible-lint from terraform/lxc/ansible/ on the edited
+  files.
 
 context: |
   The refactor uses a single-template model. Tier 1 safety comes from playbooks
@@ -32,7 +33,7 @@ workflow:
       failed_when: false.
     - Place it early in the playbook without restructuring unrelated logic.
     - Do not add portainer_agent, portainer_api, or app_stack behavior.
-    - Run ansible-lint on the edited playbooks.
+    - Run ansible-lint from terraform/lxc/ansible/ on the edited playbooks.
 
 postconditions:
   criteria:

@@ -56,6 +56,8 @@ patterns are:
 - `terragrunt run-all plan` or equivalent plan-only check
 - `terraform fmt -check` for Terraform edits
 - `ansible-lint` for playbook or role edits
+  Run it from `terraform/lxc/ansible/` so local roles resolve via the repo's
+  `ansible.cfg`.
 - `shellcheck` for shell-script edits
 - `python3 -m unittest ...` for added regression tests
 - `rg`/`grep` assertions for removed Portainer references or required mask tasks

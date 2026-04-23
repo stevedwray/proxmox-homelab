@@ -90,7 +90,8 @@ files. All of this is load-bearing for the edge infrastructure.
 grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
 # The only acceptable match is the mask task's service name string
 
-ansible-lint terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
+cd terraform/lxc/ansible
+ansible-lint playbooks/deploy-proxy-stack.yml
 
 scripts/teardown-deploy-test.sh source-preflight
 # Expected: syntax-check-deploy-proxy-stack passes

@@ -6,8 +6,9 @@ status: pending
 depends_on: [rp-00-inventory-template]
 task_doc: docs/refactor-remove-portainer/tasks/01-create-direct-stack-role.md
 validation_note: |
-  Run ansible-lint on the new role. Confirm community.docker.docker_compose_v2 is
-  available. Run SonarCloud if any Python/shell files were created:
+  Run ansible-lint on the new role from terraform/lxc/ansible/. Confirm
+  community.docker.docker_compose_v2 is available. Run SonarCloud if any
+  Python/shell files were created:
   ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
@@ -53,7 +54,7 @@ workflow:
          state: present and remove_orphans: {{ direct_stack_prune_on_update }}.
          This is NOT gated on SHA256 change — it runs every invocation to guarantee
          running state.
-    - Run ansible-lint terraform/lxc/ansible/roles/direct_stack/
+    - Run ansible-lint from terraform/lxc/ansible/: ansible-lint roles/direct_stack/
     - Confirm: grep -r "portainer|app_stack" terraform/lxc/ansible/roles/direct_stack/
       returns no output.
 
