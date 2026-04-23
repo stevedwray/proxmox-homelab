@@ -88,7 +88,8 @@ grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
 # Expected: no output (the portainer-agent.service string in the mask task is acceptable
 # — grep -i portainer will match it; confirm the only hit is the mask task itself)
 
-ansible-lint terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml
+cd terraform/lxc/ansible
+ansible-lint playbooks/deploy-authentik-stack.yml
 
 scripts/teardown-deploy-test.sh source-preflight
 # Expected: syntax-check-deploy-authentik-stack passes

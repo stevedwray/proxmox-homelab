@@ -41,6 +41,13 @@
     - docker_base
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json

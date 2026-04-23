@@ -29,6 +29,13 @@
     - role: lxc_base
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Check whether CoreDNS is already installed
       ansible.builtin.stat:
         path: "{{ coredns_binary }}"

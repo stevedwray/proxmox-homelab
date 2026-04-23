@@ -98,7 +98,8 @@ direct_stack_prune_on_update: true
 ## Validation
 
 ```bash
-ansible-lint terraform/lxc/ansible/roles/direct_stack/
+cd terraform/lxc/ansible
+ansible-lint roles/direct_stack/
 grep -r "portainer\|app_stack" terraform/lxc/ansible/roles/direct_stack/
 # Expected: no output
 ```

@@ -6,7 +6,7 @@ status: pending
 depends_on: [rp-01-direct-stack-role]
 task_doc: docs/refactor-remove-portainer/tasks/02-update-harbor-playbook.md
 validation_note: |
-  Run ansible-lint on the playbook after editing.
+  Run ansible-lint on the playbook from terraform/lxc/ansible/ after editing.
   Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
@@ -41,7 +41,7 @@ workflow:
       only portainer_api role and portainer_api_* vars — nothing else.
     - Update the comment block at the top of the file to remove Portainer references.
     - Do not change Play 3 or Play 4 in any way.
-    - Run ansible-lint.
+    - Run ansible-lint from terraform/lxc/ansible/.
     - Add a run_logged "syntax-check-deploy-harbor-stack" step to run_source_preflight_checks
       in scripts/teardown-deploy-test.sh as specified in the task document (bash -lc with
       ANSIBLE_ROLES_PATH and ANSIBLE_CONFIG set, ansible-playbook --syntax-check).

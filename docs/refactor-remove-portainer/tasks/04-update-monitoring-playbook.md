@@ -89,7 +89,8 @@ checks that the teardown test validates.
 grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
 # The only acceptable match is the mask task's service name string
 
-ansible-lint terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
+cd terraform/lxc/ansible
+ansible-lint playbooks/deploy-monitoring-stack.yml
 
 scripts/teardown-deploy-test.sh source-preflight
 # Expected: syntax-check-deploy-monitoring-stack passes

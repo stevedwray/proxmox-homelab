@@ -96,7 +96,8 @@ will fail the rebuild validation.
 grep -in "portainer" terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
 # Expected: no output (the comment at top may reference portainer — remove it)
 
-ansible-lint terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+cd terraform/lxc/ansible
+ansible-lint playbooks/deploy-harbor-stack.yml
 
 scripts/teardown-deploy-test.sh source-preflight
 # Expected: syntax-check-deploy-harbor-stack passes

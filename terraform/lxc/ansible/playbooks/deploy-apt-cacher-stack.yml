@@ -5,6 +5,13 @@
   gather_facts: false
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Install apt-cacher-ng
       ansible.builtin.apt:
         name: apt-cacher-ng

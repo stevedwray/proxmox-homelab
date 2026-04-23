@@ -69,12 +69,13 @@ rg -n "Mask portainer-agent service|portainer-agent.service" \
   terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml \
   terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
 
+cd terraform/lxc/ansible
 ansible-lint \
-  terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml \
-  terraform/lxc/ansible/playbooks/deploy-step-ca.yml \
-  terraform/lxc/ansible/playbooks/deploy-coredns.yml \
-  terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml \
-  terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
+  playbooks/deploy-portainer-stack.yml \
+  playbooks/deploy-step-ca.yml \
+  playbooks/deploy-coredns.yml \
+  playbooks/deploy-apt-cacher-stack.yml \
+  playbooks/deploy-ci-runner.yml
 ```
 
 ## Stop Conditions

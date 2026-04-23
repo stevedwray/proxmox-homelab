@@ -28,6 +28,13 @@
       ansible.builtin.setup:
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Install step-ca host dependencies
       ansible.builtin.apt:
         name:

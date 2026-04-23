@@ -136,7 +136,8 @@ updated** to use the new container name.
 grep -in "portainer\|app_stack" terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml
 # Expected: only the mask task's service name string
 
-ansible-lint terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml
+cd terraform/lxc/ansible
+ansible-lint playbooks/deploy-netbox-stack.yml
 
 scripts/teardown-deploy-test.sh source-preflight
 # Expected: syntax-check-deploy-netbox-stack passes
