@@ -106,7 +106,7 @@ prompts:
 
   - id: rp-10-update-docs
     file: 10-update-docs.yaml
-    title: "Create runbook and sync documentation"
+    title: "Sync documentation to the runbook-backed method"
     type: documentation
     status: pending
     depends_on:

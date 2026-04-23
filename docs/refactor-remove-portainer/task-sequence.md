@@ -48,7 +48,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 | # | Title | Status | Preconditions |
 |---|---|---|---|
-| 10 | Create shared validation runbook and sync documentation | `pending` | 06a, 07, 08, 09 |
+| 10 | Sync documentation to the runbook-backed method | `pending` | 06a, 07, 08, 09 |
 
 ## Dependency Graph
 

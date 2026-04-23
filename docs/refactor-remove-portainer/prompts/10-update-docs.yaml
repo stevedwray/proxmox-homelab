@@ -1,6 +1,6 @@
 ---
 id: rp-10-update-docs
-title: "Create runbook and sync documentation"
+title: "Sync documentation to the runbook-backed method"
 type: documentation
 status: pending
 depends_on:
@@ -10,24 +10,27 @@ depends_on:
   - rp-09-provision-script
 task_doc: docs/refactor-remove-portainer/tasks/10-update-docs.md
 validation_note: |
-  Confirm the package now has a clear source-of-truth order and shared runbook.
-  Then search repo docs for stale Portainer-everywhere / Terraform-runs-Ansible wording.
+  Confirm the package still has a clear source-of-truth order and shared
+  runbook. Then search repo docs for stale Portainer-everywhere /
+  Terraform-runs-Ansible wording.
 
 context: |
   The portainer-removal package should now follow the same method as
   docs/provisioning-refactor/: control docs, runbook, atomic tasks, and clearly
-  marked background documents. Repo-level docs also need to reflect the target
-  two-phase model and Tier 1/Tier 2 split.
+  marked background documents. That package foundation now exists, but the
+  final documentation sync task must verify it stays consistent and update
+  repo-level docs to reflect the target two-phase model and Tier 1/Tier 2
+  split.
 
 objective: |
-  Create the shared validation/runbook layer for this package and sync both
-  package-level and repo-level documentation to the target model.
+  Verify/refine the existing shared validation/runbook layer for this package
+  and sync both package-level and repo-level documentation to the target model.
 
 workflow:
   steps:
     - Read the package control docs and the repo-level docs in full.
-    - Create or update runbook.md so this package has shared validation, rebuild,
-      and rollback vocabulary.
+    - Verify and refine runbook.md so this package keeps a shared validation,
+      rebuild, and rollback vocabulary.
     - Ensure README.md, decisions.md, and task-sequence.md clearly describe
       source-of-truth ordering, one-task-per-session execution, and background-vs-operational docs.
     - Mark 01/02 as background context and 03 as legacy draft context.
@@ -37,7 +40,7 @@ workflow:
 
 postconditions:
   criteria:
-    - The package has a shared runbook and clear source-of-truth order.
+    - The package retains a shared runbook and clear source-of-truth order.
     - Background docs are explicitly marked as background or legacy.
     - No documentation states Terraform invokes Ansible for stack configuration.
     - ADR-04 reflects Tier 1 has no Portainer agent.

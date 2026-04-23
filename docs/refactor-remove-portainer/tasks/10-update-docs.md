@@ -1,4 +1,4 @@
-# Task 10: Create shared validation runbook and sync documentation
+# Task 10: Sync documentation to the runbook-backed method
 
 ## Type
 
@@ -6,23 +6,24 @@ Documentation
 
 ## Objective
 
-Bring the Portainer-removal package up to the same documentation method used by
-`docs/provisioning-refactor/`:
+Finalize the Portainer-removal package so it remains aligned with the
+documentation method used by `docs/provisioning-refactor/`:
 
 - clear source-of-truth ordering
 - shared validation/runbook contract
 - explicit task sequencing
 - background-vs-operational document separation
 
-Then update repo-level docs that still describe the old Portainer-everywhere or
-Terraform-runs-Ansible model.
+The control-doc package and `runbook.md` already exist; this task verifies and
+refines that package, then updates repo-level docs that still describe the old
+Portainer-everywhere or Terraform-runs-Ansible model.
 
 ## Files
 
 - `docs/refactor-remove-portainer/README.md`
 - `docs/refactor-remove-portainer/decisions.md`
 - `docs/refactor-remove-portainer/task-sequence.md`
-- `docs/refactor-remove-portainer/runbook.md` (create if missing)
+- `docs/refactor-remove-portainer/runbook.md`
 - `docs/refactor-remove-portainer/01-revised-architecture.md`
 - `docs/refactor-remove-portainer/02-terraform-ansible-separation.md`
 - `docs/refactor-remove-portainer/03-refactor-plan.md`
@@ -44,7 +45,7 @@ Terraform-runs-Ansible model.
 2. Ensure the package control docs clearly state:
    - this directory is the operational source of truth
    - one task equals one branch/session
-   - `runbook.md` is the shared validation contract
+   - `runbook.md` remains the shared validation contract
    - `01`/`02` are background reference and `03` is legacy draft context
 3. Ensure task sequencing covers all Tier 1 playbooks, including the
    service-mask-only group.
@@ -61,7 +62,7 @@ Terraform-runs-Ansible model.
 
 - The Portainer-removal package reads like an execution package, not a loose
   design note collection.
-- `runbook.md` exists and defines shared validation/rebuild vocabulary.
+- `runbook.md` remains present and defines shared validation/rebuild vocabulary.
 - Background docs are clearly marked as background/legacy.
 - Repo-level docs no longer describe the old Portainer-everywhere or
   Terraform-runs-Ansible model once the refactor is complete.
