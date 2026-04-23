@@ -31,7 +31,13 @@ terraform/lxc/stacks/netbox-stack/stack.yaml
 
 ## Preconditions
 
-- None. This task is independent and may be run before or after Tasks 02–06.
+- Task 00a complete. Task-complete validation for this refactor is currently
+  blocked on the scoped Terragrunt validation baseline.
+
+## Current Status Note
+
+- Task 00a is complete. Task 07 is now unblocked and should use the scoped
+  dry-plan path from `./scripts/validate-portainer-refactor-plan.sh`.
 
 ## Background
 
@@ -181,7 +187,7 @@ grep -rn "portainer_agent: true" terraform/lxc/stacks/portainer-stack/ \
   terraform/lxc/stacks/netbox-stack/
 # Expected: no output
 
-./with-secrets terragrunt run-all plan
+./scripts/validate-portainer-refactor-plan.sh
 # Expected: no LXC infrastructure changes. stack_cleanup/null_resource metadata
 # diffs may appear for stacks that are switching portainer_agent from true to false.
 

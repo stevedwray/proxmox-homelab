@@ -329,7 +329,7 @@ resource "local_file" "ansible_inventory" {
     registry_host       = try(local.stack.registry_host, var.registry_host)
     apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
     dns_server          = local.effective_dns_server
-    network_zone        = coalesce(local.stack_network_zone, "")
+    network_zone        = local.stack_network_zone != null ? local.stack_network_zone : ""
     contract_dns_server = local.resolved_sdn_gateway != null ? local.resolved_sdn_gateway : ""
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
