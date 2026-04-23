@@ -86,7 +86,7 @@ No dependency conflict requiring source code change was found in the in-scope
 6. `proxy-stack`
 7. `step-ca-stack`
 8. `authentik-stack`
-9. edge reconciliation activation
+9. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
 10. `monitoring-stack`
 11. `netbox-stack`
 
