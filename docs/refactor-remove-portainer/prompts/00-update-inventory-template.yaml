@@ -1,0 +1,43 @@
+---
+id: rp-00-inventory-template
+title: "Update inventory.tpl to render ansible_playbook"
+type: development
+status: pending
+task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
+validation_note: |
+  After editing: run ./with-secrets terragrunt run-all plan and confirm no
+  infrastructure changes. After apply, grep the harbor-stack inventory.
+
+context: |
+  Terraform generates an inventory.yml per stack from terraform/lxc/templates/inventory.tpl.
+  The template receives ansible_playbook as a variable (main.tf line ~327) but never
+  renders it into the output file. The provision.sh orchestrator (a later task) reads
+  ansible_playbook from the generated inventory to determine which playbook to run.
+  Without this field in the inventory, provision.sh will silently skip every stack.
+
+objective: |
+  Add a conditional rendering block for ansible_playbook to inventory.tpl so that
+  stacks with ansible_playbook set in stack.yaml produce that field as a host var in
+  their generated inventory.yml.
+
+workflow:
+  steps:
+    - Read terraform/lxc/templates/inventory.tpl in full.
+    - Observe how other optional fields are rendered (network_zone, app_stack_name use
+      %{ if ... ~} conditional blocks).
+    - Add the ansible_playbook conditional block after the stack_name line, before
+      the vmid line, preserving the exact indentation of the surrounding YAML host
+      vars block.
+    - Run ./with-secrets terragrunt run-all plan to confirm no infrastructure changes.
+    - If pve-test is up and inventories exist, run terragrunt apply and then grep the
+      harbor-stack inventory for ansible_playbook.
+
+postconditions:
+  criteria:
+    - terraform plan is clean (no infrastructure changes).
+    - A stack with ansible_playbook in stack.yaml produces that field in its inventory.
+    - A stack without ansible_playbook does not produce the field in its inventory.
+
+stop_conditions:
+  - ansible_playbook is already in inventory.tpl — report and do nothing.
+  - terraform plan shows any infrastructure change after the edit.

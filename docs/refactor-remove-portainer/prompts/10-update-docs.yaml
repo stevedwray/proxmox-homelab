@@ -1,0 +1,52 @@
+---
+id: rp-10-update-docs
+title: "Update platform documentation"
+type: documentation
+status: pending
+depends_on:
+  - rp-07-classify-stacks
+  - rp-08-remove-local-exec
+  - rp-09-provision-script
+task_doc: docs/refactor-remove-portainer/tasks/10-update-docs.md
+validation_note: |
+  Run SonarCloud after editing markdown and YAML files:
+  source .env && sonar-scanner
+
+context: |
+  All code changes are complete. The following documentation still describes the old
+  model where Terraform invokes Ansible and Portainer agents exist on all containers:
+    - terraform/lxc/PLATFORM_CONTRACT.md
+    - docs/design/architecture.md (ADR-04, SEC-02)
+    - terraform/lxc/README.md
+    - docs/plan/README.md (may reference local-exec)
+
+objective: |
+  Update the four documents listed above to reflect the two-phase deployment model
+  and the Tier 1 (no agent) / Tier 2 (Portainer agent) split.
+
+workflow:
+  steps:
+    - Read all four files in full before editing.
+    - "In PLATFORM_CONTRACT.md: add direct_stack to shared roles; note app_stack and
+      portainer_api are Tier 2 only; add deployment_tier field to stack.yaml fields
+      table; note portainer_agent and portainer_server_ip are Tier 2 only."
+    - "In docs/design/architecture.md: locate ADR-04 (Container Management Plane) and
+      update decision text and rationale to reflect platform containers have no
+      Portainer agent. Update SEC-02 scope to Tier 2 application stacks only."
+    - "In terraform/lxc/README.md: add a Deployment model section with the two-phase
+      workflow (terragrunt apply then provision.sh) and the full rebuild sequence."
+    - "In docs/plan/README.md: search for any text implying Terraform invokes Ansible
+      or that local-exec runs playbooks. Correct those references."
+    - Run sonar-scanner.
+
+postconditions:
+  criteria:
+    - No documentation states Terraform invokes Ansible for stack configuration.
+    - ADR-04 reflects Tier 1 has no Portainer agent.
+    - PLATFORM_CONTRACT.md lists direct_stack and deployment_tier.
+    - sonar-scanner reports no new issues.
+
+stop_conditions:
+  - ADR-04 does not exist in docs/design/architecture.md — report the actual ADR
+    numbering before editing.
+  - docs/plan/README.md does not exist — skip that file and report.

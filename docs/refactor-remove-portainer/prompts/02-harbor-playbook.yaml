@@ -1,0 +1,57 @@
+---
+id: rp-02-harbor-playbook
+title: "Update harbor playbook — remove Portainer plays"
+type: development
+status: pending
+depends_on: [rp-01-direct-stack-role]
+task_doc: docs/refactor-remove-portainer/tasks/02-update-harbor-playbook.md
+validation_note: |
+  Run ansible-lint on the playbook after editing.
+  Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  Harbor is the container registry and a bootstrap dependency — it must be deployable
+  before most other services can pull images. Requiring Portainer to deploy or register
+  Harbor creates a circular bootstrap dependency.
+
+  Harbor does NOT use app_stack for its Docker deployment. It uses the harbor_installer
+  role, which downloads the Harbor offline installer and runs its own compose setup.
+  The Portainer involvement in the current playbook is ONLY:
+  - portainer_agent role in Play 1 (agent installation)
+  - portainer_api role in Play 2 (endpoint registration)
+  Neither is involved in actually deploying Harbor's containers.
+
+  Plays 3 (harbor_installer) and 4 (harbor_postconfigure) must not be touched.
+
+objective: |
+  Remove portainer_agent from Play 1, remove Play 2 entirely, add the platform-tier
+  agent service mask task.
+
+workflow:
+  steps:
+    - Read the full playbook terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml.
+    - Confirm the playbook has four plays. Confirm Play 3 uses harbor_installer and
+      Play 4 uses harbor_postconfigure.
+    - "In Play 1: remove portainer_agent from the roles list. Remove any vars that exist
+      solely for portainer_agent (portainer_agent_* prefixed vars). Add the platform
+      service mask task from the task document at the end of the tasks section (a
+      systemd task that sets portainer-agent.service masked=true, enabled=false,
+      failed_when=false). Rename the play to Configure Docker base."
+    - Remove Play 2 (Register endpoint with Portainer) entirely. This play contains
+      only portainer_api role and portainer_api_* vars — nothing else.
+    - Update the comment block at the top of the file to remove Portainer references.
+    - Do not change Play 3 or Play 4 in any way.
+    - Run ansible-lint.
+
+postconditions:
+  criteria:
+    - grep -in portainer returns only the mask task's service name string.
+    - ansible-lint passes.
+    - harbor_installer and harbor_postconfigure roles are present and unchanged.
+    - Play count is 3 (was 4).
+
+stop_conditions:
+  - Play 2 contains any task that is not a pure portainer_api role call — report the
+    task content before removing.
+  - Play 1 contains a portainer_agent_* variable that is also used by harbor_installer
+    or harbor_postconfigure — report before removing.

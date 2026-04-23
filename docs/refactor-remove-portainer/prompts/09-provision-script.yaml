@@ -1,0 +1,62 @@
+---
+id: rp-09-provision-script
+title: "Create scripts/provision.sh"
+type: development
+status: pending
+depends_on:
+  - rp-00-inventory-template
+  - rp-08-remove-local-exec
+task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
+validation_note: |
+  Run shellcheck scripts/provision.sh.
+  Test with ./with-secrets ./scripts/provision.sh --check --stack harbor-stack.
+  Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  Terraform no longer calls Ansible for stack configuration. This script is the
+  replacement orchestrator. It reads the inventory.yml files Terraform generates and
+  runs each stack's playbook in dependency order. ansible_playbook is now a host var
+  in the inventory after Task 00.
+
+  The script must set the same ANSIBLE_* environment variables that the removed
+  null_resource.ansible_provision was setting in main.tf.
+
+  Platform stack order (from decisions.md Decision 7):
+    portainer-stack, harbor-stack, apt-cacher-stack, ci-runner-01,
+    dns-stack, step-ca-stack, authentik-stack, proxy-stack,
+    monitoring-stack, netbox-stack
+
+objective: |
+  Create scripts/provision.sh with --tier, --stack, and --check flags. Script reads
+  ansible_playbook from generated inventory.yml and runs each playbook in order.
+
+workflow:
+  steps:
+    - Read a generated inventory.yml (e.g. terraform/lxc/stacks/harbor-stack/inventory.yml)
+      to confirm ansible_playbook is present as a host var and determine the exact yq
+      path to extract it from the nested YAML structure.
+    - Check the removed local-exec block in git history or from main.tf to confirm the
+      exact ANSIBLE_* environment variable values (ANSIBLE_HOST_KEY_CHECKING, ANSIBLE_CONFIG,
+      ANSIBLE_ROLES_PATH, ANSIBLE_LOCAL_TEMP, ANSIBLE_SSH_CONTROL_PATH_DIR).
+    - Create scripts/provision.sh using the template in the task document. Adjust the
+      yq path for ansible_playbook if the actual inventory structure differs from the
+      template.
+    - Make the script executable with chmod +x.
+    - Run shellcheck scripts/provision.sh — fix any issues.
+    - Test the SKIP path by running with a stack that has no ansible_playbook.
+    - If pve-test is up, test with --check --stack harbor-stack.
+
+postconditions:
+  criteria:
+    - shellcheck passes with no errors or warnings.
+    - Script outputs SKIP for stacks with no inventory.yml.
+    - Script outputs SKIP for stacks with no ansible_playbook in inventory.
+    - ./with-secrets ./scripts/provision.sh --check --stack harbor-stack exits 0.
+
+stop_conditions:
+  - ansible_playbook is not in the generated inventory despite Task 00 being complete
+    — report the inventory structure and inventory.tpl content.
+  - yq is not installed or the path expression fails — report yq version and the
+    actual inventory structure.
+  - shellcheck reports errors that cannot be fixed without changing the script design
+    — report the errors.
