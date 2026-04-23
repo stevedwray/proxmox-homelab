@@ -31,13 +31,14 @@ terraform/lxc/stacks/netbox-stack/stack.yaml
 
 ## Preconditions
 
-- Task 00a complete. Task-complete validation for this refactor is currently
-  blocked on the scoped Terragrunt validation baseline.
+- Task 00a complete.
+- Task 00b complete.
 
 ## Current Status Note
 
-- Task 00a is complete. Task 07 is now unblocked and should use the scoped
-  dry-plan path from `./scripts/validate-portainer-refactor-plan.sh`.
+- Task 07 is unblocked by Task 00b. Downstream task-complete dry-plan checks
+  now use the platform-only helper, and `portainer_agent` assertions should
+  target only intended `stack.yaml` files.
 
 ## Background
 
@@ -175,19 +176,20 @@ grep -rn "deployment_tier" terraform/lxc/stacks/portainer-stack/ \
 # Expected: 10 lines, each showing "deployment_tier: platform"
 
 # No platform stack has portainer_agent: true
-grep -rn "portainer_agent: true" terraform/lxc/stacks/portainer-stack/ \
-  terraform/lxc/stacks/harbor-stack/ \
-  terraform/lxc/stacks/apt-cacher-stack/ \
-  terraform/lxc/stacks/ci-runner-01/ \
-  terraform/lxc/stacks/dns-stack/ \
-  terraform/lxc/stacks/step-ca-stack/ \
-  terraform/lxc/stacks/authentik-stack/ \
-  terraform/lxc/stacks/proxy-stack/ \
-  terraform/lxc/stacks/monitoring-stack/ \
-  terraform/lxc/stacks/netbox-stack/
+grep -n "portainer_agent: true" \
+  terraform/lxc/stacks/portainer-stack/stack.yaml \
+  terraform/lxc/stacks/harbor-stack/stack.yaml \
+  terraform/lxc/stacks/apt-cacher-stack/stack.yaml \
+  terraform/lxc/stacks/ci-runner-01/stack.yaml \
+  terraform/lxc/stacks/dns-stack/stack.yaml \
+  terraform/lxc/stacks/step-ca-stack/stack.yaml \
+  terraform/lxc/stacks/authentik-stack/stack.yaml \
+  terraform/lxc/stacks/proxy-stack/stack.yaml \
+  terraform/lxc/stacks/monitoring-stack/stack.yaml \
+  terraform/lxc/stacks/netbox-stack/stack.yaml
 # Expected: no output
 
-./scripts/validate-portainer-refactor-plan.sh
+./scripts/validate-portainer-refactor-platform-plan.sh
 # Expected: no LXC infrastructure changes. stack_cleanup/null_resource metadata
 # diffs may appear for stacks that are switching portainer_agent from true to false.
 

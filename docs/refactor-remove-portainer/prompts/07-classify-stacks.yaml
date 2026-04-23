@@ -3,11 +3,12 @@ id: rp-07-classify-stacks
 title: "Classify stack execution intent explicitly"
 type: development
 status: pending
-depends_on: [rp-00a-plan-baseline]
+depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
 task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
 validation_note: |
   deployment_tier is metadata-only, but portainer_agent still affects
   stack_cleanup. Confirm there are no LXC infrastructure changes after editing.
+  For `portainer_agent: true` checks, target only intended stack.yaml files.
 
 context: |
   The deployment_tier field classifies each stack for provision.sh and makes intent
@@ -37,7 +38,10 @@ workflow:
     - "For any Phase 06 app stack stack.yaml files that exist (pihole-stack, arr-stack,
       jellyfin-stack, game-stack), add deployment_tier: apps."
     - Do not edit test-docker, test-lxc, or net-* stacks.
-    - Run ./scripts/validate-portainer-refactor-plan.sh to confirm no LXC infrastructure changes.
+    - For `portainer_agent: true` assertions, target only intended stack.yaml files
+      (not recursive directory scans).
+    - Run ./scripts/validate-portainer-refactor-platform-plan.sh to confirm no LXC
+      infrastructure changes for downstream platform stacks.
     - "Create terraform/lxc/test_stack_classification.py as specified in the task document
       (two tests: deployment_tier platform for all 10 stacks; portainer_agent false for all 10)."
     - "Add test_stack_classification.py to the run_logged edge-unit-tests python3 -m unittest

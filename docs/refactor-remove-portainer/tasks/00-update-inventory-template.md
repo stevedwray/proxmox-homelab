@@ -21,13 +21,13 @@ edit.
 
 ## Preconditions
 
-- Task 00a complete. Task-complete validation for this refactor is currently
-  blocked on the scoped Terragrunt validation baseline.
+- Task 00a complete.
+- Task 00b complete.
 
 ## Current Status Note
 
-- Task 00a is complete. Task 00 is now unblocked and should use the scoped
-  dry-plan path from `./scripts/validate-portainer-refactor-plan.sh`.
+- Task 00 is unblocked by Task 00b. Downstream task-complete dry-plan checks
+  now use the platform-only helper that excludes `test-docker` and `test-lxc`.
 
 ## Background
 
@@ -134,9 +134,11 @@ Other optional fields use a conditional block pattern:
 
 ```bash
 # Check the template renders correctly (dry-run via plan)
-./scripts/validate-portainer-refactor-plan.sh
+./scripts/validate-portainer-refactor-platform-plan.sh
 
-# After apply, verify a stack with ansible_playbook set has it in inventory
+# Optional local evidence only when generated inventory.yml files already exist
+# in the current workspace (for example, after apply).
+# Verify a stack with ansible_playbook set has it in inventory
 grep "ansible_playbook" terraform/lxc/stacks/harbor-stack/inventory.yml
 
 # Verify a stack without ansible_playbook set does not have the line
