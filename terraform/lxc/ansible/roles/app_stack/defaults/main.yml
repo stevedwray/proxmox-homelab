@@ -15,6 +15,7 @@ app_stack_admin_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandat
 app_stack_name: "nginx-test"
 app_stack_endpoint_name: "{{ inventory_hostname }}"
 app_stack_prune_on_update: true
+app_stack_force_redeploy: false
 
 # Stack environment variables passed to Portainer (list of {name, value} dicts)
 # These are resolved as ${VAR} in the compose file by Portainer.

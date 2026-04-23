@@ -50,6 +50,11 @@
         url: "https://github.com/smallstep/cli/releases/download/v{{ step_cli_version }}/step_linux_amd64.tar.gz"
         dest: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
         mode: "0644"
+        timeout: 30
+      register: step_cli_download
+      until: step_cli_download is succeeded
+      retries: 5
+      delay: 5
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
 
     - name: Download step-ca release
@@ -57,6 +62,11 @@
         url: "https://github.com/smallstep/certificates/releases/download/v{{ step_ca_version }}/step-ca_linux_amd64.tar.gz"
         dest: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
         mode: "0644"
+        timeout: 30
+      register: step_ca_download
+      until: step_ca_download is succeeded
+      retries: 5
+      delay: 5
       when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
 
     - name: Create step CLI installation directory

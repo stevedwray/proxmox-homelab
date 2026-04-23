@@ -1,8 +1,8 @@
 # Teardown/Deploy Test Plan
 
-This directory is the source of truth for planning and executing a controlled
-`pve-test` teardown/deploy rehearsal after the stack-owned edge provisioning
-refactor.
+This directory is the source of truth for planning, executing, and repeating a
+controlled `pve-test` teardown/deploy rehearsal after the stack-owned edge
+provisioning refactor.
 
 The goal is to prove that the platform can be destroyed and rebuilt from source
 in the documented Mode 2 order, including CoreDNS, Traefik, Authentik, and the
@@ -15,10 +15,15 @@ operator has explicitly approved the destructive window.
 
 ## Current Status
 
-Planning is the only approved phase. The known Stage 3a `proxy-stack` ordering
-conflict has been resolved in source, but the test remains non-executable until
-Task 01 through Task 03 close every `REQUIRES_OPERATOR_INPUT` and `VERIFY` gate
-in [variables.md](variables.md).
+The first full teardown/rebuild rehearsal completed successfully and is
+summarized in [reports/20260422-044416.md](reports/20260422-044416.md).
+The repeatable harness is documented in
+[repeatable-test.md](repeatable-test.md) and implemented at
+`scripts/teardown-deploy-test.sh`.
+
+The harness is safe by default: non-destructive validation phases can run during
+development, while destroy/apply/publish phases require explicit execution
+approval.
 
 ## Target Outcome
 
@@ -83,6 +88,13 @@ Production `pve` is out of scope.
 - [task-sequence.md](task-sequence.md) lists the atomic test plan.
 - [operations-plan.md](operations-plan.md) breaks the test into single-stack
   and single-handoff execution components with file touch sets.
+- [repeatable-test.md](repeatable-test.md) describes the reusable harness for
+  repeated preflight, live validation, and approved teardown/deploy cycles.
+- [recovery-checklist-20260423.md](recovery-checklist-20260423.md) captures the
+  strict read-only incident recovery checklist before any future approved
+  mutating session.
+- [harness-roadmap.md](harness-roadmap.md) lists the remaining work needed to
+  turn the current harness prototype into a robust reusable playbook.
 - [runbook.md](runbook.md) contains the operator command flow.
 - [tasks/](tasks/) contains detailed task documents.
 - [prompts/](prompts/) contains matching AI-agent prompts.

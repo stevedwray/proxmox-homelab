@@ -148,7 +148,14 @@
          (app_stack_current_info.json.Env | default([]) | to_json | hash('sha256') != app_stack_env_sha) }}
   when: app_stack_existing_id is defined
 
-- name: Update stack (content changed)
+- name: Determine if redeploy should be forced
+  ansible.builtin.set_fact:
+    app_stack_should_redeploy: >-
+      {{ (app_stack_needs_update | default(false) | bool) or
+         (app_stack_force_redeploy | default(false) | bool) }}
+  when: app_stack_existing_id is defined
+
+- name: Update stack (content changed or force redeploy requested)
   ansible.builtin.uri:
     url: "http://{{ app_stack_server_ip }}:{{ app_stack_server_port }}/api/stacks/{{ app_stack_existing_id }}?endpointId={{ app_stack_target_endpoint_id }}"
     method: PUT
@@ -166,17 +173,25 @@
   retries: 3
   delay: 20
   until: app_stack_update_result.status == 200
-  when: app_stack_existing_id is defined and app_stack_needs_update | bool
+  when: app_stack_existing_id is defined and app_stack_should_redeploy | bool
   delegate_to: localhost
 
 - name: Display update result
   ansible.builtin.debug:
-    msg: "Stack '{{ app_stack_name }}' updated (compose content changed)"
-  when: app_stack_existing_id is defined and app_stack_needs_update | default(false) | bool
+    msg: >-
+      Stack '{{ app_stack_name }}' updated
+      ({% if app_stack_force_redeploy | default(false) | bool and not (app_stack_needs_update | default(false) | bool) %}
+      force redeploy requested
+      {% elif app_stack_force_redeploy | default(false) | bool and app_stack_needs_update | default(false) | bool %}
+      content changed and force redeploy requested
+      {% else %}
+      compose content changed
+      {% endif %})
+  when: app_stack_existing_id is defined and app_stack_should_redeploy | default(false) | bool
   delegate_to: localhost
 
 - name: Display no-change result
   ansible.builtin.debug:
     msg: "Stack '{{ app_stack_name }}' is up-to-date (no changes needed)"
-  when: app_stack_existing_id is defined and not (app_stack_needs_update | default(false) | bool)
+  when: app_stack_existing_id is defined and not (app_stack_should_redeploy | default(false) | bool)
   delegate_to: localhost
