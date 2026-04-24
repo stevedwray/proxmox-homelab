@@ -23,6 +23,7 @@ provides:
     port: 3142
     protocol: tcp
 ansible_playbook: "deploy-apt-cacher-stack"
+deployment_tier: platform
 portainer_agent: false
 
 # pve-test service IPs (explicit — do not rely on variable defaults)

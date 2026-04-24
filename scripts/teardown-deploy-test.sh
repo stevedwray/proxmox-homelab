@@ -1300,7 +1300,8 @@ run_source_preflight_checks() {
       terraform/lxc/test_discover_authentik_edge.py \
       terraform/lxc/test_reconcile_authentik_edge.py \
       terraform/lxc/test_reconcile_edge.py \
-      terraform/lxc/test_inventory_template.py
+      terraform/lxc/test_inventory_template.py \
+      terraform/lxc/test_stack_classification.py
   run_logged "git-diff-check" git -C "${REPO_ROOT}" diff --check
 
   rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"

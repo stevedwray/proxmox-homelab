@@ -40,4 +40,5 @@ apt_cacher_host: ""  # No apt proxy on first Harbor deploy — pulls from Docker
 
 # Deployment
 ansible_playbook: "deploy-harbor-stack"
-portainer_agent: true
+deployment_tier: platform
+portainer_agent: false
