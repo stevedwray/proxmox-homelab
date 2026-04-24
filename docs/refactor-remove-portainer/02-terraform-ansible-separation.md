@@ -26,7 +26,7 @@ infrastructure (LXC exists, network attached, storage allocated). Ansible owns c
 
 ## Phase 1 — Infrastructure (Terraform / Terragrunt)
 
-**Command:** `./with-secrets terragrunt run-all apply`
+**Command:** `./with-secrets terragrunt run --all apply`
 **Scope:** `terraform/lxc/stacks/<stack>/`
 **Runs from:** operator workstation
 
@@ -51,7 +51,7 @@ infrastructure (LXC exists, network attached, storage allocated). Ansible owns c
 
 ### Handoff artefact
 
-After `terragrunt run-all apply`, each stack directory contains a generated
+After `terragrunt run --all apply`, each stack directory contains a generated
 `inventory.yml` that Ansible consumes in Phase 2. This file is the only handoff
 between the two phases. It contains:
 
@@ -158,7 +158,7 @@ with no `depends_on` are provisioned in parallel.
 
 ```bash
 # 1. Provision infrastructure
-./with-secrets terragrunt run-all apply
+./with-secrets terragrunt run --all apply
 
 # 2. Configure platform tier
 ./with-secrets ./scripts/provision.sh --tier platform

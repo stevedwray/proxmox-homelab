@@ -119,10 +119,10 @@ two-phase flow:
 
 ```bash
 # 1. Destroy all LXCs
-./with-secrets terragrunt run-all destroy
+./with-secrets terragrunt run --all destroy
 
 # 2. Provision infrastructure
-./with-secrets terragrunt run-all apply
+./with-secrets terragrunt run --all apply
 
 # 3. Configure platform tier explicitly
 ./with-secrets ./scripts/provision.sh --tier platform
