@@ -961,6 +961,9 @@ stack_apply() {
   guard_pve_test
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt apply -auto-approve"
+  guard_pve_test
+  run_logged "provision-${stack}" \
+    "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
   validate_stack_smoke "${spec}"
 }
 
