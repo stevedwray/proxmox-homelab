@@ -121,7 +121,7 @@ prompts:
     file: 09-provision-script.yaml
     title: "Create explicit Ansible orchestration path"
     type: development
-    status: pending
+    status: blocked
     depends_on:
       - rp-00-inventory-template
       - rp-07-classify-stacks
