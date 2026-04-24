@@ -1,8 +1,8 @@
-# NetBox stack lifecycle: Docker base → Portainer Agent → provision config → register → deploy → superuser + API token
+# NetBox stack lifecycle: Docker base -> provision config -> deploy -> superuser + API token
 # Extends the standard deploy-stack.yml with NetBox-specific host preparation.
 
 ---
-- name: Configure Docker base and Portainer Agent
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
@@ -11,7 +11,6 @@
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -32,6 +31,13 @@
 
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
 
   handlers:
     - name: Restart Docker
@@ -62,18 +68,16 @@
         - plugins.py
         - logging.py
 
-- name: Register endpoint and deploy stack via Portainer API
+- name: Deploy NetBox compose stack
   hosts: all
-  become: false
+  become: true
   gather_facts: false
 
   vars:
-    app_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
-    app_stack_endpoint_name: "{{ inventory_hostname }}"
-    app_stack_force_redeploy: true
-    app_stack_registry_host: "{{ registry_host | default('10.57.3.10') }}"
-    app_stack_server_ip: "{{ portainer_server_ip }}"
-    app_stack_env:
+    direct_stack_name: "netbox"
+    direct_stack_compose_dir: "/srv/docker/netbox"
+    direct_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    direct_stack_env:
       - name: NETBOX_DB_PASSWORD
         value: "{{ lookup('env', 'NETBOX_DB_PASSWORD') | mandatory('NETBOX_DB_PASSWORD env var is not set') }}"
       - name: NETBOX_REDIS_PASSWORD
@@ -85,14 +89,10 @@
       - name: NETBOX_API_TOKEN_PEPPER
         value: "{{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') | mandatory('NETBOX_API_TOKEN_PEPPER env var is not set') }}"
       - name: REGISTRY_HOST
-        value: "{{ app_stack_registry_host }}"
-    portainer_api_server_ip: "{{ portainer_server_ip }}"
-    portainer_api_endpoint_name: "{{ inventory_hostname }}"
-    portainer_api_agent_ip: "{{ ansible_host }}"
+        value: "{{ registry_host | default('10.57.3.10') }}"
 
   roles:
-    - portainer_api
-    - app_stack
+    - direct_stack
 
 - name: Create NetBox superuser and API token
   hosts: all
@@ -100,7 +100,7 @@
   gather_facts: false
 
   vars:
-    netbox_container: "{{ app_stack_name }}-netbox-1"
+    netbox_container: "netbox-netbox-1"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
     netbox_superuser_username: admin
     netbox_superuser_email: "admin@gibbsgreatly.xyz"
