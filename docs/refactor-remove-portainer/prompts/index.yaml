@@ -121,7 +121,7 @@ prompts:
     file: 08b-retire-legacy-stack-cleanup-ansible-path.yaml
     title: "Retire legacy stack_cleanup Ansible path before inventory-handoff validation"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - rp-08-remove-local-exec
     task_doc: docs/refactor-remove-portainer/tasks/08b-retire-legacy-stack-cleanup-ansible-path.md
@@ -130,7 +130,7 @@ prompts:
     file: 08a-generate-real-inventory-handoff-artifact.yaml
     title: "Generate real inventory handoff artifact for Task 09 preflight"
     type: development
-    status: blocked
+    status: pending
     depends_on:
       - rp-00-inventory-template
       - rp-07-classify-stacks
