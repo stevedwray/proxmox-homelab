@@ -45,7 +45,8 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | # | Title | Status | Preconditions |
 |---|---|---|---|
 | 08 | Remove Terraform LXC playbook runner (`ansible_provision`) | `complete` | 02, 03, 04, 05, 06, 06a |
-| 09 | Create `scripts/provision.sh` orchestration path | `blocked` | 00, 07, 08 |
+| 08a | Generate real inventory handoff artifact for Task 09 preflight | `pending` | 00, 07, 08 |
+| 09 | Create `scripts/provision.sh` orchestration path | `blocked` | 08a |
 
 ## D. Validation And Documentation
 
@@ -72,7 +73,9 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 06a (mask remaining Tier 1 playbooks) ─┐
 07  (stack classification)             ├── 08 (remove Terraform playbook runner)
-                                        └── 09 (provision.sh)  ← also needs 00 and 08
+                                        └── 08a (real inventory handoff artifact) ─── 09 (provision.sh)
+
+00 (inventory handoff contract) ────────────────────────────────────────────────┘
 
 10 (runbook + docs sync) ← needs 06a, 07, 08, 09
 ```
