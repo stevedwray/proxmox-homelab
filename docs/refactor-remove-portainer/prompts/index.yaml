@@ -117,15 +117,25 @@ prompts:
       - rp-06a-mask-remaining-tier1-playbooks
     task_doc: docs/refactor-remove-portainer/tasks/08-remove-terraform-local-exec.md
 
+  - id: rp-08b-retire-legacy-stack-cleanup-path
+    file: 08b-retire-legacy-stack-cleanup-ansible-path.yaml
+    title: "Retire legacy stack_cleanup Ansible path before inventory-handoff validation"
+    type: development
+    status: pending
+    depends_on:
+      - rp-08-remove-local-exec
+    task_doc: docs/refactor-remove-portainer/tasks/08b-retire-legacy-stack-cleanup-ansible-path.md
+
   - id: rp-08a-real-inventory-handoff
     file: 08a-generate-real-inventory-handoff-artifact.yaml
     title: "Generate real inventory handoff artifact for Task 09 preflight"
     type: development
-    status: pending
+    status: blocked
     depends_on:
       - rp-00-inventory-template
       - rp-07-classify-stacks
       - rp-08-remove-local-exec
+      - rp-08b-retire-legacy-stack-cleanup-path
     task_doc: docs/refactor-remove-portainer/tasks/08a-generate-real-inventory-handoff-artifact.md
 
   - id: rp-09-provision-script

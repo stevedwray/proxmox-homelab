@@ -25,6 +25,9 @@ final rebuild gate.
 - Task 07 complete — active stacks declare `deployment_tier`.
 - Task 08 complete — Terraform no longer invokes Ansible for stack
   configuration.
+- Task 08b complete — the legacy destroy-time `null_resource.stack_cleanup`
+  Ansible cleanup path is retired from Terraform code/state in scope for
+  `harbor-stack` validation.
 - Runbook preflight returns `pve-test`.
 - If `terraform/lxc/stacks/harbor-stack/inventory.yml` already exists, the
   executor must still prove Terraform provenance before treating this task as a
@@ -67,6 +70,9 @@ Stop condition:
 ```bash
 grep -E "ansible_playbook|deployment_tier" terraform/lxc/stacks/harbor-stack/stack.yaml
 grep -n 'filename = "${local.stack_dir}/inventory.yml"' terraform/lxc/main.tf
+grep -n "resource \"null_resource\" \"stack_cleanup\"" terraform/lxc/main.tf
+grep -n "when        = destroy" terraform/lxc/main.tf
+grep -n "ansible-playbook -i localhost, playbooks/cleanup.yml" terraform/lxc/main.tf
 ./with-secrets bash -c 'cd terraform/lxc/stacks/harbor-stack && terragrunt plan'
 ```
 
@@ -74,6 +80,8 @@ Expected outcome:
 
 - `harbor-stack` still declares `ansible_playbook` and `deployment_tier`.
 - Terraform still manages `inventory.yml` through `local_file.ansible_inventory`.
+- Source inspection confirms no remaining destroy-time `stack_cleanup` path that
+  invokes Ansible cleanup playbooks.
 - The Terragrunt plan stays within the representative `harbor-stack` boundary.
 
 Acceptable scope for the plan:
@@ -86,6 +94,11 @@ Unacceptable scope for the plan:
 - anything that requires full platform orchestration or the final rebuild gate
 - undocumented production targeting or non-`pve-test` behavior
 - drift that would widen the task beyond the representative `harbor-stack`
+
+Stop condition:
+
+- if source inspection still shows destroy-time `stack_cleanup` Ansible cleanup,
+  stop and return control to Task 08b rather than attempting apply
 
 ## Operations
 
@@ -140,6 +153,9 @@ may complete as a no-op only when:
 
 - Stop if `harbor-stack` no longer declares both `ansible_playbook` and
   `deployment_tier: platform`.
+- Stop if `terraform/lxc/main.tf` still contains a destroy-time
+  `null_resource.stack_cleanup` path that invokes
+  `ansible-playbook -i localhost, playbooks/cleanup.yml`.
 - Stop if `terragrunt plan` or `terragrunt apply` would require bootstrapping
   another stack, invoking Ansible, or widening into full platform orchestration.
 - Stop if `terragrunt plan` or `terragrunt apply` reveals unrelated drift that

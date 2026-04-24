@@ -2,11 +2,12 @@
 id: rp-08a-real-inventory-handoff
 title: "Generate real inventory handoff artifact for Task 09 preflight"
 type: development
-status: pending
+status: blocked
 depends_on:
   - rp-00-inventory-template
   - rp-07-classify-stacks
   - rp-08-remove-local-exec
+  - rp-08b-retire-legacy-stack-cleanup-path
 task_doc: docs/refactor-remove-portainer/tasks/08a-generate-real-inventory-handoff-artifact.md
 validation_note: |
   Run the pve-test preflight.
@@ -20,6 +21,11 @@ context: |
   exists yet. Decision 4 requires generated inventory to be the explicit
   Terraform -> Ansible handoff. This task creates or proves one representative
   artifact only; it is not Task 09 and it is not the rebuild gate.
+
+  Task 08a cannot be retried unchanged. The prior attempt showed that
+  destroy-time null_resource.stack_cleanup behavior can still invoke
+  ansible-playbook cleanup paths during apply. Task 08b must retire that legacy
+  path before Task 08a is executable.
 
   The representative stack is fixed to harbor-stack because Task 09 already
   validates against it, it declares ansible_playbook plus deployment_tier, and
@@ -35,6 +41,9 @@ workflow:
   steps:
     - Run preflight exactly as documented in the task doc. Stop on any target
       other than pve-test.
+    - Run source-only detection for legacy stack_cleanup destroy-time Ansible
+      cleanup behavior in terraform/lxc/main.tf. If detected, stop and return
+      to Task 08b without running terragrunt apply.
     - Confirm harbor-stack still declares ansible_playbook and deployment_tier,
       and confirm terraform/lxc/main.tf still writes inventory.yml through
       local_file.ansible_inventory.
@@ -62,6 +71,8 @@ postconditions:
     - The task stops at the handoff artifact and does not implement Task 09.
 
 stop_conditions:
+  - terraform/lxc/main.tf still contains destroy-time stack_cleanup behavior
+    that invokes ansible-playbook cleanup.yml.
   - harbor-stack no longer declares ansible_playbook or deployment_tier: platform.
   - terragrunt plan or terragrunt apply would require bootstrapping another stack,
     invoking Ansible, or widening into full platform orchestration.
