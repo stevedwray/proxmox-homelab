@@ -1326,6 +1326,11 @@ run_source_preflight_checks() {
       ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
       ansible-playbook --syntax-check \
         '${ANSIBLE_DIR}/playbooks/deploy-monitoring-stack.yml'"
+  run_logged "syntax-check-deploy-proxy-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml'"
 }
 
 run_live_preflight_checks() {
