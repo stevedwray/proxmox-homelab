@@ -44,7 +44,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 | # | Title | Status | Preconditions |
 |---|---|---|---|
-| 08 | Remove Terraform LXC playbook runner (`ansible_provision`) | `pending` | 02, 03, 04, 05, 06, 06a |
+| 08 | Remove Terraform LXC playbook runner (`ansible_provision`) | `complete` | 02, 03, 04, 05, 06, 06a |
 | 09 | Create `scripts/provision.sh` orchestration path | `pending` | 00, 07, 08 |
 
 ## D. Validation And Documentation

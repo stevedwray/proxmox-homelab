@@ -107,7 +107,7 @@ prompts:
     file: 08-remove-local-exec.yaml
     title: "Remove ansible_provision null_resource from Terraform"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - rp-02-harbor-playbook
       - rp-03-authentik-playbook
