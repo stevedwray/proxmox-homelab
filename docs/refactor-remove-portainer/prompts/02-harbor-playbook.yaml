@@ -2,7 +2,7 @@
 id: rp-02-harbor-playbook
 title: "Update harbor playbook — remove Portainer plays"
 type: development
-status: pending
+status: complete
 depends_on: [rp-01-direct-stack-role]
 task_doc: docs/refactor-remove-portainer/tasks/02-update-harbor-playbook.md
 validation_note: |
