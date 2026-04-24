@@ -2,7 +2,7 @@
 id: rp-04-monitoring-playbook
 title: "Update monitoring playbook — remove portainer_agent"
 type: development
-status: pending
+status: complete
 depends_on: [rp-01-direct-stack-role]
 task_doc: docs/refactor-remove-portainer/tasks/04-update-monitoring-playbook.md
 validation_note: |
