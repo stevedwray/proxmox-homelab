@@ -151,7 +151,7 @@ prompts:
     file: 10-update-docs.yaml
     title: "Sync documentation to the runbook-backed method"
     type: documentation
-    status: pending
+    status: complete
     depends_on:
       - rp-06a-mask-remaining-tier1-playbooks
       - rp-07-classify-stacks
