@@ -22,6 +22,9 @@ all:
           contract_dns_server: ${contract_dns_server}
 %{ endif ~}
           stack_name: ${stack_name}
+%{ if ansible_playbook != "" ~}
+          ansible_playbook: ${ansible_playbook}
+%{ endif ~}
           vmid: ${vmid}
 %{ if pve_host != "" ~}
           pve_host: ${pve_host}
