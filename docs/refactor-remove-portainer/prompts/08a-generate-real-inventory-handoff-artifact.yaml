@@ -2,7 +2,7 @@
 id: rp-08a-real-inventory-handoff
 title: "Generate real inventory handoff artifact for Task 09 preflight"
 type: development
-status: blocked
+status: complete
 depends_on:
   - rp-00-inventory-template
   - rp-07-classify-stacks
@@ -17,10 +17,10 @@ validation_note: |
   Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
 
 context: |
-  Task 09 is blocked because no real generated inventory.yml handoff artifact
-  exists yet. Decision 4 requires generated inventory to be the explicit
-  Terraform -> Ansible handoff. This task creates or proves one representative
-  artifact only; it is not Task 09 and it is not the rebuild gate.
+  Decision 4 requires generated inventory to be the explicit Terraform ->
+  Ansible handoff. This task created or proved one representative artifact so
+  Task 09 could start from a validated handoff file. It is not Task 09 and it
+  is not the rebuild gate.
 
   Task 08a cannot be retried unchanged. The prior attempt showed that
   destroy-time null_resource.stack_cleanup behavior can still invoke

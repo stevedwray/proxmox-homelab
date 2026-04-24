@@ -2,7 +2,7 @@
 id: rp-09-provision-script
 title: "Create explicit Ansible orchestration path"
 type: development
-status: blocked
+status: pending
 depends_on:
   - rp-08a-real-inventory-handoff
 task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
