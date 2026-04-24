@@ -128,11 +128,43 @@ two-phase flow:
 ./with-secrets ./scripts/provision.sh --tier platform
 
 # 4. Smoke test platform services
-curl -sf http://10.57.3.10/api/v2.0/ping
-curl -sf http://10.57.1.11/health
-curl -sf http://10.57.2.10/ping
+curl -skf https://10.57.3.10/api/v2.0/ping
+curl -skf https://10.57.1.11/health
+curl -skf https://10.57.2.10/ping
 
-# 5. Re-run platform configuration to confirm idempotent behavior
+# 5. Confirm Portainer has no platform agent endpoints
+./with-secrets bash -lc '
+  token="$(
+    curl -fsS http://10.57.1.20:9000/api/auth \
+      -H "Content-Type: application/json" \
+      -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" |
+    python3 -c "import json,sys; print(json.load(sys.stdin)[\"jwt\"])"
+  )"
+  curl -fsS http://10.57.1.20:9000/api/endpoints \
+    -H "Authorization: Bearer ${token}" |
+  python3 -c "
+import json, sys
+platform = {
+    'portainer-stack',
+    'harbor-stack',
+    'apt-cacher-stack',
+    'ci-runner-01',
+    'dns-stack',
+    'step-ca-stack',
+    'authentik-stack',
+    'proxy-stack',
+    'monitoring-stack',
+    'netbox-stack',
+}
+names = {item.get('Name', '') for item in json.load(sys.stdin)}
+unexpected = sorted(name for name in names if name in platform)
+if unexpected:
+    raise SystemExit('platform endpoints still registered: ' + ', '.join(unexpected))
+print('no platform endpoints registered')
+"
+'
+
+# 6. Re-run platform configuration to confirm idempotent behavior
 ./with-secrets ./scripts/provision.sh --tier platform
 ```
 
