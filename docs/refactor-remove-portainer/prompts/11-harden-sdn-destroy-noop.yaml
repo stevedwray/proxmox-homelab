@@ -1,0 +1,50 @@
+---
+id: rp-11-harden-sdn-destroy-noop
+title: "Harden SDN VNet destroy path for rebuild-gate no-op handling"
+type: development
+status: complete
+depends_on:
+  - rp-10-update-docs
+task_doc: docs/refactor-remove-portainer/tasks/11-harden-sdn-destroy-noop.md
+validation_note: |
+  Keep the fix scoped to destroy-network-sdn-vnet.yml. Run ansible-lint,
+  syntax-check, inspect the delete block, and run Sonar before reporting.
+
+context: |
+  The final rebuild gate stopped at Step 1 on ./with-secrets terragrunt run
+  --all destroy. In harbor-stack, the retained Terraform host-automation path
+  null_resource.configure_network_sdn_attachment invoked
+  playbooks/destroy-network-sdn-vnet.yml, and the delete task failed with:
+  sdn vnet 'tvinfra' does not exist.
+
+  This is a retained infrastructure-automation path under Decision 3, not a
+  Portainer-removal reversal. The unblocker is to make the destroy path
+  idempotent for the already-absent VNet case without widening into unrelated
+  SDN behavior or the rebuild gate itself.
+
+objective: |
+  Make destroy-network-sdn-vnet.yml treat an already-absent VNet as a no-op
+  while preserving real error handling and actual-delete gating.
+
+workflow:
+  steps:
+    - Read destroy-network-sdn-vnet.yml in full before editing.
+    - Keep the pve-test-only and active-bridge-user guardrails intact.
+    - Change only the destroy playbook logic needed to treat the already-absent
+      VNet case as a no-op.
+    - Preserve zone deletion and SDN apply steps as actual-change-gated.
+    - Run ansible-lint, syntax-check, a scoped block inspection, and Sonar.
+
+postconditions:
+  criteria:
+    - The already-absent VNet case is a no-op.
+    - Real delete failures still fail the playbook.
+    - Zone deletion and SDN apply still depend on actual delete changes.
+    - No unrelated SDN or Terraform behavior is changed.
+
+stop_conditions:
+  - Fixing the absent-VNet case requires changing retained Terraform resource
+    boundaries rather than the destroy playbook logic.
+  - Validation shows the live failure is actually outside the VNet delete path.
+  - Sonar reports new issues.
+  - Completing the task would require widening into the rebuild gate.

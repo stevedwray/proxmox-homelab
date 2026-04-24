@@ -158,3 +158,12 @@ prompts:
       - rp-08-remove-local-exec
       - rp-09-provision-script
     task_doc: docs/refactor-remove-portainer/tasks/10-update-docs.md
+
+  - id: rp-11-harden-sdn-destroy-noop
+    file: 11-harden-sdn-destroy-noop.yaml
+    title: "Harden SDN VNet destroy path for rebuild-gate no-op handling"
+    type: development
+    status: complete
+    depends_on:
+      - rp-10-update-docs
+    task_doc: docs/refactor-remove-portainer/tasks/11-harden-sdn-destroy-noop.md

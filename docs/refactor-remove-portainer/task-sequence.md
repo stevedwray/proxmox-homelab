@@ -55,6 +55,12 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 |---|---|---|---|
 | 10 | Sync documentation to the runbook-backed method | `complete` | 06a, 07, 08, 09 |
 
+## E. Rebuild Unblockers
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 11 | Harden SDN VNet destroy path for rebuild-gate no-op handling | `complete` | 10 |
+
 ## Dependency Graph
 
 ```text
@@ -79,7 +85,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 00 (inventory handoff contract) ────────────────────────────────────────────────┘
 
-10 (runbook + docs sync) ← needs 06a, 07, 08, 09
+10 (runbook + docs sync) ─── 11 (SDN destroy no-op handling)
 ```
 
 ## Tier 1 Playbook Coverage Reference
@@ -102,6 +108,7 @@ currently use Portainer roles directly.
 
 ## Final Gate
 
-After all tasks are complete, use [runbook.md](runbook.md) for the full
+After all tasks are complete, including any rebuild-unblocker tasks opened by a
+rebuild-gate stop condition, use [runbook.md](runbook.md) for the full
 `pve-test` rebuild gate. Do not mark the overall refactor complete on
 source-only validation alone.
