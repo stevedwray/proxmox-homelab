@@ -7,6 +7,7 @@ storage-audit
 *.env
 .env.*
 !.env.template
+docs/refactor-remove-portainer/reports/
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
