@@ -26,7 +26,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 00b | Split downstream validation scope from the 00a baseline helper | `complete` | 00a |
 | 00c | Harden downstream plan validation and null-resource expectations | `complete` | 00a, 00b |
 | 00 | Update inventory handoff contract (`inventory.tpl` renders `ansible_playbook`) | `complete` | 00a, 00b, 00c |
-| 07 | Classify stacks with explicit `deployment_tier` metadata | `pending` | 00a, 00b, 00c |
+| 07 | Classify stacks with explicit `deployment_tier` metadata | `complete` | 00a, 00b, 00c |
 
 ## B. Playbook Capability
 

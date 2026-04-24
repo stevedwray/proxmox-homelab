@@ -99,7 +99,7 @@ prompts:
     file: 07-classify-stacks.yaml
     title: "Classify stack execution intent explicitly"
     type: development
-    status: pending
+    status: complete
     depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
     task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
 
