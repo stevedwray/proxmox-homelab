@@ -41,12 +41,24 @@ ANSIBLE_SSH_CONTROL_PATH_DIR = "/tmp/.ansible/cp"
 ```
 
 The `ansible_playbook` field is a host var in the generated inventory (after
-Task 00). One working yq path in the current inventory layout is:
-`.all.children | to_entries | .[0].value.hosts | to_entries | .[0].value.ansible_playbook // ""`
+Task 00). Because `yq` is not guaranteed to be present in the execution
+environment, use `python3` to extract it. The inventory structure (from
+`inventory.tpl`) nests the host under `all.children.<stack_name>.hosts.<hostname>`.
+The corresponding Python3 one-liner is:
 
-This path handles the inventory structure where the host group name is the stack name
-with hyphens replaced by underscores and the hostname is the container hostname.
-Verify the path against a real inventory before writing the final script.
+```bash
+python3 -c "
+import yaml, sys
+inv = yaml.safe_load(sys.stdin)
+grp = next(iter(inv['all']['children'].values()))
+host = next(iter(grp['hosts'].values()))
+print(host.get('ansible_playbook', ''))
+" < inventory.yml
+```
+
+Verify the output against a real generated inventory before writing the final script.
+`python3` with the `yaml` module is available in this environment; `yq` is not
+required.
 
 `stack.yaml` remains the source of execution intent. The script should discover
 candidate stacks from `terraform/lxc/stacks/*/stack.yaml`, use
@@ -59,7 +71,7 @@ approved sequence.
 1. Read an existing generated inventory file (e.g.
    `terraform/lxc/stacks/harbor-stack/inventory.yml`) to confirm:
    - Where `ansible_playbook` appears as a host var (confirm Task 00 is reflected)
-   - The exact yq path needed to extract it
+   - The Python3 extraction path produces the expected value
 
 2. Examine `terraform/lxc/main.tf` git log or the removed local-exec block to
    confirm the exact `ansible_dir`, `ansible_cfg`, `ansible_roles_path` values that
@@ -77,8 +89,9 @@ approved sequence.
      for `pve-test`
    - fail clearly if the discovered metadata cannot produce a valid order
 
-4. If the actual `yq` path to `ansible_playbook` differs from what is shown
-   above, use the correct path and document it in the script comments.
+4. If the actual Python3 path to `ansible_playbook` returns an unexpected result
+   against the real inventory, correct the extraction expression and document
+   the actual inventory structure in the script comments.
 
 5. Make the script executable: `chmod +x scripts/provision.sh`
 
@@ -141,6 +154,7 @@ grep -A12 "^stack_apply" scripts/teardown-deploy-test.sh | grep "provision.sh"
 - Stop if the orchestration logic requires a hardcoded stack list that cannot be
   justified from current stack metadata and `decisions.md` — report the gap
   rather than hardcoding silently.
-- Stop if the yq expression to extract `ansible_playbook` returns the wrong value or
-  errors — report the inventory structure and the yq version (`yq --version`).
+- Stop if the Python3 expression to extract `ansible_playbook` returns the wrong
+  value or errors against a real generated inventory — report the inventory
+  structure and the Python3 version (`python3 --version`).
 - Stop if `shellcheck` reports errors — fix them before reporting completion.
