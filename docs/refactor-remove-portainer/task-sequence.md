@@ -32,7 +32,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 
 | # | Title | Status | Preconditions |
 |---|---|---|---|
-| 01 | Create `direct_stack` Ansible role | `pending` | 00 |
+| 01 | Create `direct_stack` Ansible role | `complete` | 00 |
 | 02 | Update harbor playbook | `pending` | 01 |
 | 03 | Update authentik playbook | `pending` | 01 |
 | 04 | Update monitoring playbook | `pending` | 01 |

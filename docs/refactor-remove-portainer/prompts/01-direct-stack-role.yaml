@@ -2,7 +2,7 @@
 id: rp-01-direct-stack-role
 title: "Create direct_stack Ansible role"
 type: development
-status: pending
+status: complete
 depends_on: [rp-00-inventory-template]
 task_doc: docs/refactor-remove-portainer/tasks/01-create-direct-stack-role.md
 validation_note: |
