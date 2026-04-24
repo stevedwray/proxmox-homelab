@@ -7,6 +7,10 @@
 >
 > In particular, `README.md`, `decisions.md`, `task-sequence.md`, task docs,
 > and `runbook.md` override this document when there is any conflict.
+>
+> Draft examples here that imply implicit `deployment_tier` defaults,
+> Terraform-owned LXC configuration, or multiple LXC templates are superseded
+> by the control docs and current implementation.
 
 **Status:** Draft — not yet merged into proxmox-homelab
 

@@ -57,7 +57,7 @@ The following constraints were identified through adversarial analysis and must 
 | Ref | Constraint | Attack vector mitigated |
 |---|---|---|
 | SEC-01 | CI runner (`build_seg`) egress must be restricted at MikroTik — allow only Harbor (`10.57.3.10`), apt-cacher (`10.57.3.11`), GitHub API/Actions, and package registries. Block all other outbound. | Compromised dependency → runner pivot to infra_seg via unrestricted egress |
-| SEC-02 | Portainer agent communication must use TLS with mutual certificate auth (step-ca issued certs). Anonymous/plain socket exposure is not permitted. | Portainer server compromise → Docker socket access across all zones |
+| SEC-02 | Portainer agent communication must use TLS with mutual certificate auth (step-ca issued certs). Anonymous/plain socket exposure is not permitted. | Portainer server compromise → Docker socket access on enrolled app-tier stacks |
 | SEC-03 | `.env` secrets are ephemeral — materialised from Bitwarden vault at deployment time via `bw unlock` session token and never persisted on disk beyond the active session. No static `.env` file stored on the operator workstation. *(Bridge period: `sync-secrets.sh` in repo populates `.env` at session start; the file must be deleted after each deployment session. This is the accepted operational procedure until Vault is available in Phase 07.)* | Workstation compromise → `.env` exfiltration → full Proxmox API access |
 | SEC-04 | Traefik must enforce rate limiting on all Authentik-facing routes. Authentik brute-force protection (account lockout, CAPTCHA) must be enabled. Consider Cloudflare proxy (orange cloud) in front of edge for WAF/DDoS mitigation. | Brute-force Authentik login → valid session → internal admin dashboard access |
 | SEC-05 | MikroTik management interface must not be accessible from the flat LAN. Access restricted to operator IPs via ACL, or via VPN only. MikroTik hardening (disable unused services, SSH key auth only) is a prerequisite before any SDN zone is relied upon for isolation. | MikroTik compromise → inter-VLAN ACL removal → full zone isolation collapse |
@@ -134,7 +134,7 @@ The following constraints were identified through adversarial analysis and must 
 ### ADR-04: Container Management Plane
 
 **Status:** Decided
-**Context:** Portainer is deployed in Phase 00b and has agents across multiple zones. Its role relative to Terraform/Ansible as the control plane is not formally defined.
+**Context:** Portainer is deployed in Phase 00b. After the Portainer-removal refactor, Tier 1 platform stacks are provisioned by Terraform and configured explicitly by Ansible without Portainer agents; Portainer remains for Tier 2 application stacks only.
 
 **Options considered:**
 
@@ -142,11 +142,11 @@ The following constraints were identified through adversarial analysis and must 
 |---|---|---|
 | Portainer as primary control plane | GUI convenience; fast interactive debugging | Drift from IaC state; Docker socket exposed cross-zone (SEC-02); violates NFR-08 |
 | Terraform/Ansible as primary | Single source of truth; rebuild-safe; auditable; no cross-zone socket exposure | No live GUI visibility |
-| Portainer as observability only (read access) | GUI visibility retained; control-plane risk eliminated; SEC-02 blast radius limited | Portainer agents still require TLS (SEC-02) |
+| Portainer as Tier 2 management UI only | GUI value retained for app stacks; Tier 1 Docker socket exposure removed; bootstrap path simplified | Two operational patterns must be documented clearly |
 
-**Decision:** Terraform/Ansible is the control plane. Portainer is deployed in observability-only mode (read access). No container is ever created or modified via the Portainer UI.
+**Decision:** Terraform/Ansible is the control plane. Tier 1 platform stacks do not run Portainer agents and are configured explicitly in a second phase via `scripts/provision.sh`. Portainer remains the management UI for Tier 2 application stacks only.
 
-**Rationale:** Aligns with NFR-08 (reproducibility) — if a container can be created via GUI, the rebuild is no longer fully reproducible. SEC-02 still applies: Portainer agents deployed with step-ca mutual TLS. Portainer read-only mode limits blast radius if the Portainer server is compromised.
+**Rationale:** Aligns with NFR-08 (reproducibility) and the explicit Terraform-to-Ansible handoff model. Terraform owns LXC provisioning and generated inventory; Ansible owns in-container configuration. Removing Tier 1 agents eliminates Portainer bootstrap circularity and reduces the blast radius around Harbor, Authentik, step-ca, Traefik, monitoring, NetBox, CoreDNS, apt-cacher-ng, CI runner, and the Portainer server itself. SEC-02 still applies to the app-tier stacks that remain enrolled with Portainer.
 
 ---
 

@@ -9,6 +9,10 @@
 >
 > If this document conflicts with those control documents, the control
 > documents win.
+>
+> Draft details in this file that assume a separate Tier 1 template or any
+> broader Portainer role should be treated as superseded design history, not
+> current implementation guidance.
 
 **Status:** Draft — not yet merged into proxmox-homelab
 **Supersedes:** `docs/design/architecture.md` ADR-04 and the deployment model implicit in `terraform/lxc/PLATFORM_CONTRACT.md`
