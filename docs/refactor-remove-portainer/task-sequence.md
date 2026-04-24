@@ -47,7 +47,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 08 | Remove Terraform LXC playbook runner (`ansible_provision`) | `complete` | 02, 03, 04, 05, 06, 06a |
 | 08b | Retire legacy stack_cleanup Ansible path before inventory-handoff validation | `complete` | 08 |
 | 08a | Generate real inventory handoff artifact for Task 09 preflight | `complete` | 00, 07, 08, 08b |
-| 09 | Create `scripts/provision.sh` orchestration path | `pending` | 08a |
+| 09 | Create `scripts/provision.sh` orchestration path | `complete` | 08a |
 
 ## D. Validation And Documentation
 

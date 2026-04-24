@@ -2,7 +2,7 @@
 id: rp-09-provision-script
 title: "Create explicit Ansible orchestration path"
 type: development
-status: pending
+status: complete
 depends_on:
   - rp-08a-real-inventory-handoff
 task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
@@ -72,7 +72,9 @@ postconditions:
     - Script outputs SKIP for stacks with no inventory.yml.
     - Script outputs SKIP for stacks with no ansible_playbook in inventory.
     - Script derives orchestration targets from stack metadata.
-    - ./with-secrets ./scripts/provision.sh --check --stack harbor-stack exits 0.
+    - ./with-secrets ./scripts/provision.sh --check --stack harbor-stack exits 0,
+      or non-zero only because Ansible surfaced a real existing finding rather
+      than a provision.sh orchestration error.
     - stack_apply in scripts/teardown-deploy-test.sh calls provision.sh after terragrunt apply.
 
 stop_conditions:

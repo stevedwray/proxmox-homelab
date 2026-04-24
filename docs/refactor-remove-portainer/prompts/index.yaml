@@ -142,7 +142,7 @@ prompts:
     file: 09-provision-script.yaml
     title: "Create explicit Ansible orchestration path"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - rp-08a-real-inventory-handoff
     task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
