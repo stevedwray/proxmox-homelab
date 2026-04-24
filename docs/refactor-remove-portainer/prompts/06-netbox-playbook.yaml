@@ -2,7 +2,7 @@
 id: rp-06-netbox-playbook
 title: "Update netbox playbook — replace app_stack with direct_stack"
 type: development
-status: pending
+status: complete
 depends_on: [rp-01-direct-stack-role]
 task_doc: docs/refactor-remove-portainer/tasks/06-update-netbox-playbook.md
 validation_note: |

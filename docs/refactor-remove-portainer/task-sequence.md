@@ -37,7 +37,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 03 | Update authentik playbook | `complete` | 01 |
 | 04 | Update monitoring playbook | `complete` | 01 |
 | 05 | Update proxy playbook | `complete` | 01 |
-| 06 | Update netbox playbook | `pending` | 01 |
+| 06 | Update netbox playbook | `complete` | 01 |
 | 06a | Add Tier 1 service masking to remaining non-agent playbooks | `complete` | None |
 
 ## C. Orchestration Boundary
