@@ -34,7 +34,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 |---|---|---|---|
 | 01 | Create `direct_stack` Ansible role | `complete` | 00 |
 | 02 | Update harbor playbook | `complete` | 01 |
-| 03 | Update authentik playbook | `pending` | 01 |
+| 03 | Update authentik playbook | `complete` | 01 |
 | 04 | Update monitoring playbook | `pending` | 01 |
 | 05 | Update proxy playbook | `pending` | 01 |
 | 06 | Update netbox playbook | `pending` | 01 |

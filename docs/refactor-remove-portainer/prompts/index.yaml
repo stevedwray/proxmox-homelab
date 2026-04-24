@@ -59,7 +59,7 @@ prompts:
     file: 03-authentik-playbook.yaml
     title: "Update authentik playbook — remove portainer_agent"
     type: development
-    status: pending
+    status: complete
     depends_on: [rp-01-direct-stack-role]
     task_doc: docs/refactor-remove-portainer/tasks/03-update-authentik-playbook.md
 
