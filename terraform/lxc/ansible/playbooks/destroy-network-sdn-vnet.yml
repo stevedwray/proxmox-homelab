@@ -116,7 +116,11 @@
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       when: network_sdn_safe_to_delete_vnet | bool
       register: network_sdn_vnet_delete
-      changed_when: true
+      changed_when:
+        - network_sdn_vnet_delete.rc == 0
+      failed_when:
+        - network_sdn_vnet_delete.rc != 0
+        - '"does not exist" not in (network_sdn_vnet_delete.stderr | default(""))'
 
     - name: Remove VNet firewall config file when VNet is deleted # noqa: no-handler
       ansible.builtin.command:
