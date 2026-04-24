@@ -420,42 +420,6 @@ resource "null_resource" "prime_sdn_host_route" {
 }
 
 # ---------------------------------------------------------------------------
-# Ansible provisioning (only if ansible_playbook is set in stack.yaml)
-# ---------------------------------------------------------------------------
-resource "null_resource" "ansible_provision" {
-  count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0
-
-  triggers = {
-    container_id       = module.lxc.container_id
-    container_epoch_id = module.lxc.container_epoch_id
-    inventory_content  = local_file.ansible_inventory.content
-    playbook           = try(local.stack.ansible_playbook, "")
-  }
-
-  provisioner "local-exec" {
-    command     = <<-EOT
-      ansible-playbook \
-        -i '${local.stack_dir}/inventory.yml' \
-        'playbooks/${try(local.stack.ansible_playbook, "noop")}.yml'
-    EOT
-    working_dir = local.ansible_dir
-
-    environment = {
-      ANSIBLE_HOST_KEY_CHECKING = "False"
-      ANSIBLE_CONFIG            = local.ansible_cfg
-      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
-      PORTAINER_ADMIN_PASSWORD  = var.portainer_admin_password
-    }
-  }
-
-  depends_on = [
-    local_file.ansible_inventory,
-    null_resource.configure_keyctl,
-    null_resource.prime_sdn_host_route,
-  ]
-}
-
-# ---------------------------------------------------------------------------
 # Proxmox firewall policy apply (only if network intent enables firewall)
 # Applies after any guest provisioning to avoid disrupting the existing flow.
 # ---------------------------------------------------------------------------
@@ -490,7 +454,6 @@ resource "null_resource" "configure_network_firewall" {
     local_file.ansible_inventory,
     local_file.network_firewall_vars,
     null_resource.configure_keyctl,
-    null_resource.ansible_provision,
   ]
 }
 
@@ -543,7 +506,6 @@ resource "null_resource" "configure_network_vnet_firewall" {
   depends_on = [
     local_file.network_vnet_firewall_vars,
     null_resource.configure_keyctl,
-    null_resource.ansible_provision,
   ]
 }
 
