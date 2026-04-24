@@ -117,15 +117,24 @@ prompts:
       - rp-06a-mask-remaining-tier1-playbooks
     task_doc: docs/refactor-remove-portainer/tasks/08-remove-terraform-local-exec.md
 
+  - id: rp-08a-real-inventory-handoff
+    file: 08a-generate-real-inventory-handoff-artifact.yaml
+    title: "Generate real inventory handoff artifact for Task 09 preflight"
+    type: development
+    status: pending
+    depends_on:
+      - rp-00-inventory-template
+      - rp-07-classify-stacks
+      - rp-08-remove-local-exec
+    task_doc: docs/refactor-remove-portainer/tasks/08a-generate-real-inventory-handoff-artifact.md
+
   - id: rp-09-provision-script
     file: 09-provision-script.yaml
     title: "Create explicit Ansible orchestration path"
     type: development
     status: blocked
     depends_on:
-      - rp-00-inventory-template
-      - rp-07-classify-stacks
-      - rp-08-remove-local-exec
+      - rp-08a-real-inventory-handoff
     task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
 
   - id: rp-10-update-docs

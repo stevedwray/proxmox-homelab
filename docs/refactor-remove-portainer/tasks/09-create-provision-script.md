@@ -22,11 +22,15 @@ explicit.
 
 ## Preconditions
 
+- Task 08a complete — `terraform/lxc/stacks/harbor-stack/inventory.yml`
+  exists, is Terraform-generated, and has validated `ansible_playbook`
+  content.
 - Task 00 complete — `inventory.tpl` renders `ansible_playbook`.
 - Task 07 complete — active stacks now declare `deployment_tier`.
 - Task 08 complete — Terraform no longer invokes Ansible for stack configuration.
-- At least one stack with `ansible_playbook` set in `stack.yaml` has had
-  `terragrunt apply` run so a real `inventory.yml` exists to test against.
+
+Do not use Task 09 to generate the first real inventory handoff artifact. That
+boundary belongs to Task 08a.
 
 ## Background
 
@@ -68,8 +72,8 @@ approved sequence.
 
 ## Operations
 
-1. Read an existing generated inventory file (e.g.
-   `terraform/lxc/stacks/harbor-stack/inventory.yml`) to confirm:
+1. Read the Task 08a-generated representative inventory artifact at
+  `terraform/lxc/stacks/harbor-stack/inventory.yml` to confirm:
    - Where `ansible_playbook` appears as a host var (confirm Task 00 is reflected)
    - The Python3 extraction path produces the expected value
 
@@ -140,7 +144,7 @@ shellcheck scripts/provision.sh
 ./with-secrets ./scripts/provision.sh --check --stack test-lxc
 # Expected: "SKIP test-lxc: no ansible_playbook in inventory" (if inventory exists)
 
-# Test against a real stack if pve-test is up
+# Test against the validated Task 08a artifact if pve-test is up
 ./with-secrets ./scripts/provision.sh --check --stack harbor-stack
 
 grep -A12 "^stack_apply" scripts/teardown-deploy-test.sh | grep "provision.sh"
@@ -149,6 +153,9 @@ grep -A12 "^stack_apply" scripts/teardown-deploy-test.sh | grep "provision.sh"
 
 ## Stop Conditions
 
+- Stop if Task 08a is not complete or
+  `terraform/lxc/stacks/harbor-stack/inventory.yml` is absent — report the
+  missing handoff artifact rather than generating it inside Task 09.
 - Stop if `ansible_playbook` is not present in the generated inventory.yml even after
   Task 00 — report the inventory structure and the `inventory.tpl` content.
 - Stop if the orchestration logic requires a hardcoded stack list that cannot be
