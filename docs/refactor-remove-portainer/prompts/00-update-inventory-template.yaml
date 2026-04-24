@@ -2,7 +2,7 @@
 id: rp-00-inventory-template
 title: "Establish inventory handoff contract"
 type: development
-status: pending
+status: complete
 depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
 task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
 validation_note: |
