@@ -38,6 +38,19 @@ After this change, `terragrunt apply` provisions infrastructure only.
 gated by `count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0` and runs
 `ansible-playbook playbooks/<playbook>.yml`.
 
+Current known dependency state before this task:
+
+- `null_resource.configure_network_firewall` currently depends on
+  `null_resource.ansible_provision`
+- `null_resource.configure_network_vnet_firewall` currently depends on
+  `null_resource.ansible_provision`
+
+Those dependencies exist only because Terraform previously mixed guest
+configuration with infrastructure application. In the target model, Terraform no
+longer waits for guest playbook execution, so these two dependency edges should
+be removed as part of this task. That dependency cleanup is expected and is not
+by itself a stop condition.
+
 **Do not remove any null_resource that runs commands against the Proxmox host itself**
 (not the LXC container). Those are infrastructure operations that remain Terraform's
 responsibility.
@@ -69,6 +82,10 @@ from the generated inventory. Do not remove it from the `local_file` resource.
 
 6. Remove any `depends_on` entries in other resources that reference the now-deleted
    `null_resource.ansible_provision`.
+   This is explicitly expected for:
+   - `null_resource.configure_network_firewall`
+   - `null_resource.configure_network_vnet_firewall`
+   If any other retained resource depends on `ansible_provision`, stop and report it.
 
 7. Run `terraform fmt` on the file after editing.
 
@@ -77,8 +94,9 @@ from the generated inventory. Do not remove it from the `local_file` resource.
 - `null_resource.ansible_provision` no longer exists in `main.tf`.
 - All five retained null_resources are present and unchanged.
 - `local_file.ansible_inventory` still passes `ansible_playbook` to the template.
-- `terraform plan` shows removal of `null_resource.ansible_provision[0]` from state
-  and no other infrastructure changes.
+- `terraform plan` shows removal of `null_resource.ansible_provision[0]` from state,
+  any expected dependency cleanup for the two retained firewall resources, and no
+  other infrastructure changes.
 
 ## Validation
 
@@ -98,8 +116,8 @@ grep -n "ansible_playbook" terraform/lxc/main.tf
 # Terraform format
 terraform fmt -check terraform/lxc/main.tf
 
-# Terraform plan — must show no infra changes
-./with-secrets terragrunt run-all plan
+# Scoped Terraform plan — validates LXC stacks only, must show no infra changes
+./scripts/validate-portainer-refactor-platform-plan.sh
 
 # Snyk IaC
 /home/steve/.local/bin/snyk iac test terraform/
@@ -110,8 +128,10 @@ terraform fmt -check terraform/lxc/main.tf
 - Stop if `null_resource.ansible_provision` does not exist at the expected location —
   search for it by the `local-exec` string `playbooks/${try(local.stack.ansible_playbook`
   and report what is found.
-- Stop if any retained null_resource has `depends_on = [null_resource.ansible_provision]`
-  — removing this dependency could alter execution order; flag before removing.
+- Stop if any retained resource other than `null_resource.configure_network_firewall`
+  or `null_resource.configure_network_vnet_firewall` depends on
+  `null_resource.ansible_provision` — report the resource and dependency before
+  editing.
 - Stop if `terraform plan` shows any LXC infrastructure change (not just null_resource
   removals) after the edit.
 - Stop if `null_resource.stack_cleanup` invokes both the stack playbook and other

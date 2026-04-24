@@ -29,6 +29,11 @@ context: |
   Only null_resource.ansible_provision is removed. The ansible_playbook field in
   local_file.ansible_inventory is also retained — provision.sh reads it.
 
+  Current known dependency state: configure_network_firewall and
+  configure_network_vnet_firewall both currently depend on ansible_provision.
+  Removing those two dependency edges is expected in this task because Terraform
+  no longer waits on guest playbook execution in the target model.
+
 objective: |
   Remove null_resource.ansible_provision from terraform/lxc/main.tf. Retain all five
   infrastructure null_resources. Confirm plan shows only that resource's removal
@@ -44,11 +49,15 @@ workflow:
       configuration playbook on destroy, remove only that ansible-playbook call. If it
       does other cleanup, retain those parts or stop and report.
     - Remove depends_on entries in other resources that reference ansible_provision.
+      This is expected for configure_network_firewall and
+      configure_network_vnet_firewall. If any other retained resource depends on
+      ansible_provision, stop and report it.
     - Remove locals exclusively used by ansible_provision and not by any retained
       resource or local_file.ansible_inventory.
     - Run terraform fmt on main.tf.
-    - Run terragrunt run-all plan — must show only null_resource.ansible_provision[0]
-      removal plus any expected dependency cleanup, with no LXC infrastructure changes.
+    - Run ./scripts/validate-portainer-refactor-platform-plan.sh — validates LXC stacks
+      only, must show only null_resource.ansible_provision[0] removal plus any expected
+      dependency cleanup, with no LXC infrastructure changes.
     - Run snyk iac test terraform/.
 
 postconditions:
@@ -62,8 +71,9 @@ postconditions:
 stop_conditions:
   - null_resource.ansible_provision cannot be found under that name — search for the
     local-exec pattern and report what is found.
-  - A retained null_resource has depends_on pointing to ansible_provision — flag before
-    removing that dependency.
+  - A retained resource other than configure_network_firewall or
+    configure_network_vnet_firewall has depends_on pointing to ansible_provision —
+    flag before removing that dependency.
   - terraform plan shows any LXC infrastructure change after the edit.
   - stack_cleanup invokes both the stack playbook and other non-playbook work in the
     same local-exec block — report the block content.
