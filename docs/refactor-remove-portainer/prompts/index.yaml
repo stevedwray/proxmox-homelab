@@ -190,7 +190,7 @@ prompts:
     file: 14-correct-storage-fallback-defaults.yaml
     title: "Correct invalid pve-test storage fallback defaults"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - rp-13-fix-terragrunt-flag-forwarding
     task_doc: docs/refactor-remove-portainer/tasks/14-correct-storage-fallback-defaults.md
