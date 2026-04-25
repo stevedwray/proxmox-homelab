@@ -135,21 +135,22 @@ Both interfaces are members of bridgeLocal, issue DHCP, and provide internet acc
 
 ### IPv4
 
-30 filter rules + 3 NAT rules copied from hAP ac. Includes:
+30 filter rules + 3 NAT rules. Includes:
 - Allow established/related (input + forward)
 - Allow ICMPv4
-- Kid-curfew time-based drop rules (forward chain, MAC-matched)
-- Allow LAN→WAN
+- Kid-curfew: 6 drop rules (3 devices × pm 22:00–23:59 + am 00:00–06:00), MAC-matched, in=bridgeLocal out=vlan1-wan
+- Allow LAN→WAN (in=bridgeLocal out=vlan1-wan)
 - Drop WAN→LAN
 - Drop invalid
 - Masquerade NAT on vlan1-wan
 
 ### IPv6
 
-15 filter rules. Includes:
+14 filter rules. Includes:
 - Allow established/related (input + forward)
 - Allow ICMPv6 (input + forward)
-- Allow LAN→WAN (all sources)
+- Kid-curfew: 6 drop rules (3 devices × pm 22:00–23:59 + am 00:00–06:00), MAC-matched, in=bridgeLocal out=vlan1-wan
+- Allow LAN→WAN (in=bridgeLocal out=vlan1-wan)
 - Drop WAN→LAN (bridgeLocal)
 - Drop invalid
 
