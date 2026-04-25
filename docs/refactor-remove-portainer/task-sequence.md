@@ -63,7 +63,7 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 12 | Document stack-only, non-interactive rebuild-gate contract | `complete` | 11 |
 | 13 | Fix Terragrunt flag forwarding for rebuild-gate destroy/apply | `complete` | 12 |
 | 14 | Correct invalid pve-test storage fallback defaults | `complete` | 13 |
-| 15 | Triage Proxmox storage lock contention on `infrastructure-containers` | `pending` | 13 |
+| 15 | Triage Proxmox storage lock contention on `infrastructure-containers` | `complete` | 13 |
 
 ## Dependency Graph
 

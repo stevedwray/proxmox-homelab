@@ -199,7 +199,7 @@ prompts:
     file: 15-triage-storage-lock-contention.yaml
     title: "Triage Proxmox storage lock contention on infrastructure-containers"
     type: development
-    status: pending
+    status: complete
     depends_on:
       - rp-13-fix-terragrunt-flag-forwarding
     task_doc: docs/refactor-remove-portainer/tasks/15-triage-storage-lock-contention.md
