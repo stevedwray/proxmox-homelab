@@ -10,6 +10,7 @@ Replacement for the hAP ac. Source of truth for reprovisioning.
 |-------|-------|
 | Model | MikroTik hAP ax3 (RBD53G-5HacD2HnD+TC) |
 | RouterOS | 7.22.2 stable |
+| Timezone | Pacific/Auckland (UTC+12/+13 DST) |
 | 2.5G port | ether1 → bridgeLocal (switch uplink) |
 | 1G ports | ether2 = WAN, ether3/4/5 = bridgeLocal |
 
