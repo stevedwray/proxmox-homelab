@@ -176,3 +176,12 @@ prompts:
     depends_on:
       - rp-11-harden-sdn-destroy-noop
     task_doc: docs/refactor-remove-portainer/tasks/12-document-stack-only-rebuild-gate.md
+
+  - id: rp-13-fix-terragrunt-flag-forwarding
+    file: 13-fix-terragrunt-flag-forwarding.yaml
+    title: "Fix Terragrunt flag forwarding for rebuild-gate destroy/apply"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-12-document-stack-only-rebuild-gate
+    task_doc: docs/refactor-remove-portainer/tasks/13-fix-terragrunt-flag-forwarding.md

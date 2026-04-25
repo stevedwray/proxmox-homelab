@@ -63,10 +63,10 @@ direct_stack_compose_dir: "/srv/docker/{{ direct_stack_name }}"
 direct_stack_compose_path: "{{ direct_stack_compose_dir }}/docker-compose.yml"
 direct_stack_name: "{{ inventory_hostname }}"
 direct_stack_compose_content: ""   # caller must set this
-./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- destroy -auto-approve
 direct_stack_prune_on_update: true
 ```
-./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- apply -auto-approve
 **`tasks/main.yml`:**
 
 ```yaml
@@ -422,10 +422,10 @@ After all groups are complete, validate with a full pve-test wipe-and-rebuild:
 
 ```bash
 # 1. Wipe pve-test
-./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- destroy -auto-approve
 
 # 2. Provision all LXCs
-./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- apply -auto-approve
 
 # 3. Configure platform tier
 ./with-secrets ./scripts/provision.sh --tier platform
@@ -446,7 +446,7 @@ curl -k https://10.57.2.10/ping               # Traefik
 
 ## Acceptance criteria
 
-- [ ] `terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve` completes without invoking Ansible
+- [ ] `terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- apply -auto-approve` completes without invoking Ansible
 - [ ] `provision.sh --tier platform` configures all platform stacks to a healthy state
 - [ ] Portainer UI shows no registered environments after platform provisioning
 - [ ] `provision.sh --tier apps` deploys Tier 2 stacks and they appear in Portainer
