@@ -59,13 +59,14 @@ direct_stack/
 
 ```yaml
 direct_stack_compose_dir: "/srv/docker/{{ direct_stack_name }}"
+./with-secrets terragrunt --working-dir terraform/lxc/stacks run --all plan
 direct_stack_compose_path: "{{ direct_stack_compose_dir }}/docker-compose.yml"
 direct_stack_name: "{{ inventory_hostname }}"
 direct_stack_compose_content: ""   # caller must set this
-direct_stack_env: []               # list of {name: X, value: Y} dicts — matches app_stack interface
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
 direct_stack_prune_on_update: true
 ```
-
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
 **`tasks/main.yml`:**
 
 ```yaml
@@ -272,7 +273,7 @@ since Tier 2 stacks can still reference it from `variables.tf` defaults.
 After D-1 and D-2, run:
 
 ```bash
-./with-secrets terragrunt run --all plan
+./with-secrets terragrunt --working-dir terraform/lxc/stacks run --all plan
 ```
 
 Expected: no diff except for the removed null_resource blocks. No infrastructure changes.
@@ -421,10 +422,10 @@ After all groups are complete, validate with a full pve-test wipe-and-rebuild:
 
 ```bash
 # 1. Wipe pve-test
-./with-secrets terragrunt run --all destroy
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
 
 # 2. Provision all LXCs
-./with-secrets terragrunt run --all apply
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
 
 # 3. Configure platform tier
 ./with-secrets ./scripts/provision.sh --tier platform
@@ -445,7 +446,7 @@ curl -k https://10.57.2.10/ping               # Traefik
 
 ## Acceptance criteria
 
-- [ ] `terragrunt run --all apply` completes without invoking Ansible
+- [ ] `terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve` completes without invoking Ansible
 - [ ] `provision.sh --tier platform` configures all platform stacks to a healthy state
 - [ ] Portainer UI shows no registered environments after platform provisioning
 - [ ] `provision.sh --tier apps` deploys Tier 2 stacks and they appear in Portainer

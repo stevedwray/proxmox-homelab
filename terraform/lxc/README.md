@@ -119,7 +119,7 @@ For a Tier 1 platform stack, set `deployment_tier: platform` and point
 4. Provision infrastructure, then run the explicit Ansible phase.
 
 ```bash
-./with-secrets terragrunt run --all apply
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
 ./with-secrets ./scripts/provision.sh --stack my-app
 ```
 
@@ -239,10 +239,10 @@ Keep real secrets in `terraform/secrets.enc.yaml` and inject them with
 terragrunt init
 
 # Preview infrastructure changes
-./with-secrets terragrunt run --all plan
+./with-secrets terragrunt --working-dir terraform/lxc/stacks run --all plan
 
 # Provision infrastructure
-./with-secrets terragrunt run --all apply
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
 
 # Configure platform tier explicitly
 ./with-secrets ./scripts/provision.sh --tier platform
@@ -251,7 +251,7 @@ terragrunt init
 ./with-secrets ./scripts/provision.sh --stack harbor-stack
 
 # Destroy infrastructure
-./with-secrets terragrunt run --all destroy
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
 ```
 
 ## Validation

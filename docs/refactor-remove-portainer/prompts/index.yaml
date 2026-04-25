@@ -167,3 +167,12 @@ prompts:
     depends_on:
       - rp-10-update-docs
     task_doc: docs/refactor-remove-portainer/tasks/11-harden-sdn-destroy-noop.md
+
+  - id: rp-12-document-stack-only-rebuild-gate
+    file: 12-document-stack-only-rebuild-gate.yaml
+    title: "Document stack-only, non-interactive rebuild-gate contract"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-11-harden-sdn-destroy-noop
+    task_doc: docs/refactor-remove-portainer/tasks/12-document-stack-only-rebuild-gate.md

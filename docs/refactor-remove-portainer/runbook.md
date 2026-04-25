@@ -117,12 +117,16 @@ Expected validation:
 After all implementation tasks are complete, validate the full explicit
 two-phase flow:
 
+Use the stack-only Terragrunt entrypoint. Do not run repo-root all-units
+commands against `terraform/lxc`, because the root unit requires
+`stack_name` and `stack_yaml_path` and is not the rebuild-gate target.
+
 ```bash
 # 1. Destroy all LXCs
-./with-secrets terragrunt run --all destroy
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all destroy -auto-approve
 
 # 2. Provision infrastructure
-./with-secrets terragrunt run --all apply
+./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all apply -auto-approve
 
 # 3. Configure platform tier explicitly
 ./with-secrets ./scripts/provision.sh --tier platform
@@ -171,6 +175,7 @@ print('no platform endpoints registered')
 Expected outcome:
 
 - infrastructure provisions successfully
+- destroy/apply run non-interactively from `terraform/lxc/stacks`
 - platform playbooks configure the expected stacks
 - Harbor, step-ca, and Traefik smoke tests pass
 - Portainer contains no platform agent endpoints after platform provisioning
