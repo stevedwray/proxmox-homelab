@@ -5,6 +5,7 @@ vmid: 131
 cores: 2
 memory: 2048
 rootfs_size: 8
+rootfs_storage: infrastructure-containers
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 
 # Deployment

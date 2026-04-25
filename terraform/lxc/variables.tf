@@ -96,7 +96,7 @@ variable "default_gateway" {
 variable "default_storage" {
   description = "Default storage backend"
   type        = string
-  default     = "local-zfs"
+  default     = "infrastructure-containers"
 }
 
 variable "portainer_server_ip" {

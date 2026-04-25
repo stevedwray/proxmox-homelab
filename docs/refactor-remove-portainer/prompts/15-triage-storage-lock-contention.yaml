@@ -1,0 +1,42 @@
+---
+id: rp-15-triage-storage-lock-contention
+title: "Triage Proxmox storage lock contention on infrastructure-containers"
+type: development
+status: pending
+depends_on:
+  - rp-13-fix-terragrunt-flag-forwarding
+task_doc: docs/refactor-remove-portainer/tasks/15-triage-storage-lock-contention.md
+validation_note: |
+  This is an evidence-only triage task. Gather non-mutating host state from
+  pve-test and classify the lock contention. Do not edit code or rerun the
+  rebuild gate here.
+
+context: |
+  Rebuild-gate apply progressed far enough to show Proxmox errors referencing
+  `/var/lock/pve-manager/pve-storage-infrastructure-containers`, with timeouts
+  while creating multiple platform CTs. This confirms the intended storage pool
+  is in use, but the rebuild is blocked by runtime storage locking on the host.
+
+objective: |
+  Determine whether the storage lock contention is:
+  - transient host state that can clear before a rebuild retry, or
+  - repeatable infrastructure behavior that needs a follow-up fix task
+
+workflow:
+  steps:
+    - Add Task 15 to task-sequence.md in the rebuild-unblocker area.
+    - Add this prompt to prompts/index.yaml with dependency on Task 13.
+    - Gather non-mutating CT, storage, lock, and active-task evidence from pve-test.
+    - Map the reported CT IDs back to stack names.
+    - Classify the blocker without changing code, configs, or host state.
+
+postconditions:
+  criteria:
+    - The storage lock contention is evidenced concretely.
+    - The next step is classified as retry-after-clear or new fix task.
+    - No live mutation or code change occurred.
+
+stop_conditions:
+  - Required evidence cannot be gathered non-mutatively.
+  - Host triage would require killing tasks or removing lock files.
+  - Validation reveals a wider issue that needs a separate implementation task.

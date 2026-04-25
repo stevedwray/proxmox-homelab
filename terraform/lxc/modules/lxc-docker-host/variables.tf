@@ -77,7 +77,7 @@ variable "nesting" {
 variable "rootfs_storage" {
   description = "Storage backend for the root filesystem"
   type        = string
-  default     = "local-zfs"
+  default     = "infrastructure-containers"
 }
 
 variable "rootfs_size" {

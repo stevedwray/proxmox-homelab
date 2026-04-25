@@ -62,6 +62,8 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 11 | Harden SDN VNet destroy path for rebuild-gate no-op handling | `complete` | 10 |
 | 12 | Document stack-only, non-interactive rebuild-gate contract | `complete` | 11 |
 | 13 | Fix Terragrunt flag forwarding for rebuild-gate destroy/apply | `complete` | 12 |
+| 14 | Correct invalid pve-test storage fallback defaults | `pending` | 13 |
+| 15 | Triage Proxmox storage lock contention on `infrastructure-containers` | `pending` | 13 |
 
 ## Dependency Graph
 
@@ -88,6 +90,8 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 00 (inventory handoff contract) ────────────────────────────────────────────────┘
 
 10 (runbook + docs sync) ─── 11 (SDN destroy no-op handling) ─── 12 (stack-only rebuild-gate contract) ─── 13 (Terragrunt flag forwarding fix)
+                                                                                                                ├── 14 (storage fallback correction)
+                                                                                                                └── 15 (storage lock triage)
 ```
 
 ## Tier 1 Playbook Coverage Reference
@@ -110,7 +114,7 @@ currently use Portainer roles directly.
 
 ## Final Gate
 
-After all tasks are complete, including Task 13 and any rebuild-unblocker tasks opened by a
+After all tasks are complete, including Tasks 14, 15, and any rebuild-unblocker tasks opened by a
 rebuild-gate stop condition, use [runbook.md](runbook.md) for the full
 `pve-test` rebuild gate. Do not mark the overall refactor complete on
 source-only validation alone.

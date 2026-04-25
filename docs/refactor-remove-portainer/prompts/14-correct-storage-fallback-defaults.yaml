@@ -1,0 +1,49 @@
+---
+id: rp-14-correct-storage-fallback-defaults
+title: "Correct invalid pve-test storage fallback defaults"
+type: development
+status: pending
+depends_on:
+  - rp-13-fix-terragrunt-flag-forwarding
+task_doc: docs/refactor-remove-portainer/tasks/14-correct-storage-fallback-defaults.md
+validation_note: |
+  This task changes Terraform/HCL and stack YAML. Validate with the broader
+  baseline helper plus Terraform fmt, Snyk IaC, and Sonar. Do not run the live
+  rebuild gate in this task.
+
+context: |
+  Rebuild-gate layout inspection proved the active platform stacks already pin
+  `rootfs_storage: infrastructure-containers`, but the Terraform defaults still
+  point at nonexistent `local-zfs` and `test-docker` / `test-lxc` still rely on
+  that fallback.
+
+  The repo's pve-test planning docs consistently treat
+  `infrastructure-containers` as the active target storage pool.
+
+objective: |
+  Remove invalid `local-zfs` fallback usage from the active pve-test Terraform
+  path by:
+  - changing the root and module defaults to `infrastructure-containers`
+  - making `test-docker` and `test-lxc` explicit about `rootfs_storage`
+  - preserving existing platform stack storage intent
+
+workflow:
+  steps:
+    - Add Task 14 to task-sequence.md in the rebuild-unblocker area.
+    - Add this prompt to prompts/index.yaml with dependency on Task 13.
+    - Change terraform/lxc/variables.tf default_storage to infrastructure-containers.
+    - Change terraform/lxc/modules/lxc-docker-host/variables.tf rootfs_storage default to infrastructure-containers.
+    - Add explicit rootfs_storage: infrastructure-containers to test-docker and test-lxc stack.yaml files.
+    - Run Terraform fmt check, the broader baseline helper, Snyk IaC, and Sonar.
+
+postconditions:
+  criteria:
+    - No scoped Terraform default still points to local-zfs.
+    - test-docker and test-lxc no longer rely on fallback storage resolution.
+    - The broader pve-test baseline still validates cleanly.
+    - No live rebuild-gate execution occurred in this task.
+
+stop_conditions:
+  - Existing repo evidence does not justify infrastructure-containers as the correct fallback.
+  - Validation reveals a wider storage-model inconsistency outside scoped files.
+  - Snyk IaC or Sonar reports new issues.
