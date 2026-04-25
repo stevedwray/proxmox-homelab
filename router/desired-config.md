@@ -134,26 +134,29 @@ Both interfaces are members of bridgeLocal, issue DHCP, and provide internet acc
 
 ## Firewall
 
-### IPv4
+### IPv4 forward chain
 
-30 filter rules + 3 NAT rules. Includes:
-- Allow established/related (input + forward)
-- Allow ICMPv4
-- Kid-curfew: 6 drop rules (3 devices × pm 22:00–23:59 + am 00:00–06:00), MAC-matched, in=bridgeLocal out=vlan1-wan
-- Allow LAN→WAN (in=bridgeLocal out=vlan1-wan)
-- Drop WAN→LAN
-- Drop invalid
-- Masquerade NAT on vlan1-wan
+| # | Action | Rule |
+|---|--------|------|
+| 1 | accept | established/related |
+| 2 | drop | invalid |
+| 3–8 | drop | kid-curfew pc/iphone/nih pm+am (MAC, in=bridgeLocal out=vlan1-wan, time-gated) |
+| 9 | accept | LAN→WAN (in=bridgeLocal out=vlan1-wan) |
+| 10 | drop | WAN→LAN (in=vlan1-wan out=bridgeLocal) |
 
-### IPv6
+Plus NAT: masquerade on vlan1-wan.
 
-14 filter rules. Includes:
-- Allow established/related (input + forward)
-- Allow ICMPv6 (input + forward)
-- Kid-curfew: 6 drop rules (3 devices × pm 22:00–23:59 + am 00:00–06:00), MAC-matched, in=bridgeLocal out=vlan1-wan
-- Allow LAN→WAN (in=bridgeLocal out=vlan1-wan)
-- Drop WAN→LAN (bridgeLocal)
-- Drop invalid
+### IPv6 forward chain
+
+Mirrors IPv4 forward chain exactly:
+
+| # | Action | Rule |
+|---|--------|------|
+| 1 | accept | established/related |
+| 2 | drop | invalid |
+| 3–8 | drop | kid-curfew pc/iphone/nih pm+am (MAC, in=bridgeLocal out=vlan1-wan, time-gated) |
+| 9 | accept | LAN→WAN (in=bridgeLocal out=vlan1-wan) |
+| 10 | drop | WAN→LAN (in=vlan1-wan out=bridgeLocal) |
 
 ---
 
