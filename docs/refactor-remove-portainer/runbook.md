@@ -124,8 +124,8 @@ For `terragrunt run --all`, pass OpenTofu/Terraform flags after `--` so they
 are forwarded to the underlying command.
 
 ```bash
-# 1. Destroy all LXCs
-./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- destroy -auto-approve
+# 1. Destroy all LXCs (stop-first helper)
+./scripts/rebuild-gate-destroy.sh --execute
 
 # 2. Provision infrastructure
 ./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- apply -auto-approve
