@@ -203,3 +203,66 @@ prompts:
     depends_on:
       - rp-13-fix-terragrunt-flag-forwarding
     task_doc: docs/refactor-remove-portainer/tasks/15-triage-storage-lock-contention.md
+
+  - id: rp-15a-integrate-task-15-status-sync
+    file: 15a-integrate-task-15-status-sync.yaml
+    title: "Integrate Task 15 package status into dev/pve-test"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-15-triage-storage-lock-contention
+    task_doc: docs/refactor-remove-portainer/tasks/15a-integrate-task-15-status-sync.md
+
+  - id: rp-16-clear-stale-proxmox-storage-lock
+    file: 16-clear-stale-proxmox-storage-lock.yaml
+    title: "Clear or confirm absence of stale Proxmox storage lock"
+    type: development
+    status: complete
+    depends_on:
+      - rp-15a-integrate-task-15-status-sync
+    task_doc: docs/refactor-remove-portainer/tasks/16-clear-stale-proxmox-storage-lock.md
+
+  - id: rp-17-retry-rebuild-gate-after-stale-lock-cleanup
+    file: 17-retry-rebuild-gate-after-stale-lock-cleanup.yaml
+    title: "Retry the full pve-test rebuild gate after stale-lock cleanup"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-16-clear-stale-proxmox-storage-lock
+    task_doc: docs/refactor-remove-portainer/tasks/17-retry-rebuild-gate-after-stale-lock-cleanup.md
+
+  - id: rp-18-triage-proxmox-shutdown-timeout-during-destroy
+    file: 18-triage-proxmox-shutdown-timeout-during-destroy.yaml
+    title: "Triage Proxmox container shutdown timeout during rebuild-gate destroy"
+    type: development
+    status: complete
+    depends_on:
+      - rp-17-retry-rebuild-gate-after-stale-lock-cleanup
+    task_doc: docs/refactor-remove-portainer/tasks/18-triage-proxmox-shutdown-timeout-during-destroy.md
+
+  - id: rp-19-add-stop-first-rebuild-gate-destroy-helper
+    file: 19-add-stop-first-rebuild-gate-destroy-helper.yaml
+    title: "Add a stop-first rebuild-gate destroy helper"
+    type: development
+    status: complete
+    depends_on:
+      - rp-18-triage-proxmox-shutdown-timeout-during-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/19-add-stop-first-rebuild-gate-destroy-helper.md
+
+  - id: rp-19a-integrate-destroy-helper-into-dev-pve-test
+    file: 19a-integrate-destroy-helper-into-dev-pve-test.yaml
+    title: "Integrate Task 19 destroy-helper commit into dev/pve-test"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-19-add-stop-first-rebuild-gate-destroy-helper
+    task_doc: docs/refactor-remove-portainer/tasks/19a-integrate-destroy-helper-into-dev-pve-test.md
+
+  - id: rp-19b-integrate-task-19a-package-status
+    file: 19b-integrate-task-19a-package-status.yaml
+    title: "Integrate Task 19a package status into dev/pve-test"
+    type: documentation
+    status: pending
+    depends_on:
+      - rp-19a-integrate-destroy-helper-into-dev-pve-test
+    task_doc: docs/refactor-remove-portainer/tasks/19b-integrate-task-19a-package-status.md

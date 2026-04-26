@@ -65,6 +65,43 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | 14 | Correct invalid pve-test storage fallback defaults | `complete` | 13 |
 | 15 | Triage Proxmox storage lock contention on `infrastructure-containers` | `complete` | 13 |
 
+## F. Integration Closeout
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 15a | Integrate Task 15 package status into `dev/pve-test` | `complete` | 15 |
+
+## G. Host Cleanup
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 16 | Clear or confirm absence of stale Proxmox storage lock | `complete` | 15a |
+
+## H. Rebuild Gate
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 17 | Retry the full `pve-test` rebuild gate after stale-lock cleanup | `blocked` | 16 |
+
+## I. Rebuild Triage
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 18 | Triage Proxmox container shutdown timeout during rebuild-gate destroy | `complete` | 17 |
+
+## J. Destroy Unblocker
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 19 | Add a stop-first rebuild-gate destroy helper | `complete` | 18 |
+
+## K. Integration Closeout
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 19a | Integrate Task 19 destroy-helper commit into `dev/pve-test` | `complete` | 19 |
+| 19b | Integrate Task 19a package status into `dev/pve-test` | `pending` | 19a |
+
 ## Dependency Graph
 
 ```text
@@ -92,6 +129,13 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 10 (runbook + docs sync) ─── 11 (SDN destroy no-op handling) ─── 12 (stack-only rebuild-gate contract) ─── 13 (Terragrunt flag forwarding fix)
                                                                                                                 ├── 14 (storage fallback correction)
                                                                                                                 └── 15 (storage lock triage)
+                                                                                                                     └── 15a (Task 15 package status integration)
+                                                                                                                         └── 16 (stale lock cleanup or no-op confirmation)
+                                                                                                                             └── 17 (fresh rebuild-gate retry)
+                                                                                                                                 └── 18 (shutdown-timeout triage)
+                                                                                                                                     └── 19 (stop-first destroy helper)
+                                                                                                                                         └── 19a (destroy-helper integration)
+                                                                                                                                             └── 19b (Task 19a package status integration)
 ```
 
 ## Tier 1 Playbook Coverage Reference
@@ -114,7 +158,7 @@ currently use Portainer roles directly.
 
 ## Final Gate
 
-After all tasks are complete, including Tasks 14, 15, and any rebuild-unblocker tasks opened by a
+After all tasks are complete, including Tasks 14, 15, 15a, 16, 17, 18, 19, 19a, 19b, and any rebuild-unblocker tasks opened by a
 rebuild-gate stop condition, use [runbook.md](runbook.md) for the full
 `pve-test` rebuild gate. Do not mark the overall refactor complete on
 source-only validation alone.
