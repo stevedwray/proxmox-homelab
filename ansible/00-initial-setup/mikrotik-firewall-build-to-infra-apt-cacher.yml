@@ -1,0 +1,148 @@
+---
+- name: Ensure build_seg can reach apt-cacher on infra_seg
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    apt_cacher_allow_rule:
+      comment: "homelab-build-seg-to-apt-cacher-3142"
+      chain: "forward"
+      action: "accept"
+      protocol: "tcp"
+      src-address: "10.57.0.0/24"
+      dst-address: "10.57.3.11"
+      dst-port: "3142"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find existing apt-cacher allow rule by comment
+      ansible.builtin.set_fact:
+        apt_cacher_rule_existing: >-
+          {{
+            (firewall_filters.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', apt_cacher_allow_rule.comment)
+              | list)
+            | first | default({})
+          }}
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add allow rule before first forward drop/reject
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ apt_cacher_allow_rule | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - apt_cacher_rule_existing == {}
+        - forward_drop_anchor != {}
+      no_log: true
+
+    - name: Add allow rule when no forward drop/reject anchor exists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ apt_cacher_allow_rule }}"
+        status_code: [200, 201]
+      when:
+        - apt_cacher_rule_existing == {}
+        - forward_drop_anchor == {}
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert apt-cacher allow rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', apt_cacher_allow_rule.comment)
+            | selectattr('chain', 'equalto', apt_cacher_allow_rule.chain)
+            | selectattr('action', 'equalto', apt_cacher_allow_rule.action)
+            | selectattr('protocol', 'equalto', apt_cacher_allow_rule.protocol)
+            | selectattr('src-address', 'equalto', apt_cacher_allow_rule['src-address'])
+            | selectattr('dst-address', 'equalto', apt_cacher_allow_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', apt_cacher_allow_rule['dst-port'])
+            | list | length > 0
+        fail_msg: >-
+          Expected MikroTik forward allow rule for build_seg -> apt-cacher tcp/3142
+          was not found after apply.
+        success_msg: >-
+          MikroTik forward allow rule for build_seg -> apt-cacher tcp/3142 is present.
