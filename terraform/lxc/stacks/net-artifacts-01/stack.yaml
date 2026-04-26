@@ -9,6 +9,3 @@ rootfs_size: 4
 rootfs_storage: "storage-containers"
 docker_storage_size: "4G"
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
-
-network:
-  zone: artifacts_seg
