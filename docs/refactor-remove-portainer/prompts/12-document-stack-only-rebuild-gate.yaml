@@ -1,0 +1,53 @@
+---
+id: rp-12-document-stack-only-rebuild-gate
+title: "Document stack-only, non-interactive rebuild-gate contract"
+type: documentation
+status: complete
+depends_on:
+  - rp-11-harden-sdn-destroy-noop
+task_doc: docs/refactor-remove-portainer/tasks/12-document-stack-only-rebuild-gate.md
+validation_note: |
+  This is a package/source-of-truth correction only. Do not execute rebuild
+  commands. Validate by command-contract grep/rg checks and Sonar.
+
+context: |
+  The latest rebuild-gate attempt stopped with needs-package-update, not an
+  implementation failure. The report evidence shows the documented runbook
+  command path still allows repo-root all-units Terragrunt execution, which
+  includes terraform/lxc and fails on required variables stack_name and
+  stack_yaml_path.
+
+  The package must now publish an explicit stack-only Terragrunt entrypoint and
+  non-interactive apply behavior before any rebuild-gate retry.
+
+objective: |
+  Update the package contract so operator-facing docs consistently document:
+  - stack-only Terragrunt entrypoint via --working-dir terraform/lxc/stacks
+  - non-interactive execution behavior
+  - explicit apply auto-approval behavior
+  while preserving the existing Terraform->inventory->Ansible two-phase model.
+
+workflow:
+  steps:
+    - Add Task 12 to task-sequence.md in the rebuild-unblocker/final-gate area.
+    - Add this prompt to prompts/index.yaml with dependency on Task 11.
+    - Add Task 12 task document with package-level stop-condition rationale.
+    - Update runbook final rebuild-gate contract to stack-only, non-interactive
+      Terragrunt commands.
+    - Align 02-terraform-ansible-separation.md, 03-refactor-plan.md, and
+      terraform/lxc/README.md so they do not conflict with runbook wording.
+    - Run source-only command checks plus Sonar.
+
+postconditions:
+  criteria:
+    - Task 12 appears cleanly in package registries.
+    - Rebuild-gate docs no longer direct repo-root all-units Terraform/LXC runs.
+    - Stack-only Terragrunt entrypoint is explicit.
+    - Non-interactive apply behavior with -auto-approve is explicit.
+    - No implementation-code behavior changed.
+
+stop_conditions:
+  - Contract cannot be corrected confidently from existing evidence.
+  - Required correction spills into implementation-code changes.
+  - Validation reveals wider inconsistency outside scoped docs.
+  - Sonar reports new issues.

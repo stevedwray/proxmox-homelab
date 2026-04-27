@@ -1,0 +1,53 @@
+---
+id: rp-30c-restore-ci-runner-apt-cacher-reachability
+title: "Restore repeatable ci-runner-01 apt-cacher reachability in code"
+type: development
+status: blocked
+depends_on:
+  - rp-30b-validate-ci-runner-functional-configuration
+task_doc: docs/refactor-remove-portainer/tasks/30c-restore-ci-runner-apt-cacher-reachability.md
+validation_note: |
+  This is a narrow live unblocker. Fix the apt-cacher reachability problem in
+  repo-managed code, then re-run the supported ci-runner-01 provisioning path
+  and prove the runner service is active and GitHub sees it online.
+
+context: |
+  Task 30b proved a real functional blocker: ci-runner-01 on build_seg could
+  not reach apt-cacher at 10.57.3.11:3142, so apt dependency installation
+  failed before runner setup completed. The task then added a repo-managed
+  MikroTik forward-rule playbook, but VMID 141 still could not reach its
+  gateway, so this prompt now serves as blocked historical evidence rather than
+  the current next step.
+
+objective: |
+  Restore build_seg access from ci-runner-01 to apt-cacher in a repeatable
+  repo-managed way and re-prove ci-runner-01 functional readiness.
+
+workflow:
+  steps:
+    - Verify Task 30b blocked evidence is present on disk and preflight confirms pve-test.
+    - Reproduce or confirm the apt-cacher reachability failure from VMID 141.
+    - Implement the smallest repo-managed code change that restores build_seg -> infra_seg tcp/3142 reachability.
+    - Apply only the affected automation needed to activate the fix on pve-test.
+    - Validate from VMID 141 that 10.57.3.11:3142 is reachable and apt update succeeds.
+    - Re-run ./with-secrets ./scripts/provision.sh --stack ci-runner-01.
+    - Verify the runner service is active inside VMID 141.
+    - Verify the GitHub Actions API reports ci-runner-pve-test as online.
+    - Write docs/refactor-remove-portainer/reports/30c-restore-ci-runner-apt-cacher-reachability-report.md.
+    - Stop after reporting and return control to the architect session.
+
+postconditions:
+  criteria:
+    - The apt-cacher path is fixed repeatably in code or the first out-of-scope blocker is reported clearly.
+    - ci-runner-01 functional readiness is revalidated through the supported path.
+    - No Sonar or Snyk scan is required for this exploratory live unblocker step.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Task 30b evidence is missing from disk or does not show Status: blocked.
+  - The required fix cannot be implemented through repo-managed code in scope.
+  - The task would require a manual one-off environment change to succeed.
+  - 10.57.3.11:3142 remains unreachable from VMID 141 after the scoped fix.
+  - The supported ci-runner-01 configuration path still fails after the network fix is applied.
+  - The runner service is not active inside VMID 141.
+  - The GitHub Actions API does not report ci-runner-pve-test as online.

@@ -1,0 +1,48 @@
+---
+id: rp-19-add-stop-first-rebuild-gate-destroy-helper
+title: "Add a stop-first rebuild-gate destroy helper"
+type: development
+status: pending
+depends_on:
+  - rp-18-triage-proxmox-shutdown-timeout-during-destroy
+task_doc: docs/refactor-remove-portainer/tasks/19-add-stop-first-rebuild-gate-destroy-helper.md
+validation_note: |
+  This is a narrow rebuild-unblocker implementation task. Add an explicit
+  helper for the destroy path, validate it with shellcheck and dry-run mode,
+  update the runbook to use it, and do not rerun the full rebuild gate here.
+
+context: |
+  Task 18 classified the destroy failure as repeatable Proxmox container
+  shutdown behavior in active Docker LXCs rather than a stale storage-lock
+  artifact. The rebuild gate therefore needs an explicit stop-first destroy
+  entrypoint before Terragrunt destroy is invoked.
+
+objective: |
+  Add a documented stop-first rebuild-gate destroy helper that derives its
+  target scope from stack metadata and makes the destroy path non-interactive
+  and resilient to guest shutdown timeout behavior.
+
+workflow:
+  steps:
+    - Add Task 19 to task-sequence.md as the destroy-unblocker follow-up to Task 18.
+    - Add this prompt to prompts/index.yaml with dependency on Task 18.
+    - Preserve the modified secrets file and untracked architect prompt notes.
+    - Create scripts/rebuild-gate-destroy.sh with pve-test preflight and dry-run support.
+    - Derive target VMIDs from terraform/lxc/stacks/*/stack.yaml rather than a hardcoded list.
+    - Stop currently running target CTs before invoking the existing Terragrunt destroy command.
+    - Update docs/refactor-remove-portainer/runbook.md to use the helper for rebuild-gate destroy.
+    - Validate with shellcheck, dry-run output, runbook grep, and Sonar.
+    - Write docs/refactor-remove-portainer/reports/19-stop-first-destroy-helper-report.md.
+
+postconditions:
+  criteria:
+    - The rebuild-gate destroy path has an explicit helper.
+    - The helper derives scope from stack metadata.
+    - The runbook destroy step points to the helper.
+    - No rebuild-gate retry occurred in this task.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - The helper cannot be implemented without widening scope.
+  - Dry-run mode cannot derive a stable target set from stack metadata.
+  - Sonar reports new issues.

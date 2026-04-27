@@ -1,0 +1,56 @@
+---
+id: rp-05-proxy-playbook
+title: "Update proxy playbook — remove portainer_agent"
+type: development
+status: complete
+depends_on: [rp-01-direct-stack-role]
+task_doc: docs/refactor-remove-portainer/tasks/05-update-proxy-playbook.md
+validation_note: |
+  Run ansible-lint on the playbook from terraform/lxc/ansible/ after editing.
+  Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  Traefik is the edge reverse proxy. The playbook has two plays. Play 1 installs Docker
+  base and portainer_agent. Play 2 generates Traefik's entire configuration inline and
+  deploys via community.docker.docker_compose_v2.
+
+  Play 2 is load-bearing for the edge infrastructure: it writes traefik.yml (static
+  config with LE staging + step-ca cert resolvers), authentik.yml (forward-auth
+  middleware), certs.yml (wildcard cert), docker-compose.yml, and handles publishing
+  reconciler-generated dynamic files via traefik_generated_source_dir. Play 2 does NOT
+  use app_stack. It is already Portainer-independent.
+
+  The only change is removing portainer_agent from Play 1 and masking the service.
+  Play 2 must not be modified.
+
+objective: |
+  Remove portainer_agent from Play 1, add the platform-tier service mask task from the
+  task document, rename the play. Do not touch Play 2.
+
+workflow:
+  steps:
+    - Read the full playbook terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml.
+    - Confirm Play 1 has roles lxc_base, docker_base, portainer_agent plus tasks for
+      daemon.json trust and Flush handlers.
+    - Confirm Play 2 writes traefik.yml, authentik.yml, certs.yml, docker-compose.yml
+      and uses community.docker.docker_compose_v2. Confirm no portainer_api or app_stack.
+    - "In Play 1: remove portainer_agent from the roles list. Remove any portainer_agent_*
+      vars. Append the service mask task from the task document at the end of the tasks
+      section, after the Flush handlers task. Rename the play to Configure Docker base."
+    - Do not change Play 2 in any way.
+    - Run ansible-lint from terraform/lxc/ansible/.
+    - Add a run_logged "syntax-check-deploy-proxy-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document.
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
+
+postconditions:
+  criteria:
+    - grep -in portainer returns only the mask task service name string.
+    - ansible-lint passes.
+    - Play 2 Traefik config generation, traefik_generated_source_dir logic, and deploy
+      tasks are intact and unmodified.
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-proxy-stack.
+
+stop_conditions:
+  - portainer_api or app_stack appears anywhere in the playbook — report before editing.
+  - Play 2 references portainer_agent_* variables — report before editing.

@@ -1,0 +1,51 @@
+---
+id: rp-13-fix-terragrunt-flag-forwarding
+title: "Fix Terragrunt flag forwarding for rebuild-gate destroy/apply"
+type: documentation
+status: complete
+depends_on:
+  - rp-12-document-stack-only-rebuild-gate
+task_doc: docs/refactor-remove-portainer/tasks/13-fix-terragrunt-flag-forwarding.md
+validation_note: |
+  This is a package/source-of-truth correction only. Do not execute rebuild
+  commands. Validate by command-contract grep/rg checks and Sonar.
+
+context: |
+  The latest rebuild-gate attempt stopped with needs-package-update, not an
+  implementation failure. Terragrunt stopped at the first destroy command
+  because the package currently places `-auto-approve` directly after `destroy`
+  in `terragrunt run --all ...` form.
+
+  Terragrunt 1.0.2 requires OpenTofu/Terraform flags to be forwarded after
+  `--` (for example: `terragrunt run --all -- destroy -auto-approve`).
+
+objective: |
+  Update package docs so operator-facing rebuild-gate commands consistently use
+  valid Terragrunt flag forwarding while preserving:
+  - stack-only `--working-dir terraform/lxc/stacks`
+  - non-interactive execution
+  - the explicit Terraform -> inventory -> Ansible model
+
+workflow:
+  steps:
+    - Add Task 13 to task-sequence.md in the rebuild-unblocker/final-gate area.
+    - Add this prompt to prompts/index.yaml with dependency on Task 12.
+    - Add Task 13 task document with package-level stop-condition rationale.
+    - Update runbook final rebuild-gate destroy/apply commands to forward flags
+      after `--`.
+    - Align 02-terraform-ansible-separation.md, 03-refactor-plan.md, and
+      terraform/lxc/README.md so they do not conflict with runbook wording.
+    - Run source-only command checks plus Sonar.
+
+postconditions:
+  criteria:
+    - Task 13 appears cleanly in package registries.
+    - Rebuild-gate docs no longer use invalid non-forwarded destroy/apply forms.
+    - Valid forwarded forms are explicit for both destroy and apply.
+    - No implementation-code behavior changed.
+
+stop_conditions:
+  - Contract cannot be corrected confidently from existing evidence.
+  - Required correction spills into implementation-code changes.
+  - Validation reveals wider inconsistency outside scoped docs.
+  - Sonar reports new issues.

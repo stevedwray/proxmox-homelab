@@ -1,0 +1,422 @@
+---
+# Portainer Removal Refactor — Prompt Index
+#
+# Each prompt maps one-to-one to docs/refactor-remove-portainer/tasks/.
+# Use one prompt per executor session.
+# Read README.md, decisions.md, and runbook.md before starting any task.
+# Background architecture: 01-revised-architecture.md, 02-terraform-ansible-separation.md
+
+prompts:
+  - id: rp-00a-plan-baseline
+    file: 00a-establish-scoped-terragrunt-validation-baseline.yaml
+    title: "Establish scoped Terragrunt validation baseline"
+    type: development
+    status: complete
+    depends_on: []
+    task_doc: docs/refactor-remove-portainer/tasks/00a-establish-scoped-terragrunt-validation-baseline.md
+
+  - id: rp-00b-validation-split
+    file: 00b-split-downstream-validation-scope.yaml
+    title: "Split downstream validation scope from the 00a baseline helper"
+    type: development
+    status: complete
+    depends_on: [rp-00a-plan-baseline]
+    task_doc: docs/refactor-remove-portainer/tasks/00b-split-downstream-validation-scope.md
+
+  - id: rp-00c-validation-hardening
+    file: 00c-harden-downstream-plan-validation.yaml
+    title: "Harden downstream plan validation and null-resource expectations"
+    type: development
+    status: complete
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split]
+    task_doc: docs/refactor-remove-portainer/tasks/00c-harden-downstream-plan-validation.md
+
+  - id: rp-00-inventory-template
+    file: 00-update-inventory-template.yaml
+    title: "Establish inventory handoff contract"
+    type: development
+    status: complete
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
+    task_doc: docs/refactor-remove-portainer/tasks/00-update-inventory-template.md
+
+  - id: rp-01-direct-stack-role
+    file: 01-direct-stack-role.yaml
+    title: "Create direct_stack Ansible role"
+    type: development
+    status: complete
+    depends_on: [rp-00-inventory-template]
+    task_doc: docs/refactor-remove-portainer/tasks/01-create-direct-stack-role.md
+
+  - id: rp-02-harbor-playbook
+    file: 02-harbor-playbook.yaml
+    title: "Update harbor playbook — remove Portainer plays"
+    type: development
+    status: complete
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/02-update-harbor-playbook.md
+
+  - id: rp-03-authentik-playbook
+    file: 03-authentik-playbook.yaml
+    title: "Update authentik playbook — remove portainer_agent"
+    type: development
+    status: complete
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/03-update-authentik-playbook.md
+
+  - id: rp-04-monitoring-playbook
+    file: 04-monitoring-playbook.yaml
+    title: "Update monitoring playbook — remove portainer_agent"
+    type: development
+    status: complete
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/04-update-monitoring-playbook.md
+
+  - id: rp-05-proxy-playbook
+    file: 05-proxy-playbook.yaml
+    title: "Update proxy playbook — remove portainer_agent"
+    type: development
+    status: complete
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/05-update-proxy-playbook.md
+
+  - id: rp-06-netbox-playbook
+    file: 06-netbox-playbook.yaml
+    title: "Update netbox playbook — replace app_stack with direct_stack"
+    type: development
+    status: complete
+    depends_on: [rp-01-direct-stack-role]
+    task_doc: docs/refactor-remove-portainer/tasks/06-update-netbox-playbook.md
+
+  - id: rp-06a-mask-remaining-tier1-playbooks
+    file: 06a-mask-remaining-tier1-playbooks.yaml
+    title: "Add Tier 1 service masking to remaining playbooks"
+    type: development
+    status: complete
+    depends_on: []
+    task_doc: docs/refactor-remove-portainer/tasks/06a-mask-remaining-tier1-playbooks.md
+
+  - id: rp-07-classify-stacks
+    file: 07-classify-stacks.yaml
+    title: "Classify stack execution intent explicitly"
+    type: development
+    status: complete
+    depends_on: [rp-00a-plan-baseline, rp-00b-validation-split, rp-00c-validation-hardening]
+    task_doc: docs/refactor-remove-portainer/tasks/07-classify-stacks.md
+
+  - id: rp-08-remove-local-exec
+    file: 08-remove-local-exec.yaml
+    title: "Remove ansible_provision null_resource from Terraform"
+    type: development
+    status: complete
+    depends_on:
+      - rp-02-harbor-playbook
+      - rp-03-authentik-playbook
+      - rp-04-monitoring-playbook
+      - rp-05-proxy-playbook
+      - rp-06-netbox-playbook
+      - rp-06a-mask-remaining-tier1-playbooks
+    task_doc: docs/refactor-remove-portainer/tasks/08-remove-terraform-local-exec.md
+
+  - id: rp-08b-retire-legacy-stack-cleanup-path
+    file: 08b-retire-legacy-stack-cleanup-ansible-path.yaml
+    title: "Retire legacy stack_cleanup Ansible path before inventory-handoff validation"
+    type: development
+    status: complete
+    depends_on:
+      - rp-08-remove-local-exec
+    task_doc: docs/refactor-remove-portainer/tasks/08b-retire-legacy-stack-cleanup-ansible-path.md
+
+  - id: rp-08a-real-inventory-handoff
+    file: 08a-generate-real-inventory-handoff-artifact.yaml
+    title: "Generate real inventory handoff artifact for Task 09 preflight"
+    type: development
+    status: complete
+    depends_on:
+      - rp-00-inventory-template
+      - rp-07-classify-stacks
+      - rp-08-remove-local-exec
+      - rp-08b-retire-legacy-stack-cleanup-path
+    task_doc: docs/refactor-remove-portainer/tasks/08a-generate-real-inventory-handoff-artifact.md
+
+  - id: rp-09-provision-script
+    file: 09-provision-script.yaml
+    title: "Create explicit Ansible orchestration path"
+    type: development
+    status: complete
+    depends_on:
+      - rp-08a-real-inventory-handoff
+    task_doc: docs/refactor-remove-portainer/tasks/09-create-provision-script.md
+
+  - id: rp-10-update-docs
+    file: 10-update-docs.yaml
+    title: "Sync documentation to the runbook-backed method"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-06a-mask-remaining-tier1-playbooks
+      - rp-07-classify-stacks
+      - rp-08-remove-local-exec
+      - rp-09-provision-script
+    task_doc: docs/refactor-remove-portainer/tasks/10-update-docs.md
+
+  - id: rp-11-harden-sdn-destroy-noop
+    file: 11-harden-sdn-destroy-noop.yaml
+    title: "Harden SDN VNet destroy path for rebuild-gate no-op handling"
+    type: development
+    status: complete
+    depends_on:
+      - rp-10-update-docs
+    task_doc: docs/refactor-remove-portainer/tasks/11-harden-sdn-destroy-noop.md
+
+  - id: rp-12-document-stack-only-rebuild-gate
+    file: 12-document-stack-only-rebuild-gate.yaml
+    title: "Document stack-only, non-interactive rebuild-gate contract"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-11-harden-sdn-destroy-noop
+    task_doc: docs/refactor-remove-portainer/tasks/12-document-stack-only-rebuild-gate.md
+
+  - id: rp-13-fix-terragrunt-flag-forwarding
+    file: 13-fix-terragrunt-flag-forwarding.yaml
+    title: "Fix Terragrunt flag forwarding for rebuild-gate destroy/apply"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-12-document-stack-only-rebuild-gate
+    task_doc: docs/refactor-remove-portainer/tasks/13-fix-terragrunt-flag-forwarding.md
+
+  - id: rp-14-correct-storage-fallback-defaults
+    file: 14-correct-storage-fallback-defaults.yaml
+    title: "Correct invalid pve-test storage fallback defaults"
+    type: development
+    status: complete
+    depends_on:
+      - rp-13-fix-terragrunt-flag-forwarding
+    task_doc: docs/refactor-remove-portainer/tasks/14-correct-storage-fallback-defaults.md
+
+  - id: rp-15-triage-storage-lock-contention
+    file: 15-triage-storage-lock-contention.yaml
+    title: "Triage Proxmox storage lock contention on infrastructure-containers"
+    type: development
+    status: complete
+    depends_on:
+      - rp-13-fix-terragrunt-flag-forwarding
+    task_doc: docs/refactor-remove-portainer/tasks/15-triage-storage-lock-contention.md
+
+  - id: rp-15a-integrate-task-15-status-sync
+    file: 15a-integrate-task-15-status-sync.yaml
+    title: "Integrate Task 15 package status into dev/pve-test"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-15-triage-storage-lock-contention
+    task_doc: docs/refactor-remove-portainer/tasks/15a-integrate-task-15-status-sync.md
+
+  - id: rp-16-clear-stale-proxmox-storage-lock
+    file: 16-clear-stale-proxmox-storage-lock.yaml
+    title: "Clear or confirm absence of stale Proxmox storage lock"
+    type: development
+    status: complete
+    depends_on:
+      - rp-15a-integrate-task-15-status-sync
+    task_doc: docs/refactor-remove-portainer/tasks/16-clear-stale-proxmox-storage-lock.md
+
+  - id: rp-17-retry-rebuild-gate-after-stale-lock-cleanup
+    file: 17-retry-rebuild-gate-after-stale-lock-cleanup.yaml
+    title: "Retry the full pve-test rebuild gate after stale-lock cleanup"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-16-clear-stale-proxmox-storage-lock
+    task_doc: docs/refactor-remove-portainer/tasks/17-retry-rebuild-gate-after-stale-lock-cleanup.md
+
+  - id: rp-18-triage-proxmox-shutdown-timeout-during-destroy
+    file: 18-triage-proxmox-shutdown-timeout-during-destroy.yaml
+    title: "Triage Proxmox container shutdown timeout during rebuild-gate destroy"
+    type: development
+    status: complete
+    depends_on:
+      - rp-17-retry-rebuild-gate-after-stale-lock-cleanup
+    task_doc: docs/refactor-remove-portainer/tasks/18-triage-proxmox-shutdown-timeout-during-destroy.md
+
+  - id: rp-19-add-stop-first-rebuild-gate-destroy-helper
+    file: 19-add-stop-first-rebuild-gate-destroy-helper.yaml
+    title: "Add a stop-first rebuild-gate destroy helper"
+    type: development
+    status: complete
+    depends_on:
+      - rp-18-triage-proxmox-shutdown-timeout-during-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/19-add-stop-first-rebuild-gate-destroy-helper.md
+
+  - id: rp-19a-integrate-destroy-helper-into-dev-pve-test
+    file: 19a-integrate-destroy-helper-into-dev-pve-test.yaml
+    title: "Integrate Task 19 destroy-helper commit into dev/pve-test"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-19-add-stop-first-rebuild-gate-destroy-helper
+    task_doc: docs/refactor-remove-portainer/tasks/19a-integrate-destroy-helper-into-dev-pve-test.md
+
+  - id: rp-19b-integrate-task-19a-package-status
+    file: 19b-integrate-task-19a-package-status.yaml
+    title: "Integrate Task 19a package status into dev/pve-test"
+    type: documentation
+    status: complete
+    depends_on:
+      - rp-19a-integrate-destroy-helper-into-dev-pve-test
+    task_doc: docs/refactor-remove-portainer/tasks/19b-integrate-task-19a-package-status.md
+
+  - id: rp-20-retry-rebuild-gate-with-stop-first-helper
+    file: 20-retry-rebuild-gate-with-stop-first-helper.yaml
+    title: "Retry rebuild gate with stop-first helper"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-19b-integrate-task-19a-package-status
+    task_doc: docs/refactor-remove-portainer/tasks/20-retry-rebuild-gate-with-stop-first-helper.md
+
+  - id: rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+    file: 20a-retry-rebuild-gate-with-corrected-evidence-handling.yaml
+    title: "Retry rebuild gate with corrected evidence handling"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-19b-integrate-task-19a-package-status
+    task_doc: docs/refactor-remove-portainer/tasks/20a-retry-rebuild-gate-with-corrected-evidence-handling.md
+
+  - id: rp-21-fix-pct-stop-compatibility-in-destroy-helper
+    file: 21-fix-pct-stop-compatibility-in-destroy-helper.yaml
+    title: "Fix pct stop compatibility in destroy helper"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+    task_doc: docs/refactor-remove-portainer/tasks/21-fix-pct-stop-compatibility-in-destroy-helper.md
+
+  - id: rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    file: 22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy.yaml
+    title: "Triage Proxmox LXC config lock timeout during stop-first destroy"
+    type: development
+    status: complete
+    depends_on:
+      - rp-21-fix-pct-stop-compatibility-in-destroy-helper
+    task_doc: docs/refactor-remove-portainer/tasks/22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy.md
+
+  - id: rp-23-clear-hung-proxmox-stop-task-for-vmid-150
+    file: 23-clear-hung-proxmox-stop-task-for-vmid-150.yaml
+    title: "Clear hung Proxmox stop task for VMID 150"
+    type: development
+    status: complete
+    depends_on:
+      - rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/23-clear-hung-proxmox-stop-task-for-vmid-150.md
+
+  - id: rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+    file: 24-reboot-pve-test-and-reestablish-storage-health-baseline.yaml
+    title: "Reconcile pve-test post-reboot storage health baseline"
+    type: development
+    status: complete
+    depends_on:
+      - rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/24-reboot-pve-test-and-reestablish-storage-health-baseline.md
+
+  - id: rp-29-strip-down-disposable-validation-containers
+    file: 29-strip-down-disposable-validation-containers.yaml
+    title: "Strip down disposable validation containers on pve-test"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+    task_doc: docs/refactor-remove-portainer/tasks/29-strip-down-disposable-validation-containers.md
+
+  - id: rp-29a-manually-remove-orphaned-disposable-validation-containers
+    file: 29a-manually-remove-orphaned-disposable-validation-containers.yaml
+    title: "Manually remove orphaned disposable validation containers on pve-test"
+    type: development
+    status: complete
+    depends_on:
+      - rp-29-strip-down-disposable-validation-containers
+    task_doc: docs/refactor-remove-portainer/tasks/29a-manually-remove-orphaned-disposable-validation-containers.md
+
+  - id: rp-30-classify-and-prune-disposable-sdn-objects
+    file: 30-classify-and-prune-disposable-sdn-objects.yaml
+    title: "Classify and prune disposable SDN objects after strip-down"
+    type: development
+    status: complete
+    depends_on:
+      - rp-29a-manually-remove-orphaned-disposable-validation-containers
+    task_doc: docs/refactor-remove-portainer/tasks/30-classify-and-prune-disposable-sdn-objects.md
+
+  - id: rp-30a-validate-ci-runner-container-creation
+    file: 30a-validate-ci-runner-container-creation.yaml
+    title: "Validate retained container creation with ci-runner-01"
+    type: development
+    status: complete
+    depends_on:
+      - rp-30-classify-and-prune-disposable-sdn-objects
+    task_doc: docs/refactor-remove-portainer/tasks/30a-validate-ci-runner-container-creation.md
+
+  - id: rp-30b-validate-ci-runner-functional-configuration
+    file: 30b-validate-ci-runner-functional-configuration.yaml
+    title: "Validate ci-runner-01 functional configuration"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30a-validate-ci-runner-container-creation
+    task_doc: docs/refactor-remove-portainer/tasks/30b-validate-ci-runner-functional-configuration.md
+
+  - id: rp-30c-restore-ci-runner-apt-cacher-reachability
+    file: 30c-restore-ci-runner-apt-cacher-reachability.yaml
+    title: "Restore repeatable ci-runner-01 apt-cacher reachability in code"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30b-validate-ci-runner-functional-configuration
+    task_doc: docs/refactor-remove-portainer/tasks/30c-restore-ci-runner-apt-cacher-reachability.md
+
+  - id: rp-30d-reconcile-active-mikrotik-baseline
+    file: 30d-reconcile-active-mikrotik-baseline-and-build-seg-carriage.yaml
+    title: "Reconcile active MikroTik baseline and build-seg carriage assumptions"
+    type: development
+    status: complete
+    depends_on:
+      - rp-30c-restore-ci-runner-apt-cacher-reachability
+    task_doc: docs/refactor-remove-portainer/tasks/30d-reconcile-active-mikrotik-baseline-and-build-seg-carriage.md
+
+  - id: rp-30e-reconcile-build-seg-vlan-data-plane
+    file: 30e-reconcile-build-seg-vlan-data-plane.yaml
+    title: "Reconcile build_seg VLAN/data-plane path between Proxmox and the active MikroTik"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30d-reconcile-active-mikrotik-baseline
+    task_doc: docs/refactor-remove-portainer/tasks/30e-reconcile-build-seg-vlan-data-plane.md
+
+  - id: rp-31-add-minimal-build-path-validation-harness
+    file: 31-add-minimal-build-path-validation-harness.yaml
+    title: "Add a minimal build-path validation harness"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30e-reconcile-build-seg-vlan-data-plane
+    task_doc: docs/refactor-remove-portainer/tasks/31-add-minimal-build-path-validation-harness.md
+
+  - id: rp-32-run-minimal-build-path-harness
+    file: 32-run-minimal-build-path-harness.yaml
+    title: "Run the minimal build-path harness on pve-test"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30-classify-and-prune-disposable-sdn-objects
+      - rp-31-add-minimal-build-path-validation-harness
+    task_doc: docs/refactor-remove-portainer/tasks/32-run-minimal-build-path-harness.md
+
+  - id: rp-33-validate-sdn-vnet-idempotency-with-minimal-harness
+    file: 33-validate-sdn-vnet-idempotency-with-minimal-harness.yaml
+    title: "Validate SDN VNet idempotency with the minimal build-path harness"
+    type: development
+    status: pending
+    depends_on:
+      - rp-32-run-minimal-build-path-harness
+    task_doc: docs/refactor-remove-portainer/tasks/33-validate-sdn-vnet-idempotency-with-minimal-harness.md

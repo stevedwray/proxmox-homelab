@@ -1,0 +1,53 @@
+---
+id: rp-04-monitoring-playbook
+title: "Update monitoring playbook — remove portainer_agent"
+type: development
+status: complete
+depends_on: [rp-01-direct-stack-role]
+task_doc: docs/refactor-remove-portainer/tasks/04-update-monitoring-playbook.md
+validation_note: |
+  Run ansible-lint on the playbook from terraform/lxc/ansible/ after editing.
+  Run SonarCloud: ./with-secrets /home/steve/.local/bin/sonar-scanner
+
+context: |
+  The monitoring stack (Grafana + VictoriaMetrics + Loki + Promtail) is a platform
+  service. The playbook has two plays. Play 1 installs Docker base and portainer_agent.
+  Play 2 generates the entire monitoring configuration inline (Loki config, Promtail
+  config, Grafana datasource provisioning, .env file, docker-compose.yml content) and
+  deploys via community.docker.docker_compose_v2.
+
+  The monitoring stack does NOT use app_stack. Play 2 is already Portainer-independent.
+  The only change is removing portainer_agent from Play 1 and masking the service.
+  Play 2 must not be modified.
+
+objective: |
+  Remove portainer_agent from Play 1, add the platform-tier service mask task from the
+  task document, rename the play. Do not touch Play 2.
+
+workflow:
+  steps:
+    - Read the full playbook terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml.
+    - Confirm Play 1 has roles lxc_base, docker_base, portainer_agent plus a tasks
+      section with daemon.json and Flush handlers tasks.
+    - Confirm Play 2 uses community.docker.docker_compose_v2 with health checks for
+      Grafana, VictoriaMetrics, and Loki. Confirm it has no portainer_api or app_stack.
+    - "In Play 1: remove portainer_agent from the roles list. Remove any portainer_agent_*
+      vars. Append the service mask task from the task document at the end of the
+      existing tasks section, after the Flush handlers task. Rename the play to
+      Configure Docker base."
+    - Do not change Play 2 in any way.
+    - Run ansible-lint from terraform/lxc/ansible/.
+    - Add a run_logged "syntax-check-deploy-monitoring-stack" step to run_source_preflight_checks
+      in scripts/teardown-deploy-test.sh as specified in the task document.
+    - Run scripts/teardown-deploy-test.sh source-preflight to confirm the syntax check passes.
+
+postconditions:
+  criteria:
+    - grep -in portainer returns only the mask task service name string.
+    - ansible-lint passes.
+    - Play 2 inline config generation and three health checks are intact.
+    - scripts/teardown-deploy-test.sh source-preflight passes syntax-check-deploy-monitoring-stack.
+
+stop_conditions:
+  - portainer_api or app_stack appears anywhere in the playbook — report before editing.
+  - Play 1 contains any inline task doing Portainer API work — report before removing.

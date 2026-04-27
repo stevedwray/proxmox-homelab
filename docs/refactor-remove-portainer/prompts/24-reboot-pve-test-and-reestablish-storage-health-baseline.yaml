@@ -1,0 +1,50 @@
+---
+id: rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+title: "Reconcile pve-test post-reboot storage health baseline"
+type: development
+status: complete
+depends_on:
+  - rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+task_doc: docs/refactor-remove-portainer/tasks/24-reboot-pve-test-and-reestablish-storage-health-baseline.md
+validation_note: |
+  This is a host recovery reconciliation step. If reboot recovery has not yet
+  happened, capture pre-reboot evidence, reboot pve-test, wait for it to
+  return, then record the immediate post-reboot storage/runtime baseline. If
+  recovery already happened manually, reconcile the post-recovery host state
+  from declared live evidence without widening into rebuild-gate or
+  implementation work.
+
+context: |
+  Host evidence now shows a wider storage/runtime failure on pve-test: multiple
+  ZFS pools are suspended, CT 150 is left in a running-but-shutting-down state,
+  and host logs report pool I/O suspension. A narrow stop-task cleanup is no
+  longer the right next step.
+
+objective: |
+  Determine whether the suspended-pool and hung-stop-task symptoms have cleared
+  enough to resume refactor recovery work, whether recovery occurs in-task or
+  was already completed manually before evidence capture.
+
+workflow:
+  steps:
+    - Verify the Task 22 report exists in the operator workspace.
+    - Preserve the modified helper script, modified secrets file, .worktrees, architect notes, and local package edits.
+    - Determine whether reboot recovery already happened before the executor run.
+    - If recovery has not yet happened, capture pre-reboot host evidence for uptime, zpool status, pct status 150, and any live stop-task processes.
+    - If recovery has not yet happened, reboot pve-test and wait for SSH availability to return.
+    - Capture post-reboot or post-recovery zpool, pvesm, pct 150, stop-task, and journal evidence.
+    - State explicitly whether the reboot and CT shutdown were executed in-task or had already been completed manually out of band.
+    - Write docs/refactor-remove-portainer/reports/24-pve-test-reboot-recovery-report.md.
+
+postconditions:
+  criteria:
+    - The host either returns with a usable baseline or the broader defect is documented clearly.
+    - No rebuild-gate retry occurs in this task.
+    - No helper or Terraform/Ansible implementation work is mixed into this task.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Task 22 evidence is missing from disk.
+  - Host state degrades such that reboot cannot be initiated normally when recovery has not yet happened.
+  - Host does not return after reboot within a reasonable wait window when the task is the one performing the reboot.
+  - Post-reboot or post-recovery evidence shows a broader storage/hardware defect requiring escalation.
