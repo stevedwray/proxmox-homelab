@@ -222,7 +222,7 @@ exit: 0
 - `.ai/tasks/planner-blocker-to-architect.yaml` created to separate planner blockers from executor-review handoffs.
 - `docs/sessions/session-agent-hardening-01-report.md` created.
 
-Commit SHA: pending at report write time.
+Commit SHA: `1e82b50`.
 
 ## 4. Blockers
 
