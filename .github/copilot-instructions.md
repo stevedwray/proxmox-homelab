@@ -1,5 +1,16 @@
 # Workflow Instructions
 
+## Protected Branches
+
+**Do not commit to or merge into these branches without explicit instruction.**
+
+| Branch | Purpose | Rule |
+|---|---|---|
+| `baseline/teardown-validated` | Preserved snapshot of system state after teardown was validated. Intentionally 3 commits ahead of `dev/pve-test` (SOPS updates and docs not yet integrated). | **READ-ONLY. Never commit or merge into it.** |
+| `dev/pve-test` | Known-good integration branch for the test server. | Only receives: (1) work fully validated on a working branch, (2) AI tooling/workflow changes. **Never merge task, fix, exec, or chore branches directly.** |
+
+All development work goes to a **working branch** cut from `dev/pve-test`. Only after validation (tests pass, playbook runs clean, scans pass) does it merge to `dev/pve-test`.
+
 ## Branching
 
 - `dev/pve-test` is the long-running integration branch tracking the test server state

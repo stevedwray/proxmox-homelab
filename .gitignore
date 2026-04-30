@@ -79,8 +79,9 @@ cosign.key
 *~
 .scannerwork/
 
-# BMAD GenAI agents and tooling (not committed — sourced from bmad-core)
+# BMAD GenAI tooling (not committed — sourced from bmad-core)
 .genai/
-.github/agents/
 .github/skills/
-.github/instructions/
+
+# Custom agent definitions and instructions (project-owned, version-controlled)
+# .github/agents/ and .github/instructions/ are tracked intentionally
