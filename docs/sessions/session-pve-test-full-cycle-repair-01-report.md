@@ -1,93 +1,72 @@
-# Executor Session Report: session-pve-test-full-cycle-repair-01
+# Executor Session Report: session-pve-test-full-cycle-repair-03
 
 ## 1. Session Metadata
 
 | Field | Value |
 |---|---|
-| Session ID | session-pve-test-full-cycle-repair-01 |
-| Branch | work/pve-test-stage3b-repair |
-| HEAD SHA | 8638b7f96459565d4b3b736c9c9ee0ba11a87000 |
-| Evidence stamp | 20260501-fix-003 |
-| Target guard | PASS (pve-test) |
-| Working tree | clean |
-| Session state | COMPLETE through final-validation + platform-status |
+| Session ID | session-pve-test-full-cycle-repair-03 |
+| Branch | work/pve-test-full-cycle-repair |
+| HEAD SHA | 24447e9d275c783097839aef673d286076f445a0 |
+| Baseline anchor | aa8ce3c505880a000848710c3ef94f4ef5c0c179 |
+| Runtime validated SHA | aa8ce3c505880a000848710c3ef94f4ef5c0c179 |
+| Delta type (`none` / `metadata-only` / `runtime-change`) | metadata-only |
+| Lineage check | PASS |
+| Target guard | PASS |
+| Working tree | dirty |
+| Open issues at start | none |
 
-## 2. Objective
+## 2. Gate Results
 
-Execute full platform teardown and redeploy to fix container workload mismatch:
+**guard** — PASS
 
-- dns-stack had portainer-agent instead of CoreDNS workload behavior
-- proxy-stack had portainer-agent instead of Traefik workload behavior
+```bash
+$ ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+pve-test
+exit: 0
+```
 
-## 3. Gate Outcomes
+**verify-current-head** — PASS
 
-| Gate | Result |
-|---|---|
-| guard | PASS |
-| destroy | PASS |
-| deploy-foundation | PASS |
-| deploy-edge | PASS |
-| activate-edge | PASS |
-| deploy-platform | PASS |
-| final-validation | PASS |
-| platform-status | PASS |
-| verify-dns-responsive | PASS |
+```bash
+$ git rev-parse HEAD
+24447e9d275c783097839aef673d286076f445a0
+exit: 0
+```
 
-Checkpoint state confirms phase status `passed` for destroy, deploy-foundation, deploy-edge, activate-edge, deploy-platform, final-validation.
+**verify-cycle04-evidence-lines** — PASS
 
-## 4. Key Execution Notes
+```bash
+$ rg -n "DONE (final-validation|platform-status)" docs/teardown-test/evidence/20260501-cycle-04/logs/teardown-deploy-test-20260501-cycle-04.log
+865:[2026-05-01T07:13:01Z] DONE final-validation; evidence_dir=/home/steve/git/proxmox-homelab/docs/teardown-test/evidence/20260501-cycle-04
+887:[2026-05-01T07:17:01Z] DONE platform-status; evidence_dir=/home/steve/git/proxmox-homelab/docs/teardown-test/evidence/20260501-cycle-04
+1258:[2026-05-01T07:48:27Z] DONE final-validation; evidence_dir=/home/steve/git/proxmox-homelab/docs/teardown-test/evidence/20260501-cycle-04
+1280:[2026-05-01T07:49:19Z] DONE platform-status; evidence_dir=/home/steve/git/proxmox-homelab/docs/teardown-test/evidence/20260501-cycle-04
+exit: 0
+```
 
-1. Approval protocol constraints were resolved by pinning stamp with `TEARDOWN_TEST_STAMP`, updating approval packet metadata, and satisfying backup artifact gates.
-2. Foundation phase needed operational hardening during execution:
-   - Portainer bootstrap password lookup aligned with TF_VAR naming
-   - apt-cacher health probe updated to accept valid HTTP 406 usage response
-   - Harbor health probe aligned to local HTTP registry endpoint behavior
-3. Edge phase required one retry after transient DNS provision failure (`rc 137` during package install); second run passed.
-4. Final-validation initially failed before edge publish because browser DNS routing for authentik had not been activated (`authentik.lab` resolving to service IP). Running activate-edge (render + reconcile + publish coredns/traefik) resolved this and final-validation passed.
+**refs-consistency** — PASS
 
-## 5. Workload Verification (Critical)
+```bash
+$ git diff --name-only aa8ce3c505880a000848710c3ef94f4ef5c0c179..24447e9d275c783097839aef673d286076f445a0
+docs/sessions/session-pve-test-full-cycle-repair-01-report.md
+$ git merge-base --is-ancestor aa8ce3c505880a000848710c3ef94f4ef5c0c179 HEAD
+exit: 0
+$ classification
+runtime_validated_sha=aa8ce3c505880a000848710c3ef94f4ef5c0c179
+current_head_sha=24447e9d275c783097839aef673d286076f445a0
+delta_type=metadata-only
+exit: 0
+```
 
-Validated post-deploy behavior:
+## 3. Changes Made
 
-- dns-stack:
-  - `systemctl is-active coredns` returned `active`
-  - `ss -ltnup` shows listeners on TCP/UDP port 53 by coredns
-- proxy-stack:
-  - `traefik` container running
-- authoritative DNS gate:
-  - `dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz` returned `10.57.2.10`
+- `docs/sessions/session-pve-test-full-cycle-repair-01-report.md`: Updated metadata and gate evidence to explicitly separate runtime validated SHA from current HEAD and classify the delta as metadata-only.
+- `.git/ai/handoff-to-architect.yaml`: Updated contract-compliant refs block with `runtime_validated_sha`, `current_head_sha`, and `delta_type`, and aligned gate IDs/notes.
 
-Note: portainer-agent sidecars are still present on multiple stacks; this run validated that required primary workloads (CoreDNS, Traefik, etc.) are present and healthy, which resolves the original blocker condition.
+## 4. Blockers
 
-## 6. Commits Created During Session
+None.
 
-| SHA | Summary |
-|---|---|
-| 71c52f7 | Fix teardown-deploy-test array handling under strict shell mode; add initial session report |
-| 38b3400 | Fix Portainer bootstrap password lookup for TF_VAR secret naming |
-| f2f2ffb | Accept apt-cacher 406 usage response in health probes |
-| 0585935 | Align Harbor health probe with local HTTP registry endpoint |
-| 8638b7f | Refresh homelab root certificate artifact |
+## 5. Recommendation
 
-## 7. Architect Recommendation (User Feedback)
-
-Operator feedback from this session:
-
-- Portainer is currently deployed first in foundation order.
-- In current operating model, Portainer is primarily used for application stacks and not required as the earliest platform dependency.
-- Recommendation: update deployment order policy and docs to delay Portainer until later in the sequence (for example near application stack readiness, or after core edge services) unless a specific stack dependency requires it.
-
-Action requested for architect:
-
-1. Re-evaluate approved deploy ordering in docs/teardown-test/inventory.md and scripts/provision.sh platform order list.
-2. Document the intended rationale for Portainer placement (early dependency vs delayed app-ops service).
-3. If delaying Portainer is approved, update dependency contracts and health gates accordingly.
-
-## 8. Final State Summary
-
-The full teardown/redeploy repair objective is complete for this session stamp.
-
-- Platform status reports all in-scope stacks healthy.
-- Final-validation passed after activate-edge publish.
-- DNS responsiveness verification passed.
-- Evidence and logs are available under docs/teardown-test/evidence/20260501-fix-003.
+Architect should focus on the explicit runtime-vs-current refs mapping (aa8ce3c... vs 24447e9...) and, with all gates passing and delta classified metadata-only, treat this session as sufficient for go/no-go review.

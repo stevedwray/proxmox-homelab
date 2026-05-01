@@ -145,6 +145,8 @@ Write the report to the path in `output_report`.
 | Branch | |
 | HEAD SHA | |
 | Baseline anchor | |
+| Runtime validated SHA | |
+| Delta type (`none` / `metadata-only` / `runtime-change`) | |
 | Lineage check | PASS / FAIL |
 | Target guard | PASS / FAIL |
 | Working tree | clean / dirty |
@@ -206,6 +208,9 @@ input:
 refs:
   baseline_sha: ""
   frozen_sha: null                # SHA after clean-tree preflight, or null
+  runtime_validated_sha: ""      # SHA tied to runtime evidence in report
+  current_head_sha: ""           # SHA at handoff write time
+  delta_type: "none"             # none | metadata-only | runtime-change
 
 gates:
   - id: ""

@@ -18,7 +18,6 @@ tags:
 depends_on:
   - harbor-stack
   - apt-cacher-stack
-  - portainer-stack
 provides: []
 
 network:
