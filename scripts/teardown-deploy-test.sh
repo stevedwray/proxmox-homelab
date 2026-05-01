@@ -852,6 +852,47 @@ get_authentik_url() {
   return 1
 }
 
+wait_for_authentik_api_ready() {
+  local authentik_url="$1"
+  local max_attempts="24"
+  local delay_seconds="5"
+
+  run_logged "wait-authentik-api-ready" \
+    "${WITH_SECRETS}" bash -lc '
+      set -euo pipefail
+
+      authentik_url="$1"
+      max_attempts="$2"
+      delay_seconds="$3"
+      endpoint="${authentik_url%/}/api/v3/core/applications/?page_size=1"
+      token="${AUTHENTIK_SUPERUSER_API_TOKEN:-}"
+
+      if [[ -z "${token}" ]]; then
+        echo "AUTHENTIK_SUPERUSER_API_TOKEN is not set" >&2
+        exit 1
+      fi
+
+      for attempt in $(seq 1 "${max_attempts}"); do
+        code="$(curl -sk -o /tmp/authentik-api-ready.json -w "%{http_code}" \
+          -H "Authorization: Bearer ${token}" \
+          -H "Accept: application/json" \
+          "${endpoint}" || true)"
+        echo "attempt=${attempt} http_code=${code} endpoint=${endpoint}"
+
+        if [[ "${code}" == "200" ]]; then
+          exit 0
+        fi
+
+        if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+          sleep "${delay_seconds}"
+        fi
+      done
+
+      echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
+      exit 1
+    ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
+}
+
 require_execute_approval() {
   local approval_lc
   approval_lc="${APPROVAL_TEXT,,}"
@@ -1629,6 +1670,7 @@ phase_activate_edge() {
   require_clean_tree
   guard_pve_test
   authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
