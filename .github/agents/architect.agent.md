@@ -109,10 +109,11 @@ Do not produce approval packets, supporting notes, candidate-basis documents, or
 supersession notices. Verdict goes inline in chat. Handoff goes to `.git/ai/`.
 Nothing else.
 
-**Respect protected branches**
-`baseline/teardown-validated` is READ-ONLY — never set it as a target branch or merge destination.
-`dev/pve-test` only receives work validated on a working branch, or AI tooling changes.
-Always set `refs.base_branch` to the active working branch, not directly to `dev/pve-test`, unless the work is a confirmed AI tooling change.
+**Respect the branch model**
+`baseline/teardown-validated` receives infrastructure code validated through a full teardown + redeploy cycle.
+`dev/pve-test` receives code validated for application stack deployment on top of `baseline/teardown-validated`.
+Never merge directly into either without the promotion gate being passed.
+Set `refs.base_branch` to the active `work/*` branch for infrastructure work, or `dev/pve-test` for application stack work.
 
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
