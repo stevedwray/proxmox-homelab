@@ -1103,7 +1103,8 @@ validate_stack_smoke() {
         bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"
       ;;
     harbor-stack)
-      run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
