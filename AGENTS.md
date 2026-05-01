@@ -1,15 +1,23 @@
 # Workflow Instructions
 
-## Protected Branches
+## Branch Model
 
-**Do not commit to or merge into these branches without explicit instruction.**
+```
+work/* branches                    ← active development
+       ↓  full infrastructure teardown + redeploy validated
+baseline/teardown-validated        ← infrastructure foundation known good
+       ↓  application stacks deploy successfully on top
+dev/pve-test                       ← application deployment known good
+       ↓  stable and tested
+main
+```
 
-| Branch | Purpose | Rule |
+| Branch | Meaning | Promotion gate |
 |---|---|---|
-| `baseline/teardown-validated` | Preserved snapshot of system state after teardown was validated. Intentionally 3 commits ahead of `dev/pve-test` (SOPS updates and docs not yet integrated). | **READ-ONLY. Never commit or merge into it.** |
-| `dev/pve-test` | Known-good integration branch for the test server. | Only receives: (1) work fully validated on a working branch, (2) AI tooling/workflow changes. **Never merge task, fix, exec, or chore branches directly.** |
+| `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
+| `dev/pve-test` | Application stacks deploy successfully on the infrastructure. | Validate application stacks on top of `baseline/teardown-validated`. |
 
-All development work goes to a **working branch** cut from `dev/pve-test`. Only after validation (tests pass, playbook runs clean, scans pass) does it merge to `dev/pve-test`.
+**Never merge directly into either branch** — work must pass its promotion gate first. Active development happens on `work/*` or short-lived `feat/`, `fix/`, `task/` branches.
 
 ## Branching
 
