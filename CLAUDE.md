@@ -21,13 +21,12 @@ main
 
 ## Branching
 
-- `dev/pve-test` is the long-running integration branch tracking the test server state
-- Cut short-lived branches from `dev/pve-test` (e.g. `fix/terraform-fmt`, `feat/harbor-deployment`)
-- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging, if issues are encountered in validation stop and offer options.
-- Merge short-lived branches → `dev/pve-test`, not `main`
-- PR `dev/pve-test` → `main` only when stable and tested on the test server
-- After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync
-- Never PR directly to `main` unless already on `dev/pve-test` and tested
+- Infrastructure work: cut `work/*` from the current working state; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
+- Application stack work: cut `feat/`, `fix/`, or `task/` from `dev/pve-test`; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
+- AI tooling / workflow changes: cut `feat/` from `dev/pve-test`; merge directly to `dev/pve-test` (no infrastructure gate required).
+- Validate in the short-lived branch before merging. If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
+- PR `dev/pve-test` → `main` only when stable and tested on the test server.
+- After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync.
 
 ## Commits and Issues
 
