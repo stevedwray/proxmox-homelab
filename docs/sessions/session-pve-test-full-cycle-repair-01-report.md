@@ -4,90 +4,90 @@
 
 | Field | Value |
 |---|---|
-| Session ID | `session-pve-test-full-cycle-repair-01` |
-| Branch | `work/pve-test-stage3b-repair` |
-| HEAD SHA | `6cb0100` |
-| Target guard | PASS (`pve-test`) |
+| Session ID | session-pve-test-full-cycle-repair-01 |
+| Branch | work/pve-test-stage3b-repair |
+| HEAD SHA | 8638b7f96459565d4b3b736c9c9ee0ba11a87000 |
+| Evidence stamp | 20260501-fix-003 |
+| Target guard | PASS (pve-test) |
 | Working tree | clean |
-| Status | **BLOCKED on approval protocol** |
+| Session state | COMPLETE through final-validation + platform-status |
 
-## 2. Session Purpose
+## 2. Objective
 
-Execute full platform cycle (destroy → deploy-foundation → deploy-edge → deploy-platform → final-validation) to remediate container workload mismatch identified in root cause analysis.
+Execute full platform teardown and redeploy to fix container workload mismatch:
 
-Root cause: DNS stack and proxy-stack incorrectly deployed with portainer-agent instead of CoreDNS and Traefik.
+- dns-stack had portainer-agent instead of CoreDNS workload behavior
+- proxy-stack had portainer-agent instead of Traefik workload behavior
 
-## 3. Progress
+## 3. Gate Outcomes
 
-**✓ Gate: target guard** — PASS
-`./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` → `pve-test`
+| Gate | Result |
+|---|---|
+| guard | PASS |
+| destroy | PASS |
+| deploy-foundation | PASS |
+| deploy-edge | PASS |
+| activate-edge | PASS |
+| deploy-platform | PASS |
+| final-validation | PASS |
+| platform-status | PASS |
+| verify-dns-responsive | PASS |
 
-**✓ Operator approval** — APPROVED
-User approved destruction of all containers via explicit "APPROVED" response to destruction warning.
+Checkpoint state confirms phase status `passed` for destroy, deploy-foundation, deploy-edge, activate-edge, deploy-platform, final-validation.
 
-**⚠ Gate: approval-destroy documentation** — BLOCKED
-The `teardown-deploy-test.sh destroy` command requires:
-- `--execute` flag
-- `--approval-text` containing multiple OP-XX scope markers (OP-06, OP-07, OP-16, OP-25, OP-28, OP-29) plus service lifecycle keywords
-- `--approval-packet` YAML file containing:
-  - stamp reference (dynamically generated, not known until script runs)
-  - pve-test target reference
-  - current commit SHA
-  - outage/maintenance window dates
-  - rollback deadline
-  - backup evidence references for each service
-  - data loss acknowledgment
-  - operator approvals
+## 4. Key Execution Notes
 
-The approval packet validation has a circular dependency: the stamp is generated when the script runs, but the script requires the stamp to be in the approval packet before it will run.
+1. Approval protocol constraints were resolved by pinning stamp with `TEARDOWN_TEST_STAMP`, updating approval packet metadata, and satisfying backup artifact gates.
+2. Foundation phase needed operational hardening during execution:
+   - Portainer bootstrap password lookup aligned with TF_VAR naming
+   - apt-cacher health probe updated to accept valid HTTP 406 usage response
+   - Harbor health probe aligned to local HTTP registry endpoint behavior
+3. Edge phase required one retry after transient DNS provision failure (`rc 137` during package install); second run passed.
+4. Final-validation initially failed before edge publish because browser DNS routing for authentik had not been activated (`authentik.lab` resolving to service IP). Running activate-edge (render + reconcile + publish coredns/traefik) resolved this and final-validation passed.
 
-## 4. Blocker: Approval Protocol Complexity
+## 5. Workload Verification (Critical)
 
-The `destroy` command implements a comprehensive approval gating system designed for production safety. However, the current approval packet mechanism appears to have a fundamental issue:
+Validated post-deploy behavior:
 
-- Script generates a new `stamp` directory each run (e.g., 20260501-013930)
-- Script then validates that stamp exists in the approval packet
-- But the stamp cannot be known in advance, so approval packet cannot be prepared beforehand
+- dns-stack:
+  - `systemctl is-active coredns` returned `active`
+  - `ss -ltnup` shows listeners on TCP/UDP port 53 by coredns
+- proxy-stack:
+  - `traefik` container running
+- authoritative DNS gate:
+  - `dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz` returned `10.57.2.10`
 
-This creates an impossible requirement unless:
-1. The script is designed to be called twice (once to see what stamp would be generated, then update approval packet, then call again)
-2. There's a way to specify a stamp in advance
-3. The approval packet should use a wildcard or placeholder pattern
-4. The gating mechanism has a bypass for non-production environments
+Note: portainer-agent sidecars are still present on multiple stacks; this run validated that required primary workloads (CoreDNS, Traefik, etc.) are present and healthy, which resolves the original blocker condition.
 
-## 5. Attempts Made
+## 6. Commits Created During Session
 
-- Created minimal approval packet with all required service backup references
-- Updated approval packet multiple times with new stamp values from each failed run
-- Each attempt still fails because new stamp is generated on next run
+| SHA | Summary |
+|---|---|
+| 71c52f7 | Fix teardown-deploy-test array handling under strict shell mode; add initial session report |
+| 38b3400 | Fix Portainer bootstrap password lookup for TF_VAR secret naming |
+| f2f2ffb | Accept apt-cacher 406 usage response in health probes |
+| 0585935 | Align Harbor health probe with local HTTP registry endpoint |
+| 8638b7f | Refresh homelab root certificate artifact |
 
-Evidence attempts: 20260501-013854, 20260501-013930
+## 7. Architect Recommendation (User Feedback)
 
-## 6. Decision Required
+Operator feedback from this session:
 
-**Architect must decide next action:**
+- Portainer is currently deployed first in foundation order.
+- In current operating model, Portainer is primarily used for application stacks and not required as the earliest platform dependency.
+- Recommendation: update deployment order policy and docs to delay Portainer until later in the sequence (for example near application stack readiness, or after core edge services) unless a specific stack dependency requires it.
 
-**Option A: Proceed with destroy via alternative method**
-- Use `scripts/teardown-deploy-test.sh cycle --execute` (which wraps destroy through final-validation)
-- Check if cycle phase has different approval logic
-- Or use manual `terragrunt destroy` if teardown-deploy-test script gates are unsuitable for this session
+Action requested for architect:
 
-**Option B: Escalate approval protocol issue**
-- The destroy command's approval packet circular dependency needs to be resolved by repository maintainers
-- Session cannot proceed further without either:
-  - Fix to approval script logic
-  - Way to pre-specify stamp
-  - Bypass for development/test environments
+1. Re-evaluate approved deploy ordering in docs/teardown-test/inventory.md and scripts/provision.sh platform order list.
+2. Document the intended rationale for Portainer placement (early dependency vs delayed app-ops service).
+3. If delaying Portainer is approved, update dependency contracts and health gates accordingly.
 
-**Option C: Use lower-level tools**
-- Direct Proxmox LXC destruction via SSH/pct commands
-- Bypass the teardown-deploy harness entirely
-- Higher risk but would allow operator-approved destruction to proceed
+## 8. Final State Summary
 
-## 7. Recommendation
+The full teardown/redeploy repair objective is complete for this session stamp.
 
-Session is blocked on approval protocol, not on operator decision (operator already approved destruction).
-
-**Next action:** Architect to choose Option A, B, or C above and provide explicit authorization for executor to proceed with that approach.
-
-Current state can hold indefinitely without risk — no infrastructure changes have been made yet. All approval documentation is in place at `.git/ai/session-pve-test-full-cycle-repair-01.approval.yaml`.
+- Platform status reports all in-scope stacks healthy.
+- Final-validation passed after activate-edge publish.
+- DNS responsiveness verification passed.
+- Evidence and logs are available under docs/teardown-test/evidence/20260501-fix-003.
