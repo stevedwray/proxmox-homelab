@@ -262,7 +262,206 @@ prompts:
     file: 19b-integrate-task-19a-package-status.yaml
     title: "Integrate Task 19a package status into dev/pve-test"
     type: documentation
-    status: pending
+    status: complete
     depends_on:
       - rp-19a-integrate-destroy-helper-into-dev-pve-test
     task_doc: docs/refactor-remove-portainer/tasks/19b-integrate-task-19a-package-status.md
+
+  - id: rp-20-retry-rebuild-gate-with-stop-first-helper
+    file: 20-retry-rebuild-gate-with-stop-first-helper.yaml
+    title: "Retry rebuild gate with stop-first helper"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-19b-integrate-task-19a-package-status
+    task_doc: docs/refactor-remove-portainer/tasks/20-retry-rebuild-gate-with-stop-first-helper.md
+
+  - id: rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+    file: 20a-retry-rebuild-gate-with-corrected-evidence-handling.yaml
+    title: "Retry rebuild gate with corrected evidence handling"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-19b-integrate-task-19a-package-status
+    task_doc: docs/refactor-remove-portainer/tasks/20a-retry-rebuild-gate-with-corrected-evidence-handling.md
+
+  - id: rp-21-fix-pct-stop-compatibility-in-destroy-helper
+    file: 21-fix-pct-stop-compatibility-in-destroy-helper.yaml
+    title: "Fix pct stop compatibility in destroy helper"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+    task_doc: docs/refactor-remove-portainer/tasks/21-fix-pct-stop-compatibility-in-destroy-helper.md
+
+  - id: rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    file: 22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy.yaml
+    title: "Triage Proxmox LXC config lock timeout during stop-first destroy"
+    type: development
+    status: complete
+    depends_on:
+      - rp-21-fix-pct-stop-compatibility-in-destroy-helper
+    task_doc: docs/refactor-remove-portainer/tasks/22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy.md
+
+  - id: rp-23-clear-hung-proxmox-stop-task-for-vmid-150
+    file: 23-clear-hung-proxmox-stop-task-for-vmid-150.yaml
+    title: "Clear hung Proxmox stop task for VMID 150"
+    type: development
+    status: complete
+    depends_on:
+      - rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/23-clear-hung-proxmox-stop-task-for-vmid-150.md
+
+  - id: rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+    file: 24-reboot-pve-test-and-reestablish-storage-health-baseline.yaml
+    title: "Reconcile pve-test post-reboot storage health baseline"
+    type: development
+    status: complete
+    depends_on:
+      - rp-22-triage-proxmox-lxc-config-lock-timeout-during-stop-first-destroy
+    task_doc: docs/refactor-remove-portainer/tasks/24-reboot-pve-test-and-reestablish-storage-health-baseline.md
+
+  - id: rp-29-strip-down-disposable-validation-containers
+    file: 29-strip-down-disposable-validation-containers.yaml
+    title: "Strip down disposable validation containers on pve-test"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+    task_doc: docs/refactor-remove-portainer/tasks/29-strip-down-disposable-validation-containers.md
+
+  - id: rp-29a-manually-remove-orphaned-disposable-validation-containers
+    file: 29a-manually-remove-orphaned-disposable-validation-containers.yaml
+    title: "Manually remove orphaned disposable validation containers on pve-test"
+    type: development
+    status: complete
+    depends_on:
+      - rp-29-strip-down-disposable-validation-containers
+    task_doc: docs/refactor-remove-portainer/tasks/29a-manually-remove-orphaned-disposable-validation-containers.md
+
+  - id: rp-30-classify-and-prune-disposable-sdn-objects
+    file: 30-classify-and-prune-disposable-sdn-objects.yaml
+    title: "Classify and prune disposable SDN objects after strip-down"
+    type: development
+    status: complete
+    depends_on:
+      - rp-29a-manually-remove-orphaned-disposable-validation-containers
+    task_doc: docs/refactor-remove-portainer/tasks/30-classify-and-prune-disposable-sdn-objects.md
+
+  - id: rp-30a-validate-ci-runner-container-creation
+    file: 30a-validate-ci-runner-container-creation.yaml
+    title: "Validate retained container creation with ci-runner-01"
+    type: development
+    status: complete
+    depends_on:
+      - rp-30-classify-and-prune-disposable-sdn-objects
+    task_doc: docs/refactor-remove-portainer/tasks/30a-validate-ci-runner-container-creation.md
+
+  - id: rp-30b-validate-ci-runner-functional-configuration
+    file: 30b-validate-ci-runner-functional-configuration.yaml
+    title: "Validate ci-runner-01 functional configuration"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30a-validate-ci-runner-container-creation
+    task_doc: docs/refactor-remove-portainer/tasks/30b-validate-ci-runner-functional-configuration.md
+
+  - id: rp-30c-restore-ci-runner-apt-cacher-reachability
+    file: 30c-restore-ci-runner-apt-cacher-reachability.yaml
+    title: "Restore repeatable ci-runner-01 apt-cacher reachability in code"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30b-validate-ci-runner-functional-configuration
+    task_doc: docs/refactor-remove-portainer/tasks/30c-restore-ci-runner-apt-cacher-reachability.md
+
+  - id: rp-30d-reconcile-active-mikrotik-baseline
+    file: 30d-reconcile-active-mikrotik-baseline-and-build-seg-carriage.yaml
+    title: "Reconcile active MikroTik baseline and build-seg carriage assumptions"
+    type: development
+    status: complete
+    depends_on:
+      - rp-30c-restore-ci-runner-apt-cacher-reachability
+    task_doc: docs/refactor-remove-portainer/tasks/30d-reconcile-active-mikrotik-baseline-and-build-seg-carriage.md
+
+  - id: rp-30e-reconcile-build-seg-vlan-data-plane
+    file: 30e-reconcile-build-seg-vlan-data-plane.yaml
+    title: "Reconcile build_seg VLAN/data-plane path between Proxmox and the active MikroTik"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30d-reconcile-active-mikrotik-baseline
+    task_doc: docs/refactor-remove-portainer/tasks/30e-reconcile-build-seg-vlan-data-plane.md
+
+  - id: rp-30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway
+    file: 30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway.yaml
+    title: "Reconcile active MikroTik credentials and restore VLAN 10 gateway carriage"
+    type: development
+    status: blocked
+    depends_on:
+      - rp-30e-reconcile-build-seg-vlan-data-plane
+    task_doc: docs/refactor-remove-portainer/tasks/30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway.md
+
+  - id: rp-30g-validate-external-build-trunk-path
+    file: 30g-validate-external-build-trunk-path.yaml
+    title: "Validate the external build trunk path between Proxmox and the active MikroTik"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway
+    task_doc: docs/refactor-remove-portainer/tasks/30g-validate-external-build-trunk-path.md
+
+  - id: rp-31-add-minimal-build-path-validation-harness
+    file: 31-add-minimal-build-path-validation-harness.yaml
+    title: "Add a minimal build-path validation harness"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30g-validate-external-build-trunk-path
+    task_doc: docs/refactor-remove-portainer/tasks/31-add-minimal-build-path-validation-harness.md
+
+  - id: rp-32-run-minimal-build-path-harness
+    file: 32-run-minimal-build-path-harness.yaml
+    title: "Run the minimal build-path harness on pve-test"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30-classify-and-prune-disposable-sdn-objects
+      - rp-31-add-minimal-build-path-validation-harness
+    task_doc: docs/refactor-remove-portainer/tasks/32-run-minimal-build-path-harness.md
+
+  - id: rp-33-validate-sdn-vnet-idempotency-with-minimal-harness
+    file: 33-validate-sdn-vnet-idempotency-with-minimal-harness.yaml
+    title: "Validate SDN VNet idempotency with the minimal build-path harness"
+    type: development
+    status: pending
+    depends_on:
+      - rp-32-run-minimal-build-path-harness
+    task_doc: docs/refactor-remove-portainer/tasks/33-validate-sdn-vnet-idempotency-with-minimal-harness.md
+
+  - id: rp-34-add-basic-sdn-smoke-harness
+    file: 34-add-basic-sdn-smoke-harness.yaml
+    title: "Add a basic SDN smoke harness with simple container scope"
+    type: development
+    status: pending
+    depends_on:
+      - rp-30g-validate-external-build-trunk-path
+    task_doc: docs/refactor-remove-portainer/tasks/34-add-basic-sdn-smoke-harness.md
+
+  - id: rp-35-run-basic-sdn-smoke-harness
+    file: 35-run-basic-sdn-smoke-harness.yaml
+    title: "Run the basic SDN smoke harness on pve-test"
+    type: development
+    status: pending
+    depends_on:
+      - rp-34-add-basic-sdn-smoke-harness
+    task_doc: docs/refactor-remove-portainer/tasks/35-run-basic-sdn-smoke-harness.md
+
+  - id: rp-36-rerun-basic-sdn-smoke-idempotency-and-teardown
+    file: 36-rerun-basic-sdn-smoke-idempotency-and-teardown.yaml
+    title: "Re-run basic SDN smoke idempotency and teardown"
+    type: development
+    status: pending
+    depends_on:
+      - rp-35-run-basic-sdn-smoke-harness
+    task_doc: docs/refactor-remove-portainer/tasks/36-rerun-basic-sdn-smoke-idempotency-and-teardown.md

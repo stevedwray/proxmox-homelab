@@ -1,0 +1,33 @@
+---
+id: rp-36-rerun-basic-sdn-smoke-idempotency-and-teardown
+title: "Re-run basic SDN smoke idempotency and teardown"
+type: development
+status: pending
+depends_on:
+  - rp-35-run-basic-sdn-smoke-harness
+task_doc: docs/refactor-remove-portainer/tasks/36-rerun-basic-sdn-smoke-idempotency-and-teardown.md
+validation_note: |
+  Re-run apply+validate for the basic harness, then destroy in-scope stacks.
+
+context: |
+  This task closes the basic SDN reset loop with repeatability and cleanup
+  evidence in one scoped session.
+
+objective: |
+  Confirm basic harness idempotent behavior and restore a clean runtime state.
+
+workflow:
+  steps:
+    - Verify Task 35 evidence.
+    - Re-run validate-sdn-basic.sh apply and validate.
+    - Run validate-sdn-basic.sh destroy.
+    - Capture pct list and write report.
+
+postconditions:
+  criteria:
+    - Repeatability evidence is captured.
+    - test-lxc and net-build-01 are torn down after validation.
+
+stop_conditions:
+  - Apply/validate results are inconsistent without clear cause.
+  - Destroy fails for either scoped stack.

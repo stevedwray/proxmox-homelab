@@ -106,10 +106,18 @@ unverified. Do not rely on the executor's summary — read the file or run the c
 A finding is a blocker if any of the following are true:
 - A required gate has no raw evidence (claim only, no path)
 - A gate failed with no recorded waiver
-- Branch or SHA does not match the declared refs
+- Branch does not match declared session/refs intent
+- SHA mapping is unclear: the runtime-validated basis, current HEAD, and delta type are not explicitly documented with evidence
+- Executor reports `delta_type: runtime-change` without fresh validation evidence for the new runtime basis
 - A destructive action ran without recorded approval in the session context
 
 Everything else is a warning or informational — it does not block the verdict.
+
+Treat SHA movement alone as non-blocking when the handoff/report clearly states:
+- runtime-validated SHA,
+- current HEAD SHA,
+- delta type (`none` or `metadata-only`), and
+- evidence anchor for the validated runtime basis.
 
 **No ceremony**
 Do not produce approval packets, supporting notes, candidate-basis documents, or
@@ -238,6 +246,9 @@ boundary:
 refs:
   base_branch: ""     # integration branch to cut from, e.g. "dev/pve-test" or "main"
   baseline_sha: ""
+  runtime_validated_sha: ""   # SHA tied to runtime evidence for this verdict
+  current_head_sha: ""        # live HEAD seen during review/handoff creation
+  delta_type: "none"          # none | metadata-only | runtime-change
   prior_report: null  # or path
 
 env:

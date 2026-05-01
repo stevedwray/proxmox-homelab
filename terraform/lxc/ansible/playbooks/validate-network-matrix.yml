@@ -37,14 +37,14 @@
       - host: net-artifacts-01
         port: 8081
     network_matrix_test_cases:
-      - description: "policy: apps -> infra tcp/8080 ALLOW"
+      - description: "policy: bridge (apps) -> bridge (infra) tcp/8080 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
         to_ip: "{{ hostvars['net-svc-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: "policy: apps -> infra tcp/9000 ALLOW"
+      - description: "policy: bridge (apps) -> bridge (infra) tcp/9000 ALLOW"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-svc-01
@@ -58,7 +58,7 @@
         to_ip: "{{ hostvars['net-service-01'].ansible_host }}"
         port: 8080
         expected: allow
-      - description: "policy: media_seg -> observe_seg tcp/8080 ALLOW"
+      - description: "policy: bridge (media_seg) -> bridge (observe_seg) tcp/8080 ALLOW"
         from_host: net-client-02
         from_vmid: "{{ hostvars['net-client-02'].vmid }}"
         to_host: net-service-02
@@ -79,7 +79,7 @@
         to_ip: "{{ hostvars['net-artifacts-01'].ansible_host }}"
         port: 8081
         expected: allow
-      - description: "policy: infra -> apps tcp/8080 DENY (no return rule)"
+      - description: "policy: bridge (infra) -> bridge (apps) tcp/8080 DENY (no return rule)"
         from_host: net-svc-01
         from_vmid: "{{ hostvars['net-svc-01'].vmid }}"
         to_host: net-app-01
@@ -93,7 +93,7 @@
         to_ip: "{{ hostvars['net-client-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: observe_seg -> media_seg tcp/8080 DENY (no return rule)"
+      - description: "policy: bridge (observe_seg) -> bridge (media_seg) tcp/8080 DENY (no return rule)"
         from_host: net-service-02
         from_vmid: "{{ hostvars['net-service-02'].vmid }}"
         to_host: net-client-02
@@ -142,14 +142,14 @@
         to_ip: "{{ hostvars['net-artifacts-01'].ansible_host }}"
         port: 5000
         expected: deny
-      - description: "policy: apps -> isolated tcp/8080 DENY (no isolated allow rule)"
+      - description: "policy: bridge (apps) -> bridge (isolated) tcp/8080 DENY (no isolated allow rule)"
         from_host: net-app-01
         from_vmid: "{{ hostvars['net-app-01'].vmid }}"
         to_host: net-isolated-01
         to_ip: "{{ hostvars['net-isolated-01'].ansible_host }}"
         port: 8080
         expected: deny
-      - description: "policy: isolated -> infra tcp/8080 DENY (no isolated allow rule)"
+      - description: "policy: bridge (isolated) -> bridge (infra) tcp/8080 DENY (no isolated allow rule)"
         from_host: net-isolated-01
         from_vmid: "{{ hostvars['net-isolated-01'].vmid }}"
         to_host: net-svc-01
