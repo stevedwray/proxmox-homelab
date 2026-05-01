@@ -18,7 +18,7 @@ AUTH="-u ${USER}:${PASS}"
 
 get() {
   local path="$1"
-  curl -sf -k ${AUTH} "${BASE}${path}" 2>/dev/null || echo "null"
+  curl -sf -k "${AUTH}" "${BASE}${path}" 2>/dev/null || echo "null"
 }
 
 echo "Scraping MikroTik config from ${HOST} ..."

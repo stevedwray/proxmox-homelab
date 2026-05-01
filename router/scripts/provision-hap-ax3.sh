@@ -28,6 +28,7 @@ eval "$(sops -d "${REPO_ROOT}/terraform/secrets.enc.yaml" \
   | grep -E '^(hAPax3_ADMIN|MIKROTIK_USER):' \
   | sed 's/: /=/;s/^/export /')"
 AUTH_USER="${MIKROTIK_USER}"
+# shellcheck disable=SC2154  # hAPax3_ADMIN is injected by with-secrets from SOPS
 AUTH_PASS="${hAPax3_ADMIN}"
 
 # ---------------------------------------------------------------------------
