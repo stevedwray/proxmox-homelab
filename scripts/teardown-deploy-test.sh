@@ -944,7 +944,9 @@ validate_approval_packet() {
     missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
   fi
 
-  if (( ${#missing_items[@]} > 0 )); then
+  set +u
+  if [[ ${#missing_items[@]} -gt 0 ]]; then
+    set -u
     {
       log "ERROR approval packet validation failed: ${packet_path}"
       printf '[%s] Missing approval packet items:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "${RUN_LOG}"
@@ -957,6 +959,7 @@ validate_approval_packet() {
       "approval packet missing required metadata"
     return 1
   fi
+  set -u
 
   packet_hash_file="${LOG_DIR}/approval-packet.sha256"
   packet_sha="$(sha256sum "${packet_path}" | awk '{print $1}')"
