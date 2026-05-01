@@ -18,7 +18,6 @@ tags:
   - docker
 depends_on:
   - harbor-stack
-  - portainer-stack
 provides:
   - service: authentik-http
     port: 9000
