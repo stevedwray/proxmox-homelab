@@ -19,6 +19,7 @@ tags:
   - docker
 depends_on:
   - harbor-stack
+  - portainer-stack
 provides:
   - service: netbox-http
     port: 8080

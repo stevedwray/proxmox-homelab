@@ -19,12 +19,3 @@ repos:
     rev: v1.81.0
     hooks:
       - id: terraform_fmt
-
-  - repo: local
-    hooks:
-      - id: check-required-sops-keys
-        name: Check required SOPS keys
-        entry: bash scripts/check-required-sops-keys.sh
-        language: system
-        pass_filenames: false
-        files: ^terraform/secrets\.enc\.yaml$

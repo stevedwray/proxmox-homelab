@@ -17,7 +17,7 @@
 #     Tagged VLAN 40: infra_seg — 10.57.3.0/24, gw 10.57.3.1
 #
 # MikroTik one-time setup (run once before the first SDN stack is deployed):
-#   # Replace <trunk-iface> with the interface facing pve-test (active baseline: ether5)
+#   # Replace <trunk-iface> with the interface facing pve-test (e.g. ether2)
 #   /interface vlan add interface=<trunk-iface> name=vlan10-build vlan-id=10
 #   /interface vlan add interface=<trunk-iface> name=vlan20-mgmt  vlan-id=20
 #   /interface vlan add interface=<trunk-iface> name=vlan30-edge  vlan-id=30
@@ -32,7 +32,7 @@
 #   /ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=10.57.2.10 ttl=5m comment=lab-zone-baseline
 #   # Or via the REST API using environment variables for credentials:
 #   #   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
-#   #     -X POST https://192.168.1.251/rest/ip/dns/static/add \
+#   #     -X POST https://192.168.1.1/rest/ip/dns/static/add \
 #   #     -H "Content-Type: application/json" \
 #   #     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"10.57.2.10","ttl":"5m","comment":"lab-zone-baseline"}'
 #   # When an internal authoritative DNS server is available, replace with FWD type:

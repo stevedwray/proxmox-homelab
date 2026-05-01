@@ -8,10 +8,6 @@ storage-audit
 .env.*
 !.env.template
 docs/refactor-remove-portainer/reports/
-docs/teardown-test/architect-decisions/
-docs/teardown-test/packets/
-docs/teardown-test/prompts/20*.md
-docs/teardown-test/reports/
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml

@@ -33,7 +33,7 @@
   gather_facts: false
 
   vars:
-    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.251', true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
       {{

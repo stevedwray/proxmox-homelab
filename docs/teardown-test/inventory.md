@@ -43,16 +43,16 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Stack | Stage | VMID | IP | Zone | depends_on | ansible_playbook |
 |---|---|---:|---|---|---|---|
-| `portainer-stack` | Stage 3b platform | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
+| `portainer-stack` | Stage 1/2 foundation | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
 | `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
-| `harbor-stack` | Stage 1/2 foundation | 121 | `10.57.3.10/24` | `infra_seg` | `[]` | `deploy-harbor-stack` |
-| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `harbor-stack`, `apt-cacher-stack` | `deploy-ci-runner` |
+| `harbor-stack` | Stage 1/2 foundation | 121 | `10.57.3.10/24` | `infra_seg` | `portainer-stack` | `deploy-harbor-stack` |
+| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `harbor-stack`, `apt-cacher-stack`, `portainer-stack` | `deploy-ci-runner` |
 | `dns-stack` | Stage 3a edge foundation | 151 | `10.57.1.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
 | `proxy-stack` | Stage 3a edge foundation | 153 | `10.57.2.10/24` | `edge_seg` | `harbor-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
 | `step-ca-stack` | Stage 3a edge foundation | 152 | `10.57.1.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
-| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `harbor-stack` | `deploy-authentik-stack` |
+| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `harbor-stack`, `portainer-stack` | `deploy-authentik-stack` |
 | `monitoring-stack` | Stage 3b platform | 154 | `10.57.1.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
-| `netbox-stack` | Stage 3b platform | 143 | `10.57.3.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
+| `netbox-stack` | Stage 3b platform | 143 | `10.57.3.12/24` | `infra_seg` | `harbor-stack`, `portainer-stack` | `deploy-netbox-stack` |
 
 ## Resolver And Zone Contract
 
@@ -78,17 +78,17 @@ No dependency conflict requiring source code change was found in the in-scope
 
 ## Approved Deploy Order
 
-1. `apt-cacher-stack`
-2. `harbor-stack`
-3. `ci-runner-01`
-4. `dns-stack`
-5. `proxy-stack`
-6. `step-ca-stack`
-7. `authentik-stack`
-8. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
-9. `monitoring-stack`
-10. `netbox-stack`
-11. `portainer-stack`
+1. `portainer-stack`
+2. `apt-cacher-stack`
+3. `harbor-stack`
+4. `ci-runner-01`
+5. `dns-stack`
+6. `proxy-stack`
+7. `step-ca-stack`
+8. `authentik-stack`
+9. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
+10. `monitoring-stack`
+11. `netbox-stack`
 
 ## Approved Destroy Order
 
