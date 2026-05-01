@@ -13,9 +13,10 @@ publish. Those remain gated by OP-04/OP-05 completion and explicit operator
 approval at the destructive window.
 
 Rule for all services:
-Stop if backup path is missing and accepted data-loss is not documented. For
-services marked data-loss not acceptable, stop if restore confidence is missing
-or restore test plan evidence is missing.
+Backup evidence is advisory for pve-test teardown rehearsals. The environment
+must remain fully destructible and redeployable from source. Missing backup
+artifacts should be recorded in evidence and remediation tracked, but they do
+not block destroy/redeploy execution.
 
 Expected evidence root during live window:
 `docs/teardown-test/evidence/${STAMP}/backups/`
@@ -47,7 +48,7 @@ Post-Restore Validation:
 - Existing endpoints and stacks appear as expected, or approved-loss posture is documented
 
 Stop Conditions:
-- Stop if no LXC-level backup artifact is recorded in evidence.
+- Advisory only: record when LXC-level backup artifact is absent.
 
 ## Harbor
 
@@ -80,8 +81,8 @@ Post-Restore Validation:
 - Sample image pull/push path is validated, or approved-loss posture is documented
 
 Stop Conditions:
-- Stop if no LXC-level backup artifact is recorded.
-- Stop if registry data backup scope excludes Harbor persistent storage.
+- Advisory only: record when LXC-level backup artifact is absent.
+- Advisory only: record when backup scope excludes Harbor persistent storage.
 
 ## Authentik
 
@@ -114,8 +115,8 @@ Post-Restore Validation:
 - Existing providers/applications are present, or approved-loss posture is documented
 
 Stop Conditions:
-- Stop if no LXC-level backup artifact is recorded.
-- Stop if bootstrap/admin recovery procedure is not documented in evidence.
+- Advisory only: record when LXC-level backup artifact is absent.
+- Advisory only: record when bootstrap/admin recovery procedure is not documented.
 
 ## NetBox
 
@@ -144,7 +145,7 @@ Post-Restore Validation:
 - Key objects are present, or approved-loss posture is documented
 
 Stop Conditions:
-- Stop if no LXC-level backup artifact is recorded.
+- Advisory only: record when LXC-level backup artifact is absent.
 
 ## Monitoring/Grafana/Loki/VictoriaMetrics
 
@@ -178,8 +179,8 @@ Post-Restore Validation:
 - Baseline dashboards/data availability validated, or approved-loss posture is documented
 
 Stop Conditions:
-- Stop if no LXC-level backup artifact is recorded and configuration preservation
-  is not otherwise evidenced.
+- Advisory only: record when LXC-level backup artifact/configuration preservation
+  evidence is absent.
 
 ## Traefik ACME/Cert Storage
 
@@ -208,7 +209,7 @@ Post-Restore Validation:
 - Browser routes serve expected certificates and TLS handshake succeeds
 
 Stop Conditions:
-- Stop if cert re-issuance path is not validated and cert backup is missing.
+- Advisory only: record when cert re-issuance validation/cert backup evidence is absent.
 
 ## step-ca Authority Material
 
@@ -237,8 +238,8 @@ Post-Restore Validation:
 - CA/ACME issuance path works at least for a smoke check
 
 Stop Conditions:
-- Stop if authority-material backup is missing.
-- Stop if restore confidence is below high or restore test plan evidence is absent.
+- Advisory only: record when authority-material backup evidence is missing.
+- Advisory only: record when restore confidence/test-plan evidence is below target.
 
 ## CI Runner Registration/State
 
@@ -269,7 +270,7 @@ Post-Restore Validation:
 - Runner picks up and executes a test workflow job
 
 Stop Conditions:
-- Stop if re-registration procedure is not captured and validated.
+- Advisory only: record when re-registration procedure evidence is incomplete.
 
 ## apt-cacher Cache
 
@@ -297,7 +298,7 @@ Post-Restore Validation:
 - Proxy endpoint responds and apt clients can use cache path
 
 Stop Conditions:
-- Stop if apt-cacher redeploy and functional smoke check cannot be performed.
+- Advisory only: record when apt-cacher redeploy/smoke evidence is missing.
 
 ## OP-03 Decision Gate
 

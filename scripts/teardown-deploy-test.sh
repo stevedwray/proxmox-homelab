@@ -1022,26 +1022,14 @@ validate_backup_artifacts_present() {
   } >"${LOG_DIR}/backup-gating.log"
 
   if (( ${#missing_dirs[@]} > 0 )); then
-    log "ERROR required backup directories missing under ${backup_root}"
-    set_phase_failure_context \
-      "backup-gating" \
-      "validate_backup_artifacts_present" \
-      "${LOG_DIR}/backup-gating.log" \
-      "required backup directories missing"
-    return 1
+    log "WARNING backup evidence directories missing under ${backup_root} (advisory only)"
   fi
 
   if (( ${#missing_non_loss[@]} > 0 )); then
-    log "ERROR required non-loss backup artifacts missing under ${backup_root}"
-    set_phase_failure_context \
-      "backup-gating" \
-      "validate_backup_artifacts_present" \
-      "${LOG_DIR}/backup-gating.log" \
-      "required non-loss backup artifacts missing"
-    return 1
+    log "WARNING backup evidence artifacts missing under ${backup_root} (advisory only)"
   fi
 
-  log "backup artifact gate passed for required non-loss services"
+  log "backup evidence check complete (advisory only for fully destructible pve-test)"
 }
 
 stack_name() {
