@@ -43,7 +43,7 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Stack | Stage | VMID | IP | Zone | depends_on | ansible_playbook |
 |---|---|---:|---|---|---|---|
-| `portainer-stack` | Stage 1/2 foundation | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
+| `portainer-stack` | Stage 3b platform | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
 | `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
 | `harbor-stack` | Stage 1/2 foundation | 121 | `10.57.3.10/24` | `infra_seg` | `[]` | `deploy-harbor-stack` |
 | `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `harbor-stack`, `apt-cacher-stack` | `deploy-ci-runner` |
@@ -81,14 +81,14 @@ No dependency conflict requiring source code change was found in the in-scope
 1. `apt-cacher-stack`
 2. `harbor-stack`
 3. `ci-runner-01`
-4. `portainer-stack`
-5. `dns-stack`
-6. `proxy-stack`
-7. `step-ca-stack`
-8. `authentik-stack`
-9. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
-10. `monitoring-stack`
-11. `netbox-stack`
+4. `dns-stack`
+5. `proxy-stack`
+6. `step-ca-stack`
+7. `authentik-stack`
+8. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
+9. `monitoring-stack`
+10. `netbox-stack`
+11. `portainer-stack`
 
 ## Approved Destroy Order
 
