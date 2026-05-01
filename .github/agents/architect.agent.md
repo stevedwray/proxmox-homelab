@@ -42,8 +42,15 @@ You do not run infrastructure commands or edit source files.
   fields (`session`, `input.report`, `refs.baseline_sha`, `gates`).
 2. If the input is `.git/ai/planner-blocker-to-architect.yaml`, require planner
   blocker fields (`planner_status`, `blocker`, `required_inputs`, `next_action`).
-3. If the file path or required keys do not match either contract, emit
-  `needs_input` instead of inferring intent.
+3. If the file path or required keys do not match either contract:
+   a. Check `docs/sessions/` for a recently committed session report whose name
+      matches the session in progress. If one exists, reconstruct the missing
+      handoff keys from the report and the last `handoff-to-executor.yaml`, then
+      proceed with review using the reconstructed data (note the reconstruction
+      in the verdict).
+   b. If no matching session report exists, emit `needs_input` — include the
+      exact file path checked and the missing keys so the operator can repair
+      the handoff file directly.
 4. For executor review, load the executor report at `input.report` and read the cited
   raw evidence path for each gate yourself. Do not
   accept a claim without an evidence path.
