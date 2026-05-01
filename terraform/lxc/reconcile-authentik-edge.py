@@ -988,8 +988,29 @@ def reconcile_authentik(
                 consumed["outpost"].add(outpost_id)
             linked = _DISCOVER._provider_references(shared_outpost)
             missing_links = sorted(required_provider_ids - linked)
+            desired_links = sorted(linked | required_provider_ids)
+
+            outpost_config_raw = shared_outpost.get("config")
+            outpost_config = outpost_config_raw if isinstance(outpost_config_raw, dict) else {}
+            desired_config = dict(outpost_config)
+            config_changed = False
+            for key, value in OUTPOST_DEFAULT_CONFIG.items():
+                existing = outpost_config.get(key)
+                if existing in (None, ""):
+                    desired_config[key] = value
+                    config_changed = True
+
+            outpost_patch: dict[str, Any] = {}
+            reason_parts: list[str] = []
             if missing_links:
-                desired_links = sorted(linked | required_provider_ids)
+                outpost_patch["providers"] = desired_links
+                reason_parts.append("shared outpost missing provider links")
+            if config_changed:
+                outpost_patch["config"] = desired_config
+                reason_parts.append("shared outpost host config missing required values")
+
+            if outpost_patch:
+                reason = "; ".join(reason_parts)
                 actions.append(
                     ReconcileAction(
                         stack="_shared",
@@ -997,12 +1018,12 @@ def reconcile_authentik(
                         object_kind="outpost",
                         object_name=SHARED_FORWARD_OUTPOST,
                         operation="update",
-                        reason="shared outpost missing provider links",
+                        reason=reason,
                         object_id=outpost_id,
                     )
                 )
                 if apply and not stop_conditions and outpost_id:
-                    updated = client.update_outpost(outpost_id, {"providers": desired_links})
+                    updated = client.update_outpost(outpost_id, outpost_patch)
                     write_count += 1
                     shared_outpost.update(updated)
             else:
