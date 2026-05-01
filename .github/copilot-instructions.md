@@ -17,7 +17,9 @@ main
 | `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
 | `dev/pve-test` | Application stacks deploy successfully on the infrastructure. | Validate application stacks on top of `baseline/teardown-validated`. |
 
-**Never merge directly into either branch** — work must pass its promotion gate first. Active development happens on `work/*` or short-lived `feat/`, `fix/`, `task/` branches.
+Do not develop directly in either branch. Active development happens on `work/*` or short-lived `feat/`, `fix/`, `task/` branches.
+Promotion merges into either branch are allowed once the corresponding gate is satisfied.
+If the operator explicitly names a merge target (`baseline/teardown-validated` or `dev/pve-test`), use that exact target and do not silently retarget.
 
 ## Branching
 

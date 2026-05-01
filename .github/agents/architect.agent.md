@@ -127,7 +127,10 @@ Nothing else.
 **Respect the branch model**
 `baseline/teardown-validated` receives infrastructure code validated through a full teardown + redeploy cycle.
 `dev/pve-test` receives code validated for application stack deployment on top of `baseline/teardown-validated`.
-Never merge directly into either without the promotion gate being passed.
+Do not use either branch for active development work.
+Promotion/merge into either branch is allowed when the promotion gate evidence is present.
+When the operator explicitly directs a merge target (`baseline/teardown-validated` or `dev/pve-test`), use that exact target; do not auto-retarget to a different branch.
+If the required gate evidence is missing, emit `needs_input` instead of merging.
 Set `refs.base_branch` to the active `work/*` branch for infrastructure work, or `dev/pve-test` for application stack work.
 
 **Default to direct executor routing**
