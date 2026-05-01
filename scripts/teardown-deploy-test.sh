@@ -86,6 +86,11 @@ BROWSER_HOSTS=(
 
 BROWSER_DNS_TARGET_IP="10.57.2.10"
 
+# Runtime-generated deltas that can legitimately appear mid-cycle.
+EXPECTED_RUNTIME_DIRTY_PATHS=(
+  "certs/homelab-root.crt"
+)
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -475,9 +480,44 @@ guard_pve_test() {
 }
 
 require_clean_tree() {
-  if [[ -n "$(git -C "${REPO_ROOT}" status --short)" ]]; then
+  local allowed_path
+  local line path
+  local path_allowed
+  local -a status_lines=()
+  local -a allowed_lines=()
+  local -a disallowed_lines=()
+
+  mapfile -t status_lines < <(git -C "${REPO_ROOT}" status --short)
+  if [[ ${#status_lines[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  for line in "${status_lines[@]}"; do
+    path="${line:3}"
+    if [[ "${path}" == *" -> "* ]]; then
+      path="${path##* -> }"
+    fi
+
+    path_allowed=false
+    if [[ "${PHASE}" == "cycle" || "${PHASE}" == "activate-edge" || "${PHASE}" == "deploy-platform" ]]; then
+      for allowed_path in "${EXPECTED_RUNTIME_DIRTY_PATHS[@]}"; do
+        if [[ "${path}" == "${allowed_path}" ]]; then
+          path_allowed=true
+          break
+        fi
+      done
+    fi
+
+    if [[ "${path_allowed}" == "true" ]]; then
+      allowed_lines+=("${line}")
+    else
+      disallowed_lines+=("${line}")
+    fi
+  done
+
+  if [[ ${#disallowed_lines[@]} -gt 0 ]]; then
     log "ERROR working tree is dirty"
-    git -C "${REPO_ROOT}" status --short | tee -a "${RUN_LOG}" >&2
+    printf '%s\n' "${status_lines[@]}" | tee -a "${RUN_LOG}" >&2
     set_phase_failure_context \
       "require-clean-tree" \
       "git -C ${REPO_ROOT} status --short" \
@@ -485,6 +525,11 @@ require_clean_tree() {
       "working tree is dirty"
     return 1
   fi
+
+  {
+    printf '[%s] WARNING allowing expected runtime-generated change(s) during %s:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${PHASE}"
+    printf '%s\n' "${allowed_lines[@]}"
+  } | tee -a "${RUN_LOG}" >&2
 }
 
 record_working_tree_state() {
