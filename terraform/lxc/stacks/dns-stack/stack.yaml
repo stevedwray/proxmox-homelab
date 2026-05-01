@@ -19,6 +19,8 @@ network:
   zone: mgmt_seg
 
 ansible_playbook: "deploy-coredns"
+deployment_tier: platform
+portainer_agent: false
 
 # pve-test service IPs (explicit — do not rely on variable defaults)
 portainer_server_ip: "10.57.1.20"

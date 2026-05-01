@@ -1,5 +1,5 @@
 ---
-- name: Configure Docker base and Portainer Agent
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
@@ -8,7 +8,6 @@
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -29,6 +28,13 @@
 
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
 
   handlers:
     - name: Restart Docker

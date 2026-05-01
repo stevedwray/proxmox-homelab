@@ -830,6 +830,31 @@ require_execute_approval() {
       "${PHASE} requires approval text containing: approve pve-test teardown deploy test"
     return 1
   fi
+
+  if [[ "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ]]; then
+    if [[ "${approval_lc}" != *"op-06"* \
+      || "${approval_lc}" != *"destroy"* \
+      || "${approval_lc}" != *"op-07"* \
+      || "${approval_lc}" != *"op-16"* \
+      || "${approval_lc}" != *"stop"* \
+      || "${approval_lc}" != *"first failure"* \
+      || "${approval_lc}" != *"does not authorize"* \
+      || "${approval_lc}" != *"rebuild apply"* \
+      || "${approval_lc}" != *"edge publish"* \
+      || "${approval_lc}" != *"op-25"* \
+      || "${approval_lc}" != *"op-28"* \
+      || "${approval_lc}" != *"op-29"* \
+      || "${approval_lc}" != *"reconcile"* \
+      || "${approval_lc}" != *"apply"* ]]; then
+      log "ERROR ${PHASE} requires explicit OP-06 destroy-only scope and exclusions in --approval-text"
+      set_phase_failure_context \
+        "require-op06-scope-approval-text" \
+        "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <op06-scope-text>" \
+        "${RUN_LOG}" \
+        "${PHASE} approval text missing required OP-06 destroy-only scope markers"
+      return 1
+    fi
+  fi
 }
 
 approval_packet_line_for_service() {
@@ -919,7 +944,9 @@ validate_approval_packet() {
     missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
   fi
 
-  if (( ${#missing_items[@]} > 0 )); then
+  set +u
+  if [[ ${#missing_items[@]} -gt 0 ]]; then
+    set -u
     {
       log "ERROR approval packet validation failed: ${packet_path}"
       printf '[%s] Missing approval packet items:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "${RUN_LOG}"
@@ -932,12 +959,89 @@ validate_approval_packet() {
       "approval packet missing required metadata"
     return 1
   fi
+  set -u
 
   packet_hash_file="${LOG_DIR}/approval-packet.sha256"
   packet_sha="$(sha256sum "${packet_path}" | awk '{print $1}')"
   printf '%s  %s\n' "${packet_sha}" "${packet_path}" >"${packet_hash_file}"
   log "approval packet accepted: ${packet_path}"
   log "approval packet sha256: ${packet_sha} (recorded in ${packet_hash_file})"
+}
+
+backup_dir_has_artifact() {
+  local dir="$1"
+  find "${dir}" -mindepth 1 -type f | grep -q .
+}
+
+validate_backup_artifacts_present() {
+  local backup_root="${EVIDENCE_DIR}/backups"
+  local d
+  local -a missing_dirs=()
+  local -a missing_non_loss=()
+  local -a required_dirs=(
+    "portainer"
+    "harbor"
+    "authentik"
+    "netbox"
+    "monitoring"
+    "traefik-certs"
+    "step-ca"
+    "ci-runner"
+    "apt-cacher"
+  )
+  local -a non_loss_dirs=(
+    "step-ca"
+    "authentik"
+    "harbor"
+    "netbox"
+  )
+
+  for d in "${required_dirs[@]}"; do
+    if [[ ! -d "${backup_root}/${d}" ]]; then
+      missing_dirs+=("${backup_root}/${d}")
+    fi
+  done
+
+  for d in "${non_loss_dirs[@]}"; do
+    if [[ -d "${backup_root}/${d}" ]] && ! backup_dir_has_artifact "${backup_root}/${d}"; then
+      missing_non_loss+=("${backup_root}/${d}")
+    fi
+  done
+
+  {
+    echo "backup_root=${backup_root}"
+    echo "required_dirs=${required_dirs[*]}"
+    echo "missing_dir_count=${#missing_dirs[@]}"
+    echo "missing_non_loss_count=${#missing_non_loss[@]}"
+    if (( ${#missing_dirs[@]} > 0 )); then
+      echo "missing_dirs=${missing_dirs[*]}"
+    fi
+    if (( ${#missing_non_loss[@]} > 0 )); then
+      echo "missing_non_loss_artifacts=${missing_non_loss[*]}"
+    fi
+  } >"${LOG_DIR}/backup-gating.log"
+
+  if (( ${#missing_dirs[@]} > 0 )); then
+    log "ERROR required backup directories missing under ${backup_root}"
+    set_phase_failure_context \
+      "backup-gating" \
+      "validate_backup_artifacts_present" \
+      "${LOG_DIR}/backup-gating.log" \
+      "required backup directories missing"
+    return 1
+  fi
+
+  if (( ${#missing_non_loss[@]} > 0 )); then
+    log "ERROR required non-loss backup artifacts missing under ${backup_root}"
+    set_phase_failure_context \
+      "backup-gating" \
+      "validate_backup_artifacts_present" \
+      "${LOG_DIR}/backup-gating.log" \
+      "required non-loss backup artifacts missing"
+    return 1
+  fi
+
+  log "backup artifact gate passed for required non-loss services"
 }
 
 stack_name() {
@@ -960,7 +1064,10 @@ stack_apply() {
 
   guard_pve_test
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt apply -auto-approve"
+  guard_pve_test
+  run_logged "provision-${stack}" \
+    "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
   validate_stack_smoke "${spec}"
 }
 
@@ -972,9 +1079,9 @@ stack_destroy() {
 
   guard_pve_test
   run_logged "destroy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt destroy -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
   run_logged "verify-destroy-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then exit 1; fi"
+    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
 
 validate_stack_smoke() {
@@ -992,10 +1099,12 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"
       ;;
     apt-cacher-stack)
-      run_logged "health-${stack}" curl -fsSI "http://${ip}:3142/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"
       ;;
     harbor-stack)
-      run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
@@ -1056,7 +1165,8 @@ probe_stack_health() {
       ;;
     apt-cacher-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsSI "http://${ip}:3142/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
       else
@@ -1299,7 +1409,9 @@ run_source_preflight_checks() {
       terraform/lxc/test_render_edge_coredns.py \
       terraform/lxc/test_discover_authentik_edge.py \
       terraform/lxc/test_reconcile_authentik_edge.py \
-      terraform/lxc/test_reconcile_edge.py
+      terraform/lxc/test_reconcile_edge.py \
+      terraform/lxc/test_inventory_template.py \
+      terraform/lxc/test_stack_classification.py
   run_logged "git-diff-check" git -C "${REPO_ROOT}" diff --check
 
   rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
@@ -1309,6 +1421,31 @@ run_source_preflight_checks() {
   run_logged "render-edge-coredns" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   assert_coredns_render_output "${LOG_DIR}/render-edge-coredns.log"
   log "CoreDNS render output assertions passed"
+  run_logged "syntax-check-deploy-harbor-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-harbor-stack.yml'"
+  run_logged "syntax-check-deploy-authentik-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-authentik-stack.yml'"
+  run_logged "syntax-check-deploy-monitoring-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-monitoring-stack.yml'"
+  run_logged "syntax-check-deploy-proxy-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml'"
+  run_logged "syntax-check-deploy-netbox-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-netbox-stack.yml'"
 }
 
 run_live_preflight_checks() {
@@ -1414,6 +1551,7 @@ phase_destroy() {
   create_evidence_dirs
   require_execute_approval
   validate_approval_packet
+  validate_backup_artifacts_present
   require_clean_tree
   load_stack_specs destroy specs
   set_current_phase_stack_specs "${specs[@]}"
@@ -1466,11 +1604,11 @@ phase_activate_edge() {
 
   guard_pve_test
   run_logged "publish-coredns" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
 
   guard_pve_test
   run_logged "publish-traefik" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \

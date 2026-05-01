@@ -1,0 +1,42 @@
+---
+- name: Validate basic SDN smoke path
+  hosts: localhost
+  gather_facts: false
+  vars:
+    pve_test_host: pve-test.gibbsgreatly.xyz
+    mikrotik_mgmt_ip: 192.168.1.251
+    build_gateway_ip: 10.57.0.1
+    build_vmid: 139
+
+  tasks:
+    - name: Confirm untagged baseline path from pve-test to MikroTik management IP
+      ansible.builtin.command:
+        cmd: >-
+          ssh -F /dev/null root@{{ pve_test_host }}
+          "ping -c 2 -W 1 {{ mikrotik_mgmt_ip }}"
+      register: baseline_ping
+      changed_when: false
+
+    - name: Check build container status
+      ansible.builtin.command:
+        cmd: >-
+          ssh -F /dev/null root@{{ pve_test_host }}
+          "pct status {{ build_vmid }}"
+      register: build_ct_status
+      changed_when: false
+
+    - name: Probe build gateway reachability from build container
+      ansible.builtin.command:
+        cmd: >-
+          ssh -F /dev/null root@{{ pve_test_host }}
+          "pct exec {{ build_vmid }} -- ping -c 2 -W 1 {{ build_gateway_ip }}"
+      register: build_gateway_probe
+      changed_when: false
+      failed_when: false
+
+    - name: Report gateway probe result
+      ansible.builtin.debug:
+        msg:
+          - "build container status: {{ build_ct_status.stdout }}"
+          - "build gateway probe rc={{ build_gateway_probe.rc }}"
+          - "This probe is expected to fail while external VLAN carriage is unresolved."

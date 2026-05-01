@@ -41,6 +41,13 @@
     - docker_base
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
@@ -105,7 +112,22 @@
   become: false
   gather_facts: false
 
+  vars:
+    portainer_admin_password: >-
+      {{
+        lookup('env', 'PORTAINER_ADMIN_PASSWORD')
+        | default(lookup('env', 'TF_VAR_portainer_admin_password'), true)
+      }}
+
   tasks:
+    - name: Assert Portainer admin password is configured
+      ansible.builtin.assert:
+        that:
+          - portainer_admin_password | length > 0
+        fail_msg: >-
+          Set PORTAINER_ADMIN_PASSWORD or TF_VAR_portainer_admin_password before running
+          deploy-portainer-stack.
+
     - name: Wait for Portainer API to become available
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/system/status"
@@ -122,7 +144,7 @@
         body_format: json
         body:
           Username: "admin"
-          Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+          Password: "{{ portainer_admin_password }}"
         status_code: [200, 409]
       register: portainer_init_result
       no_log: true
@@ -134,7 +156,7 @@
         body_format: json
         body:
           username: "admin"
-          password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+          password: "{{ portainer_admin_password }}"
         status_code: 200
       register: portainer_auth_response
       no_log: true

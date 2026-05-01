@@ -1,0 +1,7 @@
+---
+direct_stack_name: "{{ inventory_hostname }}"
+direct_stack_compose_dir: "/opt/{{ direct_stack_name }}"
+direct_stack_compose_path: "{{ direct_stack_compose_dir }}/docker-compose.yml"
+direct_stack_compose_content: ""
+direct_stack_env: []
+direct_stack_prune_on_update: true

@@ -78,6 +78,11 @@ directly. Once Harbor is running, all subsequent containers in all zones pull fr
 `10.57.3.10`. This is the designed Stage 1 → Stage 2 transition — it is not a
 misconfiguration. See [bootstrap.md](../design/bootstrap.md).
 
+Portainer remains in the lab as the management UI for Tier 2 application
+stacks. Tier 1 platform stacks on `pve-test` are provisioned by Terraform and
+configured explicitly via `scripts/provision.sh`; they do not use Portainer
+agents.
+
 ## Two modes of work
 
 **Mode 1 — Development:** Building and refining the playbook — writing Ansible roles,

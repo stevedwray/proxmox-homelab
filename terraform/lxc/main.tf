@@ -329,7 +329,7 @@ resource "local_file" "ansible_inventory" {
     registry_host       = try(local.stack.registry_host, var.registry_host)
     apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
     dns_server          = local.effective_dns_server
-    network_zone        = coalesce(local.stack_network_zone, "")
+    network_zone        = local.stack_network_zone != null ? local.stack_network_zone : ""
     contract_dns_server = local.resolved_sdn_gateway != null ? local.resolved_sdn_gateway : ""
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
@@ -420,42 +420,6 @@ resource "null_resource" "prime_sdn_host_route" {
 }
 
 # ---------------------------------------------------------------------------
-# Ansible provisioning (only if ansible_playbook is set in stack.yaml)
-# ---------------------------------------------------------------------------
-resource "null_resource" "ansible_provision" {
-  count = try(local.stack.ansible_playbook, "") != "" ? 1 : 0
-
-  triggers = {
-    container_id       = module.lxc.container_id
-    container_epoch_id = module.lxc.container_epoch_id
-    inventory_content  = local_file.ansible_inventory.content
-    playbook           = try(local.stack.ansible_playbook, "")
-  }
-
-  provisioner "local-exec" {
-    command     = <<-EOT
-      ansible-playbook \
-        -i '${local.stack_dir}/inventory.yml' \
-        'playbooks/${try(local.stack.ansible_playbook, "noop")}.yml'
-    EOT
-    working_dir = local.ansible_dir
-
-    environment = {
-      ANSIBLE_HOST_KEY_CHECKING = "False"
-      ANSIBLE_CONFIG            = local.ansible_cfg
-      ANSIBLE_ROLES_PATH        = local.ansible_roles_path
-      PORTAINER_ADMIN_PASSWORD  = var.portainer_admin_password
-    }
-  }
-
-  depends_on = [
-    local_file.ansible_inventory,
-    null_resource.configure_keyctl,
-    null_resource.prime_sdn_host_route,
-  ]
-}
-
-# ---------------------------------------------------------------------------
 # Proxmox firewall policy apply (only if network intent enables firewall)
 # Applies after any guest provisioning to avoid disrupting the existing flow.
 # ---------------------------------------------------------------------------
@@ -490,7 +454,6 @@ resource "null_resource" "configure_network_firewall" {
     local_file.ansible_inventory,
     local_file.network_firewall_vars,
     null_resource.configure_keyctl,
-    null_resource.ansible_provision,
   ]
 }
 
@@ -543,12 +506,11 @@ resource "null_resource" "configure_network_vnet_firewall" {
   depends_on = [
     local_file.network_vnet_firewall_vars,
     null_resource.configure_keyctl,
-    null_resource.ansible_provision,
   ]
 }
 
 # ---------------------------------------------------------------------------
-# Portainer cleanup on destroy (only if portainer_agent: true in stack.yaml)
+# Legacy Portainer cleanup resource kept only for state retirement.
 # ---------------------------------------------------------------------------
 resource "null_resource" "stack_cleanup" {
   count = try(local.stack.portainer_agent, false) ? 1 : 0
@@ -559,21 +521,6 @@ resource "null_resource" "stack_cleanup" {
     portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
     # Stored as a trigger so destroy provisioner has a stable absolute path.
     ansible_dir = local.ansible_dir
-  }
-
-  provisioner "local-exec" {
-    when        = destroy
-    command     = <<-EOT
-      export STACK_NAME="${self.triggers.stack_name}"
-      export AGENT_HOSTNAME="${self.triggers.hostname}"
-      export PORTAINER_SERVER_IP="${self.triggers.portainer_server_ip}"
-      export ANSIBLE_HOST_KEY_CHECKING="False"
-      export ANSIBLE_CONFIG="${self.triggers.ansible_dir}/ansible.cfg"
-      export ANSIBLE_ROLES_PATH="${self.triggers.ansible_dir}/roles"
-      ansible-playbook -i localhost, playbooks/cleanup.yml
-    EOT
-    working_dir = self.triggers.ansible_dir
-    on_failure  = continue
   }
 
   depends_on = [module.lxc]

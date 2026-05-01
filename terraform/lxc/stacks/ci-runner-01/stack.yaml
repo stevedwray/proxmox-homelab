@@ -31,3 +31,5 @@ portainer_server_ip: "10.57.1.20"
 registry_host: "10.57.3.10"
 
 ansible_playbook: "deploy-ci-runner"
+deployment_tier: platform
+portainer_agent: false

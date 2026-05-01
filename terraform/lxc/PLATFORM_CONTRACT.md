@@ -7,23 +7,33 @@ responsible for:
 
 - **Container lifecycle**: create, start, resize, destroy via the `bpg/proxmox`
   Terraform provider
-- **Ansible inventory generation**: produces `inventory.yml` in each stack directory
-  from `templates/inventory.tpl`, pre-populated with host vars that playbooks consume
+- **Inventory handoff generation**: produces `inventory.yml` in each stack directory
+  from `templates/inventory.tpl`, pre-populated with the host vars that the
+  explicit Ansible phase consumes
 - **Network attachment**: connects each container to the correct SDN VNet or bridge,
   as declared in `network/<env>.yaml`
 - **Firewall intent**: generates per-VNet firewall rules from `network/<env>.yaml`
   policies (note: firewall is currently disabled for dev passes; see `pve-test.yaml`)
-- **Shared Ansible roles**: `lxc_base`, `docker_base`, `portainer_agent`,
-  `portainer_api`, `app_stack`, `harbor_installer`, `harbor_postconfigure`,
-  `lxc_tun_device` — logic that applies to 2+ stacks lives here
+- **Host-level automation tied to provisioning**: applies Proxmox-side actions
+  such as `configure_keyctl`, SDN attachment, and firewall updates that cannot
+  be performed from inside the guest
+- **Shared Ansible roles**: `lxc_base`, `docker_base`, `direct_stack`,
+  `portainer_agent`, `portainer_api`, `app_stack`, `harbor_installer`,
+  `harbor_postconfigure`, `lxc_tun_device` — logic that applies to 2+ stacks
+  lives here
 - **Platform validation**: shared validators such as `validate-network.sh`,
   `validate-network-matrix.sh`, and `validate-zone-dns.sh` that prove network and
   DNS contracts from generated stack inventories
 
+Terraform does not perform a hidden second pass for LXC stack configuration.
+The generated inventory is the handoff artifact to the explicit Ansible phase
+run via `scripts/provision.sh`.
+
 ## What it may read from elsewhere
 
-- `stacks/<stack>/stack.yaml` — stack identity, resource sizing, network zone,
-  playbook name, feature flags (`portainer_agent`, `keyctl`)
+- `stacks/<stack>/stack.yaml` — stack identity, resource sizing,
+  `deployment_tier`, network zone, playbook name, and feature flags
+  (`portainer_agent`, `keyctl`)
 - `network/<env>.yaml` — zone topology, attachment config, cross-zone policies
 - Environment variables and `TF_VAR_*` set by sourcing `.env` or `.env.pve-test`
 
@@ -45,7 +55,7 @@ These are declared in `variables.tf` and may be overridden per environment:
 
 | Variable                | Default        | pve-test value  | Notes |
 |-------------------------|----------------|-----------------|-------|
-| `portainer_server_ip`   | `192.168.1.4`  | `10.57.1.20`    | Portainer server for agent registration |
+| `portainer_server_ip`   | `192.168.1.4`  | `10.57.1.20`    | Portainer server for app-tier endpoint registration |
 | `registry_host`         | `192.168.1.10` | `10.57.3.10`    | Harbor IP for Docker pulls |
 | `apt_cacher_host`       | `192.168.1.35` | `10.57.3.11`    | apt-cacher-ng proxy |
 
@@ -57,7 +67,7 @@ The pve-test values are set via `TF_VAR_*` in `.env.pve-test`. They flow through
 `templates/inventory.tpl` as host vars so playbooks pick them up automatically.
 
 `portainer_server_ip` follows the same generated-inventory pattern in active
-paths. Shared roles such as `portainer_api` and `app_stack` now prefer the
+paths. Tier 2 roles such as `portainer_api` and `app_stack` prefer the
 generated `portainer_server_ip` host var and only fall back to the current
 pve-test address when that host var is absent.
 
@@ -78,6 +88,7 @@ change to field names or semantics as a platform API change affecting all stacks
 |--------------------|--------|-------|
 | `hostname`         | string | LXC hostname |
 | `ip_address`       | string | CIDR notation (e.g. `10.57.3.10/24`) |
+| `deployment_tier`  | string | Explicit orchestration tier: `platform` or `apps` |
 
 ### Optional with platform defaults
 
@@ -94,15 +105,32 @@ change to field names or semantics as a platform API change affecting all stacks
 | `ostemplate`          | string  | Defaults to the shared Debian Docker template |
 | `tags`                | list    | Defaults to `[stack_name]` |
 | `network.zone`        | string  | Optional; when omitted, the stack uses bridge defaults rather than network intent |
-| `ansible_playbook`    | string  | If omitted, no Ansible provisioning runs |
-| `portainer_agent`     | bool    | Defaults to `false` |
+| `ansible_playbook`    | string  | Playbook name consumed by `scripts/provision.sh` during the explicit Ansible phase |
+| `portainer_agent`     | bool    | Defaults to `false`; relevant for app-tier/legacy Portainer cleanup behavior only |
 | `keyctl`              | bool    | Defaults to `false` |
 | `app_stack_name`      | string  | Defaults to stack directory name |
 | `extra_mount_path`    | string  | No extra mount when omitted |
 | `extra_mount_size`    | string  | No extra mount when omitted |
 | `extra_mount_storage` | string  | Falls back to `rootfs_storage` when extra mount is used |
-| `depends_on`          | list    | Planned metadata only; no functional effect yet |
-| `provides`            | list    | Planned metadata only; no functional effect yet |
+| `depends_on`          | list    | Orchestration metadata used to document and order stack application in the explicit provisioning path |
+| `provides`            | list    | Contract/validation metadata used by stack-boundary documentation tooling |
+
+## Orchestration boundary
+
+The active model is explicitly two-phase:
+
+1. Terraform provisions the LXC and generates `stacks/<stack>/inventory.yml`.
+2. `scripts/provision.sh` reads the generated inventory and runs the stack's
+   `ansible_playbook` as a separate operator action.
+
+The generated inventory is the Terraform-to-Ansible handoff artifact.
+
+- Tier 1 `deployment_tier: platform` stacks do not use Portainer agents.
+- Tier 1 playbooks deploy directly on-host, typically via the `direct_stack`
+  role or stack-specific logic.
+- Tier 2 `deployment_tier: apps` stacks continue to use `portainer_agent`,
+  `portainer_api`, and `app_stack`.
+- Tier 1 playbooks must actively mask `portainer-agent.service`.
 
 ## What must not be edited casually
 

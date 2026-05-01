@@ -32,6 +32,7 @@ network:
   zone: mgmt_seg
 
 ansible_playbook: "deploy-portainer-stack"
+deployment_tier: platform
 apt_cacher_host: ""
 dns_server: "10.57.1.1"
 portainer_agent: false

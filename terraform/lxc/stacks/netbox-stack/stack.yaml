@@ -28,7 +28,8 @@ keyctl: true
 
 # Deployment
 ansible_playbook: "deploy-netbox-stack"
-portainer_agent: true
+deployment_tier: platform
+portainer_agent: false
 app_stack_name: "netbox"
 
 # pve-test service IPs (explicit — do not rely on variable defaults)

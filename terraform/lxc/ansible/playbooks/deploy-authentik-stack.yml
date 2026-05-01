@@ -1,15 +1,22 @@
 ---
 # Authentik stack lifecycle:
-# Docker base + Portainer Agent -> deploy local compose -> validate health
+# Docker base -> deploy local compose -> validate health
 
-- name: Configure Docker base and Portainer Agent
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
+
+  tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
 
 - name: Deploy Authentik compose stack
   hosts: all
