@@ -1,0 +1,52 @@
+---
+id: rp-29-strip-down-disposable-validation-containers
+title: "Strip down disposable validation containers on pve-test"
+type: development
+status: pending
+depends_on:
+  - rp-24-reboot-pve-test-and-reestablish-storage-health-baseline
+task_doc: docs/refactor-remove-portainer/tasks/29-strip-down-disposable-validation-containers.md
+validation_note: |
+  This is a cleanup-first execution task. Remove only the disposable validation
+  stacks, capture before/after host evidence, and stop on the first destroy
+  failure or retained-stack surprise. Run from the updated package baseline,
+  use one explicit destroy command per stack, and allow only a single immediate
+  retry when provider or plugin init fails before live mutation. Do not touch
+  SDN objects in this task.
+
+context: |
+  The package is intentionally moving away from broad rebuild-gate retries.
+  pve-test still contains the disposable validation CT fleet from earlier
+  network-matrix work, and that state needs to be removed before more focused
+  SDN recovery work continues. The first Task 29 attempt blocked before cleanup
+  completed, so this rerun must follow the corrected execution contract.
+
+objective: |
+  Remove the disposable validation containers from pve-test and re-establish a
+  reduced host baseline for the next cleanup-first tasks.
+
+workflow:
+  steps:
+    - Verify Task 24 evidence is present and preflight confirms pve-test.
+    - Verify the executor branch/worktree already contains the updated tracked package artifacts for this rerun.
+    - Capture the current pct list before live mutation.
+    - Destroy only the named disposable validation stacks, one explicit command at a time.
+    - If provider or plugin init fails before live mutation, rerun that same stack destroy once immediately.
+    - Stop immediately if the retry fails, any other destroy fails, or a retained stack is unexpectedly affected.
+    - Capture the pct list after the cleanup pass.
+    - Write docs/refactor-remove-portainer/reports/29-strip-down-disposable-validation-containers-report.md.
+    - Stop after reporting and return control to the architect session.
+
+postconditions:
+  criteria:
+    - Disposable validation CTs are absent or the first blocker is reported clearly.
+    - No SDN object pruning is attempted here.
+    - No Sonar or Snyk scan is required for this exploratory cleanup step.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Task 24 evidence is missing from disk.
+  - The executor baseline does not contain the updated tracked package artifacts for this rerun.
+  - Any disposable stack destroy fails.
+  - A provider or plugin init failure repeats on the same stack retry.
+  - A retained stack outside scope is touched or affected.

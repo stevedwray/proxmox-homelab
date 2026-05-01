@@ -1,0 +1,49 @@
+---
+id: rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+title: "Retry the full pve-test rebuild gate with corrected evidence handling"
+type: development
+status: pending
+depends_on:
+  - rp-20-retry-rebuild-gate-with-stop-first-helper
+task_doc: docs/refactor-remove-portainer/tasks/20a-retry-rebuild-gate-with-corrected-evidence-handling.md
+validation_note: |
+  This is an integration validation step, not a new implementation task. Verify
+  the required local report artifacts in the operator workspace before
+  switching to the refreshed clean baseline, then run the rebuild gate exactly
+  as documented and stop on the first failure.
+
+context: |
+  Task 20 stopped before live mutation because its prompt incorrectly required
+  local operational report artifacts to exist on a refreshed clean baseline.
+  The rebuild gate itself remains untested after Task 19/19a/19b and must now
+  be retried with corrected evidence handling.
+
+objective: |
+  Retry the documented full rebuild gate on pve-test using the stop-first
+  destroy helper, while verifying evidence in the correct workspace context and
+  recording whether the refactor now passes the final gate.
+
+workflow:
+  steps:
+    - Verify the Task 19, 19a, and 19b report files exist in the current operator workspace before switching to a clean execution baseline.
+    - Preserve the modified secrets file, untracked architect notes, and local package edits.
+    - Verify origin/dev/pve-test already contains commits 18820711b8128c160807479e7a192a5258d88876 and 7032ed57758fb4413a5c6ba0305430314ed6b288.
+    - Cut a clean short-lived branch from the refreshed dev/pve-test baseline.
+    - Run the rebuild gate exactly as documented in runbook.md.
+    - Stop immediately on the first failing command.
+    - Write docs/refactor-remove-portainer/reports/20a-rebuild-gate-with-corrected-evidence-handling-report.md.
+
+postconditions:
+  criteria:
+    - The rebuild gate either passes cleanly or fails with a precise stop condition and evidence.
+    - No ad hoc fix work is mixed into this task.
+    - No package or implementation files are edited in this task.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Required local report artifacts are missing from the operator workspace.
+  - The integrated baseline cannot be verified.
+  - Any rebuild-gate command fails.
+  - Any smoke test fails.
+  - Portainer still shows platform agent endpoints.
+  - The second platform provision run reports unresolved drift caused by the refactor.

@@ -388,28 +388,10 @@ prompts:
     file: 30e-reconcile-build-seg-vlan-data-plane.yaml
     title: "Reconcile build_seg VLAN/data-plane path between Proxmox and the active MikroTik"
     type: development
-    status: blocked
+    status: pending
     depends_on:
       - rp-30d-reconcile-active-mikrotik-baseline
     task_doc: docs/refactor-remove-portainer/tasks/30e-reconcile-build-seg-vlan-data-plane.md
-
-  - id: rp-30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway
-    file: 30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway.yaml
-    title: "Reconcile active MikroTik credentials and restore VLAN 10 gateway carriage"
-    type: development
-    status: blocked
-    depends_on:
-      - rp-30e-reconcile-build-seg-vlan-data-plane
-    task_doc: docs/refactor-remove-portainer/tasks/30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway.md
-
-  - id: rp-30g-validate-external-build-trunk-path
-    file: 30g-validate-external-build-trunk-path.yaml
-    title: "Validate the external build trunk path between Proxmox and the active MikroTik"
-    type: development
-    status: pending
-    depends_on:
-      - rp-30f-reconcile-active-mikrotik-credentials-and-vlan10-gateway
-    task_doc: docs/refactor-remove-portainer/tasks/30g-validate-external-build-trunk-path.md
 
   - id: rp-31-add-minimal-build-path-validation-harness
     file: 31-add-minimal-build-path-validation-harness.yaml
@@ -417,7 +399,7 @@ prompts:
     type: development
     status: pending
     depends_on:
-      - rp-30g-validate-external-build-trunk-path
+      - rp-30e-reconcile-build-seg-vlan-data-plane
     task_doc: docs/refactor-remove-portainer/tasks/31-add-minimal-build-path-validation-harness.md
 
   - id: rp-32-run-minimal-build-path-harness
@@ -438,30 +420,3 @@ prompts:
     depends_on:
       - rp-32-run-minimal-build-path-harness
     task_doc: docs/refactor-remove-portainer/tasks/33-validate-sdn-vnet-idempotency-with-minimal-harness.md
-
-  - id: rp-34-add-basic-sdn-smoke-harness
-    file: 34-add-basic-sdn-smoke-harness.yaml
-    title: "Add a basic SDN smoke harness with simple container scope"
-    type: development
-    status: pending
-    depends_on:
-      - rp-30g-validate-external-build-trunk-path
-    task_doc: docs/refactor-remove-portainer/tasks/34-add-basic-sdn-smoke-harness.md
-
-  - id: rp-35-run-basic-sdn-smoke-harness
-    file: 35-run-basic-sdn-smoke-harness.yaml
-    title: "Run the basic SDN smoke harness on pve-test"
-    type: development
-    status: pending
-    depends_on:
-      - rp-34-add-basic-sdn-smoke-harness
-    task_doc: docs/refactor-remove-portainer/tasks/35-run-basic-sdn-smoke-harness.md
-
-  - id: rp-36-rerun-basic-sdn-smoke-idempotency-and-teardown
-    file: 36-rerun-basic-sdn-smoke-idempotency-and-teardown.yaml
-    title: "Re-run basic SDN smoke idempotency and teardown"
-    type: development
-    status: pending
-    depends_on:
-      - rp-35-run-basic-sdn-smoke-harness
-    task_doc: docs/refactor-remove-portainer/tasks/36-rerun-basic-sdn-smoke-idempotency-and-teardown.md
