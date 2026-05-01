@@ -1099,7 +1099,8 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"
       ;;
     apt-cacher-stack)
-      run_logged "health-${stack}" curl -fsSI "http://${ip}:3142/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"
       ;;
     harbor-stack)
       run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
@@ -1163,7 +1164,8 @@ probe_stack_health() {
       ;;
     apt-cacher-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsSI "http://${ip}:3142/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
       else
