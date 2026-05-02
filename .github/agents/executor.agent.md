@@ -45,6 +45,9 @@ session metadata table before continuing.
 1. **Branch** — confirm current branch matches `session.branch`.
    If the branch does not exist: `git checkout -b <branch> <refs.base_branch>`
    If on a different branch and it exists: stop.
+  Teardown fast-path: if the operator explicitly requests a teardown/redeploy test
+  from current branch state, and `session.branch` matches the current branch,
+  continue without additional branch-switch ceremony.
   If the branch does not exist and the worktree is dirty, preserve the tree first
   with a named stash, switch branches, then restore it. If stash restore creates
   conflicts in session handoff files, keep the restored session files, record the
