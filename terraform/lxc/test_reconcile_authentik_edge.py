@@ -53,11 +53,13 @@ class FakeClient:
         *,
         applications: list[dict] | None = None,
         providers: list[dict] | None = None,
+        oauth2_providers: list[dict] | None = None,
         outposts: list[dict] | None = None,
         flows: list[dict] | None = None,
     ) -> None:
         self.applications = list(applications or [])
         self.providers = list(providers or [])
+        self.oauth2_providers = list(oauth2_providers or [])
         self.outposts = list(outposts or [])
         self.flows = list(
             flows
@@ -91,6 +93,10 @@ class FakeClient:
         self.request_methods.append("GET")
         return self.providers
 
+    def fetch_oauth2_providers(self):
+        self.request_methods.append("GET")
+        return self.oauth2_providers
+
     def fetch_outposts(self):
         self.request_methods.append("GET")
         return self.outposts
@@ -106,10 +112,26 @@ class FakeClient:
         self.providers.append(obj)
         return obj
 
+    def create_oauth2_provider(self, payload: dict):
+        self.request_methods.append("POST")
+        self.writes.append(("provider", "create", dict(payload)))
+        obj = {"pk": self._new_id(), **payload}
+        self.oauth2_providers.append(obj)
+        return obj
+
     def update_proxy_provider(self, provider_id: str, payload: dict):
         self.request_methods.append("PATCH")
         self.writes.append(("provider", "update", dict(payload)))
         for provider in self.providers:
+            if str(provider.get("pk")) == str(provider_id):
+                provider.update(payload)
+                return provider
+        raise AssertionError("provider not found")
+
+    def update_oauth2_provider(self, provider_id: str, payload: dict):
+        self.request_methods.append("PATCH")
+        self.writes.append(("provider", "update", dict(payload)))
+        for provider in self.oauth2_providers:
             if str(provider.get("pk")) == str(provider_id):
                 provider.update(payload)
                 return provider
@@ -492,6 +514,33 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual(0, result.write_count)
         self.assertEqual([], client.writes)
 
+    def test_owned_objects_from_other_stacks_do_not_cause_stop(self):
+        """Orphan check is scoped: objects from stacks not in the current manifest are ignored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "portainer.yaml"
+            _write_manifest(
+                manifest,
+                stack="portainer-stack",
+                route="portainer",
+                host="portainer.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                # These owned objects belong to OTHER stacks — should not block portainer reconcile.
+                applications=[
+                    {"pk": 301, "name": "edge-netbox-stack-netbox-app", "slug": "edge-netbox-stack-netbox", "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz"},
+                    {"pk": 302, "name": "edge-harbor-stack-harbor-app", "slug": "edge-harbor-stack-harbor", "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz"},
+                ],
+                providers=[
+                    {"pk": 401, "name": "edge-netbox-stack-netbox-provider", "external_host": "https://netbox.lab.gibbsgreatly.xyz"},
+                    {"pk": 402, "name": "edge-harbor-stack-harbor-provider", "external_host": "https://harbor.lab.gibbsgreatly.xyz"},
+                ],
+            )
+
+            result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertEqual((), result.stop_conditions)
+        self.assertTrue(result.ok)
     def test_provider_payload_uses_resolved_flow_pks(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "portainer.yaml"
@@ -589,6 +638,73 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         payload = provider_writes[0][2]
         self.assertEqual("flow-authz-custom", payload["authorization_flow"])
         self.assertEqual("flow-invalidation-custom", payload["invalidation_flow"])
+
+    def test_harbor_oidc_dry_run_plans_provider_and_application_without_outpost(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=False)
+
+        self.assertTrue(result.ok)
+        operations = {(action.object_kind, action.operation) for action in result.actions}
+        self.assertIn(("provider", "create"), operations)
+        self.assertIn(("application", "create"), operations)
+        self.assertNotIn(("outpost", "create"), operations)
+
+    def test_harbor_oidc_apply_writes_expected_provider_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual("harbor", payload["client_id"])
+        self.assertEqual("secret-value", payload["client_secret"])
+        self.assertEqual(
+            [{"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}],
+            payload["redirect_uris"],
+        )
+
+    def test_harbor_oidc_requires_secret_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(MODULE.os.environ, {}, clear=True):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(0, result.write_count)
+        self.assertEqual([], client.writes)
+        self.assertTrue(any(issue.code == "AKR006" for issue in result.issues))
 
 
 if __name__ == "__main__":

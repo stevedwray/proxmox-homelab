@@ -139,6 +139,9 @@ class AuthentikApiClient:
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
+    def fetch_oauth2_providers(self) -> list[dict[str, Any]]:
+        return self._get_paginated("/api/v3/providers/oauth2/")
+
     def fetch_outposts(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/outposts/instances/")
 
@@ -148,9 +151,19 @@ class AuthentikApiClient:
     def create_proxy_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(f"{self.base_url}/api/v3/providers/proxy/", "POST", payload)
 
+    def create_oauth2_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request_json(f"{self.base_url}/api/v3/providers/oauth2/", "POST", payload)
+
     def update_proxy_provider(self, provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(
             f"{self.base_url}/api/v3/providers/proxy/{provider_id}/",
+            "PATCH",
+            payload,
+        )
+
+    def update_oauth2_provider(self, provider_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return self._request_json(
+            f"{self.base_url}/api/v3/providers/oauth2/{provider_id}/",
             "PATCH",
             payload,
         )
@@ -370,6 +383,54 @@ def _provider_payload(
     }
 
 
+def _oidc_provider_secret(intent: RouteIntent) -> tuple[str | None, ReconcileIssue | None]:
+    env_name = _DISCOVER._oidc_client_secret_env(intent)
+    if not env_name:
+        return None, ReconcileIssue(
+            code="AKR005",
+            message=f"native OIDC route {intent.stack}/{intent.route} has no repo-managed Authentik mapping",
+            manifest=intent.manifest,
+            route=intent.route,
+            object_kind="provider",
+            object_name=intent.provider_name,
+        )
+    secret = os.environ.get(env_name, "").strip()
+    if secret:
+        return secret, None
+    return None, ReconcileIssue(
+        code="AKR006",
+        message=f"missing required OIDC client secret in environment variable {env_name}",
+        manifest=intent.manifest,
+        route=intent.route,
+        object_kind="provider",
+        object_name=intent.provider_name,
+    )
+
+
+def _oidc_provider_payload(
+    intent: RouteIntent,
+    *,
+    authorization_flow_pk: str,
+    invalidation_flow_pk: str,
+    client_secret: str,
+) -> dict[str, Any]:
+    return {
+        "name": intent.provider_name,
+        "client_type": "confidential",
+        "client_id": _DISCOVER._oidc_client_id(intent),
+        "client_secret": client_secret,
+        "authorization_flow": authorization_flow_pk,
+        "invalidation_flow": invalidation_flow_pk,
+        "redirect_uris": [
+            {"matching_mode": "strict", "url": redirect_uri}
+            for redirect_uri in _DISCOVER._oidc_redirect_uris(intent)
+        ],
+        "sub_mode": "hashed_user_id",
+        "issuer_mode": "per_provider",
+        "include_claims_in_id_token": True,
+    }
+
+
 def _flow_pk(flow: dict[str, Any]) -> str | None:
     return _DISCOVER._as_id(flow.get("pk") or flow.get("id"))
 
@@ -541,6 +602,54 @@ def _resolve_forwardauth_candidates(
     return app_obj, provider_obj, stops
 
 
+def _resolve_oidc_candidates(
+    intent: RouteIntent,
+    applications: list[dict[str, Any]],
+    providers: list[dict[str, Any]],
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, list[str]]:
+    host = intent.host.lower()
+    expected_client_id = _DISCOVER._oidc_client_id(intent)
+
+    provider_alternates = _DISCOVER._pick_candidates(
+        providers,
+        [
+            lambda item, expected_host=host: _DISCOVER._provider_matches_host(item, expected_host),
+            lambda item, expected_client_id=expected_client_id: bool(expected_client_id)
+            and str(item.get("client_id", "")) == expected_client_id,
+        ],
+    )
+    provider_obj, provider_stop = _resolve_single_owned_candidate(
+        object_kind="provider",
+        expected_name=intent.provider_name,
+        alternates=provider_alternates,
+        inventory_items=providers,
+        stack=intent.stack,
+        route=intent.route,
+    )
+
+    app_alternates = _DISCOVER._pick_candidates(
+        applications,
+        [
+            lambda item, expected_slug=intent.app_slug: str(item.get("slug", "")) == expected_slug,
+            lambda item, expected_host=host: _DISCOVER._normalize_url_host(
+                item.get("meta_launch_url") or item.get("launch_url")
+            )
+            == expected_host,
+        ],
+    )
+    app_obj, app_stop = _resolve_single_owned_candidate(
+        object_kind="application",
+        expected_name=intent.app_name,
+        alternates=app_alternates,
+        inventory_items=applications,
+        stack=intent.stack,
+        route=intent.route,
+    )
+
+    stops = [msg for msg in (provider_stop, app_stop) if msg]
+    return app_obj, provider_obj, stops
+
+
 def _resolve_delete_reports(
     intent: RouteIntent,
     applications: list[dict[str, Any]],
@@ -563,8 +672,7 @@ def _resolve_delete_reports(
         providers,
         [
             lambda item, expected_name=intent.provider_name: _DISCOVER._get_name(item) == expected_name,
-            lambda item, expected_host=host: _DISCOVER._normalize_url_host(item.get("external_host"))
-            == expected_host,
+            lambda item, expected_host=host: _DISCOVER._provider_matches_host(item, expected_host),
         ],
     )
 
@@ -759,11 +867,11 @@ def reconcile_authentik(
     write_count = 0
     consumed: dict[str, set[str]] = {"application": set(), "provider": set(), "outpost": set()}
     required_provider_ids: set[str] = set()
-    has_forwardauth = any(intent.auth_mode == "forwardAuth" for intent in intents)
+    has_managed_authentik = any(intent.auth_mode in {"forwardAuth", "oidc"} for intent in intents)
 
     authorization_flow_pk: str | None = None
     invalidation_flow_pk: str | None = None
-    if has_forwardauth:
+    if has_managed_authentik:
         flow_ids, flow_issues = _resolve_proxy_flow_ids(
             client,
             authorization_flow_slug_override=authorization_flow_slug_override,
@@ -789,7 +897,7 @@ def reconcile_authentik(
             )
             continue
 
-        if intent.auth_mode != "forwardAuth":
+        if intent.auth_mode not in {"forwardAuth", "oidc"}:
             app_matches, provider_matches, route_stops = _resolve_delete_reports(
                 intent,
                 applications,
@@ -807,7 +915,7 @@ def reconcile_authentik(
                         object_kind="application",
                         object_name=_DISCOVER._get_name(app),
                         operation="delete-report",
-                        reason="route auth mode is not forwardAuth; object would be deleted in cleanup task",
+                        reason="route auth mode is not Authentik-managed; object would be deleted in cleanup task",
                         object_id=app_id,
                     )
                 )
@@ -822,22 +930,50 @@ def reconcile_authentik(
                         object_kind="provider",
                         object_name=_DISCOVER._get_name(provider),
                         operation="delete-report",
-                        reason="route auth mode is not forwardAuth; object would be deleted in cleanup task",
+                        reason="route auth mode is not Authentik-managed; object would be deleted in cleanup task",
                         object_id=provider_id,
                     )
                 )
             continue
 
-        app_obj, provider_obj, route_stops = _resolve_forwardauth_candidates(intent, applications, providers)
+        if intent.auth_mode == "forwardAuth":
+            app_obj, provider_obj, route_stops = _resolve_forwardauth_candidates(intent, applications, providers)
+        else:
+            if not _DISCOVER._oidc_route_supported(intent):
+                issues.append(
+                    ReconcileIssue(
+                        code="AKR005",
+                        message=f"native OIDC route {intent.stack}/{intent.route} has no repo-managed Authentik mapping",
+                        manifest=intent.manifest,
+                        route=intent.route,
+                        object_kind="provider",
+                        object_name=intent.provider_name,
+                    )
+                )
+                continue
+            app_obj, provider_obj, route_stops = _resolve_oidc_candidates(intent, applications, providers)
         stop_conditions.extend(route_stops)
 
         assert authorization_flow_pk is not None
         assert invalidation_flow_pk is not None
-        provider_payload = _provider_payload(
-            intent,
-            authorization_flow_pk=authorization_flow_pk,
-            invalidation_flow_pk=invalidation_flow_pk,
-        )
+        if intent.auth_mode == "forwardAuth":
+            provider_payload = _provider_payload(
+                intent,
+                authorization_flow_pk=authorization_flow_pk,
+                invalidation_flow_pk=invalidation_flow_pk,
+            )
+        else:
+            client_secret, secret_issue = _oidc_provider_secret(intent)
+            if secret_issue is not None:
+                issues.append(secret_issue)
+                continue
+            assert client_secret is not None
+            provider_payload = _oidc_provider_payload(
+                intent,
+                authorization_flow_pk=authorization_flow_pk,
+                invalidation_flow_pk=invalidation_flow_pk,
+                client_secret=client_secret,
+            )
         provider_id: str | None = None
 
         if provider_obj is None:
@@ -852,7 +988,10 @@ def reconcile_authentik(
                 )
             )
             if apply and not route_stops and not stop_conditions:
-                created = client.create_proxy_provider(provider_payload)
+                if intent.auth_mode == "forwardAuth":
+                    created = client.create_proxy_provider(provider_payload)
+                else:
+                    created = client.create_oauth2_provider(provider_payload)
                 write_count += 1
                 providers.append(created)
                 provider_obj = created
@@ -874,7 +1013,10 @@ def reconcile_authentik(
                     )
                 )
                 if apply and not route_stops and not stop_conditions and provider_id:
-                    updated = client.update_proxy_provider(provider_id, provider_patch)
+                    if intent.auth_mode == "forwardAuth":
+                        updated = client.update_proxy_provider(provider_id, provider_patch)
+                    else:
+                        updated = client.update_oauth2_provider(provider_id, provider_patch)
                     write_count += 1
                     provider_obj.update(updated)
             else:
@@ -957,7 +1099,7 @@ def reconcile_authentik(
                     )
                 )
 
-    if has_forwardauth:
+    if any(intent.auth_mode == "forwardAuth" for intent in intents):
         shared_outpost, outpost_stop = _find_single_shared_outpost(outposts)
         if outpost_stop:
             stop_conditions.append(outpost_stop)
@@ -1044,14 +1186,18 @@ def reconcile_authentik(
         if not item_id or item_id in consumed["application"]:
             continue
         name = _DISCOVER._get_name(item)
-        if _DISCOVER._is_owned_object(name):
+        if _DISCOVER._is_owned_object(name) and any(
+            f"edge-{intent.stack}-" in name for intent in intents
+        ):
             stop_conditions.append(f"unmanaged owned application detected: {name}")
     for item in providers:
         item_id = _as_id(item)
         if not item_id or item_id in consumed["provider"]:
             continue
         name = _DISCOVER._get_name(item)
-        if _DISCOVER._is_owned_object(name):
+        if _DISCOVER._is_owned_object(name) and any(
+            f"edge-{intent.stack}-" in name for intent in intents
+        ):
             stop_conditions.append(f"unmanaged owned provider detected: {name}")
 
     stop_conditions = sorted(set(stop_conditions))
@@ -1060,7 +1206,7 @@ def reconcile_authentik(
         # Writes are prevented by guarded apply branches above.
         pass
 
-    if has_forwardauth and not apply:
+    if any(intent.auth_mode == "forwardAuth" for intent in intents) and not apply:
         issues.extend(_validate_forwardauth_endpoint_serving(client, intents))
 
     actions.sort(key=lambda action: (action.stack, action.route, action.object_kind, action.object_name, action.operation))
