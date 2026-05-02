@@ -6,10 +6,10 @@
 |---|---|
 | Session ID | deploy-kickoff-evening-06 |
 | Branch | work/portainer-oidc-runtime-fix-06 |
-| HEAD SHA | e51029b836c26c9a4eb0dc27f0f2a314eda9e78a |
+| HEAD SHA | ad536117a34d04d74d570c8dfff26b03207aca43 |
 | Baseline anchor | 028d37798cd8c633de43ffcefb84e5f1d7656dc7 |
-| Runtime validated SHA | e51029b836c26c9a4eb0dc27f0f2a314eda9e78a |
-| Delta type (none / metadata-only / runtime-change) | runtime-change |
+| Runtime validated SHA | ad536117a34d04d74d570c8dfff26b03207aca43 |
+| Delta type (none / metadata-only / runtime-change) | none |
 | Lineage check | PASS |
 | Target guard | PASS |
 | Working tree | clean |
@@ -70,13 +70,22 @@ $ cd /home/steve/git/proxmox-homelab && ./with-secrets bash -lc 'set -euo pipefa
   "OAuthSettings": {
     "ClientID": "portainer",
     "AuthorizationURI": "https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/",
-    "AccessTokenURI": "https://authentik.lab.gibbsgreatly.xyz/application/o/token/",
-    "ResourceURI": "https://authentik.lab.gibbsgreatly.xyz/application/o/userinfo/",
-    "RedirectURI": "https://portainer.lab.gibbsgreatly.xyz"
+    "AccessTokenURI": "http://10.57.1.10:9000/application/o/token/",
+    "ResourceURI": "http://10.57.1.10:9000/application/o/userinfo/",
+    "RedirectURI": "https://portainer.lab.gibbsgreatly.xyz",
+    "UserIdentifier": "preferred_username",
+    "OAuthAutoCreateUsers": true,
+    "DefaultTeamID": 0,
+    "SSO": true
   }
 }
 exit: 0
 ```
+
+Additional final evidence:
+
+- `docs/sessions/evidence/deploy-kickoff-evening-06/portainer-settings-raw-final.json`
+- `docs/sessions/evidence/deploy-kickoff-evening-06/portainer-users-final.json`
 
 `portainer-route-health-after` - PASS
 
@@ -94,8 +103,9 @@ $ cd /home/steve/git/proxmox-homelab && rg -n 'PORTAINER_.*(OIDC|OAUTH).*' .env.
 106:export PORTAINER_OAUTH_ENABLED=true
 108:export PORTAINER_OAUTH_CLIENT_ID='portainer'
 109:export PORTAINER_OAUTH_AUTH_URL='https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/'
-110:export PORTAINER_OAUTH_TOKEN_URL='https://authentik.lab.gibbsgreatly.xyz/application/o/token/'
-111:export PORTAINER_OAUTH_RESOURCE_URL='https://authentik.lab.gibbsgreatly.xyz/application/o/userinfo/'
+110:export PORTAINER_OAUTH_TOKEN_URL='http://10.57.1.10:9000/application/o/token/'
+111:export PORTAINER_OAUTH_RESOURCE_URL='http://10.57.1.10:9000/application/o/userinfo/'
+115:export PORTAINER_OAUTH_ADMIN_USERNAMES='akadmin'
 112:export PORTAINER_OAUTH_LOGOUT_URL='https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/'
 113:export PORTAINER_OAUTH_USER_IDENTIFIER='preferred_username'
 114:export PORTAINER_OAUTH_SCOPES='openid profile email'
@@ -110,10 +120,21 @@ exit: 0
   - Invoked helper in the main stack loop so Portainer deploy updates proxy dynamic config before app deploy.
   - Commit: e51029b836c26c9a4eb0dc27f0f2a314eda9e78a
 
+- terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml
+  - Mounted host CA trust bundle into the Portainer container.
+  - Switched OAuth backend token/userinfo defaults to internal Authentik HTTP endpoint.
+  - Added OAuth username-to-admin promotion automation (default `akadmin`).
+  - Commits: ebafcf6, 56e170c, ad53611
+
+- .env.template
+  - Updated Portainer OAuth token/resource endpoint defaults to internal Authentik endpoint.
+  - Added `PORTAINER_OAUTH_ADMIN_USERNAMES` placeholder with default `akadmin`.
+  - Commits: 56e170c, ad53611
+
 ## 4. Blockers
 
 None.
 
 ## 5. Recommendation
 
-Focus architect review on the new provision flow step that republishes Portainer route config via proxy stack; this session materially advances to go/no-go and should be treated as GO for the redirect_uri regression.
+Focus architect review on the two hardening paths added after initial gate pass: backend OAuth endpoint trust resilience and OAuth user role persistence. Session is GO: operator confirmed OAuth login works and environments are visible.
