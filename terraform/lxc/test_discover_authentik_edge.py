@@ -5,6 +5,7 @@ from __future__ import annotations
 import importlib.util
 import io
 import json
+import os
 import ssl
 import sys
 import tempfile
@@ -332,7 +333,8 @@ class TestClientTlsBehavior(unittest.TestCase):
             return dummy
 
         client = AuthentikApiClient(base_url="https://example.local", token="token")
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch.dict(os.environ, {"AUTHENTIK_EXTRA_CA": ""}), \
+                mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             client.fetch_applications()
 
         self.assertIsNone(captured[0], "default client must pass context=None (system TLS verification)")
