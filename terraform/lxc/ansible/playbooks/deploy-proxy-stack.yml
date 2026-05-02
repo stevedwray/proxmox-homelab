@@ -235,6 +235,20 @@
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
 
+    - name: Wait for Harbor HTTPS to be ready before image pull
+      ansible.builtin.uri:
+        url: "https://{{ registry_host | default('10.57.3.10') }}/health"
+        method: HEAD
+        validate_certs: false
+        follow_redirects: none
+        timeout: 5
+      register: harbor_https_check
+      retries: 30
+      delay: 5
+      until: harbor_https_check.status in [200, 401, 403, 404]
+      delegate_to: localhost
+      become: false
+
     - name: Start Traefik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
