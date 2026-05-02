@@ -59,6 +59,13 @@ No Harbor/Grafana code or stack manifests were modified.
 - Updated `terraform/lxc/discover-authentik-edge.py`:
   - Added `_dedupe_provider_records()` helper.
   - Applied provider deduplication in `_fetch_authentik_inventory()` after combining proxy and oauth2 provider lists.
+  - Commit: `342b2517743e5ea87c7125af2b8f3890a4ce6c69`
+
+- Updated `terraform/lxc/stacks/netbox-stack/docker-compose.yml`:
+  - Enabled NetBox `REMOTE_AUTH_ENABLED=true`.
+  - Set `REMOTE_AUTH_HEADER=HTTP_X_AUTHENTIK_USERNAME`, `REMOTE_AUTH_USER_EMAIL`, `REMOTE_AUTH_GROUP_HEADER` to consume identity headers forwarded by Authentik forwardAuth outpost.
+  - Commit: `3467320f91914ec023bc25548ed4be6192123727`
+  - Root cause: without this, Authentik enforced the door but NetBox ignored the identity pass-through and still showed its own local login form.
 
 ## Validation
 
@@ -67,12 +74,19 @@ No Harbor/Grafana code or stack manifests were modified.
   - Result: `27 passed in 0.09s`
   - Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/tests-reconcile-discover.log`
 
-- Code security scan: PASS
+- Live backend header test: PASS
+  - `curl -sI -H 'X-Authentik-Username: sso-probe' http://10.57.3.12:8080/` returned `HTTP/1.1 200 OK` (no login redirect).
+  - `curl -sI http://10.57.3.12:8080/` (no headers) still returns `302 → /login/` as expected.
+
+- User-confirmed SSO working end-to-end in browser.
+
+- Code security scans: PASS (both passes)
   - `./with-secrets /home/steve/.local/bin/sonar-scanner`
   - Result: `ANALYSIS SUCCESSFUL` and `EXECUTION SUCCESS`
   - Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/scan-sonar.log`
 
 ## Notes
 
-- Reconcile now correctly treats duplicate provider records emitted across Authentik endpoints as the same object when id/name are identical.
-- Runtime writes for reconcile remained `writes=0` (already converged state after normalization).
+- Reconcile correctly treats duplicate provider records emitted across Authentik endpoints as the same object when id/name are identical.
+- Full SSO requires both edge enforcement (Traefik forwardAuth → Authentik) AND backend header trust (NetBox REMOTE_AUTH). The session initially only wired the edge layer.
+- `REMOTE_AUTH_AUTO_CREATE_USER=true` ensures first-time Authentik users are provisioned in NetBox automatically on login.
