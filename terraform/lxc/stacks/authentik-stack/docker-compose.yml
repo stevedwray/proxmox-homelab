@@ -5,7 +5,7 @@
 
 services:
   postgresql:
-    image: ${REGISTRY_HOST}/dockerhub/library/postgres:16-alpine
+    image: postgres:16-alpine
     restart: unless-stopped
     env_file:
       - .env
@@ -17,7 +17,7 @@ services:
       - authentik-postgresql:/var/lib/postgresql/data
 
   redis:
-    image: ${REGISTRY_HOST}/dockerhub/library/redis:alpine
+    image: redis:alpine
     restart: unless-stopped
     command:
       - sh
@@ -27,7 +27,7 @@ services:
       - authentik-redis:/data
 
   server:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ghcr.io/goauthentik/server:2024.12.3
     restart: unless-stopped
     command: server
     env_file:
@@ -52,7 +52,7 @@ services:
       - authentik-certs:/certs
 
   worker:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ghcr.io/goauthentik/server:2024.12.3
     restart: unless-stopped
     command: worker
     env_file:
