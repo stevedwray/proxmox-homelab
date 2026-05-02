@@ -441,6 +441,21 @@ def _is_owned_object(name: str) -> bool:
     return bool(name and name.startswith(OWNED_NAME_PREFIX))
 
 
+def _dedupe_provider_records(providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate provider records returned across provider endpoints."""
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for provider in providers:
+        provider_id = _as_id(provider.get("pk") or provider.get("id"))
+        provider_name = _get_name(provider)
+        key = (provider_id or "", provider_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(provider)
+    return deduped
+
+
 def _fetch_authentik_inventory(
     client: AuthentikApiClient,
 ) -> tuple[AuthentikInventory | None, DiscoveryIssue | None]:
@@ -449,6 +464,7 @@ def _fetch_authentik_inventory(
         applications = client.fetch_applications()
         providers = client.fetch_proxy_providers()
         providers.extend(client.fetch_oauth2_providers())
+        providers = _dedupe_provider_records(providers)
         outposts = [
             outpost
             for outpost in client.fetch_outposts()
