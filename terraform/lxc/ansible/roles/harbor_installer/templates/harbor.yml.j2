@@ -7,6 +7,9 @@ hostname: {{ harbor_installer_hostname }}
 http:
   port: {{ harbor_installer_http_port }}
 
+# Harbor OIDC auth is configured post-install via the Harbor API because
+# harbor.yml does not expose the provider settings directly.
+
 # HTTPS is terminated externally by Nginx Proxy Manager with a Let's Encrypt
 # certificate. Harbor serves plain HTTP internally on port {{ harbor_installer_http_port }}.
 # Uncomment and configure the section below only if you switch to Harbor-native TLS.

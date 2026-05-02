@@ -113,6 +113,8 @@ SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml
 | `MIKROTIK_PASSWORD` | MikroTik read-only API password | Manual |
 | `HARBOR_ADMIN_PASSWORD` | Harbor admin password | deploy-harbor-stack |
 | `HARBOR_DB_PASSWORD` | Harbor PostgreSQL password | deploy-harbor-stack |
+| `HARBOR_OIDC_CLIENT_ID` | Harbor OIDC client ID (AuthentiK application slug/client ID) | deploy-harbor-stack |
+| `HARBOR_OIDC_CLIENT_SECRET` | Harbor OIDC client secret | deploy-harbor-stack |
 | `HARBOR_ROBOT_USER` | Harbor robot account username | All stack playbooks (image pull auth) |
 | `HARBOR_ROBOT_PASSWORD` | Harbor robot account password | All stack playbooks (image pull auth) |
 | `HARBOR_DOCKERHUB_USERNAME` | DockerHub pull-through account | Harbor proxy cache config |

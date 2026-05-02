@@ -36,6 +36,22 @@ harbor_postconfigure_bw_org_id: "03cd75dc-3db4-4b2e-8ecc-af86014151a7"
 harbor_postconfigure_bw_collection_id: "fa8ec932-22d8-4b7e-b13f-b349013d627b"
 harbor_postconfigure_bw_item_name: "Harbor CI Robot"
 
+# Browser SSO via Harbor OIDC auth mode.
+harbor_postconfigure_oidc_enabled: false
+harbor_postconfigure_oidc_name: "authentik"
+harbor_postconfigure_oidc_endpoint: ""
+harbor_postconfigure_oidc_client_id: ""
+harbor_postconfigure_oidc_client_secret: ""
+harbor_postconfigure_oidc_groups_claim: "groups"
+harbor_postconfigure_oidc_admin_group: ""
+harbor_postconfigure_oidc_group_filter: ""
+harbor_postconfigure_oidc_scope: "openid,profile,email,offline_access"
+harbor_postconfigure_oidc_user_claim: "preferred_username"
+harbor_postconfigure_oidc_verify_cert: true
+harbor_postconfigure_oidc_auto_onboard: true
+harbor_postconfigure_oidc_logout: true
+harbor_postconfigure_oidc_primary_auth_mode: true
+
 # Vulnerability scanning
 harbor_postconfigure_scan_on_push: true
 # Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
