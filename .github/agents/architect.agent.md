@@ -43,11 +43,10 @@ You do not run infrastructure commands or edit source files.
 2. If the input is `.git/ai/planner-blocker-to-architect.yaml`, require planner
   blocker fields (`planner_status`, `blocker`, `required_inputs`, `next_action`).
 3. If the file path or required keys do not match either contract:
-   a. Check `docs/sessions/` for a recently committed session report whose name
-      matches the session in progress. If one exists, reconstruct the missing
-      handoff keys from the report and the last `handoff-to-executor.yaml`, then
-      proceed with review using the reconstructed data (note the reconstruction
-      in the verdict).
+   a. Check `.git/ai/sessions/` for a session report whose name matches the
+      session in progress. If one exists, reconstruct the missing handoff keys
+      from the report and the last `handoff-to-executor.yaml`, then proceed with
+      review using the reconstructed data (note the reconstruction in the verdict).
    b. If no matching session report exists, emit `needs_input` — include the
       exact file path checked and the missing keys so the operator can repair
       the handoff file directly.
@@ -76,27 +75,16 @@ a `needs_input` block before producing the first session context.
 | `env.disposable` | `true` = backup and data-loss gates pre-satisfied |
 | `env.scan_gate` | `pr` = scans deferred to PR/merge (default); `session` = required each session |
 
-Dirty working tree is admissible when branch and SHA are explicitly pinned in the
-session context.
+**Before writing the handoff**, create `session.branch` from `refs.base_branch` if
+it does not already exist, then push it:
 
-When scoping a session that includes `approval-preflight`, `destroy`, or any other
-phase of `teardown-deploy-test.sh`, add a `commit-pending-work` gate immediately
-after `guard-target`. This pre-cleans the tree before the teardown script's own
-clean-tree check runs. Use this standard gate:
-
-```yaml
-- id: commit-pending-work
-  cmd: >-
-    cd /home/steve/git/proxmox-homelab &&
-    git add docs/sessions/ docs/teardown-test/ &&
-    { git diff --cached --quiet && echo 'nothing to commit'; } ||
-    git commit -m 'docs: commit pending session artefacts before teardown' &&
-    git rev-parse HEAD | tee docs/sessions/evidence/<stamp>/frozen-sha.log
-  expect: "working tree clean or commit succeeds; SHA printed"
-  critical: true
+```
+git checkout -b <session.branch> <refs.base_branch>
+git push -u origin <session.branch>
 ```
 
-Record the SHA this gate prints as `refs.frozen_sha` in the handoff.
+If the branch already exists, verify it is rooted at `refs.base_branch` before
+continuing. The executor does not create branches.
 
 ## Handoff Contracts
 
@@ -273,7 +261,7 @@ written verbatim to `.git/ai/handoff-to-executor.yaml`.
 session:
   id: ""              # e.g. "session-04" or "feat-harbor-02"
   goal: ""
-  branch: ""          # short-lived branch; executor creates from refs.base_branch if absent
+  branch: ""          # architect creates this branch before handoff
   issue: ""           # "#N"
 
 boundary:
@@ -288,7 +276,7 @@ refs:
   runtime_validated_sha: ""   # SHA tied to runtime evidence for this verdict
   current_head_sha: ""        # live HEAD seen during review/handoff creation
   delta_type: "none"          # none | metadata-only | runtime-change
-  prior_report: null  # or path
+  prior_report: null  # or .git/ai/sessions/<prior-session-id>-report.md
 
 env:
   disposable: true    # or false
@@ -307,7 +295,7 @@ gates:
 
 model_hint: lightweight   # lightweight | heavy
 
-output_report: "docs/sessions/<session-id>-report.md"
+output_report: ".git/ai/sessions/<session-id>-report.md"
 ```
 
 When verdict is `ESCALATE-TO-PLANNER`, write `.git/ai/handoff-to-planner.yaml`
@@ -346,9 +334,14 @@ State which path you are taking. Confirm the handoff file has been written.
 
 Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory exists.
 
-- **Direct to executor**: written to `.git/ai/handoff-to-executor.yaml`.
+- **Direct to executor**: create the branch (see Session Context above), then write
+  to `.git/ai/handoff-to-executor.yaml`.
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
 - **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no handoff. Recommend the user merge the branch to `refs.base_branch`.
+- **PASS**: no new handoff. Commit any uncommitted source changes from the session,
+  push, merge the branch to `refs.base_branch`, close the tracking issue, then
+  delete `.git/ai/sessions/<session-id>-report.md`.
+- **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
+  `.git/ai/sessions/<prior-session-id>-report.md`.
 - **NEEDS-INPUT**: no handoff yet. Waiting for operator response.

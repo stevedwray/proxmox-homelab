@@ -40,12 +40,11 @@ session:
   issue: ""
 
 input:
-  report: ""              # path to the committed session report
+  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
   prior_architect_review: null    # path or null
 
 refs:
   baseline_sha: ""
-  frozen_sha: null                # SHA after clean-tree preflight, or null
   runtime_validated_sha: ""      # SHA tied to runtime evidence in report
   current_head_sha: ""           # SHA at handoff write time
   delta_type: "none"             # none | metadata-only | runtime-change

@@ -43,15 +43,11 @@ Run these four checks in order before any gate work. Record all results in the
 session metadata table before continuing.
 
 1. **Branch** — confirm current branch matches `session.branch`.
-   If the branch does not exist: `git checkout -b <branch> <refs.base_branch>`
-   If on a different branch and it exists: stop.
-  Teardown fast-path: if the operator explicitly requests a teardown/redeploy test
-  from current branch state, and `session.branch` matches the current branch,
-  continue without additional branch-switch ceremony.
-  If the branch does not exist and the worktree is dirty, preserve the tree first
-  with a named stash, switch branches, then restore it. If stash restore creates
-  conflicts in session handoff files, keep the restored session files, record the
-  conflict in the report, and do not discard unrelated user changes.
+   The architect creates the branch before handoff. If the branch does not exist
+   locally: `git fetch origin && git checkout <session.branch>`
+   If it does not exist on the remote either: stop — this is an architect error,
+   do not create the branch.
+   If on a different branch: `git checkout <session.branch>`
 
 2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
    `env.target_guard_expect`. If it does not, stop.
@@ -85,12 +81,6 @@ Stop immediately and document if:
 
 Record: what stopped you, the last safe state, and the shortest path to resume.
 
-**Clean-tree preflight (`commit-pending-work` gate)**
-If the session includes a gate with id `commit-pending-work`, record the SHA it
-prints as `refs.frozen_sha` in the handoff. If the gate outputs "nothing to commit",
-set `frozen_sha` to the current HEAD SHA. If this gate fails, stop — do not proceed
-to approval-preflight or any destructive gate.
-
 **Disposable environment**
 If `env.disposable: true`, backup gates and formal data-loss acceptance are
 pre-satisfied for all target services. Do not require backup proof.
@@ -101,8 +91,11 @@ record it in the report. If `env.scan_gate: pr` (or absent), skip scans and note
 the deferral in the report — this is not a blocker.
 
 **Commit discipline**
-- Commit report and any source changes before ending the session
-- Format: `<type>: <subject> (session <id>)` with `Refs #N` or `Closes #N`
+- Commit source and infrastructure changes during the session as they are made
+- Do NOT commit the session report — it is written to `.git/ai/sessions/` and
+  reviewed by the architect from disk; the architect decides whether to commit it
+- Every commit must follow this format exactly: `<type>: <subject> (session <id>) Refs #N`
+  or `Closes #N` — no exceptions, including inline fix commits
 - Do not commit evidence directories (they are gitignored)
 - Do not use `--no-verify` unless explicitly instructed
 
@@ -127,8 +120,9 @@ the deferral in the report — this is not a blocker.
 ## Branch and Issue Protocol
 
 **Branch:**
-- Use the branch in `session.branch`; create from `refs.base_branch` if it does not exist
-- Push at session end: `git push -u origin <branch>`
+- The branch in `session.branch` is created by the architect before handoff; check
+  it out, do not create it
+- Push source changes at session end: `git push`
 
 **Issues — during execution:**
 - If a gate resolves an open blocker issue: add a comment with evidence path + SHA,
@@ -144,7 +138,8 @@ what passed, what failed, what is blocked, and the report path.
 
 ## Output Contract
 
-Write the report to the path in `output_report`.
+Write the report to the path in `output_report` (always `.git/ai/sessions/<id>-report.md`).
+Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
 
 ### 1. Session Metadata
 
@@ -211,12 +206,11 @@ session:
   issue: ""
 
 input:
-  report: ""              # path to the committed session report
+  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
   prior_architect_review: null    # path or null
 
 refs:
   baseline_sha: ""
-  frozen_sha: null                # SHA printed by commit-pending-work gate, or null if gate absent/skipped
   runtime_validated_sha: ""      # SHA tied to runtime evidence in report
   current_head_sha: ""           # SHA at handoff write time
   delta_type: "none"             # none | metadata-only | runtime-change
