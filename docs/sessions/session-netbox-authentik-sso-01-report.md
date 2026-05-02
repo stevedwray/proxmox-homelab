@@ -23,7 +23,7 @@ No Harbor/Grafana code or stack manifests were modified.
 - Result: clean tree at gate start (`git diff --name-only` produced no paths)
 - Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-scope-only.log`
 
-3. `netbox-reconcile` - PASS (after fix)
+3. `netbox-reconcile` - PASS (verified without --no-verify-tls in follow-on TLS fix)
 - Initial run failed due TLS chain verification (`AKD100`).
 - Retry with supported `--no-verify-tls` exposed stop conditions:
   - `multiple provider objects named edge-netbox-stack-netbox-provider`
@@ -36,6 +36,16 @@ No Harbor/Grafana code or stack manifests were modified.
   - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-reconcile-no-verify-tls.log`
   - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-reconcile-no-verify-tls-rerun.log`
   - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/discover-netbox-no-verify-tls.json`
+- Follow-on TLS fix (commit `9842850`): `--no-verify-tls` no longer needed.
+  - Authentik route switched from letsencrypt (LE staging, untrusted) to step-ca resolver.
+  - Traefik compose updated with combined CA bundle (system CAs + homelab-root.crt) so
+    lego can reach both acme-staging-v02.api.letsencrypt.org and the step-ca ACME endpoint.
+  - `defaultGeneratedCert` removed from certs.yml so the letsencrypt wildcard no longer
+    shadows the step-ca cert for the authentik route.
+  - `AUTHENTIK_EXTRA_CA` env var added to reconciler and discover scripts; set in .env.pve-test.
+  - Verified: `openssl s_client authentik.lab.gibbsgreatly.xyz:443` shows
+    `issuer=O=Homelab CA, CN=Homelab CA Intermediate CA`.
+  - Verified: reconcile runs cleanly with `Actions: 3 (writes=0)` and no TLS error.
 
 4. `netbox-provision` - PASS
 - Result: `scripts/provision.sh --stack netbox-stack` completed with no failures.
@@ -90,3 +100,12 @@ No Harbor/Grafana code or stack manifests were modified.
 - Reconcile correctly treats duplicate provider records emitted across Authentik endpoints as the same object when id/name are identical.
 - Full SSO requires both edge enforcement (Traefik forwardAuth → Authentik) AND backend header trust (NetBox REMOTE_AUTH). The session initially only wired the edge layer.
 - `REMOTE_AUTH_AUTO_CREATE_USER=true` ensures first-time Authentik users are provisioned in NetBox automatically on login.
+
+## TLS Key Findings (follow-on work)
+
+- `LEGO_CA_CERTIFICATES` in lego/Traefik **replaces** (not augments) the default CA pool.
+  A combined bundle (system root CAs + homelab CA) is required; homelab-only breaks LE.
+- `defaultGeneratedCert` with a wildcard resolver shadows domain-specific `certResolver`
+  assignments on individual routers. Removing it lets each router use its own resolver.
+- The step-ca ACME server at `https://10.57.1.11/acme/acme/directory` uses a cert signed
+  by the homelab intermediate CA, which is not in the Traefik container's default CA pool.
