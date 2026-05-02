@@ -133,6 +133,7 @@
     portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
+    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin', true) }}"
 
   tasks:
     - name: Assert Portainer admin password is configured
@@ -244,6 +245,16 @@
           AuthStyle: 0
       no_log: true
 
+    - name: Build list of OAuth usernames to promote to Portainer admin
+      ansible.builtin.set_fact:
+        portainer_oauth_admin_usernames: >-
+          {{
+            portainer_oauth_admin_usernames_raw.split(',')
+            | map('trim')
+            | reject('equalto', '')
+            | list
+          }}
+
     - name: Check whether Portainer auth settings need update
       ansible.builtin.set_fact:
         portainer_auth_settings_need_update: >-
@@ -275,6 +286,34 @@
           }}
         status_code: 200
       when: portainer_auth_settings_need_update | bool
+      no_log: true
+
+    - name: Read current Portainer users
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_response
+      when: portainer_oauth_admin_usernames | length > 0
+      no_log: true
+
+    - name: Promote configured OAuth usernames to Portainer admin role
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Role: 1
+        status_code: 200
+      loop: "{{ portainer_users_response.json }}"
+      when:
+        - portainer_oauth_admin_usernames | length > 0
+        - (item.Username | default('')) in portainer_oauth_admin_usernames
+        - (item.Role | int) != 1
       no_log: true
 
     - name: Report init outcome
