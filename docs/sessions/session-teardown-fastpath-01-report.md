@@ -15,12 +15,13 @@
 | Session ID | `teardown-fastpath-01` |
 | Branch | `work/teardown-validate-post-netbox-sso-01` |
 | HEAD SHA at start | `028d37798cd8c633de43ffcefb84e5f1d7656dc7` |
-| HEAD SHA at end | `6ca8cef` (commit: ordering fix) |
+| HEAD SHA at end | `f604d60` |
 | Baseline anchor | `028d37798cd8c633de43ffcefb84e5f1d7656dc7` |
-| Working tree | clean (after commits) |
+| Working tree | clean |
 | Target guard | **PASS** — pve-test |
 | Lineage check | **PASS** — baseline is ancestor of HEAD |
 | Open executor issues at start | none |
+| **pve-test final state** | **CLEAN — 0 containers running** |
 
 ---
 
