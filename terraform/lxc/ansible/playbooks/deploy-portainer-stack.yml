@@ -118,6 +118,20 @@
         lookup('env', 'PORTAINER_ADMIN_PASSWORD')
         | default(lookup('env', 'TF_VAR_portainer_admin_password'), true)
       }}
+    portainer_oauth_enabled: "{{ lookup('env', 'PORTAINER_OAUTH_ENABLED') | default('true', true) | bool }}"
+    portainer_public_url: "{{ lookup('env', 'PORTAINER_PUBLIC_URL') | default('https://portainer.lab.gibbsgreatly.xyz', true) }}"
+    portainer_oauth_client_id: "{{ lookup('env', 'PORTAINER_OAUTH_CLIENT_ID') | default('portainer', true) }}"
+    portainer_oauth_client_secret: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_CLIENT_SECRET')
+        | default('', true)
+      }}
+    portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/', true) }}"
+    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/token/', true) }}"
+    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/userinfo/', true) }}"
+    portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
+    portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
+    portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
 
   tasks:
     - name: Assert Portainer admin password is configured
@@ -127,6 +141,15 @@
         fail_msg: >-
           Set PORTAINER_ADMIN_PASSWORD or TF_VAR_portainer_admin_password before running
           deploy-portainer-stack.
+
+    - name: Assert Portainer OAuth secret is configured when OAuth enabled
+      ansible.builtin.assert:
+        that:
+          - portainer_oauth_client_secret | length > 0
+        fail_msg: >-
+          Set PORTAINER_OAUTH_CLIENT_SECRET before running deploy-portainer-stack when
+          PORTAINER_OAUTH_ENABLED=true.
+      when: portainer_oauth_enabled
 
     - name: Wait for Portainer API to become available
       ansible.builtin.uri:
@@ -191,8 +214,76 @@
       when: portainer_local_endpoint_id is not defined
       register: portainer_local_endpoint_create
 
+    - name: Read current Portainer settings
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/settings"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_settings_response
+      no_log: true
+
+    - name: Build desired Portainer OAuth settings
+      ansible.builtin.set_fact:
+        portainer_desired_auth_method: "{{ 3 if portainer_oauth_enabled else 1 }}"
+        portainer_desired_oauth_settings:
+          ClientID: "{{ portainer_oauth_client_id }}"
+          ClientSecret: "{{ portainer_oauth_client_secret }}"
+          AuthorizationURI: "{{ portainer_oauth_auth_url }}"
+          AccessTokenURI: "{{ portainer_oauth_token_url }}"
+          ResourceURI: "{{ portainer_oauth_resource_url }}"
+          RedirectURI: "{{ portainer_public_url }}"
+          UserIdentifier: "{{ portainer_oauth_user_identifier }}"
+          Scopes: "{{ portainer_oauth_scopes }}"
+          OAuthAutoCreateUsers: true
+          DefaultTeamID: 0
+          SSO: true
+          LogoutURI: "{{ portainer_oauth_logout_url }}"
+          AuthStyle: 0
+      no_log: true
+
+    - name: Check whether Portainer auth settings need update
+      ansible.builtin.set_fact:
+        portainer_auth_settings_need_update: >-
+          {{
+            (portainer_settings_response.json.AuthenticationMethod | int != portainer_desired_auth_method | int)
+            or ((portainer_settings_response.json.OAuthSettings.ClientID | default('')) != portainer_desired_oauth_settings.ClientID)
+            or ((portainer_settings_response.json.OAuthSettings.AuthorizationURI | default('')) != portainer_desired_oauth_settings.AuthorizationURI)
+            or ((portainer_settings_response.json.OAuthSettings.AccessTokenURI | default('')) != portainer_desired_oauth_settings.AccessTokenURI)
+            or ((portainer_settings_response.json.OAuthSettings.ResourceURI | default('')) != portainer_desired_oauth_settings.ResourceURI)
+            or ((portainer_settings_response.json.OAuthSettings.RedirectURI | default('')) != portainer_desired_oauth_settings.RedirectURI)
+            or ((portainer_settings_response.json.OAuthSettings.UserIdentifier | default('')) != portainer_desired_oauth_settings.UserIdentifier)
+            or ((portainer_settings_response.json.OAuthSettings.Scopes | default('')) != portainer_desired_oauth_settings.Scopes)
+            or ((portainer_settings_response.json.OAuthSettings.LogoutURI | default('')) != portainer_desired_oauth_settings.LogoutURI)
+            or ((portainer_settings_response.json.OAuthSettings.SSO | default(false) | bool) != (portainer_desired_oauth_settings.SSO | bool))
+          }}
+
+    - name: Update Portainer authentication settings
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/settings"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body: >-
+          {{
+            portainer_settings_response.json
+            | combine({'AuthenticationMethod': portainer_desired_auth_method}, recursive=True)
+            | combine({'OAuthSettings': portainer_desired_oauth_settings}, recursive=True)
+          }}
+        status_code: 200
+      when: portainer_auth_settings_need_update | bool
+      no_log: true
+
     - name: Report init outcome
       ansible.builtin.debug:
         msg: >-
           {{ 'Portainer admin account initialised.' if portainer_init_result.status == 200
              else 'Portainer admin account already exists (idempotent).' }}
+
+    - name: Report Portainer auth settings outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer OAuth settings updated.' if (portainer_auth_settings_need_update | bool)
+             else 'Portainer OAuth settings already match desired state.' }}
