@@ -7,7 +7,6 @@ storage-audit
 *.env
 .env.*
 !.env.template
-docs/refactor-remove-portainer/reports/
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
@@ -71,6 +70,7 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
+certs/homelab-root.crt
 
 # Logs
 *.log
@@ -80,8 +80,6 @@ cosign.key
 .scannerwork/
 
 # BMAD GenAI tooling (not committed — sourced from bmad-core)
+# .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
 .github/skills/
-
-# Custom agent definitions and instructions (project-owned, version-controlled)
-# .github/agents/ and .github/instructions/ are tracked intentionally

@@ -1,0 +1,47 @@
+---
+id: rp-19a-integrate-destroy-helper-into-dev-pve-test
+title: "Integrate Task 19 destroy-helper commit into dev/pve-test"
+type: documentation
+status: pending
+depends_on:
+  - rp-19-add-stop-first-rebuild-gate-destroy-helper
+task_doc: docs/refactor-remove-portainer/tasks/19a-integrate-destroy-helper-into-dev-pve-test.md
+validation_note: |
+  This is an integration-only step, not a new implementation task. Preserve the
+  current workspace hazards and local architect package edits, isolate the
+  narrow Task 19 commit, run Sonar before merge, and integrate only that change
+  into dev/pve-test.
+
+context: |
+  Task 19 produced a validated implementation commit for the stop-first
+  rebuild-gate destroy helper. That commit is not yet integrated on
+  dev/pve-test, and the current checkout also contains local uncommitted
+  architect-package edits that must not be folded into this integration step.
+
+objective: |
+  Integrate only commit 04e2d2cd08488d25d707fd3f000ee3cadb90007e into
+  dev/pve-test while preserving local workspace hazards and local package work.
+
+workflow:
+  steps:
+    - Add Task 19a to task-sequence.md as the integration-closeout step after Task 19.
+    - Add this prompt to prompts/index.yaml with dependency on Task 19.
+    - Preserve the modified secrets file, untracked architect notes, and local package edits.
+    - Cut a clean short-lived branch from dev/pve-test.
+    - Cherry-pick only 04e2d2cd08488d25d707fd3f000ee3cadb90007e onto that branch.
+    - Validate that the isolated diff is limited to scripts/rebuild-gate-destroy.sh and docs/refactor-remove-portainer/runbook.md.
+    - Run ./with-secrets /home/steve/.local/bin/sonar-scanner before merge.
+    - Merge the clean integration branch into dev/pve-test.
+    - Write docs/refactor-remove-portainer/reports/19-destroy-helper-integration-report.md.
+
+postconditions:
+  criteria:
+    - dev/pve-test contains the Task 19 destroy-helper commit.
+    - No local architect package edits or unrelated hazards are integrated.
+    - No rebuild-gate retry occurred in this task.
+
+stop_conditions:
+  - Workspace hazards and local package edits cannot be preserved non-destructively.
+  - Commit 04e2d2cd08488d25d707fd3f000ee3cadb90007e no longer applies cleanly.
+  - The isolated integration diff widens beyond the helper script and runbook.
+  - Sonar reports new issues.

@@ -100,6 +100,36 @@ class TestReconcileEdge(unittest.TestCase):
         self.assertEqual("passed", result["traefik"]["status"])
         self.assertEqual([], result["issues"])
 
+        def test_oidc_manifest_requires_authentik(self):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                        manifest = Path(tmpdir) / "harbor.yaml"
+                        manifest.write_text(
+                                """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+    name: harbor-edge
+    stack: harbor-stack
+spec:
+    routes:
+        - name: harbor
+            host: harbor.lab.gibbsgreatly.xyz
+            backend:
+                type: url
+                url: http://10.57.3.10
+            dns:
+                enabled: true
+                target: 10.57.2.10
+                ttl: 5m
+            tls:
+                resolver: letsencrypt
+            auth:
+                mode: oidc
+""",
+                                encoding="utf-8",
+                        )
+
+                        self.assertTrue(MODULE._manifest_requires_authentik(manifest))
+
 
 if __name__ == "__main__":
     unittest.main()

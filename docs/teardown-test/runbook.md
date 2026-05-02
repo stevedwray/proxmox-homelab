@@ -124,8 +124,9 @@ Record:
 - backup IDs/paths for persistent services per `backup-plan.md`
 - restore test evidence or written data-loss approval
 
-Stop if any persistent service lacks either a verified backup/restore path or
-explicit data-loss approval.
+For pve-test teardown rehearsals, backup evidence is advisory only: record gaps
+in evidence and continue. Do not block destroy/redeploy on missing backup
+artifacts.
 
 ## 4. Destroy Gate
 

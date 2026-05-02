@@ -208,7 +208,7 @@ def _manifest_requires_authentik(manifest_path: Path) -> bool:
         auth = route.get("auth")
         if not isinstance(auth, dict):
             continue
-        if str(auth.get("mode", "")).strip() == "forwardAuth":
+        if str(auth.get("mode", "")).strip() in {"forwardAuth", "oidc"}:
             return True
     return False
 

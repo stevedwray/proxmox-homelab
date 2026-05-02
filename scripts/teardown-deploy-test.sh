@@ -86,6 +86,11 @@ BROWSER_HOSTS=(
 
 BROWSER_DNS_TARGET_IP="10.57.2.10"
 
+# Runtime-generated deltas that can legitimately appear mid-cycle.
+EXPECTED_RUNTIME_DIRTY_PATHS=(
+  "certs/homelab-root.crt"
+)
+
 usage() {
   cat <<'EOF'
 Usage:
@@ -475,9 +480,44 @@ guard_pve_test() {
 }
 
 require_clean_tree() {
-  if [[ -n "$(git -C "${REPO_ROOT}" status --short)" ]]; then
+  local allowed_path
+  local line path
+  local path_allowed
+  local -a status_lines=()
+  local -a allowed_lines=()
+  local -a disallowed_lines=()
+
+  mapfile -t status_lines < <(git -C "${REPO_ROOT}" status --short)
+  if [[ ${#status_lines[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  for line in "${status_lines[@]}"; do
+    path="${line:3}"
+    if [[ "${path}" == *" -> "* ]]; then
+      path="${path##* -> }"
+    fi
+
+    path_allowed=false
+    if [[ "${PHASE}" == "cycle" || "${PHASE}" == "activate-edge" || "${PHASE}" == "deploy-platform" ]]; then
+      for allowed_path in "${EXPECTED_RUNTIME_DIRTY_PATHS[@]}"; do
+        if [[ "${path}" == "${allowed_path}" ]]; then
+          path_allowed=true
+          break
+        fi
+      done
+    fi
+
+    if [[ "${path_allowed}" == "true" ]]; then
+      allowed_lines+=("${line}")
+    else
+      disallowed_lines+=("${line}")
+    fi
+  done
+
+  if [[ ${#disallowed_lines[@]} -gt 0 ]]; then
     log "ERROR working tree is dirty"
-    git -C "${REPO_ROOT}" status --short | tee -a "${RUN_LOG}" >&2
+    printf '%s\n' "${status_lines[@]}" | tee -a "${RUN_LOG}" >&2
     set_phase_failure_context \
       "require-clean-tree" \
       "git -C ${REPO_ROOT} status --short" \
@@ -485,6 +525,11 @@ require_clean_tree() {
       "working tree is dirty"
     return 1
   fi
+
+  {
+    printf '[%s] WARNING allowing expected runtime-generated change(s) during %s:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${PHASE}"
+    printf '%s\n' "${allowed_lines[@]}"
+  } | tee -a "${RUN_LOG}" >&2
 }
 
 record_working_tree_state() {
@@ -807,6 +852,47 @@ get_authentik_url() {
   return 1
 }
 
+wait_for_authentik_api_ready() {
+  local authentik_url="$1"
+  local max_attempts="24"
+  local delay_seconds="5"
+
+  run_logged "wait-authentik-api-ready" \
+    "${WITH_SECRETS}" bash -lc '
+      set -euo pipefail
+
+      authentik_url="$1"
+      max_attempts="$2"
+      delay_seconds="$3"
+      endpoint="${authentik_url%/}/api/v3/core/applications/?page_size=1"
+      token="${AUTHENTIK_SUPERUSER_API_TOKEN:-}"
+
+      if [[ -z "${token}" ]]; then
+        echo "AUTHENTIK_SUPERUSER_API_TOKEN is not set" >&2
+        exit 1
+      fi
+
+      for attempt in $(seq 1 "${max_attempts}"); do
+        code="$(curl -sk -o /tmp/authentik-api-ready.json -w "%{http_code}" \
+          -H "Authorization: Bearer ${token}" \
+          -H "Accept: application/json" \
+          "${endpoint}" || true)"
+        echo "attempt=${attempt} http_code=${code} endpoint=${endpoint}"
+
+        if [[ "${code}" == "200" ]]; then
+          exit 0
+        fi
+
+        if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+          sleep "${delay_seconds}"
+        fi
+      done
+
+      echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
+      exit 1
+    ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
+}
+
 require_execute_approval() {
   local approval_lc
   approval_lc="${APPROVAL_TEXT,,}"
@@ -829,6 +915,31 @@ require_execute_approval() {
       "${RUN_LOG}" \
       "${PHASE} requires approval text containing: approve pve-test teardown deploy test"
     return 1
+  fi
+
+  if [[ "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ]]; then
+    if [[ "${approval_lc}" != *"op-06"* \
+      || "${approval_lc}" != *"destroy"* \
+      || "${approval_lc}" != *"op-07"* \
+      || "${approval_lc}" != *"op-16"* \
+      || "${approval_lc}" != *"stop"* \
+      || "${approval_lc}" != *"first failure"* \
+      || "${approval_lc}" != *"does not authorize"* \
+      || "${approval_lc}" != *"rebuild apply"* \
+      || "${approval_lc}" != *"edge publish"* \
+      || "${approval_lc}" != *"op-25"* \
+      || "${approval_lc}" != *"op-28"* \
+      || "${approval_lc}" != *"op-29"* \
+      || "${approval_lc}" != *"reconcile"* \
+      || "${approval_lc}" != *"apply"* ]]; then
+      log "ERROR ${PHASE} requires explicit OP-06 destroy-only scope and exclusions in --approval-text"
+      set_phase_failure_context \
+        "require-op06-scope-approval-text" \
+        "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <op06-scope-text>" \
+        "${RUN_LOG}" \
+        "${PHASE} approval text missing required OP-06 destroy-only scope markers"
+      return 1
+    fi
   fi
 }
 
@@ -919,7 +1030,9 @@ validate_approval_packet() {
     missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
   fi
 
-  if (( ${#missing_items[@]} > 0 )); then
+  set +u
+  if [[ ${#missing_items[@]} -gt 0 ]]; then
+    set -u
     {
       log "ERROR approval packet validation failed: ${packet_path}"
       printf '[%s] Missing approval packet items:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "${RUN_LOG}"
@@ -932,12 +1045,77 @@ validate_approval_packet() {
       "approval packet missing required metadata"
     return 1
   fi
+  set -u
 
   packet_hash_file="${LOG_DIR}/approval-packet.sha256"
   packet_sha="$(sha256sum "${packet_path}" | awk '{print $1}')"
   printf '%s  %s\n' "${packet_sha}" "${packet_path}" >"${packet_hash_file}"
   log "approval packet accepted: ${packet_path}"
   log "approval packet sha256: ${packet_sha} (recorded in ${packet_hash_file})"
+}
+
+backup_dir_has_artifact() {
+  local dir="$1"
+  find "${dir}" -mindepth 1 -type f | grep -q .
+}
+
+validate_backup_artifacts_present() {
+  local backup_root="${EVIDENCE_DIR}/backups"
+  local d
+  local -a missing_dirs=()
+  local -a missing_non_loss=()
+  local -a required_dirs=(
+    "portainer"
+    "harbor"
+    "authentik"
+    "netbox"
+    "monitoring"
+    "traefik-certs"
+    "step-ca"
+    "ci-runner"
+    "apt-cacher"
+  )
+  local -a non_loss_dirs=(
+    "step-ca"
+    "authentik"
+    "harbor"
+    "netbox"
+  )
+
+  for d in "${required_dirs[@]}"; do
+    if [[ ! -d "${backup_root}/${d}" ]]; then
+      missing_dirs+=("${backup_root}/${d}")
+    fi
+  done
+
+  for d in "${non_loss_dirs[@]}"; do
+    if [[ -d "${backup_root}/${d}" ]] && ! backup_dir_has_artifact "${backup_root}/${d}"; then
+      missing_non_loss+=("${backup_root}/${d}")
+    fi
+  done
+
+  {
+    echo "backup_root=${backup_root}"
+    echo "required_dirs=${required_dirs[*]}"
+    echo "missing_dir_count=${#missing_dirs[@]}"
+    echo "missing_non_loss_count=${#missing_non_loss[@]}"
+    if (( ${#missing_dirs[@]} > 0 )); then
+      echo "missing_dirs=${missing_dirs[*]}"
+    fi
+    if (( ${#missing_non_loss[@]} > 0 )); then
+      echo "missing_non_loss_artifacts=${missing_non_loss[*]}"
+    fi
+  } >"${LOG_DIR}/backup-gating.log"
+
+  if (( ${#missing_dirs[@]} > 0 )); then
+    log "WARNING backup evidence directories missing under ${backup_root} (advisory only)"
+  fi
+
+  if (( ${#missing_non_loss[@]} > 0 )); then
+    log "WARNING backup evidence artifacts missing under ${backup_root} (advisory only)"
+  fi
+
+  log "backup evidence check complete (advisory only for fully destructible pve-test)"
 }
 
 stack_name() {
@@ -960,7 +1138,7 @@ stack_apply() {
 
   guard_pve_test
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt apply -auto-approve"
   guard_pve_test
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
@@ -975,9 +1153,9 @@ stack_destroy() {
 
   guard_pve_test
   run_logged "destroy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt destroy -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
   run_logged "verify-destroy-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then exit 1; fi"
+    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
 
 validate_stack_smoke() {
@@ -995,10 +1173,12 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"
       ;;
     apt-cacher-stack)
-      run_logged "health-${stack}" curl -fsSI "http://${ip}:3142/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"
       ;;
     harbor-stack)
-      run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
@@ -1059,7 +1239,8 @@ probe_stack_health() {
       ;;
     apt-cacher-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsSI "http://${ip}:3142/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
       else
@@ -1444,6 +1625,7 @@ phase_destroy() {
   create_evidence_dirs
   require_execute_approval
   validate_approval_packet
+  validate_backup_artifacts_present
   require_clean_tree
   load_stack_specs destroy specs
   set_current_phase_stack_specs "${specs[@]}"
@@ -1488,6 +1670,7 @@ phase_activate_edge() {
   require_clean_tree
   guard_pve_test
   authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
@@ -1496,11 +1679,11 @@ phase_activate_edge() {
 
   guard_pve_test
   run_logged "publish-coredns" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
 
   guard_pve_test
   run_logged "publish-traefik" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \

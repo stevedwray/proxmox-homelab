@@ -52,6 +52,12 @@ services:
       WEBHOOKS_ENABLED: "true"
       SKIP_SUPERUSER: "true"
       LOGIN_REQUIRED: "true"
+      # Trust Authentik forwardAuth headers for browser SSO into NetBox.
+      REMOTE_AUTH_ENABLED: "true"
+      REMOTE_AUTH_AUTO_CREATE_USER: "true"
+      REMOTE_AUTH_HEADER: "HTTP_X_AUTHENTIK_USERNAME"
+      REMOTE_AUTH_USER_EMAIL: "HTTP_X_AUTHENTIK_EMAIL"
+      REMOTE_AUTH_GROUP_HEADER: "HTTP_X_AUTHENTIK_GROUPS"
       # Media
       MEDIA_ROOT: /opt/netbox/netbox/media
       # Email (disabled by default — configure when needed)

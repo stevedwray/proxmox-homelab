@@ -22,6 +22,8 @@ This package now follows the same operating method used successfully in
   `runbook.md`
 - architecture-session controlled: executor sessions do not widen scope on
   their own
+- hygiene-enforced: architect and executor sessions keep branch/worktree state
+  tidy enough that `git status` continues to reflect only the active task
 
 ## Target Model
 
@@ -43,6 +45,21 @@ The target state is:
 - This package describes documentation, implementation, and validation work for
   the refactor, but each execution task remains a single branch/session unit.
 - Do not combine tasks unless the architecture session explicitly says to do so.
+
+## Current Recovery Mode
+
+After the post-reboot recovery evidence and the later disposable-network
+investigation reports, the refactor is no longer using a broad rebuild-first
+recovery path.
+
+The current architecture-approved recovery mode is:
+
+- cleanup-first on `pve-test`
+- remove disposable validation containers before more SDN experimentation
+- prune only disposable network state that is proven unused
+- validate one infrastructure/build path at a time with a minimal harness
+- defer another broad rebuild-gate retry until the minimal harness and SDN
+  idempotency path are proven
 
 ## Background Documents
 
@@ -81,6 +98,18 @@ When there is any conflict:
 5. Run the task's required validation.
 6. Stop and report back if validation reveals a new issue outside task scope.
 
+## Workspace Hygiene
+
+- Cut each task branch from a current `origin/dev/pve-test` baseline, not from a
+  stale local branch snapshot.
+- Keep package files that belong to the task tracked on the task branch. Do not
+  rely on untracked prompts, task docs, or helper scripts as hidden session
+  state.
+- Keep scratch work, spare worktrees, and evidence directories out of normal
+  repo status noise. If local scaffolding must exist, ignore it locally.
+- Before reporting task-complete or asking the architect to evaluate a report,
+  ensure `git status --short` reflects only the active task's scoped changes.
+
 ## Session Roles
 
 Architecture session:
@@ -89,6 +118,7 @@ Architecture session:
 - updates decisions, sequencing, and prompts
 - resolves stop conditions
 - does not widen an executor task after the fact without updating docs
+- enforces branch/worktree hygiene before issuing or accepting task work
 
 Executor session:
 
@@ -96,3 +126,5 @@ Executor session:
 - reads this README, `decisions.md`, the task doc, and the matching prompt
 - reports validation output, stop conditions, and unexpected findings
 - does not silently fix unrelated issues
+- keeps the branch/worktree tidy enough that required task artifacts are
+  tracked and unrelated local noise is removed or ignored before handoff

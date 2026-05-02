@@ -1,0 +1,44 @@
+---
+id: rp-21-fix-pct-stop-compatibility-in-destroy-helper
+title: "Fix pct stop compatibility in the rebuild-gate destroy helper"
+type: development
+status: pending
+depends_on:
+  - rp-20a-retry-rebuild-gate-with-corrected-evidence-handling
+task_doc: docs/refactor-remove-portainer/tasks/21-fix-pct-stop-compatibility-in-destroy-helper.md
+validation_note: |
+  This is a narrow rebuild-unblocker implementation task. Fix only the helper's
+  live pct stop compatibility issue, validate the revised command path on
+  pve-test, and do not widen into a full rebuild-gate retry.
+
+context: |
+  Task 20a reached the first live rebuild-gate command and showed that the
+  destroy helper's pct stop invocation is not compatible with the target
+  Proxmox CLI: the host rejected --timeout with an option-parsing error.
+
+objective: |
+  Correct the helper's stop invocation so the stop-first destroy path works on
+  pve-test without reopening broader rebuild-gate scope.
+
+workflow:
+  steps:
+    - Verify the Task 20a report exists in the operator workspace.
+    - Inspect the supported pct stop syntax on pve-test non-destructively.
+    - Update scripts/rebuild-gate-destroy.sh with a host-compatible stop invocation.
+    - Run shellcheck and helper dry-run validation.
+    - Perform a narrow live validation that proves the revised stop path no longer fails on option parsing.
+    - Run ./with-secrets /home/steve/.local/bin/sonar-scanner.
+    - Write docs/refactor-remove-portainer/reports/21-pct-stop-compatibility-fix-report.md.
+
+postconditions:
+  criteria:
+    - The helper's pct stop command is compatible with pve-test.
+    - The Task 20a option-parsing failure is resolved.
+    - No full rebuild-gate retry occurred in this task.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Task 20a evidence is missing from disk.
+  - The fix would require broader helper/destroy-path redesign.
+  - A different live stop-path failure appears beyond the option-parsing defect.
+  - Sonar reports new issues.

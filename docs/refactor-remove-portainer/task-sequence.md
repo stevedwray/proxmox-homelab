@@ -100,7 +100,66 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
 | # | Title | Status | Preconditions |
 |---|---|---|---|
 | 19a | Integrate Task 19 destroy-helper commit into `dev/pve-test` | `complete` | 19 |
-| 19b | Integrate Task 19a package status into `dev/pve-test` | `pending` | 19a |
+| 19b | Integrate Task 19a package status into `dev/pve-test` | `complete` | 19a |
+
+## L. Historical Recovery Evidence
+
+These tasks and reports remain part of the operational record, but they do not
+define the next live execution mode. They explain why the package moved to a
+cleanup-first recovery strategy.
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 20 | Retry rebuild gate with stop-first helper | `blocked` | 19b |
+| 20a | Retry rebuild gate with corrected evidence handling | `blocked` | 19b |
+| 21 | Fix `pct stop` compatibility in destroy helper | `blocked` | 20a |
+| 22 | Triage Proxmox LXC config lock timeout during stop-first destroy | `complete` | 21 |
+| 23 | Clear hung Proxmox stop task for VMID 150 | `complete` | 22 |
+| 24 | Reconcile `pve-test` post-reboot storage health baseline | `complete` | 22 |
+
+## M. Cleanup-First Reset
+
+| # | Title | Status | Preconditions |
+|---|---|---|---|
+| 29 | Strip down disposable validation containers on `pve-test` | `blocked` | 24 |
+| 29a | Manually remove orphaned disposable validation containers on `pve-test` | `complete` | 29 |
+| 30 | Classify and prune disposable SDN objects after strip-down | `complete` | 29a |
+| 30a | Validate retained container creation with `ci-runner-01` | `complete` | 30 |
+| 30b | Validate `ci-runner-01` functional configuration | `blocked` | 30a |
+| 30c | Restore repeatable `ci-runner-01` apt-cacher reachability in code | `blocked` | 30b |
+| 30d | Reconcile active MikroTik baseline and build-seg carriage assumptions | `complete` | 30c |
+| 30e | Reconcile `build_seg` VLAN/data-plane path between Proxmox and the active MikroTik | `pending` | 30d |
+| 31 | Add a minimal build-path validation harness | `pending` | 30e |
+| 32 | Run the minimal build-path harness on `pve-test` | `pending` | 30, 31 |
+| 33 | Validate SDN VNet idempotency with the minimal build-path harness | `pending` | 32 |
+
+Execution note:
+
+- `docs/refactor-remove-portainer/reports/29-status-clarification-report.md`
+  reconciles the stale first-attempt Task 29 report with the later rerun
+  artifact.
+- The current authoritative Task 29 report on disk records the corrected rerun
+  and shows that the disposable validation CTs are orphaned: they still exist
+  on `pve-test`, but the corresponding Terraform state is empty.
+- Task 29a completed manual orphaned CT cleanup for VMIDs `130` through `140`.
+  It does not authorize SDN object removal by itself.
+- Task 30 completed as a validated no-op: no live SDN object was proven
+  disposable or unused.
+- Task 30a completed a retained-stack container creation test for
+  `ci-runner-01`.
+- Task 30b is authoritative blocked evidence: the supported
+  `./scripts/provision.sh --stack ci-runner-01` path failed because VMID `141`
+  could not reach apt-cacher at `10.57.3.11:3142` from `build_seg`.
+- Task 30c proved that the scoped firewall-rule fix alone was insufficient and
+  narrowed the remaining failure to the lower network plane.
+- Task 30d completed runtime-baseline reconciliation for the active MikroTik:
+  authoritative management IP `192.168.1.251`, live input contract via
+  `.env/.env.<env>` plus `terraform/secrets.enc.yaml`, and updated template
+  defaults/comments.
+- Task 30e is now the required follow-on before any minimal-harness work
+  resumes.
+- Do not start Tasks 31 or 32 unless the Task 30e report on disk explicitly
+  shows `Status: complete`.
 
 ## Dependency Graph
 
@@ -136,6 +195,21 @@ Follow the same execution discipline as `docs/provisioning-refactor/`:
                                                                                                                                      └── 19 (stop-first destroy helper)
                                                                                                                                          └── 19a (destroy-helper integration)
                                                                                                                                              └── 19b (Task 19a package status integration)
+                                                                                                                                                 ├── 20 / 20a / 21 (historical blocked rebuild retries)
+                                                                                                                                                 └── 22 (lock-timeout triage)
+                                                                                                                                                     ├── 23 (hung stop-task cleanup/no-op)
+                                                                                                                                                     └── 24 (post-reboot recovery baseline)
+                                                                                                                                                         └── 29 (strip disposable validation containers)
+                                                                                                                                                             └── 29a (manual orphaned CT cleanup)
+                                                                                                                                                                 ├── 30 (classify/prune disposable SDN state)
+                                                                                                                                                                 │   └── 30a (ci-runner-01 retained creation test)
+                                                                                                                                                                 │       └── 30b (ci-runner-01 functional validation; blocked)
+                                                                                                                                                                 │           └── 30c (fix apt-cacher reachability + revalidate ci-runner-01; blocked)
+                                                                                                                                                                 │               └── 30d (reconcile active MikroTik runtime baseline)
+                                                                                                                                                                 │                   └── 30e (reconcile build_seg VLAN/data-plane path)
+                                                                                                                                                                 │                       └── 31 (minimal build-path harness)
+                                                                                                                                                                 │                           └── 32 (run minimal build-path harness)
+                                                                                                                                                                 │                               └── 33 (SDN idempotency validation on minimal harness)
 ```
 
 ## Tier 1 Playbook Coverage Reference
@@ -158,7 +232,7 @@ currently use Portainer roles directly.
 
 ## Final Gate
 
-After all tasks are complete, including Tasks 14, 15, 15a, 16, 17, 18, 19, 19a, 19b, and any rebuild-unblocker tasks opened by a
+After all tasks are complete, including Tasks 14, 15, 15a, 16, 17, 18, 19, 19a, 19b, 29, 29a, 30, 30a, 30b, 30c, 30d, 30e, 31, 32, 33, and any rebuild-unblocker tasks opened by a
 rebuild-gate stop condition, use [runbook.md](runbook.md) for the full
 `pve-test` rebuild gate. Do not mark the overall refactor complete on
 source-only validation alone.

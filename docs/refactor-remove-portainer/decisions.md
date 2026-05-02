@@ -216,3 +216,125 @@ null resource tracks in its `triggers`.
   unexpected null-resource behavior beyond the documented orchestration churn,
   or interactive validation paths that prevent a clean non-interactive dry run.
 - Shared helper scripts for downstream validation must run non-interactively.
+
+## Decision 14: Branch and worktree hygiene are part of task completeness
+
+Architect and executor sessions must keep the working state tidy enough that the
+active branch remains an accurate representation of the active task.
+
+- Short-lived task branches must start from a current `origin/dev/pve-test`
+  baseline, or the session must stop and reconcile the stale base first.
+- Required task artifacts such as prompts, task docs, helper scripts, and
+  package status updates must not be left as untracked files on the active task
+  branch. If the task needs them, they must be committed on that branch.
+- Local scaffolding such as spare worktrees, scratch files, and preservation
+  copies must be kept out of normal repo status noise by using ignored
+  locations or local ignore rules.
+- A task handoff is not clean if `git status --short` still includes unrelated
+  modified or untracked files that are outside the declared task scope.
+
+## Decision 15: Recovery continues via a cleanup-first, minimal-harness path
+
+After Task 24 and the later disposable-network investigation reports, the next
+architecture step is not another broad rebuild-gate retry.
+
+- First remove disposable validation containers from `pve-test`.
+- Then classify and prune only disposable SDN state that is proven unused.
+- Then validate one infrastructure/build path at a time with a minimal harness.
+- Only after the minimal harness proves the current SDN path should the package
+  reopen broader rebuild-gate retries.
+
+This intentionally narrows the blast radius of further recovery work.
+
+## Decision 16: Exploratory cleanup and minimal-harness tasks are not merge-candidate scan gates
+
+The repository-wide scan rules still apply before merge when relevant, but the
+cleanup-first recovery tasks are exploratory execution steps, not immediate
+merge-candidate integration tasks.
+
+- Do not require Sonar or Snyk for cleanup-only or minimal-harness execution
+  tasks unless the architecture session explicitly opens a merge-candidate
+  integration step.
+- When the package reaches an integration or merge-candidate step again, run
+  the appropriate scans before merging that branch.
+
+## Decision 17: Orphaned disposable validation containers may be removed manually, but SDN cleanup remains separate
+
+If the cleanup-first Task 29 path proves that disposable validation containers
+still exist on `pve-test` while the corresponding Terraform state is empty,
+those containers are treated as unmanaged orphans rather than as active
+Terraform-managed stack resources.
+
+- A narrow follow-on task may stop and destroy only the named disposable
+  orphaned validation CTs directly on the Proxmox host.
+- That manual cleanup path is allowed only for the disposable validation CT
+  fleet opened by the cleanup-first reset, not for retained platform CTs.
+- Orphaned CTs do not by themselves prove that any SDN zone, VNet, or subnet is
+  disposable.
+- SDN object classification and pruning remains a separate later task after the
+  orphaned CT baseline is cleaned up.
+
+## Decision 18: The first retained-stack creation test after cleanup is `ci-runner-01`
+
+After disposable CT cleanup and SDN classification, the first live retained
+stack creation test should target `ci-runner-01`.
+
+- This is a real container-creation test, not just a disposable harness check.
+- The goal is to prove that a retained `build_seg` stack can be created cleanly
+  on `pve-test` before resuming broader live validation work.
+- Minimal harness work may still follow, but it should not be the first live
+  post-cleanup creation step.
+
+## Decision 19: `ci-runner-01` requires a separate functional validation step after creation
+
+A successful retained-container creation test for `ci-runner-01` does not by
+itself prove that the runner is functionally usable.
+
+- After the `ci-runner-01` creation task succeeds, run a separate narrow task
+  that uses the explicit configuration path for that stack.
+- That functional task must verify at least:
+  - the runner configuration playbook runs through the supported orchestration
+    path
+  - the runner systemd service is active inside the CT
+  - the runner is visible as online via the GitHub Actions API
+- This still does not require a full CI job smoke test unless a later task
+  explicitly opens that scope.
+
+## Decision 20: `build_seg` access to apt-cacher must be fixed in repo-managed code before broader validation resumes
+
+Task 30b established an authoritative blocker: `ci-runner-01` on `build_seg`
+cannot reach the apt-cacher endpoint at `10.57.3.11:3142`, so the supported
+`./scripts/provision.sh --stack ci-runner-01` path fails before runner setup
+can complete.
+
+- Do not treat this as a one-off manual repair.
+- The next step is a narrow code-fix task that restores this reachability
+  through repo-managed automation or validation assets and then re-proves
+  `ci-runner-01` functional readiness.
+- Do not start Task 31 while this blocker is unresolved.
+
+## Decision 21: Live MikroTik runtime inputs come from local env plus SOPS secrets, not from template defaults alone
+
+Task 30d clarified the real execution contract for MikroTik automation on
+`pve-test`.
+
+- Non-secret connection coordinates such as `MIKROTIK_HOST` belong in local
+  `.env` or `.env.<env>` files derived from `.env.template`.
+- Secret-bearing values such as active credentials belong in
+  `terraform/secrets.enc.yaml`.
+- `with-secrets` is the live runtime merge point and may override template-era
+  assumptions with local env and SOPS-backed secrets.
+- Template defaults and playbook fallback literals are useful guardrails, but
+  they are not the authoritative live runtime source by themselves.
+
+## Decision 22: The next live unblocker is the Proxmox-to-MikroTik VLAN/data-plane path, not another runner retry
+
+After Task 30d, the remaining blocker is no longer stale router targeting or a
+missing forward allow rule. VMID `141` still cannot reach its own gateway
+`10.57.0.1`, which means the next task must focus on the L2/L3 carriage path
+between `pve-test` and the active MikroTik.
+
+- The next approved task is a narrow VLAN/data-plane reconciliation task.
+- Do not retry `ci-runner-01` provisioning as the primary objective until that
+  path is proven.
+- Do not start Task 31 while the build-segment gateway path remains unproven.

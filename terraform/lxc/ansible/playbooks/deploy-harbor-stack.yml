@@ -1,7 +1,8 @@
 # Harbor registry stack — full deployment playbook.
 # Play 1: Docker base configuration
 # Play 2: Download, configure, and start Harbor via harbor_installer role
-# Play 3: Post-install configuration via Harbor API (proxy cache, robot account)
+# Play 3: Ensure Harbor's Authentik OIDC client exists
+# Play 4: Post-install configuration via Harbor API (proxy cache, robot account, OIDC)
 
 ---
 - name: Configure Docker base
@@ -25,14 +26,46 @@
   gather_facts: false
   vars:
     harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
+    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('https://' ~ harbor_installer_hostname, true) }}"
   roles:
     - harbor_installer
 
-- name: Configure Harbor (proxy cache, robot account)
+- name: Configure Harbor (proxy cache, robot account, OIDC)
   hosts: all
   become: false
   gather_facts: false
   vars:
     harbor_postconfigure_host: "{{ ansible_host }}"
+    harbor_postconfigure_oidc_enabled: "{{ lookup('env', 'HARBOR_OIDC_ENABLED') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_name: "{{ lookup('env', 'HARBOR_OIDC_PROVIDER_NAME') | default('authentik', true) }}"
+    harbor_postconfigure_oidc_endpoint: "{{ lookup('env', 'HARBOR_OIDC_ENDPOINT') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-harbor-stack-harbor/', true) }}"
+    harbor_postconfigure_oidc_client_id: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_ID') | default('harbor', true) }}"
+    harbor_postconfigure_oidc_client_secret: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_SECRET') | default('', true) }}"
+    harbor_postconfigure_oidc_groups_claim: "{{ lookup('env', 'HARBOR_OIDC_GROUPS_CLAIM') | default('groups', true) }}"
+    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('', true) }}"
+    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('', true) }}"
+    harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access', true) }}"
+    harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('sub', true) }}"
+    harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('false', true) | bool }}"
+    harbor_postconfigure_oidc_auto_onboard: "{{ lookup('env', 'HARBOR_OIDC_AUTO_ONBOARD') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_logout: "{{ lookup('env', 'HARBOR_OIDC_LOGOUT') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('true', true) | bool }}"
+  pre_tasks:
+    - name: Reconcile Harbor Authentik OIDC client
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
+          - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
+          - --authentik-url
+          - https://authentik.lab.gibbsgreatly.xyz
+          - --no-verify-tls
+          - --apply
+          - --json
+      register: harbor_authentik_reconcile
+      changed_when: "harbor_authentik_reconcile.stdout is not search('\\\"write_count\\\": 0')"
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
   roles:
     - harbor_postconfigure

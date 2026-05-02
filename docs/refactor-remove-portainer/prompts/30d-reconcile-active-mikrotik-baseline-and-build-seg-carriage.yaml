@@ -1,0 +1,21 @@
+---
+id: rp-30d-reconcile-active-mikrotik-baseline
+title: "Reconcile active MikroTik baseline and build-seg carriage assumptions"
+type: development
+status: complete
+depends_on:
+  - rp-30c-restore-ci-runner-apt-cacher-reachability
+task_doc: docs/refactor-remove-portainer/tasks/30d-reconcile-active-mikrotik-baseline-and-build-seg-carriage.md
+validation_note: |
+  This was a narrow baseline-reconciliation task. It updated stale host
+  defaults/comments and clarified that live MikroTik execution inputs come from
+  local env plus SOPS secrets through with-secrets.
+
+context: |
+  Task 30c showed that the first MikroTik automation attempt was running
+  against a stale host assumption. This task reconciled that baseline without
+  claiming the deeper build-segment data plane was fixed.
+
+objective: |
+  Keep the package aligned with the active MikroTik baseline and the real
+  runtime input contract before opening the next VLAN/data-plane task.

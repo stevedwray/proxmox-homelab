@@ -1,0 +1,43 @@
+---
+id: rp-33-validate-sdn-vnet-idempotency-with-minimal-harness
+title: "Validate SDN VNet idempotency with the minimal build-path harness"
+type: development
+status: pending
+depends_on:
+  - rp-32-run-minimal-build-path-harness
+task_doc: docs/refactor-remove-portainer/tasks/33-validate-sdn-vnet-idempotency-with-minimal-harness.md
+validation_note: |
+  Reopen the current configure-network-sdn-vnet.yml work only against the
+  minimal build-path harness. Validate repeated net-build-01 apply behavior and
+  re-run the minimal harness afterward. Do not widen back into the rebuild gate.
+
+context: |
+  The cleanup-first reset exists to make SDN idempotency validation smaller and
+  safer. This task is the first narrow live proof of the current SDN playbook
+  fix after the host and harness have been reduced.
+
+objective: |
+  Validate the SDN idempotency path against the minimal build-path harness
+  rather than against the full rebuild gate.
+
+workflow:
+  steps:
+    - Verify Task 32 evidence is present and preflight confirms pve-test.
+    - Validate configure-network-sdn-vnet.yml locally with ansible-lint.
+    - Re-apply net-build-01 against the existing minimal harness baseline.
+    - Re-run the minimal build-path validation harness.
+    - Write docs/refactor-remove-portainer/reports/33-validate-sdn-vnet-idempotency-with-minimal-harness-report.md.
+    - Stop after reporting and return control to the architect session.
+
+postconditions:
+  criteria:
+    - The SDN idempotency fix is either validated on the minimal harness or the first blocker is clearly reported.
+    - No broad rebuild-gate commands are run in this task.
+    - No Sonar or Snyk scan is required for this exploratory validation step.
+
+stop_conditions:
+  - Preflight does not confirm pve-test.
+  - Task 32 evidence is missing from disk.
+  - ansible-lint fails for configure-network-sdn-vnet.yml.
+  - Repeated net-build-01 apply still fails on SDN object re-creation.
+  - The minimal build-path harness fails after the repeated apply.

@@ -46,9 +46,8 @@ tier_filter = sys.argv[2]
 explicit_csv = sys.argv[3]
 
 APPROVED_PLATFORM_ORDER = [
-    "portainer-stack",
-    "harbor-stack",
     "apt-cacher-stack",
+  "harbor-stack",
     "ci-runner-01",
     "dns-stack",
     "step-ca-stack",
@@ -56,6 +55,7 @@ APPROVED_PLATFORM_ORDER = [
     "proxy-stack",
     "monitoring-stack",
     "netbox-stack",
+  "portainer-stack",
 ]
 
 
