@@ -6,13 +6,13 @@
 |---|---|
 | Session ID | dev-fix-harbor-https-timing-03-sha-mapping |
 | Branch | work/teardown-validate-post-netbox-sso-01 |
-| HEAD SHA | 1962633039b45127ff4a713b8c2f10f3b41fb510 |
+| HEAD SHA | 10450c952aedc82f9e3d03bad2492fac2dab01e1 |
 | Baseline anchor | 028d37798cd8c633de43ffcefb84e5f1d7656dc7 |
 | Runtime validated SHA | 359b083123d95af5c56628b7b495a4de478871fd |
 | Delta type (`none` / `metadata-only` / `runtime-change`) | metadata-only |
 | Lineage check | PASS |
 | Target guard | PASS |
-| Working tree | dirty |
+| Working tree | clean |
 | Open issues at start | none |
 
 ## 2. Gate Results
@@ -21,28 +21,31 @@
 
 ```
 $ cd /home/steve/git/proxmox-homelab && git rev-parse HEAD
-1962633039b45127ff4a713b8c2f10f3b41fb510
+10450c952aedc82f9e3d03bad2492fac2dab01e1
 exit: 0
 ```
+Raw evidence path: `docs/sessions/evidence/dev-fix-harbor-https-timing-03/head-match.log`
 
 ### `delta-metadata-only` — PASS
 
 ```
-$ cd /home/steve/git/proxmox-homelab && git diff --name-only 359b083123d95af5c56628b7b495a4de478871fd 1962633039b45127ff4a713b8c2f10f3b41fb510
-docs/sessions/session-dev-fix-harbor-https-timing-01-report.md
+$ cd /home/steve/git/proxmox-homelab && git diff --name-only 1962633039b45127ff4a713b8c2f10f3b41fb510 10450c952aedc82f9e3d03bad2492fac2dab01e1
 docs/sessions/session-dev-fix-harbor-https-timing-02-evidence-report.md
+docs/sessions/session-dev-fix-harbor-https-timing-03-sha-mapping-report.md
 exit: 0
 ```
+Raw evidence path: `docs/sessions/evidence/dev-fix-harbor-https-timing-03/delta-metadata-only.log`
 
 ### `handoff-refs-correct` — PASS
 
 ```
 $ cd /home/steve/git/proxmox-homelab && rg -n 'runtime_validated_sha|current_head_sha|delta_type' .git/ai/handoff-to-architect.yaml
 13:  runtime_validated_sha: "359b083123d95af5c56628b7b495a4de478871fd"
-14:  current_head_sha: "1962633039b45127ff4a713b8c2f10f3b41fb510"
+14:  current_head_sha: "10450c952aedc82f9e3d03bad2492fac2dab01e1"
 15:  delta_type: "metadata-only"
 exit: 0
 ```
+Raw evidence path: `docs/sessions/evidence/dev-fix-harbor-https-timing-03/handoff-refs-correct.log`
 
 ## 3. Changes Made
 
