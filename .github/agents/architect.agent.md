@@ -79,6 +79,25 @@ a `needs_input` block before producing the first session context.
 Dirty working tree is admissible when branch and SHA are explicitly pinned in the
 session context.
 
+When scoping a session that includes `approval-preflight`, `destroy`, or any other
+phase of `teardown-deploy-test.sh`, add a `commit-pending-work` gate immediately
+after `guard-target`. This pre-cleans the tree before the teardown script's own
+clean-tree check runs. Use this standard gate:
+
+```yaml
+- id: commit-pending-work
+  cmd: >-
+    cd /home/steve/git/proxmox-homelab &&
+    git add docs/sessions/ docs/teardown-test/ &&
+    { git diff --cached --quiet && echo 'nothing to commit'; } ||
+    git commit -m 'docs: commit pending session artefacts before teardown' &&
+    git rev-parse HEAD | tee docs/sessions/evidence/<stamp>/frozen-sha.log
+  expect: "working tree clean or commit succeeds; SHA printed"
+  critical: true
+```
+
+Record the SHA this gate prints as `refs.frozen_sha` in the handoff.
+
 ## Handoff Contracts
 
 Use these paths and required keys consistently:

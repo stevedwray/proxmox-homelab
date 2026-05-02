@@ -85,6 +85,12 @@ Stop immediately and document if:
 
 Record: what stopped you, the last safe state, and the shortest path to resume.
 
+**Clean-tree preflight (`commit-pending-work` gate)**
+If the session includes a gate with id `commit-pending-work`, record the SHA it
+prints as `refs.frozen_sha` in the handoff. If the gate outputs "nothing to commit",
+set `frozen_sha` to the current HEAD SHA. If this gate fails, stop — do not proceed
+to approval-preflight or any destructive gate.
+
 **Disposable environment**
 If `env.disposable: true`, backup gates and formal data-loss acceptance are
 pre-satisfied for all target services. Do not require backup proof.
@@ -210,7 +216,7 @@ input:
 
 refs:
   baseline_sha: ""
-  frozen_sha: null                # SHA after clean-tree preflight, or null
+  frozen_sha: null                # SHA printed by commit-pending-work gate, or null if gate absent/skipped
   runtime_validated_sha: ""      # SHA tied to runtime evidence in report
   current_head_sha: ""           # SHA at handoff write time
   delta_type: "none"             # none | metadata-only | runtime-change
