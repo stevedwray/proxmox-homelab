@@ -235,17 +235,15 @@
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
 
-    - name: Wait for Harbor HTTPS to be ready before image pull
-      ansible.builtin.uri:
-        url: "https://{{ registry_host | default('10.57.3.10') }}/health"
-        method: HEAD
-        validate_certs: false
-        follow_redirects: none
-        timeout: 5
-      register: harbor_https_check
+    - name: Wait for Harbor endpoint to be reachable before image pull
+      ansible.builtin.shell: >-
+        curl -skI --max-time 5 "https://{{ registry_host | default('10.57.3.10') }}/health" >/dev/null
+        || curl -sI --max-time 5 "http://{{ registry_host | default('10.57.3.10') }}/health" >/dev/null
+      register: harbor_endpoint_check
       retries: 30
       delay: 5
-      until: harbor_https_check.status in [200, 401, 403, 404]
+      until: harbor_endpoint_check.rc == 0
+      changed_when: false
       delegate_to: localhost
       become: false
 
