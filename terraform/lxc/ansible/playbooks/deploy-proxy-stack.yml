@@ -50,7 +50,7 @@
   vars:
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
-    traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
+    traefik_image: "traefik:{{ traefik_version }}"
     # Optional control-node source dir for generated per-stack Traefik files.
     # When provided, files are published into /opt/proxy-stack/dynamic/ so the
     # active file provider always loads them.
