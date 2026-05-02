@@ -41,6 +41,8 @@ cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-pro
 Result: PASS
 Evidence:
 - `playbook: playbooks/deploy-proxy-stack.yml`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/syntax-check-proxy.log`
+- Exit code: `0`
 
 ### syntax-check-step-ca
 Command:
@@ -51,6 +53,8 @@ Result: PASS
 Evidence:
 - `playbook: playbooks/deploy-step-ca.yml`
 - Warning observed and expected in syntax-only context: `Could not match supplied host pattern, ignoring: dns-stack`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/syntax-check-step-ca.log`
+- Exit code: `0`
 
 ### lint-proxy
 Command:
@@ -60,6 +64,8 @@ cd terraform/lxc/ansible && ansible-lint playbooks/deploy-proxy-stack.yml
 Result: PASS
 Evidence:
 - `Passed: 0 failure(s), 0 warning(s)`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/lint-proxy.log`
+- Exit code: `0`
 
 ### lint-step-ca
 Command:
@@ -69,6 +75,8 @@ cd terraform/lxc/ansible && ansible-lint playbooks/deploy-step-ca.yml
 Result: PASS
 Evidence:
 - `Passed: 0 failure(s), 0 warning(s)`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/lint-step-ca.log`
+- Exit code: `0`
 
 ### wait-task-present
 Command:
@@ -78,6 +86,8 @@ grep -c 'Wait for Harbor HTTPS' terraform/lxc/ansible/playbooks/deploy-proxy-sta
 Result: PASS
 Evidence:
 - Output: `1`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/wait-task-present.log`
+- Exit code: `0`
 
 ### retroactive-trust-present
 Command:
@@ -87,6 +97,8 @@ grep -c 'dns-stack' terraform/lxc/ansible/playbooks/deploy-step-ca.yml
 Result: PASS
 Evidence:
 - Output: `2`
+- Raw log: `docs/sessions/evidence/dev-fix-harbor-https-timing-01/retroactive-trust-present.log`
+- Exit code: `0`
 
 ## Runtime Execution
 
