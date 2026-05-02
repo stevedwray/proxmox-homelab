@@ -56,6 +56,7 @@ class FakeClient:
         oauth2_providers: list[dict] | None = None,
         outposts: list[dict] | None = None,
         flows: list[dict] | None = None,
+        certificate_keypairs: list[dict] | None = None,
     ) -> None:
         self.applications = list(applications or [])
         self.providers = list(providers or [])
@@ -75,6 +76,18 @@ class FakeClient:
                     "slug": "default-provider-invalidation-flow",
                     "designation": "invalidation",
                 },
+            ]
+        )
+        self.certificate_keypairs = list(
+            certificate_keypairs
+            if certificate_keypairs is not None
+            else [
+                {
+                    "pk": "certkey-default",
+                    "name": "authentik Self-signed Certificate",
+                    "private_key_available": True,
+                    "private_key_type": "rsa",
+                }
             ]
         )
         self.request_methods: list[str] = []
@@ -104,6 +117,10 @@ class FakeClient:
     def fetch_flows(self):
         self.request_methods.append("GET")
         return self.flows
+
+    def fetch_certificate_keypairs(self):
+        self.request_methods.append("GET")
+        return self.certificate_keypairs
 
     def create_proxy_provider(self, payload: dict):
         self.request_methods.append("POST")
@@ -681,6 +698,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         payload = provider_writes[0][2]
         self.assertEqual("harbor", payload["client_id"])
         self.assertEqual("secret-value", payload["client_secret"])
+        self.assertEqual("certkey-default", payload["signing_key"])
         self.assertEqual(
             [{"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}],
             payload["redirect_uris"],
@@ -705,6 +723,26 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual(0, result.write_count)
         self.assertEqual([], client.writes)
         self.assertTrue(any(issue.code == "AKR006" for issue in result.issues))
+
+    def test_harbor_oidc_requires_signing_key_before_writes(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient(certificate_keypairs=[])
+
+            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertFalse(result.ok)
+        self.assertEqual(0, result.write_count)
+        self.assertEqual([], client.writes)
+        self.assertTrue(any(issue.code == "AKR007" for issue in result.issues))
 
 
 if __name__ == "__main__":

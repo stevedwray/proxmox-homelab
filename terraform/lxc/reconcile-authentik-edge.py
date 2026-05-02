@@ -22,6 +22,8 @@ DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
 INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"
+OIDC_SIGNING_KEY_NAME_ENV = "AUTHENTIK_OIDC_SIGNING_KEY_NAME"
+DEFAULT_OIDC_SIGNING_KEY_NAME = "authentik Self-signed Certificate"
 COOKIE_DOMAIN = ".lab.gibbsgreatly.xyz"
 SHARED_OUTPOST_TYPE = "proxy"
 DEFAULT_AUTHORIZATION_FLOW_SLUGS = (
@@ -147,6 +149,9 @@ class AuthentikApiClient:
 
     def fetch_flows(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/flows/instances/")
+
+    def fetch_certificate_keypairs(self) -> list[dict[str, Any]]:
+        return self._get_paginated("/api/v3/crypto/certificatekeypairs/")
 
     def create_proxy_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(f"{self.base_url}/api/v3/providers/proxy/", "POST", payload)
@@ -413,6 +418,7 @@ def _oidc_provider_payload(
     authorization_flow_pk: str,
     invalidation_flow_pk: str,
     client_secret: str,
+    signing_key_pk: str,
 ) -> dict[str, Any]:
     return {
         "name": intent.provider_name,
@@ -428,7 +434,49 @@ def _oidc_provider_payload(
         "sub_mode": "hashed_user_id",
         "issuer_mode": "per_provider",
         "include_claims_in_id_token": True,
+        "signing_key": signing_key_pk,
     }
+
+
+def _resolve_oidc_signing_key_id(
+    client: Any,
+    *,
+    signing_key_name_override: str | None,
+) -> tuple[str | None, ReconcileIssue | None]:
+    keypairs = client.fetch_certificate_keypairs()
+
+    target_name = signing_key_name_override or DEFAULT_OIDC_SIGNING_KEY_NAME
+    preferred = [
+        item
+        for item in keypairs
+        if str(item.get("name", "")) == target_name
+    ]
+    if preferred:
+        key_id = _DISCOVER._as_id(preferred[0].get("pk") or preferred[0].get("id"))
+        if key_id:
+            return key_id, None
+
+    fallback = [
+        item
+        for item in keypairs
+        if bool(item.get("private_key_available")) and str(item.get("private_key_type", "")).lower() == "rsa"
+    ]
+    if len(fallback) == 1:
+        key_id = _DISCOVER._as_id(fallback[0].get("pk") or fallback[0].get("id"))
+        if key_id:
+            return key_id, None
+
+    available_names = sorted({str(item.get("name", "")) for item in keypairs if item.get("name")})
+    return None, ReconcileIssue(
+        code="AKR007",
+        message=(
+            "missing required Authentik OIDC signing key for RS256 tokens; "
+            f"looked for '{target_name}' and did not find a unique RSA keypair. "
+            f"available={available_names}"
+        ),
+        route="oidc",
+        object_kind="provider",
+    )
 
 
 def _flow_pk(flow: dict[str, Any]) -> str | None:
@@ -868,6 +916,7 @@ def reconcile_authentik(
     consumed: dict[str, set[str]] = {"application": set(), "provider": set(), "outpost": set()}
     required_provider_ids: set[str] = set()
     has_managed_authentik = any(intent.auth_mode in {"forwardAuth", "oidc"} for intent in intents)
+    has_oidc_managed = any(intent.auth_mode == "oidc" for intent in intents)
 
     authorization_flow_pk: str | None = None
     invalidation_flow_pk: str | None = None
@@ -888,6 +937,23 @@ def reconcile_authentik(
             )
         assert flow_ids is not None
         authorization_flow_pk, invalidation_flow_pk = flow_ids
+
+    oidc_signing_key_pk: str | None = None
+    if has_oidc_managed:
+        oidc_signing_key_pk, signing_issue = _resolve_oidc_signing_key_id(
+            client,
+            signing_key_name_override=_resolve_slug_override(OIDC_SIGNING_KEY_NAME_ENV),
+        )
+        if signing_issue is not None:
+            return ReconcileResult(
+                apply=apply,
+                actions=(),
+                issues=(signing_issue,),
+                stop_conditions=(),
+                request_methods=tuple(client.request_methods),
+                write_count=0,
+            )
+        assert oidc_signing_key_pk is not None
 
     intents = sorted(intents, key=lambda item: (item.stack, item.route, item.host))
     for intent in intents:
@@ -973,6 +1039,7 @@ def reconcile_authentik(
                 authorization_flow_pk=authorization_flow_pk,
                 invalidation_flow_pk=invalidation_flow_pk,
                 client_secret=client_secret,
+                signing_key_pk=oidc_signing_key_pk,
             )
         provider_id: str | None = None
 
