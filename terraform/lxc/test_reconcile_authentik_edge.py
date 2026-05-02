@@ -57,6 +57,7 @@ class FakeClient:
         outposts: list[dict] | None = None,
         flows: list[dict] | None = None,
         certificate_keypairs: list[dict] | None = None,
+        scope_property_mappings: list[dict] | None = None,
     ) -> None:
         self.applications = list(applications or [])
         self.providers = list(providers or [])
@@ -90,6 +91,15 @@ class FakeClient:
                 }
             ]
         )
+        self.scope_property_mappings = list(
+            scope_property_mappings
+            if scope_property_mappings is not None
+            else [
+                {"pk": "scope-openid", "scope_name": "openid", "name": "OpenID"},
+                {"pk": "scope-profile", "scope_name": "profile", "name": "Profile"},
+                {"pk": "scope-email", "scope_name": "email", "name": "Email"},
+            ]
+        )
         self.request_methods: list[str] = []
         self.writes: list[tuple[str, str, dict]] = []
         self._next_id = 1000
@@ -121,6 +131,10 @@ class FakeClient:
     def fetch_certificate_keypairs(self):
         self.request_methods.append("GET")
         return self.certificate_keypairs
+
+    def fetch_scope_property_mappings(self):
+        self.request_methods.append("GET")
+        return self.scope_property_mappings
 
     def create_proxy_provider(self, payload: dict):
         self.request_methods.append("POST")
@@ -699,6 +713,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual("harbor", payload["client_id"])
         self.assertEqual("secret-value", payload["client_secret"])
         self.assertEqual("certkey-default", payload["signing_key"])
+        self.assertEqual(["scope-openid", "scope-profile", "scope-email"], payload["property_mappings"])
         self.assertEqual(
             [{"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}],
             payload["redirect_uris"],

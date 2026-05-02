@@ -34,6 +34,7 @@ DEFAULT_INVALIDATION_FLOW_SLUGS = (
     "default-provider-invalidation-flow",
     "default-invalidation-flow",
 )
+DEFAULT_OIDC_SCOPE_NAMES = ("openid", "profile", "email")
 # Minimum outpost config — Authentik requires this field on creation.
 OUTPOST_DEFAULT_CONFIG = {
     "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
@@ -153,6 +154,9 @@ class AuthentikApiClient:
     def fetch_certificate_keypairs(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/crypto/certificatekeypairs/")
 
+    def fetch_scope_property_mappings(self) -> list[dict[str, Any]]:
+        return self._get_paginated("/api/v3/propertymappings/provider/scope/")
+
     def create_proxy_provider(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request_json(f"{self.base_url}/api/v3/providers/proxy/", "POST", payload)
 
@@ -235,7 +239,6 @@ class AuthentikApiClient:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
-
         with urllib.request.urlopen(request, context=context) as response:
             raw = response.read().decode("utf-8")
             if not raw:
@@ -419,6 +422,7 @@ def _oidc_provider_payload(
     invalidation_flow_pk: str,
     client_secret: str,
     signing_key_pk: str,
+    property_mapping_ids: list[str],
 ) -> dict[str, Any]:
     return {
         "name": intent.provider_name,
@@ -435,6 +439,7 @@ def _oidc_provider_payload(
         "issuer_mode": "per_provider",
         "include_claims_in_id_token": True,
         "signing_key": signing_key_pk,
+        "property_mappings": property_mapping_ids,
     }
 
 
@@ -478,6 +483,45 @@ def _resolve_oidc_signing_key_id(
         object_kind="provider",
     )
 
+
+def _resolve_oidc_scope_property_mapping_ids(
+    client: Any,
+    *,
+    required_scopes: tuple[str, ...] = DEFAULT_OIDC_SCOPE_NAMES,
+) -> tuple[list[str] | None, ReconcileIssue | None]:
+    mappings = client.fetch_scope_property_mappings()
+    by_scope: dict[str, list[dict[str, Any]]] = {}
+    for item in mappings:
+        scope_name = str(item.get("scope_name", "")).strip()
+        if not scope_name:
+            continue
+        by_scope.setdefault(scope_name, []).append(item)
+
+    selected: list[str] = []
+    missing: list[str] = []
+    for scope in required_scopes:
+        candidates = by_scope.get(scope, [])
+        if not candidates:
+            missing.append(scope)
+            continue
+        mapping_id = _DISCOVER._as_id(candidates[0].get("pk") or candidates[0].get("id"))
+        if not mapping_id:
+            missing.append(scope)
+            continue
+        selected.append(mapping_id)
+
+    if missing:
+        return None, ReconcileIssue(
+            code="AKR008",
+            message=(
+                "missing required Authentik OIDC scope property mappings: "
+                f"required={list(required_scopes)} missing={missing}"
+            ),
+            route="oidc",
+            object_kind="provider",
+        )
+
+    return selected, None
 
 def _flow_pk(flow: dict[str, Any]) -> str | None:
     return _DISCOVER._as_id(flow.get("pk") or flow.get("id"))
@@ -939,6 +983,7 @@ def reconcile_authentik(
         authorization_flow_pk, invalidation_flow_pk = flow_ids
 
     oidc_signing_key_pk: str | None = None
+    oidc_scope_property_mapping_ids: list[str] | None = None
     if has_oidc_managed:
         oidc_signing_key_pk, signing_issue = _resolve_oidc_signing_key_id(
             client,
@@ -954,6 +999,17 @@ def reconcile_authentik(
                 write_count=0,
             )
         assert oidc_signing_key_pk is not None
+        oidc_scope_property_mapping_ids, scope_mapping_issue = _resolve_oidc_scope_property_mapping_ids(client)
+        if scope_mapping_issue is not None:
+            return ReconcileResult(
+                apply=apply,
+                actions=(),
+                issues=(scope_mapping_issue,),
+                stop_conditions=(),
+                request_methods=tuple(client.request_methods),
+                write_count=0,
+            )
+        assert oidc_scope_property_mapping_ids is not None
 
     intents = sorted(intents, key=lambda item: (item.stack, item.route, item.host))
     for intent in intents:
@@ -1040,6 +1096,7 @@ def reconcile_authentik(
                 invalidation_flow_pk=invalidation_flow_pk,
                 client_secret=client_secret,
                 signing_key_pk=oidc_signing_key_pk,
+                property_mapping_ids=oidc_scope_property_mapping_ids,
             )
         provider_id: str | None = None
 

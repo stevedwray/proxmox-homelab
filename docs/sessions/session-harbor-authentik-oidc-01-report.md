@@ -164,3 +164,85 @@ Provision run: `ok=49  failed=0`. 35 unit tests PASS.
 ### Commit
 
 `eb9268eb4d3f557f99ba1bc357eabeafc3fec26d` on `feat/harbor-authentik-oidc-01`
+
+---
+
+## Session Continuation — Grafana OIDC Runtime Fix — 2026-05-02
+
+### Problem
+
+Grafana SSO button rendered, but login failed with `InternalError`.
+
+Observed runtime error sequence:
+- initial failure: token exchange TLS trust error (`x509: certificate signed by unknown authority`)
+- after TLS workaround: repeated userinfo failure where Grafana requested `.../application/o/userinfo/emails` and received `404`
+
+### Root Cause
+
+Mixed compatibility behavior between Grafana Generic OAuth (`11.1.4`) and Authentik userinfo handling:
+- Grafana attempted an email sub-resource lookup (`/userinfo/emails`) that Authentik does not expose.
+- Existing provider defaults did not guarantee stable claim behavior for this integration path.
+
+### Repo-owned Fixes Implemented
+
+**Monitoring deploy wiring**
+- `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`
+  - Added explicit Generic OAuth settings and claim controls.
+  - Added `GF_AUTH_GENERIC_OAUTH_TLS_SKIP_VERIFY_INSECURE` (lab trust compatibility).
+  - Enabled ID-token-first behavior (`GF_AUTH_GENERIC_OAUTH_USE_ID_TOKEN=true`).
+  - Set Generic OAuth API URL default to empty so Grafana does not rely on userinfo sub-resource behavior.
+
+**Environment template defaults**
+- `.env.template`
+  - Added/updated Grafana OAuth defaults used by the playbook (including `GRAFANA_OAUTH_USE_ID_TOKEN` and empty `GRAFANA_OAUTH_API_URL`).
+
+**Authentik reconciler hardening**
+- `terraform/lxc/reconcile-authentik-edge.py`
+  - Added scope property mapping discovery via `/api/v3/propertymappings/provider/scope/`.
+  - OIDC providers now enforce default scope property mappings: `openid`, `profile`, `email`.
+  - Added preflight failure `AKR008` when required scope mappings are missing.
+
+**Unit tests**
+- `terraform/lxc/test_reconcile_authentik_edge.py`
+  - Extended fake client with scope property mappings.
+  - Added assertion that OIDC provider payload includes expected property mappings.
+
+### Validation Evidence
+
+Commands and outcomes:
+
+```bash
+python3 -m unittest terraform/lxc/test_reconcile_authentik_edge.py
+```
+
+```text
+Ran 17 tests in 0.023s
+OK
+```
+
+```bash
+./with-secrets bash -c 'scripts/provision.sh --stack monitoring-stack 2>&1'
+```
+
+Result: completed successfully (`failed=0`).
+
+```bash
+./with-secrets bash -c 'curl -sS -k -H "Authorization: Bearer ${AUTHENTIK_SUPERUSER_API_TOKEN}" "https://authentik.lab.gibbsgreatly.xyz/api/v3/providers/oauth2/?name=edge-monitoring-stack-grafana-provider" | jq -r ".results[0] | {name, property_mappings, include_claims_in_id_token, sub_mode}"'
+```
+
+Result excerpt:
+
+```json
+{
+  "name": "edge-monitoring-stack-grafana-provider",
+  "property_mappings": [
+    "7208b421-7713-45e4-a2e3-296e7231e7f6",
+    "81d96ff1-efe6-4a8b-b3de-d3e6591e6bc9",
+    "d2905f2a-c6e6-4e77-8a17-9bbc84a2126c"
+  ],
+  "include_claims_in_id_token": true,
+  "sub_mode": "hashed_user_id"
+}
+```
+
+User-confirmed live result after final deploy: Grafana login via Authentik works.
