@@ -96,6 +96,7 @@
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock
                 - /var/lib/portainer:/data
+                - /etc/ssl/certs:/etc/ssl/certs:ro
 
     - name: Pull Portainer image
       community.docker.docker_image:
