@@ -69,12 +69,13 @@ This is a planning artifact only. It does not approve destructive execution.
 | Check | Result |
 |---|---|
 | `proxy-stack` does not depend on `authentik-stack` | pass |
-| Stage 3a order can be run as `dns -> proxy -> step-ca -> authentik` | pass |
+| `proxy-stack` provision requires `step-ca` homelab root CA | corrected: order now `dns -> step-ca -> proxy -> authentik` |
 | Stage 3b `monitoring-stack` waits for Stage 3a services | pass (`depends_on` includes `authentik-stack`, `proxy-stack`, `step-ca-stack`) |
 | `headscale-stack` remains out of default scope | pass |
 
-No dependency conflict requiring source code change was found in the in-scope
-`stack.yaml` files during OP-02 freeze.
+**Updated during OP-06+:** `proxy-stack` provisioning requires the homelab root CA
+from `step-ca`, introduced by Traefik + OIDC + proxy middleware wiring. Ordering
+corrected in Stage 3a: `step-ca` must precede `proxy-stack`.
 
 ## Approved Deploy Order
 
@@ -82,8 +83,8 @@ No dependency conflict requiring source code change was found in the in-scope
 2. `harbor-stack`
 3. `ci-runner-01`
 4. `dns-stack`
-5. `proxy-stack`
-6. `step-ca-stack`
+5. `step-ca-stack`
+6. `proxy-stack`
 7. `authentik-stack`
 8. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
 9. `monitoring-stack`
