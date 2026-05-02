@@ -15,6 +15,6 @@ spec:
         target: 10.57.2.10
         ttl: 5m
       tls:
-        resolver: letsencrypt
+        resolver: step-ca
       auth:
         mode: none

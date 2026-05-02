@@ -158,15 +158,19 @@
         dest: "{{ proxy_compose_dir }}/dynamic/certs.yml"
         mode: "0640"
         content: |
-          tls:
-            stores:
-              default:
-                defaultGeneratedCert:
-                  resolver: letsencrypt
-                  domain:
-                    main: "lab.gibbsgreatly.xyz"
-                    sans:
-                      - "*.lab.gibbsgreatly.xyz"
+          # No defaultGeneratedCert: each router requests its own cert via its
+          # certResolver. This prevents the letsencrypt wildcard from shadowing
+          # resolver-specific certs (e.g. step-ca cert for authentik).
+          {}
+
+    - name: Build combined CA bundle for lego (system CAs + homelab step-ca CA)
+      ansible.builtin.shell: |
+        cat /etc/ssl/certs/ca-certificates.crt \
+            /usr/local/share/ca-certificates/homelab-root.crt \
+            > {{ proxy_compose_dir }}/certs/combined-ca.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -179,6 +183,11 @@
               container_name: traefik
               restart: unless-stopped
               env_file: .env
+              environment:
+                # Combined CA bundle: system root CAs + homelab step-ca root CA.
+                # LEGO_CA_CERTIFICATES replaces (not augments) the default CA pool,
+                # so both system CAs (for LE) and homelab CA (for step-ca) are needed.
+                LEGO_CA_CERTIFICATES: /certs/combined-ca.crt
               ports:
                 - "80:80"
                 - "443:443"
@@ -188,6 +197,7 @@
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
+                - ./certs/combined-ca.crt:/certs/combined-ca.crt:ro
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:

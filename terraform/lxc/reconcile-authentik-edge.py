@@ -239,6 +239,11 @@ class AuthentikApiClient:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+        else:
+            extra_ca = os.environ.get("AUTHENTIK_EXTRA_CA")
+            if extra_ca:
+                context = ssl.create_default_context()
+                context.load_verify_locations(cafile=extra_ca)
         with urllib.request.urlopen(request, context=context) as response:
             raw = response.read().decode("utf-8")
             if not raw:
