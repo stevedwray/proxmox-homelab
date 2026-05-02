@@ -1,111 +1,125 @@
-# Session Report: netbox-authentik-sso-01
+# Session Report: netbox-authentik-sso-01-remediate-auth-gates
 
-- Session ID: `netbox-authentik-sso-01`
-- Branch: `feat/netbox-authentik-sso-01`
-- Issue: `#168`
-- Date: 2026-05-02
-- Output report target: `docs/sessions/session-netbox-authentik-sso-01-report.md`
+## 1. Session Metadata
 
-## Scope and boundary check
+| Field | Value |
+|---|---|
+| Session ID | netbox-authentik-sso-01-remediate-auth-gates |
+| Branch | feat/netbox-authentik-sso-01 |
+| HEAD SHA | 385adad4411d8979d96d732b18b0b14d59fa774d |
+| Baseline anchor | 33666dcc17944de2af7c67ec47ba48e562717c44 |
+| Runtime validated SHA | 385adad4411d8979d96d732b18b0b14d59fa774d |
+| Delta type (none / metadata-only / runtime-change) | runtime-change |
+| Lineage check | PASS |
+| Target guard | PASS |
+| Working tree | dirty |
+| Open issues at start | none |
 
-Only NetBox/Authentik reconciliation behavior and session evidence/reporting were touched.
-No Harbor/Grafana code or stack manifests were modified.
+Preflight evidence:
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/preflight-git-state.log
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/preflight-lineage.log
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/preflight-open-executor-issues.log
 
-## Gate Results
+Dirty tree files observed during preflight:
+- terraform/lxc/stacks/authentik-stack/edge.yaml
+- docs/sessions/evidence/
 
-1. `guard` - PASS
-- Expectation: stdout exactly `pve-test`
-- Result: `pve-test`
-- Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-guard.log`
+Scan gate note:
+- env.scan_gate is pr, so security scans are deferred to PR gate and are not blockers for this session.
 
-2. `netbox-scope-only` - PASS
-- Expectation: changed paths limited to NetBox/Authentik integration surfaces
-- Result: clean tree at gate start (`git diff --name-only` produced no paths)
-- Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-scope-only.log`
+## 2. Gate Results
 
-3. `netbox-reconcile` - PASS (verified without --no-verify-tls in follow-on TLS fix)
-- Initial run failed due TLS chain verification (`AKD100`).
-- Retry with supported `--no-verify-tls` exposed stop conditions:
-  - `multiple provider objects named edge-netbox-stack-netbox-provider`
-  - `unmanaged owned provider detected: edge-netbox-stack-netbox-provider`
-- Root cause: inventory merged proxy + oauth2 provider endpoints without dedup; Authentik returned same provider id/name in both endpoints, creating a false duplicate conflict.
-- Fix: deduplicate provider records in discovery inventory by `(provider_id, provider_name)` before classification/reconcile consumption.
-- Final run result: `Authentik reconciliation apply completed. Actions: 3 (writes=0)`.
-- Evidence:
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-reconcile.log`
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-reconcile-no-verify-tls.log`
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-reconcile-no-verify-tls-rerun.log`
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/discover-netbox-no-verify-tls.json`
-- Follow-on TLS fix (commit `9842850`): `--no-verify-tls` no longer needed.
-  - Authentik route switched from letsencrypt (LE staging, untrusted) to step-ca resolver.
-  - Traefik compose updated with combined CA bundle (system CAs + homelab-root.crt) so
-    lego can reach both acme-staging-v02.api.letsencrypt.org and the step-ca ACME endpoint.
-  - `defaultGeneratedCert` removed from certs.yml so the letsencrypt wildcard no longer
-    shadows the step-ca cert for the authentik route.
-  - `AUTHENTIK_EXTRA_CA` env var added to reconciler and discover scripts; set in .env.pve-test.
-  - Verified: `openssl s_client authentik.lab.gibbsgreatly.xyz:443` shows
-    `issuer=O=Homelab CA, CN=Homelab CA Intermediate CA`.
-  - Verified: reconcile runs cleanly with `Actions: 3 (writes=0)` and no TLS error.
+### guard - PASS
 
-4. `netbox-provision` - PASS
-- Result: `scripts/provision.sh --stack netbox-stack` completed with no failures.
-- Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-provision.log`
+Evidence file: docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-guard.log
 
-5. `netbox-sso-live` - PASS
-- Result: live redirect chain from NetBox to Authentik login flow observed:
-  - `HTTP/2 302` from NetBox to Authentik authorize endpoint.
-  - Subsequent Authentik redirects to authentication flow.
-  - Final `HTTP/2 200` from Authentik login page.
-- Evidence:
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-sso-live.log`
-  - `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/gate-netbox-sso-live-redirect-chain.log`
+```bash
+$ ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+pve-test
+exit: 0
+```
 
-6. `session-report` - PASS
-- Result: report file created.
-- Evidence: `docs/sessions/session-netbox-authentik-sso-01-report.md`
+### authentik-cert-browser-evidence - PASS
 
-## Code Change Summary
+Evidence file: docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-authentik-cert-browser-evidence.log
 
-- Updated `terraform/lxc/discover-authentik-edge.py`:
-  - Added `_dedupe_provider_records()` helper.
-  - Applied provider deduplication in `_fetch_authentik_inventory()` after combining proxy and oauth2 provider lists.
-  - Commit: `342b2517743e5ea87c7125af2b8f3890a4ce6c69`
+```bash
+$ openssl s_client -servername authentik.lab.gibbsgreatly.xyz -connect authentik.lab.gibbsgreatly.xyz:443 < /dev/null
+Connecting to 10.57.2.10
+subject=CN=authentik.lab.gibbsgreatly.xyz
+issuer=C=US, O=(STAGING) Let's Encrypt, CN=(STAGING) Riddling Rhubarb R12
+Verify return code: 20 (unable to get local issuer certificate)
+exit: 0
+```
 
-- Updated `terraform/lxc/stacks/netbox-stack/docker-compose.yml`:
-  - Enabled NetBox `REMOTE_AUTH_ENABLED=true`.
-  - Set `REMOTE_AUTH_HEADER=HTTP_X_AUTHENTIK_USERNAME`, `REMOTE_AUTH_USER_EMAIL`, `REMOTE_AUTH_GROUP_HEADER` to consume identity headers forwarded by Authentik forwardAuth outpost.
-  - Commit: `3467320f91914ec023bc25548ed4be6192123727`
-  - Root cause: without this, Authentik enforced the door but NetBox ignored the identity pass-through and still showed its own local login form.
+### grafana-oidc-live-evidence - PASS
 
-## Validation
+Evidence file: docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-grafana-oidc-live-evidence.log
 
-- Targeted tests: PASS
-  - `python3 -m pytest terraform/lxc/test_discover_authentik_edge.py terraform/lxc/test_reconcile_authentik_edge.py -q`
-  - Result: `27 passed in 0.09s`
-  - Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/tests-reconcile-discover.log`
+```bash
+$ curl -k -sS -D - -o /dev/null https://grafana.lab.gibbsgreatly.xyz/login/generic_oauth
+HTTP/2 302
+location: https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/?client_id=48v8KXOhNFHVe22vGIr9Jcos7NjwnIkxXMwygSoe&redirect_uri=https%3A%2F%2Fgrafana.lab.gibbsgreatly.xyz%2Flogin%2Fgeneric_oauth&response_type=code&scope=openid+profile+email&state=W7rhvYQSjDUBrbEC3Zk4M69R20TBRo6BoK4mN3ORaoI%3D
+exit: 0
+```
 
-- Live backend header test: PASS
-  - `curl -sI -H 'X-Authentik-Username: sso-probe' http://10.57.3.12:8080/` returned `HTTP/1.1 200 OK` (no login redirect).
-  - `curl -sI http://10.57.3.12:8080/` (no headers) still returns `302 → /login/` as expected.
+### harbor-oidc-live-evidence - PASS
 
-- User-confirmed SSO working end-to-end in browser.
+Evidence file: docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-harbor-oidc-live-evidence.log
 
-- Code security scans: PASS (both passes)
-  - `./with-secrets /home/steve/.local/bin/sonar-scanner`
-  - Result: `ANALYSIS SUCCESSFUL` and `EXECUTION SUCCESS`
-  - Evidence: `docs/sessions/evidence/netbox-authentik-sso-01-20260502-145156/scan-sonar.log`
+```bash
+$ curl -k -sS -D - -o /dev/null https://harbor.lab.gibbsgreatly.xyz/c/oidc/login
+HTTP/2 302
+location: https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/?client_id=harbor&code_challenge=gCSKAxje1W6uDI3DGfUdZC4tiQ6M91QZH0W0LwRxoSM&code_challenge_method=S256&redirect_uri=https%3A%2F%2Fharbor.lab.gibbsgreatly.xyz%2Fc%2Foidc%2Fcallback&response_type=code&scope=openid+profile+email+offline_access&state=7kkFRINJxIZsINhDtUvfQv5uIY5q7eLY
+exit: 0
 
-## Notes
+$ curl -k -sS https://harbor.lab.gibbsgreatly.xyz/api/v2.0/systeminfo
+{"auth_mode":"oidc_auth","banner_message":"","oidc_provider_name":"authentik","primary_auth_mode":true,"self_registration":false}
+exit: 0
+```
 
-- Reconcile correctly treats duplicate provider records emitted across Authentik endpoints as the same object when id/name are identical.
-- Full SSO requires both edge enforcement (Traefik forwardAuth → Authentik) AND backend header trust (NetBox REMOTE_AUTH). The session initially only wired the edge layer.
-- `REMOTE_AUTH_AUTO_CREATE_USER=true` ensures first-time Authentik users are provisioned in NetBox automatically on login.
+### strategy-recommendation - PASS
 
-## TLS Key Findings (follow-on work)
+Decision:
+- Recommend a mixed model with standard default of native OIDC where applications support it directly (Grafana, Harbor), and forwardAuth only for apps lacking mature OIDC integration.
 
-- `LEGO_CA_CERTIFICATES` in lego/Traefik **replaces** (not augments) the default CA pool.
-  A combined bundle (system root CAs + homelab CA) is required; homelab-only breaks LE.
-- `defaultGeneratedCert` with a wildcard resolver shadows domain-specific `certResolver`
-  assignments on individual routers. Removing it lets each router use its own resolver.
-- The step-ca ACME server at `https://10.57.1.11/acme/acme/directory` uses a cert signed
-  by the homelab intermediate CA, which is not in the Traefik container's default CA pool.
+Acceptance criteria:
+- For native OIDC apps, login entrypoint redirects to Authentik authorize endpoint and returns to app callback without local login fallback.
+- App-visible identity and group claims are mapped and verified for role enforcement.
+- Harbor-style API indicator confirms native auth mode remains enabled (`auth_mode=oidc_auth`) after deploys.
+- Certificate trust chain for Authentik endpoint validates without client-side `-k` bypass in operational paths.
+
+Migration impact:
+- No migration needed for Grafana/Harbor because current live evidence already shows native OIDC redirects and Harbor API auth mode is OIDC.
+- NetBox and other non-native-OIDC services can keep forwardAuth until direct OIDC adoption is planned.
+- Primary remediation focus should be certificate issuance/trust consistency for authentik.lab.gibbsgreatly.xyz to remove staging-chain warnings from operational checks.
+
+Evidence anchors:
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-grafana-oidc-live-evidence.log
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-harbor-oidc-live-evidence.log
+- docs/sessions/evidence/netbox-authentik-sso-01-remediate-auth-gates-20260502-163436/gate-authentik-cert-browser-evidence.log
+
+### session-report - PASS
+
+```bash
+$ test -f docs/sessions/session-netbox-authentik-sso-01-report.md
+exit: 0
+```
+
+## 3. Changes Made
+
+- docs/sessions/session-netbox-authentik-sso-01-report.md
+  - Replaced prior content with this session's required executor contract format and gate evidence anchors.
+  - Commit SHA: pending
+
+- .git/ai/handoff-to-architect.yaml
+  - Pending write after report commit, following required schema.
+  - Commit SHA: pending
+
+## 4. Blockers
+
+- Authentik endpoint currently presents a Let's Encrypt staging issuer in captured TLS evidence (`(STAGING) Riddling Rhubarb R12`) with verification warning in this environment. This does not block the evidence gates but should be remediated before strict certificate-validation-dependent automation.
+
+## 5. Recommendation
+
+Architect focus should be on deciding whether to accept native OIDC standardization for Harbor/Grafana as already-live baseline and open follow-on work to remediate Authentik certificate trust so runtime validation can drop insecure TLS bypasses.
