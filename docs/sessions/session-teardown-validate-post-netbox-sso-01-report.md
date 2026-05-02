@@ -121,8 +121,8 @@ exit: 0
 
 ## 3. Changes Made
 
-- docs/sessions/session-teardown-validate-post-netbox-sso-01-report.md: rewrote report with current gate evidence and stop condition. Commit SHA: pending.
-- .git/ai/handoff-to-architect.yaml: will be rewritten to match this run and gate statuses. Commit SHA: pending.
+- docs/sessions/session-teardown-validate-post-netbox-sso-01-report.md: rewrote report with current gate evidence and stop condition. Commit SHA: 77ae503786dbc8b88c84f74ea5196a1e57a25337.
+- .git/ai/handoff-to-architect.yaml: rewritten to match this run and gate statuses. File is intentionally not tracked; no repository commit SHA.
 
 ## 4. Blockers
 
