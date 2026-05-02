@@ -6,14 +6,24 @@
 |---|---|
 | Session ID | dev-fix-harbor-https-timing-02-evidence |
 | Branch | work/teardown-validate-post-netbox-sso-01 |
-| HEAD SHA | 359b083123d95af5c56628b7b495a4de478871fd |
+| HEAD SHA | 1962633039b45127ff4a713b8c2f10f3b41fb510 |
 | Baseline anchor | 028d37798cd8c633de43ffcefb84e5f1d7656dc7 |
 | Runtime validated SHA | 359b083123d95af5c56628b7b495a4de478871fd |
+| Current HEAD SHA | 1962633039b45127ff4a713b8c2f10f3b41fb510 |
 | Delta type (`none` / `metadata-only` / `runtime-change`) | metadata-only |
 | Lineage check | PASS |
 | Target guard | PASS |
-| Working tree | dirty |
+| Working tree | clean |
 | Open issues at start | none |
+
+### SHA Mapping Evidence (metadata-only delta)
+
+```
+$ git diff --name-only 359b083123d95af5c56628b7b495a4de478871fd 1962633039b45127ff4a713b8c2f10f3b41fb510
+docs/sessions/session-dev-fix-harbor-https-timing-01-report.md
+docs/sessions/session-dev-fix-harbor-https-timing-02-evidence-report.md
+exit: 0
+```
 
 ### Pre-Execution Checks (raw evidence)
 
@@ -106,10 +116,10 @@ exit: 0
 
 - `docs/sessions/session-dev-fix-harbor-https-timing-01-report.md`
   - Updated gate evidence sections to include one raw evidence file path and exit code per gate.
-  - Commit SHA: pending this session commit.
+  - Commit SHA: 1962633039b45127ff4a713b8c2f10f3b41fb510.
 - `docs/sessions/session-dev-fix-harbor-https-timing-02-evidence-report.md`
   - Added executor report documenting prechecks and all six gates with raw command output and exit codes.
-  - Commit SHA: pending this session commit.
+  - Commit SHA: 1962633039b45127ff4a713b8c2f10f3b41fb510.
 
 ## 4. Blockers
 
