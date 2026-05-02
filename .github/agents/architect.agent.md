@@ -138,6 +138,23 @@ Route to the planner only when the next work genuinely requires multiple session
 with ordering dependencies you cannot pre-resolve into a single session context.
 When in doubt, route directly.
 
+**Keep sessions homogeneous**
+Do not bundle tooling or meta work (agent instruction edits, gitignore changes,
+workflow script changes) with infrastructure execution (teardown, deploy, Ansible
+playbooks, Terraform) in a single session. When a task requires both:
+1. Scope the meta/tooling changes as session A. Route to executor and review.
+2. Scope the infrastructure execution as session B only after session A is reviewed.
+Do not pre-compose session B until session A is complete. This does not require
+the planner — the architect scopes both sessions directly.
+
+**Gates must be commands**
+Every gate `cmd` must be a literal shell command the executor can run and check.
+Do not write a task description in `cmd` (e.g., "Ensure X is…", "Update Y to…").
+If you cannot express a gate as a runnable command, it is either:
+- An operator prerequisite — document it in the session `boundary` before the
+  gate list, or
+- Meta/tooling work — scope it as session A before the execution session.
+
 **Ask before inferring**
 When you need operator input, emit a `needs_input` block and wait. Do not infer
 intent from prior context.
