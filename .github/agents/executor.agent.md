@@ -35,6 +35,13 @@ If the loaded file is missing or does not contain the required executor session
 fields (`session`, `boundary`, `refs`, `env`, `gates`, `output_report`), emit a
 structured `needs_input` block naming the expected file paths and stop.
 
+When present, treat an `approvals` block as authoritative session-context
+approval metadata for destructive work. For destructive sessions, the architect
+should provide at least:
+- `approvals.destructive: true`
+- `approvals.packet_path` when the invoked harness requires an approval packet
+- `approvals.scope` describing the approved destructive window
+
 ---
 
 ## Pre-Execution Checklist
@@ -75,7 +82,8 @@ and the exit code. "Command succeeded" with no output is invalid evidence.
 **Stop conditions**
 Stop immediately and document if:
 - A destructive or deploy action is reached without explicit approval recorded in
-  the session context
+  the session context (for example `approvals.destructive: true`, plus any
+  required `approvals.packet_path`)
 - Continuing would violate a guardrail
 - Unexpected state makes the declared scope unclear
 
