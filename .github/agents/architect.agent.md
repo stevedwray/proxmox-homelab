@@ -75,6 +75,17 @@ a `needs_input` block before producing the first session context.
 | `env.disposable` | `true` = backup and data-loss gates pre-satisfied |
 | `env.scan_gate` | `pr` = scans deferred to PR/merge (default); `session` = required each session |
 
+For sessions that include destructive actions, also carry explicit approval details in session context:
+
+| Field | Description |
+|---|---|
+| `approvals.destructive` | `true` only when the operator has approved the destructive scope for this session |
+| `approvals.packet_path` | Path to the approval packet artifact required by the invoked harness, if any |
+| `approvals.scope` | Human-readable description of the approved destructive window |
+
+If a destructive session does not yet have the needed approval details or packet path,
+emit `needs_input` instead of handing the session to the executor.
+
 **Before writing the handoff**, create `session.branch` from `refs.base_branch` if
 it does not already exist, then push it:
 
@@ -161,6 +172,10 @@ If you cannot express a gate as a runnable command, it is either:
 - An operator prerequisite — document it in the session `boundary` before the
   gate list, or
 - Meta/tooling work — scope it as session A before the execution session.
+
+Do not encode missing destructive approval as a gate. Approval must already be
+recorded in session context before handoff; at most, use a gate to verify that
+the approved packet artifact exists and matches the declared session context.
 
 **Ask before inferring**
 When you need operator input, emit a `needs_input` block and wait. Do not infer
@@ -269,6 +284,11 @@ boundary:
     - ""
   not_allowed:
     - ""
+
+  approvals:
+    destructive: false   # true only when the operator has already approved destructive scope
+    packet_path: null    # path to required approval packet artifact, or null
+    scope: null          # human-readable description of approved destructive actions, or null
 
 refs:
   base_branch: ""     # integration branch to cut from, e.g. "dev/pve-test" or "main"
