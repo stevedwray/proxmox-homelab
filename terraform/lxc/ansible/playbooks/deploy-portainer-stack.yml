@@ -133,6 +133,7 @@
     portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
+    portainer_oauth_default_team_name: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_NAME') | default('oauth-default', true) }}"
     portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin', true) }}"
 
   tasks:
@@ -226,6 +227,50 @@
       register: portainer_settings_response
       no_log: true
 
+    - name: Read current Portainer teams
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/teams"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_teams_response
+
+    - name: Set OAuth default team ID when team already exists
+      ansible.builtin.set_fact:
+        portainer_oauth_default_team_id: "{{ item.Id | int }}"
+      loop: "{{ portainer_teams_response.json }}"
+      when: (item.Name | default('')) == portainer_oauth_default_team_name
+
+    - name: Create OAuth default team when missing
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/teams"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Name: "{{ portainer_oauth_default_team_name }}"
+        status_code: 200
+      when: portainer_oauth_default_team_id is not defined
+      register: portainer_oauth_default_team_create
+
+    - name: Persist OAuth default team ID
+      ansible.builtin.set_fact:
+        portainer_oauth_default_team_id: >-
+          {{
+            (portainer_oauth_default_team_create.json.Id | int)
+            if (portainer_oauth_default_team_create is defined)
+            else (portainer_oauth_default_team_id | int)
+          }}
+
+    - name: Assert OAuth default team ID resolved when OAuth enabled
+      ansible.builtin.assert:
+        that:
+          - (portainer_oauth_default_team_id | int) > 0
+        fail_msg: "Could not determine Portainer OAuth default team ID."
+      when: portainer_oauth_enabled
+
     - name: Build desired Portainer OAuth settings
       ansible.builtin.set_fact:
         portainer_desired_auth_method: "{{ 3 if portainer_oauth_enabled else 1 }}"
@@ -239,7 +284,7 @@
           UserIdentifier: "{{ portainer_oauth_user_identifier }}"
           Scopes: "{{ portainer_oauth_scopes }}"
           OAuthAutoCreateUsers: true
-          DefaultTeamID: 0
+          DefaultTeamID: "{{ portainer_oauth_default_team_id | int }}"
           SSO: true
           LogoutURI: "{{ portainer_oauth_logout_url }}"
           AuthStyle: 0
@@ -267,8 +312,11 @@
             or ((portainer_settings_response.json.OAuthSettings.RedirectURI | default('')) != portainer_desired_oauth_settings.RedirectURI)
             or ((portainer_settings_response.json.OAuthSettings.UserIdentifier | default('')) != portainer_desired_oauth_settings.UserIdentifier)
             or ((portainer_settings_response.json.OAuthSettings.Scopes | default('')) != portainer_desired_oauth_settings.Scopes)
+            or ((portainer_settings_response.json.OAuthSettings.OAuthAutoCreateUsers | default(false) | bool) != (portainer_desired_oauth_settings.OAuthAutoCreateUsers | bool))
+            or ((portainer_settings_response.json.OAuthSettings.DefaultTeamID | default(0) | int) != (portainer_desired_oauth_settings.DefaultTeamID | int))
             or ((portainer_settings_response.json.OAuthSettings.LogoutURI | default('')) != portainer_desired_oauth_settings.LogoutURI)
             or ((portainer_settings_response.json.OAuthSettings.SSO | default(false) | bool) != (portainer_desired_oauth_settings.SSO | bool))
+            or ((portainer_settings_response.json.OAuthSettings.AuthStyle | default(0) | int) != (portainer_desired_oauth_settings.AuthStyle | int))
           }}
 
     - name: Update Portainer authentication settings
