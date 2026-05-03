@@ -134,6 +134,7 @@
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
     portainer_oauth_default_team_name: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_NAME') | default('oauth-default', true) }}"
+    portainer_oauth_default_team_endpoint_role_id: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_ENDPOINT_ROLE_ID') | default('2', true) | int }}"
     portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin', true) }}"
 
   tasks:
@@ -217,6 +218,36 @@
       when: portainer_local_endpoint_id is not defined
       register: portainer_local_endpoint_create
 
+    - name: Persist local Docker endpoint ID
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_id: "{{ portainer_local_endpoint_create.json.Id | int }}"
+      when:
+        - portainer_local_endpoint_id is not defined
+        - portainer_local_endpoint_create is defined
+        - not (portainer_local_endpoint_create.skipped | default(false) | bool)
+        - portainer_local_endpoint_create.json is defined
+        - portainer_local_endpoint_create.json.Id is defined
+
+    - name: Set local Docker endpoint group ID from existing endpoint list
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: "{{ item.GroupId | int }}"
+      loop: "{{ portainer_endpoints_response.json }}"
+      when:
+        - (item.Id | int) == (portainer_local_endpoint_id | int)
+        - item.GroupId is defined
+
+    - name: Persist local Docker endpoint group ID when endpoint created
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: "{{ portainer_local_endpoint_create.json.GroupId | default(1) | int }}"
+      when:
+        - portainer_local_endpoint_group_id is not defined
+        - portainer_local_endpoint_create is defined
+
+    - name: Fall back local Docker endpoint group ID to Unassigned
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: 1
+      when: portainer_local_endpoint_group_id is not defined
+
     - name: Read current Portainer settings
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/settings"
@@ -257,12 +288,13 @@
 
     - name: Persist OAuth default team ID
       ansible.builtin.set_fact:
-        portainer_oauth_default_team_id: >-
-          {{
-            (portainer_oauth_default_team_create.json.Id | int)
-            if (portainer_oauth_default_team_create is defined)
-            else (portainer_oauth_default_team_id | int)
-          }}
+        portainer_oauth_default_team_id: "{{ portainer_oauth_default_team_create.json.Id | int }}"
+      when:
+        - portainer_oauth_default_team_id is not defined
+        - portainer_oauth_default_team_create is defined
+        - not (portainer_oauth_default_team_create.skipped | default(false) | bool)
+        - portainer_oauth_default_team_create.json is defined
+        - portainer_oauth_default_team_create.json.Id is defined
 
     - name: Assert OAuth default team ID resolved when OAuth enabled
       ansible.builtin.assert:
@@ -270,6 +302,59 @@
           - (portainer_oauth_default_team_id | int) > 0
         fail_msg: "Could not determine Portainer OAuth default team ID."
       when: portainer_oauth_enabled
+
+    - name: Read local endpoint group access policy
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_local_endpoint_group_response
+
+    - name: Build desired local endpoint group team access policy
+      ansible.builtin.set_fact:
+        portainer_desired_group_team_access_policies: >-
+          {{
+            (portainer_local_endpoint_group_response.json.TeamAccessPolicies | default({}))
+            | combine(
+                {
+                  (portainer_oauth_default_team_id | string): {
+                    'RoleId': (portainer_oauth_default_team_endpoint_role_id | int)
+                  }
+                },
+                recursive=True
+              )
+          }}
+
+    - name: Check whether local endpoint group team policy needs update
+      ansible.builtin.set_fact:
+        portainer_endpoint_group_policy_needs_update: >-
+          {{
+            (portainer_local_endpoint_group_response.json.TeamAccessPolicies
+             | default({})
+             | to_json)
+            !=
+            (portainer_desired_group_team_access_policies
+             | default({})
+             | to_json)
+          }}
+
+    - name: Update local endpoint group policy for OAuth default team
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Name: "{{ portainer_local_endpoint_group_response.json.Name }}"
+          Description: "{{ portainer_local_endpoint_group_response.json.Description | default('') }}"
+          UserAccessPolicies: "{{ portainer_local_endpoint_group_response.json.UserAccessPolicies | default({}) }}"
+          TeamAccessPolicies: "{{ portainer_desired_group_team_access_policies }}"
+          TagIds: "{{ portainer_local_endpoint_group_response.json.TagIds | default([]) }}"
+        status_code: 200
+      when: portainer_endpoint_group_policy_needs_update | bool
 
     - name: Build desired Portainer OAuth settings
       ansible.builtin.set_fact:
@@ -375,3 +460,10 @@
         msg: >-
           {{ 'Portainer OAuth settings updated.' if (portainer_auth_settings_need_update | bool)
              else 'Portainer OAuth settings already match desired state.' }}
+
+    - name: Report local endpoint group policy outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer local endpoint group policy updated for OAuth default team.'
+             if (portainer_endpoint_group_policy_needs_update | bool)
+             else 'Portainer local endpoint group policy already grants OAuth default team access.' }}
