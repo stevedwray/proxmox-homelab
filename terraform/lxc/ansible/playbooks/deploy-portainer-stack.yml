@@ -432,6 +432,58 @@
       when: portainer_oauth_admin_usernames | length > 0
       no_log: true
 
+    - name: Build list of existing Portainer usernames
+      ansible.builtin.set_fact:
+        portainer_existing_usernames: >-
+          {{
+            (portainer_users_response.json | default([]))
+            | map(attribute='Username')
+            | map('default', '')
+            | list
+          }}
+      when: portainer_oauth_admin_usernames | length > 0
+
+    - name: Build list of missing OAuth admin users
+      ansible.builtin.set_fact:
+        portainer_missing_oauth_admin_usernames: >-
+          {{
+            (portainer_oauth_admin_usernames | default([]))
+            | difference(portainer_existing_usernames | default([]))
+          }}
+      when: portainer_oauth_admin_usernames | length > 0
+
+    - name: Pre-create missing OAuth users for deterministic admin promotion
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          username: "{{ item }}"
+          role: 2
+          authenticationMethod: 3
+        status_code: [200, 409]
+      loop: "{{ portainer_missing_oauth_admin_usernames | default([]) }}"
+      when:
+        - portainer_oauth_enabled
+        - (portainer_missing_oauth_admin_usernames | default([])) | length > 0
+      no_log: true
+
+    - name: Refresh Portainer users after OAuth user pre-creation
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_response
+      when:
+        - portainer_oauth_admin_usernames | length > 0
+        - portainer_oauth_enabled
+        - (portainer_missing_oauth_admin_usernames | default([])) | length > 0
+      no_log: true
+
     - name: Promote configured OAuth usernames to Portainer admin role
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"
