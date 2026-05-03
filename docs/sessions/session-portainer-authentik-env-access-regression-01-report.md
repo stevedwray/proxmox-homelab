@@ -4,13 +4,13 @@
 |---|---|
 | Session ID | portainer-authentik-env-access-regression-01 |
 | Branch | task/portainer-authentik-env-access-regression-01 |
-| HEAD SHA | 1e320981c2d9d73758ff2fad0b5e9869c9bdad0a |
+| HEAD SHA | 8efd0f2f82ee05152b2e6f9bb346101ff22f7365 |
 | Baseline anchor | 1e320981c2d9d73758ff2fad0b5e9869c9bdad0a |
-| Runtime validated SHA | ad536117a34d04d74d570c8dfff26b03207aca43 |
-| Delta type (`none` / `metadata-only` / `runtime-change`) | metadata-only |
+| Runtime validated SHA | 8efd0f2f82ee05152b2e6f9bb346101ff22f7365 |
+| Delta type (`none` / `metadata-only` / `runtime-change`) | runtime-change |
 | Lineage check | PASS |
 | Target guard | PASS |
-| Working tree | dirty |
+| Working tree | clean |
 | Open issues at start | none |
 
 `env.scan_gate` is `pr`; security scans deferred to PR gate (non-blocking for this session).
@@ -121,9 +121,10 @@ exit: 0
 
 ## 3. Changes Made
 
-- `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml`: added deterministic OAuth default-team resolution and creation (`PORTAINER_OAUTH_DEFAULT_TEAM_NAME`, team lookup/create, non-zero team assertion), set OAuth `DefaultTeamID` from resolved team ID, and expanded auth settings drift detection to include `DefaultTeamID`, `OAuthAutoCreateUsers`, and `AuthStyle`. Commit SHA: pending.
-- `docs/sessions/session-portainer-authentik-env-access-regression-01-report.md`: created session evidence report. Commit SHA: pending.
-- `.git/ai/handoff-to-architect.yaml`: regenerated executor handoff summary for architect review. Commit SHA: pending.
+- `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml`: added deterministic OAuth default-team resolution and creation (`PORTAINER_OAUTH_DEFAULT_TEAM_NAME`, team lookup/create, non-zero team assertion), set OAuth `DefaultTeamID` from resolved team ID, and expanded auth settings drift detection to include `DefaultTeamID`, `OAuthAutoCreateUsers`, and `AuthStyle`. Commit SHA: 8efd0f2f82ee05152b2e6f9bb346101ff22f7365.
+- `.env.template`: added `PORTAINER_OAUTH_DEFAULT_TEAM_NAME` to keep environment contract aligned with deterministic first-login access behavior. Commit SHA: 8efd0f2f82ee05152b2e6f9bb346101ff22f7365.
+- `docs/sessions/session-portainer-authentik-env-access-regression-01-report.md`: created session evidence report. Commit SHA: 8efd0f2f82ee05152b2e6f9bb346101ff22f7365.
+- `.git/ai/handoff-to-architect.yaml`: regenerated executor handoff summary for architect review (workspace handoff artifact, not part of git commit).
 
 ## 4. Blockers
 
