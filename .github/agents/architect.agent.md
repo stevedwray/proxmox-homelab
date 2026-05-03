@@ -149,7 +149,7 @@ Do not use either branch for active development work.
 Promotion/merge into either branch is allowed when the promotion gate evidence is present.
 When the operator explicitly directs a merge target (`baseline/teardown-validated` or `dev/pve-test`), use that exact target; do not auto-retarget to a different branch.
 If the required gate evidence is missing, emit `needs_input` instead of merging.
-Set `refs.base_branch` to the active `work/*` branch for infrastructure work, or `dev/pve-test` for application stack work.
+Set `refs.base_branch` to the current active working branch for all work types. Never set it to `dev/pve-test` or `baseline/teardown-validated` — these are promotion targets, not development sources.
 
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
@@ -291,7 +291,7 @@ boundary:
     scope: null          # human-readable description of approved destructive actions, or null
 
 refs:
-  base_branch: ""     # integration branch to cut from, e.g. "dev/pve-test" or "main"
+  base_branch: ""     # active work/* or feat/* branch to cut from; never dev/pve-test or baseline/teardown-validated
   baseline_sha: ""
   runtime_validated_sha: ""   # SHA tied to runtime evidence for this verdict
   current_head_sha: ""        # live HEAD seen during review/handoff creation

@@ -23,9 +23,10 @@ If the operator explicitly names a merge target (`baseline/teardown-validated` o
 
 ## Branching
 
-- Infrastructure work: cut `work/*` from the current working state; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
-- Application stack work: cut `feat/`, `fix/`, or `task/` from `dev/pve-test`; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
-- AI tooling / workflow changes: cut `feat/` from `dev/pve-test`; merge directly to `dev/pve-test` (no infrastructure gate required).
+- Infrastructure work: cut `work/*` from the current working HEAD; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
+- Application stack work: cut `feat/`, `fix/`, or `task/` from the current working HEAD; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
+- AI tooling / workflow changes: cut `feat/` from the current working HEAD; merge directly to `dev/pve-test` (no infrastructure gate required).
+- `dev/pve-test` and `baseline/teardown-validated` are **promotion targets only** — never use them as the base for a new development branch.
 - Validate in the short-lived branch before merging. If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `dev/pve-test` → `main` only when stable and tested on the test server.
 - After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync.
