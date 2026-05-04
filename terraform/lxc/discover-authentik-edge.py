@@ -30,6 +30,17 @@ LEGACY_SHARED_EMBEDDED_OUTPOST = "authentik Embedded Outpost"
 # Prefer the embedded outpost because it is served directly by the Authentik server.
 SHARED_FORWARD_OUTPOST = LEGACY_SHARED_EMBEDDED_OUTPOST
 
+OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
+    ("harbor-stack", "harbor"): ("HARBOR_OIDC_CLIENT_ID", "harbor"),
+    ("monitoring-stack", "grafana"): ("GRAFANA_OAUTH_CLIENT_ID", "grafana"),
+    ("portainer-stack", "portainer"): ("PORTAINER_OAUTH_CLIENT_ID", "portainer"),
+}
+OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
+    ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
+    ("monitoring-stack", "grafana"): "GRAFANA_OAUTH_CLIENT_SECRET",
+    ("portainer-stack", "portainer"): "PORTAINER_OAUTH_CLIENT_SECRET",
+}
+
 
 @dataclass(frozen=True)
 class DiscoveryIssue:
@@ -169,6 +180,9 @@ class AuthentikApiClient:
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
+    def fetch_oauth2_providers(self) -> list[dict[str, Any]]:
+        return self._get_paginated("/api/v3/providers/oauth2/")
+
     def fetch_outposts(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/outposts/instances/")
 
@@ -210,6 +224,11 @@ class AuthentikApiClient:
             context = ssl.create_default_context()
             context.check_hostname = False
             context.verify_mode = ssl.CERT_NONE
+        else:
+            extra_ca = os.environ.get("AUTHENTIK_EXTRA_CA")
+            if extra_ca:
+                context = ssl.create_default_context()
+                context.load_verify_locations(cafile=extra_ca)
 
         with urllib.request.urlopen(request, context=context) as response:
             return json.loads(response.read().decode("utf-8"))
@@ -358,6 +377,60 @@ def _get_provider_id_from_application(app: dict[str, Any]) -> str | None:
     return _as_id(provider)
 
 
+def _provider_redirect_uris(provider: dict[str, Any]) -> tuple[str, ...]:
+    redirect_uris = provider.get("redirect_uris")
+    if not isinstance(redirect_uris, list):
+        return ()
+
+    values: list[str] = []
+    for redirect_uri in redirect_uris:
+        if isinstance(redirect_uri, dict):
+            url = redirect_uri.get("url")
+            if isinstance(url, str) and url.strip():
+                values.append(url.strip())
+        elif isinstance(redirect_uri, str) and redirect_uri.strip():
+            values.append(redirect_uri.strip())
+    return tuple(values)
+
+
+def _provider_matches_host(provider: dict[str, Any], host: str) -> bool:
+    external_host = _normalize_url_host(provider.get("external_host"))
+    if external_host == host:
+        return True
+    return any(_normalize_url_host(uri) == host for uri in _provider_redirect_uris(provider))
+
+
+def _oidc_route_key(intent: RouteIntent) -> tuple[str, str]:
+    return (intent.stack, intent.route)
+
+
+def _oidc_route_supported(intent: RouteIntent) -> bool:
+    return _oidc_route_key(intent) in OIDC_ROUTE_CLIENT_IDS
+
+
+def _oidc_client_id(intent: RouteIntent) -> str | None:
+    config = OIDC_ROUTE_CLIENT_IDS.get(_oidc_route_key(intent))
+    if config is None:
+        return None
+    env_name, default_value = config
+    return os.environ.get(env_name, "").strip() or default_value
+
+
+def _oidc_client_secret_env(intent: RouteIntent) -> str | None:
+    return OIDC_ROUTE_CLIENT_SECRETS.get(_oidc_route_key(intent))
+
+
+def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
+    base_url = f"https://{intent.host}"
+    if _oidc_route_key(intent) == ("harbor-stack", "harbor"):
+        return (f"{base_url}/c/oidc/callback",)
+    if _oidc_route_key(intent) == ("monitoring-stack", "grafana"):
+        return (f"{base_url}/login/generic_oauth",)
+    if _oidc_route_key(intent) == ("portainer-stack", "portainer"):
+        return (base_url,)
+    return ()
+
+
 def _provider_references(outpost: dict[str, Any]) -> set[str]:
     providers = outpost.get("providers")
     values: set[str] = set()
@@ -377,6 +450,21 @@ def _is_owned_object(name: str) -> bool:
     return bool(name and name.startswith(OWNED_NAME_PREFIX))
 
 
+def _dedupe_provider_records(providers: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop duplicate provider records returned across provider endpoints."""
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for provider in providers:
+        provider_id = _as_id(provider.get("pk") or provider.get("id"))
+        provider_name = _get_name(provider)
+        key = (provider_id or "", provider_name)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(provider)
+    return deduped
+
+
 def _fetch_authentik_inventory(
     client: AuthentikApiClient,
 ) -> tuple[AuthentikInventory | None, DiscoveryIssue | None]:
@@ -384,6 +472,8 @@ def _fetch_authentik_inventory(
     try:
         applications = client.fetch_applications()
         providers = client.fetch_proxy_providers()
+        providers.extend(client.fetch_oauth2_providers())
+        providers = _dedupe_provider_records(providers)
         outposts = [
             outpost
             for outpost in client.fetch_outposts()
@@ -497,8 +587,7 @@ def _resolve_app_provider_candidates(
         inventory.providers,
         [
             lambda item, expected_name=intent.provider_name: _get_name(item) == expected_name,
-            lambda item, expected_host=host: _normalize_url_host(item.get("external_host"))
-            == expected_host,
+            lambda item, expected_host=host: _provider_matches_host(item, expected_host),
         ],
     )
     reasons: list[str] = []
@@ -647,6 +736,136 @@ def _classify_forward_auth_route(
     )
 
 
+def _check_oidc_provider_match(
+    intent: RouteIntent,
+    provider: dict[str, Any] | None,
+) -> tuple[str | None, list[str], list[ObjectRef], bool]:
+    if provider is None:
+        return None, [], [], False
+
+    provider_id = _as_id(provider.get("pk") or provider.get("id"))
+    provider_name = _get_name(provider)
+    reasons: list[str] = []
+    identifiers: list[ObjectRef] = []
+    differing = False
+    if provider_id:
+        identifiers.append(ObjectRef(kind="provider", id=provider_id, name=provider_name))
+    if provider_name != intent.provider_name:
+        differing = True
+        reasons.append(f"provider name differs (expected {intent.provider_name}, found {provider_name})")
+
+    expected_client_id = _oidc_client_id(intent)
+    actual_client_id = provider.get("client_id") if isinstance(provider.get("client_id"), str) else ""
+    if expected_client_id and actual_client_id and actual_client_id != expected_client_id:
+        differing = True
+        reasons.append(f"provider client_id differs (expected {expected_client_id}, found {actual_client_id})")
+
+    expected_redirects = set(_oidc_redirect_uris(intent))
+    actual_redirects = set(_provider_redirect_uris(provider))
+    if expected_redirects and not expected_redirects.issubset(actual_redirects):
+        differing = True
+        reasons.append("provider redirect_uris differ from expected OIDC callback set")
+
+    return provider_id, reasons, identifiers, differing
+
+
+def _resolve_oidc_candidates(
+    intent: RouteIntent,
+    inventory: AuthentikInventory,
+) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool, list[str]]:
+    host = intent.host.lower()
+    expected_client_id = _oidc_client_id(intent)
+    app_candidates = _pick_candidates(
+        inventory.applications,
+        [
+            lambda item, expected_name=intent.app_name: _get_name(item) == expected_name,
+            lambda item, expected_slug=intent.app_slug: str(item.get("slug", "")) == expected_slug,
+            lambda item, expected_host=host: _normalize_url_host(
+                item.get("meta_launch_url") or item.get("launch_url")
+            )
+            == expected_host,
+        ],
+    )
+    provider_candidates = _pick_candidates(
+        inventory.providers,
+        [
+            lambda item, expected_name=intent.provider_name: _get_name(item) == expected_name,
+            lambda item, expected_host=host: _provider_matches_host(item, expected_host),
+            lambda item, expected_client_id=expected_client_id: bool(expected_client_id)
+            and str(item.get("client_id", "")) == expected_client_id,
+        ],
+    )
+
+    reasons: list[str] = []
+    ambiguous = False
+    if len(app_candidates) > 1:
+        ambiguous = True
+        reasons.append("multiple application candidates matched this route")
+    if len(provider_candidates) > 1:
+        ambiguous = True
+        reasons.append("multiple OIDC provider candidates matched this route")
+
+    app = app_candidates[0] if len(app_candidates) == 1 else None
+    provider = provider_candidates[0] if len(provider_candidates) == 1 else None
+    return app, provider, ambiguous, reasons
+
+
+def _classify_oidc_route(
+    intent: RouteIntent,
+    inventory: AuthentikInventory,
+) -> _RouteClassification:
+    if not _oidc_route_supported(intent):
+        return _RouteClassification(
+            classification="differing",
+            reasons=["native OIDC route has no repo-managed Authentik mapping"],
+            identifiers=[],
+            stop_condition=None,
+        )
+
+    app, provider, ambiguous, reasons = _resolve_oidc_candidates(intent, inventory)
+    identifiers: list[ObjectRef] = []
+    missing = False
+    differing = False
+
+    if app is None:
+        missing = True
+        reasons.append("application is missing")
+    if provider is None:
+        missing = True
+        reasons.append("OIDC provider is missing")
+
+    provider_id_for_links, prov_reasons, prov_ids, prov_differing = _check_oidc_provider_match(intent, provider)
+    reasons.extend(prov_reasons)
+    identifiers.extend(prov_ids)
+    if prov_differing:
+        differing = True
+
+    app_reasons, app_ids, app_differing = _check_app_match(intent, app, intent.host.lower(), provider_id_for_links)
+    reasons.extend(app_reasons)
+    identifiers.extend(app_ids)
+    if app_differing:
+        differing = True
+
+    stop_condition: str | None = None
+    if ambiguous:
+        classification = "ambiguous"
+        stop_condition = f"{intent.stack}/{intent.route}: existing object names cannot be mapped safely"
+    elif missing:
+        classification = "missing"
+    elif differing:
+        classification = "differing"
+    else:
+        classification = "matching"
+        reasons.append("discovered objects match route auth intent")
+
+    return _RouteClassification(
+        classification=classification,
+        reasons=reasons,
+        identifiers=identifiers,
+        stop_condition=stop_condition,
+    )
+
+
 def _classify_non_managed_auth_route(
     intent: RouteIntent,
     inventory: AuthentikInventory,
@@ -735,6 +954,8 @@ def _classify_route_intent(
     """Dispatch to the appropriate classifier based on auth mode."""
     if intent.auth_mode == "forwardAuth":
         return _classify_forward_auth_route(intent, inventory)
+    if intent.auth_mode == "oidc":
+        return _classify_oidc_route(intent, inventory)
     return _classify_non_managed_auth_route(intent, inventory)
 
 

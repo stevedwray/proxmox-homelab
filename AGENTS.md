@@ -23,9 +23,10 @@ If the operator explicitly names a merge target (`baseline/teardown-validated` o
 
 ## Branching
 
-- Infrastructure work: cut `work/*` from the current working state; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
-- Application stack work: cut `feat/`, `fix/`, or `task/` from `dev/pve-test`; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
-- AI tooling / workflow changes: cut `feat/` from `dev/pve-test`; merge directly to `dev/pve-test` (no infrastructure gate required).
+- Infrastructure work: cut `work/*` from the current working HEAD; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
+- Application stack work: cut `feat/`, `fix/`, or `task/` from the current working HEAD; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
+- AI tooling / workflow changes: cut `feat/` from the current working HEAD; merge directly to `dev/pve-test` (no infrastructure gate required).
+- `dev/pve-test` and `baseline/teardown-validated` are **promotion targets only** — never use them as the base for a new development branch.
 - Validate in the short-lived branch before merging. If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `dev/pve-test` → `main` only when stable and tested on the test server.
 - After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync.
@@ -59,6 +60,38 @@ If a scan returns new issues, **stop and present options** — do not merge unti
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
 - Keep runtime evidence, logs, backups, and large snapshots under ignored timestamped evidence directories; summarize results in tracked docs instead of committing bulky artifacts or secrets.
+
+## Script Credential Handling
+
+Some scripts call `./with-secrets` internally; others rely on it being in the environment. Use this table when writing gate commands:
+
+| Script | Credential handling | How to invoke |
+|---|---|---|
+| `scripts/provision.sh` | None — relies on env vars injected by caller | `./with-secrets scripts/provision.sh --stack <name>` |
+| `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
+| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
+
+For `scripts/teardown-deploy-test.sh cycle`, pass `--approval-packet <path>` by default.
+When session context sets `env.disposable: true`, pass `--disposable` and omit `--approval-packet`.
+
+When adding a new script, check whether it calls `${WITH_SECRETS}` or `with-secrets` internally before deciding whether to prefix with `./with-secrets`.
+
+## Stack Service Types
+
+Not all stacks run Docker containers. When writing health/verify gate commands, derive the check from the actual service type — do not assume Docker. Reference the deployment playbook in `terraform/lxc/ansible/playbooks/` to confirm.
+
+| Stack | Service type | Verify approach |
+|---|---|---|
+| `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
+| `dns-stack` | systemd (CoreDNS) | `dig` query against the DNS container IP |
+| `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
+| `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
+| `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
+| `proxy-stack` | Docker Compose (Traefik) | `curl` to Traefik ingress |
+| `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
+| `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
+| `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
 
 ## Execution Guardrails
 

@@ -70,11 +70,16 @@ can report owned objects from other stacks as unmanaged. Full baseline runs with
 no manifest arguments are the authoritative post-apply convergence check:
 
 ```bash
-./with-secrets python3 terraform/lxc/reconcile-edge.py --no-verify-tls --json
+./with-secrets python3 terraform/lxc/reconcile-edge.py \
+  --authentik-url http://10.57.1.10:9000 \
+  --no-verify-tls --json
 ```
 
 `--no-verify-tls` remains acceptable for this rehearsal until the lab CA bundle
 follow-up is complete.
+
+The direct Authentik URL is required for current rehearsal flows. Do not assume
+the reconciler default target is safe for teardown-test validation.
 
 ## Decision 7: Orphaned Stack State Is Out Of Scope By Default
 
@@ -96,3 +101,10 @@ and must not be smuggled into the teardown test.
 Runtime snapshots and large evidence bundles are not committed unless explicitly
 requested. Store them under an ignored timestamped directory and summarize key
 results in the test report.
+
+## Decision 10: Historical Checkpoints Do Not Override Evergreen Docs
+
+Checkpoint docs and dated recovery notes are preserved as execution history.
+They are not the primary source of truth for future runs. When historical notes
+teach a durable lesson, update the evergreen teardown-test docs and
+`lessons-learned.md`.

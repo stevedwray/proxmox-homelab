@@ -43,11 +43,10 @@ You do not run infrastructure commands or edit source files.
 2. If the input is `.git/ai/planner-blocker-to-architect.yaml`, require planner
   blocker fields (`planner_status`, `blocker`, `required_inputs`, `next_action`).
 3. If the file path or required keys do not match either contract:
-   a. Check `docs/sessions/` for a recently committed session report whose name
-      matches the session in progress. If one exists, reconstruct the missing
-      handoff keys from the report and the last `handoff-to-executor.yaml`, then
-      proceed with review using the reconstructed data (note the reconstruction
-      in the verdict).
+   a. Check `.git/ai/sessions/` for a session report whose name matches the
+      session in progress. If one exists, reconstruct the missing handoff keys
+      from the report and the last `handoff-to-executor.yaml`, then proceed with
+      review using the reconstructed data (note the reconstruction in the verdict).
    b. If no matching session report exists, emit `needs_input` — include the
       exact file path checked and the missing keys so the operator can repair
       the handoff file directly.
@@ -76,8 +75,36 @@ a `needs_input` block before producing the first session context.
 | `env.disposable` | `true` = backup and data-loss gates pre-satisfied |
 | `env.scan_gate` | `pr` = scans deferred to PR/merge (default); `session` = required each session |
 
-Dirty working tree is admissible when branch and SHA are explicitly pinned in the
-session context.
+For sessions that include destructive actions, also carry explicit approval details in session context:
+
+| Field | Description |
+|---|---|
+| `approvals.destructive` | `true` only when the operator has approved the destructive scope for this session |
+| `approvals.packet_path` | Path to the approval packet artifact required by the invoked harness, if any |
+| `approvals.scope` | Human-readable description of the approved destructive window |
+
+For a destructive session, the operator's explicit confirmation in the intake prompt
+is sufficient to set `approvals.destructive: true`. Set `approvals.packet_path: null`
+unless the invoked harness specifically requires an artifact file — most sessions
+(provision.sh, rebuild-gate-destroy.sh, etc.) do not. Only emit `needs_input` for
+missing approval when `approvals.destructive` has not been confirmed by the operator.
+
+When `approvals.packet_path` is not null, verify packet integrity before writing:
+1. Confirm the file exists: `test -f <approvals.packet_path>`
+2. Confirm it contains the exact SHA you will write as `refs.current_head_sha`:
+   `grep -qF <current_head_sha> <approvals.packet_path>`
+If either check fails, emit `needs_input` — do not write the handoff.
+
+**Before writing the handoff**, create `session.branch` from `refs.base_branch` if
+it does not already exist, then push it:
+
+```
+git checkout -b <session.branch> <refs.base_branch>
+git push -u origin <session.branch>
+```
+
+If the branch already exists, verify it is rooted at `refs.base_branch` before
+continuing. The executor does not create branches.
 
 ## Handoff Contracts
 
@@ -85,7 +112,7 @@ Use these paths and required keys consistently:
 
 | Path | Required keys | Producer |
 |---|---|---|
-| `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | architect |
+| `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `approvals`, `refs`, `env`, `gates`, `output_report` | architect |
 | `.git/ai/handoff-to-planner.yaml` | `session`, `input`, `refs`, `env`, `guardrails`, `planning` | architect |
 | `.git/ai/session-<NN>.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | planner |
 | `.git/ai/handoff-to-architect.yaml` | `session`, `input.report`, `refs.baseline_sha`, `gates` | executor |
@@ -131,12 +158,37 @@ Do not use either branch for active development work.
 Promotion/merge into either branch is allowed when the promotion gate evidence is present.
 When the operator explicitly directs a merge target (`baseline/teardown-validated` or `dev/pve-test`), use that exact target; do not auto-retarget to a different branch.
 If the required gate evidence is missing, emit `needs_input` instead of merging.
-Set `refs.base_branch` to the active `work/*` branch for infrastructure work, or `dev/pve-test` for application stack work.
+Set `refs.base_branch` to the current active working branch for all work types. Never set it to `dev/pve-test` or `baseline/teardown-validated` — these are promotion targets, not development sources.
 
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
 with ordering dependencies you cannot pre-resolve into a single session context.
 When in doubt, route directly.
+
+**Keep sessions homogeneous**
+Do not bundle tooling or meta work (agent instruction edits, gitignore changes,
+workflow script changes) with infrastructure execution (teardown, deploy, Ansible
+playbooks, Terraform) in a single session. When a task requires both:
+1. Scope the meta/tooling changes as session A. Route to executor and review.
+2. Scope the infrastructure execution as session B only after session A is reviewed.
+Do not pre-compose session B until session A is complete. This does not require
+the planner — the architect scopes both sessions directly.
+
+**Gates must be commands**
+Every gate `cmd` must be a literal shell command the executor can run and check.
+Do not write a task description in `cmd` (e.g., "Ensure X is…", "Update Y to…").
+If you cannot express a gate as a runnable command, it is either:
+- An operator prerequisite — document it in the session `boundary` before the
+  gate list, or
+- Meta/tooling work — scope it as session A before the execution session.
+
+Do not encode missing destructive approval as a gate. Approval must already be
+recorded in session context before handoff; at most, use a gate to verify that
+the approved packet artifact exists and matches the declared session context.
+
+When generating a `scripts/teardown-deploy-test.sh cycle` gate:
+- If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
+- If `env.disposable: false`, require `--approval-packet <path>` in the command.
 
 **Ask before inferring**
 When you need operator input, emit a `needs_input` block and wait. Do not infer
@@ -237,7 +289,7 @@ written verbatim to `.git/ai/handoff-to-executor.yaml`.
 session:
   id: ""              # e.g. "session-04" or "feat-harbor-02"
   goal: ""
-  branch: ""          # short-lived branch; executor creates from refs.base_branch if absent
+  branch: ""          # architect creates this branch before handoff
   issue: ""           # "#N"
 
 boundary:
@@ -246,13 +298,18 @@ boundary:
   not_allowed:
     - ""
 
+approvals:
+  destructive: false   # true only when the operator has already approved destructive scope
+  packet_path: null    # path to required approval packet artifact, or null
+  scope: null          # human-readable description of approved destructive actions, or null
+
 refs:
-  base_branch: ""     # integration branch to cut from, e.g. "dev/pve-test" or "main"
+  base_branch: ""     # active work/* or feat/* branch to cut from; never dev/pve-test or baseline/teardown-validated
   baseline_sha: ""
   runtime_validated_sha: ""   # SHA tied to runtime evidence for this verdict
   current_head_sha: ""        # live HEAD seen during review/handoff creation
   delta_type: "none"          # none | metadata-only | runtime-change
-  prior_report: null  # or path
+  prior_report: null  # or .git/ai/sessions/<prior-session-id>-report.md
 
 env:
   disposable: true    # or false
@@ -271,7 +328,7 @@ gates:
 
 model_hint: lightweight   # lightweight | heavy
 
-output_report: "docs/sessions/<session-id>-report.md"
+output_report: ".git/ai/sessions/<session-id>-report.md"
 ```
 
 When verdict is `ESCALATE-TO-PLANNER`, write `.git/ai/handoff-to-planner.yaml`
@@ -310,9 +367,14 @@ State which path you are taking. Confirm the handoff file has been written.
 
 Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory exists.
 
-- **Direct to executor**: written to `.git/ai/handoff-to-executor.yaml`.
+- **Direct to executor**: create the branch (see Session Context above), then write
+  to `.git/ai/handoff-to-executor.yaml`.
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
 - **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no handoff. Recommend the user merge the branch to `refs.base_branch`.
+- **PASS**: no new handoff. Commit any uncommitted source changes from the session,
+  push, merge the branch to `refs.base_branch`, close the tracking issue, then
+  delete `.git/ai/sessions/<session-id>-report.md`.
+- **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
+  `.git/ai/sessions/<prior-session-id>-report.md`.
 - **NEEDS-INPUT**: no handoff yet. Waiting for operator response.

@@ -25,6 +25,11 @@ working tree, a known commit, and explicit operator approval.
   `-u root`.
 - Generated edge artifacts under `terraform/lxc/.generated/` are runtime output,
   not source. Regenerate them immediately before publish.
+- Reconciler dry-run and apply commands should use the direct Authentik URL
+  `http://10.57.1.10:9000` during rehearsal flows.
+- Direct Portainer validation should use the API on port `9000`.
+- Certificate drift in `certs/homelab-root.crt` after step-ca rebuild is an
+  explicit closeout decision, not background noise.
 - If any atomic component exposes a source bug, stop the rehearsal. Fix that bug
   in a separate short-lived branch, merge it back to `dev/pve-test`, then restart
   from the most recent non-destructive preflight.
@@ -105,11 +110,11 @@ the next component starts.
 | OP-22 | Deploy `proxy-stack` | OP-21 complete. | Apply `proxy-stack` runtime; validate Traefik accepts HTTPS on `10.57.2.10:443`. | Traefik runtime is running at VMID `153`, `10.57.2.10`, without needing Authentik. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-proxy-stack.log`. |
 | OP-23 | Deploy `step-ca-stack` | OP-22 complete. | Apply `step-ca-stack`; validate CA/ACME prerequisites. | step-ca is running at VMID `152`, `10.57.1.11`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-step-ca-stack.log`. |
 | OP-24 | Deploy `authentik-stack` | OP-23 complete. | Apply `authentik-stack`; complete direct first boot if needed; verify or store API token. | Authentik is healthy at VMID `150`, `10.57.1.10`, and API token is available through `./with-secrets`. | `terraform/secrets.enc.yaml` only if an API token must be created or rotated; otherwise no tracked source files. Evidence log required. |
-| OP-25 | Activate edge reconciliation | OP-24 complete; CoreDNS, Traefik, and Authentik API healthy. | Regenerate edge artifacts; run reconciler apply; publish generated CoreDNS and Traefik files; run full reconciler dry-run. | Browser edge state is generated from manifests and active. | No tracked source files; ignored `terraform/lxc/.generated/`; evidence log required. |
+| OP-25 | Activate edge reconciliation | OP-24 complete; CoreDNS, Traefik, and Authentik API healthy. | Regenerate edge artifacts; run reconciler apply using the direct Authentik URL; publish generated CoreDNS and Traefik files; run full reconciler dry-run with the same URL. | Browser edge state is generated from manifests and active. | No tracked source files; ignored `terraform/lxc/.generated/`; evidence log required. |
 | OP-26 | Deploy `monitoring-stack` | OP-25 complete. | Apply `monitoring-stack`; validate direct services and Grafana browser route behavior. | Monitoring is running at VMID `154`, `10.57.1.12`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-monitoring-stack.log`. |
 | OP-27 | Deploy `netbox-stack` | OP-26 complete. | Apply `netbox-stack`; validate direct service and NetBox browser route behavior. | NetBox is running at VMID `143`, `10.57.3.12`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-netbox-stack.log`. |
-| OP-28 | End-to-end validation | OP-27 complete. | Validate VMIDs/IPs, DNS, HTTPS, certificate, auth behavior, Harbor registry auth, and final full reconciler no-op. | The rebuilt platform has pass/fail evidence for the full contract. | No tracked source files; `docs/teardown-test/evidence/<stamp>/final-validation.log`. |
-| OP-29 | Closeout and follow-ups | OP-28 complete. | Summarize result, evidence paths, accepted deviations, and follow-up tasks. | The rehearsal outcome is durable without committing raw evidence. | `docs/teardown-test/README.md`; `docs/teardown-test/variables.md`; optionally add `docs/teardown-test/reports/<stamp>.md` for a tracked summary. |
+| OP-28 | End-to-end validation | OP-27 complete. | Validate VMIDs/IPs, DNS, HTTPS, certificate, auth behavior, Harbor registry auth, direct Portainer API health on port `9000`, and final full reconciler no-op using the direct Authentik URL. | The rebuilt platform has pass/fail evidence for the full contract. | No tracked source files; `docs/teardown-test/evidence/<stamp>/final-validation.log`. |
+| OP-29 | Closeout and follow-ups | OP-28 complete. | Summarize result, evidence paths, accepted deviations, certificate-drift decisions, and follow-up tasks. Promote durable lessons into tracked docs instead of leaving them only in raw evidence. | The rehearsal outcome is durable without committing raw evidence. | `docs/teardown-test/README.md`; `docs/teardown-test/variables.md`; `docs/teardown-test/lessons-learned.md`; optionally add `docs/teardown-test/reports/<stamp>.md` for a tracked summary. |
 
 ## Stop-And-Branch Rule
 

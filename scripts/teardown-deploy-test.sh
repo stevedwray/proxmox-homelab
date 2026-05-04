@@ -25,6 +25,7 @@ PVE_TEST_HOST="pve-test.gibbsgreatly.xyz"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
+DISPOSABLE=false
 REQUIRE_CLEAN=false
 PHASE=""
 STAMP="${TEARDOWN_TEST_STAMP:-$(date -u +%Y%m%d-%H%M%S)}"
@@ -118,7 +119,11 @@ Options:
   --approval-text TEXT
       Required with --execute. Must contain: approve pve-test teardown deploy test
   --approval-packet PATH
-    Required for destroy and cycle. Must reference stamp/commit/backup approvals.
+    Required for destroy and cycle unless --disposable is set.
+    Must reference stamp/commit/backup approvals.
+    --disposable
+      Disposable environment mode for destroy/cycle.
+      Skips approval-packet metadata validation and backup-artifact evidence checks.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -852,6 +857,47 @@ get_authentik_url() {
   return 1
 }
 
+wait_for_authentik_api_ready() {
+  local authentik_url="$1"
+  local max_attempts="24"
+  local delay_seconds="5"
+
+  run_logged "wait-authentik-api-ready" \
+    "${WITH_SECRETS}" bash -lc '
+      set -euo pipefail
+
+      authentik_url="$1"
+      max_attempts="$2"
+      delay_seconds="$3"
+      endpoint="${authentik_url%/}/api/v3/core/applications/?page_size=1"
+      token="${AUTHENTIK_SUPERUSER_API_TOKEN:-}"
+
+      if [[ -z "${token}" ]]; then
+        echo "AUTHENTIK_SUPERUSER_API_TOKEN is not set" >&2
+        exit 1
+      fi
+
+      for attempt in $(seq 1 "${max_attempts}"); do
+        code="$(curl -sk -o /tmp/authentik-api-ready.json -w "%{http_code}" \
+          -H "Authorization: Bearer ${token}" \
+          -H "Accept: application/json" \
+          "${endpoint}" || true)"
+        echo "attempt=${attempt} http_code=${code} endpoint=${endpoint}"
+
+        if [[ "${code}" == "200" ]]; then
+          exit 0
+        fi
+
+        if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+          sleep "${delay_seconds}"
+        fi
+      done
+
+      echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
+      exit 1
+    ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
+}
+
 require_execute_approval() {
   local approval_lc
   approval_lc="${APPROVAL_TEXT,,}"
@@ -876,7 +922,7 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ]]; then
+  if [[ "${DISPOSABLE}" != "true" && ( "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ) ]]; then
     if [[ "${approval_lc}" != *"op-06"* \
       || "${approval_lc}" != *"destroy"* \
       || "${approval_lc}" != *"op-07"* \
@@ -930,6 +976,11 @@ validate_approval_packet() {
     "monitoring:monitoring"
     "portainer:portainer"
   )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping approval packet validation"
+    return 0
+  fi
 
   if [[ -z "${APPROVAL_PACKET}" ]]; then
     log "ERROR ${PHASE} requires --approval-packet PATH"
@@ -1040,6 +1091,11 @@ validate_backup_artifacts_present() {
     "harbor"
     "netbox"
   )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping backup artifact validation"
+    return 0
+  fi
 
   for d in "${required_dirs[@]}"; do
     if [[ ! -d "${backup_root}/${d}" ]]; then
@@ -1629,6 +1685,7 @@ phase_activate_edge() {
   require_clean_tree
   guard_pve_test
   authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
@@ -1822,6 +1879,10 @@ parse_args() {
         fi
         APPROVAL_PACKET="${2:-}"
         shift 2
+        ;;
+      --disposable)
+        DISPOSABLE=true
+        shift
         ;;
       --stamp)
         if [[ $# -lt 2 ]]; then

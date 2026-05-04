@@ -33,5 +33,5 @@ app_stack_name: "netbox"
 
 # pve-test service IPs (explicit — do not rely on variable defaults)
 portainer_server_ip: "10.57.1.20"
-registry_host: "10.57.3.10"
+registry_host: "harbor.lab.gibbsgreatly.xyz"
 apt_cacher_host: "10.57.3.11"

@@ -1,5 +1,6 @@
 # Operational cutover evidence snapshots (local only)
 docs/provisioning-refactor/snapshots/
+docs/sessions/evidence/
 # Environment files
 storage-audit
 .env
@@ -70,6 +71,7 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
+certs/homelab-root.crt
 
 # Logs
 *.log

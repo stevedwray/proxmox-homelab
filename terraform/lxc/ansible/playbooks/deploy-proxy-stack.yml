@@ -50,7 +50,7 @@
   vars:
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
-    traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
+    traefik_image: "traefik:{{ traefik_version }}"
     # Optional control-node source dir for generated per-stack Traefik files.
     # When provided, files are published into /opt/proxy-stack/dynamic/ so the
     # active file provider always loads them.
@@ -158,15 +158,19 @@
         dest: "{{ proxy_compose_dir }}/dynamic/certs.yml"
         mode: "0640"
         content: |
-          tls:
-            stores:
-              default:
-                defaultGeneratedCert:
-                  resolver: letsencrypt
-                  domain:
-                    main: "lab.gibbsgreatly.xyz"
-                    sans:
-                      - "*.lab.gibbsgreatly.xyz"
+          # No defaultGeneratedCert: each router requests its own cert via its
+          # certResolver. This prevents the letsencrypt wildcard from shadowing
+          # resolver-specific certs (e.g. step-ca cert for authentik).
+          {}
+
+    - name: Build combined CA bundle for lego (system CAs + homelab step-ca CA)
+      ansible.builtin.shell: |
+        cat /etc/ssl/certs/ca-certificates.crt \
+            /usr/local/share/ca-certificates/homelab-root.crt \
+            > {{ proxy_compose_dir }}/certs/combined-ca.crt
+      args:
+        executable: /bin/bash
+      changed_when: true
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -179,6 +183,11 @@
               container_name: traefik
               restart: unless-stopped
               env_file: .env
+              environment:
+                # Combined CA bundle: system root CAs + homelab step-ca root CA.
+                # LEGO_CA_CERTIFICATES replaces (not augments) the default CA pool,
+                # so both system CAs (for LE) and homelab CA (for step-ca) are needed.
+                LEGO_CA_CERTIFICATES: /certs/combined-ca.crt
               ports:
                 - "80:80"
                 - "443:443"
@@ -188,6 +197,7 @@
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
+                - ./certs/combined-ca.crt:/certs/combined-ca.crt:ro
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:
@@ -224,6 +234,18 @@
         cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
+
+    - name: Wait for Harbor endpoint to be reachable before image pull
+      ansible.builtin.shell: >-
+        curl -skI --max-time 5 "https://{{ registry_host | default('10.57.3.10') }}/health" >/dev/null
+        || curl -sI --max-time 5 "http://{{ registry_host | default('10.57.3.10') }}/health" >/dev/null
+      register: harbor_endpoint_check
+      retries: 30
+      delay: 5
+      until: harbor_endpoint_check.rc == 0
+      changed_when: false
+      delegate_to: localhost
+      become: false
 
     - name: Start Traefik via compose
       community.docker.docker_compose_v2:

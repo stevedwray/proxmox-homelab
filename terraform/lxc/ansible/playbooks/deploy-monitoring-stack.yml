@@ -4,7 +4,8 @@
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+    docker_registry_host: "{{ monitoring_registry_host }}"
   roles:
     - lxc_base
     - docker_base
@@ -53,13 +54,50 @@
     grafana_version: "11.1.4"
     loki_version: "3.0.0"
     promtail_version: "3.0.0"
-    vm_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
-    grafana_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
-    loki_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/grafana/loki:{{ loki_version }}"
-    promtail_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/grafana/promtail:{{ promtail_version }}"
+    monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+    vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
+    grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
+    loki_image: "{{ monitoring_registry_host }}/dockerhub/grafana/loki:{{ loki_version }}"
+    promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
-    grafana_oauth_client_id: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_ID') | mandatory('GRAFANA_OAUTH_CLIENT_ID env var is not set') }}"
+    grafana_oauth_enabled: "{{ lookup('env', 'GRAFANA_OAUTH_ENABLED') | default('true', true) | bool }}"
+    grafana_public_url: "{{ lookup('env', 'GRAFANA_PUBLIC_URL') | default('https://grafana.lab.gibbsgreatly.xyz', true) }}"
+    grafana_oauth_name: "{{ lookup('env', 'GRAFANA_OAUTH_NAME') | default('Authentik', true) }}"
+    grafana_oauth_scopes: "{{ lookup('env', 'GRAFANA_OAUTH_SCOPES') | default('openid profile email', true) }}"
+    grafana_oauth_client_id: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_ID') | default('grafana', true) }}"
     grafana_oauth_client_secret: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_SECRET') | mandatory('GRAFANA_OAUTH_CLIENT_SECRET env var is not set') }}"
+    grafana_oauth_auth_url: "{{ lookup('env', 'GRAFANA_OAUTH_AUTH_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/', true) }}"
+    grafana_oauth_token_url: "{{ lookup('env', 'GRAFANA_OAUTH_TOKEN_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/token/', true) }}"
+    grafana_oauth_api_url: "{{ lookup('env', 'GRAFANA_OAUTH_API_URL') | default('', true) }}"
+    grafana_oauth_signout_redirect_url: "{{ lookup('env', 'GRAFANA_OAUTH_SIGNOUT_REDIRECT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-monitoring-stack-grafana/end-session/', true) }}"
+    grafana_oauth_tls_skip_verify_insecure: "{{ lookup('env', 'GRAFANA_OAUTH_TLS_SKIP_VERIFY_INSECURE') | default('true', true) | bool }}"
+    grafana_oauth_login_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_LOGIN_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
+    grafana_oauth_name_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_NAME_ATTRIBUTE_PATH') | default('name', true) }}"
+    grafana_oauth_email_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
+    grafana_oauth_email_attribute_name: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_NAME') | default('preferred_username', true) }}"
+    grafana_oauth_use_id_token: "{{ lookup('env', 'GRAFANA_OAUTH_USE_ID_TOKEN') | default('true', true) | bool }}"
+
+  pre_tasks:
+    - name: Reconcile Grafana Authentik OIDC client
+      ansible.builtin.command:
+        # Keep API reconcile on direct endpoint: --authentik-url http://10.57.1.10:9000
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
+          - "{{ playbook_dir }}/../../stacks/monitoring-stack/edge.yaml"
+          - --authentik-url
+          - http://10.57.1.10:9000
+          - --no-verify-tls
+          - --apply
+          - --json
+      environment:
+        AUTHENTIK_SUPERUSER_API_TOKEN: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | mandatory('AUTHENTIK_SUPERUSER_API_TOKEN env var is not set') }}"
+      register: grafana_authentik_reconcile
+      changed_when: "grafana_authentik_reconcile.stdout is not search('\\\"write_count\\\": 0')"
+      when: grafana_oauth_enabled
+      delegate_to: localhost
+      become: false
+      run_once: true
 
   tasks:
     - name: Create monitoring directory structure
@@ -186,14 +224,20 @@
               ports:
                 - "3000:3000"
               environment:
-                GF_SERVER_ROOT_URL: "{{ grafana_public_url | default('https://grafana.gibbsgreatly.xyz') }}"
-                GF_AUTH_GENERIC_OAUTH_ENABLED: "true"
-                GF_AUTH_GENERIC_OAUTH_NAME: "Authentik"
-                GF_AUTH_GENERIC_OAUTH_SCOPES: "openid profile email"
-                GF_AUTH_GENERIC_OAUTH_AUTH_URL: "http://10.57.1.10:9000/application/o/authorize/"
-                GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "http://10.57.1.10:9000/application/o/token/"
-                GF_AUTH_GENERIC_OAUTH_API_URL: "http://10.57.1.10:9000/application/o/userinfo/"
-                GF_AUTH_SIGNOUT_REDIRECT_URL: "http://10.57.1.10:9000/application/o/grafana/end-session/"
+                GF_SERVER_ROOT_URL: "{{ grafana_public_url }}"
+                GF_AUTH_GENERIC_OAUTH_ENABLED: "{{ 'true' if grafana_oauth_enabled else 'false' }}"
+                GF_AUTH_GENERIC_OAUTH_NAME: "{{ grafana_oauth_name }}"
+                GF_AUTH_GENERIC_OAUTH_SCOPES: "{{ grafana_oauth_scopes }}"
+                GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ grafana_oauth_auth_url }}"
+                GF_AUTH_GENERIC_OAUTH_TOKEN_URL: "{{ grafana_oauth_token_url }}"
+                GF_AUTH_GENERIC_OAUTH_API_URL: "{{ grafana_oauth_api_url }}"
+                GF_AUTH_GENERIC_OAUTH_TLS_SKIP_VERIFY_INSECURE: "{{ 'true' if grafana_oauth_tls_skip_verify_insecure else 'false' }}"
+                GF_AUTH_GENERIC_OAUTH_LOGIN_ATTRIBUTE_PATH: "{{ grafana_oauth_login_attribute_path }}"
+                GF_AUTH_GENERIC_OAUTH_NAME_ATTRIBUTE_PATH: "{{ grafana_oauth_name_attribute_path }}"
+                GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH: "{{ grafana_oauth_email_attribute_path }}"
+                GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_NAME: "{{ grafana_oauth_email_attribute_name }}"
+                GF_AUTH_GENERIC_OAUTH_USE_ID_TOKEN: "{{ 'true' if grafana_oauth_use_id_token else 'false' }}"
+                GF_AUTH_SIGNOUT_REDIRECT_URL: "{{ grafana_oauth_signout_redirect_url }}"
                 GF_USERS_AUTO_ASSIGN_ORG_ROLE: "Viewer"
               volumes:
                 - grafana-data:/var/lib/grafana

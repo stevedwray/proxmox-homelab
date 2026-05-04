@@ -26,6 +26,86 @@ fail() {
   exit 1
 }
 
+is_truthy() {
+  local value
+  value="${1,,}"
+  case "$value" in
+    1|true|yes|on)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
+ensure_portainer_oauth_secret() {
+  local stack="$1"
+  local oauth_enabled="${PORTAINER_OAUTH_ENABLED:-true}"
+  local edge_manifest="${STACKS_DIR}/portainer-stack/edge.yaml"
+
+  [[ "$stack" == "portainer-stack" ]] || return 0
+
+  if ! is_truthy "$oauth_enabled"; then
+    log "Portainer OAuth disabled; skipping OAuth secret bootstrap"
+    return 0
+  fi
+
+  if [[ -n "${PORTAINER_OAUTH_CLIENT_SECRET:-}" ]]; then
+    log "PORTAINER_OAUTH_CLIENT_SECRET is already present"
+    return 0
+  fi
+
+  [[ -n "${AUTHENTIK_SUPERUSER_API_TOKEN:-}" ]] || fail "PORTAINER_OAUTH_CLIENT_SECRET is missing and cannot be bootstrapped because AUTHENTIK_SUPERUSER_API_TOKEN is unset"
+  [[ -f "$edge_manifest" ]] || fail "expected Authentik edge manifest not found: ${edge_manifest}"
+
+  PORTAINER_OAUTH_CLIENT_SECRET="$(openssl rand -hex 32)"
+  export PORTAINER_OAUTH_CLIENT_SECRET
+  log "Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)"
+  log "Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility"
+
+  log "Reconciling Authentik OIDC provider for Portainer with generated secret"
+  python3 "${REPO_ROOT}/terraform/lxc/reconcile-authentik-edge.py" \
+    "$edge_manifest" \
+    --apply \
+    --json \
+    --no-verify-tls
+}
+
+ensure_portainer_edge_publish() {
+  local stack="$1"
+  local check_mode="$2"
+  local edge_manifest="${STACKS_DIR}/portainer-stack/edge.yaml"
+  local proxy_inventory="${STACKS_DIR}/proxy-stack/inventory.yml"
+  local proxy_playbook="${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml"
+  local generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
+
+  [[ "$stack" == "portainer-stack" ]] || return 0
+
+  [[ -f "$edge_manifest" ]] || fail "expected edge manifest not found: ${edge_manifest}"
+  [[ -f "$proxy_inventory" ]] || fail "expected proxy inventory not found: ${proxy_inventory}"
+  [[ -f "$proxy_playbook" ]] || fail "expected proxy playbook not found: ${proxy_playbook}"
+
+  if [[ "$check_mode" == "true" ]]; then
+    log "Reconcile edge dry-run for Portainer route publication"
+    python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
+      "$edge_manifest" \
+      --json \
+      --no-verify-tls
+  else
+    log "Reconcile edge apply for Portainer route publication"
+    python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
+      "$edge_manifest" \
+      --apply \
+      --json \
+      --no-verify-tls
+
+    log "Publish generated Traefik files for Portainer route"
+    ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \
+      -e "traefik_generated_source_dir=${generated_traefik_dir}"
+  fi
+}
+
 extract_ansible_playbook() {
   local inventory_file="$1"
 
@@ -252,6 +332,9 @@ export ANSIBLE_SSH_CONTROL_PATH_DIR="/tmp/.ansible/cp"
 
 for stack in "${ordered_stacks[@]}"; do
   inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
+
+  ensure_portainer_oauth_secret "$stack"
+  ensure_portainer_edge_publish "$stack" "$check_mode"
 
   if [[ ! -f "$inventory_file" ]]; then
     log "SKIP ${stack}: inventory file not found (${inventory_file})"

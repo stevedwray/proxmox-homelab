@@ -19,6 +19,84 @@ Session activation accepts the same validated inputs as the standard executor:
 - `.git/ai/handoff-to-executor.yaml`
 - `.git/ai/session-<NN>.yaml`
 
+## Pre-Execution Checklist (required — read this section, do not rely on executor.agent.md link)
+
+Run these five checks in order before any gate work. Record all results in the
+session metadata table before continuing.
+
+1. **Branch** — confirm current branch matches `session.branch`.
+   The architect creates the branch before handoff. If the branch does not exist
+   locally: `git fetch origin && git checkout <session.branch>`
+   If it does not exist on the remote either: stop — this is an architect error,
+   do not create the branch.
+   If on a different branch: `git checkout <session.branch>`
+
+2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
+   `env.target_guard_expect`. If it does not, stop.
+
+3. **Baseline** — confirm `refs.baseline_sha` is an ancestor of HEAD:
+   `git merge-base --is-ancestor <sha> HEAD`
+   If it is not, stop.
+
+4. **Open issues** — search for issues in scope:
+   `gh issue list --label executor --state open`
+   List any found; do not open new ones at session start.
+
+5. **Approval** (destructive sessions only) — if the session includes any destructive
+   or deploy gates, validate the `approvals` block before running any gates:
+   - Confirm `approvals.destructive: true` is set.
+   - If `approvals.packet_path` is not null, confirm the file exists:
+     `test -f <approvals.packet_path>`
+   - If `approvals.packet_path` is not null, confirm the packet file contains the
+     exact value of `refs.current_head_sha`:
+     `grep -qF <current_head_sha> <approvals.packet_path>`
+   If any check fails, stop immediately — record the missing or mismatched field and
+   do not run destructive gates.
+
+---
+
+## Terminal Resilience (required — read this section, do not rely on executor.agent.md link)
+
+**Long-running gate output capture**
+For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
+applies, Ansible playbooks), append `2>&1 | tee /tmp/gate-<gate-id>.log` to the
+command before running. If the terminal dies mid-execution, open a new terminal,
+`cat /tmp/gate-<gate-id>.log`, and use that output as the gate evidence. Clean up
+`/tmp/gate-*.log` files at session end.
+
+**Terminal recovery**
+If a terminal becomes unavailable during gate execution:
+- Do not hang waiting for output that will never arrive — open a new terminal immediately
+- Verify actual system state independently before deciding gate status:
+  for teardown: `ssh root@<host> 'pct list'`; for deploy: check container or service status
+- Record the gate as FAIL with a note about terminal loss and the observed system state
+- Do not assume the command ran or succeeded based solely on the terminal dying
+- Commit any changes the partial run may have left in the working tree before continuing
+
+---
+
+## Session Metadata Table (required — read this section, do not rely on executor.agent.md link)
+
+Include this table at the top of the session report:
+
+| Field | Value |
+|---|---|
+| Session ID | |
+| Branch | |
+| HEAD SHA | |
+| Baseline anchor | |
+| Runtime validated SHA | |
+| Delta type (`none` / `metadata-only` / `runtime-change`) | |
+| Lineage check | PASS / FAIL |
+| Target guard | PASS / FAIL |
+| Working tree | clean / dirty |
+| Open issues at start | #N title, or none |
+| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
+| Approval: packet found | PASS / FAIL / N/A |
+| Approval: packet SHA match | PASS / FAIL / N/A |
+
+---
+
 ## Handoff (required — read this section, do not rely on executor.agent.md link)
 
 Run `mkdir -p .git/ai` before writing the handoff file.
@@ -40,12 +118,11 @@ session:
   issue: ""
 
 input:
-  report: ""              # path to the committed session report
+  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
   prior_architect_review: null    # path or null
 
 refs:
   baseline_sha: ""
-  frozen_sha: null                # SHA after clean-tree preflight, or null
   runtime_validated_sha: ""      # SHA tied to runtime evidence in report
   current_head_sha: ""           # SHA at handoff write time
   delta_type: "none"             # none | metadata-only | runtime-change

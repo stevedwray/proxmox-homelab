@@ -8,6 +8,7 @@ WITH_SECRETS="${REPO_ROOT}/with-secrets"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 TARGET_NODE_EXPECTED="pve-test"
 TARGET_HOST="${TARGET_NODE_EXPECTED}.gibbsgreatly.xyz"
+SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ssh/known_hosts")
 EXECUTE=false
 
 usage() {
@@ -114,7 +115,7 @@ print_target_scope() {
 
 remote_pct_status() {
   local vmid="$1"
-  "${WITH_SECRETS}" ssh -F /dev/null "root@${TARGET_HOST}" "pct status '${vmid}'" 2>&1
+  "${WITH_SECRETS}" ssh -F /dev/null "${SSH_OPTS[@]}" "root@${TARGET_HOST}" "pct status '${vmid}'" 2>&1
 }
 
 classify_pct_status() {
@@ -157,7 +158,7 @@ stop_running_targets() {
     case "${status}" in
       running)
         log "Stopping ${stack} (vmid=${vmid}) on ${TARGET_HOST}"
-        "${WITH_SECRETS}" ssh -F /dev/null "root@${TARGET_HOST}" "pct stop '${vmid}' --timeout 120"
+        "${WITH_SECRETS}" ssh -F /dev/null "${SSH_OPTS[@]}" "root@${TARGET_HOST}" "pct stop '${vmid}'"
 
         status_output="$(remote_pct_status "${vmid}" || true)"
         status="$(classify_pct_status "${status_output}")"

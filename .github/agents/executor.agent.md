@@ -35,6 +35,13 @@ If the loaded file is missing or does not contain the required executor session
 fields (`session`, `boundary`, `refs`, `env`, `gates`, `output_report`), emit a
 structured `needs_input` block naming the expected file paths and stop.
 
+When present, treat an `approvals` block as authoritative session-context
+approval metadata for destructive work. For destructive sessions, the architect
+should provide at least:
+- `approvals.destructive: true`
+- `approvals.packet_path` when the invoked harness requires an approval packet
+- `approvals.scope` describing the approved destructive window
+
 ---
 
 ## Pre-Execution Checklist
@@ -43,12 +50,11 @@ Run these four checks in order before any gate work. Record all results in the
 session metadata table before continuing.
 
 1. **Branch** — confirm current branch matches `session.branch`.
-   If the branch does not exist: `git checkout -b <branch> <refs.base_branch>`
-   If on a different branch and it exists: stop.
-  If the branch does not exist and the worktree is dirty, preserve the tree first
-  with a named stash, switch branches, then restore it. If stash restore creates
-  conflicts in session handoff files, keep the restored session files, record the
-  conflict in the report, and do not discard unrelated user changes.
+   The architect creates the branch before handoff. If the branch does not exist
+   locally: `git fetch origin && git checkout <session.branch>`
+   If it does not exist on the remote either: stop — this is an architect error,
+   do not create the branch.
+   If on a different branch: `git checkout <session.branch>`
 
 2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
    `env.target_guard_expect`. If it does not, stop.
@@ -60,6 +66,17 @@ session metadata table before continuing.
 4. **Open issues** — search for issues in scope:
    `gh issue list --label executor --state open`
    List any found; do not open new ones at session start.
+
+5. **Approval** (destructive sessions only) — if the session includes any destructive
+   or deploy gates, validate the `approvals` block before running any gates:
+   - Confirm `approvals.destructive: true` is set.
+   - If `approvals.packet_path` is not null, confirm the file exists:
+     `test -f <approvals.packet_path>`
+   - If `approvals.packet_path` is not null, confirm the packet file contains the
+     exact value of `refs.current_head_sha`:
+     `grep -qF <current_head_sha> <approvals.packet_path>`
+   If any check fails, stop immediately — record the missing or mismatched field and
+   do not run destructive gates.
 
 ---
 
@@ -76,7 +93,8 @@ and the exit code. "Command succeeded" with no output is invalid evidence.
 **Stop conditions**
 Stop immediately and document if:
 - A destructive or deploy action is reached without explicit approval recorded in
-  the session context
+  the session context (for example `approvals.destructive: true`, plus any
+  required `approvals.packet_path`)
 - Continuing would violate a guardrail
 - Unexpected state makes the declared scope unclear
 
@@ -92,10 +110,29 @@ record it in the report. If `env.scan_gate: pr` (or absent), skip scans and note
 the deferral in the report — this is not a blocker.
 
 **Commit discipline**
-- Commit report and any source changes before ending the session
-- Format: `<type>: <subject> (session <id>)` with `Refs #N` or `Closes #N`
+- Commit source and infrastructure changes during the session as they are made
+- Do NOT commit the session report — it is written to `.git/ai/sessions/` and
+  reviewed by the architect from disk; the architect decides whether to commit it
+- Every commit must follow this format exactly: `<type>: <subject> (session <id>) Refs #N`
+  or `Closes #N` — no exceptions, including inline fix commits
 - Do not commit evidence directories (they are gitignored)
 - Do not use `--no-verify` unless explicitly instructed
+
+**Long-running gate output capture**
+For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
+applies, Ansible playbooks), append `2>&1 | tee /tmp/gate-<gate-id>.log` to the
+command before running. If the terminal dies mid-execution, open a new terminal,
+`cat /tmp/gate-<gate-id>.log`, and use that output as the gate evidence. Clean up
+`/tmp/gate-*.log` files at session end.
+
+**Terminal recovery**
+If a terminal becomes unavailable during gate execution:
+- Do not hang waiting for output that will never arrive — open a new terminal immediately
+- Verify actual system state independently before deciding gate status:
+  for teardown: `ssh root@<host> 'pct list'`; for deploy: check container or service status
+- Record the gate as FAIL with a note about terminal loss and the observed system state
+- Do not assume the command ran or succeeded based solely on the terminal dying
+- Commit any changes the partial run may have left in the working tree before continuing
 
 ---
 
@@ -118,8 +155,9 @@ the deferral in the report — this is not a blocker.
 ## Branch and Issue Protocol
 
 **Branch:**
-- Use the branch in `session.branch`; create from `refs.base_branch` if it does not exist
-- Push at session end: `git push -u origin <branch>`
+- The branch in `session.branch` is created by the architect before handoff; check
+  it out, do not create it
+- Push source changes at session end: `git push`
 
 **Issues — during execution:**
 - If a gate resolves an open blocker issue: add a comment with evidence path + SHA,
@@ -135,7 +173,8 @@ what passed, what failed, what is blocked, and the report path.
 
 ## Output Contract
 
-Write the report to the path in `output_report`.
+Write the report to the path in `output_report` (always `.git/ai/sessions/<id>-report.md`).
+Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
 
 ### 1. Session Metadata
 
@@ -151,6 +190,9 @@ Write the report to the path in `output_report`.
 | Target guard | PASS / FAIL |
 | Working tree | clean / dirty |
 | Open issues at start | #N title, or none |
+| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
+| Approval: packet found | PASS / FAIL / N/A |
+| Approval: packet SHA match | PASS / FAIL / N/A |
 
 ### 2. Gate Results
 
@@ -202,12 +244,11 @@ session:
   issue: ""
 
 input:
-  report: ""              # path to the committed session report
+  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
   prior_architect_review: null    # path or null
 
 refs:
   baseline_sha: ""
-  frozen_sha: null                # SHA after clean-tree preflight, or null
   runtime_validated_sha: ""      # SHA tied to runtime evidence in report
   current_head_sha: ""           # SHA at handoff write time
   delta_type: "none"             # none | metadata-only | runtime-change

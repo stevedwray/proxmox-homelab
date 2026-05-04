@@ -3,6 +3,10 @@
 This runbook is an execution skeleton. Fill [variables.md](variables.md) before
 using it for destructive work.
 
+Use [lessons-learned.md](lessons-learned.md) together with this runbook when
+preparing a new rehearsal cycle. Historical checkpoint docs are records, not
+the current command contract.
+
 **Primary path:** Use `scripts/teardown-deploy-test.sh` for all phases. The
 harness handles target-guard enforcement, approval-packet validation, evidence
 capture, and inventory-derived stack ordering. Sections 5–9 below are the
@@ -352,6 +356,15 @@ Expected:
 - Portainer, NetBox, and Traefik dashboard use forward-auth
 - final reconciler dry-run is passed/no-op
 
+Direct service validation corrections:
+
+```bash
+curl -fsS http://10.57.1.20:9000/api/system/status
+```
+
+Use the Portainer API on port `9000` for direct validation. Do not reuse older
+checkpoint-era probes that targeted the wrong endpoint.
+
 ## 11. Stop Conditions
 
 Stop and present options when:
@@ -364,6 +377,7 @@ Stop and present options when:
 - CoreDNS or Traefik publish fails
 - Authentik API token is unavailable when needed
 - a browser route regresses
+- direct Portainer API validation fails on port `9000`
 - final reconciler dry-run is not clean
 
 When any stop condition triggers, halt immediately and do not continue to the
