@@ -61,6 +61,35 @@ If a scan returns new issues, **stop and present options** — do not merge unti
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
 - Keep runtime evidence, logs, backups, and large snapshots under ignored timestamped evidence directories; summarize results in tracked docs instead of committing bulky artifacts or secrets.
 
+## Script Credential Handling
+
+Some scripts call `./with-secrets` internally; others rely on it being in the environment. Use this table when writing gate commands:
+
+| Script | Credential handling | How to invoke |
+|---|---|---|
+| `scripts/provision.sh` | None — relies on env vars injected by caller | `./with-secrets scripts/provision.sh --stack <name>` |
+| `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
+| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
+
+When adding a new script, check whether it calls `${WITH_SECRETS}` or `with-secrets` internally before deciding whether to prefix with `./with-secrets`.
+
+## Stack Service Types
+
+Not all stacks run Docker containers. When writing health/verify gate commands, derive the check from the actual service type — do not assume Docker. Reference the deployment playbook in `terraform/lxc/ansible/playbooks/` to confirm.
+
+| Stack | Service type | Verify approach |
+|---|---|---|
+| `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
+| `dns-stack` | systemd (CoreDNS) | `dig` query against the DNS container IP |
+| `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
+| `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
+| `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
+| `proxy-stack` | Docker Compose (Traefik) | `curl` to Traefik ingress |
+| `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
+| `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
+| `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
+
 ## Execution Guardrails
 
 - Before any `terragrunt apply` or deployment validation run, verify `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` returns `pve-test`; otherwise stop and treat it as a targeting error.
