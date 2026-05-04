@@ -60,6 +60,11 @@
     loki_image: "{{ monitoring_registry_host }}/dockerhub/grafana/loki:{{ loki_version }}"
     promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
+    grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
+    grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    grafana_breakglass_password: "{{ lookup('env', 'GRAFANA_BREAKGLASS_PASSWORD') | default(grafana_admin_password, true) }}"
+    grafana_oauth_role_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH') | default(\"preferred_username == 'akadmin' && '' || preferred_username == 'steve' && 'Admin' || 'Viewer'\", true) }}"
+    grafana_oauth_role_attribute_strict: "{{ lookup('env', 'GRAFANA_OAUTH_ROLE_ATTRIBUTE_STRICT') | default('true', true) | bool }}"
     grafana_oauth_enabled: "{{ lookup('env', 'GRAFANA_OAUTH_ENABLED') | default('true', true) | bool }}"
     grafana_public_url: "{{ lookup('env', 'GRAFANA_PUBLIC_URL') | default('https://grafana.lab.gibbsgreatly.xyz', true) }}"
     grafana_oauth_name: "{{ lookup('env', 'GRAFANA_OAUTH_NAME') | default('Authentik', true) }}"
@@ -237,6 +242,8 @@
                 GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_PATH: "{{ grafana_oauth_email_attribute_path }}"
                 GF_AUTH_GENERIC_OAUTH_EMAIL_ATTRIBUTE_NAME: "{{ grafana_oauth_email_attribute_name }}"
                 GF_AUTH_GENERIC_OAUTH_USE_ID_TOKEN: "{{ 'true' if grafana_oauth_use_id_token else 'false' }}"
+                GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_PATH: "{{ grafana_oauth_role_attribute_path }}"
+                GF_AUTH_GENERIC_OAUTH_ROLE_ATTRIBUTE_STRICT: "{{ 'true' if grafana_oauth_role_attribute_strict else 'false' }}"
                 GF_AUTH_SIGNOUT_REDIRECT_URL: "{{ grafana_oauth_signout_redirect_url }}"
                 GF_USERS_AUTO_ASSIGN_ORG_ROLE: "Viewer"
               volumes:
@@ -314,3 +321,55 @@
       retries: 30
       delay: 10
       until: loki_health.status == 200
+
+    - name: Look up Grafana breakglass local user
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
+        method: GET
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      register: grafana_breakglass_lookup
+      no_log: true
+
+    - name: Create Grafana breakglass local user when missing
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/admin/users"
+        method: POST
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "{{ grafana_breakglass_username }}"
+          email: "{{ grafana_breakglass_username }}@localhost"
+          login: "{{ grafana_breakglass_username }}"
+          password: "{{ grafana_breakglass_password }}"
+        status_code: [200, 201]
+      when: grafana_breakglass_lookup.status == 404
+      no_log: true
+
+    - name: Refresh Grafana breakglass user lookup
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
+        method: GET
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      register: grafana_breakglass_lookup_after
+      no_log: true
+
+    - name: Ensure Grafana breakglass user is Grafana admin
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/permissions"
+        method: PUT
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          isGrafanaAdmin: true
+        status_code: 200
+      no_log: true

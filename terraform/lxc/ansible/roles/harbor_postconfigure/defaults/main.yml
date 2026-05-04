@@ -3,6 +3,8 @@ harbor_postconfigure_host: "{{ ansible_host }}"
 harbor_postconfigure_port: "{{ harbor_http_port | default(80) }}"
 harbor_postconfigure_admin_user: "admin"
 harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+harbor_postconfigure_breakglass_password: "{{ lookup('env', 'HARBOR_BREAKGLASS_PASSWORD') | default(harbor_postconfigure_admin_password, true) }}"
 
 # Docker Hub proxy cache endpoint
 # Created without credentials: Harbor's health check for authenticated docker-hub

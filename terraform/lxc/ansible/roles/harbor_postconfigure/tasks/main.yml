@@ -15,6 +15,66 @@
   delegate_to: localhost
   no_log: true
 
+- name: Look up Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup
+  delegate_to: localhost
+  no_log: true
+
+- name: Create Harbor breakglass user when missing
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      username: "{{ harbor_postconfigure_breakglass_username }}"
+      email: "{{ harbor_postconfigure_breakglass_username }}@localhost"
+      realname: "Breakglass Administrator"
+      comment: "Local emergency administrator account"
+      password: "{{ harbor_postconfigure_breakglass_password }}"
+    status_code: [201, 409]
+  when: (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Re-fetch Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup_after
+  delegate_to: localhost
+  no_log: true
+
+- name: Ensure Harbor breakglass user has sysadmin role
+  ansible.builtin.uri:
+    url: >-
+      http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/
+      {{ harbor_postconfigure_breakglass_lookup_after.json[0].user_id }}/sysadmin
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      has_admin_role: true
+    status_code: 200
+  when: (harbor_postconfigure_breakglass_lookup_after.json | default([]) | length) > 0
+  delegate_to: localhost
+  no_log: true
+
 # -----------------------------------------------------------------------
 # Docker Hub proxy cache registry endpoint
 # -----------------------------------------------------------------------
