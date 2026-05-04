@@ -83,11 +83,14 @@ For sessions that include destructive actions, also carry explicit approval deta
 | `approvals.packet_path` | Path to the approval packet artifact required by the invoked harness, if any |
 | `approvals.scope` | Human-readable description of the approved destructive window |
 
-If a destructive session does not yet have the needed approval details or packet path,
-emit `needs_input` instead of handing the session to the executor.
+For a destructive session, the operator's explicit confirmation in the intake prompt
+is sufficient to set `approvals.destructive: true`. Set `approvals.packet_path: null`
+unless the invoked harness specifically requires an artifact file — most sessions
+(provision.sh, rebuild-gate-destroy.sh, etc.) do not. Only emit `needs_input` for
+missing approval when `approvals.destructive` has not been confirmed by the operator.
 
-For a destructive handoff, verify approval packet integrity before writing:
-1. Confirm the file at `approvals.packet_path` exists: `test -f <approvals.packet_path>`
+When `approvals.packet_path` is not null, verify packet integrity before writing:
+1. Confirm the file exists: `test -f <approvals.packet_path>`
 2. Confirm it contains the exact SHA you will write as `refs.current_head_sha`:
    `grep -qF <current_head_sha> <approvals.packet_path>`
 If either check fails, emit `needs_input` — do not write the handoff.

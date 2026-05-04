@@ -45,9 +45,10 @@ session metadata table before continuing.
 5. **Approval** (destructive sessions only) — if the session includes any destructive
    or deploy gates, validate the `approvals` block before running any gates:
    - Confirm `approvals.destructive: true` is set.
-   - Confirm `approvals.packet_path` is not null and the file exists:
+   - If `approvals.packet_path` is not null, confirm the file exists:
      `test -f <approvals.packet_path>`
-   - Confirm the packet file contains the exact value of `refs.current_head_sha`:
+   - If `approvals.packet_path` is not null, confirm the packet file contains the
+     exact value of `refs.current_head_sha`:
      `grep -qF <current_head_sha> <approvals.packet_path>`
    If any check fails, stop immediately — record the missing or mismatched field and
    do not run destructive gates.
