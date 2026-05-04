@@ -19,6 +19,63 @@ Session activation accepts the same validated inputs as the standard executor:
 - `.git/ai/handoff-to-executor.yaml`
 - `.git/ai/session-<NN>.yaml`
 
+## Pre-Execution Checklist (required — read this section, do not rely on executor.agent.md link)
+
+Run these five checks in order before any gate work. Record all results in the
+session metadata table before continuing.
+
+1. **Branch** — confirm current branch matches `session.branch`.
+   The architect creates the branch before handoff. If the branch does not exist
+   locally: `git fetch origin && git checkout <session.branch>`
+   If it does not exist on the remote either: stop — this is an architect error,
+   do not create the branch.
+   If on a different branch: `git checkout <session.branch>`
+
+2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
+   `env.target_guard_expect`. If it does not, stop.
+
+3. **Baseline** — confirm `refs.baseline_sha` is an ancestor of HEAD:
+   `git merge-base --is-ancestor <sha> HEAD`
+   If it is not, stop.
+
+4. **Open issues** — search for issues in scope:
+   `gh issue list --label executor --state open`
+   List any found; do not open new ones at session start.
+
+5. **Approval** (destructive sessions only) — if the session includes any destructive
+   or deploy gates, validate the `approvals` block before running any gates:
+   - Confirm `approvals.destructive: true` is set.
+   - Confirm `approvals.packet_path` is not null and the file exists:
+     `test -f <approvals.packet_path>`
+   - Confirm the packet file contains the exact value of `refs.current_head_sha`:
+     `grep -qF <current_head_sha> <approvals.packet_path>`
+   If any check fails, stop immediately — record the missing or mismatched field and
+   do not run destructive gates.
+
+---
+
+## Session Metadata Table (required — read this section, do not rely on executor.agent.md link)
+
+Include this table at the top of the session report:
+
+| Field | Value |
+|---|---|
+| Session ID | |
+| Branch | |
+| HEAD SHA | |
+| Baseline anchor | |
+| Runtime validated SHA | |
+| Delta type (`none` / `metadata-only` / `runtime-change`) | |
+| Lineage check | PASS / FAIL |
+| Target guard | PASS / FAIL |
+| Working tree | clean / dirty |
+| Open issues at start | #N title, or none |
+| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
+| Approval: packet found | PASS / FAIL / N/A |
+| Approval: packet SHA match | PASS / FAIL / N/A |
+
+---
+
 ## Handoff (required — read this section, do not rely on executor.agent.md link)
 
 Run `mkdir -p .git/ai` before writing the handoff file.
