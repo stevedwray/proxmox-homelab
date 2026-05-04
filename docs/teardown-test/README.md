@@ -17,6 +17,8 @@ operator has explicitly approved the destructive window.
 
 The first full teardown/rebuild rehearsal completed successfully and is
 summarized in [reports/20260422-044416.md](reports/20260422-044416.md).
+Durable operational takeaways from rehearsal work are captured in
+[lessons-learned.md](lessons-learned.md).
 The repeatable harness is documented in
 [repeatable-test.md](repeatable-test.md) and implemented at
 `scripts/teardown-deploy-test.sh`.
@@ -88,11 +90,10 @@ Production `pve` is out of scope.
 - [task-sequence.md](task-sequence.md) lists the atomic test plan.
 - [operations-plan.md](operations-plan.md) breaks the test into single-stack
   and single-handoff execution components with file touch sets.
+- [lessons-learned.md](lessons-learned.md) captures durable findings that
+  should stay current as the rehearsal process evolves.
 - [repeatable-test.md](repeatable-test.md) describes the reusable harness for
   repeated preflight, live validation, and approved teardown/deploy cycles.
-- [recovery-checklist-20260423.md](recovery-checklist-20260423.md) captures the
-  strict read-only incident recovery checklist before any future approved
-  mutating session.
 - [harness-roadmap.md](harness-roadmap.md) lists the remaining work needed to
   turn the current harness prototype into a robust reusable playbook.
 - [runbook.md](runbook.md) contains the operator command flow.
