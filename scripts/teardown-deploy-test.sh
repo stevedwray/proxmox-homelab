@@ -25,6 +25,7 @@ PVE_TEST_HOST="pve-test.gibbsgreatly.xyz"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
+DISPOSABLE=false
 REQUIRE_CLEAN=false
 PHASE=""
 STAMP="${TEARDOWN_TEST_STAMP:-$(date -u +%Y%m%d-%H%M%S)}"
@@ -118,7 +119,11 @@ Options:
   --approval-text TEXT
       Required with --execute. Must contain: approve pve-test teardown deploy test
   --approval-packet PATH
-    Required for destroy and cycle. Must reference stamp/commit/backup approvals.
+    Required for destroy and cycle unless --disposable is set.
+    Must reference stamp/commit/backup approvals.
+    --disposable
+      Disposable environment mode for destroy/cycle.
+      Skips approval-packet metadata validation and backup-artifact evidence checks.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -917,7 +922,7 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ]]; then
+  if [[ "${DISPOSABLE}" != "true" && ( "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ) ]]; then
     if [[ "${approval_lc}" != *"op-06"* \
       || "${approval_lc}" != *"destroy"* \
       || "${approval_lc}" != *"op-07"* \
@@ -971,6 +976,11 @@ validate_approval_packet() {
     "monitoring:monitoring"
     "portainer:portainer"
   )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping approval packet validation"
+    return 0
+  fi
 
   if [[ -z "${APPROVAL_PACKET}" ]]; then
     log "ERROR ${PHASE} requires --approval-packet PATH"
@@ -1081,6 +1091,11 @@ validate_backup_artifacts_present() {
     "harbor"
     "netbox"
   )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping backup artifact validation"
+    return 0
+  fi
 
   for d in "${required_dirs[@]}"; do
     if [[ ! -d "${backup_root}/${d}" ]]; then
@@ -1864,6 +1879,10 @@ parse_args() {
         fi
         APPROVAL_PACKET="${2:-}"
         shift 2
+        ;;
+      --disposable)
+        DISPOSABLE=true
+        shift
         ;;
       --stamp)
         if [[ $# -lt 2 ]]; then

@@ -71,6 +71,9 @@ Some scripts call `./with-secrets` internally; others rely on it being in the en
 | `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
 | `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
 
+For `scripts/teardown-deploy-test.sh cycle`, pass `--approval-packet <path>` by default.
+When session context sets `env.disposable: true`, pass `--disposable` and omit `--approval-packet`.
+
 When adding a new script, check whether it calls `${WITH_SECRETS}` or `with-secrets` internally before deciding whether to prefix with `./with-secrets`.
 
 ## Stack Service Types

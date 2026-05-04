@@ -186,6 +186,10 @@ Do not encode missing destructive approval as a gate. Approval must already be
 recorded in session context before handoff; at most, use a gate to verify that
 the approved packet artifact exists and matches the declared session context.
 
+When generating a `scripts/teardown-deploy-test.sh cycle` gate:
+- If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
+- If `env.disposable: false`, require `--approval-packet <path>` in the command.
+
 **Ask before inferring**
 When you need operator input, emit a `needs_input` block and wait. Do not infer
 intent from prior context.
