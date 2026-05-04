@@ -86,6 +86,12 @@ For sessions that include destructive actions, also carry explicit approval deta
 If a destructive session does not yet have the needed approval details or packet path,
 emit `needs_input` instead of handing the session to the executor.
 
+For a destructive handoff, verify approval packet integrity before writing:
+1. Confirm the file at `approvals.packet_path` exists: `test -f <approvals.packet_path>`
+2. Confirm it contains the exact SHA you will write as `refs.current_head_sha`:
+   `grep -qF <current_head_sha> <approvals.packet_path>`
+If either check fails, emit `needs_input` — do not write the handoff.
+
 **Before writing the handoff**, create `session.branch` from `refs.base_branch` if
 it does not already exist, then push it:
 
@@ -103,7 +109,7 @@ Use these paths and required keys consistently:
 
 | Path | Required keys | Producer |
 |---|---|---|
-| `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | architect |
+| `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `approvals`, `refs`, `env`, `gates`, `output_report` | architect |
 | `.git/ai/handoff-to-planner.yaml` | `session`, `input`, `refs`, `env`, `guardrails`, `planning` | architect |
 | `.git/ai/session-<NN>.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | planner |
 | `.git/ai/handoff-to-architect.yaml` | `session`, `input.report`, `refs.baseline_sha`, `gates` | executor |
@@ -285,10 +291,10 @@ boundary:
   not_allowed:
     - ""
 
-  approvals:
-    destructive: false   # true only when the operator has already approved destructive scope
-    packet_path: null    # path to required approval packet artifact, or null
-    scope: null          # human-readable description of approved destructive actions, or null
+approvals:
+  destructive: false   # true only when the operator has already approved destructive scope
+  packet_path: null    # path to required approval packet artifact, or null
+  scope: null          # human-readable description of approved destructive actions, or null
 
 refs:
   base_branch: ""     # active work/* or feat/* branch to cut from; never dev/pve-test or baseline/teardown-validated

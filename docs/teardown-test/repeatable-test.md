@@ -247,4 +247,8 @@ repeatable test continues to encode the current operating contract.
 The current harness is a working prototype, not the final reusable playbook.
 Before treating it as the long-term test interface, complete the follow-up work
 in [harness-roadmap.md](harness-roadmap.md). The next major implementation item
-is machine-readable resume state and checkpointing.
+list there should be kept current.
+
+Machine-readable resume state and checkpointing are already implemented through
+per-stamp `state.json`. Do not leave roadmap prose behind when completed
+features move into the harness.
