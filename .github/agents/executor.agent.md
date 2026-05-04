@@ -67,6 +67,16 @@ session metadata table before continuing.
    `gh issue list --label executor --state open`
    List any found; do not open new ones at session start.
 
+5. **Approval** (destructive sessions only) — if the session includes any destructive
+   or deploy gates, validate the `approvals` block before running any gates:
+   - Confirm `approvals.destructive: true` is set.
+   - Confirm `approvals.packet_path` is not null and the file exists:
+     `test -f <approvals.packet_path>`
+   - Confirm the packet file contains the exact value of `refs.current_head_sha`:
+     `grep -qF <current_head_sha> <approvals.packet_path>`
+   If any check fails, stop immediately — record the missing or mismatched field and
+   do not run destructive gates.
+
 ---
 
 ## Behavioral Rules
@@ -163,6 +173,9 @@ Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
 | Target guard | PASS / FAIL |
 | Working tree | clean / dirty |
 | Open issues at start | #N title, or none |
+| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
+| Approval: packet found | PASS / FAIL / N/A |
+| Approval: packet SHA match | PASS / FAIL / N/A |
 
 ### 2. Gate Results
 
