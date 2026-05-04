@@ -118,6 +118,22 @@ the deferral in the report — this is not a blocker.
 - Do not commit evidence directories (they are gitignored)
 - Do not use `--no-verify` unless explicitly instructed
 
+**Long-running gate output capture**
+For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
+applies, Ansible playbooks), append `2>&1 | tee /tmp/gate-<gate-id>.log` to the
+command before running. If the terminal dies mid-execution, open a new terminal,
+`cat /tmp/gate-<gate-id>.log`, and use that output as the gate evidence. Clean up
+`/tmp/gate-*.log` files at session end.
+
+**Terminal recovery**
+If a terminal becomes unavailable during gate execution:
+- Do not hang waiting for output that will never arrive — open a new terminal immediately
+- Verify actual system state independently before deciding gate status:
+  for teardown: `ssh root@<host> 'pct list'`; for deploy: check container or service status
+- Record the gate as FAIL with a note about terminal loss and the observed system state
+- Do not assume the command ran or succeeded based solely on the terminal dying
+- Commit any changes the partial run may have left in the working tree before continuing
+
 ---
 
 ## Evidence Standards
