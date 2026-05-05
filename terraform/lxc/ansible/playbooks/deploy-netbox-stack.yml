@@ -143,78 +143,84 @@
       ansible.builtin.shell:
         cmd: |
           docker exec -i \
-            -e NB_STEVE_USER='{{ netbox_steve_username }}' \
-            -e NB_STEVE_EMAIL='{{ netbox_steve_email }}' \
-            -e NB_BREAKGLASS_USER='{{ netbox_breakglass_username }}' \
-            -e NB_BREAKGLASS_EMAIL='{{ netbox_breakglass_email }}' \
-            -e NB_BREAKGLASS_PASSWORD='{{ netbox_breakglass_password }}' \
+            -e NB_STEVE_USER \
+            -e NB_STEVE_EMAIL \
+            -e NB_BREAKGLASS_USER \
+            -e NB_BREAKGLASS_EMAIL \
+            -e NB_BREAKGLASS_PASSWORD \
             {{ netbox_container }} \
             {{ netbox_manage }} shell <<'PYEOF'
           import os
           from django.contrib.auth import get_user_model
 
           User = get_user_model()
+          user_field_names = {field.name for field in User._meta.get_fields()}
           changed = False
+
+          def admin_defaults(email):
+              defaults = {
+                  'email': email,
+                  'is_superuser': True,
+              }
+              if 'is_staff' in user_field_names:
+                  defaults['is_staff'] = True
+              if 'is_active' in user_field_names:
+                  defaults['is_active'] = True
+              return defaults
+
+          def sync_admin_user(user, email, use_password, password_value=None):
+              updates = []
+              if user.email != email:
+                  user.email = email
+                  updates.append('email')
+              if 'is_active' in user_field_names and not user.is_active:
+                  user.is_active = True
+                  updates.append('is_active')
+              if 'is_staff' in user_field_names and not user.is_staff:
+                  user.is_staff = True
+                  updates.append('is_staff')
+              if not user.is_superuser:
+                  user.is_superuser = True
+                  updates.append('is_superuser')
+              if use_password:
+                  if not user.check_password(password_value):
+                      user.set_password(password_value)
+                      updates.append('password')
+              elif user.has_usable_password():
+                  user.set_unusable_password()
+                  updates.append('password')
+              if updates:
+                  user.save(update_fields=updates)
+                  return True
+              return False
 
           steve, steve_created = User.objects.get_or_create(
               username=os.environ['NB_STEVE_USER'],
-              defaults={
-                  'email': os.environ['NB_STEVE_EMAIL'],
-                  'is_staff': True,
-                  'is_superuser': True,
-              },
+              defaults=admin_defaults(os.environ['NB_STEVE_EMAIL']),
           )
-          if steve_created:
-              steve.set_unusable_password()
-              steve.save(update_fields=['password'])
-              changed = True
-          steve_updates = []
-          if steve.email != os.environ['NB_STEVE_EMAIL']:
-              steve.email = os.environ['NB_STEVE_EMAIL']
-              steve_updates.append('email')
-          if not steve.is_staff:
-              steve.is_staff = True
-              steve_updates.append('is_staff')
-          if not steve.is_superuser:
-              steve.is_superuser = True
-              steve_updates.append('is_superuser')
-          if steve.has_usable_password():
-              steve.set_unusable_password()
-              steve_updates.append('password')
-          if steve_updates:
-              steve.save(update_fields=steve_updates)
+          if steve_created or sync_admin_user(steve, os.environ['NB_STEVE_EMAIL'], False):
               changed = True
 
           breakglass, breakglass_created = User.objects.get_or_create(
               username=os.environ['NB_BREAKGLASS_USER'],
-              defaults={
-                  'email': os.environ['NB_BREAKGLASS_EMAIL'],
-                  'is_staff': True,
-                  'is_superuser': True,
-              },
+              defaults=admin_defaults(os.environ['NB_BREAKGLASS_EMAIL']),
           )
-          if breakglass_created:
-              changed = True
-
-          breakglass_updates = []
-          if breakglass.email != os.environ['NB_BREAKGLASS_EMAIL']:
-              breakglass.email = os.environ['NB_BREAKGLASS_EMAIL']
-              breakglass_updates.append('email')
-          if not breakglass.is_staff:
-              breakglass.is_staff = True
-              breakglass_updates.append('is_staff')
-          if not breakglass.is_superuser:
-              breakglass.is_superuser = True
-              breakglass_updates.append('is_superuser')
-          if not breakglass.check_password(os.environ['NB_BREAKGLASS_PASSWORD']):
-              breakglass.set_password(os.environ['NB_BREAKGLASS_PASSWORD'])
-              breakglass_updates.append('password')
-          if breakglass_updates:
-              breakglass.save(update_fields=breakglass_updates)
+          if breakglass_created or sync_admin_user(
+              breakglass,
+              os.environ['NB_BREAKGLASS_EMAIL'],
+              True,
+              os.environ['NB_BREAKGLASS_PASSWORD'],
+          ):
               changed = True
 
           print('CHANGED' if changed else 'UNCHANGED')
           PYEOF
+      environment:
+        NB_STEVE_USER: "{{ netbox_steve_username }}"
+        NB_STEVE_EMAIL: "{{ netbox_steve_email }}"
+        NB_BREAKGLASS_USER: "{{ netbox_breakglass_username }}"
+        NB_BREAKGLASS_EMAIL: "{{ netbox_breakglass_email }}"
+        NB_BREAKGLASS_PASSWORD: "{{ netbox_breakglass_password }}"
       register: netbox_local_admins_result
       changed_when: "'CHANGED' in netbox_local_admins_result.stdout"
       failed_when:
