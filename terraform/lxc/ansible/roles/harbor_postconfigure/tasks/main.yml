@@ -37,7 +37,7 @@
     body_format: json
     body:
       username: "{{ harbor_postconfigure_breakglass_username }}"
-      email: "{{ harbor_postconfigure_breakglass_username }}@localhost"
+      email: "{{ harbor_postconfigure_breakglass_username }}@lab.gibbsgreatly.xyz"
       realname: "Breakglass Administrator"
       comment: "Local emergency administrator account"
       password: "{{ harbor_postconfigure_breakglass_password }}"
