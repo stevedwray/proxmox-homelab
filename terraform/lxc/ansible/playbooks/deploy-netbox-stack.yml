@@ -110,7 +110,7 @@
     netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
     netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
     netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
-    netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default(netbox_superuser_password, true) }}"
+    netbox_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(netbox_superuser_password, true) }}"
 
   tasks:
     - name: Wait for NetBox to be healthy

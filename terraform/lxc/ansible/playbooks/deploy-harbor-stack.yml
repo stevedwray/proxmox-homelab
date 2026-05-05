@@ -51,7 +51,7 @@
     harbor_postconfigure_oidc_logout: "{{ lookup('env', 'HARBOR_OIDC_LOGOUT') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('true', true) | bool }}"
     harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-    harbor_postconfigure_breakglass_password: "{{ lookup('env', 'HARBOR_BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
+    harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
   pre_tasks:
     - name: Enforce readable Harbor OIDC username claim
       ansible.builtin.assert:

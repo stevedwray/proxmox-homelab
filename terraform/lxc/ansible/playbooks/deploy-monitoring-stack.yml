@@ -62,7 +62,7 @@
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-    grafana_breakglass_password: "{{ lookup('env', 'GRAFANA_BREAKGLASS_PASSWORD') | default(grafana_admin_password, true) }}"
+    grafana_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(grafana_admin_password, true) }}"
     grafana_oauth_role_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH') | default(\"preferred_username == 'akadmin' && '' || preferred_username == 'steve' && 'Admin' || 'Viewer'\", true) }}"
     grafana_oauth_role_attribute_strict: "{{ lookup('env', 'GRAFANA_OAUTH_ROLE_ATTRIBUTE_STRICT') | default('true', true) | bool }}"
     grafana_oauth_enabled: "{{ lookup('env', 'GRAFANA_OAUTH_ENABLED') | default('true', true) | bool }}"
