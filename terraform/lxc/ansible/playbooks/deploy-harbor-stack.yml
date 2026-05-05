@@ -53,6 +53,17 @@
     harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
     harbor_postconfigure_breakglass_password: "{{ lookup('env', 'HARBOR_BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
   pre_tasks:
+    - name: Enforce readable Harbor OIDC username claim
+      ansible.builtin.assert:
+        that:
+          - harbor_postconfigure_oidc_user_claim == 'preferred_username'
+        fail_msg: >-
+          Harbor OIDC user claim must be 'preferred_username' to avoid opaque
+          hash-style Harbor usernames from the 'sub' claim.
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
     - name: Check Authentik health endpoint reachability for Harbor OIDC reconcile
       ansible.builtin.uri:
         url: http://10.57.1.10:9000/-/health/live/
