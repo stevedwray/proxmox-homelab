@@ -361,6 +361,19 @@
       register: grafana_breakglass_lookup_after
       no_log: true
 
+    - name: Sync Grafana breakglass user password
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/password"
+        method: PUT
+        url_username: "{{ grafana_admin_user }}"
+        url_password: "{{ grafana_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ grafana_breakglass_password }}"
+        status_code: 200
+      no_log: true
+
     - name: Ensure Grafana breakglass user is Grafana admin
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/permissions"
