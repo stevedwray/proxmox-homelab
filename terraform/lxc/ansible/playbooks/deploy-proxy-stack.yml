@@ -51,10 +51,11 @@
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
     traefik_image: "traefik:{{ traefik_version }}"
-    # Optional control-node source dir for generated per-stack Traefik files.
-    # When provided, files are published into /opt/proxy-stack/dynamic/ so the
-    # active file provider always loads them.
-    traefik_generated_source_dir: ""
+    # Control-node source dir for generated per-stack Traefik files.
+    # Defaults to terraform/lxc/.generated/traefik and can be overridden.
+    # Files are published into /opt/proxy-stack/dynamic/ so the active file
+    # provider always loads router definitions.
+    traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
 
   tasks:
     - name: Create Traefik directory structure
