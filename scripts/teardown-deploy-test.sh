@@ -85,6 +85,15 @@ BROWSER_HOSTS=(
   "traefik"
 )
 
+BREAKGLASS_DNS_HOSTS=(
+  "authentik-bg"
+  "harbor-bg"
+  "monitoring-bg"
+  "netbox-bg"
+  "portainer-bg"
+  "proxy-bg"
+)
+
 BROWSER_DNS_TARGET_IP="10.57.2.10"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
@@ -466,6 +475,37 @@ run_dns_answer_check() {
 
       printf "DNS assertion passed for %s via %s\n" "${fqdn}" "${resolver}"
     ' _ "${resolver}" "${fqdn}" "${expected_answer}"
+}
+
+run_dns_nonempty_check() {
+  local name="$1"
+  local resolver="$2"
+  local fqdn="$3"
+
+  # shellcheck disable=SC2016
+  run_logged "${name}" \
+    bash -lc '
+      set -euo pipefail
+
+      resolver="$1"
+      fqdn="$2"
+
+      mapfile -t answers < <(dig "@${resolver}" +short "${fqdn}" | sed "/^[[:space:]]*$/d")
+
+      if (( ${#answers[@]} == 0 )); then
+        printf "resolver=%s\n" "${resolver}"
+        printf "fqdn=%s\n" "${fqdn}"
+        printf "observed=<empty>\n"
+        printf "DNS assertion failed for %s via %s: expected at least one answer\n" \
+          "${fqdn}" "${resolver}" >&2
+        exit 1
+      fi
+
+      printf "resolver=%s\n" "${resolver}"
+      printf "fqdn=%s\n" "${fqdn}"
+      printf "observed=%s\n" "$(printf "%s\n" "${answers[@]}" | paste -sd "," -)"
+      printf "DNS assertion passed for %s via %s (non-empty)\n" "${fqdn}" "${resolver}"
+    ' _ "${resolver}" "${fqdn}"
 }
 
 guard_pve_test() {
@@ -1720,7 +1760,7 @@ phase_deploy_platform() {
 }
 
 phase_final_validation() {
-  local host fqdn authentik_url
+  local host fqdn authentik_url bg_host bg_fqdn
   create_evidence_dirs
   record_working_tree_state
   guard_pve_test
@@ -1731,6 +1771,12 @@ phase_final_validation() {
     run_dns_answer_check "dns-authoritative-${host}" "10.57.1.13" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_dns_answer_check "dns-delegated-${host}" "10.57.1.1" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:10.57.2.10" "https://${fqdn}/"
+  done
+
+  for bg_host in "${BREAKGLASS_DNS_HOSTS[@]}"; do
+    bg_fqdn="${bg_host}.lab.gibbsgreatly.xyz"
+    run_dns_nonempty_check "dns-authoritative-${bg_host}" "10.57.1.13" "${bg_fqdn}"
+    run_dns_nonempty_check "dns-delegated-${bg_host}" "10.57.1.1" "${bg_fqdn}"
   done
 
   run_logged "harbor-registry-auth" curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz/v2/
