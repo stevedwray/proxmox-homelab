@@ -1,0 +1,63 @@
+---
+# Breakglass baseline manifest for platform services.
+# Each service must define a local breakglass admin identity and emergency DNS path.
+
+apt-cacher:
+  breakglass_username: breakglass
+  bg_fqdn: apt-cacher-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+dns:
+  breakglass_username: breakglass
+  bg_fqdn: dns-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+step-ca:
+  breakglass_username: breakglass
+  bg_fqdn: step-ca-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+ci-runner-01:
+  breakglass_username: breakglass
+  bg_fqdn: ci-runner-01-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+harbor:
+  breakglass_username: breakglass
+  bg_fqdn: harbor-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+authentik:
+  breakglass_username: breakglass
+  bg_fqdn: authentik-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+proxy:
+  breakglass_username: breakglass
+  bg_fqdn: proxy-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+monitoring:
+  breakglass_username: breakglass
+  bg_fqdn: monitoring-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+netbox:
+  breakglass_username: breakglass
+  bg_fqdn: netbox-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
+
+portainer:
+  breakglass_username: breakglass
+  bg_fqdn: portainer-bg.lab.gibbsgreatly.xyz
+  bypass_authentik: true
+  bypass_traefik: true
