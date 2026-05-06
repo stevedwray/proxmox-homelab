@@ -42,5 +42,5 @@ portainer_agent: false
 
 # pve-test service IPs (explicit — do not rely on variable defaults)
 portainer_server_ip: "10.57.1.20"
-registry_host: "10.57.3.10"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "10.57.3.11"

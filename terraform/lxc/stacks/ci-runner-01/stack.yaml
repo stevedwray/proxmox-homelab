@@ -27,7 +27,7 @@ network:
 # pve-test service IPs (explicit — do not rely on variable defaults)
 apt_cacher_host: "10.57.3.11"
 portainer_server_ip: "10.57.1.20"
-registry_host: "10.57.3.10"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 
 ansible_playbook: "deploy-ci-runner"
 deployment_tier: platform
