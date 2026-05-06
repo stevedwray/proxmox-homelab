@@ -106,6 +106,11 @@ git push -u origin <session.branch>
 If the branch already exists, verify it is rooted at `refs.base_branch` before
 continuing. The executor does not create branches.
 
+Before writing a new `.git/ai/handoff-to-executor.yaml`, overwrite any existing
+file completely. Do not reuse, append to, or partially edit a prior session
+handoff. If the previous handoff belongs to a completed or different task,
+replace it in full with the new session context.
+
 ## Handoff Contracts
 
 Use these paths and required keys consistently:
@@ -189,6 +194,21 @@ the approved packet artifact exists and matches the declared session context.
 When generating a `scripts/teardown-deploy-test.sh cycle` gate:
 - If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
 - If `env.disposable: false`, require `--approval-packet <path>` in the command.
+
+When generating teardown/redeploy sessions that use `scripts/teardown-deploy-test.sh`:
+- Encode the harness as literal shell commands, not summaries.
+- For every mutating phase (`destroy`, `deploy-foundation`, `deploy-edge`,
+  `activate-edge`, `deploy-platform`, and `cycle`), include both `--execute`
+  and `--approval-text "<operator-approved text>"`.
+- Preserve the declared phase order exactly: `destroy`, `deploy-foundation`,
+  `deploy-edge`, `activate-edge`, `deploy-platform`, `final-validation`.
+- Do not omit `deploy-edge` when decomposing a full teardown/redeploy workflow
+  into phase gates.
+- For long-running gates, use a durable evidence path with `tee`, for example:
+  `set -o pipefail && mkdir -p .git/ai/sessions/evidence/<session-id> && scripts/teardown-deploy-test.sh <phase> ... 2>&1 | tee .git/ai/sessions/evidence/<session-id>/<gate-id>.log`.
+- When scoping a resume or rerun session, name the exact resumed phase in the
+  gate command and point evidence at a new session-specific path instead of
+  reusing an earlier session's report or log file.
 
 **Ask before inferring**
 When you need operator input, emit a `needs_input` block and wait. Do not infer
