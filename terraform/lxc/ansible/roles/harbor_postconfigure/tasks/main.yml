@@ -167,7 +167,16 @@
         (
           harbor_postconfigure_steve_lookup.json | default([])
           | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
-          | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
+          | selectattr(
+              'email',
+              'equalto',
+              harbor_postconfigure_steve_email
+            )
+            if (harbor_postconfigure_steve_email | length) > 0
+            else (
+              harbor_postconfigure_steve_lookup.json | default([])
+              | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+            )
           | list
           | first
         ) | default({})

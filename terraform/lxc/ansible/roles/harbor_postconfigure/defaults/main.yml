@@ -6,7 +6,7 @@ harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') 
 harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
 harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(harbor_postconfigure_admin_password, true) }}"
 harbor_postconfigure_steve_username: "{{ lookup('env', 'HARBOR_STEVE_USERNAME') | default('steve', true) }}"
-harbor_postconfigure_steve_email: "{{ lookup('env', 'HARBOR_STEVE_EMAIL') | default('steve@lab.gibbsgreatly.xyz', true) }}"
+harbor_postconfigure_steve_email: "{{ lookup('env', 'HARBOR_STEVE_EMAIL') | default('', true) }}"
 
 # Docker Hub proxy cache endpoint
 # Created without credentials: Harbor's health check for authenticated docker-hub
