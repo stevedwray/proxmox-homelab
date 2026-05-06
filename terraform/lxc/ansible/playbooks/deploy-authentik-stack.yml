@@ -27,7 +27,7 @@
     authentik_compose_dir: /opt/authentik-stack
     authentik_compose_path: /opt/authentik-stack/docker-compose.yml
     authentik_compose_content: "{{ lookup('file', '../../stacks/authentik-stack/docker-compose.yml') }}"
-    authentik_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    authentik_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
