@@ -21,6 +21,14 @@ grafana         A   10.57.1.12          ; Grafana (alias for monitoring stack)
 ; Phase 04 edge services (edge_seg)
 traefik         A   10.57.2.10          ; reverse proxy
 
+; Breakglass direct-access records (bypass Traefik — point to service container IP)
+authentik-bg    IN  A   10.57.1.10      ; authentik direct (breakglass)
+harbor-bg       IN  A   10.57.3.10      ; harbor direct (breakglass)
+monitoring-bg   IN  A   10.57.1.12      ; grafana/monitoring direct (breakglass)
+netbox-bg       IN  A   10.57.3.12      ; netbox direct (breakglass)
+portainer-bg    IN  A   10.57.1.20      ; portainer direct (breakglass)
+proxy-bg        IN  A   10.57.2.10      ; traefik dashboard direct (breakglass)
+
 ; Phase 06 application services — populated during app migration
 ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)
 ; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)

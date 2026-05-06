@@ -42,15 +42,28 @@
     harbor_postconfigure_oidc_client_id: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_ID') | default('harbor', true) }}"
     harbor_postconfigure_oidc_client_secret: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_SECRET') | default('', true) }}"
     harbor_postconfigure_oidc_groups_claim: "{{ lookup('env', 'HARBOR_OIDC_GROUPS_CLAIM') | default('groups', true) }}"
-    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('', true) }}"
-    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('', true) }}"
+    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('harbor-admins', true) }}"
+    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('^harbor-(users|admins)$', true) }}"
     harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access', true) }}"
-    harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('sub', true) }}"
+    harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('preferred_username', true) }}"
     harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('false', true) | bool }}"
     harbor_postconfigure_oidc_auto_onboard: "{{ lookup('env', 'HARBOR_OIDC_AUTO_ONBOARD') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_logout: "{{ lookup('env', 'HARBOR_OIDC_LOGOUT') | default('true', true) | bool }}"
-    harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('false', true) | bool }}"
+    harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
   pre_tasks:
+    - name: Enforce readable Harbor OIDC username claim
+      ansible.builtin.assert:
+        that:
+          - harbor_postconfigure_oidc_user_claim == 'preferred_username'
+        fail_msg: >-
+          Harbor OIDC user claim must be 'preferred_username' to avoid opaque
+          hash-style Harbor usernames from the 'sub' claim.
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
     - name: Check Authentik health endpoint reachability for Harbor OIDC reconcile
       ansible.builtin.uri:
         url: http://10.57.1.10:9000/-/health/live/

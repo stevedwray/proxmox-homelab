@@ -16,6 +16,194 @@
   no_log: true
 
 # -----------------------------------------------------------------------
+# Browser SSO (OIDC)
+# -----------------------------------------------------------------------
+
+- name: Validate Harbor OIDC inputs
+  ansible.builtin.assert:
+    that:
+      - harbor_postconfigure_oidc_endpoint | length > 0
+      - harbor_postconfigure_oidc_client_id | length > 0
+      - harbor_postconfigure_oidc_client_secret | length > 0
+      - harbor_postconfigure_oidc_user_claim | length > 0
+      - "'openid' in harbor_postconfigure_oidc_scope"
+    fail_msg: "Harbor OIDC is enabled but one or more required HARBOR_OIDC_* settings are missing or invalid."
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Configure Harbor OIDC auth mode
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: >-
+      {{
+        {
+          'auth_mode': 'oidc_auth',
+          'primary_auth_mode': harbor_postconfigure_oidc_primary_auth_mode | bool,
+          'oidc_name': harbor_postconfigure_oidc_name,
+          'oidc_endpoint': harbor_postconfigure_oidc_endpoint,
+          'oidc_client_id': harbor_postconfigure_oidc_client_id,
+          'oidc_client_secret': harbor_postconfigure_oidc_client_secret,
+          'oidc_groups_claim': harbor_postconfigure_oidc_groups_claim,
+          'oidc_admin_group': harbor_postconfigure_oidc_admin_group,
+          'oidc_group_filter': harbor_postconfigure_oidc_group_filter,
+          'oidc_scope': harbor_postconfigure_oidc_scope,
+          'oidc_user_claim': harbor_postconfigure_oidc_user_claim,
+          'oidc_verify_cert': harbor_postconfigure_oidc_verify_cert | bool,
+          'oidc_auto_onboard': harbor_postconfigure_oidc_auto_onboard | bool,
+          'oidc_logout': harbor_postconfigure_oidc_logout | bool
+        } | to_json
+      }}
+    status_code: 200
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Display Harbor OIDC status
+  ansible.builtin.debug:
+    msg:
+      - "Harbor browser sign-in is configured for OIDC provider '{{ harbor_postconfigure_oidc_name }}'."
+      - "Docker and Helm CLI users still need Harbor CLI secrets after first browser SSO login."
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Look up Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup
+  delegate_to: localhost
+  no_log: true
+
+- name: Create Harbor breakglass user when missing
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      username: "{{ harbor_postconfigure_breakglass_username }}"
+      email: "{{ harbor_postconfigure_breakglass_username }}@lab.gibbsgreatly.xyz"
+      realname: "Breakglass Administrator"
+      comment: "Emergency admin"
+      password: "{{ harbor_postconfigure_breakglass_password }}"
+    status_code: [201, 409]
+  when:
+    - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
+    - not harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Skip Harbor breakglass local-user creation in OIDC mode
+  ansible.builtin.debug:
+    msg: >-
+      Skipping Harbor breakglass local-user creation because Harbor forbids creating
+      new local users after auth_mode is switched to oidc_auth. The built-in admin
+      account remains the local recovery path.
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
+  delegate_to: localhost
+
+- name: Re-fetch Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup_after
+  when:
+    - not harbor_postconfigure_oidc_enabled or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Ensure Harbor breakglass user has sysadmin role
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/{{ harbor_postconfigure_breakglass_lookup_after.json[0].user_id }}/sysadmin"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      sysadmin_flag: true
+    status_code: 200
+  when:
+    - harbor_postconfigure_breakglass_lookup_after is defined
+    - (harbor_postconfigure_breakglass_lookup_after.json | default([]) | length) > 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Look up Harbor OIDC steve user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_steve_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_steve_lookup
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Resolve Harbor OIDC steve user
+  ansible.builtin.set_fact:
+    harbor_postconfigure_steve_user: >-
+      {{
+        (
+          harbor_postconfigure_steve_lookup.json | default([])
+          | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+          | selectattr(
+              'email',
+              'equalto',
+              harbor_postconfigure_steve_email
+            )
+            if (harbor_postconfigure_steve_email | length) > 0
+            else (
+              harbor_postconfigure_steve_lookup.json | default([])
+              | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+            )
+          | list
+          | first
+        ) | default({})
+      }}
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Ensure OIDC steve user has sysadmin role
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/{{ harbor_postconfigure_steve_user.user_id }}/sysadmin"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      sysadmin_flag: true
+    status_code: 200
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - harbor_postconfigure_steve_user is defined
+    - harbor_postconfigure_steve_user.user_id is defined
+    - not (harbor_postconfigure_steve_user.sysadmin_flag | default(false) | bool)
+  delegate_to: localhost
+  no_log: true
+
+# -----------------------------------------------------------------------
 # Docker Hub proxy cache registry endpoint
 # -----------------------------------------------------------------------
 
@@ -330,59 +518,6 @@
   ansible.builtin.debug:
     msg: "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists — credentials are in Bitwarden"
   when: harbor_postconfigure_robot_exists is defined
-  delegate_to: localhost
-
-# -----------------------------------------------------------------------
-# Browser SSO (OIDC)
-# -----------------------------------------------------------------------
-
-- name: Validate Harbor OIDC inputs
-  ansible.builtin.assert:
-    that:
-      - harbor_postconfigure_oidc_endpoint | length > 0
-      - harbor_postconfigure_oidc_client_id | length > 0
-      - harbor_postconfigure_oidc_client_secret | length > 0
-      - harbor_postconfigure_oidc_user_claim | length > 0
-      - "'openid' in harbor_postconfigure_oidc_scope"
-    fail_msg: "Harbor OIDC is enabled but one or more required HARBOR_OIDC_* settings are missing or invalid."
-  when: harbor_postconfigure_oidc_enabled
-  delegate_to: localhost
-  no_log: true
-
-- name: Configure Harbor OIDC auth mode
-  ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
-    method: PUT
-    url_username: "{{ harbor_postconfigure_admin_user }}"
-    url_password: "{{ harbor_postconfigure_admin_password }}"
-    force_basic_auth: true
-    body_format: json
-    body:
-      auth_mode: "oidc_auth"
-      primary_auth_mode: "{{ harbor_postconfigure_oidc_primary_auth_mode }}"
-      oidc_name: "{{ harbor_postconfigure_oidc_name }}"
-      oidc_endpoint: "{{ harbor_postconfigure_oidc_endpoint }}"
-      oidc_client_id: "{{ harbor_postconfigure_oidc_client_id }}"
-      oidc_client_secret: "{{ harbor_postconfigure_oidc_client_secret }}"
-      oidc_groups_claim: "{{ harbor_postconfigure_oidc_groups_claim }}"
-      oidc_admin_group: "{{ harbor_postconfigure_oidc_admin_group }}"
-      oidc_group_filter: "{{ harbor_postconfigure_oidc_group_filter }}"
-      oidc_scope: "{{ harbor_postconfigure_oidc_scope }}"
-      oidc_user_claim: "{{ harbor_postconfigure_oidc_user_claim }}"
-      oidc_verify_cert: "{{ harbor_postconfigure_oidc_verify_cert }}"
-      oidc_auto_onboard: "{{ harbor_postconfigure_oidc_auto_onboard }}"
-      oidc_logout: "{{ harbor_postconfigure_oidc_logout }}"
-    status_code: 200
-  when: harbor_postconfigure_oidc_enabled
-  delegate_to: localhost
-  no_log: true
-
-- name: Display Harbor OIDC status
-  ansible.builtin.debug:
-    msg:
-      - "Harbor browser sign-in is configured for OIDC provider '{{ harbor_postconfigure_oidc_name }}'."
-      - "Docker and Helm CLI users still need Harbor CLI secrets after first browser SSO login."
-  when: harbor_postconfigure_oidc_enabled
   delegate_to: localhost
 
 # -----------------------------------------------------------------------

@@ -32,6 +32,7 @@
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
     authentik_superuser_api_token: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | mandatory('AUTHENTIK_SUPERUSER_API_TOKEN env var is not set') }}"
+    authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
 
   tasks:
     - name: Create Authentik compose directory
@@ -123,3 +124,60 @@
           AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
           injected from SOPS via .env. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
+
+    - name: Check if steve user exists in Authentik
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/?username=steve"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        status_code: [200]
+      register: authentik_steve_check
+      no_log: true
+
+    - name: Create steve user in Authentik
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "steve"
+          name: "Steve"
+          email: "steve@lab.gibbsgreatly.xyz"
+          is_active: true
+          groups: []
+        status_code: [201]
+      register: authentik_steve_create
+      when: (authentik_steve_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve steve user PK
+      ansible.builtin.set_fact:
+        steve_pk: >-
+          {{
+            (authentik_steve_check.json.results[0].pk
+            if (authentik_steve_check.json.pagination.count | int) > 0
+            else authentik_steve_create.json.pk) | int
+          }}
+      no_log: true
+
+    - name: Set steve user password in Authentik
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ steve_pk }}/set_password/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          password: "{{ authentik_steve_password }}"
+        status_code: [204]
+      no_log: true
+
+    - name: Confirm steve user provisioned
+      ansible.builtin.debug:
+        msg: "Authentik user 'steve' is present and password is set (pk={{ steve_pk }})."

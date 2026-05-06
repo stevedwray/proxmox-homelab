@@ -51,10 +51,11 @@
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
     traefik_image: "traefik:{{ traefik_version }}"
-    # Optional control-node source dir for generated per-stack Traefik files.
-    # When provided, files are published into /opt/proxy-stack/dynamic/ so the
-    # active file provider always loads them.
-    traefik_generated_source_dir: ""
+    # Control-node source dir for generated per-stack Traefik files.
+    # Defaults to terraform/lxc/.generated/traefik and can be overridden.
+    # Files are published into /opt/proxy-stack/dynamic/ so the active file
+    # provider always loads router definitions.
+    traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
 
   tasks:
     - name: Create Traefik directory structure
@@ -163,11 +164,17 @@
           # resolver-specific certs (e.g. step-ca cert for authentik).
           {}
 
-    - name: Build combined CA bundle for lego (system CAs + homelab step-ca CA)
+    - name: Check whether homelab root CA exists on managed host
+      ansible.builtin.stat:
+        path: /usr/local/share/ca-certificates/homelab-root.crt
+      register: proxy_homelab_root_ca_stat
+
+    - name: Build combined CA bundle for lego (system CAs + optional homelab step-ca CA)
       ansible.builtin.shell: |
-        cat /etc/ssl/certs/ca-certificates.crt \
-            /usr/local/share/ca-certificates/homelab-root.crt \
-            > {{ proxy_compose_dir }}/certs/combined-ca.crt
+        cat /etc/ssl/certs/ca-certificates.crt > {{ proxy_compose_dir }}/certs/combined-ca.crt
+        if [[ -f /usr/local/share/ca-certificates/homelab-root.crt ]]; then
+          cat /usr/local/share/ca-certificates/homelab-root.crt >> {{ proxy_compose_dir }}/certs/combined-ca.crt
+        fi
       args:
         executable: /bin/bash
       changed_when: true
