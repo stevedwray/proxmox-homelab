@@ -132,8 +132,11 @@
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
-        status_code: [200]
+        status_code: [200, 403]
       register: authentik_steve_check
+      retries: 12
+      delay: 10
+      until: authentik_steve_check.status == 200
       no_log: true
 
     - name: Create steve user in Authentik
