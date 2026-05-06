@@ -184,3 +184,57 @@
     - name: Confirm steve user provisioned
       ansible.builtin.debug:
         msg: "Authentik user 'steve' is present and password is set (pk={{ steve_pk }})."
+
+    - name: Ensure homelab-admins group exists in Authentik
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/?name=homelab-admins"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        status_code: [200]
+      register: authentik_homelab_admins_check
+      no_log: true
+
+    - name: Create homelab-admins group when missing
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "homelab-admins"
+          is_superuser: false
+        status_code: [201]
+      register: authentik_homelab_admins_create
+      when: (authentik_homelab_admins_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve homelab-admins group PK
+      ansible.builtin.set_fact:
+        homelab_admins_pk: >-
+          {{
+            (authentik_homelab_admins_check.json.results[0].pk
+            if (authentik_homelab_admins_check.json.pagination.count | int) > 0
+            else authentik_homelab_admins_create.json.pk)
+          }}
+      no_log: true
+
+    - name: Add steve to homelab-admins group
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/{{ homelab_admins_pk }}/add_user/"
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          pk: "{{ steve_pk }}"
+        status_code: [204]
+      no_log: true
+
+    - name: Confirm homelab-admins group provisioned with steve
+      ansible.builtin.debug:
+        msg: "Authentik group 'homelab-admins' is present (pk={{ homelab_admins_pk }}) and steve (pk={{ steve_pk }}) is a member."
