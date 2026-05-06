@@ -135,7 +135,7 @@
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
     portainer_oauth_default_team_name: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_NAME') | default('oauth-default', true) }}"
     portainer_oauth_default_team_endpoint_role_id: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_ENDPOINT_ROLE_ID') | default('2', true) | int }}"
-    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin', true) }}"
+    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin,steve', true) }}"
 
   tasks:
     - name: Assert Portainer admin password is configured
@@ -484,6 +484,17 @@
         - (portainer_missing_oauth_admin_usernames | default([])) | length > 0
       no_log: true
 
+    - name: Re-read Portainer users for admin role promotion
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_for_promotion
+      when: portainer_oauth_admin_usernames | length > 0
+      no_log: true
+
     - name: Promote configured OAuth usernames to Portainer admin role
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"
@@ -494,7 +505,7 @@
         body:
           Role: 1
         status_code: 200
-      loop: "{{ portainer_users_response.json }}"
+      loop: "{{ portainer_users_for_promotion.json | default([]) }}"
       when:
         - portainer_oauth_admin_usernames | length > 0
         - (item.Username | default('')) in portainer_oauth_admin_usernames
