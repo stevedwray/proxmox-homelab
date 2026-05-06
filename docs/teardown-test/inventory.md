@@ -45,12 +45,12 @@ This is a planning artifact only. It does not approve destructive execution.
 |---|---|---:|---|---|---|---|
 | `portainer-stack` | Stage 3b platform | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
 | `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
-| `harbor-stack` | Stage 1/2 foundation | 121 | `10.57.3.10/24` | `infra_seg` | `[]` | `deploy-harbor-stack` |
-| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `harbor-stack`, `apt-cacher-stack` | `deploy-ci-runner` |
+| `harbor-stack` | Stage 3b platform | 121 | `10.57.3.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
+| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
 | `dns-stack` | Stage 3a edge foundation | 151 | `10.57.1.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
-| `proxy-stack` | Stage 3a edge foundation | 153 | `10.57.2.10/24` | `edge_seg` | `harbor-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
+| `proxy-stack` | Stage 3a edge foundation | 153 | `10.57.2.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
 | `step-ca-stack` | Stage 3a edge foundation | 152 | `10.57.1.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
-| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `harbor-stack` | `deploy-authentik-stack` |
+| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
 | `monitoring-stack` | Stage 3b platform | 154 | `10.57.1.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
 | `netbox-stack` | Stage 3b platform | 143 | `10.57.3.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
 
@@ -80,26 +80,26 @@ corrected in Stage 3a: `step-ca` must precede `proxy-stack`.
 ## Approved Deploy Order
 
 1. `apt-cacher-stack`
-2. `harbor-stack`
-3. `ci-runner-01`
-4. `dns-stack`
-5. `step-ca-stack`
-6. `proxy-stack`
-7. `authentik-stack`
-8. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
+2. `ci-runner-01`
+3. `dns-stack`
+4. `step-ca-stack`
+5. `proxy-stack`
+6. `authentik-stack`
+7. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
+8. `harbor-stack`
 9. `monitoring-stack`
 10. `netbox-stack`
 11. `portainer-stack`
 
 ## Approved Destroy Order
 
-1. `netbox-stack`
-2. `monitoring-stack`
-3. `authentik-stack`
-4. `step-ca-stack`
-5. `proxy-stack`
-6. `dns-stack`
-7. `ci-runner-01`
-8. `harbor-stack`
-9. `apt-cacher-stack`
-10. `portainer-stack`
+1. `portainer-stack`
+2. `netbox-stack`
+3. `monitoring-stack`
+4. `harbor-stack`
+5. `authentik-stack`
+6. `step-ca-stack`
+7. `proxy-stack`
+8. `dns-stack`
+9. `ci-runner-01`
+10. `apt-cacher-stack`
