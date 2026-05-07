@@ -6,6 +6,15 @@
 
   vars:
     lab_ip_proxy_expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+    lab_ip_authentik: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
+    lab_ip_step_ca: "{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
+    lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+    lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    lab_ip_portainer: "{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var is required') }}"
+    lab_ip_proxy: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+    lab_ip_harbor: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+    lab_ip_netbox: "{{ lookup('env', 'LAB_IP_NETBOX') | mandatory('LAB_IP_NETBOX env var is required') }}"
+    lab_gw_mgmt: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
     coredns_version: "1.10.1"
     coredns_binary: "/usr/local/bin/coredns"
     coredns_config_dir: "/etc/coredns"
@@ -99,9 +108,13 @@
         state: directory
         mode: "0755"
 
-    - name: Copy CoreDNS configuration file
+    - name: Render CoreDNS configuration file
       ansible.builtin.copy:
-        src: "{{ playbook_dir }}/../files/coredns.conf"
+        content: >-
+          {{
+            lookup('file', playbook_dir ~ '/../files/coredns.conf')
+            | replace('${LAB_GW_MGMT}', lab_gw_mgmt)
+          }}
         dest: "{{ coredns_config_dir }}/coredns.conf"
         mode: "0644"
       notify: Restart CoreDNS service
@@ -124,7 +137,18 @@
 
     - name: Stage CoreDNS zone file candidate
       ansible.builtin.copy:
-        src: "{{ coredns_zone_src }}"
+        content: >-
+          {{
+            lookup('file', coredns_zone_src)
+            | replace('${LAB_IP_AUTHENTIK}', lab_ip_authentik)
+            | replace('${LAB_IP_STEP_CA}', lab_ip_step_ca)
+            | replace('${LAB_IP_MONITORING}', lab_ip_monitoring)
+            | replace('${LAB_IP_DNS}', lab_ip_dns)
+            | replace('${LAB_IP_PORTAINER}', lab_ip_portainer)
+            | replace('${LAB_IP_PROXY}', lab_ip_proxy)
+            | replace('${LAB_IP_HARBOR}', lab_ip_harbor)
+            | replace('${LAB_IP_NETBOX}', lab_ip_netbox)
+          }}
         dest: "{{ coredns_zone_stage_file }}"
         mode: "0644"
 

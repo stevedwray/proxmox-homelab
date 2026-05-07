@@ -10,24 +10,24 @@ $TTL 5m
 )
 
 @               IN  NS  ns1.lab.gibbsgreatly.xyz.
-ns1             IN  A   10.57.1.13
+ns1             IN  A   ${LAB_IP_DNS}
 
 ; Phase 04 core services (mgmt_seg)
-authentik       A   10.57.1.10          ; identity provider
-step-ca         A   10.57.1.11          ; internal CA
-monitoring      A   10.57.1.12          ; observability stack
-grafana         A   10.57.1.12          ; Grafana (alias for monitoring stack)
+authentik       A   ${LAB_IP_AUTHENTIK} ; identity provider
+step-ca         A   ${LAB_IP_STEP_CA}   ; internal CA
+monitoring      A   ${LAB_IP_MONITORING}; observability stack
+grafana         A   ${LAB_IP_MONITORING}; Grafana (alias for monitoring stack)
 
 ; Phase 04 edge services (edge_seg)
-traefik         A   10.57.2.10          ; reverse proxy
+traefik         A   ${LAB_IP_PROXY}     ; reverse proxy
 
 ; Breakglass direct-access records (bypass Traefik — point to service container IP)
-authentik-bg    IN  A   10.57.1.10      ; authentik direct (breakglass)
-harbor-bg       IN  A   10.57.3.10      ; harbor direct (breakglass)
-monitoring-bg   IN  A   10.57.1.12      ; grafana/monitoring direct (breakglass)
-netbox-bg       IN  A   10.57.3.12      ; netbox direct (breakglass)
-portainer-bg    IN  A   10.57.1.20      ; portainer direct (breakglass)
-proxy-bg        IN  A   10.57.2.10      ; traefik dashboard direct (breakglass)
+authentik-bg    IN  A   ${LAB_IP_AUTHENTIK} ; authentik direct (breakglass)
+harbor-bg       IN  A   ${LAB_IP_HARBOR}    ; harbor direct (breakglass)
+monitoring-bg   IN  A   ${LAB_IP_MONITORING}; grafana/monitoring direct (breakglass)
+netbox-bg       IN  A   ${LAB_IP_NETBOX}    ; netbox direct (breakglass)
+portainer-bg    IN  A   ${LAB_IP_PORTAINER} ; portainer direct (breakglass)
+proxy-bg        IN  A   ${LAB_IP_PROXY}     ; traefik dashboard direct (breakglass)
 
 ; Phase 06 application services — populated during app migration
 ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)

@@ -12,10 +12,6 @@ from mikrotik_client import discover_from_mikrotik
 from proxmox_client import discover_from_proxmox
 
 
-FALLBACK_PORTAINER_SERVER_IP = "10.57.1.20"
-FALLBACK_PORTAINER_URL = f"https://{FALLBACK_PORTAINER_SERVER_IP}:9443"
-
-
 # ---------------------------------------------------------------------------
 # Stack YAML discovery
 # ---------------------------------------------------------------------------
@@ -53,9 +49,16 @@ def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str, str]:
     """Resolve Portainer endpoint config from env vars, then declared metadata."""
     portainer_ip = (
         os.environ.get("PORTAINER_SERVER_IP")
+        or os.environ.get("LAB_IP_PORTAINER")
         or _get_declared_portainer_ip(stack_yamls)
-        or FALLBACK_PORTAINER_SERVER_IP
     )
+
+    if not portainer_ip:
+        raise ValueError(
+            "Portainer endpoint is unresolved; set PORTAINER_SERVER_IP or LAB_IP_PORTAINER, "
+            "or declare portainer-stack.ip_address in stack metadata"
+        )
+
     portainer_url = os.environ.get("PORTAINER_URL", f"https://{portainer_ip}:9443")
     return portainer_ip, portainer_url
 
@@ -68,7 +71,16 @@ class PortainerClient:
     """Minimal Portainer API client."""
 
     def __init__(self, url=None, password=None):
-        self.url = (url or os.environ.get("PORTAINER_URL") or FALLBACK_PORTAINER_URL).rstrip("/")
+        resolved_url = url or os.environ.get("PORTAINER_URL")
+        if not resolved_url:
+            resolved_ip = os.environ.get("PORTAINER_SERVER_IP") or os.environ.get("LAB_IP_PORTAINER")
+            if not resolved_ip:
+                raise ValueError(
+                    "Portainer URL is unresolved; set PORTAINER_URL, PORTAINER_SERVER_IP, or LAB_IP_PORTAINER"
+                )
+            resolved_url = f"https://{resolved_ip}:9443"
+
+        self.url = resolved_url.rstrip("/")
         self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
         self._token = None
 

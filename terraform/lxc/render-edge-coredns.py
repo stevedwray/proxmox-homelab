@@ -7,6 +7,7 @@ import argparse
 import difflib
 import json
 import os
+import re
 import socket
 import sys
 from dataclasses import asdict, dataclass
@@ -369,6 +370,15 @@ def _build_diff(seed_text: str, rendered_zone: str, seed_zone: Path, output_zone
     return "\n".join(diff_lines)
 
 
+def _expand_env_placeholders(seed_text: str, seed_zone_path: Path) -> str:
+    expanded = os.path.expandvars(seed_text)
+    unresolved = sorted(set(re.findall(r"\$\{([A-Z0-9_]+)\}", expanded)))
+    if unresolved:
+        names = ", ".join(unresolved)
+        raise ValueError(f"seed zone {seed_zone_path} has unresolved env placeholders: {names}")
+    return expanded
+
+
 def _live_validate_forwarding(
     generated_records: tuple[GeneratedRecord, ...],
     warnings: list[RenderWarning],
@@ -429,7 +439,10 @@ def render_coredns_dry_run(
             warnings=(),
         )
 
-    seed_text = seed_zone_path.read_text(encoding="utf-8")
+    seed_text = _expand_env_placeholders(
+        seed_zone_path.read_text(encoding="utf-8"),
+        seed_zone_path,
+    )
     issues: list[RenderIssue] = []
     warnings: list[RenderWarning] = []
 

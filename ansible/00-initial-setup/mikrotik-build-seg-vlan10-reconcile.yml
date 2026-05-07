@@ -4,14 +4,14 @@
   gather_facts: false
 
   vars:
-    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.251', true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: "{{ lookup('env', 'MIKROTIK_USER') }}"
     mikrotik_password: "{{ lookup('env', 'MIKROTIK_PASSWORD') }}"
 
     build_vlan_name: vlan10-build
     trunk_interface: ether5
-    build_gateway_cidr: 10.57.0.1/24
+    build_gateway_cidr: "{{ (lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required')) ~ '/24' }}"
 
   pre_tasks:
     - name: Assert MikroTik credentials are present

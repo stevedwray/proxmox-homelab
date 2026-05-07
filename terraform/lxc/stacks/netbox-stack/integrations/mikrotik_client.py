@@ -16,10 +16,13 @@ class MikrotikClient:
     """
 
     def __init__(self, host=None, port=None, user=None, password=None):
-        self.host = host or os.environ.get("MIKROTIK_HOST", "192.168.1.1")
+        self.host = host or os.environ.get("MIKROTIK_HOST")
         self.port = port or int(os.environ.get("MIKROTIK_PORT", "8729"))
         self.user = user or os.environ.get("MIKROTIK_USER")
         self.password = password or os.environ.get("MIKROTIK_PASSWORD")
+
+        if not self.host:
+            raise ValueError("Mikrotik host requires an explicit host or MIKROTIK_HOST env var")
 
         if not all([self.user, self.password]):
             raise ValueError(

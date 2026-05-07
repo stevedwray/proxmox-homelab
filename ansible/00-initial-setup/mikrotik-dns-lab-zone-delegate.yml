@@ -2,14 +2,14 @@
 # mikrotik-dns-lab-zone-delegate.yml
 #
 # Phase 2 DNS delegation: switches MikroTik from static A records (Phase 1)
-# to a type=FWD entry for lab.gibbsgreatly.xyz → CoreDNS at 10.57.1.13.
+# to a type=FWD entry for lab.gibbsgreatly.xyz that forwards to CoreDNS.
 #
-# Prerequisite: CoreDNS deployed and authoritative at 10.57.1.13 (Phase 04b).
+# Prerequisite: CoreDNS deployed and authoritative on the configured LAB_IP_DNS endpoint (Phase 04b).
 # Run AFTER: mikrotik-dns-lab-zone-baseline.yml has been applied.
 #
 # What it does:
 #   1. Removes all static DNS entries tagged comment=lab-zone-baseline from MikroTik.
-#   2. Adds a single type=FWD regexp entry delegating lab.gibbsgreatly.xyz → 10.57.1.13.
+#   2. Adds a single type=FWD regexp entry delegating lab.gibbsgreatly.xyz to the configured CoreDNS endpoint.
 #   3. Validates resolution of a lab-zone name via all four SDN gateway resolvers.
 #   4. Validates that non-lab names still resolve (public recursion path preserved).
 #
@@ -24,17 +24,15 @@
 #   MIKROTIK_ADMIN           — MikroTik admin automation username
 #   MIKROTIK_ADMIN_PASSWORD  — MikroTik admin automation password
 #
-# After running this playbook, the following dig checks must pass:
-#   dig @10.57.1.1 +short grafana.lab.gibbsgreatly.xyz   # expect 10.57.1.12
-#   dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz   # expect 10.57.2.10
-#   dig @10.57.1.1 +short github.com                     # expect public IP (non-delegated path)
+# After running this playbook, delegated queries should resolve via the configured LAB_GW_* resolvers,
+# and public recursion should still succeed through the configured management resolver.
 
 - name: Delegate lab.gibbsgreatly.xyz from MikroTik static A records to CoreDNS FWD
   hosts: localhost
   gather_facts: false
 
   vars:
-    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.251', true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
       {{
@@ -48,27 +46,27 @@
         | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
       }}
 
-    coredns_ip: "10.57.1.13"
+    coredns_ip: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     fwd_regexp: "(^|\\.)lab\\.gibbsgreatly\\.xyz$"
     fwd_comment: "lab-zone-delegate"
     baseline_comment: "lab-zone-baseline"
 
     # Validation probes — all four SDN gateway resolvers
     delegated_probes:
-      - resolver: "10.57.0.1"
+      - resolver: "{{ lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required') }}"
         name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.1.1"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
         name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.2.1"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_EDGE') | mandatory('LAB_GW_EDGE env var is required') }}"
         name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.3.1"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_INFRA') | mandatory('LAB_GW_INFRA env var is required') }}"
         name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
 
-    public_probe_resolver: "10.57.1.1"
+    public_probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
     public_probe_name: "github.com"
 
   pre_tasks:
@@ -184,7 +182,7 @@
         fail_msg: >-
           Resolver {{ item.item.resolver }} returned '{{ item.stdout | trim }}'
           for {{ item.item.name }}, expected {{ item.item.expected }}.
-          Check MikroTik FWD entry and that CoreDNS (10.57.1.13) is reachable
+          Check MikroTik FWD entry and that CoreDNS ({{ coredns_ip }}) is reachable
           from MikroTik with UDP/TCP 53.
         success_msg: >-
           {{ item.item.resolver }} → {{ item.item.name }} = {{ item.stdout | trim }} ✓
@@ -216,10 +214,10 @@
           - "=== Phase 2 DNS delegation validation ==="
           - "FWD entry: lab.gibbsgreatly.xyz → {{ coredns_ip }} (CoreDNS)"
           - "Delegated resolution:"
-          - "  @10.57.0.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[0].stdout | trim }}"
-          - "  @10.57.1.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[1].stdout | trim }}"
-          - "  @10.57.2.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[2].stdout | trim }}"
-          - "  @10.57.3.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[3].stdout | trim }}"
+          - "  @{{ delegated_probes[0].resolver }} {{ delegated_probes[0].name }} = {{ delegated_results.results[0].stdout | trim }}"
+          - "  @{{ delegated_probes[1].resolver }} {{ delegated_probes[1].name }} = {{ delegated_results.results[1].stdout | trim }}"
+          - "  @{{ delegated_probes[2].resolver }} {{ delegated_probes[2].name }} = {{ delegated_results.results[2].stdout | trim }}"
+          - "  @{{ delegated_probes[3].resolver }} {{ delegated_probes[3].name }} = {{ delegated_results.results[3].stdout | trim }}"
           - "Non-delegated (public probe):"
-          - "  @10.57.1.1 github.com = {{ public_probe_result.stdout | trim }}"
+          - "  @{{ public_probe_resolver }} {{ public_probe_name }} = {{ public_probe_result.stdout | trim }}"
           - "=== Delegation phase complete ==="

@@ -15,7 +15,7 @@
     # Template configuration (can be overridden via extra vars)
     template_id: "{{ debian_template.container_id | default(910) }}"
     template_hostname: "{{ debian_template.hostname | default('debian-template-builder') }}"
-    template_ip: "{{ debian_template.ip | default('192.168.1.54') }}"
+    template_ip: "{{ debian_template.ip | mandatory('debian_template.ip is required') }}"
     template_memory: "{{ debian_template.memory | default(2048) }}"
     template_cores: "{{ debian_template.cores | default(2) }}"
     template_disk: "{{ debian_template.disk | default('8G') }}"
@@ -28,7 +28,7 @@
     base_template_file: "{{ base_template | regex_replace('^local:vztmpl/', '') }}"
     debian_template_version: "{{ (base_template_file.split('_') | length > 1) | ternary(base_template_file.split('_')[1], '13') }}"
     network_bridge: "{{ proxmox_network.bridge | default('vmbr0') }}"
-    gateway_ip: "{{ proxmox_network.gateway | default('192.168.1.1') }}"
+    gateway_ip: "{{ proxmox_network.gateway | mandatory('proxmox_network.gateway is required') }}"
 
     # Template packaging settings
     clone_id: "{{ debian_template.clone_id | default(810) }}"

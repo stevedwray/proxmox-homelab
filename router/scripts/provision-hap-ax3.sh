@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Provisions the hAP ax3 as a drop-in replacement for the hAP ac.
 # Reads all source config from router/config/current-config.json.
-# Safe to run against https://192.168.1.251 while the old router is still live.
+# Safe to run against the temporary MikroTik management endpoint while the old router is still live.
 #
 # Port layout (differs from old hAP ac where ether1 was WAN):
 #   ether1 (2.5G) → bridgeLocal  (switch uplink)
@@ -12,7 +12,7 @@
 #
 # Usage:
 #   ./provision-hap-ax3.sh
-#   MIKROTIK_TARGET=192.168.x.x ./provision-hap-ax3.sh   # override target IP
+#   MIKROTIK_TARGET=router.example.test ./provision-hap-ax3.sh   # override target host/IP
 
 set -euo pipefail
 
@@ -20,8 +20,10 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/../.."
 CONFIG="${SCRIPT_DIR}/../config/current-config.json"
 
-TARGET_IP="${MIKROTIK_TARGET:-192.168.1.251}"
+TARGET_IP="${MIKROTIK_TARGET:-${MIKROTIK_HOST:?MIKROTIK_HOST not set}}"
 TARGET="https://${TARGET_IP}"
+LAN_GW_CIDR="${MIKROTIK_LAN_GW_CIDR:?MIKROTIK_LAN_GW_CIDR not set}"
+MGMT_CIDR="${MIKROTIK_MGMT_CIDR:?MIKROTIK_MGMT_CIDR not set}"
 
 # Load credentials from SOPS
 eval "$(sops -d "${REPO_ROOT}/terraform/secrets.enc.yaml" \
@@ -108,7 +110,7 @@ if [ -n "${DEFAULT_ADDR_ID}" ]; then
 fi
 
 # Apply VLAN gateway addresses from source config.
-# The source has 192.168.1.1/24 on ether2 (a bridge slave); remap to bridgeLocal.
+# The source LAN gateway CIDR is attached to ether2 (a bridge slave); remap it to bridgeLocal.
 # We skip dynamic addresses (WAN DHCP).
 log "Applying VLAN gateway addresses"
 jqc -c '.ip.addresses[] | select(.dynamic == "false")' | while IFS= read -r entry; do
@@ -116,8 +118,8 @@ jqc -c '.ip.addresses[] | select(.dynamic == "false")' | while IFS= read -r entr
   iface=$(echo "$entry" | jq -r '.interface')
   comment=$(echo "$entry" | jq -r '.comment // ""')
 
-  # Remap: old LAN IP was on ether2 (bridge slave) → bridgeLocal on new router
-  if echo "$addr" | grep -q '^192\.168\.1\.1/'; then
+  # Remap the LAN gateway CIDR from ether2 (bridge slave) to bridgeLocal.
+  if [[ "$addr" == "$LAN_GW_CIDR" ]]; then
     iface="bridgeLocal"
   fi
 
@@ -134,7 +136,7 @@ jqc -c '.ip.addresses[] | select(.dynamic == "false")' | while IFS= read -r entr
     "{\"address\":\"${addr}\",\"interface\":\"${iface}\",\"comment\":\"${comment}\"}" > /dev/null
 done
 
-# 192.168.1.251/24 remains on bridgeLocal for management access throughout provisioning.
+# The temporary management CIDR remains on bridgeLocal throughout provisioning.
 # Remove it manually after cutover (or run the cutover script).
 
 # ---------------------------------------------------------------------------
@@ -260,8 +262,8 @@ log ""
 log "Next steps:"
 log "  1. Verify config via the web UI or further API queries"
 log "  2. When ready to cut over:"
-log "     a. Unplug current router (192.168.1.1)"
+log "     a. Unplug the current LAN gateway (${LAN_GW_CIDR%/*})"
 log "     b. Plug ether2 into ISP/modem"
 log "     c. Plug switch cable into ether1 (2.5G) or ether3-5"
-log "     d. Remove management IP: DELETE /rest/ip/address/<id-of-192.168.1.251>"
-log "     e. The router will answer on 192.168.1.1 from bridgeLocal"
+log "     d. Remove management IP: DELETE /rest/ip/address/<id-of-${MGMT_CIDR}>"
+log "     e. The router will answer on ${LAN_GW_CIDR%/*} from bridgeLocal"

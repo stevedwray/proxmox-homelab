@@ -4,7 +4,7 @@
   gather_facts: false
 
   vars:
-    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
       {{
@@ -23,8 +23,8 @@
       chain: "forward"
       action: "accept"
       protocol: "tcp"
-      src-address: "10.57.0.0/24"
-      dst-address: "10.57.3.11"
+      src-address: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | mandatory('LAB_SUBNET_BUILD_CIDR env var is required') }}"
+      dst-address: "{{ lookup('env', 'LAB_IP_APT_CACHER') | mandatory('LAB_IP_APT_CACHER env var is required') }}"
       dst-port: "3142"
 
   pre_tasks:

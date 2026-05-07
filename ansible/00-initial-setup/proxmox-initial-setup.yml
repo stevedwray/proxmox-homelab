@@ -36,8 +36,8 @@
 
     # Example host network variables (ONLY used when pmx_manage_network: true)
     pmx_primary_iface: "{{ ansible_default_ipv4.interface | default('eth0') }}"
-    pmx_ipv4_addr: "192.168.1.10/24"
-    pmx_ipv4_gw: "192.168.1.1"
+    pmx_ipv4_addr: "{{ lookup('env', 'PROXMOX_INITIAL_IPV4_ADDR') | mandatory('PROXMOX_INITIAL_IPV4_ADDR env var is required') }}"
+    pmx_ipv4_gw: "{{ lookup('env', 'PROXMOX_INITIAL_IPV4_GW') | mandatory('PROXMOX_INITIAL_IPV4_GW env var is required') }}"
 
     # --- Terraform automation setup ---
     pmx_setup_terraform_user: true            # set false to skip automation user setup
