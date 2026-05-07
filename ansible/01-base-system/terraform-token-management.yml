@@ -10,7 +10,7 @@
 
   vars:
     # --- Terraform automation setup ---
-    pmx_terraform_user: "automation@pve"
+    pmx_terraform_user: "{{ lookup('env', 'PROXMOX_USER') | default('automation@pve', true) }}"
     pmx_terraform_token_id: "terraform"
     pmx_terraform_rotate_token: true          # set false to only create if missing
 

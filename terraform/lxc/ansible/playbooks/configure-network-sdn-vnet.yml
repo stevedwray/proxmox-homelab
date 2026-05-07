@@ -4,6 +4,7 @@
   gather_facts: false
 
   vars:
+    expected_pve_test_host: "{{ lookup('env', 'PVE_TEST_FQDN') | default('pve-test.gibbsgreatly.xyz', true) }}"
     network_sdn_nodes_csv: "{{ network_sdn_nodes | join(',') }}"
 
   tasks:
@@ -12,7 +13,7 @@
         that:
           - network_sdn_enable | bool
           - network_sdn_target == 'pve-test'
-          - network_sdn_pve_host == 'pve-test.gibbsgreatly.xyz'
+          - network_sdn_pve_host == expected_pve_test_host
           - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_zone_type != 'vlan' or (network_sdn_bridge | default('', true)) | length > 0
           - network_sdn_zone_type != 'vlan' or (network_sdn_vlan_tag | string) | length > 0

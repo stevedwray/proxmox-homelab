@@ -21,7 +21,7 @@ EXPECTED_HEAD="${TEARDOWN_EXPECTED_HEAD:-}"
 PREFLIGHT_ONLY="false"
 
 WITH_SECRETS="${REPO_ROOT}/with-secrets"
-PVE_HOST="pve-test.gibbsgreatly.xyz"
+PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 MODE="${1:-self-check}"
 
 PRE_EXEC_STATUS=""

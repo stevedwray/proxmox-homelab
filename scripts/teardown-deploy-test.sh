@@ -21,7 +21,7 @@ TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
-PVE_TEST_HOST="pve-test.gibbsgreatly.xyz"
+PVE_TEST_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
@@ -100,6 +100,11 @@ LAB_IP_DNS="${LAB_IP_DNS:?LAB_IP_DNS must be set in .env}"
 LAB_IP_PORTAINER="${LAB_IP_PORTAINER:?LAB_IP_PORTAINER must be set in .env}"
 LAB_IP_PROXY="${LAB_IP_PROXY:?LAB_IP_PROXY must be set in .env}"
 LAB_GW_MGMT="${LAB_GW_MGMT:?LAB_GW_MGMT must be set in .env}"
+LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
+LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
+LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
+LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
 BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
@@ -1250,11 +1255,11 @@ validate_stack_smoke() {
         ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
       ;;
     dns-stack)
-      run_logged "health-${stack}-authoritative" dig "@${ip}" +short traefik.lab.gibbsgreatly.xyz
-      run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short traefik.lab.gibbsgreatly.xyz
+      run_logged "health-${stack}-authoritative" dig "@${ip}" +short "${LAB_FQDN_TRAEFIK}"
+      run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short "${LAB_FQDN_TRAEFIK}"
       ;;
     proxy-stack)
-      run_logged "health-${stack}" curl -skI --resolve "traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://traefik.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"
       ;;
     step-ca-stack)
       run_logged "health-${stack}" curl -sk "https://${ip}/acme/acme/directory"
@@ -1263,10 +1268,10 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"
       ;;
     monitoring-stack)
-      run_logged "health-${stack}" curl -skI --resolve "grafana.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://grafana.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_GRAFANA}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_GRAFANA}/"
       ;;
     netbox-stack)
-      run_logged "health-${stack}" curl -skI --resolve "netbox.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://netbox.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_NETBOX}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_NETBOX}/"
       ;;
   esac
 }
@@ -1338,7 +1343,7 @@ probe_stack_health() {
     dns-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "dig '@${ip}' +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"; then
+        bash -lc "dig '@${ip}' +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="authoritative dns ok"
       else
@@ -1349,7 +1354,7 @@ probe_stack_health() {
     proxy-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY} https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"; then
+        bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="traefik https responds"
       else
@@ -1591,11 +1596,11 @@ run_live_preflight_checks() {
   local authentik_url
   guard_pve_test
   run_logged "dns-authoritative-traefik" \
-    bash -lc "dig @${LAB_IP_DNS} +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
+    bash -lc "dig @${LAB_IP_DNS} +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "dns-delegated-traefik" \
-    bash -lc "dig @${LAB_GW_MGMT} +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
+    bash -lc "dig @${LAB_GW_MGMT} +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "https-route-traefik" \
-    bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY} https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
+    bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
     curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
@@ -1777,19 +1782,19 @@ phase_final_validation() {
   authentik_url="$(get_authentik_url)" || return 1
 
   for host in "${BROWSER_HOSTS[@]}"; do
-    fqdn="${host}.lab.gibbsgreatly.xyz"
+    fqdn="${host}.${LAB_DOMAIN}"
     run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
   for bg_host in "${BREAKGLASS_DNS_HOSTS[@]}"; do
-    bg_fqdn="${bg_host}.lab.gibbsgreatly.xyz"
+    bg_fqdn="${bg_host}.${LAB_DOMAIN}"
     run_dns_nonempty_check "dns-authoritative-${bg_host}" "${LAB_IP_DNS}" "${bg_fqdn}"
     run_dns_nonempty_check "dns-delegated-${bg_host}" "${LAB_GW_MGMT}" "${bg_fqdn}"
   done
 
-  run_logged "harbor-registry-auth" curl -skI --resolve "harbor.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://harbor.lab.gibbsgreatly.xyz/v2/
+  run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
   run_logged "authentik-direct-health" curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \

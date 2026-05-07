@@ -41,7 +41,7 @@
 
     # --- Terraform automation setup ---
     pmx_setup_terraform_user: true            # set false to skip automation user setup
-    pmx_terraform_user: "automation@pve"
+    pmx_terraform_user: "{{ lookup('env', 'PROXMOX_USER') | default('automation@pve', true) }}"
     pmx_terraform_token_id: "terraform"
     pmx_terraform_rotate_token: true          # always create fresh token
 
