@@ -367,6 +367,11 @@ for stack in "${ordered_stacks[@]}"; do
     fi
   fi
 
+  if [[ "$check_mode" == "true" ]]; then
+    cmd+=(--check)
+  fi
+
+  log "RUN ${stack}: ${cmd[*]}"
   "${cmd[@]}"
 done
 
