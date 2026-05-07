@@ -85,13 +85,13 @@
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
       ansible.builtin.command:
-        # Keep API reconcile on direct endpoint: --authentik-url http://10.57.1.10:9000
+        # Keep API reconcile on direct endpoint, sourced from LAB_IP_AUTHENTIK.
         argv:
           - python3
           - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
           - "{{ playbook_dir }}/../../stacks/monitoring-stack/edge.yaml"
           - --authentik-url
-          - http://10.57.1.10:9000
+          - "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | default('10.57.1.10', true) }}:9000"
           - --no-verify-tls
           - --apply
           - --json

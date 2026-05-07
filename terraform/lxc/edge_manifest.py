@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 import re
@@ -13,7 +14,7 @@ import yaml
 API_VERSION = "homelab.gibbsgreatly.xyz/v1alpha1"
 KIND = "EdgeManifest"
 LAB_DOMAIN_SUFFIX = ".lab.gibbsgreatly.xyz"
-EXPECTED_DNS_TARGET = "10.57.2.10"
+EXPECTED_DNS_TARGET = os.getenv("LAB_IP_PROXY", "10.57.2.10")
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")
 TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")

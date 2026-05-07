@@ -94,7 +94,12 @@ BREAKGLASS_DNS_HOSTS=(
   "proxy-bg"
 )
 
-BROWSER_DNS_TARGET_IP="10.57.2.10"
+LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-10.57.1.10}"
+LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-10.57.1.11}"
+LAB_IP_DNS="${LAB_IP_DNS:-10.57.1.13}"
+LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-10.57.1.20}"
+LAB_IP_PROXY="${LAB_IP_PROXY:-10.57.2.10}"
+BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
 EXPECTED_RUNTIME_DIRTY_PATHS=(
@@ -621,6 +626,7 @@ assert_traefik_render_output() {
 
   if python3 - "${logfile}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -668,6 +674,7 @@ assert_coredns_render_output() {
 
   if python3 - "${logfile}" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -684,8 +691,9 @@ if not output_zone.is_file():
 rendered_zone = output_zone.read_text(encoding="utf-8")
 if "Generated browser edge records" not in rendered_zone:
     raise SystemExit("Rendered CoreDNS zone is missing generated browser record section")
-if "10.57.2.10" not in rendered_zone:
-    raise SystemExit("Rendered CoreDNS zone is missing the expected 10.57.2.10 target")
+expected_target = os.environ.get("LAB_IP_PROXY", "10.57.2.10")
+if expected_target not in rendered_zone:
+    raise SystemExit(f"Rendered CoreDNS zone is missing the expected {expected_target} target")
 PY
   then
     return 0
@@ -1244,7 +1252,7 @@ validate_stack_smoke() {
       run_logged "health-${stack}-delegated" dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
       ;;
     proxy-stack)
-      run_logged "health-${stack}" curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://traefik.lab.gibbsgreatly.xyz/
       ;;
     step-ca-stack)
       run_logged "health-${stack}" curl -sk "https://${ip}/acme/acme/directory"
@@ -1253,10 +1261,10 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"
       ;;
     monitoring-stack)
-      run_logged "health-${stack}" curl -skI --resolve grafana.lab.gibbsgreatly.xyz:443:10.57.2.10 https://grafana.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "grafana.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://grafana.lab.gibbsgreatly.xyz/
       ;;
     netbox-stack)
-      run_logged "health-${stack}" curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "netbox.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://netbox.lab.gibbsgreatly.xyz/
       ;;
   esac
 }
@@ -1328,7 +1336,7 @@ probe_stack_health() {
     dns-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "dig '@${ip}' +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"; then
+        bash -lc "dig '@${ip}' +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="authoritative dns ok"
       else
@@ -1339,7 +1347,7 @@ probe_stack_health() {
     proxy-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"; then
+        bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY} https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="traefik https responds"
       else
@@ -1581,13 +1589,13 @@ run_live_preflight_checks() {
   local authentik_url
   guard_pve_test
   run_logged "dns-authoritative-traefik" \
-    bash -lc "dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"
+    bash -lc "dig @${LAB_IP_DNS} +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "dns-delegated-traefik" \
-    bash -lc "dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"
+    bash -lc "dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "https-route-traefik" \
-    bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
+    bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY} https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
-    curl -fsS "http://10.57.1.10:9000/-/health/live/"
+    curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
@@ -1768,20 +1776,20 @@ phase_final_validation() {
 
   for host in "${BROWSER_HOSTS[@]}"; do
     fqdn="${host}.lab.gibbsgreatly.xyz"
-    run_dns_answer_check "dns-authoritative-${host}" "10.57.1.13" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
+    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_dns_answer_check "dns-delegated-${host}" "10.57.1.1" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:10.57.2.10" "https://${fqdn}/"
+    run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
   for bg_host in "${BREAKGLASS_DNS_HOSTS[@]}"; do
     bg_fqdn="${bg_host}.lab.gibbsgreatly.xyz"
-    run_dns_nonempty_check "dns-authoritative-${bg_host}" "10.57.1.13" "${bg_fqdn}"
+    run_dns_nonempty_check "dns-authoritative-${bg_host}" "${LAB_IP_DNS}" "${bg_fqdn}"
     run_dns_nonempty_check "dns-delegated-${bg_host}" "10.57.1.1" "${bg_fqdn}"
   done
 
-  run_logged "harbor-registry-auth" curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz/v2/
-  run_logged "portainer-direct-api" curl -fsS http://10.57.1.20:9000/api/system/status
-  run_logged "authentik-direct-health" curl -fsS http://10.57.1.10:9000/-/health/live/
+  run_logged "harbor-registry-auth" curl -skI --resolve "harbor.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://harbor.lab.gibbsgreatly.xyz/v2/
+  run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
+  run_logged "authentik-direct-health" curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --no-verify-tls --json

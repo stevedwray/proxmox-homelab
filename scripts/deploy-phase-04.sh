@@ -31,6 +31,9 @@ SERVICES=(
 )
 
 STACK_DIR="terraform/lxc/stacks"
+LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-10.57.1.10}"
+LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-10.57.1.11}"
+LAB_IP_MONITORING="${LAB_IP_MONITORING:-10.57.1.12}"
 
 # Functions
 log_info() {
@@ -137,7 +140,7 @@ validate_service() {
   case "$service" in
     "authentik-stack")
       # Check health endpoints
-      local ip="10.57.1.10"
+      local ip="$LAB_IP_AUTHENTIK"
       if curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; then
         log_success "Authentik live health check passed"
       else
@@ -148,7 +151,7 @@ validate_service() {
       log_info "Traefik validation - check dashboard accessibility"
       ;;
     "step-ca-stack")
-      local ip="10.57.1.11"
+      local ip="$LAB_IP_STEP_CA"
       if curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q "nonce-url"; then
         log_success "step-ca ACME directory accessible"
       else
@@ -156,7 +159,7 @@ validate_service() {
       fi
       ;;
     "monitoring-stack")
-      log_info "Monitoring validation - check container startup"
+      log_info "Monitoring validation - check container startup at $LAB_IP_MONITORING"
       ;;
   esac
 }

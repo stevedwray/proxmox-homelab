@@ -128,8 +128,8 @@
         | default('', true)
       }}
     portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/', true) }}"
-    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('http://10.57.1.10:9000/application/o/token/', true) }}"
-    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('http://10.57.1.10:9000/application/o/userinfo/', true) }}"
+    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | default('10.57.1.10', true)) ~ ':9000/application/o/token/', true) }}"
+    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | default('10.57.1.10', true)) ~ ':9000/application/o/userinfo/', true) }}"
     portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
