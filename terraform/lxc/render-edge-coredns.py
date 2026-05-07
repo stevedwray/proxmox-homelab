@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import difflib
 import json
+import os
 import socket
 import sys
 from dataclasses import asdict, dataclass
@@ -18,7 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
 
 
-EXPECTED_DNS_TARGET = "10.57.2.10"
+EXPECTED_DNS_TARGET = os.getenv("LAB_IP_PROXY", "10.57.2.10")
 
 
 @dataclass(frozen=True)

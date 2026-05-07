@@ -15,7 +15,7 @@
     runner_name: "ci-runner-pve-test"
     runner_force_reconfigure: false
     terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
-    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
 
   roles:
     - lxc_base

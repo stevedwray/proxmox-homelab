@@ -32,6 +32,10 @@ readonly STACK_DIR="terraform/lxc/stacks"
 readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
 readonly ANSIBLE_CONFIG_FILE="${PROJECT_ROOT}/terraform/lxc/ansible/ansible.cfg"
 readonly ANSIBLE_ROLES_DIR="${PROJECT_ROOT}/terraform/lxc/ansible/roles"
+readonly LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-10.57.1.10}"
+readonly LAB_IP_PROXY="${LAB_IP_PROXY:-10.57.2.10}"
+readonly LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-10.57.1.11}"
+readonly LAB_IP_MONITORING="${LAB_IP_MONITORING:-10.57.1.12}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -245,7 +249,7 @@ validate_service() {
 
   case "$service" in
     "authentik-stack")
-      local ip="10.57.1.10"
+      local ip="$LAB_IP_AUTHENTIK"
       log_info "Testing Authentik health endpoints at $ip..."
       if timeout 30 bash -c "until curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; do sleep 2; done"; then
         log_success "Authentik live health check passed"
@@ -255,7 +259,7 @@ validate_service() {
       ;;
 
     "proxy-stack")
-      local ip="10.57.2.10"
+      local ip="$LAB_IP_PROXY"
       log_info "Testing Traefik at $ip..."
       if timeout 10 bash -c "docker ps 2>/dev/null | grep -q traefik" 2>/dev/null; then
         log_success "Traefik container running"
@@ -265,7 +269,7 @@ validate_service() {
       ;;
 
     "step-ca-stack")
-      local ip="10.57.1.11"
+      local ip="$LAB_IP_STEP_CA"
       log_info "Testing step-ca ACME directory at $ip..."
       if timeout 30 bash -c "until curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q 'nonce-url'; do sleep 2; done" 2>/dev/null; then
         log_success "step-ca ACME directory accessible"
@@ -275,7 +279,7 @@ validate_service() {
       ;;
 
     "monitoring-stack")
-      local ip="10.57.1.12"
+      local ip="$LAB_IP_MONITORING"
       log_info "Testing Monitoring stack at $ip..."
       if timeout 30 bash -c "until curl -sf http://$ip:8428/api/v1/targets 2>/dev/null | grep -q 'activeTargets'; do sleep 2; done" 2>/dev/null; then
         log_success "VictoriaMetrics responding"
