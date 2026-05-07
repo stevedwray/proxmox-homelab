@@ -45,6 +45,7 @@ readonly STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB
 readonly MONITORING_PORT="${MONITORING_PORT:-8428}"
 readonly MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
 readonly MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
+readonly TARGET_NODE_EXPECTED="${PHASE04_ORCHESTRATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -125,11 +126,11 @@ check_prerequisites() {
 
   : "${TF_VAR_proxmox_node:=}"
 
-  if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
-    log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"
+  if [ "$TF_VAR_proxmox_node" != "$TARGET_NODE_EXPECTED" ]; then
+    log_error "Target node is $TF_VAR_proxmox_node, expected $TARGET_NODE_EXPECTED"
     prereqs_ok=false
   else
-    log_success "Target node: pve-test ✓"
+    log_success "Target node: $TARGET_NODE_EXPECTED ✓"
   fi
 
   # Ensure with-secrets loads environment overrides for pve-test.

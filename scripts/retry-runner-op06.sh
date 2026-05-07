@@ -22,6 +22,7 @@ PREFLIGHT_ONLY="false"
 
 WITH_SECRETS="${REPO_ROOT}/with-secrets"
 PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
+TARGET_NODE_EXPECTED="${RETRY_RUNNER_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
 MODE="${1:-self-check}"
 
 PRE_EXEC_STATUS=""
@@ -300,8 +301,8 @@ require_guard() {
     printf 'guard_value=%s\n' "${gv}" >"${LOG_DIR}/guard-summary.log"
   fi
 
-  if [[ "${gv}" != "pve-test" ]]; then
-    fail_stop "${phase}" "${tag}" "guard_mismatch" "expected pve-test got ${gv}"
+  if [[ "${gv}" != "${TARGET_NODE_EXPECTED}" ]]; then
+    fail_stop "${phase}" "${tag}" "guard_mismatch" "expected ${TARGET_NODE_EXPECTED} got ${gv}"
   fi
 }
 
@@ -527,7 +528,7 @@ main() {
   done
 
   require_guard end phase6
-  printf 'guard_value=pve-test\n' >"${LOG_DIR}/guard-end-summary.log"
+  printf 'guard_value=%s\n' "${TARGET_NODE_EXPECTED}" >"${LOG_DIR}/guard-end-summary.log"
   {
     echo "status=completed"
     echo "mode=destroy"

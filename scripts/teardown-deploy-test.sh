@@ -22,6 +22,8 @@ ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 PVE_TEST_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
+TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve ${TARGET_NODE_EXPECTED} teardown deploy test}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
@@ -137,7 +139,7 @@ Options:
   --execute
       Required for destroy, deploy-*, activate-edge, and cycle.
   --approval-text TEXT
-      Required with --execute. Must contain: approve pve-test teardown deploy test
+      Required with --execute. Must contain: ${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve <target> teardown deploy test}
   --approval-packet PATH
     Required for destroy and cycle unless --disposable is set.
     Must reference stamp/commit/backup approvals.
@@ -161,7 +163,7 @@ Examples:
   scripts/teardown-deploy-test.sh status --stamp 20260423-010203
   scripts/teardown-deploy-test.sh final-validation
   scripts/teardown-deploy-test.sh deploy-edge --execute \
-    --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24"
+    --approval-text "I approve <target> teardown deploy test OP-21 through OP-24"
 EOF
 }
 
@@ -523,13 +525,13 @@ guard_pve_test() {
   local output
   # shellcheck disable=SC2016
   output="$("${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node')"
-  if [[ "${output}" != "pve-test" ]]; then
-    log "ERROR target guard returned '${output}', expected pve-test"
+  if [[ "${output}" != "${TARGET_NODE_EXPECTED}" ]]; then
+    log "ERROR target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     set_phase_failure_context \
       "target-guard" \
       "${WITH_SECRETS} bash -c 'echo \$TF_VAR_proxmox_node'" \
       "${RUN_LOG}" \
-      "target guard returned '${output}', expected pve-test"
+      "target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     return 1
   fi
   log "target guard passed: ${output}"
@@ -967,13 +969,13 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${approval_lc}" != *"approve pve-test teardown deploy test"* ]]; then
-    log "ERROR ${PHASE} requires --approval-text containing: approve pve-test teardown deploy test"
+  if [[ "${approval_lc}" != *"${REQUIRED_APPROVAL_PHRASE,,}"* ]]; then
+    log "ERROR ${PHASE} requires --approval-text containing: ${REQUIRED_APPROVAL_PHRASE}"
     set_phase_failure_context \
       "require-approval-text" \
       "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <text>" \
       "${RUN_LOG}" \
-      "${PHASE} requires approval text containing: approve pve-test teardown deploy test"
+      "${PHASE} requires approval text containing: ${REQUIRED_APPROVAL_PHRASE}"
     return 1
   fi
 

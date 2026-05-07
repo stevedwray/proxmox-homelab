@@ -43,6 +43,7 @@ STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB_IP_STEP_
 MONITORING_PORT="${MONITORING_PORT:-8428}"
 MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
 MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
+TARGET_NODE_EXPECTED="${PHASE04_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
 
 # Functions
 log_info() {
@@ -78,8 +79,8 @@ check_env() {
 
   : "${TF_VAR_proxmox_node:=}"
 
-  if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
-    log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"
+  if [ "$TF_VAR_proxmox_node" != "$TARGET_NODE_EXPECTED" ]; then
+    log_error "Target node is $TF_VAR_proxmox_node, expected $TARGET_NODE_EXPECTED"
     return 1
   fi
 
