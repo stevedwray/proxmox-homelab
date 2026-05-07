@@ -23,6 +23,8 @@ PREFLIGHT_ONLY="false"
 WITH_SECRETS="${REPO_ROOT}/with-secrets"
 PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 TARGET_NODE_EXPECTED="${RETRY_RUNNER_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+APPROVAL_SCOPE_TARGET="${RETRY_RUNNER_APPROVAL_SCOPE_TARGET:-${TARGET_NODE_EXPECTED}}"
+REVIEW_BASE_BRANCH="${RETRY_RUNNER_REVIEW_BASE_BRANCH:-dev/pve-test}"
 MODE="${1:-self-check}"
 
 PRE_EXEC_STATUS=""
@@ -227,7 +229,7 @@ packet_has_required_scope() {
     'OP-07[[:space:]]+through[[:space:]]+OP-16'
     'destroy[[:space:]]+only'
     'stop(ping)?[[:space:]]+on[[:space:]]+first[[:space:]]+failure'
-    'pve-test'
+    "${APPROVAL_SCOPE_TARGET}"
     'exclude(s|d)?[[:space:]]+rebuild[[:space:]]+apply'
     'exclude(s|d)?[[:space:]]+edge[[:space:]]+publish'
     'exclude(s|d)?.*OP-25'
@@ -247,12 +249,13 @@ packet_has_required_scope() {
 
 approval_text_has_required_scope() {
   local approval_lc="$1"
+  local approval_scope_target_lc="${APPROVAL_SCOPE_TARGET,,}"
   [[ "${approval_lc}" == *"approve"* ]] || return 1
   [[ "${approval_lc}" == *"op-06"* ]] || return 1
   [[ "${approval_lc}" == *"op-07"* ]] || return 1
   [[ "${approval_lc}" == *"op-16"* ]] || return 1
   [[ "${approval_lc}" == *"destroy"* ]] || return 1
-  [[ "${approval_lc}" == *"pve-test"* ]] || return 1
+  [[ "${approval_lc}" == *"${approval_scope_target_lc}"* ]] || return 1
   [[ "${approval_lc}" == *"first failure"* ]] || return 1
   [[ "${approval_lc}" == *"does not authorize"* ]] || return 1
   [[ "${approval_lc}" == *"rebuild apply"* ]] || return 1
@@ -354,7 +357,7 @@ verify_reviewed_state() {
   fi
   head_check="passed"
 
-  merge_base="$(git -C "${REPO_ROOT}" merge-base HEAD dev/pve-test)"
+  merge_base="$(git -C "${REPO_ROOT}" merge-base HEAD "${REVIEW_BASE_BRANCH}")"
   git -C "${REPO_ROOT}" diff --name-only "${merge_base}"..HEAD >"${LOG_DIR}/git-changed-files-candidate.log"
 
   if [[ -n "${REVIEWED_DIFF}" ]]; then

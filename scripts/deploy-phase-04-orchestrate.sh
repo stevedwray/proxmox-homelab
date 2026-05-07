@@ -46,6 +46,8 @@ readonly MONITORING_PORT="${MONITORING_PORT:-8428}"
 readonly MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
 readonly MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
 readonly TARGET_NODE_EXPECTED="${PHASE04_ORCHESTRATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+readonly ENV_OVERRIDE_FILE="${PHASE04_ORCHESTRATE_ENV_OVERRIDE_FILE:-.env.pve-test}"
+readonly PVE_ENV_VALUE="${PHASE04_ORCHESTRATE_PVE_ENV:-${TARGET_NODE_EXPECTED}}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -94,10 +96,10 @@ check_prerequisites() {
     log_success ".env found"
   fi
 
-  if [ ! -f ".env.pve-test" ]; then
-    log_warn ".env.pve-test not found (may not be needed)"
+  if [ ! -f "$ENV_OVERRIDE_FILE" ]; then
+    log_warn "$ENV_OVERRIDE_FILE not found (may not be needed)"
   else
-    log_success ".env.pve-test found"
+    log_success "$ENV_OVERRIDE_FILE found"
   fi
 
   # Check required tools
@@ -122,7 +124,7 @@ check_prerequisites() {
   # shellcheck disable=SC1091
   source .env 2>/dev/null || { log_error "Failed to source .env"; prereqs_ok=false; }
   # shellcheck disable=SC1091
-  [ -f ".env.pve-test" ] && source .env.pve-test 2>/dev/null
+  [ -f "$ENV_OVERRIDE_FILE" ] && source "$ENV_OVERRIDE_FILE" 2>/dev/null
 
   : "${TF_VAR_proxmox_node:=}"
 
@@ -133,11 +135,11 @@ check_prerequisites() {
     log_success "Target node: $TARGET_NODE_EXPECTED ✓"
   fi
 
-  # Ensure with-secrets loads environment overrides for pve-test.
-  # Without this, with-secrets falls back to .env (pve) and causes Proxmox 401s.
-  if [ "${PVE_ENV:-}" = "" ] && [ "$TF_VAR_proxmox_node" = "pve-test" ]; then
-    export PVE_ENV="pve-test"
-    log_info "Set PVE_ENV=pve-test for with-secrets commands"
+  # Ensure with-secrets loads environment overrides for the expected node.
+  # Without this, with-secrets can fall back to .env (pve) and cause Proxmox auth failures.
+  if [ "${PVE_ENV:-}" = "" ] && [ "$TF_VAR_proxmox_node" = "$TARGET_NODE_EXPECTED" ]; then
+    export PVE_ENV="$PVE_ENV_VALUE"
+    log_info "Set PVE_ENV=$PVE_ENV_VALUE for with-secrets commands"
   fi
 
   # Check for SOPS secrets

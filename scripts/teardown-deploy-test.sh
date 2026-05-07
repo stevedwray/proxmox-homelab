@@ -1066,8 +1066,8 @@ validate_approval_packet() {
     missing_items+=("stamp reference (${STAMP})")
   fi
 
-  if ! grep -Eiq "(^|[^[:alnum:]])pve-test([^[:alnum:]]|$)" "${packet_path}"; then
-    missing_items+=("pve-test target reference")
+  if ! grep -Fqi "${TARGET_NODE_EXPECTED}" "${packet_path}"; then
+    missing_items+=("${TARGET_NODE_EXPECTED} target reference")
   fi
 
   if ! grep -Fqi "${current_commit}" "${packet_path}" \

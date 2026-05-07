@@ -44,6 +44,7 @@ MONITORING_PORT="${MONITORING_PORT:-8428}"
 MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
 MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
 TARGET_NODE_EXPECTED="${PHASE04_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+ENV_OVERRIDE_FILE="${PHASE04_ENV_OVERRIDE_FILE:-.env.pve-test}"
 
 # Functions
 log_info() {
@@ -72,9 +73,9 @@ check_env() {
 
   # shellcheck disable=SC1091
   source .env
-  if [ -f ".env.pve-test" ]; then
+  if [ -f "$ENV_OVERRIDE_FILE" ]; then
     # shellcheck disable=SC1091
-    source .env.pve-test
+    source "$ENV_OVERRIDE_FILE"
   fi
 
   : "${TF_VAR_proxmox_node:=}"
