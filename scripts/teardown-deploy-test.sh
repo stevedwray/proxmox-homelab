@@ -1725,6 +1725,9 @@ phase_deploy_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
+  run_logged "render-edge-traefik-deploy" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
+  run_logged "render-edge-coredns-deploy" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   load_stack_specs edge specs
   set_current_phase_stack_specs "${specs[@]}"
   log_stack_plan "edge" "${specs[@]}"
