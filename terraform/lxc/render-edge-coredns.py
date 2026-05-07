@@ -19,7 +19,7 @@ if str(SCRIPT_DIR) not in sys.path:
 from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
 
 
-EXPECTED_DNS_TARGET = os.getenv("LAB_IP_PROXY", "10.57.2.10")
+EXPECTED_DNS_TARGET = os.environ["LAB_IP_PROXY"]
 
 
 @dataclass(frozen=True)

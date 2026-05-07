@@ -5,6 +5,7 @@
   gather_facts: false
 
   vars:
+    lab_ip_proxy_expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
     coredns_version: "1.10.1"
     coredns_binary: "/usr/local/bin/coredns"
     coredns_config_dir: "/etc/coredns"
@@ -14,6 +15,7 @@
     coredns_zone_src: "{{ (coredns_generated_zone_src | trim) if (coredns_generated_zone_src | trim | length > 0) else coredns_seed_zone_src }}"
     coredns_zone_file: "{{ coredns_config_dir }}/lab.zone"
     coredns_zone_stage_file: "{{ coredns_config_dir }}/lab.zone.candidate"
+    coredns_loopback_ip: "{{ lookup('env', 'COREDNS_LOOPBACK_IP') | mandatory('COREDNS_LOOPBACK_IP env var is required') }}"
 
   pre_tasks:
     - name: Wait for SSH to become available after container creation
@@ -183,7 +185,7 @@
 
     - name: Wait for CoreDNS to be ready
       ansible.builtin.wait_for:
-        host: 127.0.0.1
+        host: "{{ coredns_loopback_ip }}"
         port: 53
         timeout: 30
 
@@ -198,18 +200,18 @@
         fail_msg: "CoreDNS service is not running"
 
     - name: Test authority query for traefik.lab.gibbsgreatly.xyz
-      ansible.builtin.command: dig @127.0.0.1 +short traefik.lab.gibbsgreatly.xyz
+      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short traefik.lab.gibbsgreatly.xyz
       register: coredns_authority_test
       changed_when: false
 
     - name: Verify authority query returns expected address
       ansible.builtin.assert:
         that:
-          - coredns_authority_test.stdout == "10.57.2.10"
-        fail_msg: "Authority query did not return expected IP 10.57.2.10"
+          - coredns_authority_test.stdout == lab_ip_proxy_expected
+        fail_msg: "Authority query did not return expected IP {{ lab_ip_proxy_expected }}"
 
     - name: Test recursive query for github.com
-      ansible.builtin.command: dig @127.0.0.1 +short github.com
+      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short github.com
       register: coredns_recursion_test
       changed_when: false
 

@@ -1,7 +1,7 @@
-# apt-cacher-ng transparent apt proxy — infra_seg zone (VLAN 40, 10.57.3.0/24)
+# apt-cacher-ng transparent apt proxy — infra_seg zone
 hostname: apt-cacher-stack
-ip_address: "10.57.3.11/24"
-gateway: "10.57.3.1"
+ip_address: "${lab_ip_apt_cacher}/24"
+gateway: "${lab_gw_infra}"
 proxmox_node: pve-test
 network:
   zone: infra_seg
@@ -27,6 +27,6 @@ deployment_tier: platform
 portainer_agent: false
 
 # pve-test service IPs (explicit — do not rely on variable defaults)
-portainer_server_ip: "10.57.1.20"
+portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: ""  # This container IS the apt-cacher; no self-proxy

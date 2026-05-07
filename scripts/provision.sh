@@ -154,7 +154,7 @@ for entry in sorted(os.listdir(stacks_dir)):
         continue
 
     with open(stack_file, "r", encoding="utf-8") as fh:
-        data = yaml.safe_load(fh) or {}
+        data = yaml.safe_load(os.path.expandvars(fh.read())) or {}
 
     name = data.get("stack_name") or entry
     depends_on = data.get("depends_on") or []

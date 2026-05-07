@@ -20,7 +20,28 @@ provider "proxmox" {
 # ---------------------------------------------------------------------------
 locals {
   stack_name = var.stack_name
-  stack      = yamldecode(file(var.stack_yaml_path))
+  stack_template_vars = {
+    lab_ip_portainer      = var.lab_ip_portainer
+    lab_ip_authentik      = var.lab_ip_authentik
+    lab_ip_step_ca        = var.lab_ip_step_ca
+    lab_ip_monitoring     = var.lab_ip_monitoring
+    lab_ip_dns            = var.lab_ip_dns
+    lab_ip_proxy          = var.lab_ip_proxy
+    lab_ip_harbor         = var.lab_ip_harbor
+    lab_ip_netbox         = var.lab_ip_netbox
+    lab_ip_apt_cacher     = var.lab_ip_apt_cacher
+    lab_ip_ci_runner      = var.lab_ip_ci_runner
+    lab_gw_mgmt           = var.lab_gw_mgmt
+    lab_gw_edge           = var.lab_gw_edge
+    lab_gw_infra          = var.lab_gw_infra
+    lab_gw_build          = var.lab_gw_build
+    lab_subnet_mgmt_cidr  = var.lab_subnet_mgmt_cidr
+    lab_subnet_edge_cidr  = var.lab_subnet_edge_cidr
+    lab_subnet_infra_cidr = var.lab_subnet_infra_cidr
+    lab_subnet_build_cidr = var.lab_subnet_build_cidr
+    proxmox_host          = var.proxmox_host
+  }
+  stack = yamldecode(templatefile(var.stack_yaml_path, local.stack_template_vars))
 
   # Derive stable absolute paths from the stack_yaml_path input.
   stack_dir          = dirname(var.stack_yaml_path)      # …/stacks/<name>
@@ -40,7 +61,7 @@ locals {
     local.network_intent_default_path
   )
 
-  network_intent                    = local.stack_network_zone != null ? yamldecode(file(local.effective_network_intent_path)) : null
+  network_intent                    = local.stack_network_zone != null ? yamldecode(templatefile(local.effective_network_intent_path, local.stack_template_vars)) : null
   effective_zone_members_index_path = trimsuffix(local.effective_network_intent_path, ".yaml") != local.effective_network_intent_path ? "${trimsuffix(local.effective_network_intent_path, ".yaml")}.zone-members.yaml" : "${local.effective_network_intent_path}.zone-members.yaml"
 
   resolved_zone_attachment_name = local.stack_network_zone != null ? local.network_intent.zones[local.stack_network_zone].attachment : null
@@ -63,10 +84,10 @@ locals {
   all_zone_members = [
     for relpath in local.all_stack_yaml_paths : {
       stack_name  = basename(dirname(relpath))
-      zone        = try(yamldecode(file("${local.lxc_root}/${relpath}")).network.zone, null)
-      ip_address  = split("/", yamldecode(file("${local.lxc_root}/${relpath}")).ip_address)[0]
-      gateway     = try(yamldecode(file("${local.lxc_root}/${relpath}")).gateway, null)
-      description = try(yamldecode(file("${local.lxc_root}/${relpath}")).hostname, basename(dirname(relpath)))
+      zone        = try(yamldecode(templatefile("${local.lxc_root}/${relpath}", local.stack_template_vars)).network.zone, null)
+      ip_address  = split("/", yamldecode(templatefile("${local.lxc_root}/${relpath}", local.stack_template_vars)).ip_address)[0]
+      gateway     = try(yamldecode(templatefile("${local.lxc_root}/${relpath}", local.stack_template_vars)).gateway, null)
+      description = try(yamldecode(templatefile("${local.lxc_root}/${relpath}", local.stack_template_vars)).hostname, basename(dirname(relpath)))
     }
   ]
   # When the network intent declares a per-zone gateway, use it to keep

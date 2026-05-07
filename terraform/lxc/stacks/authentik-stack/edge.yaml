@@ -9,10 +9,10 @@ spec:
       host: authentik.lab.gibbsgreatly.xyz
       backend:
         type: url
-        url: http://10.57.1.10:9000
+        url: http://${LAB_IP_AUTHENTIK}:9000
       dns:
         enabled: true
-        target: 10.57.2.10
+        target: ${LAB_IP_PROXY}
         ttl: 5m
       tls:
         resolver: letsencrypt

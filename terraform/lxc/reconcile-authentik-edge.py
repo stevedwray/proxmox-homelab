@@ -826,7 +826,7 @@ def _probe_forwardauth_endpoint(
             "X-Forwarded-Host": host,
             "X-Forwarded-Uri": "/",
             "X-Forwarded-Method": "GET",
-            "X-Forwarded-For": "10.57.2.10",
+            "X-Forwarded-For": os.environ["LAB_IP_PROXY"],
         },
     )
 

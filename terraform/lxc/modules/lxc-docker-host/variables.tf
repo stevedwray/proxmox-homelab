@@ -105,14 +105,14 @@ variable "network_firewall" {
 }
 
 variable "ip_address" {
-  description = "Static IP address with CIDR notation (e.g., 192.168.1.100/24)"
+  description = "Static IP address with CIDR notation"
   type        = string
 }
 
 variable "gateway" {
-  description = "Network gateway IP address"
+  description = "Network gateway IP address (set via root module inputs from .env)"
   type        = string
-  default     = "192.168.1.1"
+  default     = ""
 }
 
 variable "dns_servers" {

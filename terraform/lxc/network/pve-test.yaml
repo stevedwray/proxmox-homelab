@@ -63,7 +63,7 @@
 
 proxmox:
   target_node: pve-test
-  pve_host: pve-test.gibbsgreatly.xyz
+  pve_host: ${proxmox_host}
 
 attachments:
   # -------------------------------------------------------------------------
@@ -108,8 +108,8 @@ attachments:
       vnet: tvinfra
       vlan_tag: 40
       alias: pve-test infrastructure segment
-      subnet: "10.57.3.0/24"
-      gateway: "10.57.3.1"
+      subnet: "${lab_subnet_infra_cidr}"
+      gateway: "${lab_gw_infra}"
       snat: false
 
   # -------------------------------------------------------------------------
@@ -136,8 +136,8 @@ attachments:
       vnet: tvmgmt
       vlan_tag: 20
       alias: pve-test management segment
-      subnet: "10.57.1.0/24"
-      gateway: "10.57.1.1"
+      subnet: "${lab_subnet_mgmt_cidr}"
+      gateway: "${lab_gw_mgmt}"
       snat: false
 
   # -------------------------------------------------------------------------
@@ -163,8 +163,8 @@ attachments:
       vnet: tvedge
       vlan_tag: 30
       alias: pve-test edge segment
-      subnet: "10.57.2.0/24"
-      gateway: "10.57.2.1"
+      subnet: "${lab_subnet_edge_cidr}"
+      gateway: "${lab_gw_edge}"
       snat: false
 
   # -------------------------------------------------------------------------
@@ -188,8 +188,8 @@ attachments:
       vnet: tvnetc
       vlan_tag: 10
       alias: pve-test build segment
-      subnet: "10.57.0.0/24"
-      gateway: "10.57.0.1"
+      subnet: "${lab_subnet_build_cidr}"
+      gateway: "${lab_gw_build}"
       snat: false
 
 zones:
@@ -197,27 +197,27 @@ zones:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
     attachment: infra_seg
     containers:
-      - "Harbor (VMID 121)    — 10.57.3.10"
-      - "apt-cacher (VMID 142) — 10.57.3.11"
-      - "NetBox (VMID 143)    — 10.57.3.12"
+      - "Harbor (VMID 121)    — ${lab_ip_harbor}"
+      - "apt-cacher (VMID 142) — ${lab_ip_apt_cacher}"
+      - "NetBox (VMID 143)    — ${lab_ip_netbox}"
   mgmt_seg:
     description: Management plane — Portainer, Authentik, step-ca, Monitoring
     attachment: mgmt_seg
     containers:
-      - "Portainer (VMID 120)  — 10.57.1.20"
-      - "Authentik (VMID 150)  — 10.57.1.10"
-      - "step-ca (VMID 152)    — 10.57.1.11"
-      - "Monitoring (VMID 154) — 10.57.1.12"
+      - "Portainer (VMID 120)  — ${lab_ip_portainer}"
+      - "Authentik (VMID 150)  — ${lab_ip_authentik}"
+      - "step-ca (VMID 152)    — ${lab_ip_step_ca}"
+      - "Monitoring (VMID 154) — ${lab_ip_monitoring}"
   edge_seg:
     description: Edge ingress — Traefik reverse proxy
     attachment: edge_seg
     containers:
-      - "Traefik (VMID 153) — 10.57.2.10"
+      - "Traefik (VMID 153) — ${lab_ip_proxy}"
   build_seg:
     description: CI build workload zone
     attachment: seg_c
     containers:
-      - "ci-runner-01 (VMID 141) — 10.57.0.63"
+      - "ci-runner-01 (VMID 141) — ${lab_ip_ci_runner}"
 
 policies:
   # Cross-zone policies. Enforced at the MikroTik firewall.

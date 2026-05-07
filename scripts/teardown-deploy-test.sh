@@ -94,11 +94,12 @@ BREAKGLASS_DNS_HOSTS=(
   "proxy-bg"
 )
 
-LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-10.57.1.10}"
-LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-10.57.1.11}"
-LAB_IP_DNS="${LAB_IP_DNS:-10.57.1.13}"
-LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-10.57.1.20}"
-LAB_IP_PROXY="${LAB_IP_PROXY:-10.57.2.10}"
+LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .env}"
+LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
+LAB_IP_DNS="${LAB_IP_DNS:?LAB_IP_DNS must be set in .env}"
+LAB_IP_PORTAINER="${LAB_IP_PORTAINER:?LAB_IP_PORTAINER must be set in .env}"
+LAB_IP_PROXY="${LAB_IP_PROXY:?LAB_IP_PROXY must be set in .env}"
+LAB_GW_MGMT="${LAB_GW_MGMT:?LAB_GW_MGMT must be set in .env}"
 BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
@@ -691,7 +692,7 @@ if not output_zone.is_file():
 rendered_zone = output_zone.read_text(encoding="utf-8")
 if "Generated browser edge records" not in rendered_zone:
     raise SystemExit("Rendered CoreDNS zone is missing generated browser record section")
-expected_target = os.environ.get("LAB_IP_PROXY", "10.57.2.10")
+expected_target = os.environ["LAB_IP_PROXY"]
 if expected_target not in rendered_zone:
     raise SystemExit(f"Rendered CoreDNS zone is missing the expected {expected_target} target")
 PY
@@ -712,6 +713,7 @@ resolve_stack_specs() {
   local group="$1"
 
   python3 - "${group}" "${INVENTORY_FILE}" "${TERRAFORM_LXC}" <<'PY'
+import os
 import re
 import sys
 from pathlib import Path
@@ -782,7 +784,7 @@ def read_stack_yaml(stack: str) -> tuple[str, str]:
     if not stack_yaml.is_file():
         raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
 
-    text = stack_yaml.read_text(encoding="utf-8")
+    text = os.path.expandvars(stack_yaml.read_text(encoding="utf-8"))
     vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
     ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
     if not vmid_match or not ip_match:
@@ -1249,7 +1251,7 @@ validate_stack_smoke() {
       ;;
     dns-stack)
       run_logged "health-${stack}-authoritative" dig "@${ip}" +short traefik.lab.gibbsgreatly.xyz
-      run_logged "health-${stack}-delegated" dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+      run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short traefik.lab.gibbsgreatly.xyz
       ;;
     proxy-stack)
       run_logged "health-${stack}" curl -skI --resolve "traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://traefik.lab.gibbsgreatly.xyz/
@@ -1591,7 +1593,7 @@ run_live_preflight_checks() {
   run_logged "dns-authoritative-traefik" \
     bash -lc "dig @${LAB_IP_DNS} +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "dns-delegated-traefik" \
-    bash -lc "dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
+    bash -lc "dig @${LAB_GW_MGMT} +short traefik.lab.gibbsgreatly.xyz | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "https-route-traefik" \
     bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY} https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
@@ -1777,14 +1779,14 @@ phase_final_validation() {
   for host in "${BROWSER_HOSTS[@]}"; do
     fqdn="${host}.lab.gibbsgreatly.xyz"
     run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_dns_answer_check "dns-delegated-${host}" "10.57.1.1" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
+    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
   for bg_host in "${BREAKGLASS_DNS_HOSTS[@]}"; do
     bg_fqdn="${bg_host}.lab.gibbsgreatly.xyz"
     run_dns_nonempty_check "dns-authoritative-${bg_host}" "${LAB_IP_DNS}" "${bg_fqdn}"
-    run_dns_nonempty_check "dns-delegated-${bg_host}" "10.57.1.1" "${bg_fqdn}"
+    run_dns_nonempty_check "dns-delegated-${bg_host}" "${LAB_GW_MGMT}" "${bg_fqdn}"
   done
 
   run_logged "harbor-registry-auth" curl -skI --resolve "harbor.lab.gibbsgreatly.xyz:443:${LAB_IP_PROXY}" https://harbor.lab.gibbsgreatly.xyz/v2/

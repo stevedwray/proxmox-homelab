@@ -14,7 +14,7 @@ import yaml
 API_VERSION = "homelab.gibbsgreatly.xyz/v1alpha1"
 KIND = "EdgeManifest"
 LAB_DOMAIN_SUFFIX = ".lab.gibbsgreatly.xyz"
-EXPECTED_DNS_TARGET = os.getenv("LAB_IP_PROXY", "10.57.2.10")
+EXPECTED_DNS_TARGET = os.environ["LAB_IP_PROXY"]
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")
 TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")
@@ -278,7 +278,7 @@ def load_manifest(path: Path) -> dict[str, object]:
     """Load a YAML manifest document from disk."""
 
     with path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
+        data = yaml.safe_load(os.path.expandvars(handle.read()))
     return data or {}
 
 

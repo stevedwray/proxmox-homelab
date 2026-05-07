@@ -41,11 +41,11 @@ RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "rec
 
 
 TARGET_PREFLIGHT_COMMAND: tuple[str, ...] = ("./with-secrets", "bash", "-c", "echo $TF_VAR_proxmox_node")
-DEFAULT_TRAEFIK_PROBE_HOST = os.getenv("LAB_IP_PROXY", "10.57.2.10")
+DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
 DEFAULT_TRAEFIK_PROBE_PORT = 443
-DEFAULT_COREDNS_PROBE_SERVER = os.getenv("LAB_IP_DNS", "10.57.1.13")
+DEFAULT_COREDNS_PROBE_SERVER = os.environ["LAB_IP_DNS"]
 DEFAULT_COREDNS_PROBE_NAME = "traefik.lab.gibbsgreatly.xyz"
-DEFAULT_COREDNS_PROBE_EXPECTED = os.getenv("LAB_IP_PROXY", "10.57.2.10")
+DEFAULT_COREDNS_PROBE_EXPECTED = os.environ["LAB_IP_PROXY"]
 NOT_RUN_DRY_RUN = "not run (dry-run mode)"
 
 

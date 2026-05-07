@@ -116,11 +116,11 @@
                 dnsChallenge:
                   provider: cloudflare
                   resolvers:
-                    - "1.1.1.1:53"
-                    - "8.8.8.8:53"
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_PRIMARY') | mandatory('TRAEFIK_DNS_RESOLVER_PRIMARY env var is required') }}"
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_SECONDARY') | mandatory('TRAEFIK_DNS_RESOLVER_SECONDARY env var is required') }}"
             step-ca:
               acme:
-                caServer: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | default('10.57.1.11', true) }}/acme/acme/directory"
+                caServer: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}/acme/acme/directory"
                 email: "admin@gibbsgreatly.xyz"
                 storage: "/certs/step-ca/acme.json"
                 httpChallenge:
@@ -147,7 +147,7 @@
             middlewares:
               authentik:
                 forwardAuth:
-                  address: "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | default('10.57.1.10', true) }}:9000/outpost.goauthentik.io/auth/traefik"
+                  address: "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000/outpost.goauthentik.io/auth/traefik"
                   trustForwardHeader: true
                   authResponseHeaders:
                     - X-authentik-username

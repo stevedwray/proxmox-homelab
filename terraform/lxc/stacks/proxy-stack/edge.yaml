@@ -12,7 +12,7 @@ spec:
         service: api@internal
       dns:
         enabled: true
-        target: 10.57.2.10
+        target: ${LAB_IP_PROXY}
         ttl: 5m
       tls:
         resolver: letsencrypt

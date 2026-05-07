@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 
 import yaml
@@ -11,7 +12,7 @@ import yaml
 
 def load_yaml(path: Path) -> dict:
     with path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
+        data = yaml.safe_load(os.path.expandvars(handle.read()))
     return data or {}
 
 

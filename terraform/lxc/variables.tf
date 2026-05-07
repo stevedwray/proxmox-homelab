@@ -88,9 +88,9 @@ variable "ssh_private_key_path" {
 }
 
 variable "default_gateway" {
-  description = "Default network gateway"
+  description = "Default network gateway (set from TF_VAR_default_gateway in .env)"
   type        = string
-  default     = "192.168.1.1"
+  default     = ""
 }
 
 variable "default_storage" {
@@ -127,4 +127,115 @@ variable "proxmox_host" {
   description = "Proxmox host for SSH access (used by Ansible delegate_to for features that require root@pam)"
   type        = string
   default     = "pve.gibbsgreatly.xyz"
+}
+
+# ---------------------------------------------------------------------------
+# pve-test lab addressing inputs (expected from TF_VAR_* exported in .env)
+# ---------------------------------------------------------------------------
+variable "lab_ip_portainer" {
+  description = "Portainer service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_authentik" {
+  description = "Authentik service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_step_ca" {
+  description = "step-ca service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_monitoring" {
+  description = "Monitoring service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_dns" {
+  description = "CoreDNS service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_proxy" {
+  description = "Traefik service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_harbor" {
+  description = "Harbor service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_netbox" {
+  description = "NetBox service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_apt_cacher" {
+  description = "apt-cacher service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_ci_runner" {
+  description = "CI runner service IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_gw_mgmt" {
+  description = "Management subnet gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_gw_edge" {
+  description = "Edge subnet gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_gw_infra" {
+  description = "Infrastructure subnet gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_gw_build" {
+  description = "Build subnet gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_mgmt_cidr" {
+  description = "Management subnet CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_edge_cidr" {
+  description = "Edge subnet CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_infra_cidr" {
+  description = "Infrastructure subnet CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_build_cidr" {
+  description = "Build subnet CIDR"
+  type        = string
+  default     = ""
 }

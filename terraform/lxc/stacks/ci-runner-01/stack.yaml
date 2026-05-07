@@ -1,7 +1,7 @@
 # GitHub Actions self-hosted runner — build_seg zone
 hostname: ci-runner-01
-ip_address: "10.57.0.63/24"
-gateway: "10.57.0.1"
+ip_address: "${lab_ip_ci_runner}/24"
+gateway: "${lab_gw_build}"
 proxmox_node: pve-test
 vmid: 141
 cores: 2
@@ -23,10 +23,10 @@ provides: []
 network:
   zone: build_seg
 
-# Phase 03c: apt-cacher-ng is now deployed at 10.57.3.11 on infra_seg.
+# Phase 03c: apt-cacher-ng is deployed on infra_seg via LAB_IP_APT_CACHER.
 # pve-test service IPs (explicit — do not rely on variable defaults)
-apt_cacher_host: "10.57.3.11"
-portainer_server_ip: "10.57.1.20"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 
 ansible_playbook: "deploy-ci-runner"

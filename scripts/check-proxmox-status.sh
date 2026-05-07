@@ -52,7 +52,7 @@ else
 fi
 
 # Configuration
-PROXMOX_HOST="${PROXMOX_HOST:-192.168.1.100}"
+PROXMOX_HOST="${PROXMOX_HOST:?PROXMOX_HOST must be set in .env}"
 PROXMOX_USER="${PROXMOX_USER:-root@pam}"
 PROXMOX_PASSWORD="${PROXMOX_PASSWORD:-}"
 SSH_USER="${SSH_USER:-root}"
@@ -304,7 +304,7 @@ case "${1:-}" in
         echo "  --no-api       Skip API connectivity tests"
         echo
         echo "Environment variables (or .env file):"
-        echo "  PROXMOX_HOST     - Proxmox server IP/hostname (default: 192.168.1.100)"
+        echo "  PROXMOX_HOST     - Proxmox server IP/hostname (required from .env)"
         echo "  PROXMOX_USER     - Proxmox API username (default: root@pam)"
         echo "  PROXMOX_PASSWORD - Proxmox API password"
         echo "  SSH_USER         - SSH username (default: root)"
