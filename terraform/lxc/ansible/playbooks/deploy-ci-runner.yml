@@ -9,10 +9,14 @@
     cosign_version: "3.0.6"
     runner_user: runner
     runner_home: /opt/actions-runner
-    runner_service_name: "actions.runner.stevedwray-proxmox-homelab.ci-runner-pve-test.service"
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
     runner_labels: "self-hosted,pve-test,build,linux,x64"
     runner_name: "ci-runner-pve-test"
+    runner_service_name: >-
+      {{
+        lookup('env', 'RUNNER_SERVICE_NAME')
+        | default('actions.runner.' ~ (runner_repo | regex_replace('^https://github.com/', '') | replace('/', '-')) ~ '.' ~ runner_name ~ '.service', true)
+      }}
     runner_force_reconfigure: false
     terraform_mirror_path: "/opt/actions-runner/_work/proxmox-homelab/proxmox-homelab/terraform/terraform-providers"
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"

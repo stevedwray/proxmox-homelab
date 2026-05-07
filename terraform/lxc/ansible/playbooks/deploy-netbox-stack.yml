@@ -106,7 +106,11 @@
     netbox_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     netbox_lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(netbox_lab_admin_username ~ '@' ~ netbox_lab_domain, true) }}"
     netbox_superuser_username: admin
-    netbox_superuser_email: "admin@gibbsgreatly.xyz"
+    netbox_superuser_email: >-
+      {{
+        lookup('env', 'NETBOX_SUPERUSER_EMAIL')
+        | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('gibbsgreatly.xyz', true)), true)
+      }}
     netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | mandatory('NETBOX_SUPERUSER_PASSWORD env var is not set') }}"
     netbox_api_token: "{{ lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | mandatory('NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
     netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default(netbox_lab_admin_username, true) }}"
