@@ -12,7 +12,7 @@ all:
           ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 %{ endif ~}
           portainer_server_ip: ${portainer_server_ip}
-          registry_host: ${registry_host}
+          registry_host: "${registry_host}"
           apt_cacher_host: ${apt_cacher_host}
           dns_server: ${dns_server}
 %{ if network_zone != "" ~}
