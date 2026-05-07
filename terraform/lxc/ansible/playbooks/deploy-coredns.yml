@@ -176,6 +176,7 @@
         fail_msg: >-
           Staged CoreDNS zone is missing required bootstrap authority records.
           Refusing to publish because this would remove required non-browser DNS records.
+      when: not (coredns_generated_zone_src | trim | length > 0)
 
     - name: Publish CoreDNS zone file from staged candidate
       ansible.builtin.copy:
