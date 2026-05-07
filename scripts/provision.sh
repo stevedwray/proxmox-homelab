@@ -361,7 +361,7 @@ for stack in "${ordered_stacks[@]}"; do
 
   # Pass generated zone file for dns-stack if it exists
   if [[ "$stack" == "dns-stack" ]]; then
-    local generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
+    generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
     if [[ -f "$generated_zone" ]]; then
       cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
     fi
