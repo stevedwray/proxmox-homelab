@@ -36,6 +36,15 @@ readonly LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .
 readonly LAB_IP_PROXY="${LAB_IP_PROXY:?LAB_IP_PROXY must be set in .env}"
 readonly LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
 readonly LAB_IP_MONITORING="${LAB_IP_MONITORING:?LAB_IP_MONITORING must be set in .env}"
+readonly AUTHENTIK_PORT="${AUTHENTIK_PORT:-9000}"
+readonly AUTHENTIK_LIVE_PATH="${AUTHENTIK_LIVE_PATH:-/-/health/live/}"
+readonly AUTHENTIK_LIVE_URL="${AUTHENTIK_LIVE_URL:-http://${LAB_IP_AUTHENTIK}:${AUTHENTIK_PORT}${AUTHENTIK_LIVE_PATH}}"
+readonly STEP_CA_ACME_PATH_PREFIX="${STEP_CA_ACME_PATH_PREFIX:-/acme}"
+readonly STEP_CA_ACME_DIRECTORY_PATH="${STEP_CA_ACME_DIRECTORY_PATH:-${STEP_CA_ACME_PATH_PREFIX}/acme/directory}"
+readonly STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB_IP_STEP_CA}${STEP_CA_ACME_DIRECTORY_PATH}}"
+readonly MONITORING_PORT="${MONITORING_PORT:-8428}"
+readonly MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
+readonly MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -251,7 +260,7 @@ validate_service() {
     "authentik-stack")
       local ip="$LAB_IP_AUTHENTIK"
       log_info "Testing Authentik health endpoints at $ip..."
-      if timeout 30 bash -c "until curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; do sleep 2; done"; then
+      if timeout 30 bash -c "until curl -sf \"$AUTHENTIK_LIVE_URL\" > /dev/null 2>&1; do sleep 2; done"; then
         log_success "Authentik live health check passed"
       else
         log_warn "Authentik not yet responding (service may still be starting)"
@@ -271,7 +280,7 @@ validate_service() {
     "step-ca-stack")
       local ip="$LAB_IP_STEP_CA"
       log_info "Testing step-ca ACME directory at $ip..."
-      if timeout 30 bash -c "until curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q 'nonce-url'; do sleep 2; done" 2>/dev/null; then
+      if timeout 30 bash -c "until curl -sk \"$STEP_CA_ACME_DIRECTORY_URL\" 2>&1 | grep -q 'nonce-url'; do sleep 2; done" 2>/dev/null; then
         log_success "step-ca ACME directory accessible"
       else
         log_warn "step-ca ACME not yet accessible (service may still be starting)"
@@ -281,7 +290,7 @@ validate_service() {
     "monitoring-stack")
       local ip="$LAB_IP_MONITORING"
       log_info "Testing Monitoring stack at $ip..."
-      if timeout 30 bash -c "until curl -sf http://$ip:8428/api/v1/targets 2>/dev/null | grep -q 'activeTargets'; do sleep 2; done" 2>/dev/null; then
+      if timeout 30 bash -c "until curl -sf \"$MONITORING_TARGETS_URL\" 2>/dev/null | grep -q 'activeTargets'; do sleep 2; done" 2>/dev/null; then
         log_success "VictoriaMetrics responding"
       else
         log_warn "Monitoring services still initializing"

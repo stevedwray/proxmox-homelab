@@ -34,6 +34,15 @@ STACK_DIR="terraform/lxc/stacks"
 LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .env}"
 LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
 LAB_IP_MONITORING="${LAB_IP_MONITORING:?LAB_IP_MONITORING must be set in .env}"
+AUTHENTIK_PORT="${AUTHENTIK_PORT:-9000}"
+AUTHENTIK_LIVE_PATH="${AUTHENTIK_LIVE_PATH:-/-/health/live/}"
+AUTHENTIK_LIVE_URL="${AUTHENTIK_LIVE_URL:-http://${LAB_IP_AUTHENTIK}:${AUTHENTIK_PORT}${AUTHENTIK_LIVE_PATH}}"
+STEP_CA_ACME_PATH_PREFIX="${STEP_CA_ACME_PATH_PREFIX:-/acme}"
+STEP_CA_ACME_DIRECTORY_PATH="${STEP_CA_ACME_DIRECTORY_PATH:-${STEP_CA_ACME_PATH_PREFIX}/acme/directory}"
+STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB_IP_STEP_CA}${STEP_CA_ACME_DIRECTORY_PATH}}"
+MONITORING_PORT="${MONITORING_PORT:-8428}"
+MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
+MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
 
 # Functions
 log_info() {
@@ -140,8 +149,7 @@ validate_service() {
   case "$service" in
     "authentik-stack")
       # Check health endpoints
-      local ip="$LAB_IP_AUTHENTIK"
-      if curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; then
+      if curl -sf "$AUTHENTIK_LIVE_URL" > /dev/null 2>&1; then
         log_success "Authentik live health check passed"
       else
         log_error "Authentik live health check failed (expected - wait for startup)"
@@ -151,15 +159,18 @@ validate_service() {
       log_info "Traefik validation - check dashboard accessibility"
       ;;
     "step-ca-stack")
-      local ip="$LAB_IP_STEP_CA"
-      if curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q "nonce-url"; then
+      if curl -sk "$STEP_CA_ACME_DIRECTORY_URL" 2>&1 | grep -q "nonce-url"; then
         log_success "step-ca ACME directory accessible"
       else
         log_error "step-ca ACME directory not yet accessible (expected - wait for startup)"
       fi
       ;;
     "monitoring-stack")
-      log_info "Monitoring validation - check container startup at $LAB_IP_MONITORING"
+      if curl -sf "$MONITORING_TARGETS_URL" 2>/dev/null | grep -q "activeTargets"; then
+        log_success "VictoriaMetrics responding"
+      else
+        log_info "Monitoring validation - check container startup at $LAB_IP_MONITORING"
+      fi
       ;;
   esac
 }
