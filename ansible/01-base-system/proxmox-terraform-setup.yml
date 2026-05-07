@@ -6,7 +6,7 @@
 
   vars:
     # User/token naming
-    pve_user: "automation@pve"
+    pve_user: "{{ lookup('env', 'PROXMOX_USER') | default('automation@pve', true) }}"
     token_id: "terraform"
 
     # Rotate the token to ensure we get/print a fresh secret

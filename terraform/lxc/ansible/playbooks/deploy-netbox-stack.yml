@@ -102,12 +102,15 @@
   vars:
     netbox_container: "netbox-netbox-1"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
+    netbox_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    netbox_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
+    netbox_lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(netbox_lab_admin_username ~ '@' ~ netbox_lab_domain, true) }}"
     netbox_superuser_username: admin
     netbox_superuser_email: "admin@gibbsgreatly.xyz"
     netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | mandatory('NETBOX_SUPERUSER_PASSWORD env var is not set') }}"
     netbox_api_token: "{{ lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | mandatory('NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
-    netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
-    netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+    netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default(netbox_lab_admin_username, true) }}"
+    netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default(netbox_lab_admin_email, true) }}"
     netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
     netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
     netbox_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(netbox_superuser_password, true) }}"

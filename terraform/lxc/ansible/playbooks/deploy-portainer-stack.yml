@@ -114,28 +114,32 @@
   gather_facts: false
 
   vars:
+    portainer_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    portainer_lab_fqdn_portainer: "{{ lookup('env', 'LAB_FQDN_PORTAINER') | default('portainer.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     portainer_admin_password: >-
       {{
         lookup('env', 'PORTAINER_ADMIN_PASSWORD')
         | default(lookup('env', 'TF_VAR_portainer_admin_password'), true)
       }}
     portainer_oauth_enabled: "{{ lookup('env', 'PORTAINER_OAUTH_ENABLED') | default('true', true) | bool }}"
-    portainer_public_url: "{{ lookup('env', 'PORTAINER_PUBLIC_URL') | default('https://portainer.lab.gibbsgreatly.xyz', true) }}"
+    portainer_public_url: "{{ lookup('env', 'PORTAINER_PUBLIC_URL') | default('https://' ~ portainer_lab_fqdn_portainer, true) }}"
     portainer_oauth_client_id: "{{ lookup('env', 'PORTAINER_OAUTH_CLIENT_ID') | default('portainer', true) }}"
     portainer_oauth_client_secret: >-
       {{
         lookup('env', 'PORTAINER_OAUTH_CLIENT_SECRET')
         | default('', true)
       }}
-    portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/', true) }}"
+    portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
     portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required')) ~ ':9000/application/o/token/', true) }}"
     portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required')) ~ ':9000/application/o/userinfo/', true) }}"
-    portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://authentik.lab.gibbsgreatly.xyz/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
+    portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
     portainer_oauth_default_team_name: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_NAME') | default('oauth-default', true) }}"
     portainer_oauth_default_team_endpoint_role_id: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_ENDPOINT_ROLE_ID') | default('2', true) | int }}"
-    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin,steve', true) }}"
+    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin,' ~ portainer_lab_admin_username, true) }}"
 
   tasks:
     - name: Assert Portainer admin password is configured

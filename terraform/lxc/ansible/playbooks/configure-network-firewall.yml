@@ -4,6 +4,7 @@
   gather_facts: false
 
   vars:
+    expected_pve_test_host: "{{ lookup('env', 'PVE_TEST_FQDN') | default('pve-test.gibbsgreatly.xyz', true) }}"
     network_firewall_rendered_config: "{{ lookup('template', playbook_dir + '/../templates/lxc-container-firewall.fw.j2') }}"
 
   tasks:
@@ -12,8 +13,8 @@
         that:
           - network_firewall_enable | bool
           - network_firewall_target == 'pve-test'
-          - network_firewall_pve_host == 'pve-test.gibbsgreatly.xyz'
-          - pve_host == 'pve-test.gibbsgreatly.xyz'
+          - network_firewall_pve_host == expected_pve_test_host
+          - pve_host == expected_pve_test_host
         fail_msg: "Network-layer firewall automation is restricted to pve-test and must not run on pve."
         success_msg: "Firewall automation is pinned to pve-test."
 

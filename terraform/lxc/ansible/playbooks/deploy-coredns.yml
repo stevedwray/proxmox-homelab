@@ -5,6 +5,8 @@
   gather_facts: false
 
   vars:
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_fqdn_traefik: "{{ lookup('env', 'LAB_FQDN_TRAEFIK') | default('traefik.' ~ lab_domain, true) }}"
     lab_ip_proxy_expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
     lab_ip_authentik: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
     lab_ip_step_ca: "{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
@@ -156,7 +158,7 @@
       ansible.builtin.command:
         argv:
           - named-checkzone
-          - lab.gibbsgreatly.xyz
+          - "{{ lab_domain }}"
           - "{{ coredns_zone_stage_file }}"
       changed_when: false
 
@@ -169,7 +171,7 @@
       ansible.builtin.assert:
         that:
           - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+SOA\\s+')
-          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+NS\\s+ns1\\.lab\\.gibbsgreatly\\.xyz\\.')
+          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+NS\\s+ns1\\.' ~ (lab_domain | replace('.', '\\\\.')) ~ '\\.')
           - (coredns_zone_stage.content | b64decode) is search('(?m)^ns1\\s+IN\\s+A\\s+')
         fail_msg: >-
           Staged CoreDNS zone is missing required bootstrap authority records.
@@ -223,8 +225,8 @@
           - ansible_facts.services['coredns.service'].state == "running"
         fail_msg: "CoreDNS service is not running"
 
-    - name: Test authority query for traefik.lab.gibbsgreatly.xyz
-      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short traefik.lab.gibbsgreatly.xyz
+    - name: Test authority query for delegated lab probe name
+      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short {{ lab_fqdn_traefik }}
       register: coredns_authority_test
       changed_when: false
 

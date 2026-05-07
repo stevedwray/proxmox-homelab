@@ -32,6 +32,9 @@
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
     authentik_superuser_api_token: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | mandatory('AUTHENTIK_SUPERUSER_API_TOKEN env var is not set') }}"
+    lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(lab_admin_username ~ '@' ~ lab_domain, true) }}"
     authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
 
   tasks:
@@ -125,9 +128,9 @@
           injected from SOPS via .env. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
 
-    - name: Check if steve user exists in Authentik
+    - name: Check if lab admin user exists in Authentik
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/users/?username=steve"
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/?username={{ lab_admin_username }}"
         method: GET
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
@@ -139,7 +142,7 @@
       until: authentik_steve_check.status == 200
       no_log: true
 
-    - name: Create steve user in Authentik
+    - name: Create lab admin user in Authentik
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/v3/core/users/"
         method: POST
@@ -148,9 +151,9 @@
           Content-Type: "application/json"
         body_format: json
         body:
-          username: "steve"
+          username: "{{ lab_admin_username }}"
           name: "Steve"
-          email: "steve@lab.gibbsgreatly.xyz"
+          email: "{{ lab_admin_email }}"
           is_active: true
           groups: []
         status_code: [201]
@@ -158,7 +161,7 @@
       when: (authentik_steve_check.json.pagination.count | int) == 0
       no_log: true
 
-    - name: Resolve steve user PK
+    - name: Resolve lab admin user PK
       ansible.builtin.set_fact:
         steve_pk: >-
           {{
@@ -168,7 +171,7 @@
           }}
       no_log: true
 
-    - name: Set steve user password in Authentik
+    - name: Set lab admin user password in Authentik
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ steve_pk }}/set_password/"
         method: POST
@@ -181,9 +184,9 @@
         status_code: [204]
       no_log: true
 
-    - name: Confirm steve user provisioned
+    - name: Confirm lab admin user provisioned
       ansible.builtin.debug:
-        msg: "Authentik user 'steve' is present and password is set (pk={{ steve_pk }})."
+        msg: "Authentik user '{{ lab_admin_username }}' is present and password is set (pk={{ steve_pk }})."
 
     - name: Ensure homelab-admins group exists in Authentik
       ansible.builtin.uri:
@@ -222,7 +225,7 @@
           }}
       no_log: true
 
-    - name: Add steve to homelab-admins group
+    - name: Add lab admin user to homelab-admins group
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/api/v3/core/groups/{{ homelab_admins_pk }}/add_user/"
         method: POST
@@ -235,6 +238,6 @@
         status_code: [204]
       no_log: true
 
-    - name: Confirm homelab-admins group provisioned with steve
+    - name: Confirm homelab-admins group provisioned with lab admin user
       ansible.builtin.debug:
-        msg: "Authentik group 'homelab-admins' is present (pk={{ homelab_admins_pk }}) and steve (pk={{ steve_pk }}) is a member."
+        msg: "Authentik group 'homelab-admins' is present (pk={{ homelab_admins_pk }}) and {{ lab_admin_username }} (pk={{ steve_pk }}) is a member."

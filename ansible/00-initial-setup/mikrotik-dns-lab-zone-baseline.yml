@@ -29,6 +29,8 @@
   gather_facts: false
 
   vars:
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_fqdn_traefik: "{{ lookup('env', 'LAB_FQDN_TRAEFIK') | default('traefik.' ~ lab_domain, true) }}"
     mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
@@ -46,23 +48,23 @@
     # Lab zone baseline records — Phase 1: static A records per platform name.
     # Add new platform names here; remove entries and switch to FWD in Phase 2.
     lab_zone_records:
-      - name: "traefik.lab.gibbsgreatly.xyz"
+      - name: "{{ lab_fqdn_traefik }}"
         address: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
         comment: "lab-zone-baseline"
 
     # Validation targets
     delegated_probes:
       - resolver: "{{ lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_EDGE') | mandatory('LAB_GW_EDGE env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_INFRA') | mandatory('LAB_GW_INFRA env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
 
     public_probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
@@ -195,7 +197,7 @@
       ansible.builtin.debug:
         msg:
           - "=== DNS delegation baseline validation ==="
-          - "Delegated (lab.gibbsgreatly.xyz):"
+          - "Delegated ({{ lab_domain }}):"
           - "  @{{ delegated_probes[0].resolver }} {{ delegated_probes[0].name }} = {{ delegated_results.results[0].stdout | trim }}"
           - "  @{{ delegated_probes[1].resolver }} {{ delegated_probes[1].name }} = {{ delegated_results.results[1].stdout | trim }}"
           - "  @{{ delegated_probes[2].resolver }} {{ delegated_probes[2].name }} = {{ delegated_results.results[2].stdout | trim }}"

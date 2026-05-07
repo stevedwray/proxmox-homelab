@@ -32,6 +32,8 @@
   gather_facts: false
 
   vars:
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_fqdn_traefik: "{{ lookup('env', 'LAB_FQDN_TRAEFIK') | default('traefik.' ~ lab_domain, true) }}"
     mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
@@ -47,23 +49,23 @@
       }}
 
     coredns_ip: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
-    fwd_regexp: "(^|\\.)lab\\.gibbsgreatly\\.xyz$"
+    fwd_regexp: "(^|\\.){{ lab_domain | replace('.', '\\\\.') }}$"
     fwd_comment: "lab-zone-delegate"
     baseline_comment: "lab-zone-baseline"
 
     # Validation probes — all four SDN gateway resolvers
     delegated_probes:
       - resolver: "{{ lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_EDGE') | mandatory('LAB_GW_EDGE env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
       - resolver: "{{ lookup('env', 'LAB_GW_INFRA') | mandatory('LAB_GW_INFRA env var is required') }}"
-        name: "traefik.lab.gibbsgreatly.xyz"
+        name: "{{ lab_fqdn_traefik }}"
         expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
 
     public_probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
@@ -142,7 +144,7 @@
 
     # ── Step 4: Add FWD delegation entry ──────────────────────────────────────
 
-    - name: Add FWD delegation entry for lab.gibbsgreatly.xyz → CoreDNS
+    - name: Add FWD delegation entry for {{ lab_domain }} → CoreDNS
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
         method: POST
@@ -163,7 +165,7 @@
 
     - name: Skip FWD entry creation (already present)
       ansible.builtin.debug:
-        msg: "FWD entry for lab.gibbsgreatly.xyz already exists, skipping."
+        msg: "FWD entry for {{ lab_domain }} already exists, skipping."
       when: existing_fwd_entries | length > 0
 
     # ── Step 5: Validate delegated resolution through all SDN resolvers ───────
@@ -212,7 +214,7 @@
       ansible.builtin.debug:
         msg:
           - "=== Phase 2 DNS delegation validation ==="
-          - "FWD entry: lab.gibbsgreatly.xyz → {{ coredns_ip }} (CoreDNS)"
+          - "FWD entry: {{ lab_domain }} → {{ coredns_ip }} (CoreDNS)"
           - "Delegated resolution:"
           - "  @{{ delegated_probes[0].resolver }} {{ delegated_probes[0].name }} = {{ delegated_results.results[0].stdout | trim }}"
           - "  @{{ delegated_probes[1].resolver }} {{ delegated_probes[1].name }} = {{ delegated_results.results[1].stdout | trim }}"

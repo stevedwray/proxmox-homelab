@@ -4,7 +4,17 @@
   gather_facts: false
 
   vars:
-    dns_validation_delegated_probe_name: "{{ network_dns_delegated_probe_name | default('traefik.lab.gibbsgreatly.xyz') }}"
+    dns_validation_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    dns_validation_fqdn_traefik: >-
+      {{
+        lookup('env', 'LAB_FQDN_TRAEFIK')
+        | default('traefik.' ~ dns_validation_lab_domain, true)
+      }}
+    dns_validation_delegated_probe_name: >-
+      {{
+        network_dns_delegated_probe_name
+        | default(dns_validation_fqdn_traefik, true)
+      }}
     dns_validation_public_probe_name: "{{ network_dns_probe_name | default('github.com') }}"
     dns_validation_expected_resolver: >-
       {{
@@ -72,7 +82,7 @@
           - dns_validation_delegated_probe_result.rc == 0
         fail_msg: >-
           {{ inventory_hostname }} could not resolve delegated name {{ dns_validation_delegated_probe_name }} via {{ dns_validation_expected_resolver }}.
-          Check MikroTik conditional forwarding for lab.gibbsgreatly.xyz and delegated zone authority reachability.
+          Check MikroTik conditional forwarding for {{ dns_validation_lab_domain }} and delegated zone authority reachability.
         success_msg: >-
           {{ inventory_hostname }} resolved delegated name {{ dns_validation_delegated_probe_name }} via {{ dns_validation_expected_resolver }}.
 

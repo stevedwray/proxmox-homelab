@@ -3,9 +3,9 @@
   hosts: localhost
   gather_facts: false
   vars:
-    pve_test_host: pve-test.gibbsgreatly.xyz
-    mikrotik_mgmt_ip: 192.168.1.251
-    build_gateway_ip: 10.57.0.1
+    pve_test_host: "{{ lookup('env', 'PVE_TEST_FQDN') | default('pve-test.gibbsgreatly.xyz', true) }}"
+    mikrotik_mgmt_ip: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    build_gateway_ip: "{{ lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required') }}"
     build_vmid: 139
 
   tasks:
