@@ -405,8 +405,8 @@ Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory 
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
 - **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no new handoff. Commit any uncommitted source changes from the session,
-  push, merge the branch to `refs.base_branch`, close the tracking issue, then
+- **PASS**: no new handoff. Push the executor's session commit (`git push`),
+  merge the branch to `refs.base_branch`, close the tracking issue, then
   delete `.git/ai/sessions/<session-id>-report.md`.
 - **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
   `.git/ai/sessions/<prior-session-id>-report.md`.

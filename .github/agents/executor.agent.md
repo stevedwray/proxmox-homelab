@@ -110,13 +110,15 @@ record it in the report. If `env.scan_gate: pr` (or absent), skip scans and note
 the deferral in the report — this is not a blocker.
 
 **Commit discipline**
-- Commit source and infrastructure changes during the session as they are made
+- Make one commit at session end covering all source/config changes made during
+  the session. Do not commit incrementally as you go.
 - Do NOT commit the session report — it is written to `.git/ai/sessions/` and
-  reviewed by the architect from disk; the architect decides whether to commit it
+  reviewed by the architect from disk; the architect decides whether to push it
 - Every commit must follow this format exactly: `<type>: <subject> (session <id>) Refs #N`
   or `Closes #N` — no exceptions, including inline fix commits
 - Do not commit evidence directories (they are gitignored)
 - Do not use `--no-verify` unless explicitly instructed
+- Do not push — the architect pushes after reviewing the session report
 
 **Long-running gate output capture**
 For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
@@ -157,7 +159,7 @@ If a terminal becomes unavailable during gate execution:
 **Branch:**
 - The branch in `session.branch` is created by the architect before handoff; check
   it out, do not create it
-- Push source changes at session end: `git push`
+- Do not push. The architect pushes after reviewing the session report.
 
 **Issues — during execution:**
 - If a gate resolves an open blocker issue: add a comment with evidence path + SHA,
