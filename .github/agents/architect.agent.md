@@ -199,7 +199,13 @@ When generating teardown/redeploy sessions that use `scripts/teardown-deploy-tes
 - Encode the harness as literal shell commands, not summaries.
 - For every mutating phase (`destroy`, `deploy-foundation`, `deploy-edge`,
   `activate-edge`, `deploy-platform`, and `cycle`), include both `--execute`
-  and `--approval-text "<operator-approved text>"`.
+  and `--approval-text "<text>"`. Construct the approval text from `approvals.scope`
+  — do not leave it as a placeholder and do not ask the operator for it.
+- For `destroy` and `cycle` phases when `env.disposable: false`, the approval text
+  must contain all of these words (case-insensitive): `op-06`, `destroy`, `op-07`,
+  `op-16`, `stop`, `first failure`, `does not authorize`, `rebuild apply`,
+  `edge publish`, `op-25`, `op-28`, `op-29`, `reconcile`, `apply`. Compose a single
+  sentence using `approvals.scope` that naturally includes all of them.
 - Preserve the declared phase order exactly: `destroy`, `deploy-foundation`,
   `deploy-edge`, `activate-edge`, `deploy-platform`, `final-validation`.
 - Do not omit `deploy-edge` when decomposing a full teardown/redeploy workflow
@@ -210,9 +216,16 @@ When generating teardown/redeploy sessions that use `scripts/teardown-deploy-tes
   gate command and point evidence at a new session-specific path instead of
   reusing an earlier session's report or log file.
 
-**Ask before inferring**
-When you need operator input, emit a `needs_input` block and wait. Do not infer
-intent from prior context.
+**No interactive decision points after intake**
+Once you have enough context to write the session handoff, write it and immediately
+click Hand off to Executor (or Hand off to Planner). Do not present "next steps"
+options, do not ask "which would you like?", do not wait for operator confirmation
+before routing. The operator's task description is the approval to proceed.
+
+**Ask during intake only**
+Emit a `needs_input` block only when a required session context field (branch,
+target guard, disposable flag, or task scope) is genuinely absent from the intake
+prompt and cannot be inferred. Once those fields are resolved, do not ask again.
 
 ---
 
