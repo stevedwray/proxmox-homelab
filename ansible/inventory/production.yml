@@ -7,14 +7,14 @@ all:
             pve.gibbsgreatly.xyz:
               ansible_host: "{{ lookup('env', 'PROXMOX_PRODUCTION_HOST_IP') | default('192.168.1.2') }}"
               ansible_user: root
-              ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
 
         proxmox_testbed:
           hosts:
             pve-test.gibbsgreatly.xyz:
               ansible_host: "{{ lookup('env', 'PROXMOX_TESTBED_HOST_IP') | default('192.168.1.40') }}"
               ansible_user: root
-              ansible_ssh_private_key_file: ~/.ssh/id_rsa
+              ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
               pmx_enable_nftables_firewall: true
 
       vars:
@@ -28,5 +28,5 @@ all:
         debian_builder:
           ansible_host: 192.168.1.50
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'

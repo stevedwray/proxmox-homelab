@@ -159,18 +159,19 @@
     - name: Configure SSH and create automation user via pct exec
       ansible.builtin.shell: |
         pct exec {{ template_id }} -- bash -c "
+        TEMPLATE_SSH_USER='{{ template_ssh_user }}'
         apt update && apt install -y openssh-server sudo curl wget
         systemctl enable ssh
         systemctl start ssh
 
-        # Create automation user
-        useradd -m -s /bin/bash -G sudo automation
-        mkdir -p /home/automation/.ssh
-        echo '{{ lookup('file', template_public_key_path | expanduser) }}' > /home/automation/.ssh/authorized_keys
-        chown -R automation:automation /home/automation/.ssh
-        chmod 700 /home/automation/.ssh
-        chmod 600 /home/automation/.ssh/authorized_keys
-        echo 'automation ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/automation
+        # Create automation user (variable `template_ssh_user`)
+        useradd -m -s /bin/bash -G sudo "${TEMPLATE_SSH_USER}"
+        mkdir -p /home/${TEMPLATE_SSH_USER}/.ssh
+        echo '{{ lookup('file', template_public_key_path | expanduser) }}' > /home/${TEMPLATE_SSH_USER}/.ssh/authorized_keys
+        chown -R ${TEMPLATE_SSH_USER}:${TEMPLATE_SSH_USER} /home/${TEMPLATE_SSH_USER}/.ssh
+        chmod 700 /home/${TEMPLATE_SSH_USER}/.ssh
+        chmod 600 /home/${TEMPLATE_SSH_USER}/.ssh/authorized_keys
+        echo "${TEMPLATE_SSH_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${TEMPLATE_SSH_USER}
         "
       when: container_exists.rc != 0
       changed_when: true
@@ -309,7 +310,7 @@
 
     - name: Ensure automation user configuration is correct
       ansible.builtin.user:
-        name: automation
+        name: "{{ template_ssh_user }}"
         groups: sudo
         shell: /bin/bash
         create_home: true
@@ -317,13 +318,13 @@
 
     - name: Configure automation user sudoers
       ansible.builtin.copy:
-        content: "automation ALL=(ALL) NOPASSWD:ALL"
-        dest: /etc/sudoers.d/automation
+        content: "{{ template_ssh_user }} ALL=(ALL) NOPASSWD:ALL"
+        dest: "/etc/sudoers.d/{{ template_ssh_user }}"
         mode: "0440"
 
     - name: Configure SSH for automation user
       ansible.posix.authorized_key:
-        user: automation
+        user: "{{ template_ssh_user }}"
         state: present
         key: "{{ lookup('file', template_public_key_path | expanduser) }}"
 
@@ -376,7 +377,7 @@
 
         - name: Add automation user to docker group
           ansible.builtin.user:
-            name: automation
+            name: "{{ template_ssh_user }}"
             groups: docker
             append: true
 

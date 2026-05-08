@@ -6,7 +6,7 @@ all:
         pvetest:
           ansible_host: "{{ lookup('env', 'PROXMOX_PRODUCTION_HOST_IP') | default('pve.gibbsgreatly.xyz') }}"
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
 
     # Debian template builder containers
     debian_template_builder:
@@ -14,7 +14,7 @@ all:
         debian_builder:
           ansible_host: 192.168.1.50
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
     # Alpine template builder containers
@@ -23,7 +23,7 @@ all:
         alpine_builder:
           ansible_host: 192.168.1.52
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           ansible_python_interpreter: /usr/bin/python3
 
@@ -33,7 +33,7 @@ all:
         debian_enhanced:
           ansible_host: 192.168.1.51
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
     alpine_template_enhanced:
@@ -41,6 +41,6 @@ all:
         alpine_enhanced:
           ansible_host: 192.168.1.53
           ansible_user: root
-          ansible_ssh_private_key_file: ~/.ssh/id_rsa
+          ansible_ssh_private_key_file: "{{ lookup('env', 'ANSIBLE_PRIVATE_KEY_FILE') | default('~/.ssh/id_ed25519') }}"
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           ansible_python_interpreter: /usr/bin/python3
