@@ -43,7 +43,7 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Stack | Stage | VMID | IP | Zone | depends_on | ansible_playbook |
 |---|---|---:|---|---|---|---|
-| `portainer-stack` | Stage 3b platform | 120 | `192.168.20.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
+| `portainer-stack` | Stage 3b platform | 120 | `${lab_ip_portainer}/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
 | `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
 | `harbor-stack` | Stage 3b platform | 121 | `10.57.3.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
 | `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
