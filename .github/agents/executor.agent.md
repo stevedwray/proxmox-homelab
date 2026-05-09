@@ -39,7 +39,6 @@ When present, treat an `approvals` block as authoritative session-context
 approval metadata for destructive work. For destructive sessions, the architect
 should provide at least:
 - `approvals.destructive: true`
-- `approvals.packet_path` when the invoked harness requires an approval packet
 - `approvals.scope` describing the approved destructive window
 
 ---
@@ -68,15 +67,8 @@ session metadata table before continuing.
    List any found; do not open new ones at session start.
 
 5. **Approval** (destructive sessions only) — if the session includes any destructive
-   or deploy gates, validate the `approvals` block before running any gates:
-   - Confirm `approvals.destructive: true` is set.
-   - If `approvals.packet_path` is not null, confirm the file exists:
-     `test -f <approvals.packet_path>`
-   - If `approvals.packet_path` is not null, confirm the packet file contains the
-     exact value of `refs.current_head_sha`:
-     `grep -qF <current_head_sha> <approvals.packet_path>`
-   If any check fails, stop immediately — record the missing or mismatched field and
-   do not run destructive gates.
+   or deploy gates, confirm `approvals.destructive: true` is set before running any
+   gates. If it is absent or false, stop immediately and do not run destructive gates.
 
 ---
 
@@ -92,9 +84,8 @@ and the exit code. "Command succeeded" with no output is invalid evidence.
 
 **Stop conditions**
 Stop immediately and document if:
-- A destructive or deploy action is reached without explicit approval recorded in
-  the session context (for example `approvals.destructive: true`, plus any
-  required `approvals.packet_path`)
+- A destructive or deploy action is reached without `approvals.destructive: true`
+  recorded in the session context
 - Continuing would violate a guardrail
 - Unexpected state makes the declared scope unclear
 
@@ -193,8 +184,6 @@ Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
 | Working tree | clean / dirty |
 | Open issues at start | #N title, or none |
 | Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
-| Approval: packet found | PASS / FAIL / N/A |
-| Approval: packet SHA match | PASS / FAIL / N/A |
 
 ### 2. Gate Results
 

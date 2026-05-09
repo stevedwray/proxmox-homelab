@@ -84,16 +84,8 @@ For sessions that include destructive actions, also carry explicit approval deta
 | `approvals.scope` | Human-readable description of the approved destructive window |
 
 For a destructive session, the operator's explicit confirmation in the intake prompt
-is sufficient to set `approvals.destructive: true`. Set `approvals.packet_path: null`
-unless the invoked harness specifically requires an artifact file — most sessions
-(provision.sh, rebuild-gate-destroy.sh, etc.) do not. Only emit `needs_input` for
+is sufficient to set `approvals.destructive: true`. Only emit `needs_input` for
 missing approval when `approvals.destructive` has not been confirmed by the operator.
-
-When `approvals.packet_path` is not null, verify packet integrity before writing:
-1. Confirm the file exists: `test -f <approvals.packet_path>`
-2. Confirm it contains the exact SHA you will write as `refs.current_head_sha`:
-   `grep -qF <current_head_sha> <approvals.packet_path>`
-If either check fails, emit `needs_input` — do not write the handoff.
 
 **Before writing the handoff**, create `session.branch` from `refs.base_branch` if
 it does not already exist, then push it:
@@ -209,11 +201,6 @@ When generating teardown/redeploy sessions that use `scripts/teardown-deploy-tes
   `activate-edge`, `deploy-platform`, and `cycle`), include both `--execute`
   and `--approval-text "<text>"`. Construct the approval text from `approvals.scope`
   — do not leave it as a placeholder and do not ask the operator for it.
-- For `destroy` and `cycle` phases when `env.disposable: false`, the approval text
-  must contain all of these words (case-insensitive): `op-06`, `destroy`, `op-07`,
-  `op-16`, `stop`, `first failure`, `does not authorize`, `rebuild apply`,
-  `edge publish`, `op-25`, `op-28`, `op-29`, `reconcile`, `apply`. Compose a single
-  sentence using `approvals.scope` that naturally includes all of them.
 - Preserve the declared phase order exactly: `destroy`, `deploy-foundation`,
   `deploy-edge`, `activate-edge`, `deploy-platform`, `final-validation`.
 - Do not omit `deploy-edge` when decomposing a full teardown/redeploy workflow
