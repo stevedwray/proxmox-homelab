@@ -291,11 +291,85 @@
             loki-data: {}
       no_log: true
 
+    - name: Test DNS resolution for Harbor
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import socket,sys
+        try:
+            socket.gethostbyname('{{ monitoring_lab_fqdn_harbor }}')
+            print('OK')
+        except Exception:
+            sys.exit(1)
+        PY
+      register: harbor_dns
+      failed_when: false
+
+    - name: Test DNS resolution for Docker Hub registry
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import socket,sys
+        try:
+            socket.gethostbyname('registry-1.docker.io')
+            print('OK')
+        except Exception:
+            sys.exit(1)
+        PY
+      register: dockerhub_dns
+      failed_when: false
+
+    - name: Decide whether temporary DNS fallback is needed
+      ansible.builtin.set_fact:
+        monitoring_dns_fallback_needed: "{{ (harbor_dns.rc != 0) or (dockerhub_dns.rc != 0) }}"
+
+    - name: Backup resolv.conf when Harbor DNS lookup fails
+      ansible.builtin.copy:
+        src: /etc/resolv.conf
+        dest: /etc/resolv.conf.backup-ansible
+        remote_src: yes
+      when: monitoring_dns_fallback_needed
+      failed_when: false
+
+    - name: Probe Harbor token endpoint over TLS
+      ansible.builtin.uri:
+        url: "https://{{ monitoring_lab_fqdn_harbor }}/service/token"
+        method: GET
+        validate_certs: false
+        status_code: [200, 400, 401, 403, 404]
+      register: harbor_token_tls
+      failed_when: false
+      changed_when: false
+
+    - name: Rewrite compose images to use upstream Docker Hub (dependency-tolerant mode)
+      ansible.builtin.replace:
+        path: "{{ monitoring_compose_dir }}/docker-compose.yml"
+        regexp: "{{ monitoring_registry_host | regex_escape }}/dockerhub/"
+        replace: ""
+      failed_when: false
+
     - name: Validate monitoring compose configuration
       ansible.builtin.command:
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ monitoring_compose_dir }}"
       changed_when: false
+
+    - name: Add temporary /etc/hosts entry for Harbor when DNS lookup fails
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }} {{ monitoring_lab_fqdn_harbor }}"
+        state: present
+      when: harbor_dns.rc != 0
+      failed_when: false
+
+    - name: Write temporary public DNS fallback when Harbor DNS lookup fails
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: '0644'
+        content: |
+          # Temporary fallback added by ansible for provisioning
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+      when: monitoring_dns_fallback_needed
+      failed_when: false
 
     - name: Start monitoring stack via compose
       community.docker.docker_compose_v2:
@@ -331,6 +405,22 @@
       retries: 30
       delay: 10
       until: loki_health.status == 200
+
+    - name: Restore resolv.conf from backup if we modified it
+      ansible.builtin.copy:
+        src: /etc/resolv.conf.backup-ansible
+        dest: /etc/resolv.conf
+        remote_src: yes
+      when: monitoring_dns_fallback_needed | default(false)
+      failed_when: false
+
+    - name: Remove temporary /etc/hosts entry for Harbor
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }}\\s+{{ monitoring_lab_fqdn_harbor }}"
+        state: absent
+      when: harbor_dns is defined and harbor_dns.rc != 0
+      failed_when: false
 
     - name: Look up Grafana breakglass local user
       ansible.builtin.uri:
