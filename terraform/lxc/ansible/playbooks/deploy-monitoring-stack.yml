@@ -81,9 +81,11 @@
     grafana_oauth_scopes: "{{ lookup('env', 'GRAFANA_OAUTH_SCOPES') | default('openid profile email', true) }}"
     grafana_oauth_client_id: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_ID') | default('grafana', true) }}"
     grafana_oauth_client_secret: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_SECRET') | mandatory('GRAFANA_OAUTH_CLIENT_SECRET env var is not set') }}"
+    # Use public Authentik URL for browser-facing authorize endpoint so existing cookies are used,
+    # while keeping token/api endpoints on the internal Authentik backchannel for server-to-server calls.
     grafana_oauth_auth_url: "{{ lookup('env', 'GRAFANA_OAUTH_AUTH_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
-    grafana_oauth_token_url: "{{ lookup('env', 'GRAFANA_OAUTH_TOKEN_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/token/', true) }}"
-    grafana_oauth_api_url: "{{ lookup('env', 'GRAFANA_OAUTH_API_URL') | default('', true) }}"
+    grafana_oauth_token_url: "{{ lookup('env', 'GRAFANA_OAUTH_TOKEN_URL') | default('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000/application/o/token/', true) }}"
+    grafana_oauth_api_url: "{{ lookup('env', 'GRAFANA_OAUTH_API_URL') | default('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000', true) }}"
     grafana_oauth_signout_redirect_url: "{{ lookup('env', 'GRAFANA_OAUTH_SIGNOUT_REDIRECT_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/edge-monitoring-stack-grafana/end-session/', true) }}"
     grafana_oauth_tls_skip_verify_insecure: "{{ lookup('env', 'GRAFANA_OAUTH_TLS_SKIP_VERIFY_INSECURE') | default('true', true) | bool }}"
     grafana_oauth_login_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_LOGIN_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
