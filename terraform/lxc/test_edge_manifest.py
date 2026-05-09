@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import os
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / "docs" / "provisioning-refactor" / "fixtures"
@@ -17,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("edge_manifest", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 discover_edge_manifests = MODULE.discover_edge_manifests
 extract_legacy_routes = MODULE.extract_legacy_routes
