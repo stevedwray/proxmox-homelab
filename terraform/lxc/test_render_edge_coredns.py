@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import os
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / "docs" / "provisioning-refactor" / "fixtures"
@@ -17,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("render_edge_coredns", RENDER_MODU
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 render_coredns_dry_run = MODULE.render_coredns_dry_run

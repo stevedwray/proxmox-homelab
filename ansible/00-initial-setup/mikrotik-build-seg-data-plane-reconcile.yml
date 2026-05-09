@@ -13,6 +13,25 @@
     trunk_interface: ether5
     build_vlan_name: vlan10-build
     build_gateway_cidr: "{{ (lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required')) ~ '/24' }}"
+    mgmt_gateway_cidr: "{{ (lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required')) ~ '/24' }}"
+    edge_gateway_cidr: "{{ (lookup('env', 'LAB_GW_EDGE') | mandatory('LAB_GW_EDGE env var is required')) ~ '/24' }}"
+    infra_gateway_cidr: "{{ (lookup('env', 'LAB_GW_INFRA') | mandatory('LAB_GW_INFRA env var is required')) ~ '/24' }}"
+    migrated_gateway_bindings:
+      - name: mgmt
+        interface: vlan20-mgmt
+        cidr: "{{ mgmt_gateway_cidr }}"
+        legacy_cidr: 10.57.1.1/24
+        comment: pve-test mgmt_seg gw
+      - name: edge
+        interface: vlan30-edge
+        cidr: "{{ edge_gateway_cidr }}"
+        legacy_cidr: 10.57.2.1/24
+        comment: pve-test edge_seg gw
+      - name: infra
+        interface: vlan40-infra
+        cidr: "{{ infra_gateway_cidr }}"
+        legacy_cidr: 10.57.3.1/24
+        comment: pve-test infra_seg gw
     tagged_vlans:
       - 10
       - 20
@@ -182,6 +201,101 @@
         - build_ip_obj.interface != build_vlan_name or (build_ip_obj.disabled | default('false')) == 'true'
       no_log: true
 
+    - name: Locate migrated gateway address objects
+      ansible.builtin.set_fact:
+        migrated_gateway_ip_objs: >-
+          {{
+            (migrated_gateway_ip_objs | default({}))
+            | combine({
+              (item.name): (
+                (ip_result.json | selectattr('address', 'equalto', item.cidr) | list | first)
+                | default({})
+              )
+            })
+          }}
+      loop: "{{ migrated_gateway_bindings }}"
+
+    - name: Add migrated gateway IP when missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          address: "{{ item.cidr }}"
+          interface: "{{ item.interface }}"
+          comment: "{{ item.comment }}"
+          disabled: "false"
+        status_code: [200, 201]
+      loop: "{{ migrated_gateway_bindings }}"
+      when: migrated_gateway_ip_objs[item.name] == {}
+      no_log: true
+
+    - name: Ensure migrated gateway IP is attached to target VLAN
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/{{ migrated_gateway_ip_objs[item.name]['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          interface: "{{ item.interface }}"
+          disabled: "false"
+          comment: "{{ item.comment }}"
+        status_code: [200, 201]
+      loop: "{{ migrated_gateway_bindings }}"
+      when:
+        - migrated_gateway_ip_objs[item.name] != {}
+        - >-
+          migrated_gateway_ip_objs[item.name].interface != item.interface
+          or (migrated_gateway_ip_objs[item.name].disabled | default('false')) == 'true'
+      no_log: true
+
+    - name: Read refreshed IP addresses after gateway reconcile
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: refreshed_ip_result
+      no_log: true
+
+    - name: Locate legacy migrated gateway address objects
+      ansible.builtin.set_fact:
+        legacy_gateway_ip_objs: >-
+          {{
+            (legacy_gateway_ip_objs | default({}))
+            | combine({
+              (item.name): (
+                (refreshed_ip_result.json | selectattr('address', 'equalto', item.legacy_cidr) | list | first)
+                | default({})
+              )
+            })
+          }}
+      loop: "{{ migrated_gateway_bindings }}"
+
+    - name: Remove legacy migrated gateway addresses
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/{{ legacy_gateway_ip_objs[item.name]['.id'] }}"
+        method: DELETE
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: [200, 204]
+      loop: "{{ migrated_gateway_bindings }}"
+      when: legacy_gateway_ip_objs[item.name] != {}
+      no_log: true
+
     - name: Read bridge VLAN table
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan"
@@ -260,6 +374,19 @@
       register: final_bridge_result
       no_log: true
 
+    - name: Read final IP addresses
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: final_ip_result
+      no_log: true
+
     - name: Read final bridge VLAN table
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan"
@@ -280,8 +407,20 @@
           - final_build_vlan_entry != {}
           - trunk_interface in (final_build_vlan_entry.tagged | default(''))
           - bridge_name in (final_build_vlan_entry.tagged | default(''))
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', mgmt_gateway_cidr) | list | length) > 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', edge_gateway_cidr) | list | length) > 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', infra_gateway_cidr) | list | length) > 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', '10.57.1.1/24') | list | length) == 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', '10.57.2.1/24') | list | length) == 0
+          - >-
+            (final_ip_result.json | selectattr('address', 'equalto', '10.57.3.1/24') | list | length) == 0
         fail_msg: VLAN10 trunk model was not reconciled as expected.
-        success_msg: VLAN10 trunk model now exists on bridgeLocal and ether5.
+        success_msg: VLAN10 trunk model plus mgmt/edge/infra gateway migration reconciled.
       vars:
         final_bridge_obj: >-
           {{

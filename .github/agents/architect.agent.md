@@ -1,6 +1,6 @@
 ---
 description: 'architect — task intake, evidence review, and go/no-go decisions for homelab Ansible/Terraform work'
-tools: [execute/runNotebookCell, execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runTask, execute/createAndRunTask, execute/runInTerminal, execute/runTests, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, agent/runSubagent, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/searchSubagent, search/usages, web/fetch, web/githubRepo]
+tools: [execute/getTerminalOutput, execute/runInTerminal, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, agent/runSubagent, edit/createDirectory, edit/createFile, edit/editFiles, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/searchSubagent, search/usages, web/fetch, web/githubRepo]
 model: gpt-4.1
 handoffs:
   - label: 'Hand off to Executor'
@@ -84,16 +84,8 @@ For sessions that include destructive actions, also carry explicit approval deta
 | `approvals.scope` | Human-readable description of the approved destructive window |
 
 For a destructive session, the operator's explicit confirmation in the intake prompt
-is sufficient to set `approvals.destructive: true`. Set `approvals.packet_path: null`
-unless the invoked harness specifically requires an artifact file — most sessions
-(provision.sh, rebuild-gate-destroy.sh, etc.) do not. Only emit `needs_input` for
+is sufficient to set `approvals.destructive: true`. Only emit `needs_input` for
 missing approval when `approvals.destructive` has not been confirmed by the operator.
-
-When `approvals.packet_path` is not null, verify packet integrity before writing:
-1. Confirm the file exists: `test -f <approvals.packet_path>`
-2. Confirm it contains the exact SHA you will write as `refs.current_head_sha`:
-   `grep -qF <current_head_sha> <approvals.packet_path>`
-If either check fails, emit `needs_input` — do not write the handoff.
 
 **Before writing the handoff**, create `session.branch` from `refs.base_branch` if
 it does not already exist, then push it:
@@ -165,6 +157,14 @@ When the operator explicitly directs a merge target (`baseline/teardown-validate
 If the required gate evidence is missing, emit `needs_input` instead of merging.
 Set `refs.base_branch` to the current active working branch for all work types. Never set it to `dev/pve-test` or `baseline/teardown-validated` — these are promotion targets, not development sources.
 
+**Never run gate commands**
+Gate commands belong in the handoff — not in a terminal. Do not run any command
+from the `gates` list directly. Write `.git/ai/handoff-to-executor.yaml` and click
+**Hand off to Executor**. Terminal access is reserved for lightweight checks only:
+`git status`, `git merge-base`, `gh issue list`, `test -f`, `grep`. If you find
+yourself about to run an Ansible playbook, Terraform command, or any script from
+`scripts/`, stop — that is executor work.
+
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
 with ordering dependencies you cannot pre-resolve into a single session context.
@@ -199,7 +199,8 @@ When generating teardown/redeploy sessions that use `scripts/teardown-deploy-tes
 - Encode the harness as literal shell commands, not summaries.
 - For every mutating phase (`destroy`, `deploy-foundation`, `deploy-edge`,
   `activate-edge`, `deploy-platform`, and `cycle`), include both `--execute`
-  and `--approval-text "<operator-approved text>"`.
+  and `--approval-text "<text>"`. Construct the approval text from `approvals.scope`
+  — do not leave it as a placeholder and do not ask the operator for it.
 - Preserve the declared phase order exactly: `destroy`, `deploy-foundation`,
   `deploy-edge`, `activate-edge`, `deploy-platform`, `final-validation`.
 - Do not omit `deploy-edge` when decomposing a full teardown/redeploy workflow
@@ -210,9 +211,16 @@ When generating teardown/redeploy sessions that use `scripts/teardown-deploy-tes
   gate command and point evidence at a new session-specific path instead of
   reusing an earlier session's report or log file.
 
-**Ask before inferring**
-When you need operator input, emit a `needs_input` block and wait. Do not infer
-intent from prior context.
+**No interactive decision points after intake**
+Once you have enough context to write the session handoff, write it and immediately
+click Hand off to Executor (or Hand off to Planner). Do not present "next steps"
+options, do not ask "which would you like?", do not wait for operator confirmation
+before routing. The operator's task description is the approval to proceed.
+
+**Ask during intake only**
+Emit a `needs_input` block only when a required session context field (branch,
+target guard, disposable flag, or task scope) is genuinely absent from the intake
+prompt and cannot be inferred. Once those fields are resolved, do not ask again.
 
 ---
 
@@ -392,8 +400,8 @@ Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory 
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
 - **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no new handoff. Commit any uncommitted source changes from the session,
-  push, merge the branch to `refs.base_branch`, close the tracking issue, then
+- **PASS**: no new handoff. Push the executor's session commit (`git push`),
+  merge the branch to `refs.base_branch`, close the tracking issue, then
   delete `.git/ai/sessions/<session-id>-report.md`.
 - **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
   `.git/ai/sessions/<prior-session-id>-report.md`.

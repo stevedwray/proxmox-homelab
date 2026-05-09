@@ -34,5 +34,5 @@ network:
 ansible_playbook: "deploy-portainer-stack"
 deployment_tier: platform
 apt_cacher_host: ""
-dns_server: "${lab_gw_mgmt}"
+dns_server: "${lab_ip_dns}"
 portainer_agent: false

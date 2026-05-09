@@ -43,16 +43,16 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Stack | Stage | VMID | IP | Zone | depends_on | ansible_playbook |
 |---|---|---:|---|---|---|---|
-| `portainer-stack` | Stage 3b platform | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
-| `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
-| `harbor-stack` | Stage 3b platform | 121 | `10.57.3.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
-| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
-| `dns-stack` | Stage 3a edge foundation | 151 | `10.57.1.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
-| `proxy-stack` | Stage 3a edge foundation | 153 | `10.57.2.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
-| `step-ca-stack` | Stage 3a edge foundation | 152 | `10.57.1.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
-| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
-| `monitoring-stack` | Stage 3b platform | 154 | `10.57.1.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
-| `netbox-stack` | Stage 3b platform | 143 | `10.57.3.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
+| `portainer-stack` | Stage 3b platform | 120 | `192.168.20.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
+| `apt-cacher-stack` | Stage 1/2 foundation | 142 | `192.168.40.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
+| `harbor-stack` | Stage 3b platform | 121 | `192.168.40.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
+| `ci-runner-01` | Stage 1/2 foundation | 141 | `192.168.10.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
+| `dns-stack` | Stage 3a edge foundation | 151 | `192.168.20.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
+| `proxy-stack` | Stage 3a edge foundation | 153 | `192.168.30.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
+| `step-ca-stack` | Stage 3a edge foundation | 152 | `192.168.20.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
+| `authentik-stack` | Stage 3a edge foundation | 150 | `192.168.20.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
+| `monitoring-stack` | Stage 3b platform | 154 | `192.168.20.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
+| `netbox-stack` | Stage 3b platform | 143 | `192.168.40.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
 
 ## Resolver And Zone Contract
 

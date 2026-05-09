@@ -7,7 +7,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WITH_SECRETS="${REPO_ROOT}/with-secrets"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 TARGET_NODE_EXPECTED="${REBUILD_GATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
-TARGET_HOST="${TARGET_NODE_EXPECTED}.gibbsgreatly.xyz"
+TARGET_HOST="${REBUILD_GATE_TARGET_HOST:-${PVE_TEST_FQDN:-${PROXMOX_HOST:-${TARGET_NODE_EXPECTED}.local}}}"
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ssh/known_hosts")
 EXECUTE=false
 

@@ -6,7 +6,7 @@ all:
         proxmox_testbed:
           hosts:
             pve-test.gibbsgreatly.xyz:
-              ansible_host: 192.168.1.40
+              ansible_host: "{{ lookup('env', 'PROXMOX_TESTBED_HOST_IP') | default('pve-test.gibbsgreatly.xyz') }}"
               ansible_user: root
               pmx_enable_nftables_firewall: true
 
@@ -18,7 +18,7 @@ all:
     debian_template_builder:
       hosts:
         debian_builder:
-          ansible_host: 192.168.1.50
+          ansible_host: "{{ ansible_host_ip_map.debian_template_builder }}"
           ansible_user: root
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
@@ -26,7 +26,7 @@ all:
     alpine_template_builder:
       hosts:
         alpine_builder:
-          ansible_host: 192.168.1.52
+          ansible_host: "{{ ansible_host_ip_map.alpine_template_builder }}"
           ansible_user: root
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           ansible_python_interpreter: /usr/bin/python3
@@ -35,14 +35,14 @@ all:
     debian_template_enhanced:
       hosts:
         debian_enhanced:
-          ansible_host: 192.168.1.51
+          ansible_host: "{{ ansible_host_ip_map.debian_template_enhanced }}"
           ansible_user: root
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
     alpine_template_enhanced:
       hosts:
         alpine_enhanced:
-          ansible_host: 192.168.1.53
+          ansible_host: "{{ ansible_host_ip_map.alpine_template_enhanced }}"
           ansible_user: root
           ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
           ansible_python_interpreter: /usr/bin/python3

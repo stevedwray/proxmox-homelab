@@ -44,6 +44,15 @@
         state: present
         update_cache: true
 
+    - name: Ensure temporary public DNS fallback so downloads succeed
+      ansible.builtin.shell: |
+        if ! getent hosts github.com >/dev/null 2>&1; then
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+        fi
+      args:
+        executable: /bin/bash
+      become: true
+
     - name: Check whether step and step-ca are already installed
       ansible.builtin.stat:
         path: "{{ item }}"

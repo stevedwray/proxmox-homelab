@@ -95,6 +95,15 @@
         msg: "docker compose config failed: {{ authentik_compose_validate.stderr | default(authentik_compose_validate.stdout) }}"
       when: authentik_compose_validate.rc != 0
 
+    - name: Ensure temporary public DNS fallback so Docker can pull images
+      ansible.builtin.shell: |
+        if ! getent hosts registry-1.docker.io >/dev/null 2>&1; then
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+        fi
+      args:
+        executable: /bin/bash
+      become: true
+
     - name: Start Authentik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ authentik_compose_dir }}"
