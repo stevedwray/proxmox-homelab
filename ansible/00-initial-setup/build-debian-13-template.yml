@@ -40,6 +40,16 @@
     template_ssh_common_args: "{{ debian_template.ssh_common_args | default('-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null') }}"
     template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_ed25519.pub') }}"
     enable_root_ssh_login: "{{ debian_template.enable_root_ssh_login | default(false) }}"
+    apt_lock_wait_command: |
+      for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        if ! ps -eo comm= | grep -Eq '^(apt|apt-get|dpkg|aptitude|unattended-upgrade)$'; then
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "Timed out waiting for apt/dpkg lock holders to exit" >&2
+      exit 1
+    apt_lock_timeout_seconds: "{{ debian_template.apt_lock_timeout_seconds | default(300) }}"
 
     # Feature flags
     install_docker: "{{ debian_template.install_docker | default(true) }}"
@@ -98,6 +108,26 @@
       failed_when: false
       changed_when: false
 
+    - name: Stop existing template container before rebuild
+      ansible.builtin.command: pct stop {{ template_id }}
+      register: stop_existing_template
+      failed_when: stop_existing_template.rc not in [0, 255]
+      changed_when: stop_existing_template.rc == 0
+      when: container_exists.rc == 0
+
+    - name: Remove existing template container before rebuild
+      ansible.builtin.command: pct destroy {{ template_id }} --purge 1
+      register: destroy_existing_template
+      failed_when: destroy_existing_template.rc != 0
+      changed_when: true
+      when: container_exists.rc == 0
+
+    - name: Re-check template container after cleanup
+      ansible.builtin.command: pct config {{ template_id }}
+      register: container_exists_post_cleanup
+      failed_when: false
+      changed_when: false
+
     - name: Refresh Proxmox appliance catalog
       ansible.builtin.command: pveam update
       changed_when: false
@@ -116,7 +146,7 @@
       ansible.builtin.command: pveam download local {{ base_template_file }}
       changed_when: true
       when:
-        - container_exists.rc != 0
+        - container_exists_post_cleanup.rc != 0
         - template_available.rc != 0
 
     - name: Create base LXC container
@@ -131,9 +161,15 @@
         --onboot 0
         --protection 0
         --start
-      when: container_exists.rc != 0
+      when: container_exists_post_cleanup.rc != 0
       register: container_creation
       changed_when: true
+
+    - name: Ensure template container is running
+      ansible.builtin.command: pct start {{ template_id }}
+      register: container_start
+      failed_when: false
+      changed_when: "'started' in (container_start.stdout | default(''))"
 
     - name: Wait for container to be running
       ansible.builtin.command: pct status {{ template_id }}
@@ -141,7 +177,6 @@
       until: "'running' in container_status.stdout"
       retries: 10
       delay: 5
-      when: container_exists.rc != 0
       changed_when: false
 
     - name: Wait for SSH to be available
@@ -150,30 +185,46 @@
         port: 22
         delay: 10
         timeout: 300
-      when: container_exists.rc != 0
 
     # =====================================
     # Initial SSH and User Setup via pct exec
     # =====================================
 
-    - name: Configure SSH and create automation user via pct exec
+    - name: Configure SSH and ensure automation user via pct exec
       ansible.builtin.shell: |
         pct exec {{ template_id }} -- bash -c "
         TEMPLATE_SSH_USER='{{ template_ssh_user }}'
-        apt update && apt install -y openssh-server sudo curl wget
+        export DEBIAN_FRONTEND=noninteractive
+        systemctl stop apt-daily.service apt-daily-upgrade.service || true
+        systemctl disable apt-daily.timer apt-daily-upgrade.timer || true
+        systemctl mask apt-daily.service apt-daily.timer apt-daily-upgrade.service apt-daily-upgrade.timer || true
+        apt_ready=0
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+          if ! ps -eo comm= | grep -Eq \"^(apt|apt-get|dpkg|aptitude|unattended-upgrade)$\"; then
+            apt_ready=1
+            break
+          fi
+          sleep 5
+        done
+        if [ \"\${apt_ready}\" -ne 1 ]; then
+          echo \"Timed out waiting for apt/dpkg lock holders to exit\" >&2
+          exit 1
+        fi
+        apt-get update
+        apt-get -o DPkg::Lock::Timeout={{ apt_lock_timeout_seconds }} install -y openssh-server sudo curl wget
         systemctl enable ssh
         systemctl start ssh
 
-        # Create automation user (variable `template_ssh_user`)
-        useradd -m -s /bin/bash -G sudo "${TEMPLATE_SSH_USER}"
-        mkdir -p /home/${TEMPLATE_SSH_USER}/.ssh
-        echo '{{ lookup('file', template_public_key_path | expanduser) }}' > /home/${TEMPLATE_SSH_USER}/.ssh/authorized_keys
-        chown -R ${TEMPLATE_SSH_USER}:${TEMPLATE_SSH_USER} /home/${TEMPLATE_SSH_USER}/.ssh
-        chmod 700 /home/${TEMPLATE_SSH_USER}/.ssh
-        chmod 600 /home/${TEMPLATE_SSH_USER}/.ssh/authorized_keys
-        echo "${TEMPLATE_SSH_USER} ALL=(ALL) NOPASSWD:ALL" > /etc/sudoers.d/${TEMPLATE_SSH_USER}
+        # Ensure automation user exists and can reconnect Ansible over SSH.
+        id -u \"\${TEMPLATE_SSH_USER}\" >/dev/null 2>&1 || useradd -m -s /bin/bash -G sudo \"\${TEMPLATE_SSH_USER}\"
+        usermod -aG sudo \"\${TEMPLATE_SSH_USER}\"
+        mkdir -p /home/\${TEMPLATE_SSH_USER}/.ssh
+        echo '{{ lookup('file', template_public_key_path | expanduser) }}' > /home/\${TEMPLATE_SSH_USER}/.ssh/authorized_keys
+        chown -R \${TEMPLATE_SSH_USER}:\${TEMPLATE_SSH_USER} /home/\${TEMPLATE_SSH_USER}/.ssh
+        chmod 700 /home/\${TEMPLATE_SSH_USER}/.ssh
+        chmod 600 /home/\${TEMPLATE_SSH_USER}/.ssh/authorized_keys
+        echo \"\${TEMPLATE_SSH_USER} ALL=(ALL) NOPASSWD:ALL\" > /etc/sudoers.d/\${TEMPLATE_SSH_USER}
         "
-      when: container_exists.rc != 0
       changed_when: true
 
     - name: Optionally enable root SSH login in template builder container
@@ -187,7 +238,6 @@
         systemctl restart ssh
         "
       when:
-        - container_exists.rc != 0
         - enable_root_ssh_login
       changed_when: true
 
@@ -211,6 +261,7 @@
     install_docker: "{{ debian_template.install_docker | default(true) }}"
     install_portainer_agent: "{{ debian_template.install_portainer_agent | default(true) }}"
     cleanup_template: "{{ debian_template.cleanup_template | default(true) }}"
+    template_ssh_user: "{{ debian_template.ssh_user | default('automation') }}"
     template_public_key_path: "{{ debian_template.ssh_public_key_path | default('~/.ssh/id_ed25519.pub') }}"
     enable_root_console_autologin: "{{ debian_template.enable_root_console_autologin | default(false) }}"
     docker_channel: "{{ debian_template.docker_channel | default('debian') }}"
@@ -218,6 +269,16 @@
       {{ debian_template.docker_compose_cli
          | default((docker_channel == 'debian')
          | ternary('/usr/bin/docker-compose', '/usr/bin/docker compose')) }}
+    apt_lock_wait_command: |
+      for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+        if ! ps -eo comm= | grep -Eq '^(apt|apt-get|dpkg|aptitude|unattended-upgrade)$'; then
+          exit 0
+        fi
+        sleep 5
+      done
+      echo "Timed out waiting for apt/dpkg lock holders to exit" >&2
+      exit 1
+    apt_lock_timeout_seconds: "{{ debian_template.apt_lock_timeout_seconds | default(300) }}"
     docker_packages_debian:
       - docker.io
       - docker-compose
@@ -244,6 +305,7 @@
       # Python and development tools
       - python3
       - python3-pip
+      - python3-docker
       - python3-venv
       - build-essential
 
@@ -292,17 +354,37 @@
       ansible.builtin.setup:
 
   tasks:
+    - name: Stop and mask apt timers to avoid background apt jobs
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+        enabled: false
+        masked: true
+      loop:
+        - apt-daily.service
+        - apt-daily.timer
+        - apt-daily-upgrade.service
+        - apt-daily-upgrade.timer
+
+    - name: Wait for apt/dpkg to be free before package operations
+      ansible.builtin.shell: "{{ apt_lock_wait_command }}"
+      register: wait_apt_runtime
+      changed_when: false
+      failed_when: wait_apt_runtime.rc != 0
+
     - name: Update package cache and upgrade system
       ansible.builtin.apt:
         update_cache: true
         upgrade: dist
         autoremove: true
         autoclean: true
+        lock_timeout: "{{ apt_lock_timeout_seconds }}"
 
     - name: Install standard packages
       ansible.builtin.apt:
         name: "{{ template_packages }}"
         state: present
+        lock_timeout: "{{ apt_lock_timeout_seconds }}"
 
     - name: Configure timezone
       community.general.timezone:
@@ -339,6 +421,7 @@
           ansible.builtin.apt:
             name: "{{ docker_packages_debian }}"
             state: present
+            lock_timeout: "{{ apt_lock_timeout_seconds }}"
           when: docker_channel == 'debian'
 
         - name: Create directory for Docker GPG key
@@ -367,12 +450,14 @@
         - name: Update apt cache after adding Docker repo
           ansible.builtin.apt:
             update_cache: true
+            lock_timeout: "{{ apt_lock_timeout_seconds }}"
           when: docker_channel == 'upstream'
 
         - name: Install Docker packages from upstream repository
           ansible.builtin.apt:
             name: "{{ docker_packages_upstream }}"
             state: present
+            lock_timeout: "{{ apt_lock_timeout_seconds }}"
           when: docker_channel == 'upstream'
 
         - name: Add automation user to docker group
@@ -620,6 +705,17 @@
       ansible.builtin.setup:
 
   tasks:
+    - name: Check whether packaging clone already exists
+      ansible.builtin.command: pct config {{ clone_id }}
+      register: clone_exists
+      failed_when: false
+      changed_when: false
+
+    - name: Fail if packaging clone already exists
+      ansible.builtin.fail:
+        msg: "Packaging clone CT {{ clone_id }} already exists. Remove or rename it before rebuilding the template."
+      when: clone_exists.rc == 0
+
     - name: Stop the container
       ansible.builtin.command: pct stop {{ template_id }}
       failed_when: false
