@@ -49,7 +49,7 @@
       }}
 
     coredns_ip: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
-    fwd_regexp: "(^|\\.){{ lab_domain | replace('.', '\\\\.') }}$"
+    fwd_regexp: "(^|\\.){{ lab_domain | replace('.', '\\.') }}$"
     fwd_comment: "lab-zone-delegate"
     baseline_comment: "lab-zone-baseline"
 
@@ -142,6 +142,30 @@
             | list
           }}
 
+    - name: Build list of stale lab-zone-delegate entries
+      ansible.builtin.set_fact:
+        stale_fwd_entries: >-
+          {{
+            existing_fwd_entries
+            | rejectattr('type', 'equalto', 'FWD')
+            | list
+            +
+            (
+              existing_fwd_entries
+              | selectattr('type', 'equalto', 'FWD')
+              | rejectattr('regexp', 'equalto', fwd_regexp)
+              | list
+            )
+            +
+            (
+              existing_fwd_entries
+              | selectattr('type', 'equalto', 'FWD')
+              | selectattr('regexp', 'equalto', fwd_regexp)
+              | rejectattr('forward-to', 'equalto', coredns_ip)
+              | list
+            )
+          }}
+
     # ── Step 4: Add FWD delegation entry ──────────────────────────────────────
 
     - name: Add FWD delegation entry for {{ lab_domain }} → CoreDNS
@@ -163,9 +187,32 @@
       when: existing_fwd_entries | length == 0
       no_log: true
 
-    - name: Skip FWD entry creation (already present)
+    - name: Update stale FWD delegation entries to current CoreDNS target
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ item['.id'] }}"
+        method: PATCH
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body:
+          regexp: "{{ fwd_regexp }}"
+          type: "FWD"
+          forward-to: "{{ coredns_ip }}"
+          ttl: "5m"
+          comment: "{{ fwd_comment }}"
+        status_code: [200, 204]
+      loop: "{{ stale_fwd_entries }}"
+      when: existing_fwd_entries | length > 0 and stale_fwd_entries | length > 0
+      no_log: true
+
+    - name: Report FWD entry state
       ansible.builtin.debug:
-        msg: "FWD entry for {{ lab_domain }} already exists, skipping."
+        msg: >-
+          FWD entry for {{ lab_domain }} already exists.
+          stale_entries={{ stale_fwd_entries | length }}
+          forward_to_expected={{ coredns_ip }}
       when: existing_fwd_entries | length > 0
 
     # ── Step 5: Validate delegated resolution through all SDN resolvers ───────
