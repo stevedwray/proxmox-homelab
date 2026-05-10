@@ -11,7 +11,7 @@ a Portainer agent so that their containers are visible and manageable from one U
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `mgmt_seg` (VLAN 20)     |
-| IP           | `10.57.1.20/24`          |
+| IP           | `${lab_ip_portainer}/24`          |
 | Gateway      | `10.57.1.1` (MikroTik)  |
 | VMID         | 120                      |
 
@@ -52,7 +52,7 @@ not depend on Harbor (see Inputs above) or any other stack.
 ## What May Depend on This Stack
 
 All stacks with `portainer_agent: true` in their `stack.yaml` depend on this stack
-being reachable at `10.57.1.20:9000` during their Ansible provisioning play. The
+being reachable at `${lab_ip_portainer}:9000` during their Ansible provisioning play. The
 `portainer_api` role registers the agent endpoint; the `portainer_agent` role starts
 the agent container.
 

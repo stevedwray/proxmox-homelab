@@ -1,7 +1,7 @@
 ---
 description: 'executor — bounded session execution for homelab Ansible/Terraform work'
 tools: [execute/runNotebookCell, execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runTask, execute/createAndRunTask, execute/runInTerminal, execute/runTests, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/searchSubagent, search/usages, web/fetch, web/githubRepo]
-model: gpt-4o-mini
+model: gpt-5-mini
 handoffs:
   - label: 'Hand off to Architect'
     agent: architect
@@ -39,7 +39,6 @@ When present, treat an `approvals` block as authoritative session-context
 approval metadata for destructive work. For destructive sessions, the architect
 should provide at least:
 - `approvals.destructive: true`
-- `approvals.packet_path` when the invoked harness requires an approval packet
 - `approvals.scope` describing the approved destructive window
 
 ---
@@ -68,15 +67,8 @@ session metadata table before continuing.
    List any found; do not open new ones at session start.
 
 5. **Approval** (destructive sessions only) — if the session includes any destructive
-   or deploy gates, validate the `approvals` block before running any gates:
-   - Confirm `approvals.destructive: true` is set.
-   - If `approvals.packet_path` is not null, confirm the file exists:
-     `test -f <approvals.packet_path>`
-   - If `approvals.packet_path` is not null, confirm the packet file contains the
-     exact value of `refs.current_head_sha`:
-     `grep -qF <current_head_sha> <approvals.packet_path>`
-   If any check fails, stop immediately — record the missing or mismatched field and
-   do not run destructive gates.
+   or deploy gates, confirm `approvals.destructive: true` is set before running any
+   gates. If it is absent or false, stop immediately and do not run destructive gates.
 
 ---
 
@@ -92,9 +84,8 @@ and the exit code. "Command succeeded" with no output is invalid evidence.
 
 **Stop conditions**
 Stop immediately and document if:
-- A destructive or deploy action is reached without explicit approval recorded in
-  the session context (for example `approvals.destructive: true`, plus any
-  required `approvals.packet_path`)
+- A destructive or deploy action is reached without `approvals.destructive: true`
+  recorded in the session context
 - Continuing would violate a guardrail
 - Unexpected state makes the declared scope unclear
 
@@ -110,13 +101,15 @@ record it in the report. If `env.scan_gate: pr` (or absent), skip scans and note
 the deferral in the report — this is not a blocker.
 
 **Commit discipline**
-- Commit source and infrastructure changes during the session as they are made
+- Make one commit at session end covering all source/config changes made during
+  the session. Do not commit incrementally as you go.
 - Do NOT commit the session report — it is written to `.git/ai/sessions/` and
-  reviewed by the architect from disk; the architect decides whether to commit it
+  reviewed by the architect from disk; the architect decides whether to push it
 - Every commit must follow this format exactly: `<type>: <subject> (session <id>) Refs #N`
   or `Closes #N` — no exceptions, including inline fix commits
 - Do not commit evidence directories (they are gitignored)
 - Do not use `--no-verify` unless explicitly instructed
+- Do not push — the architect pushes after reviewing the session report
 
 **Long-running gate output capture**
 For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
@@ -157,7 +150,7 @@ If a terminal becomes unavailable during gate execution:
 **Branch:**
 - The branch in `session.branch` is created by the architect before handoff; check
   it out, do not create it
-- Push source changes at session end: `git push`
+- Do not push. The architect pushes after reviewing the session report.
 
 **Issues — during execution:**
 - If a gate resolves an open blocker issue: add a comment with evidence path + SHA,
@@ -191,8 +184,6 @@ Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
 | Working tree | clean / dirty |
 | Open issues at start | #N title, or none |
 | Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
-| Approval: packet found | PASS / FAIL / N/A |
-| Approval: packet SHA match | PASS / FAIL / N/A |
 
 ### 2. Gate Results
 

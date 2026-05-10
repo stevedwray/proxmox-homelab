@@ -55,9 +55,9 @@ These are declared in `variables.tf` and may be overridden per environment:
 
 | Variable                | Default        | pve-test value  | Notes |
 |-------------------------|----------------|-----------------|-------|
-| `portainer_server_ip`   | `192.168.1.4`  | `10.57.1.20`    | Portainer server for app-tier endpoint registration |
 | `registry_host`         | `192.168.1.10` | `10.57.3.10`    | Harbor IP for Docker pulls |
 | `apt_cacher_host`       | `192.168.1.35` | `10.57.3.11`    | apt-cacher-ng proxy |
+| `portainer_server_ip`   | `192.168.1.4`  | `${lab_ip_portainer}`    | Portainer server for app-tier endpoint registration |
 
 `registry_host` and `apt_cacher_host` now flow through `variables.tf` →
 `main.tf` → `templates/inventory.tpl` as generated host vars. Stacks can override

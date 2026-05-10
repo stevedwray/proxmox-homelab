@@ -15,6 +15,8 @@ SPEC = importlib.util.spec_from_file_location("reconcile_authentik_edge", MODULE
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+import os
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 reconcile_authentik = MODULE.reconcile_authentik
