@@ -210,3 +210,22 @@ export TF_VAR_apt_cacher_host=10.57.3.11
 
 Implemented by reading `registry_host` from generated inventory and writing
 `REGISTRY_HOST` into the stack `.env` file for Docker Compose expansion.
+
+## Implementation cross-links
+
+For quick navigation between the contract and its implementation, reference the
+following files in this repository:
+
+- `terraform/lxc/main.tf` — the module entrypoint that binds `variables.tf` into
+  the template rendering call (see the `templatefile()` invocation where
+  inventory variables are composed).
+- `terraform/lxc/templates/inventory.tpl` — the rendered inventory template; any
+  field added/removed here is a breaking contract change for playbooks.
+- `terraform/lxc/modules/lxc-docker-host/` — module implementing the LXC host
+  provisioning primitives used by the platform layer.
+- `terraform/lxc/PLATFORM_CONTRACT.md` — this document (contract source).
+- `terraform/lxc/stacks/*/STACK_CONTRACT.md` — per-stack contracts the platform
+  consumes (examples: `stacks/portainer-stack/STACK_CONTRACT.md`).
+
+If you edit the contract semantics here, add or update the cross-link above to
+point readers at the representative implementation example(s).

@@ -77,3 +77,48 @@ The shared contract will likely need sections for:
 - what belongs in shared network intent rather than per-stack config
 - how non-secret vars should be layered
 - how to represent special-case behavior without overcomplicating the base schema
+
+## Example: render + reconcile flow (invocation)
+
+The repository includes small Python scripts that render derived artifacts and
+perform lightweight reconciliation. Below is an example flow that the SLR docs
+should document as an implementer example.
+
+1. Generate the edge manifest (creates a platform view of stacks and zones):
+
+```bash
+python3 terraform/lxc/edge_manifest.py --env pve-test \
+  > .git/ai/sessions/evidence/session-01/edge-manifest.json
+```
+
+Expected: JSON manifest containing stack entries and zone mappings.
+
+2. Render DNS/ingress publish artifacts (example for CoreDNS and Traefik):
+
+```bash
+python3 terraform/lxc/render-edge-coredns.py \
+  --manifest .git/ai/sessions/evidence/session-01/edge-manifest.json \
+  --out out/coredns.zone
+
+python3 terraform/lxc/render-edge-traefik.py \
+  --manifest .git/ai/sessions/evidence/session-01/edge-manifest.json \
+  --out out/traefik-routes.yml
+```
+
+Expected: `out/coredns.zone` and `out/traefik-routes.yml` with rendered entries for
+the current stacks.
+
+3. (Optional) Reconcile runtime state against the manifest:
+
+```bash
+python3 terraform/lxc/reconcile-edge.py --manifest .git/ai/sessions/evidence/session-01/edge-manifest.json
+```
+
+Expected: printed summary of differences and optional dump of corrective actions
+to a `reconcile-*.json` file.
+
+Notes:
+- Add these example commands and expected outputs to `inventory-model.md` so
+  implementers have an immediate way to reproduce the generated artifacts.
+- Link the script paths from this doc to the implementation files in
+  `terraform/lxc/`.

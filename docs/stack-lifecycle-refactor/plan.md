@@ -94,6 +94,13 @@ Deliverables:
 - audit of the current contract surface in:
   - `terraform/lxc/PLATFORM_CONTRACT.md`
   - relevant per-stack `STACK_CONTRACT.md` files
+  - Per-stack contract links:
+    - [terraform/lxc/stacks/apt-cacher-stack/STACK_CONTRACT.md](terraform/lxc/stacks/apt-cacher-stack/STACK_CONTRACT.md)
+    - [terraform/lxc/stacks/authentik-stack/STACK_CONTRACT.md](terraform/lxc/stacks/authentik-stack/STACK_CONTRACT.md)
+    - [terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md](terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md)
+    - [terraform/lxc/stacks/harbor-stack/STACK_CONTRACT.md](terraform/lxc/stacks/harbor-stack/STACK_CONTRACT.md)
+    - [terraform/lxc/stacks/portainer-stack/STACK_CONTRACT.md](terraform/lxc/stacks/portainer-stack/STACK_CONTRACT.md)
+    - [terraform/lxc/stacks/step-ca-stack/STACK_CONTRACT.md](terraform/lxc/stacks/step-ca-stack/STACK_CONTRACT.md)
 - first-pass shared contract proposal
 - documented generated-vs-authoritative boundaries
 - documented treatment of stack metadata, network intent, and derived artifacts
