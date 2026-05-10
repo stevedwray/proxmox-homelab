@@ -81,7 +81,7 @@ rm -rf terraform/lxc/.generated/traefik terraform/lxc/.generated/coredns
 python3 terraform/lxc/render-edge-traefik.py --json
 python3 terraform/lxc/render-edge-coredns.py --json
 ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-	--authentik-url http://10.57.1.10:9000 --no-verify-tls --json
+	--authentik-url http://${lab_ip_authentik}:9000 --no-verify-tls --json
 ```
 
 Expected:
@@ -212,10 +212,8 @@ Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 Exact approved deploy order from [inventory.md](inventory.md), Stage 1/2 subset
 for this section:
 
-1. `portainer-stack`
-2. `apt-cacher-stack`
-3. `harbor-stack`
-4. `ci-runner-01`
+1. `apt-cacher-stack`
+2. `ci-runner-01`
 
 For each stack in this section, run guard -> apply -> capture evidence:
 
@@ -238,8 +236,8 @@ Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 Deploy exact Stage 3a order from [inventory.md](inventory.md):
 
 1. `dns-stack`
-2. `proxy-stack`
-3. `step-ca-stack`
+2. `step-ca-stack`
+3. `proxy-stack`
 4. `authentik-stack`
 
 If current Terraform metadata prevents this order, stop and resolve the
@@ -261,10 +259,10 @@ Live validation block for Stage 3a (guard immediately before checks):
 ```bash
 ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 
-dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
-curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz
-curl -sk -o /dev/null -w '%{http_code}\n' http://10.57.1.10:9000/-/health/live/
+dig @${lab_ip_dns} +short traefik.lab.gibbsgreatly.xyz
+dig @${lab_gw_mgmt} +short traefik.lab.gibbsgreatly.xyz
+curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:${lab_ip_proxy} https://traefik.lab.gibbsgreatly.xyz
+curl -sk -o /dev/null -w '%{http_code}\n' http://${lab_ip_authentik}:9000/-/health/live/
 ```
 
 ## 8. Edge Reconciliation Activation
@@ -279,7 +277,7 @@ Regenerate artifacts after Stage 3a:
 python3 terraform/lxc/render-edge-traefik.py --json
 python3 terraform/lxc/render-edge-coredns.py --json
 ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-	--authentik-url http://10.57.1.10:9000 --no-verify-tls --apply --json \
+	--authentik-url http://${lab_ip_authentik}:9000 --no-verify-tls --apply --json \
   2>&1 | tee "$LOG_DIR/reconcile-edge-apply.log"
 ```
 
@@ -307,10 +305,12 @@ Publish generated Traefik:
 
 Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 
-Deploy exact remaining order from [inventory.md](inventory.md):
+Deploy exact remaining order from [inventory.md](inventory.md), Stage 3b subset:
 
-10. `monitoring-stack`
-11. `netbox-stack`
+8. `harbor-stack`
+9. `monitoring-stack`
+10. `netbox-stack`
+11. `portainer-stack`
 
 For each stack in this section, run guard -> apply -> capture evidence:
 
@@ -337,19 +337,19 @@ Live validation block (guard immediately before checks):
 
 for h in authentik harbor grafana portainer netbox traefik; do
 	echo "== $h =="
-	dig @10.57.1.13 +short "$h.lab.gibbsgreatly.xyz"
-	dig @10.57.1.1 +short "$h.lab.gibbsgreatly.xyz"
-	curl -sSI --resolve "$h.lab.gibbsgreatly.xyz:443:10.57.2.10" "https://$h.lab.gibbsgreatly.xyz" | sed -n '1,8p'
+	dig @${lab_ip_dns} +short "$h.lab.gibbsgreatly.xyz"
+	dig @${lab_gw_mgmt} +short "$h.lab.gibbsgreatly.xyz"
+	curl -sSI --resolve "$h.lab.gibbsgreatly.xyz:443:${lab_ip_proxy}" "https://$h.lab.gibbsgreatly.xyz" | sed -n '1,8p'
 done
 
 curl -skI https://harbor.lab.gibbsgreatly.xyz/v2/
 ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-	--authentik-url http://10.57.1.10:9000 --no-verify-tls --json
+	--authentik-url http://${lab_ip_authentik}:9000 --no-verify-tls --json
 ```
 
 Expected:
 
-- all six browser hosts resolve to `10.57.2.10`
+- all six browser hosts resolve to `${lab_ip_proxy}`
 - Harbor `/v2/` returns native registry auth challenge, not Authentik redirect
 - Authentik route does not forward-auth itself
 - Grafana uses native login/OIDC flow
@@ -359,7 +359,7 @@ Expected:
 Direct service validation corrections:
 
 ```bash
-curl -fsS http://10.57.1.20:9000/api/system/status
+curl -fsS http://${lab_ip_portainer}:9000/api/system/status
 ```
 
 Use the Portainer API on port `9000` for direct validation. Do not reuse older

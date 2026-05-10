@@ -23,7 +23,7 @@ evidence directories.
 
   ```bash
   ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-    --authentik-url http://10.57.1.10:9000 \
+    --authentik-url http://${lab_ip_authentik}:9000 \
     --no-verify-tls
   ```
 
@@ -37,7 +37,7 @@ evidence directories.
 - The correct direct Portainer API probe is:
 
   ```bash
-  curl -fsS http://10.57.1.20:9000/api/system/status
+  curl -fsS http://${lab_ip_portainer}:9000/api/system/status
   ```
 
 - Future final-validation steps should use this endpoint when checking Portainer

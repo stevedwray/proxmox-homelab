@@ -8,24 +8,24 @@ default expectation but still require confirmation during preflight.
 
 | Variable | Value |
 |---|---|
-| Operator approving destructive test | Steve Dray (approval not granted yet; planning-only) |
-| Planned start time | Not scheduled; planning session only (2026-04-21) |
-| Planned stop/rollback deadline | Not scheduled; set during destructive go/no-go gate |
+| Operator approving destructive test | REQUIRES_OPERATOR_INPUT |
+| Planned start time | REQUIRES_OPERATOR_INPUT |
+| Planned stop/rollback deadline | REQUIRES_OPERATOR_INPUT; set during destructive go/no-go gate |
 | Communication channel/status notes location | `docs/teardown-test/` planning documents on this branch |
-| Maximum acceptable pve-test outage | Not approved yet; must be explicitly set before destructive execution |
+| Maximum acceptable pve-test outage | REQUIRES_OPERATOR_INPUT; must be explicitly set before destructive execution |
 | Initial approval posture | Approved for documentation/planning only. Destroy/apply/live publish are not approved in this step. |
 
 ## Git And Targeting
 
 | Variable | Value |
 |---|---|
-| Branch to test | `dev/pve-test` |
-| Commit SHA to test | `d95324aeed1832fafa30af3354e75e044e3f08a3` |
+| Branch to test | REQUIRES_OPERATOR_INPUT |
+| Commit SHA to test | REQUIRES_OPERATOR_INPUT |
 | Target guard expected value | `pve-test` |
 | Command for target guard | `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` |
-| Target guard actual output (2026-04-21) | `pve-test` |
-| SOPS/age key confirmed present | `./with-secrets` execution succeeded in this session; treat as provisional until preflight rerun in Task 04 |
-| `./with-secrets` confirmed working | yes; guard command returned expected output |
+| Target guard actual output | VERIFY |
+| SOPS/age key confirmed present | VERIFY |
+| `./with-secrets` confirmed working | VERIFY |
 
 ## Scope
 
@@ -80,12 +80,12 @@ data-loss posture for recreatable services).
 
 | Variable | Value |
 |---|---|
-| Traefik IP | `10.57.2.10` |
-| CoreDNS authoritative IP | `10.57.1.13` |
-| Delegated resolver IP | `10.57.1.1` |
-| Expected browser DNS target | `10.57.2.10` |
-| Resolver command for authoritative checks | `dig @10.57.1.13 +short <host>` |
-| Resolver command for delegated checks | `dig @10.57.1.1 +short <host>` |
+| Traefik IP | `${lab_ip_proxy}` |
+| CoreDNS authoritative IP | `${lab_ip_dns}` |
+| Delegated resolver IP | `${lab_gw_mgmt}` |
+| Expected browser DNS target | `${lab_ip_proxy}` |
+| Resolver command for authoritative checks | `dig @${lab_ip_dns} +short <host>` |
+| Resolver command for delegated checks | `dig @${lab_gw_mgmt} +short <host>` |
 | MikroTik conditional forwarder confirmed | Assumed as documented contract for planning; revalidate during Task 10 live checks |
 
 ## Approved Deploy And Destroy Order (OP-02)
@@ -94,23 +94,25 @@ Task 02 freezes the deploy and destroy order below for this rehearsal scope.
 This does not grant destructive approval. Destroy/apply/live publish remain
 blocked by the later approval gates.
 
+Authoritative source: [inventory.md](inventory.md). Reproduced here for quick reference.
+
 | Order | Stack/unit | Command owner | Notes |
 |---:|---|---|---|
-| 1 | `portainer-stack` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation |
-| 2 | `apt-cacher-stack` | operator using `./with-secrets terragrunt` | Independent foundation utility for later apt-backed deploys |
-| 3 | `harbor-stack` | operator using `./with-secrets terragrunt` | Stage 1/2 registry foundation; depends on Portainer |
-| 4 | `ci-runner-01` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation if included |
-| 5 | `dns-stack` | operator using `./with-secrets terragrunt` | Stage 3a CoreDNS seed authority |
-| 6 | `proxy-stack` | operator using `./with-secrets terragrunt` | Stage 3a Traefik runtime; no Authentik dependency |
-| 7 | `step-ca-stack` | operator using `./with-secrets terragrunt` | Stage 3a internal CA |
-| 8 | `authentik-stack` | operator using `./with-secrets terragrunt` | Stage 3a direct first boot/API token |
-| 9 | edge reconciliation activation | operator using `./with-secrets` plus Ansible publish commands | Not a Terraform stack; publish generated DNS/Traefik/Auth state |
-| 10 | `monitoring-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
-| 11 | `netbox-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
+| 1 | `apt-cacher-stack` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation; independent apt utility |
+| 2 | `ci-runner-01` | operator using `./with-secrets terragrunt` | Stage 1/2 foundation; depends on apt-cacher |
+| 3 | `dns-stack` | operator using `./with-secrets terragrunt` | Stage 3a CoreDNS seed authority |
+| 4 | `step-ca-stack` | operator using `./with-secrets terragrunt` | Stage 3a internal CA; must precede proxy |
+| 5 | `proxy-stack` | operator using `./with-secrets terragrunt` | Stage 3a Traefik runtime; requires step-ca root CA |
+| 6 | `authentik-stack` | operator using `./with-secrets terragrunt` | Stage 3a direct first boot/API token |
+| 7 | edge reconciliation activation | operator using `./with-secrets` plus Ansible publish commands | Not a Terraform stack; publish generated DNS/Traefik/Auth state |
+| 8 | `harbor-stack` | operator using `./with-secrets terragrunt` | Stage 3b; depends on dns, step-ca, proxy, authentik |
+| 9 | `monitoring-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
+| 10 | `netbox-stack` | operator using `./with-secrets terragrunt` | Stage 3b |
+| 11 | `portainer-stack` | operator using `./with-secrets terragrunt` | Stage 3b management service |
 
 Approved destroy order is reverse stack order, excluding edge activation:
 
-`netbox-stack -> monitoring-stack -> authentik-stack -> step-ca-stack -> proxy-stack -> dns-stack -> ci-runner-01 -> harbor-stack -> apt-cacher-stack -> portainer-stack`
+`portainer-stack -> netbox-stack -> monitoring-stack -> harbor-stack -> authentik-stack -> step-ca-stack -> proxy-stack -> dns-stack -> ci-runner-01 -> apt-cacher-stack`
 
 ## Success Criteria
 
@@ -118,7 +120,7 @@ Approved destroy order is reverse stack order, excluding edge activation:
 |---|---|
 | Edge manifest validation | pass |
 | Full edge reconciler final dry-run | pass/no-op |
-| Browser records | all six resolve to `10.57.2.10` |
+| Browser records | all six resolve to `${lab_ip_proxy}` |
 | Authentik route | no forward-auth recursion |
 | Harbor registry path | `/v2/` returns native registry auth challenge |
 | Grafana | native login/OIDC flow, no Traefik forward-auth |

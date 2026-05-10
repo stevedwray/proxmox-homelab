@@ -38,7 +38,7 @@ At the end of the test:
 - Generated CoreDNS and Traefik state is regenerated from current manifests and
   published from fresh artifacts.
 - Authentik discovery/reconciliation is converged without automatic deletes.
-- All six browser routes resolve to Traefik at `10.57.2.10` and show expected
+- All six browser routes resolve to Traefik at `${lab_ip_proxy}` and show expected
   auth behavior.
 - The final edge reconciler dry-run is a no-op.
 - Destroy, deploy, validation, and rollback evidence are captured.

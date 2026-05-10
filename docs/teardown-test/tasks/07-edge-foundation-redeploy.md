@@ -39,7 +39,7 @@ direct first boot/API token.
 ## Validation
 
 - CoreDNS authoritative and delegated resolver checks pass.
-- Traefik accepts HTTPS on `10.57.2.10:443`.
+- Traefik accepts HTTPS on `${lab_ip_proxy}:443`.
 - Authentik direct health endpoint passes.
 - Authentik API token is available through `./with-secrets`.
 

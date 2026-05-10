@@ -71,7 +71,7 @@ no manifest arguments are the authoritative post-apply convergence check:
 
 ```bash
 ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-  --authentik-url http://10.57.1.10:9000 \
+  --authentik-url http://${lab_ip_authentik}:9000 \
   --no-verify-tls --json
 ```
 

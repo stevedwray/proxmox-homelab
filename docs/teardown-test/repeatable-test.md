@@ -36,7 +36,7 @@ The script reuses the current workspace patterns:
 - generated edge artifacts are regenerated before publish
 - logs and runtime evidence stay under ignored evidence directories
 - full edge reconciler dry-runs use the direct Authentik URL
-  `http://10.57.1.10:9000`
+  `http://${lab_ip_authentik}:9000`
 
 ## Development Loop
 
