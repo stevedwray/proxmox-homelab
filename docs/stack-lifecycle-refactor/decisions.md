@@ -24,6 +24,7 @@ This file records decisions that have been made for the stack lifecycle refactor
 
 - Shared inventory should be an evolution of `stack.yaml`.
 - `stack.yaml` should become a higher-level shared contract used to derive Terraform and Ansible inputs.
+- Stage 1 must begin by auditing the current implemented contract, especially `terraform/lxc/PLATFORM_CONTRACT.md`, before extending the model.
 
 ### Behavior
 
@@ -44,6 +45,18 @@ This file records decisions that have been made for the stack lifecycle refactor
 - The overall effort is one coordinated refactor program.
 - Migration should start with cleaner platform stacks, not the most interconnected ones.
 
+### Structural Compromise
+
+- Ansible day-2 logic is currently co-located under `terraform/lxc/ansible/`.
+- For now, the ownership boundary will be logical before it becomes structural.
+- Directory reorganization is deferred unless later stages show a strong reason to separate the trees physically.
+
+### Scope Boundary
+
+- Early stages focus on platform stacks.
+- `deployment_tier: apps` and Portainer-dependent Tier 2 behavior are not the initial proving ground for the refactor.
+- Tier 2 treatment should be revisited only after the platform-side model is proven on the selected exemplars.
+
 ## Recommended Defaults
 
 - Generated files remain derived artifacts, not source of truth.
@@ -51,17 +64,26 @@ This file records decisions that have been made for the stack lifecycle refactor
 - Terraform may offer an approved post-change day-2 reconcile path.
 - Managed in-container settings are authoritative and may be overwritten by Ansible.
 
-## Candidate Exemplars
+## Selected Exemplars
 
-### Conservative Pair
+### First Pair
 
 - `apt-cacher-stack`
 - `harbor-stack`
 
-### Broader Pair
+Rationale:
 
-- `apt-cacher-stack`
+- cleaner platform stacks
+- lower cross-stack coupling
+- better fit for proving the shared model before handling heavier bootstrap behavior
+
+### Deferred Candidate
+
 - `netbox-stack`
+
+Reason deferred:
+
+- already treated as a special case due to deeper bootstrap and state-management behavior
 
 ## Open Decisions
 

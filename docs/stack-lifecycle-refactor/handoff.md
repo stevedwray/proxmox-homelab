@@ -26,10 +26,14 @@ Start Stage 1 on a short-lived branch from `refactor/stack-lifecycle`:
 
 Primary objective:
 
-- define the first draft of the shared `stack.yaml` contract
+- audit the current implemented contract and define the first draft of the shared `stack.yaml` contract
 
 Initial focus:
 
+- audit:
+  - `terraform/lxc/PLATFORM_CONTRACT.md`
+  - relevant per-stack `STACK_CONTRACT.md` files
+- identify current contract coverage, gaps, and conflicts
 - common fields
 - Terraform-derived fields
 - Ansible-derived fields
@@ -42,7 +46,6 @@ Do not broaden into implementation changes yet unless required to clarify the co
 
 - exact shape of the shared stack contract
 - exact classification of managed vs observed vs adoptable paths
-- final exemplar choice
 - exact validation gates and thresholds
 
 ## Session Closeout Checklist

@@ -83,6 +83,7 @@ Suggested branch:
 
 Goals:
 
+- audit the current implemented contract before proposing extensions
 - draft the next-generation `stack.yaml` contract
 - define which fields are shared source of truth
 - define which artifacts are derived for Terraform and Ansible
@@ -90,12 +91,16 @@ Goals:
 
 Deliverables:
 
+- audit of the current contract surface in:
+  - `terraform/lxc/PLATFORM_CONTRACT.md`
+  - relevant per-stack `STACK_CONTRACT.md` files
 - first-pass shared contract proposal
 - documented generated-vs-authoritative boundaries
 - documented treatment of stack metadata, network intent, and derived artifacts
 
 Exit criteria:
 
+- current contract coverage and gaps are explicit
 - enough contract shape exists to guide implementation
 - special-case extension sections are identified
 - unresolved schema questions are explicit and limited
@@ -104,6 +109,7 @@ Notes:
 
 - no large code movement in this stage
 - this is the primary kickoff stage for the refactor
+- do not draft from first principles without first reconciling with the current implemented contract
 
 ### Stage 2: Workflow And Validation Design
 
@@ -224,7 +230,6 @@ Candidate early rollout targets:
 
 - `apt-cacher-stack`
 - `harbor-stack`
-- `netbox-stack`
 
 Deliverables:
 
@@ -322,7 +327,7 @@ Exit criteria:
 
 ## Proposed First Exemplars
 
-### Option A
+### Selected First Pair
 
 - `apt-cacher-stack`
 - `harbor-stack`
@@ -331,15 +336,16 @@ Why:
 
 - useful
 - less cross-stack coupling than identity, DNS, trust, or ingress stacks
+- avoids using a stack already identified as a current special case
 
-### Option B
+### Deferred Candidate
 
-- `apt-cacher-stack`
 - `netbox-stack`
 
-Why:
+Why deferred:
 
-- tests both a simpler stack and a richer compose/bootstrap stack
+- richer compose/bootstrap behavior
+- already classified as a special case needing explicit treatment
 
 ## Exit Criteria For The First Exemplar Stage
 
@@ -357,15 +363,17 @@ Kick off the refactor with:
 
 This stage should:
 
+- audit `terraform/lxc/PLATFORM_CONTRACT.md` and relevant stack contract files
 - finalize the first draft of the shared `stack.yaml` contract
 - define the generated artifact model
-- confirm the exemplar decision path
+- confirm how the new contract extends rather than conflicts with the existing one
 - avoid broad implementation changes until the contract is stable enough
 
 Recommended immediate sequence:
 
-1. Draft the shared contract structure.
-2. Record unresolved schema questions.
-3. Confirm the first exemplar pair.
-4. Define the validation gates the exemplar stage must satisfy.
-5. Then move into implementation scaffolding.
+1. Audit the existing contract documents and current contract surface.
+2. Record gaps, overlaps, and conflicts.
+3. Draft the shared contract extensions and structure.
+4. Record unresolved schema questions.
+5. Define the validation gates the exemplar stage must satisfy.
+6. Then move into implementation scaffolding.
