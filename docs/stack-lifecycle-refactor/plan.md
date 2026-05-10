@@ -105,6 +105,11 @@ Deliverables:
 - documented generated-vs-authoritative boundaries
 - documented treatment of stack metadata, network intent, and derived artifacts
 
+Cross-reference:
+
+- The Stage-1 deliverables must reference the shared contract draft and its
+  Contract reconciliation audit matrix at `docs/stack-lifecycle-refactor/shared-stack-contract-draft.md`.
+
 Exit criteria:
 
 - current contract coverage and gaps are explicit

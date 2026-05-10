@@ -56,3 +56,14 @@ Do not broaden into implementation changes yet unless required to clarify the co
   - what changed
   - what was validated
   - what remains next
+
+## Teardown-ready stopping condition
+
+When Stage-1 is complete and the branch is ready to schedule a teardown validation session, this file (and `plan.md`) MUST include an explicit teardown-ready statement describing the stopping condition. For Stage-1 the teardown-ready stopping condition is:
+
+- The `Contract reconciliation audit matrix` header exists in `shared-stack-contract-draft.md` and references the exemplar stacks.
+- `plan.md` and `decisions.md` reference the shared draft/audit matrix.
+- The Stage-1 unit-tests pass (`pytest terraform/lxc/test_edge_manifest.py`).
+- A `teardown-ready` note and evidence links exist in this handoff and in the executor session evidence directory.
+
+Include the line `teardown-ready: true — Stage-1 completed` and links to the evidence files when scoping the teardown session.

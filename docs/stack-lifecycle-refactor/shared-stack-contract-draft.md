@@ -85,6 +85,30 @@ validation:
   `STACK_CONTRACT.md` files to enumerate gaps and conflicts (audit matrix).
 - Produce a minimal JSON Schema for `stack.yaml` once the draft fields settle.
 
+## Contract reconciliation audit matrix
+
+The audit matrix below is a concise, actionable checklist for Stage-1 that
+captures where the implemented contracts (`PLATFORM_CONTRACT.md` and
+per-stack `STACK_CONTRACT.md`) align or diverge from this shared draft.
+
+| Source | Exemplar stacks | Notes |
+|---|---|---|
+| `terraform/lxc/PLATFORM_CONTRACT.md` | apt-cacher-stack, harbor-stack, portainer-stack, step-ca-stack | Platform-level fields that must be reconciled with shared draft |
+| `terraform/lxc/stacks/apt-cacher-stack/STACK_CONTRACT.md` | apt-cacher-stack | Record any field name mismatches and derived expectations |
+| `terraform/lxc/stacks/harbor-stack/STACK_CONTRACT.md` | harbor-stack | Record required service endpoints and validation metadata |
+| `terraform/lxc/stacks/portainer-stack/STACK_CONTRACT.md` | portainer-stack | Surface Portainer-specific overrides (eg. `registry_host`) |
+| `terraform/lxc/stacks/step-ca-stack/STACK_CONTRACT.md` | step-ca-stack | Surface required TLS/ACME endpoints and validation probes |
+
+Stage-1 implementers should populate the matrix rows with:
+
+- `Covered` / `Partial` / `Missing` status per field group
+- Notes about required generator changes (Terraform) or playbook expectations (Ansible)
+- Evidence links to PRs or commits that reconcile the differences
+
+The executor session for Stage-1 will assert the presence of this header and
+that the exemplar stacks above are at least referenced in the draft as the
+initial audit coverage.
+
 ## Generated vs authoritative boundaries
 
 - Authoritative: fields authored by the stack owner and intended as source-of-truth for intent and topology (for example `hostname`, `deployment_tier`, `resources.*`, `features.*`).

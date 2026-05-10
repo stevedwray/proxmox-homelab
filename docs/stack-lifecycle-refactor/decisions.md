@@ -26,6 +26,10 @@ This file records decisions that have been made for the stack lifecycle refactor
 - `stack.yaml` should become a higher-level shared contract used to derive Terraform and Ansible inputs.
 - Stage 1 must begin by auditing the current implemented contract, especially `terraform/lxc/PLATFORM_CONTRACT.md`, before extending the model.
 
+Reference:
+
+- See the shared contract draft and the Contract reconciliation audit matrix at `docs/stack-lifecycle-refactor/shared-stack-contract-draft.md` for the authoritative Stage-1 reconciliation checklist.
+
 ### Behavior
 
 - Day-2 playbooks should be safe to rerun.
