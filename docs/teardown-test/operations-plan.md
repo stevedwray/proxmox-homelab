@@ -26,7 +26,7 @@ working tree, a known commit, and explicit operator approval.
 - Generated edge artifacts under `terraform/lxc/.generated/` are runtime output,
   not source. Regenerate them immediately before publish.
 - Reconciler dry-run and apply commands should use the direct Authentik URL
-  `http://10.57.1.10:9000` during rehearsal flows.
+  `http://${lab_ip_authentik}:9000` during rehearsal flows.
 - Direct Portainer validation should use the API on port `9000`.
 - Certificate drift in `certs/homelab-root.crt` after step-ca rebuild is an
   explicit closeout decision, not background noise.
@@ -40,27 +40,29 @@ Task 02 must verify this candidate against current `stack.yaml` metadata before
 execution. The order below reflects the current bootstrap model and keeps
 Traefik independent of Authentik during Stage 3a.
 
-| Order | Unit | VMID | IP | Stage | Reason |
-|---:|---|---:|---|---|---|
-| 1 | `portainer-stack` | 120 | `10.57.1.20` | Stage 1/2 foundation | Base management service; no stack dependency. |
-| 2 | `apt-cacher-stack` | 142 | `10.57.3.11` | Stage 1/2 foundation | Independent apt utility; needed by later apt-backed stacks. |
-| 3 | `harbor-stack` | 121 | `10.57.3.10` | Stage 1/2 foundation | Registry foundation; depends on Portainer. |
-| 4 | `ci-runner-01` | 141 | `10.57.0.63` | Stage 1/2 foundation | Depends on Portainer, Harbor, and apt-cacher. |
-| 5 | `dns-stack` | 151 | `10.57.1.13` | Stage 3a edge foundation | Seed authority for `lab.gibbsgreatly.xyz`. |
-| 6 | `proxy-stack` | 153 | `10.57.2.10` | Stage 3a edge foundation | Traefik runtime; must not depend on Authentik. |
-| 7 | `step-ca-stack` | 152 | `10.57.1.11` | Stage 3a edge foundation | Internal CA; validates after proxy/network prerequisites. |
-| 8 | `authentik-stack` | 150 | `10.57.1.10` | Stage 3a edge foundation | Direct first boot and API-token bootstrap. |
-| 9 | edge reconciliation activation | n/a | n/a | Stage 3a handoff | Publish generated DNS, Traefik, and Authentik state. |
-| 10 | `monitoring-stack` | 154 | `10.57.1.12` | Stage 3b platform | Depends on Harbor, apt-cacher, Authentik, proxy, and step-ca. |
-| 11 | `netbox-stack` | 143 | `10.57.3.12` | Stage 3b platform | Can deploy after Harbor/Portainer, but runs after edge activation so its browser route is validated on the normal path. |
+Authoritative source: [inventory.md](inventory.md). Reproduced here for context.
+
+| Order | Unit | VMID | Stage | Reason |
+|---:|---|---:|---|---|
+| 1 | `apt-cacher-stack` | 142 | Stage 1/2 foundation | Independent apt utility; needed by later apt-backed stacks. |
+| 2 | `ci-runner-01` | 141 | Stage 1/2 foundation | Depends on apt-cacher. |
+| 3 | `dns-stack` | 151 | Stage 3a edge foundation | Seed authority for `lab.gibbsgreatly.xyz`. |
+| 4 | `step-ca-stack` | 152 | Stage 3a edge foundation | Internal CA; must precede proxy-stack. |
+| 5 | `proxy-stack` | 153 | Stage 3a edge foundation | Traefik runtime; requires step-ca root CA; must not depend on Authentik. |
+| 6 | `authentik-stack` | 150 | Stage 3a edge foundation | Direct first boot and API-token bootstrap. |
+| 7 | edge reconciliation activation | n/a | Stage 3a handoff | Publish generated DNS, Traefik, and Authentik state. |
+| 8 | `harbor-stack` | 121 | Stage 3b platform | Depends on dns, step-ca, proxy, and authentik. |
+| 9 | `monitoring-stack` | 154 | Stage 3b platform | Depends on Harbor, apt-cacher, Authentik, proxy, and step-ca. |
+| 10 | `netbox-stack` | 143 | Stage 3b platform | Depends on Harbor. |
+| 11 | `portainer-stack` | 120 | Stage 3b platform | Management service; no blocking stack dependency. |
 
 Destroy order is the reverse stack order, excluding the non-Terraform edge
 activation unit:
 
 ```text
-netbox-stack -> monitoring-stack -> authentik-stack -> step-ca-stack ->
-proxy-stack -> dns-stack -> ci-runner-01 -> harbor-stack ->
-apt-cacher-stack -> portainer-stack
+portainer-stack -> netbox-stack -> monitoring-stack -> harbor-stack ->
+authentik-stack -> step-ca-stack -> proxy-stack -> dns-stack ->
+ci-runner-01 -> apt-cacher-stack
 ```
 
 ## Atomic Planning Components
@@ -102,17 +104,17 @@ the next component starts.
 
 | ID | Component | Preconditions | Operation | Postconditions | Files modified or added |
 |---|---|---|---|---|---|
-| OP-17 | Deploy `portainer-stack` | OP-16 complete. | Apply `portainer-stack`; validate direct Portainer health. | Portainer is running at VMID `120`, `10.57.1.20`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-portainer-stack.log`. |
-| OP-18 | Deploy `apt-cacher-stack` | OP-17 complete. | Apply `apt-cacher-stack`; validate apt-cacher service. | apt-cacher is running at VMID `142`, `10.57.3.11`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-apt-cacher-stack.log`. |
-| OP-19 | Deploy `harbor-stack` | OP-18 complete. | Apply `harbor-stack`; validate direct Harbor health and `/v2/` auth challenge. | Harbor is running at VMID `121`, `10.57.3.10`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-harbor-stack.log`. |
-| OP-20 | Deploy `ci-runner-01` | OP-19 complete; runner token procedure approved. | Apply `ci-runner-01`; validate runner registration or explicitly record re-registration steps. | CI runner is running at VMID `141`, `10.57.0.63`. | No tracked source files unless runner token handling changes `terraform/secrets.enc.yaml`; evidence log required. |
-| OP-21 | Deploy `dns-stack` | OP-20 complete. | Apply `dns-stack` with seed zone; validate authoritative and delegated seed lookups. | CoreDNS is running at VMID `151`, `10.57.1.13`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-dns-stack.log`. |
-| OP-22 | Deploy `proxy-stack` | OP-21 complete. | Apply `proxy-stack` runtime; validate Traefik accepts HTTPS on `10.57.2.10:443`. | Traefik runtime is running at VMID `153`, `10.57.2.10`, without needing Authentik. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-proxy-stack.log`. |
-| OP-23 | Deploy `step-ca-stack` | OP-22 complete. | Apply `step-ca-stack`; validate CA/ACME prerequisites. | step-ca is running at VMID `152`, `10.57.1.11`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-step-ca-stack.log`. |
-| OP-24 | Deploy `authentik-stack` | OP-23 complete. | Apply `authentik-stack`; complete direct first boot if needed; verify or store API token. | Authentik is healthy at VMID `150`, `10.57.1.10`, and API token is available through `./with-secrets`. | `terraform/secrets.enc.yaml` only if an API token must be created or rotated; otherwise no tracked source files. Evidence log required. |
-| OP-25 | Activate edge reconciliation | OP-24 complete; CoreDNS, Traefik, and Authentik API healthy. | Regenerate edge artifacts; run reconciler apply using the direct Authentik URL; publish generated CoreDNS and Traefik files; run full reconciler dry-run with the same URL. | Browser edge state is generated from manifests and active. | No tracked source files; ignored `terraform/lxc/.generated/`; evidence log required. |
-| OP-26 | Deploy `monitoring-stack` | OP-25 complete. | Apply `monitoring-stack`; validate direct services and Grafana browser route behavior. | Monitoring is running at VMID `154`, `10.57.1.12`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-monitoring-stack.log`. |
-| OP-27 | Deploy `netbox-stack` | OP-26 complete. | Apply `netbox-stack`; validate direct service and NetBox browser route behavior. | NetBox is running at VMID `143`, `10.57.3.12`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-netbox-stack.log`. |
+| OP-17 | Deploy `apt-cacher-stack` | OP-16 complete. | Apply `apt-cacher-stack`; validate apt-cacher service on port 3142. | apt-cacher is running at VMID `142`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-apt-cacher-stack.log`. |
+| OP-18 | Deploy `ci-runner-01` | OP-17 complete; runner token procedure approved. | Apply `ci-runner-01`; validate runner registration or explicitly record re-registration steps. | CI runner is running at VMID `141`. | No tracked source files unless runner token handling changes `terraform/secrets.enc.yaml`; evidence log required. |
+| OP-19 | Deploy `dns-stack` | OP-18 complete. | Apply `dns-stack` with seed zone; validate authoritative and delegated seed lookups. | CoreDNS is running at VMID `151`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-dns-stack.log`. |
+| OP-20 | Deploy `step-ca-stack` | OP-19 complete. | Apply `step-ca-stack`; validate CA/ACME prerequisites. | step-ca is running at VMID `152`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-step-ca-stack.log`. |
+| OP-21 | Deploy `proxy-stack` | OP-20 complete. | Apply `proxy-stack` runtime; validate Traefik accepts HTTPS without needing Authentik. | Traefik runtime is running at VMID `153`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-proxy-stack.log`. |
+| OP-22 | Deploy `authentik-stack` | OP-21 complete. | Apply `authentik-stack`; complete direct first boot if needed; verify or store API token. | Authentik is healthy at VMID `150` and API token is available through `./with-secrets`. | `terraform/secrets.enc.yaml` only if an API token must be created or rotated; otherwise no tracked source files. Evidence log required. |
+| OP-23 | Activate edge reconciliation | OP-22 complete; CoreDNS, Traefik, and Authentik API healthy. | Regenerate edge artifacts; run reconciler apply using the direct Authentik URL; publish generated CoreDNS and Traefik files; run full reconciler dry-run with the same URL. | Browser edge state is generated from manifests and active. | No tracked source files; ignored `terraform/lxc/.generated/`; evidence log required. |
+| OP-24 | Deploy `harbor-stack` | OP-23 complete. | Apply `harbor-stack`; validate direct Harbor health and `/v2/` auth challenge. | Harbor is running at VMID `121`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-harbor-stack.log`. |
+| OP-25 | Deploy `monitoring-stack` | OP-24 complete. | Apply `monitoring-stack`; validate direct services and Grafana browser route behavior. | Monitoring is running at VMID `154`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-monitoring-stack.log`. |
+| OP-26 | Deploy `netbox-stack` | OP-25 complete. | Apply `netbox-stack`; validate direct service and NetBox browser route behavior. | NetBox is running at VMID `143`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-netbox-stack.log`. |
+| OP-27 | Deploy `portainer-stack` | OP-26 complete. | Apply `portainer-stack`; validate direct Portainer health. | Portainer is running at VMID `120`. | No tracked source files; `docs/teardown-test/evidence/<stamp>/deploy-portainer-stack.log`. |
 | OP-28 | End-to-end validation | OP-27 complete. | Validate VMIDs/IPs, DNS, HTTPS, certificate, auth behavior, Harbor registry auth, direct Portainer API health on port `9000`, and final full reconciler no-op using the direct Authentik URL. | The rebuilt platform has pass/fail evidence for the full contract. | No tracked source files; `docs/teardown-test/evidence/<stamp>/final-validation.log`. |
 | OP-29 | Closeout and follow-ups | OP-28 complete. | Summarize result, evidence paths, accepted deviations, certificate-drift decisions, and follow-up tasks. Promote durable lessons into tracked docs instead of leaving them only in raw evidence. | The rehearsal outcome is durable without committing raw evidence. | `docs/teardown-test/README.md`; `docs/teardown-test/variables.md`; `docs/teardown-test/lessons-learned.md`; optionally add `docs/teardown-test/reports/<stamp>.md` for a tracked summary. |
 
