@@ -3,6 +3,9 @@ kind: EdgeManifest
 metadata:
   name: harbor-edge
   stack: harbor-stack
+  annotations:
+    repo.auth.oidc.client_id_env: HARBOR_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: HARBOR_OIDC_CLIENT_SECRET
 spec:
   routes:
     - name: harbor
