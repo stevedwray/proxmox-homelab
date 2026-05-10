@@ -165,10 +165,42 @@ from the `gates` list directly. Write `.git/ai/handoff-to-executor.yaml` and cli
 yourself about to run an Ansible playbook, Terraform command, or any script from
 `scripts/`, stop — that is executor work.
 
+**Scan gate scope**
+`env.scan_gate` governs infrastructure security scanners only: snyk
+(`snyk iac test`) and sonar-scanner. `ansible-lint` is **never** a scan gate;
+it is a quality check that appears in session gates with `critical: false` and
+is recorded in the report. Do not elevate ansible-lint failures to scan blockers
+or scope a separate session solely to resolve lint before allowing other work.
+
+**Validate refs.base_branch before writing any handoff**
+Run `git rev-parse --verify <refs.base_branch>` before writing a handoff. If
+the branch does not exist locally, run `git fetch origin` first and retry. If it
+still does not exist, emit `needs_input` naming the missing branch — do not
+write the handoff with an invalid base_branch.
+
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
 with ordering dependencies you cannot pre-resolve into a single session context.
 When in doubt, route directly.
+
+**Scope work, not checks**
+Gates must represent work to be completed, not just verification of whether
+something already exists. A gate that only checks for a file or section the
+executor hasn't been told to create will fail and leave the executor with
+nothing to do but ask. The implementation step belongs inside the gate boundary,
+with verification as the final check of that gate's success.
+
+Good gate shape: "create X if absent, then verify it exists" — one gate, one
+outcome.
+Bad gate shape: "verify X exists" when X hasn't been created yet — this is an
+incomplete session that will stop at the first failure.
+
+**Declare the stopping condition in the session goal**
+The session `goal` must name the condition under which the executor finishes and
+hands off — not just the work to be done. Example: "implement X and Y until
+unit tests pass and the contract draft is complete enough to scope a teardown
+session." The executor must be able to determine on its own when the work is
+done without asking.
 
 **Keep sessions homogeneous**
 Do not bundle tooling or meta work (agent instruction edits, gitignore changes,
@@ -178,6 +210,9 @@ playbooks, Terraform) in a single session. When a task requires both:
 2. Scope the infrastructure execution as session B only after session A is reviewed.
 Do not pre-compose session B until session A is complete. This does not require
 the planner — the architect scopes both sessions directly.
+This rule does not apply to documentation work — do not fragment doc-only
+sessions into tiny verification stubs. Scope doc work to meaningful completion
+points.
 
 **Gates must be commands**
 Every gate `cmd` must be a literal shell command the executor can run and check.
@@ -216,6 +251,13 @@ Once you have enough context to write the session handoff, write it and immediat
 click Hand off to Executor (or Hand off to Planner). Do not present "next steps"
 options, do not ask "which would you like?", do not wait for operator confirmation
 before routing. The operator's task description is the approval to proceed.
+
+**Answer status questions directly — do not offer to act**
+When asked a readiness or status question ("is it ready for X?", "can we proceed?"),
+answer yes or no, list any blockers or unmet requirements, state what the operator
+needs to do, and stop. Do not offer to perform the remediation yourself. Do not
+present a menu of options ending with "which should I do?" — that decision belongs
+to the operator.
 
 **Ask during intake only**
 Emit a `needs_input` block only when a required session context field (branch,
@@ -393,16 +435,27 @@ planning:
 
 State which path you are taking. Confirm the handoff file has been written.
 
-Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory exists.
+Before writing any handoff file, run:
+```
+mkdir -p .git/ai && rm -f <target-path>
+```
+This guarantees a clean write. Never append to an existing handoff file.
+If the rm fails for any reason, stop and report it before proceeding.
 
 - **Direct to executor**: create the branch (see Session Context above), then write
-  to `.git/ai/handoff-to-executor.yaml`.
+  to `.git/ai/handoff-to-executor.yaml`. Do NOT write to any other filename
+  (e.g. `handoff-to-executor-next.yaml`) — the executor only loads
+  `handoff-to-executor.yaml` or `session-<NN>.yaml`.
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
 - **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no new handoff. Push the executor's session commit (`git push`),
-  merge the branch to `refs.base_branch`, close the tracking issue, then
-  delete `.git/ai/sessions/<session-id>-report.md`.
+- **PASS**: no new handoff. Run in order:
+  1. `git push origin <session.branch>`
+  2. `gh pr create --base <refs.base_branch> --title "<session.id>: <session.goal>" --body "Closes #<session.issue>"`
+  3. After the PR merges, close the tracking issue with a summary comment.
+  4. Delete `.git/ai/sessions/<session-id>-report.md`.
+  Do NOT create PRs targeting `main`, `baseline/teardown-validated`, or
+  `dev/pve-test` unless the operator explicitly names one of those as the target.
 - **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
   `.git/ai/sessions/<prior-session-id>-report.md`.
 - **NEEDS-INPUT**: no handoff yet. Waiting for operator response.
