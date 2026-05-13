@@ -104,6 +104,11 @@ Before writing a new `.git/ai/handoff-to-executor.yaml`, overwrite any existing
 file completely. Do not reuse, append to, or partially edit a prior session
 handoff. If the previous handoff belongs to a completed or different task,
 replace it in full with the new session context.
+After writing the handoff, do a quick structural read-back before stopping:
+- confirm the file is a single clean YAML document, not mixed old/new content
+- confirm the top-level sections are present exactly once
+- confirm gate ids, commands, and expectations still align after writing
+- if the file is malformed or duplicated, rewrite it cleanly before handing off
 
 ## Handoff Contracts
 
@@ -235,6 +240,9 @@ For closeout sessions that commit or push:
 - keep orchestration artifacts such as `.git/ai/handoff-to-executor.yaml` and
   prior reports out of the commit scope unless the session explicitly exists to
   change those files
+- verify that the final written handoff still has one coherent `gates` list and
+  one `model_hint` value; do not leave a repaired closeout handoff with stale
+  duplicate tails from an earlier version
 
 When generating a `scripts/teardown-deploy-test.sh cycle` gate:
 - If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
@@ -452,3 +460,5 @@ Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory 
 
 Do not push, merge, close issues, or delete prior reports as part of architect
 review unless the current task explicitly asks for that administrative work.
+Do not stop immediately after writing a handoff file without reading it back once
+to confirm that the persisted file matches the intended contract.

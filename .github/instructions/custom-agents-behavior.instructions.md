@@ -18,6 +18,7 @@ Interaction model for this repository:
 - `architect` and `planner` should focus on design, scope, decomposition, completion criteria, and concise operator-facing output rather than live command execution.
 - `architect` and `planner` should prefer positive workflow instructions: define the intended sequence, completion criteria, and handoff boundary rather than relying mainly on prohibitions.
 - `architect` and `planner` should prefer concrete handoff contracts: repo-root file paths in gates, real values or `null` in required fields, explicit discovery gates instead of symbolic placeholders, and no assumption that bootstrap is already satisfied unless the handoff/report chain proves it.
+- when `architect` or `planner` writes a `.git/ai/*.yaml` handoff, it should fully replace the file, read it back once, and confirm it is a single coherent YAML document rather than mixed old/new content.
 - for bootstrap/setup sessions, architect/planner should make it explicit that the executor is allowed to start on a different branch and establish the target branch during the session before the final target guard is enforced.
 - machine-readable detail belongs in `.git/ai/*.yaml` and session reports, not in verbose chat dumps. In chat, prefer a short verdict, short blocker summary, and the path of any written handoff/report file.
 - `executor` and `executor-heavy` should execute the bounded handoff without asking the user follow-up questions.
@@ -28,6 +29,7 @@ Interaction model for this repository:
 - if an executor discovers a missing approval, missing privilege, or unresolved ambiguity, it should report back through `.git/ai/handoff-to-architect.yaml` instead of asking the user directly.
 - executors may include a lightweight architect review recommendation in `.git/ai/handoff-to-architect.yaml` when the next architect step is narrow, well-evidenced, and low-ambiguity; this is only a hint for operator model choice, not a workflow decision.
 - architect/planner should recommend or accept `lightweight` review only for evidence review and narrow docs-only scoping. Any branch-bootstrap design, commit/push closeout design, shell-gate repair, or ambiguous next-step planning should be treated as `full` model work.
+- closeout-handoff authoring is especially strict: gate names, commands, and expectations must still align after the file is written, and stale duplicate tails from earlier handoffs are not acceptable.
 
 ## Scope Rules
 
