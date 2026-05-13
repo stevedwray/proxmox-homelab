@@ -8,7 +8,7 @@
 
 ## Current Phase
 
-- Phase 0: Define the Target Model
+- Stage 1: Contract schema draft (IN PROGRESS → COMPLETE)
 
 ## Established Working Assumptions
 
@@ -20,27 +20,20 @@
 
 ## Suggested Next Step
 
-Start Stage 1 on a short-lived branch from `refactor/stack-lifecycle`:
+- Current Phase: Stage 1 complete / Stage 2 pending
 
-- `task/slr-01-shared-contract-draft`
+- What was completed:
+  - Contract surface audit (contract-audit.md)
+  - First-pass shared contract schema draft (docs/stack-lifecycle-refactor/contract-schema.md)
 
-Primary objective:
+- Evidence:
+  - docs/stack-lifecycle-refactor/contract-schema.md
+  - docs/stack-lifecycle-refactor/field-classification.csv
 
-- audit the current implemented contract and define the first draft of the shared `stack.yaml` contract
+- Suggested Next Step: start Stage 2 on `task/slr-02-workflow-and-validation`
+  - Goals for Stage 2: operator workflows, post-Terraform day-2 reconcile path, drift handling expectations, mandatory validation gates per change class
 
-Initial focus:
-
-- audit:
-  - `terraform/lxc/PLATFORM_CONTRACT.md`
-  - relevant per-stack `STACK_CONTRACT.md` files
-- identify current contract coverage, gaps, and conflicts
-- common fields
-- Terraform-derived fields
-- Ansible-derived fields
-- special-case extension sections
-- validation metadata
-
-Do not broaden into implementation changes yet unless required to clarify the contract.
+- Open questions to carry forward: see the numbered list in `contract-schema.md` section 7
 
 ## Open Questions To Carry Forward
 
