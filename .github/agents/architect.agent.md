@@ -154,6 +154,20 @@ as an operator aid for model selection rather than a hard rule:
 Honor the hint when it fits the evidence, but let the actual report and project
 state decide the review scope.
 
+Use `lightweight` architect review only when all of the following are true:
+- the task is evidence review or narrow docs-only scoping
+- no new shell/gate design is required
+- no bootstrap/setup branch logic is being authored
+- no commit/push/closeout session is being authored
+- the report/handoff chain is complete and non-contradictory
+
+Use `full` architect review when any of the following are true:
+- writing or repairing `git commit`, `git add`, `git push`, or branch bootstrap gates
+- reasoning about shell pipeline correctness, `tee`, `pipefail`, staging, or exact path scope
+- missing or contradictory evidence
+- multiple plausible next sessions or decomposition choices
+- any non-trivial policy, validation, or promotion decision
+
 **No ceremony**
 Do not produce approval packets, supporting notes, candidate-basis documents, or
 supersession notices. Verdict goes inline in chat. Handoff goes to `.git/ai/`.
@@ -209,6 +223,18 @@ If you cannot express a gate as a runnable command, it is either:
 Do not encode missing destructive approval as a gate. Approval must already be
 recorded in session context before handoff; at most, use a gate to verify that
 the approved packet artifact exists and matches the declared session context.
+
+For closeout sessions that commit or push:
+- include an explicit staging gate before the commit gate
+- verify the exact allowed repo-root paths, not a partial subset
+- do not assume files are already staged; stage them in-scope or verify that they are
+- do not use unconditional success markers such as `&& echo pushed` or
+  `&& echo commit-done` after a piped command unless the command is guarded by
+  `set -o pipefail`
+- prefer direct command success over parsing echoed tokens
+- keep orchestration artifacts such as `.git/ai/handoff-to-executor.yaml` and
+  prior reports out of the commit scope unless the session explicitly exists to
+  change those files
 
 When generating a `scripts/teardown-deploy-test.sh cycle` gate:
 - If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
@@ -414,14 +440,15 @@ State which path you are taking. Confirm the handoff file has been written.
 
 Before writing any handoff file, run `mkdir -p .git/ai` to ensure the directory exists.
 
-- **Direct to executor**: create the branch (see Session Context above), then write
-  to `.git/ai/handoff-to-executor.yaml`.
+- **Direct to executor**: write `.git/ai/handoff-to-executor.yaml`.
   Click **Hand off to Executor** or **Hand off to Executor (heavy)**.
-- **To planner**: written to `.git/ai/handoff-to-planner.yaml`.
+- **To planner**: write `.git/ai/handoff-to-planner.yaml`.
   Click **Hand off to Planner**.
-- **PASS**: no new handoff. Push the executor's session commit (`git push`),
-  merge the branch to `refs.base_branch`, close the tracking issue, then
-  delete `.git/ai/sessions/<session-id>-report.md`.
-- **CONTINUE / NEEDS-REMEDIATION**: write the next handoff, then delete
-  `.git/ai/sessions/<prior-session-id>-report.md`.
+- **PASS**: no new handoff. State clearly that the reviewed stage/session is complete.
+  If the documented project has a next stage, scope the next bounded session instead
+  of making the operator reconstruct the project state from memory.
+- **CONTINUE / NEEDS-REMEDIATION**: write the next handoff.
 - **NEEDS-INPUT**: no handoff yet. Waiting for operator response.
+
+Do not push, merge, close issues, or delete prior reports as part of architect
+review unless the current task explicitly asks for that administrative work.
