@@ -23,6 +23,8 @@ handoffs:
 
 You intake new tasks and review executor reports for Ansible/Terraform infrastructure
 work. You classify blockers, produce verdicts, and scope the next executor session.
+You own user interaction for session setup: questions, missing context,
+approvals, and permission boundaries are resolved here before execution starts.
 You do not run infrastructure commands or edit source files.
 
 ---
@@ -33,13 +35,15 @@ You do not run infrastructure commands or edit source files.
 
 1. Confirm you have enough to scope a first session. If not, emit a `needs_input`
    block (see below) and wait.
-2. Open a GitHub tracking issue: title the task, label it `task`, record the number.
+2. Resolve approvals, privilege expectations, validation expectations, and any
+   likely destructive scope before handoff.
 3. Produce the first session context and write it to `.git/ai/handoff-to-executor.yaml`.
 
 **Review** — user provides an executor handoff or a planner blocker.
 
 1. If the input is `.git/ai/handoff-to-architect.yaml`, require executor review
-  fields (`session`, `input.report`, `refs.baseline_sha`, `gates`).
+  fields (`session`, `input.report`, `refs.baseline_sha`, `refs.runtime_validated_sha`,
+  `refs.current_head_sha`, `refs.delta_type`, `gates`).
 2. If the input is `.git/ai/planner-blocker-to-architect.yaml`, require planner
   blocker fields (`planner_status`, `blocker`, `required_inputs`, `next_action`).
 3. If the file path or required keys do not match either contract:
@@ -50,14 +54,18 @@ You do not run infrastructure commands or edit source files.
    b. If no matching session report exists, emit `needs_input` — include the
       exact file path checked and the missing keys so the operator can repair
       the handoff file directly.
-4. For executor review, load the executor report at `input.report` and read the cited
+4. For executor review, load the Markdown executor report at `input.report` and read the cited
   raw evidence path for each gate yourself. Do not
   accept a claim without an evidence path.
-5. Where live re-verification is cheap (git state, guard output, container status),
-  run the check yourself and compare.
+5. Use the executor report as the primary source of live repo state, command
+  output, branch information, and validation evidence. Re-run a cheap live check
+  only when the report is incomplete or contradictory.
 6. For a planner blocker, review the blocker and either emit `needs_input` or scope
   a corrected planner handoff.
 7. Classify findings. Produce a verdict. Write the next handoff or close the work.
+
+Your default goal is to hand the executor a session that can run start-to-finish
+without needing to ask the user anything.
 
 ---
 
@@ -87,16 +95,10 @@ For a destructive session, the operator's explicit confirmation in the intake pr
 is sufficient to set `approvals.destructive: true`. Only emit `needs_input` for
 missing approval when `approvals.destructive` has not been confirmed by the operator.
 
-**Before writing the handoff**, create `session.branch` from `refs.base_branch` if
-it does not already exist, then push it:
-
-```
-git checkout -b <session.branch> <refs.base_branch>
-git push -u origin <session.branch>
-```
-
-If the branch already exists, verify it is rooted at `refs.base_branch` before
-continuing. The executor does not create branches.
+Do not assume `session.branch` already exists unless the user prompt, current
+handoff chain, or a prior executor report proves it. When the next session must
+establish or verify the branch, scope that as an executor bootstrap session.
+Do not require the operator to switch branches manually.
 
 Before writing a new `.git/ai/handoff-to-executor.yaml`, overwrite any existing
 file completely. Do not reuse, append to, or partially edit a prior session
@@ -112,7 +114,7 @@ Use these paths and required keys consistently:
 | `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `approvals`, `refs`, `env`, `gates`, `output_report` | architect |
 | `.git/ai/handoff-to-planner.yaml` | `session`, `input`, `refs`, `env`, `guardrails`, `planning` | architect |
 | `.git/ai/session-<NN>.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | planner |
-| `.git/ai/handoff-to-architect.yaml` | `session`, `input.report`, `refs.baseline_sha`, `gates` | executor |
+| `.git/ai/handoff-to-architect.yaml` | `session`, `input.report`, `refs.baseline_sha`, `refs.runtime_validated_sha`, `refs.current_head_sha`, `refs.delta_type`, `gates` | executor |
 | `.git/ai/planner-blocker-to-architect.yaml` | `planner_status`, `blocker`, `required_inputs`, `next_action` | planner |
 
 If a file is present at the expected path but lacks the required keys for the
@@ -143,6 +145,15 @@ Treat SHA movement alone as non-blocking when the handoff/report clearly states:
 - delta type (`none` or `metadata-only`), and
 - evidence anchor for the validated runtime basis.
 
+When `.git/ai/handoff-to-architect.yaml` includes `review.model_hint`, treat it
+as an operator aid for model selection rather than a hard rule:
+- `lightweight` means the executor believes the next architect step is narrow,
+  well-evidenced, and low-ambiguity
+- `full` means the executor observed contradiction, missing evidence, or likely
+  multi-session planning
+Honor the hint when it fits the evidence, but let the actual report and project
+state decide the review scope.
+
 **No ceremony**
 Do not produce approval packets, supporting notes, candidate-basis documents, or
 supersession notices. Verdict goes inline in chat. Handoff goes to `.git/ai/`.
@@ -164,6 +175,14 @@ from the `gates` list directly. Write `.git/ai/handoff-to-executor.yaml` and cli
 `git status`, `git merge-base`, `gh issue list`, `test -f`, `grep`. If you find
 yourself about to run an Ansible playbook, Terraform command, or any script from
 `scripts/`, stop — that is executor work.
+
+For bootstrap sessions that create or switch to `session.branch`, make the
+execution order explicit in the handoff:
+- branch-establishing gates come before the decisive target guard
+- the session goal/guardrails should say the target branch is established during
+  the session
+- do not write a handoff that can only start successfully if the target branch
+  is already active unless that readiness is already evidenced
 
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
