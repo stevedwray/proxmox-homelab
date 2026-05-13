@@ -56,3 +56,10 @@ Do not broaden into implementation changes yet unless required to clarify the co
   - what changed
   - what was validated
   - what remains next
+
+## Stage 3 Outcomes
+
+- Stage: 3 — Exemplar selection and scoped documentation.
+- Session: `slr-03-main-work-01` scoped to branch `task/slr-03-exemplar-scope`.
+- Outcome: created `docs/stack-lifecycle-refactor/stage-03-exemplar-scope.md` selecting `apt-cacher-stack` and `harbor-stack` as the exemplar pair; `netbox-stack` recorded as deferred.
+- Next: Stage 4 will implement validation artifacts for the selected exemplars based on the expected validation evidence captured in the Stage 3 document.
