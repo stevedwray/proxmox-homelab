@@ -90,4 +90,9 @@ Even on a failed or blocked session, the final rendered handoff must describe
 the current session's outcome. Never leave a prior successful handoff in place
 just because the current session failed late.
 
+Apply the same full-replacement rule to `output_report`: rewrite the report for
+the current session from scratch, then read it back and confirm it starts with
+`## Session <current-session-id>` and does not contain an appended stale copy of
+the same session.
+
 Click **Hand off to Architect**.

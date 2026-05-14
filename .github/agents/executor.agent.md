@@ -131,6 +131,8 @@ includes the required validation gates and they have passed.
 
 Write the Markdown session report to `output_report`. Run
 `mkdir -p "$(dirname "$output_report")"` first.
+Fully replace the report file for the current session. Do not append a new
+report block to an older copy of the same report.
 
 ```
 ## Session <id>
@@ -161,6 +163,15 @@ If a late report-validation gate fails, update the report once with the required
 evidence-path citations or wording, rerun that gate, and only then decide
 whether the session still fails. Do not leave a stale report uncorrected when
 the exact fix is inside `boundary.allowed`.
+
+After the final report write, read it back once and confirm:
+- it begins with `## Session <current-session-id>`
+- it contains only the current session result, not an appended older result for
+  the same session id
+- any report-citation gate outcome shown in the report matches the final gate
+  status you are handing back
+If those checks fail, rewrite the report cleanly before rendering the architect
+handoff.
 
 If all in-scope gates are complete, stop after writing the report and
 `.git/ai/handoff-to-architect.yaml`. Do not ask the operator what to do next.
