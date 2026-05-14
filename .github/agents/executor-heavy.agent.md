@@ -86,5 +86,8 @@ Self-check: file must start with `session:` and contain exactly one coherent
 `session:`, `input:`, `refs:`, `review:`, and `gates:` block. Confirm that
 `session.id` matches the current session and `input.report` matches
 `output_report`. Rewrite from template if any check fails.
+Even on a failed or blocked session, the final rendered handoff must describe
+the current session's outcome. Never leave a prior successful handoff in place
+just because the current session failed late.
 
 Click **Hand off to Architect**.

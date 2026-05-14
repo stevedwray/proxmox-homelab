@@ -86,6 +86,9 @@ Gates are work orders, not a test suite. For each gate:
   session is done. Minor edits alone are not completion unless the gates say so.
 - Run the validation and verification gates in the handoff before proposing that
   the session is complete.
+- If a gate validates report content, evidence-path citations, or other final
+  report text, draft or update `output_report` before running that gate, then
+  rerun the gate against the updated report if needed.
 - Keep moving through all non-blocked gates in order. Do not stop early just to
   summarize progress or suggest a PR.
 - When the handoff needs live git facts such as branch, HEAD SHA, cleanliness,
@@ -154,6 +157,11 @@ If the session stopped before all gates passed, state exactly which gate blocked
 completion and whether architect must provide a new handoff, approval, or
 decision.
 
+If a late report-validation gate fails, update the report once with the required
+evidence-path citations or wording, rerun that gate, and only then decide
+whether the session still fails. Do not leave a stale report uncorrected when
+the exact fix is inside `boundary.allowed`.
+
 If all in-scope gates are complete, stop after writing the report and
 `.git/ai/handoff-to-architect.yaml`. Do not ask the operator what to do next.
 Do not offer optional follow-on actions such as PR creation, opening links,
@@ -209,5 +217,8 @@ After rendering the handoff, read it back once and confirm:
 - the `session.id` matches the current session
 - `input.report` matches `output_report`
 If any of those checks fail, rewrite the file cleanly before stopping.
+Even on a failed or blocked session, the final rendered handoff must describe
+the current session's outcome. Never leave a prior successful handoff in place
+just because the current session failed late.
 
 Click **Hand off to Architect**.

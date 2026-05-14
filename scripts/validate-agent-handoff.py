@@ -200,7 +200,7 @@ def validate_architect(doc: dict[str, Any]) -> list[str]:
     if not isinstance(input_block, dict):
         errors.append("input: must be a mapping")
     else:
-        errors.extend(expect_keys("input", input_block, ["report"]))
+        errors.extend(expect_keys("input", input_block, ["report"], ["prior_architect_review"]))
         if not non_empty_string(input_block.get("report")):
             errors.append("input.report: must be a non-empty string")
 
