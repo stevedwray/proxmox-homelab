@@ -28,6 +28,7 @@ Interaction model for this repository:
 - executors should not offer optional follow-on actions after completion, including PR suggestions, opening links, merge suggestions, or extra out-of-scope verification.
 - if an executor discovers a missing approval, missing privilege, or unresolved ambiguity, it should report back through `.git/ai/handoff-to-architect.yaml` instead of asking the user directly.
 - executors may include a lightweight architect review recommendation in `.git/ai/handoff-to-architect.yaml` when the next architect step is narrow, well-evidenced, and low-ambiguity; this is only a hint for operator model choice, not a workflow decision.
+- when an executor writes `.git/ai/handoff-to-architect.yaml`, it should fully replace the file, read it back once, and confirm it contains only the current session rather than concatenated stale blocks.
 - architect/planner should recommend or accept `lightweight` review only for evidence review and narrow docs-only scoping. Any branch-bootstrap design, commit/push closeout design, shell-gate repair, or ambiguous next-step planning should be treated as `full` model work.
 - closeout-handoff authoring is especially strict: gate names, commands, and expectations must still align after the file is written, and stale duplicate tails from earlier handoffs are not acceptable.
 

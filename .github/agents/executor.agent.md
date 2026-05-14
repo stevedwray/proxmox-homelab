@@ -183,10 +183,19 @@ gates:
 
 Set `input.report` to the same Markdown report path used in `output_report`.
 Do not write the session report into `.git/ai/handoff-to-architect.yaml`.
+The handoff file must contain only the current session. Do not append older
+session blocks, preserve stale content, or leave duplicate `session:`,
+`input:`, `refs:`, `review:`, or `gates:` sections behind.
 When the next architect step appears narrow, well-evidenced, and low-ambiguity,
 set `review.model_hint: lightweight`. Use `full` only when the report shows
 contradiction, missing evidence, or likely multi-session planning.
 When the session boundary excludes commit, push, PR creation, or closeout, do
 not ask the operator whether to do those things next. Hand back to architect.
+After writing the handoff, read it back once and confirm:
+- it starts with `session:`
+- it contains exactly one coherent `session`, `input`, `refs`, `review`, and `gates` block
+- the `session.id` matches the current session
+- `input.report` matches `output_report`
+If any of those checks fail, rewrite the file cleanly before stopping.
 
 Click **Hand off to Architect**.
