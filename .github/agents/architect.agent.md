@@ -106,6 +106,7 @@ handoff. If the previous handoff belongs to a completed or different task,
 replace it in full with the new session context.
 After writing the handoff, do a quick structural read-back before stopping:
 - confirm the file is a single clean YAML document, not mixed old/new content
+- confirm it contains exactly one executor session, not multiple candidate sessions
 - confirm the top-level sections are present exactly once
 - confirm gate ids, commands, and expectations still align after writing
 - if the file is malformed or duplicated, rewrite it cleanly before handing off
@@ -225,9 +226,22 @@ If you cannot express a gate as a runnable command, it is either:
   gate list, or
 - Meta/tooling work — scope it as session A before the execution session.
 
+Every gate must also have a concrete `expect` value. Do not leave `expect` blank.
+If success is determined by exit code, say so explicitly in `expect` (for example
+`exit 0`). If success is determined by output, name the exact expected output.
+
 Do not encode missing destructive approval as a gate. Approval must already be
 recorded in session context before handoff; at most, use a gate to verify that
 the approved packet artifact exists and matches the declared session context.
+
+Do not suppress a gate failure with `|| true`, `; true`, or similar constructs
+in executor handoffs. If a failure is acceptable, mark the gate non-critical and
+make the acceptable outcome explicit in `expect`.
+
+Do not combine implementation authoring, commit, and push inside a single gate
+unless the session is explicitly a closeout-only session and the gate exists only
+for the closeout action. For normal main-work sessions, implementation and
+closeout must be separate sessions or separate gates with clear boundaries.
 
 For closeout sessions that commit or push:
 - include an explicit staging gate before the commit gate
@@ -243,6 +257,8 @@ For closeout sessions that commit or push:
 - verify that the final written handoff still has one coherent `gates` list and
   one `model_hint` value; do not leave a repaired closeout handoff with stale
   duplicate tails from an earlier version
+- keep closeout gates narrow: stage, verify staged scope, commit, record HEAD,
+  push, verify upstream/report as needed
 
 When generating a `scripts/teardown-deploy-test.sh cycle` gate:
 - If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
