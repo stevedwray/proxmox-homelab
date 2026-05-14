@@ -204,6 +204,22 @@ execution order explicit in the handoff:
 - do not write a handoff that can only start successfully if the target branch
   is already active unless that readiness is already evidenced
 
+For any executor session, choose exactly one session-start pattern:
+- **start-on-target**: `session.branch`, the pre-work target guard, and the
+  first in-scope branch expectation all refer to the same branch
+- **start-elsewhere-then-switch**: the handoff explicitly says the session
+  starts on branch A and switches to branch B during the session, and the
+  branch-switch gates come before the decisive target guard for branch B
+
+Do not mix these patterns. In particular:
+- do not set `session.branch` or `env.target_guard_expect` to branch B while the
+  first gate expects branch A
+- do not rely on executor pre-work checkout behavior to silently resolve a
+  branch transition that the handoff itself has not modeled clearly
+- for merge/promotion sessions, either start on the work branch and make the
+  switch to the base branch explicit, or start on the base branch and remove any
+  gate that expects the work branch first
+
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
 with ordering dependencies you cannot pre-resolve into a single session context.
@@ -242,6 +258,12 @@ Do not combine implementation authoring, commit, and push inside a single gate
 unless the session is explicitly a closeout-only session and the gate exists only
 for the closeout action. For normal main-work sessions, implementation and
 closeout must be separate sessions or separate gates with clear boundaries.
+
+When a session changes branches as part of the work, gate names and expectations
+must reflect the actual order:
+- any "initial branch" gate must agree with the declared starting branch
+- any "target guard" gate for a later branch must come after the branch-switch
+  gate that establishes that branch
 
 For closeout sessions that commit or push:
 - include an explicit staging gate before the commit gate

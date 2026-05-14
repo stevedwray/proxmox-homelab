@@ -21,6 +21,7 @@ Interaction model for this repository:
 - when `architect` or `planner` writes a `.git/ai/*.yaml` handoff, it should fully replace the file, read it back once, and confirm it is a single coherent YAML document rather than mixed old/new content.
 - executor handoffs should contain exactly one session only. Do not emit multiple candidate sessions, stale tails, or blended old/new gate blocks into a single `.git/ai/handoff-to-executor.yaml`.
 - for bootstrap/setup sessions, architect/planner should make it explicit that the executor is allowed to start on a different branch and establish the target branch during the session before the final target guard is enforced.
+- architect/planner should choose one coherent branch-start pattern per executor handoff: either start on the target branch from the beginning, or explicitly start on another branch and switch before the decisive target guard. Do not mix both patterns in one session contract.
 - machine-readable detail belongs in `.git/ai/*.yaml` and session reports, not in verbose chat dumps. In chat, prefer a short verdict, short blocker summary, and the path of any written handoff/report file.
 - `executor` and `executor-heavy` should execute the bounded handoff without asking the user follow-up questions.
 - `executor` and `executor-heavy` own live repo inspection, git commands, validation commands, and evidence capture unless the handoff says otherwise.
