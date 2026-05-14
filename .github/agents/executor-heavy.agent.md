@@ -58,13 +58,27 @@ refs:
   runtime_validated_sha: ""
   current_head_sha: ""
   delta_type: "none"   # none | metadata-only | runtime-change
+review:
+  model_hint: "lightweight"   # lightweight | full
+  rationale: ""
 gates:
   - id: ""
     status: ""         # PASS | FAIL | SKIP
     notes: ""
 ```
 
-Self-check: file must start with `session:` and contain `input:`, `refs:`,
-`gates:`. Rewrite from template if not.
+Set `input.report` to the same Markdown report path used in `output_report`.
+Do not write the session report into `.git/ai/handoff-to-architect.yaml`.
+The handoff file must contain only the current session. Do not append older
+session blocks, preserve stale content, or leave duplicate `session:`,
+`input:`, `refs:`, `review:`, or `gates:` sections behind.
+When the next architect step appears narrow, well-evidenced, and low-ambiguity,
+set `review.model_hint: lightweight`. Use `full` only when the report shows
+contradiction, missing evidence, or likely multi-session planning.
+
+Self-check: file must start with `session:` and contain exactly one coherent
+`session:`, `input:`, `refs:`, `review:`, and `gates:` block. Confirm that
+`session.id` matches the current session and `input.report` matches
+`output_report`. Rewrite from template if any check fails.
 
 Click **Hand off to Architect**.
