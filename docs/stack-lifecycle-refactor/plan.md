@@ -198,6 +198,14 @@ Exit criteria:
 - infra changes do not implicitly destroy day-2 configuration state
 - the scaffolding is stable enough for validation
 
+Status:
+
+- complete
+
+Implementation note:
+
+- Stage 4 introduced a bounded day-2 reconcile entrypoint for the exemplar pair only: `scripts/reconcile-exemplar-stacks.sh`
+
 ### Stage 5: Exemplar Validation And Adjustment
 
 Suggested branch:

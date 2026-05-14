@@ -2,13 +2,13 @@
 
 ## Current State
 
-- The document tree has been created.
-- Core working assumptions have been captured.
-- No code or workflow changes have been implemented yet under this refactor.
+- Stage 1, Stage 2, and Stage 3 are complete.
+- Stage 4 exemplar scaffolding is complete for the selected pair.
+- Changes are intentionally bounded to operator entrypoint scaffolding and refactor tracking docs.
 
 ## Current Phase
 
-- Phase 0: Define the Target Model
+- Stage 5 preparation: Exemplar validation and adjustment.
 
 ## Established Working Assumptions
 
@@ -20,33 +20,27 @@
 
 ## Suggested Next Step
 
-Start Stage 1 on a short-lived branch from `refactor/stack-lifecycle`:
+Start Stage 5 on a short-lived branch from the Stage 4 baseline:
 
-- `task/slr-01-shared-contract-draft`
+- `task/slr-05-exemplar-validation`
 
 Primary objective:
 
-- audit the current implemented contract and define the first draft of the shared `stack.yaml` contract
+- validate the Stage 4 exemplar scaffolding end-to-end for `apt-cacher-stack` and `harbor-stack`
 
 Initial focus:
 
-- audit:
-  - `terraform/lxc/PLATFORM_CONTRACT.md`
-  - relevant per-stack `STACK_CONTRACT.md` files
-- identify current contract coverage, gaps, and conflicts
-- common fields
-- Terraform-derived fields
-- Ansible-derived fields
-- special-case extension sections
-- validation metadata
+- run infra-only and config-only validation gates for both exemplars
+- verify approval-gated post-infra reconcile invocation path
+- capture evidence under a Stage 5 evidence directory and summarize pass/fail/waive status
 
-Do not broaden into implementation changes yet unless required to clarify the contract.
+Do not broaden into additional stack rollout during Stage 5.
 
 ## Open Questions To Carry Forward
 
-- exact shape of the shared stack contract
-- exact classification of managed vs observed vs adoptable paths
-- exact validation gates and thresholds
+- acceptable non-idempotent output threshold for exemplar bootstrap/reconcile runs
+- whether drift handling remains reporting-only or needs early hard-fail rules for exemplars
+- whether any exemplar-specific contract extension is needed before wider rollout
 
 ## Session Closeout Checklist
 
@@ -60,19 +54,24 @@ Do not broaden into implementation changes yet unless required to clarify the co
 ## Stage 3 Outcomes
 
 - Stage: 3 — Exemplar selection and scoped documentation.
-- Session: `slr-03-main-work-01` scoped to branch `task/slr-03-exemplar-scope`.
-- Outcome: created `docs/stack-lifecycle-refactor/stage-03-exemplar-scope.md` selecting `apt-cacher-stack` and `harbor-stack` as the exemplar pair; `netbox-stack` recorded as deferred.
-- Next: Stage 4 will implement validation artifacts for the selected exemplars based on the expected validation evidence captured in the Stage 3 document.
+- Session: `slr-03-main-work-01` on branch `task/slr-03-exemplar-scope`.
+- Outcome:
+  - selected exemplar pair: `apt-cacher-stack` and `harbor-stack`
+  - scope and non-goals captured in `stage-03-exemplar-scope.md`
 
-## Stage 4 Kickoff
+## Stage 4 Outcomes
 
-- Stage: 4 — Exemplar scaffolding bootstrap.
-- Session: slr-04-bootstrap-01 on branch task/slr-04-exemplar-scaffolding.
-- Outcome target: bounded Stage 4 scope and implementation checklist for apt-cacher-stack and harbor-stack, with no infrastructure command execution.
-- Next: Stage 4 main-work will implement the scoped scaffolding changes and capture code-level evidence for Stage 5 validation.
-
-## Stage 4 Main-Work Progress
-
-- Session: slr-04-main-work-01 on branch task/slr-04-exemplar-scaffolding.
-- Scope: implement bounded exemplar scaffolding hooks in platform and exemplar contract docs only.
-- Validation deferral: runtime validation and closeout remain in follow-on Stage 5 and closeout sessions.
+- Stage: 4 — Exemplar scaffolding.
+- Session: `slr-04-main-work-01` on branch `task/slr-04-exemplar-scaffolding`.
+- What changed:
+  - added `scripts/reconcile-exemplar-stacks.sh` as a bounded day-2 reconcile entrypoint for the exemplar pair only
+  - added optional approval-gated `--post-infra` mode with required `--approval-text`
+  - preserved existing deployment behavior by delegating execution to `scripts/provision.sh --stack <name>`
+  - updated Stage 4 status in `plan.md`
+  - updated this handoff for Stage 5 start
+- What was validated in-session:
+  - branch is `task/slr-04-exemplar-scaffolding`
+  - script argument parsing and gating logic pass static shell parsing (`bash -n`)
+  - help output and command wiring are in place for exemplar-only scope
+- Next:
+  - execute Stage 5 validation gates and collect runtime evidence
