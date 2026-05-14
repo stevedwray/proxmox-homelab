@@ -48,6 +48,7 @@ Outcome:
 
 Step ids:
 
+- `slr-01-bootstrap`
 - `slr-01-contract-audit`
 - `slr-01-shared-contract-draft`
 

@@ -38,12 +38,27 @@ Planner should read:
 3. relevant docs in `docs/stack-lifecycle-refactor/`
 4. the latest report or blocker only when a plan update depends on it
 
+## Templates
+
+Planner must choose one of these templates before writing the next packet:
+
+- `docs/stack-lifecycle-refactor/templates/step-bootstrap.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-main-work.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-closeout.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-validate.spec.yaml`
+
+Do not invent packet structure from scratch when one of these templates fits.
+
 ## Rules
 
 - exactly one step may be `ready` at a time
 - the next step must come from `plan-state.yaml`, not ad hoc improvisation
 - do not create a new packet that skips unresolved dependencies
 - if the plan itself is ambiguous, say so explicitly and repair the plan before writing the packet
+- `bootstrap` steps must actually establish the branch, not merely check whether it is already active
+- `main_work` steps must not include commit or push
+- `closeout` steps must include explicit staging, staged-scope verification, and push gates
+- `validate` steps must remain validation-only
 
 ## Packet Writing
 

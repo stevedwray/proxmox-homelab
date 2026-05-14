@@ -22,6 +22,11 @@ Interaction model for this repository:
 - normal successful executor runs should not route back through architect.
 - the current executor packet is `.git/ai/current-step.yaml`.
 - the packet authoring source is `.git/ai/current-step.spec.yaml`.
+- planner should choose from explicit step templates instead of inventing packet structure:
+  - `docs/stack-lifecycle-refactor/templates/step-bootstrap.spec.yaml`
+  - `docs/stack-lifecycle-refactor/templates/step-main-work.spec.yaml`
+  - `docs/stack-lifecycle-refactor/templates/step-closeout.spec.yaml`
+  - `docs/stack-lifecycle-refactor/templates/step-validate.spec.yaml`
 - plan and packet generation should use deterministic render/validate scripts:
   - `python3 scripts/render-current-step.py`
   - `python3 scripts/validate-current-step.py`

@@ -132,6 +132,35 @@ Only created when execution cannot continue autonomously.
 
 This replaces the current `handoff-to-architect.yaml` pattern.
 
+## Step Templates
+
+Planner should choose from explicit step templates rather than inventing step
+packets from scratch:
+
+- `docs/stack-lifecycle-refactor/templates/step-bootstrap.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-main-work.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-closeout.spec.yaml`
+- `docs/stack-lifecycle-refactor/templates/step-validate.spec.yaml`
+
+Each template should only be parameterized with the step-specific values such as:
+
+- step id
+- title
+- branch
+- allowed paths
+- forbidden actions
+- baseline and starting SHA
+- concrete gates
+- report path
+- model hint
+
+Template meanings:
+
+- `bootstrap` = establish or verify the working branch
+- `main_work` = bounded implementation without commit/push
+- `closeout` = stage, verify, commit, and push bounded files
+- `validate` = run validation-only checks and capture evidence
+
 ---
 
 ## State Machine
