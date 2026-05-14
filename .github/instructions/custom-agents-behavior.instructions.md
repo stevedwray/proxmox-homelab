@@ -36,6 +36,7 @@ Interaction model for this repository:
 - architect/planner should recommend or accept `lightweight` review only for evidence review and narrow docs-only scoping. Any branch-bootstrap design, commit/push closeout design, shell-gate repair, or ambiguous next-step planning should be treated as `full` model work.
 - closeout-handoff authoring is especially strict: gate names, commands, and expectations must still align after the file is written, and stale duplicate tails from earlier handoffs are not acceptable.
 - executor handoffs should not use blank `expect` fields or suppress failure with `|| true` in gate commands. If success is exit-code based, say so explicitly in `expect`.
+- architect/planner should avoid pinning an exact starting `HEAD` in executor gates unless that exact commit is truly required and evidenced by the latest relevant report. For most metadata-only continuation work, record current HEAD as evidence and validate ancestry/branch intent instead of blocking on a stale tip SHA.
 
 ## Scope Rules
 

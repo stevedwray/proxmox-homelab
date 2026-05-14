@@ -151,6 +151,21 @@ Treat SHA movement alone as non-blocking when the handoff/report clearly states:
 - delta type (`none` or `metadata-only`), and
 - evidence anchor for the validated runtime basis.
 
+When generating the next executor handoff, do not turn `refs.current_head_sha`
+into a critical equality check unless the next session genuinely depends on that
+exact branch tip. Use these rules:
+- If the session only needs the executor to record the current starting HEAD for
+  evidence, make that a record/report gate with an expectation like
+  `40-character SHA recorded`, not an exact equality match.
+- Use an exact starting-HEAD expectation only when the session would be unsafe
+  or semantically wrong on any other commit, and that exact SHA is evidenced by
+  the latest relevant executor report or handoff chain.
+- For `metadata-only` movement on the same branch, prefer recording current HEAD
+  plus validating ancestry/branch intent over blocking on an exact stale SHA.
+- If the branch tip may have advanced since the last report, update
+  `refs.current_head_sha` from the latest evidenced source before writing the
+  handoff, or avoid pinning an exact starting-HEAD gate altogether.
+
 When `.git/ai/handoff-to-architect.yaml` includes `review.model_hint`, treat it
 as an operator aid for model selection rather than a hard rule:
 - `lightweight` means the executor believes the next architect step is narrow,
@@ -271,6 +286,8 @@ must reflect the actual order:
 - any "initial branch" gate must agree with the declared starting branch
 - any "target guard" gate for a later branch must come after the branch-switch
   gate that establishes that branch
+- any starting-HEAD gate must either record the current HEAD as evidence or use
+  an exact equality check only when that exact tip is truly required
 
 For closeout sessions that commit or push:
 - include an explicit staging gate before the commit gate
