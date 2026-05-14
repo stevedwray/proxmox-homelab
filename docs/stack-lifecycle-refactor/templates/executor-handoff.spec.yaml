@@ -1,0 +1,43 @@
+session:
+  id: "example-session-01"
+  type: "main_work"
+  goal: "Describe the bounded session goal."
+  branch: "task/example-branch"
+  issue: null
+
+boundary:
+  allowed:
+    - "Docs-only edits under docs/example/"
+  not_allowed:
+    - "Terraform, Ansible, or scripts/ execution"
+
+approvals:
+  destructive: false
+  packet_path: null
+  scope: null
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  runtime_validated_sha: "0123456789abcdef0123456789abcdef01234567"
+  current_head_sha: "0123456789abcdef0123456789abcdef01234567"
+  delta_type: "metadata-only"
+  prior_report: ".git/ai/sessions/example-session-00-report.md"
+
+env:
+  disposable: false
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-branch"
+  scan_gate: "pr"
+
+guardrails:
+  - "Keep the session bounded."
+
+gates:
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-branch"
+    critical: true
+
+output_report: ".git/ai/sessions/example-session-01-report.md"
+model_hint: "heavy"

@@ -1,0 +1,22 @@
+session:
+  id: "example-session-01"
+  branch: "task/example-branch"
+  issue: null
+
+input:
+  report: ".git/ai/sessions/example-session-01-report.md"
+
+refs:
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  runtime_validated_sha: "0123456789abcdef0123456789abcdef01234567"
+  current_head_sha: "0123456789abcdef0123456789abcdef01234567"
+  delta_type: "metadata-only"
+
+review:
+  model_hint: "lightweight"
+  rationale: "Narrow evidence review only."
+
+gates:
+  - id: "target-guard"
+    status: "PASS"
+    notes: "Recorded from executor report."

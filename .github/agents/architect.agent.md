@@ -37,7 +37,8 @@ You do not run infrastructure commands or edit source files.
    block (see below) and wait.
 2. Resolve approvals, privilege expectations, validation expectations, and any
    likely destructive scope before handoff.
-3. Produce the first session context and write it to `.git/ai/handoff-to-executor.yaml`.
+3. Produce the first session context as `.git/ai/handoff-to-executor.spec.yaml`,
+   render `.git/ai/handoff-to-executor.yaml`, validate it, and then hand off.
 
 **Review** — user provides an executor handoff or a planner blocker.
 
@@ -100,17 +101,12 @@ handoff chain, or a prior executor report proves it. When the next session must
 establish or verify the branch, scope that as an executor bootstrap session.
 Do not require the operator to switch branches manually.
 
-Before writing a new `.git/ai/handoff-to-executor.yaml`, overwrite any existing
-file completely. Do not reuse, append to, or partially edit a prior session
-handoff. If the previous handoff belongs to a completed or different task,
-replace it in full with the new session context.
-After writing the handoff, do a quick structural read-back before stopping:
-- confirm the file is a single clean YAML document, not mixed old/new content
-- confirm it contains exactly one executor session, not multiple candidate sessions
-- confirm the top-level sections are present exactly once
-- confirm gate ids, commands, and expectations still align after writing
-- confirm `session.issue` is either a real value or `null`, never an empty string
-- if the file is malformed or duplicated, rewrite it cleanly before handing off
+Do not hand-author `.git/ai/handoff-to-executor.yaml`.
+Instead:
+1. overwrite `.git/ai/handoff-to-executor.spec.yaml` completely
+2. run `python3 scripts/render-agent-handoff.py executor .git/ai/handoff-to-executor.spec.yaml .git/ai/handoff-to-executor.yaml`
+3. run `python3 scripts/validate-agent-handoff.py executor .git/ai/handoff-to-executor.yaml`
+4. if validation fails, fix the spec and re-render; do not patch the rendered YAML directly
 
 ## Handoff Contracts
 
@@ -118,9 +114,11 @@ Use these paths and required keys consistently:
 
 | Path | Required keys | Producer |
 |---|---|---|
+| `.git/ai/handoff-to-executor.spec.yaml` | source spec for the executor handoff | architect |
 | `.git/ai/handoff-to-executor.yaml` | `session`, `boundary`, `approvals`, `refs`, `env`, `gates`, `output_report` | architect |
 | `.git/ai/handoff-to-planner.yaml` | `session`, `input`, `refs`, `env`, `guardrails`, `planning` | architect |
 | `.git/ai/session-<NN>.yaml` | `session`, `boundary`, `refs`, `env`, `gates`, `output_report` | planner |
+| `.git/ai/handoff-to-architect.spec.yaml` | source spec for the architect handoff | executor |
 | `.git/ai/handoff-to-architect.yaml` | `session`, `input.report`, `refs.baseline_sha`, `refs.runtime_validated_sha`, `refs.current_head_sha`, `refs.delta_type`, `gates` | executor |
 | `.git/ai/planner-blocker-to-architect.yaml` | `planner_status`, `blocker`, `required_inputs`, `next_action` | planner |
 
@@ -206,8 +204,10 @@ Set `refs.base_branch` to the current active working branch for all work types. 
 
 **Never run gate commands**
 Gate commands belong in the handoff — not in a terminal. Do not run any command
-from the `gates` list directly. Write `.git/ai/handoff-to-executor.yaml` and click
-**Hand off to Executor**. Terminal access is reserved for lightweight checks only:
+from the `gates` list directly. Write `.git/ai/handoff-to-executor.spec.yaml`,
+render `.git/ai/handoff-to-executor.yaml`, validate it, and click
+**Hand off to Executor**. Terminal access is reserved for lightweight checks plus
+local render/validate commands only:
 `git status`, `git merge-base`, `gh issue list`, `test -f`, `grep`. If you find
 yourself about to run an Ansible playbook, Terraform command, or any script from
 `scripts/`, stop — that is executor work.
@@ -438,15 +438,17 @@ If none: "None."
 
 ### Next Session
 
-Include when verdict is `CONTINUE` or `NEEDS-REMEDIATION`. This block is also
-written verbatim to `.git/ai/handoff-to-executor.yaml`.
+Include when verdict is `CONTINUE` or `NEEDS-REMEDIATION`. This block is written
+first to `.git/ai/handoff-to-executor.spec.yaml`, then rendered into
+`.git/ai/handoff-to-executor.yaml`.
 
 ```yaml
 session:
   id: ""              # e.g. "session-04" or "feat-harbor-02"
+  type: "main_work"   # bootstrap | main_work | closeout | promote | evidence
   goal: ""
   branch: ""          # architect creates this branch before handoff
-  issue: ""           # "#N"
+  issue: null         # or "#N"
 
 boundary:
   allowed:
@@ -485,6 +487,13 @@ gates:
 model_hint: lightweight   # lightweight | heavy
 
 output_report: ".git/ai/sessions/<session-id>-report.md"
+```
+
+Then render and validate it:
+
+```bash
+python3 scripts/render-agent-handoff.py executor .git/ai/handoff-to-executor.spec.yaml .git/ai/handoff-to-executor.yaml
+python3 scripts/validate-agent-handoff.py executor .git/ai/handoff-to-executor.yaml
 ```
 
 When verdict is `ESCALATE-TO-PLANNER`, write `.git/ai/handoff-to-planner.yaml`

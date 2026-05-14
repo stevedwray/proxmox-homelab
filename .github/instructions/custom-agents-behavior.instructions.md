@@ -18,7 +18,12 @@ Interaction model for this repository:
 - `architect` and `planner` should focus on design, scope, decomposition, completion criteria, and concise operator-facing output rather than live command execution.
 - `architect` and `planner` should prefer positive workflow instructions: define the intended sequence, completion criteria, and handoff boundary rather than relying mainly on prohibitions.
 - `architect` and `planner` should prefer concrete handoff contracts: repo-root file paths in gates, real values or `null` in required fields, explicit discovery gates instead of symbolic placeholders, and no assumption that bootstrap is already satisfied unless the handoff/report chain proves it.
-- when `architect` or `planner` writes a `.git/ai/*.yaml` handoff, it should fully replace the file, read it back once, and confirm it is a single coherent YAML document rather than mixed old/new content.
+- handoff generation should use a spec-render-validate flow rather than free-form editing of the final machine contract:
+  - write `.spec.yaml`
+  - render `.yaml` with `scripts/render-agent-handoff.py`
+  - validate `.yaml` with `scripts/validate-agent-handoff.py`
+  - if validation fails, fix the spec and re-render; do not patch the rendered YAML directly
+- when `architect` or `planner` writes a `.git/ai/*.yaml` handoff, it should fully replace the spec file, render the machine contract, and confirm it is a single coherent YAML document rather than mixed old/new content.
 - executor handoffs should contain exactly one session only. Do not emit multiple candidate sessions, stale tails, or blended old/new gate blocks into a single `.git/ai/handoff-to-executor.yaml`.
 - executor handoffs should use `session.issue: null` when there is no issue value yet; do not use empty strings for unknown issue fields.
 - for bootstrap/setup sessions, architect/planner should make it explicit that the executor is allowed to start on a different branch and establish the target branch during the session before the final target guard is enforced.
@@ -33,7 +38,7 @@ Interaction model for this repository:
 - executors should not offer optional follow-on actions after completion, including PR suggestions, opening links, merge suggestions, or extra out-of-scope verification.
 - if an executor discovers a missing approval, missing privilege, or unresolved ambiguity, it should report back through `.git/ai/handoff-to-architect.yaml` instead of asking the user directly.
 - executors may include a lightweight architect review recommendation in `.git/ai/handoff-to-architect.yaml` when the next architect step is narrow, well-evidenced, and low-ambiguity; this is only a hint for operator model choice, not a workflow decision.
-- when an executor writes `.git/ai/handoff-to-architect.yaml`, it should fully replace the file, read it back once, and confirm it contains only the current session rather than concatenated stale blocks.
+- when an executor writes `.git/ai/handoff-to-architect.yaml`, it should write `.git/ai/handoff-to-architect.spec.yaml`, render the final file, and confirm it contains only the current session rather than concatenated stale blocks.
 - architect/planner should recommend or accept `lightweight` review only for evidence review and narrow docs-only scoping. Any branch-bootstrap design, commit/push closeout design, shell-gate repair, or ambiguous next-step planning should be treated as `full` model work.
 - closeout-handoff authoring is especially strict: gate names, commands, and expectations must still align after the file is written, and stale duplicate tails from earlier handoffs are not acceptable.
 - executor handoffs should not use blank `expect` fields or suppress failure with `|| true` in gate commands. If success is exit-code based, say so explicitly in `expect`.

@@ -8,10 +8,11 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 ARCHITECT_AGENT = REPO_ROOT / ".github/agents/architect.agent.md"
 
 REQUIRED_SNIPPETS = [
-    "overwrite any existing\nfile completely",
-    "Do not reuse, append to, or partially edit a prior session\nhandoff",
+    ".git/ai/handoff-to-executor.spec.yaml",
+    "scripts/render-agent-handoff.py executor",
+    "scripts/validate-agent-handoff.py executor",
     "scripts/teardown-deploy-test.sh",
-    "include both `--execute`\n  and `--approval-text \"<operator-approved text>\"`",
+    "and `--approval-text \"<text>\"`. Construct the approval text from `approvals.scope`",
     "Do not omit `deploy-edge`",
     ".git/ai/sessions/evidence/<session-id>/<gate-id>.log",
 ]

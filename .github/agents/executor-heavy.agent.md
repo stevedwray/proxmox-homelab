@@ -43,7 +43,8 @@ If a terminal dies mid-gate:
 
 ## Handoff (extended metadata)
 
-Write `.git/ai/handoff-to-architect.yaml` (overwrite any existing file):
+Write `.git/ai/handoff-to-architect.spec.yaml` first, then render
+`.git/ai/handoff-to-architect.yaml` from it:
 
 ```yaml
 session:
@@ -69,6 +70,11 @@ gates:
 
 Set `input.report` to the same Markdown report path used in `output_report`.
 Do not write the session report into `.git/ai/handoff-to-architect.yaml`.
+After writing the spec, run:
+- `python3 scripts/render-agent-handoff.py architect .git/ai/handoff-to-architect.spec.yaml .git/ai/handoff-to-architect.yaml`
+- `python3 scripts/validate-agent-handoff.py architect .git/ai/handoff-to-architect.yaml`
+If validation fails, fix the spec and re-render. Do not patch the rendered YAML directly.
+
 The handoff file must contain only the current session. Do not append older
 session blocks, preserve stale content, or leave duplicate `session:`,
 `input:`, `refs:`, `review:`, or `gates:` sections behind.
