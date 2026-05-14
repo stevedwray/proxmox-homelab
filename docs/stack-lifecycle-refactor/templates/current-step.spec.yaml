@@ -1,0 +1,41 @@
+step:
+  id: "example-step-01"
+  stage: "1"
+  type: "main_work"
+  title: "Describe the bounded step"
+  branch: "task/example-step-01"
+
+goal:
+  summary: "Describe the goal."
+
+scope:
+  allowed_paths:
+    - "docs/example/"
+  forbidden_actions:
+    - "Terraform, Ansible, or scripts/ execution"
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  starting_sha: "0123456789abcdef0123456789abcdef01234567"
+
+env:
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-step-01"
+  approvals_required: false
+  disposable: false
+  scan_gate: "pr"
+
+gates:
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-step-01"
+    critical: true
+
+report:
+  path: ".git/ai/reports/example-step-01.md"
+
+plan_state:
+  path: ".git/ai/plan-state.yaml"
+
+model_hint: "lightweight"
