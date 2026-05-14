@@ -220,6 +220,13 @@ Do not mix these patterns. In particular:
   switch to the base branch explicit, or start on the base branch and remove any
   gate that expects the work branch first
 
+For **start-elsewhere-then-switch** sessions, encode the contract like this:
+- `session.branch` = the required starting branch A
+- the first branch-related gate also expects branch A
+- `env.target_guard_expect` = the later decisive branch B
+- guardrails or goal text explicitly say the session starts on A and switches to B
+- the branch-switch gate appears before the decisive target guard for B
+
 **Default to direct executor routing**
 Route to the planner only when the next work genuinely requires multiple sessions
 with ordering dependencies you cannot pre-resolve into a single session context.

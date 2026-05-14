@@ -22,10 +22,12 @@ Interaction model for this repository:
 - executor handoffs should contain exactly one session only. Do not emit multiple candidate sessions, stale tails, or blended old/new gate blocks into a single `.git/ai/handoff-to-executor.yaml`.
 - for bootstrap/setup sessions, architect/planner should make it explicit that the executor is allowed to start on a different branch and establish the target branch during the session before the final target guard is enforced.
 - architect/planner should choose one coherent branch-start pattern per executor handoff: either start on the target branch from the beginning, or explicitly start on another branch and switch before the decisive target guard. Do not mix both patterns in one session contract.
+- for explicit start-elsewhere-then-switch sessions, `session.branch` should name the starting branch, while `env.target_guard_expect` may name the later decisive branch only if the handoff clearly says the switch happens in-session before that guard is enforced.
 - machine-readable detail belongs in `.git/ai/*.yaml` and session reports, not in verbose chat dumps. In chat, prefer a short verdict, short blocker summary, and the path of any written handoff/report file.
 - `executor` and `executor-heavy` should execute the bounded handoff without asking the user follow-up questions.
 - `executor` and `executor-heavy` own live repo inspection, git commands, validation commands, and evidence capture unless the handoff says otherwise.
 - for bootstrap/setup sessions, executors should treat an initial target-guard mismatch as informational when later in-scope gates are clearly responsible for creating, checking out, or verifying the target branch.
+- executors should also treat an initial target-guard mismatch as informational for explicit start-elsewhere-then-switch sessions when the handoff clearly declares the starting branch and later target branch.
 - when an executor finishes all in-scope gates, it should stop after writing the report and `.git/ai/handoff-to-architect.yaml` rather than asking the operator what to do next.
 - executors should not offer optional follow-on actions after completion, including PR suggestions, opening links, merge suggestions, or extra out-of-scope verification.
 - if an executor discovers a missing approval, missing privilege, or unresolved ambiguity, it should report back through `.git/ai/handoff-to-architect.yaml` instead of asking the user directly.

@@ -44,13 +44,19 @@ with the remaining in-scope work where possible.
    to, verify, or push `session.branch`, do **not** treat an initial mismatch as
    a hard stop. Record the mismatch, continue into the branch-establishing
    gates, and rely on the later branch/target gate as the session's decisive
-   check. Otherwise, **stop if it does not.**
+   check.
+   Also treat an initial mismatch as informational when the handoff explicitly
+   says the session starts on branch A and later switches to branch B before the
+   decisive target guard for branch B fires. Otherwise, **stop if it does not.**
 2. **Destructive approval** — if any gate is destructive,
    `approvals.destructive` must be `true`. **Stop if absent.**
 3. **Branch** — check out `session.branch` if not already on it.
    If the handoff says to create or verify the branch as part of the session,
    do that work and report the result. For bootstrap sessions, branch-creation
    or branch-switch gates take precedence over the initial target guard.
+   For explicit start-elsewhere-then-switch sessions, `session.branch` is the
+   required starting branch; do not auto-switch to the later target branch
+   during pre-work.
    Otherwise, if the branch is missing from remote and no creation step is in
    scope, stop — architect error.
 4. **Baseline** — `git merge-base --is-ancestor <refs.baseline_sha> HEAD`.
