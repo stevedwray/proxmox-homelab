@@ -20,6 +20,7 @@ Interaction model for this repository:
 - `architect` and `planner` should prefer concrete handoff contracts: repo-root file paths in gates, real values or `null` in required fields, explicit discovery gates instead of symbolic placeholders, and no assumption that bootstrap is already satisfied unless the handoff/report chain proves it.
 - when `architect` or `planner` writes a `.git/ai/*.yaml` handoff, it should fully replace the file, read it back once, and confirm it is a single coherent YAML document rather than mixed old/new content.
 - executor handoffs should contain exactly one session only. Do not emit multiple candidate sessions, stale tails, or blended old/new gate blocks into a single `.git/ai/handoff-to-executor.yaml`.
+- executor handoffs should use `session.issue: null` when there is no issue value yet; do not use empty strings for unknown issue fields.
 - for bootstrap/setup sessions, architect/planner should make it explicit that the executor is allowed to start on a different branch and establish the target branch during the session before the final target guard is enforced.
 - architect/planner should choose one coherent branch-start pattern per executor handoff: either start on the target branch from the beginning, or explicitly start on another branch and switch before the decisive target guard. Do not mix both patterns in one session contract.
 - for explicit start-elsewhere-then-switch sessions, `session.branch` should name the starting branch, while `env.target_guard_expect` may name the later decisive branch only if the handoff clearly says the switch happens in-session before that guard is enforced.
@@ -36,6 +37,8 @@ Interaction model for this repository:
 - architect/planner should recommend or accept `lightweight` review only for evidence review and narrow docs-only scoping. Any branch-bootstrap design, commit/push closeout design, shell-gate repair, or ambiguous next-step planning should be treated as `full` model work.
 - closeout-handoff authoring is especially strict: gate names, commands, and expectations must still align after the file is written, and stale duplicate tails from earlier handoffs are not acceptable.
 - executor handoffs should not use blank `expect` fields or suppress failure with `|| true` in gate commands. If success is exit-code based, say so explicitly in `expect`.
+- main-work executor handoffs should not combine file authoring with `git commit` or `git push` in one gate, and should not sneak closeout work into an implementation session.
+- executor handoffs should use real repo paths in `boundary` and gate commands; do not invent shortened path aliases that do not match the repository.
 - architect/planner should avoid pinning an exact starting `HEAD` in executor gates unless that exact commit is truly required and evidenced by the latest relevant report. For most metadata-only continuation work, record current HEAD as evidence and validate ancestry/branch intent instead of blocking on a stale tip SHA.
 
 ## Scope Rules

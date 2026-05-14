@@ -109,6 +109,7 @@ After writing the handoff, do a quick structural read-back before stopping:
 - confirm it contains exactly one executor session, not multiple candidate sessions
 - confirm the top-level sections are present exactly once
 - confirm gate ids, commands, and expectations still align after writing
+- confirm `session.issue` is either a real value or `null`, never an empty string
 - if the file is malformed or duplicated, rewrite it cleanly before handing off
 
 ## Handoff Contracts
@@ -268,6 +269,10 @@ Every gate must also have a concrete `expect` value. Do not leave `expect` blank
 If success is determined by exit code, say so explicitly in `expect` (for example
 `exit 0`). If success is determined by output, name the exact expected output.
 
+If a path is listed in `boundary.allowed` or `boundary.not_allowed`, write the
+real repository path or repository-root-relative path that executor will use.
+Do not abbreviate or invent shortened path forms that do not match the repo.
+
 Do not encode missing destructive approval as a gate. Approval must already be
 recorded in session context before handoff; at most, use a gate to verify that
 the approved packet artifact exists and matches the declared session context.
@@ -280,6 +285,8 @@ Do not combine implementation authoring, commit, and push inside a single gate
 unless the session is explicitly a closeout-only session and the gate exists only
 for the closeout action. For normal main-work sessions, implementation and
 closeout must be separate sessions or separate gates with clear boundaries.
+For normal main-work sessions, do not include `git commit` or `git push` in the
+same gate that authors or edits files.
 
 When a session changes branches as part of the work, gate names and expectations
 must reflect the actual order:
@@ -305,6 +312,12 @@ For closeout sessions that commit or push:
   duplicate tails from an earlier version
 - keep closeout gates narrow: stage, verify staged scope, commit, record HEAD,
   push, verify upstream/report as needed
+
+For non-closeout sessions:
+- do not include `git commit` or `git push` unless the session is explicitly
+  scoped as closeout or merge/promotion work
+- do not turn a main-work handoff into an implicit closeout by embedding commit
+  steps in implementation gates
 
 When generating a `scripts/teardown-deploy-test.sh cycle` gate:
 - If `env.disposable: true`, include `--disposable` and omit `--approval-packet`.
