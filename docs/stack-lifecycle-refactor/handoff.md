@@ -70,3 +70,9 @@ Do not broaden into implementation changes yet unless required to clarify the co
 - Session: slr-04-bootstrap-01 on branch task/slr-04-exemplar-scaffolding.
 - Outcome target: bounded Stage 4 scope and implementation checklist for apt-cacher-stack and harbor-stack, with no infrastructure command execution.
 - Next: Stage 4 main-work will implement the scoped scaffolding changes and capture code-level evidence for Stage 5 validation.
+
+## Stage 4 Main-Work Progress
+
+- Session: slr-04-main-work-01 on branch task/slr-04-exemplar-scaffolding.
+- Scope: implement bounded exemplar scaffolding hooks in platform and exemplar contract docs only.
+- Validation deferral: runtime validation and closeout remain in follow-on Stage 5 and closeout sessions.

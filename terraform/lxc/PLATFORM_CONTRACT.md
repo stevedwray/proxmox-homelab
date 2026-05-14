@@ -229,3 +229,21 @@ following files in this repository:
 
 If you edit the contract semantics here, add or update the cross-link above to
 point readers at the representative implementation example(s).
+
+## Stage 4 Exemplar Scaffolding Hooks
+
+### Exemplar Pair
+
+- apt-cacher-stack
+- harbor-stack
+
+### Scaffolding Intent
+
+- define a shared, minimal hook surface for day-1/day-2 contract handoff
+- keep existing behavior stable while introducing explicit exemplar-owned hook points
+
+### Required Stage 4 Outputs
+
+- stack-level hook declarations for apt-cacher and harbor contracts
+- clear contract language for generated handoff artifacts used by Terraform and Ansible
+- a bounded checklist for Stage 5 validation evidence
