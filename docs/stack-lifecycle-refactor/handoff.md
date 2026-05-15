@@ -718,43 +718,32 @@ Validation/hardening pass (bounded Stage 8) outcomes:
 - known shared rerun churn classes from Stage 6-8 evidence remain accepted (DNS resolver/fallback rewrites, trust-install churn, proxy CA bundle always-changed task)
 - these are reporting-first baselines and should not hide new stack-specific regressions
 
-## Stage 9 Promotion-Readiness Preparation
+## Stage 9 Promotion-Readiness Closeout
 
-**Status:** ready to execute, not yet started
+**Status:** complete (execution plus documentation closeout recorded)
 
-### First real Stage 9 session
+### Evidence-confirmed outcome
 
-Run this sequence from a clean tree after the target guard passes:
+- Evidence directory: `docs/teardown-test/evidence/20260515-075219/`
+- Execution state source: `docs/teardown-test/evidence/20260515-075219/state.json`
+- Aggregated cycle log: `docs/teardown-test/evidence/20260515-075219/logs/teardown-deploy-test-20260515-075219.log`
+- Final cycle result: `DONE cycle` with `cycle` status `passed` and exit status `0`
 
-1. `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` and confirm it prints `pve-test`.
-2. `./scripts/teardown-deploy-test.sh approval-preflight --require-clean`.
-3. `./scripts/teardown-deploy-test.sh cycle --execute --approval-text <text containing the required approval phrase plus OP-06 destroy-only scope markers> --approval-packet <path>`.
-4. Stop on the first failed phase; do not continue the remaining cycle phases in the same session.
+### Stage 9 phase status from recorded evidence
 
-### Cycle order to expect
+- `destroy`: passed
+- `deploy-foundation`: passed
+- `deploy-edge`: passed
+- `activate-edge`: passed
+- `deploy-platform`: passed
+- `final-validation`: passed
 
-- `destroy`
-- `deploy-foundation`
-- `deploy-edge`
-- `activate-edge`
-- `deploy-platform`
-- `final-validation`
+### Promotion-readiness assessment
 
-### Evidence matrix summary
+- Stage 9 promotion-readiness execution completed successfully from recorded evidence.
+- Promotion readiness is satisfied for the refactor closeout record and supports promotion consideration to `baseline/teardown-validated`.
 
-- Target guard: capture terminal output only.
-- Approval preflight: capture the preflight log and clean-tree/approval checks.
-- Destroy: capture per-stack destroy logs plus the aggregated cycle log and `state.json`.
-- Deploy foundation / edge / platform: capture phase logs under `docs/teardown-test/evidence/<stamp>/logs/`.
-- Activate edge: capture reconcile apply, DNS publish, Traefik publish, and post-activate dry-run logs.
-- Final validation: capture DNS, HTTP, API, and final reconcile dry-run logs.
+### Follow-up that remains open
 
-### Pass / fail summary
-
-- Pass means the approved sequence completes end to end with no failed phases and the final validation is clean.
-- Fail means any phase error, missing approval artifact, wrong target node, unexpected replacement, or post-redeploy health mismatch.
-
-### Baseline behavior carried forward
-
-- Known shared base-role churn remains acceptable only if it matches the documented Stage 6-8 baseline classes.
-- Any new destroy/redeploy or final-validation drift outside that baseline is a real regression and should stop the session.
+- NetBox interactive login via Authentik is still reported as failing operationally.
+- This is explicitly carried forward as follow-up work and is not addressed by this Stage 9 documentation closeout step.

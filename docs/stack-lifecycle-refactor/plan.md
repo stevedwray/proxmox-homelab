@@ -553,7 +553,7 @@ Exit criteria:
 
 Status:
 
-- ready to execute, not yet started
+- complete (execution plus documentation closeout recorded)
 
 Suggested branch:
 
@@ -576,6 +576,25 @@ Exit criteria:
 - promotion evidence is complete
 - remaining issues are either resolved or explicitly accepted
 - `refactor/stack-lifecycle` is ready for merge to `baseline/teardown-validated`
+
+Stage 9 closeout evidence (2026-05-15):
+
+- evidence directory: `docs/teardown-test/evidence/20260515-075219/`
+- execution state source: `docs/teardown-test/evidence/20260515-075219/state.json`
+- full cycle status: passed (`cycle` exit 0)
+- stage phases passed during cycle execution:
+  - `destroy`
+  - `deploy-foundation`
+  - `deploy-edge`
+  - `activate-edge`
+  - `deploy-platform`
+  - `final-validation`
+
+Promotion-readiness assessment:
+
+- Stage 9 promotion-readiness execution passed from recorded evidence.
+- Promotion-readiness gate requirements are satisfied for the refactor closeout record.
+- Follow-up remains open: NetBox interactive login through Authentik is still reported as failing operationally and should be investigated as separate work after this Stage 9 closeout.
 
 ## Proposed First Exemplars
 
