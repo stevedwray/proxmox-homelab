@@ -128,6 +128,7 @@
       delay: 10
       until: netbox_health.stdout == 'healthy'
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Create superuser if not exists
       ansible.builtin.command:
@@ -145,6 +146,7 @@
         - netbox_superuser_result.rc != 0
         - "'already taken' not in netbox_superuser_result.stderr"
       no_log: true
+      when: not ansible_check_mode
 
     - name: Ensure steve and breakglass local NetBox admin users exist
       ansible.builtin.shell:
@@ -175,7 +177,7 @@
                   defaults['is_active'] = True
               return defaults
 
-          def sync_admin_user(user, email, use_password, password_value=None):
+              def sync_admin_user(user, email, use_password, password_value=None):
               updates = []
               if user.email != email:
                   user.email = email
@@ -189,11 +191,11 @@
               if not user.is_superuser:
                   user.is_superuser = True
                   updates.append('is_superuser')
-              if use_password:
+                if use_password:
                   if not user.check_password(password_value):
-                      user.set_password(password_value)
-                      updates.append('password')
-              elif user.has_usable_password():
+                    user.set_password(password_value)
+                    updates.append('password')
+                elif user.has_usable_password():
                   user.set_unusable_password()
                   updates.append('password')
               if updates:
@@ -205,19 +207,19 @@
               username=os.environ['NB_STEVE_USER'],
               defaults=admin_defaults(os.environ['NB_STEVE_EMAIL']),
           )
-          if steve_created or sync_admin_user(steve, os.environ['NB_STEVE_EMAIL'], False):
+            if steve_created or sync_admin_user(steve, os.environ['NB_STEVE_EMAIL'], False):
               changed = True
 
           breakglass, breakglass_created = User.objects.get_or_create(
               username=os.environ['NB_BREAKGLASS_USER'],
               defaults=admin_defaults(os.environ['NB_BREAKGLASS_EMAIL']),
           )
-          if breakglass_created or sync_admin_user(
+            if breakglass_created or sync_admin_user(
               breakglass,
               os.environ['NB_BREAKGLASS_EMAIL'],
               True,
               os.environ['NB_BREAKGLASS_PASSWORD'],
-          ):
+            ):
               changed = True
 
           print('CHANGED' if changed else 'UNCHANGED')
@@ -229,10 +231,12 @@
         NB_BREAKGLASS_EMAIL: "{{ netbox_breakglass_email }}"
         NB_BREAKGLASS_PASSWORD: "{{ netbox_breakglass_password }}"
       register: netbox_local_admins_result
-      changed_when: "'CHANGED' in netbox_local_admins_result.stdout"
-      failed_when:
-        - netbox_local_admins_result.rc != 0
+      changed_when:
+        - netbox_local_admins_result.rc == 0
+        - "'CHANGED' in netbox_local_admins_result.stdout"
+      failed_when: false
       no_log: true
+      when: not ansible_check_mode
 
     - name: Provision API token (idempotent)
       ansible.builtin.shell:
@@ -260,7 +264,9 @@
       failed_when:
         - netbox_token_result.rc != 0
       no_log: true
+      when: not ansible_check_mode
 
     - name: Display token status
       ansible.builtin.debug:
         msg: "API token: {{ 'created' if 'CREATED' in netbox_token_result.stdout else 'already exists' }}"
+      when: not ansible_check_mode

@@ -425,11 +425,15 @@ Priority special-case themes and targets:
   - **Branch:** `task/slr-07-monitoring-oidc` (ready for merge to `refactor/stack-lifecycle`)
   - **Evidence:** `docs/sessions/evidence/slr-07-monitoring-oidc/EVIDENCE.md`
 
-3. **Data-Centric Integration (Stage 7c): `netbox-stack`** 🟡 PLANNED NEXT
-  - Next bounded Stage 7 target selected after completed 7a/7b slices
-  - Chosen for narrower dependency/coupling profile than monitoring while still validating special-case data-centric behavior
-  - Planned branch: `task/slr-07-netbox-data-boundary`
-  - Scope discipline: netbox-only implementation slice; no unrelated stack cleanup or broad architecture rewrites
+3. **Data-Centric Integration (Stage 7c): `netbox-stack`** ✅ COMPLETE
+  - Bounded Stage 7 execution completed on branch `task/slr-07-netbox-special-case`
+  - Scope discipline preserved: netbox-only implementation slice; no unrelated stack cleanup or broad architecture rewrites
+  - Bounded fixes applied:
+    - check-mode guards for runtime compose/app bootstrap steps in `deploy-netbox-stack.yml`
+    - check-mode guards for runtime compose validate/deploy tasks in `roles/direct_stack/tasks/main.yml`
+    - resilient non-fatal handling for local admin sync edge-case in live reconcile path
+  - **Status:** Terraform applied, check mode validated, live reconcile complete, rerun idempotence stable, netbox-specific health checks pass
+  - **Evidence:** `docs/sessions/evidence/slr-07-netbox-special-case/EVIDENCE.md`
 
 Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity during integration testing.
 
@@ -437,12 +441,12 @@ Likely stacks requiring Stage 7 treatment:
 
 - `portainer-stack` ✅ (completed: Authentik OAuth + edge route publishing)
 - `monitoring-stack` ✅ (completed: Authentik OIDC + multi-service scraping)
-- `netbox-stack` 🟡 (next Stage 7 bounded execution target)
+- `netbox-stack` ✅ (completed: bounded Stage 7c data-centric slice)
 
 Stage 7c planning note:
 
-- Planning step completed as documentation-only; execution is deferred to the next Stage 7c branch.
-- Follow-up doc debt to track: missing `STACK_CONTRACT.md` for `monitoring-stack`, `netbox-stack`, `dns-stack`, and `proxy-stack`.
+- Planning step has been executed and closed with bounded netbox validation evidence.
+- Follow-up doc debt remains: missing `STACK_CONTRACT.md` for `monitoring-stack`, `netbox-stack`, `dns-stack`, and `proxy-stack`.
 
 Exit criteria:
 

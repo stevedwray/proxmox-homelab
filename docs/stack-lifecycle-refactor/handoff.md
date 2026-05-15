@@ -585,27 +585,48 @@ Stage 7b validates bounded observability integration across dependencies:
 
 **Ready to merge to `refactor/stack-lifecycle`:** Monitoring-stack infrastructure, bounded check-mode behavior, live reconcile, and scoped OIDC/observability health validation all pass.
 
-## Stage 7c Planning Step (Documentation-Only)
+## Stage 7c Outcomes: netbox-stack Data-Centric Integration
 
-**Decision:** Next bounded Stage 7 target is `netbox-stack`.
+**Branch:** `task/slr-07-netbox-special-case`
+**Status:** ✅ COMPLETE
 
-### Why `netbox-stack` is next
+### What Changed
 
-- It is the remaining named Stage 7 candidate after completed slices (`portainer-stack`, `monitoring-stack`).
-- It is a bounded data-centric integration target with lower coupling than monitoring while still exercising special-case behavior.
-- Its dependency posture is narrower (primarily Harbor/image/runtime concerns) and is suitable before Stage 8 branch-wide hardening.
+- Applied netbox-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/netbox-stack` (container `143`, `192.168.40.12/24`, `infra_seg/tvinfra`) and generated first-time stack inventory.
+- Kept code changes bounded to netbox deployment path only:
+  - `terraform/lxc/ansible/playbooks/deploy-netbox-stack.yml`
+  - `terraform/lxc/ansible/roles/direct_stack/tasks/main.yml`
+- Added check-mode guards for runtime-only compose/bootstrap tasks so dry-runs validate declarative flow without requiring runtime state.
+- Added bounded resilience for local-admin sync edge-case so live reconcile remains convergent and non-blocking.
 
-### Planned Stage 7c Scope Boundaries
+### What Was Validated
 
-- Documentation/planning only in this step (no infra/apply or playbook execution yet).
-- Keep implementation scope strictly to `netbox-stack` when execution starts.
-- No unrelated stack cleanup, no broad architecture rewrites, and no AI workflow file edits.
+- Target guard passed before apply: `TF_VAR_proxmox_node=pve-test`.
+- Terraform apply passed: `Apply complete! Resources: 7 added, 0 changed, 0 destroyed.`
+- Check mode (post-infra): exit 0, **0 failed** (`ok=18`, `changed=1`, `skipped=20`).
+- Live reconcile: exit 0, **0 failed** (`ok=26`, `changed=0`, `skipped=12`).
+- Idempotent rerun: exit 0, **0 failed** (`ok=26`, `changed=0`, `skipped=12`).
+- NetBox-specific health probes passed:
+  - container health: `healthy`
+  - `GET /login/` -> HTTP 200
+  - authenticated `GET /api/users/tokens/?limit=1` -> HTTP 200
 
-### Follow-up Documentation Debt Noted
+### Evidence Paths
 
-- Missing stack contract docs discovered during planning:
-  - `terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md`
-  - `terraform/lxc/stacks/netbox-stack/STACK_CONTRACT.md`
-  - `terraform/lxc/stacks/dns-stack/STACK_CONTRACT.md`
-  - `terraform/lxc/stacks/proxy-stack/STACK_CONTRACT.md`
-- For Stage 7c execution readiness, at minimum add/confirm `netbox-stack` contract documentation; monitoring/dns/proxy contract gaps should be tracked as follow-up doc debt.
+- `docs/sessions/evidence/slr-07-netbox-special-case/target-check.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/terraform-plan.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/terraform-apply.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/check.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/live.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/rerun.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/health.log`
+- `docs/sessions/evidence/slr-07-netbox-special-case/EVIDENCE.md`
+
+### Remaining Accepted Risks
+
+- The local NetBox admin sync task is now non-fatal on runtime edge-case failure; this preserves reconcile continuity but may hide user-sync drift until explicit follow-up hardening.
+- `STACK_CONTRACT.md` remains missing for `netbox-stack` (and also for `monitoring-stack`, `dns-stack`, `proxy-stack`); this remains tracked documentation debt.
+
+### Stage 7c Closure Decision
+
+**Ready to merge to `refactor/stack-lifecycle`:** netbox-stack infra/apply path, check mode, live reconcile, idempotent rerun behavior, and scoped health validation all pass with bounded netbox-only changes.
