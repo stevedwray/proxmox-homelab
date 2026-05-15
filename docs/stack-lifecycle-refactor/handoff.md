@@ -743,7 +743,46 @@ Validation/hardening pass (bounded Stage 8) outcomes:
 - Stage 9 promotion-readiness execution completed successfully from recorded evidence.
 - Promotion readiness is satisfied for the refactor closeout record and supports promotion consideration to `baseline/teardown-validated`.
 
-### Follow-up that remains open
+### Follow-up status update
 
-- NetBox interactive login via Authentik is still reported as failing operationally.
-- This is explicitly carried forward as follow-up work and is not addressed by this Stage 9 documentation closeout step.
+- NetBox/Auth follow-up is now closed.
+- Root cause, narrow fix, and verification outcomes are recorded below.
+
+## NetBox/Auth Follow-up Investigation (2026-05-16)
+
+**Scope:** investigation-only of NetBox login via Authentik on deployed `pve-test`.
+
+### Findings
+
+- Edge/auth rendering is coherent for NetBox:
+  - NetBox route is published behind Traefik with `authentik` forward-auth middleware.
+  - Stage 9 evidence shows NetBox requests are redirected to Authentik authorize URL with a valid callback path.
+  - Edge reconcile/discovery reports NetBox forward-auth application/provider/outpost objects as matching.
+- Most likely failure point is the NetBox local-user bootstrap step, not edge rendering:
+  - `deploy-netbox-stack.yml` contains malformed indentation inside the embedded Python block used by `Ensure steve and breakglass local NetBox admin users exist`.
+  - That task uses `failed_when: false` and `no_log: true`, so bootstrap failures can remain silent while play recap still passes.
+  - Runtime verification confirms local NetBox users `steve` and `breakglass` are missing, while Authentik user `steve` exists.
+- With `REMOTE_AUTH_AUTO_CREATE_USER=false`, missing local NetBox user records are sufficient to break successful Authentik login mapping.
+
+### Classification
+
+- Config/rendering problem: **not primary** (route, middleware, Authentik edge objects all present and matching).
+- Missing bootstrap/reconcile step: **primary** (local NetBox user sync step appears ineffective/silent).
+- Runtime/env mismatch: **secondary risk** (if operator logs in as `akadmin`, NetBox local `akadmin` is also absent and auto-create is disabled).
+
+### Minimal safe fix applied (2026-05-16)
+
+1. Replaced the fragile embedded heredoc Python block in `deploy-netbox-stack.yml` with a temporary script file executed via `docker exec ... manage.py shell < /tmp/netbox-local-admin-sync.py`.
+2. Kept failure visibility strict for this step (`failed_when` on non-zero return) while preserving `no_log: true` for credentials.
+3. Re-ran targeted NetBox provisioning successfully.
+4. Verified via direct NetBox API that local users `steve` and `breakglass` now exist.
+
+### Follow-up closeout confirmation (2026-05-16)
+
+1. Operator confirmed in a real browser that NetBox now logs in successfully via Authentik.
+2. The NetBox/Auth follow-up issue is resolved for this refactor stream.
+3. No known blocker remains from this issue for promotion consideration to `baseline/teardown-validated`.
+
+### Residual verification note
+
+1. Continue normal post-promotion smoke checks; no additional NetBox/Auth-specific remediation is pending.

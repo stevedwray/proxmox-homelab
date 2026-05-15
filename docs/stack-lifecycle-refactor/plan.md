@@ -594,7 +594,8 @@ Promotion-readiness assessment:
 
 - Stage 9 promotion-readiness execution passed from recorded evidence.
 - Promotion-readiness gate requirements are satisfied for the refactor closeout record.
-- Follow-up remains open: NetBox interactive login through Authentik is still reported as failing operationally and should be investigated as separate work after this Stage 9 closeout.
+- NetBox/Auth follow-up is closed: root cause (local NetBox user bootstrap gap), narrow fix, targeted validation, and operator-confirmed browser login success are recorded in `handoff.md`.
+- No known blocker remains from NetBox/Auth for promotion consideration to `baseline/teardown-validated`.
 
 ## Proposed First Exemplars
 

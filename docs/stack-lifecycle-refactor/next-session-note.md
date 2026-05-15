@@ -38,22 +38,22 @@ The work has been progressing in narrow stages:
   - full teardown + redeploy + reconcile validation cycle passed
   - evidence directory: `docs/teardown-test/evidence/20260515-075219/`
   - promotion-readiness execution is satisfied from recorded evidence
-- Important follow-up note:
-  - NetBox is not logging in with Authentik and should be treated as a follow-up issue to investigate after the Stage 9 closeout is recorded.
+- NetBox/Auth follow-up closeout:
+  - root cause identified (local NetBox user bootstrap gap under `REMOTE_AUTH_AUTO_CREATE_USER=false`)
+  - narrow fix applied and targeted stack validation passed
+  - operator confirmed successful real-browser NetBox login via Authentik
 - Intended next step:
-  - keep Stage 9 closeout docs as the durable record
-  - scope the next implementation stream to the NetBox/Authentik login follow-up only
-  - decide promotion timing to `baseline/teardown-validated` after follow-up triage is explicitly accepted or resolved
+  - keep Stage 9 and NetBox/Auth closeout docs as the durable record
+  - reassess promotion timing to `baseline/teardown-validated` based on any remaining non-NetBox blockers
 
 ## What Tomorrow's Session Should Achieve
 
 In order:
 
 1. Keep the successful Stage 9 outcome and evidence reference as the durable record.
-2. Carry forward the known follow-up issue:
-   - NetBox Authentik login is still not working
-3. Decide whether the branch should promote now or only after that follow-up is addressed or explicitly accepted.
-4. Avoid opening unrelated implementation streams while follow-up scope is being decided.
+2. Keep the NetBox/Auth follow-up closeout recorded as resolved.
+3. Decide promotion readiness to `baseline/teardown-validated` based on remaining blockers, if any.
+4. Avoid opening unrelated implementation streams before promotion decision.
 
 ## Prompt
 
@@ -78,5 +78,5 @@ Requirements:
 
 Before finishing:
 - summarize whether the branch is now ready for promotion to baseline/teardown-validated
-- also note that NetBox Authentik login is still not working and should be tracked as follow-up work
+- note any remaining blockers that still need explicit acceptance or remediation
 ```
