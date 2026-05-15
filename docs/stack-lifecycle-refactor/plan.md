@@ -446,7 +446,7 @@ Likely stacks requiring Stage 7 treatment:
 Stage 7c planning note:
 
 - Planning step has been executed and closed with bounded netbox validation evidence.
-- Follow-up doc debt remains: missing `STACK_CONTRACT.md` for `proxy-stack`.
+- Follow-up doc debt is cleared: all stack contract docs are now present.
 
 Exit criteria:
 
@@ -462,10 +462,9 @@ Suggested branch:
 
 Goals:
 
-- start with the remaining contract-doc debt cleanup for `proxy-stack`
-- review consistency across migrated stacks
-- tighten documentation, validation, and operator workflows
-- resolve remaining branch-level rough edges before final validation
+- contract-doc debt cleanup is complete (all stacks covered)
+- consistency pass completed: IP notation normalized, portainer_agent drift fixed, Stage 4 scaffolding sections removed
+- remaining work: tighten validation, operator workflows, and branch-level rough edges before final validation
 
 Deliverables:
 

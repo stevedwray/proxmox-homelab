@@ -633,6 +633,9 @@ Stage 7b validates bounded observability integration across dependencies:
 
 ## Stage 8 Entry Point
 
-**Recommended starting point:** contract-doc debt cleanup for `proxy-stack`.
+**Status:** contract-doc debt is fully cleared and a consistency pass is complete.
 
-Reasoning: `dns-stack` contract doc is now complete. Only `proxy-stack` remains before broader consistency/hardening work. Clearing that doc first keeps Stage 8 grounded in the shared contract model before any branch-wide workflow tightening.
+- All stack contract docs are now present (`proxy-stack` added).
+- Consistency pass: normalized IP notation to `${lab_ip_*}` across older contracts (harbor, step-ca, authentik, apt-cacher, ci-runner-01); removed stale portainer_agent role references and incorrect portainer Provides rows from harbor, authentik, and ci-runner-01; fixed incorrect portainer_agent note in step-ca; removed leftover Stage 4 scaffolding sections from harbor and apt-cacher.
+
+**Next:** branch-wide validation and operator workflow tightening (no design work remaining).

@@ -12,7 +12,7 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `build_seg` (VLAN 10)    |
-| IP           | `10.57.0.63/24`          |
+| IP           | `${lab_ip_ci_runner}/24` |
 | Gateway      | `10.57.0.1` (MikroTik)  |
 | VMID         | 141                      |
 
@@ -24,7 +24,6 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 | `GITHUB_RUNNER_REPO`        | env var     | Repository the runner registers with |
 | Harbor registry             | `registry_host` (`10.57.3.10`) | Runtime job container pulls via proxy cache |
 | apt-cacher                  | `apt_cacher_host:3142` | apt proxy during provisioning |
-| Portainer server            | `portainer_server_ip` (`10.57.1.20`) | Agent registration |
 
 **Current implementation:** `lxc_base` consumes `apt_cacher_host` from generated
 inventory host vars during provisioning, and Portainer agent registration consumes
@@ -38,7 +37,6 @@ provisioning.
 | Service             | Port | Protocol | Notes |
 |---------------------|------|----------|-------|
 | GitHub Actions runner | —  | outbound | Polls GitHub for jobs |
-| Portainer agent     | 9001 | TCP      | Portainer server connects here |
 
 No inbound ports are required. The runner connects outbound to GitHub.
 
@@ -48,7 +46,6 @@ No inbound ports are required. The runner connects outbound to GitHub.
 |-----------------|-----|
 | harbor-stack    | Docker image pulls for job containers |
 | apt-cacher-stack | apt proxy for runner provisioning and job steps |
-| portainer-stack | Registers Portainer agent |
 
 Cross-zone access needed: `build_seg → infra_seg tcp/80,443,3142` (covered by the
 `all_zones → infra_seg` policy in `pve-test.yaml`).

@@ -12,7 +12,7 @@ reporting.
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `infra_seg` (VLAN 40)    |
-| IP           | `10.57.3.10/24`          |
+| IP           | `${lab_ip_harbor}/24`    |
 | Gateway      | `10.57.3.1` (MikroTik)  |
 | VMID         | 121                      |
 
@@ -21,8 +21,6 @@ reporting.
 | Input                 | Source                              | Notes |
 |-----------------------|-------------------------------------|-------|
 | `HARBOR_HOSTNAME`     | env var (mandatory)                 | FQDN for TLS cert and API calls |
-| `PORTAINER_ADMIN_PASSWORD` | env var (mandatory)           | For Portainer agent registration |
-| Portainer server      | `portainer_server_ip` in inventory  | `10.57.1.20` on pve-test |
 
 ## Provides
 
@@ -31,15 +29,10 @@ reporting.
 | Registry API     | 80   | HTTP     | Image pulls (HTTP, not HTTPS) |
 | Registry API     | 443  | HTTPS    | Image pulls (HTTPS) |
 | Harbor UI        | 80   | HTTP     | Web interface |
-| Portainer agent  | 9001 | TCP      | Portainer server connects here |
 
 `stack.yaml` service identifiers: `registry-http`, `registry-https`.
 
 ## Dependencies
-
-| Stack           | Why |
-|-----------------|-----|
-| portainer-stack | Registers Portainer agent on startup |
 
 Bootstrap note: on the first pass of a fresh pve-test node, Harbor itself pulls from
 Docker Hub directly (Harbor is not yet running). All subsequent stacks pull from
@@ -56,7 +49,7 @@ Docker Hub directly (Harbor is not yet running). All subsequent stacks pull from
 Every stack that uses Docker images.
 
 **Target state:** active pve-test `docker-compose.yml` files should reference
-`${REGISTRY_HOST}`, which resolves to `10.57.3.10`.
+`${REGISTRY_HOST}` (the `registry_host` generated inventory variable).
 
 **Current state:** `authentik-stack` and the active NetBox compose path already
 reference `${REGISTRY_HOST}` through generated inventory variables. Remaining Harbor
@@ -73,17 +66,6 @@ repo consistency rather than the active pve-test provisioning path.
 
 ## Playbook
 
-`deploy-harbor-stack` (roles: `lxc_base`, `docker_base`, `portainer_agent`,
-`portainer_api`, `harbor_installer`, `harbor_postconfigure`)
+`deploy-harbor-stack` (roles: `lxc_base`, `docker_base`, `harbor_installer`, `harbor_postconfigure`)
 
-## Stage 4 Exemplar Scaffolding Hooks
-
-### Day-1 To Day-2 Handoff
-
-- identify generated handoff artifacts consumed by day-2 reconcile workflows
-- keep ownership boundaries explicit between Terraform-managed and Ansible-managed state
-
-### Reconcile Entry Expectations
-
-- define approval-aware post-infra reconcile entrypoint expectations
-- document minimal evidence to confirm hook wiring for Stage 5
+`portainer_agent: false` is intentional; the portainer-agent systemd unit is masked during provisioning.

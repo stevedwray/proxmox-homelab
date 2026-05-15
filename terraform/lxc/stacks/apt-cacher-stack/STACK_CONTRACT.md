@@ -12,7 +12,7 @@ rather than the upstream Debian mirrors.
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `infra_seg` (VLAN 40)    |
-| IP           | `10.57.3.11/24`          |
+| IP           | `${lab_ip_apt_cacher}/24`|
 | Gateway      | `10.57.3.1` (MikroTik)  |
 | VMID         | 142                      |
 
@@ -57,15 +57,3 @@ Every other stack (via `lxc_base` role apt proxy configuration).
 ## Playbook
 
 `deploy-apt-cacher-stack`
-
-## Stage 4 Exemplar Scaffolding Hooks
-
-### Day-1 To Day-2 Handoff
-
-- identify generated handoff artifacts consumed by day-2 reconcile workflows
-- keep ownership boundaries explicit between Terraform-managed and Ansible-managed state
-
-### Reconcile Entry Expectations
-
-- define approval-aware post-infra reconcile entrypoint expectations
-- document minimal evidence to confirm hook wiring for Stage 5
