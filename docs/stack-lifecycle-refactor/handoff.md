@@ -128,8 +128,78 @@
 
 ## Current Phase
 
-- Stage 6: fifth implementation slice complete for `proxy-stack`.
+- Stage 6: complete with five implementation slices (ci-runner-01, step-ca-stack, dns-stack, authentik-stack, proxy-stack).
 - Current branch is `task/slr-06-rollout-proxy-stack`.
+- Ready to transition to Stage 7: multi-stack integration and special-case patterns.
+
+## Decision: Transition to Stage 7
+
+### Stage 6 Completion Assessment
+
+**Platform Foundation Status:**
+- ✓ CI/runners: `ci-runner-01` (systemd service boundary proven)
+- ✓ PKI/trust: `step-ca-stack` (non-Docker service boundary proven)
+- ✓ DNS: `dns-stack` (systemd service + generated artifact pattern proven)
+- ✓ Identity: `authentik-stack` (Docker container + runtime bootstrap pattern proven)
+- ✓ Ingress: `proxy-stack` (Docker container + dynamic config pattern proven)
+
+**Stage 6 Exit Criteria Met:**
+- ✓ Model works for more than the first exemplar pair (5 diverse stacks)
+- ✓ Common patterns are clear (check-mode guards, idempotent replay, health validation)
+- ✓ Remaining exceptions are better isolated (CA bundle task always-changed; DNS/resolver churn recognized as cross-stack baseline)
+
+**Candidate Remaining Stacks:**
+
+| Stack | Dependencies | Integration Complexity | Recommendation |
+|-------|--------------|-------------------------|-----------------|
+| `portainer-stack` | none (explicit) | **HIGH** — Authentik OAuth bootstrap + proxy edge route publishing | Defer to Stage 7 (7a) |
+| `monitoring-stack` | harbor, apt-cacher, authentik, proxy, step-ca (all complete) | **HIGH** — Authentik OIDC + Grafana OAuth + service scraping registration | Defer to Stage 7 (7b) |
+| `netbox-stack` | harbor (complete) | **MEDIUM** — simpler than above, but still a data-centric stack | Consider later (7c or 8) |
+| `headscale-stack` | unknown | unknown | Needs assessment |
+
+### Why NOT Continue with Stage 6
+
+**Monitoring-stack Coupling Analysis:**
+- While all 5 dependencies are technically satisfied, the playbook includes:
+  - Pre-tasks for Authentik OIDC client reconciliation (`pre_tasks` section)
+  - Grafana OAuth configuration with Authentik integration
+  - Service scraping across all other platform stacks
+- This represents multi-stack integration patterns (Stage 7 scope), not single-stack isolation (Stage 6 scope)
+
+**Portainer-stack Coupling Analysis:**
+- Explicitly deferred in Stage 6 plan due to:
+  - Authentik-backed OAuth bootstrap
+  - Proxy-published edge routes
+- These are Stage 7 themes (identity federation, service registration)
+
+### Why Transition to Stage 7 is Correct
+
+**Stage 6 was "Clean Platform Stacks":**
+- Focused on single-stack isolation and service boundaries
+- Each stack validated independently
+- No multi-stack coordination required
+- Goal: "extend the model to additional lower-complexity platform stacks"
+
+**Stage 7 is "Special-Case Strategy and Multi-Stack Integration":**
+- Explicitly designed to "handle interconnected stacks deliberately"
+- Priority themes include:
+  - Identity/bootstrap integrations (Authentik OAuth)
+  - External registration lifecycles (Portainer edge registration)
+  - Service discovery and scraping patterns (Monitoring across all services)
+  - Trust distribution and certificate distribution
+
+**Remaining stacks require Stage 7 patterns:**
+- Portainer needs OAuth bootstrap + edge registration = Stage 7a
+- Monitoring needs OIDC federation + multi-service scraping = Stage 7b
+- These are not "clean single-stack" problems
+
+### Next Action
+
+**Stage 7 kickoff scope:**
+- Stage 7a: `portainer-stack` — Authentik OAuth integration + edge route publishing
+- Stage 7b: `monitoring-stack` — Identity federation + multi-service metric collection
+- These should be executed in new short-lived branches cut from `refactor/stack-lifecycle`
+- Each will validate multi-stack patterns before branch-wide hardening (Stage 8)
 
 ## Stage 6 Closeout: proxy-stack
 

@@ -379,15 +379,20 @@ Stage 6 closeout status (`authentik-stack`):
 
 Deliverables:
 
-- migrated clean-stack set
-- refined shared patterns
+- migrated clean-stack set (5 stacks: ci-runner-01, step-ca-stack, dns-stack, authentik-stack, proxy-stack)
+- refined shared patterns (check-mode guards, idempotent replay, health validation)
 - updated validation expectations where needed
 
 Exit criteria:
 
-- the model works for more than the first exemplar pair
-- common patterns are clear
-- remaining exceptions are better isolated
+- ✓ the model works for more than the first exemplar pair (5 diverse stacks proven)
+- ✓ common patterns are clear (check-mode, rerun safety, platform boundary isolation)
+- ✓ remaining exceptions are better isolated (CA bundle task always-changed; DNS/resolver churn)
+- ✓ **Stage 6 is COMPLETE**
+
+Status:
+
+- **complete** — all five implementation slices validated end-to-end
 
 ### Stage 7: Special-Case Strategy And Migration
 
@@ -399,24 +404,32 @@ Goals:
 
 - handle interconnected stacks deliberately rather than forcing them into a simplistic pattern
 - decide which exceptions become capability flags and which remain stack-specific
+- prove multi-stack integration patterns before branching to hardening
 
-Priority special-case themes:
+Priority special-case themes and targets:
 
-- DNS and generated zone publication
-- ingress and edge publication
-- identity/bootstrap integrations
-- external registration lifecycles
-- trust distribution and certificate distribution
+1. **Identity and OAuth Integration (Stage 7a): `portainer-stack`**
+   - Authentik-backed OAuth bootstrap
+   - Proxy-published edge routes for management UI
+   - Requires coordination between identity layer (authentik) and ingress layer (proxy)
 
-Likely stacks:
+2. **Multi-service Observability (Stage 7b): `monitoring-stack`**
+   - Authentik OIDC client reconciliation in pre-tasks
+   - Grafana OAuth integration
+   - Multi-service scraping registration pattern
+   - Requires coordination between monitoring stack and all core platform services
 
-- `dns-stack` (depends on many service IPs; requires generated zone publication)
-- `proxy-stack` (Traefik integration with step-ca ACME and Authentik forward-auth)
-- `authentik-stack` (identity provider with database bootstrap)
-- `monitoring-stack` (depends on all core services)
-- `portainer-stack` (only if Stage 6 rollout reveals special-case behavior, currently deferred)
+3. **Deferred Data-Centric Stacks (Stage 7c+): `netbox-stack`, others**
+   - Simpler dependencies but still benefit from hardened multi-stack patterns
+   - Execute after 7a and 7b prove the integration model
 
-Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity.
+Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity during integration testing.
+
+Likely stacks requiring Stage 7 treatment:
+
+- `portainer-stack` (Authentik OAuth + edge route publishing)
+- `monitoring-stack` (Authentik OIDC + multi-service scraping)
+- `netbox-stack` (data-centric; can follow after integration patterns proven)
 
 Exit criteria:
 
