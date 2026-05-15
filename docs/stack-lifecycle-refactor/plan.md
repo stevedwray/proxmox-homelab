@@ -425,9 +425,11 @@ Priority special-case themes and targets:
   - **Branch:** `task/slr-07-monitoring-oidc` (ready for merge to `refactor/stack-lifecycle`)
   - **Evidence:** `docs/sessions/evidence/slr-07-monitoring-oidc/EVIDENCE.md`
 
-3. **Deferred Data-Centric Stacks (Stage 7c+): `netbox-stack`, others** ⏳ PENDING
-   - Simpler dependencies but still benefit from hardened multi-stack patterns
-   - Execute after 7a and 7b prove the integration model
+3. **Data-Centric Integration (Stage 7c): `netbox-stack`** 🟡 PLANNED NEXT
+  - Next bounded Stage 7 target selected after completed 7a/7b slices
+  - Chosen for narrower dependency/coupling profile than monitoring while still validating special-case data-centric behavior
+  - Planned branch: `task/slr-07-netbox-data-boundary`
+  - Scope discipline: netbox-only implementation slice; no unrelated stack cleanup or broad architecture rewrites
 
 Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity during integration testing.
 
@@ -435,7 +437,12 @@ Likely stacks requiring Stage 7 treatment:
 
 - `portainer-stack` ✅ (completed: Authentik OAuth + edge route publishing)
 - `monitoring-stack` ✅ (completed: Authentik OIDC + multi-service scraping)
-- `netbox-stack` ⏳ (data-centric; can follow after integration patterns proven)
+- `netbox-stack` 🟡 (next Stage 7 bounded execution target)
+
+Stage 7c planning note:
+
+- Planning step completed as documentation-only; execution is deferred to the next Stage 7c branch.
+- Follow-up doc debt to track: missing `STACK_CONTRACT.md` for `monitoring-stack`, `netbox-stack`, `dns-stack`, and `proxy-stack`.
 
 Exit criteria:
 

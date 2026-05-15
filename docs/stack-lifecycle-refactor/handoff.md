@@ -584,3 +584,28 @@ Stage 7b validates bounded observability integration across dependencies:
 ### Stage 7b Closure Decision
 
 **Ready to merge to `refactor/stack-lifecycle`:** Monitoring-stack infrastructure, bounded check-mode behavior, live reconcile, and scoped OIDC/observability health validation all pass.
+
+## Stage 7c Planning Step (Documentation-Only)
+
+**Decision:** Next bounded Stage 7 target is `netbox-stack`.
+
+### Why `netbox-stack` is next
+
+- It is the remaining named Stage 7 candidate after completed slices (`portainer-stack`, `monitoring-stack`).
+- It is a bounded data-centric integration target with lower coupling than monitoring while still exercising special-case behavior.
+- Its dependency posture is narrower (primarily Harbor/image/runtime concerns) and is suitable before Stage 8 branch-wide hardening.
+
+### Planned Stage 7c Scope Boundaries
+
+- Documentation/planning only in this step (no infra/apply or playbook execution yet).
+- Keep implementation scope strictly to `netbox-stack` when execution starts.
+- No unrelated stack cleanup, no broad architecture rewrites, and no AI workflow file edits.
+
+### Follow-up Documentation Debt Noted
+
+- Missing stack contract docs discovered during planning:
+  - `terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md`
+  - `terraform/lxc/stacks/netbox-stack/STACK_CONTRACT.md`
+  - `terraform/lxc/stacks/dns-stack/STACK_CONTRACT.md`
+  - `terraform/lxc/stacks/proxy-stack/STACK_CONTRACT.md`
+- For Stage 7c execution readiness, at minimum add/confirm `netbox-stack` contract documentation; monitoring/dns/proxy contract gaps should be tracked as follow-up doc debt.
