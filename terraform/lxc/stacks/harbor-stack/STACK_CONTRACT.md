@@ -75,3 +75,15 @@ repo consistency rather than the active pve-test provisioning path.
 
 `deploy-harbor-stack` (roles: `lxc_base`, `docker_base`, `portainer_agent`,
 `portainer_api`, `harbor_installer`, `harbor_postconfigure`)
+
+## Stage 4 Exemplar Scaffolding Hooks
+
+### Day-1 To Day-2 Handoff
+
+- identify generated handoff artifacts consumed by day-2 reconcile workflows
+- keep ownership boundaries explicit between Terraform-managed and Ansible-managed state
+
+### Reconcile Entry Expectations
+
+- define approval-aware post-infra reconcile entrypoint expectations
+- document minimal evidence to confirm hook wiring for Stage 5

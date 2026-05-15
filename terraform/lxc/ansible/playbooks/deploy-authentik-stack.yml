@@ -77,11 +77,15 @@
             },
             "storage-driver": "overlay2"
           }
+      register: authentik_docker_daemon_config
 
     - name: Restart Docker to apply registry trust
       ansible.builtin.systemd:
         name: docker
         state: restarted
+      when:
+        - not ansible_check_mode
+        - authentik_docker_daemon_config.changed
 
     - name: Validate Authentik compose
       ansible.builtin.command:
@@ -89,11 +93,14 @@
         chdir: "{{ authentik_compose_dir }}"
       register: authentik_compose_validate
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Fail if compose invalid
       ansible.builtin.fail:
         msg: "docker compose config failed: {{ authentik_compose_validate.stderr | default(authentik_compose_validate.stdout) }}"
-      when: authentik_compose_validate.rc != 0
+      when:
+        - not ansible_check_mode
+        - authentik_compose_validate.rc != 0
 
     - name: Ensure temporary public DNS fallback so Docker can pull images
       ansible.builtin.shell: |
@@ -103,11 +110,13 @@
       args:
         executable: /bin/bash
       become: true
+      when: not ansible_check_mode
 
     - name: Start Authentik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ authentik_compose_dir }}"
         state: present
+      when: not ansible_check_mode
 
     - name: Wait for Authentik live health endpoint
       ansible.builtin.uri:
@@ -118,6 +127,7 @@
       retries: 30
       delay: 10
       until: authentik_live_health.status in [200, 204]
+      when: not ansible_check_mode
 
     - name: Wait for Authentik ready health endpoint
       ansible.builtin.uri:
@@ -128,6 +138,7 @@
       retries: 30
       delay: 10
       until: authentik_ready_health.status in [200, 204]
+      when: not ansible_check_mode
 
     - name: Confirm bootstrap credentials were injected
       ansible.builtin.debug:
@@ -136,6 +147,7 @@
           AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
           injected from SOPS via .env. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
+      when: not ansible_check_mode
 
     - name: Check if lab admin user exists in Authentik
       ansible.builtin.uri:
@@ -150,6 +162,7 @@
       delay: 10
       until: authentik_steve_check.status == 200
       no_log: true
+      when: not ansible_check_mode
 
     - name: Create lab admin user in Authentik
       ansible.builtin.uri:
@@ -167,7 +180,9 @@
           groups: []
         status_code: [201]
       register: authentik_steve_create
-      when: (authentik_steve_check.json.pagination.count | int) == 0
+      when:
+        - not ansible_check_mode
+        - (authentik_steve_check.json.pagination.count | int) == 0
       no_log: true
 
     - name: Resolve lab admin user PK
@@ -179,6 +194,7 @@
             else authentik_steve_create.json.pk) | int
           }}
       no_log: true
+      when: not ansible_check_mode
 
     - name: Set lab admin user password in Authentik
       ansible.builtin.uri:
@@ -192,10 +208,12 @@
           password: "{{ authentik_steve_password }}"
         status_code: [204]
       no_log: true
+      when: not ansible_check_mode
 
     - name: Confirm lab admin user provisioned
       ansible.builtin.debug:
         msg: "Authentik user '{{ lab_admin_username }}' is present and password is set (pk={{ steve_pk }})."
+      when: not ansible_check_mode
 
     - name: Ensure homelab-admins group exists in Authentik
       ansible.builtin.uri:
@@ -207,6 +225,7 @@
         status_code: [200]
       register: authentik_homelab_admins_check
       no_log: true
+      when: not ansible_check_mode
 
     - name: Create homelab-admins group when missing
       ansible.builtin.uri:
@@ -221,7 +240,9 @@
           is_superuser: false
         status_code: [201]
       register: authentik_homelab_admins_create
-      when: (authentik_homelab_admins_check.json.pagination.count | int) == 0
+      when:
+        - not ansible_check_mode
+        - (authentik_homelab_admins_check.json.pagination.count | int) == 0
       no_log: true
 
     - name: Resolve homelab-admins group PK
@@ -233,6 +254,7 @@
             else authentik_homelab_admins_create.json.pk)
           }}
       no_log: true
+      when: not ansible_check_mode
 
     - name: Add lab admin user to homelab-admins group
       ansible.builtin.uri:
@@ -246,7 +268,9 @@
           pk: "{{ steve_pk }}"
         status_code: [204]
       no_log: true
+      when: not ansible_check_mode
 
     - name: Confirm homelab-admins group provisioned with lab admin user
       ansible.builtin.debug:
         msg: "Authentik group 'homelab-admins' is present (pk={{ homelab_admins_pk }}) and {{ lab_admin_username }} (pk={{ steve_pk }}) is a member."
+      when: not ansible_check_mode

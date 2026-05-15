@@ -178,6 +178,7 @@
       args:
         executable: /bin/bash
       changed_when: true
+      when: not ansible_check_mode
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -241,8 +242,10 @@
         cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Start Traefik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
+      when: not ansible_check_mode
