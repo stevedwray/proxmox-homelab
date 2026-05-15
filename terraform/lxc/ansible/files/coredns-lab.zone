@@ -2,7 +2,7 @@ $ORIGIN lab.gibbsgreatly.xyz.
 $TTL 5m
 
 @               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
-					2026041802 ; serial
+						2026051601 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -22,6 +22,7 @@ grafana         A   ${LAB_IP_MONITORING}; Grafana (alias for monitoring stack)
 traefik         A   ${LAB_IP_PROXY}     ; reverse proxy
 
 ; Breakglass direct-access records (bypass Traefik — point to service container IP)
+authentik-int   IN  A   ${LAB_IP_AUTHENTIK} ; authentik internal machine endpoint
 authentik-bg    IN  A   ${LAB_IP_AUTHENTIK} ; authentik direct (breakglass)
 harbor-bg       IN  A   ${LAB_IP_HARBOR}    ; harbor direct (breakglass)
 monitoring-bg   IN  A   ${LAB_IP_MONITORING}; grafana/monitoring direct (breakglass)
