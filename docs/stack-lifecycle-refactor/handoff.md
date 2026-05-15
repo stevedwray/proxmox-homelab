@@ -7,6 +7,45 @@
 - Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.
 - First Stage 6 implementation slice for `ci-runner-01` is complete with check mode, live reconcile, and systemd health validation passing.
 - Second Stage 6 implementation slice for `step-ca-stack` is complete with check mode, live reconcile, ACME health check (HTTP 200), and idempotent rerun all passing.
+- Stage 6 closeout for `step-ca-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
+
+## Stage 6 Closeout: step-ca-stack
+
+### What changed
+
+- Added first-time stack inventory at `terraform/lxc/stacks/step-ca-stack/inventory.yml` for vmid 152 (`192.168.20.11`, `mgmt_seg`, ProxyJump through pve-test).
+- Applied bounded check-mode and lifecycle guards in `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` only:
+  - Guarded binary download/extract/find/install and `step ca init` bootstrap in check mode.
+  - Allowed expected check-mode startup/export gaps with `ignore_errors: "{{ ansible_check_mode }}"` on service enable/start and root cert export/fetch.
+  - Skipped health wait loop in check mode to avoid false failure/retry delay.
+
+### What was validated
+
+- Terraform apply for step-ca container creation succeeded cleanly.
+- Check mode on fresh container passed (`exit 0`, `0 failed`, `2` expected ignores).
+- Live reconcile passed (`exit 0`, `0 failed`) with full install/bootstrap/start flow.
+- ACME endpoint health check passed (`/acme/acme/directory` returns HTTP 200).
+- Idempotent rerun passed (`exit 0`, `0 failed`) with only known lxc_base baseline churn.
+- Post-deploy check mode passed (`exit 0`, `0 failed`, `0 ignored`).
+
+### Evidence paths
+
+- `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-run-2.log`
+- `docs/sessions/evidence/slr-06-rollout-step-ca-stack/live.log`
+- `docs/sessions/evidence/slr-06-rollout-step-ca-stack/health.log`
+- `docs/sessions/evidence/slr-06-rollout-step-ca-stack/rerun.log`
+- `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-final.log`
+
+### Remaining accepted risks
+
+- `lxc_base` DNS resolver/trust tasks remain non-idempotent across reruns (known cross-stack baseline behavior, accepted for now).
+- Retroactive dns-stack trust play is intentionally a no-op until `dns-stack` inventory is present.
+- `certs/homelab-root.crt` lifecycle is still local-file based and will need explicit handling as additional dependent stacks roll out.
+
+### Next narrow Stage 6 target
+
+- `dns-stack`.
+- Why next: step-ca rollout already exposed deferred dns trust-distribution coupling; `dns-stack` is the smallest follow-on target that closes that dependency path before higher-coupling ingress/identity stacks.
 
 ## Current Phase
 

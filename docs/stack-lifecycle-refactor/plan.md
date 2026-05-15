@@ -256,6 +256,7 @@ Candidate early rollout targets:
 
 - `ci-runner-01` (primary, **complete**): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
 - `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
+- `dns-stack` (next, **selected for narrow Stage 6 follow-on scope**): directly closes the trust-distribution dependency surfaced during step-ca rollout and remains narrower than ingress/identity stacks with broader coupling
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):
@@ -308,6 +309,17 @@ Second implementation slice outcome (`step-ca-stack`, **complete**):
 - root cert fetched to `certs/homelab-root.crt`
 - evidence captured under `docs/sessions/evidence/slr-06-rollout-step-ca-stack/`
 - follow-up: second play (retroactive trust distribution to dns-stack) is a no-op until dns-stack is rolled out
+
+Stage 6 closeout status (`step-ca-stack`):
+
+- completed and validated end-to-end (scope, implementation, check mode, live reconcile, health, rerun)
+- accepted residual risks are bounded to known cross-stack lxc_base idempotency behavior and deferred dns trust-play coupling
+- evidence index:
+  - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-run-2.log`
+  - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/live.log`
+  - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/health.log`
+  - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/rerun.log`
+  - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-final.log`
 
 Deliverables:
 
