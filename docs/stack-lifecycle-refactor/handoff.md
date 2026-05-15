@@ -20,11 +20,31 @@
 - Generated artifacts are derived only.
 - Terraform may offer an approved post-change day-2 reconcile path.
 
-## Suggested Next Step
+## Current Session Progress
 
-Choose the next bounded Stage 6 platform rollout target after `ci-runner-01` before further Stage 6 work.
+### Step 1: Scope Definition for step-ca-stack (completed)
 
-Stage 6 scope definition for this branch:
+**Decision:** Promoted step-ca-stack from Stage 7 special-cases to Stage 6 rollout as the second implementation target.
+
+**Rationale:**
+- Depends only on apt-cacher-stack (exemplar, validated)
+- Non-Docker systemd service pattern (like ci-runner-01) — validates the pattern works across service types
+- Simpler than Docker/database stacks (harbor, authentik, netbox)
+- Logical predecessor to dns-stack, proxy-stack, and identity services which have more dependencies
+- Represents local-only state lifecycle (no external registration service like GitHub), different risk class from ci-runner-01
+
+**Scope:**
+- Scope-definition step only — no implementation work in this step
+- Next session will execute the implementation slice
+- Small, focused changes to deploy-step-ca.yml
+- Expect similar validation pattern to ci-runner-01 (check mode, live reconcile, health check)
+- Evidence directory: docs/sessions/evidence/slr-06-rollout-step-ca-stack/
+
+---
+
+## Earlier Session: ci-runner-01 Rollout (Stage 6 First Slice)
+
+Stage 6 scope definition for the ci-runner-01 branch:
 
 - First rollout target: `ci-runner-01` (single-stack slice)
 - Why chosen: next in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and fewer cross-stack touchpoints than later stacks
@@ -75,6 +95,44 @@ Stage 6 scope definition for this branch:
   - next Stage 6 work should decide whether to continue on the next platform stack or first clean up the branch naming mismatch
 
 ## Session Closeout Checklist
+
+- ✓ identified step-ca-stack as the next Stage 6 rollout target
+- ✓ documented rationale and scope in plan.md and handoff.md
+- ✓ defined expected changes, validation evidence, risks, and non-goals
+- ✓ commit docs to preserve scope definition
+
+## Next Step: stage-ca-stack Implementation (Future Session)
+
+**Objective:** Extend the exemplar-proven reconcile pattern to step-ca-stack.
+
+**Bounded scope:** Apply changes only to `terraform/lxc/ansible/playbooks/deploy-step-ca.yml` for:
+- Binary download/installation from GitHub releases (handle check-mode failures if binary path does not exist)
+- systemd unit enable/start tasks (tolerate check-mode failures if service not yet installed)
+- Root certificate export to repo (allow conditional skip in check mode)
+- step-ca initialization and provisioner password idempotency (ensure rerun safety)
+
+**Validation commands:**
+```bash
+# Check mode
+./with-secrets ./scripts/provision.sh --stack step-ca-stack --check
+
+# Live reconcile
+./with-secrets ./scripts/provision.sh --stack step-ca-stack
+
+# Health check
+curl -k https://10.57.1.11:443/acme/acme/directory
+```
+
+**Evidence locations:**
+- Check mode log: `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check.log`
+- Live reconcile log: `docs/sessions/evidence/slr-06-rollout-step-ca-stack/live.log`
+- Health check log: `docs/sessions/evidence/slr-06-rollout-step-ca-stack/health.log`
+
+**Branch naming:** Consider whether to create a new branch `task/slr-06-rollout-step-ca-stack` or continue on the current branch and handle naming separately. Current branch name reflects the ci-runner-01 target; decide if multi-target branching is appropriate.
+
+---
+
+## Session Closeout Checklist (Original)
 
 - update [decisions.md](./decisions.md) if a decision is made
 - update [plan.md](./plan.md) if phase or scope changes
