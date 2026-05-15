@@ -492,7 +492,15 @@ Stage 8 validation evidence tightening checkpoint (2026-05-15):
 
 Status:
 
-- in progress (validation evidence tightening complete; remaining Stage 8 work is operator-workflow hardening and final branch-level rough-edge cleanup)
+- complete (validation evidence tightening plus operator-workflow hardening and branch-level rough-edge cleanup are complete)
+
+Stage 8 operator-workflow hardening and final rough-edge cleanup checkpoint (2026-05-15):
+
+- converted remaining open-item placeholders in Stage 2 validation/drift docs into execution-ready operator guidance
+- standardized pre-Stage9 validation command flow (target guard, check mode, live reconcile, rerun, health)
+- codified evidence file baseline (`check.log`, `live.log`, `rerun.log`, `health.log`, optional `EVIDENCE.md`)
+- codified accepted shared non-idempotent baseline classes and reporting-first handling before Stage 9
+- confirmed no new design work, rollout staging, or Stage 9 teardown/redeploy/reconcile execution started in this checkpoint
 
 Exit criteria:
 

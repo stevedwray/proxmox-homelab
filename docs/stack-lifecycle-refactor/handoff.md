@@ -685,4 +685,35 @@ Validation/hardening pass (bounded Stage 8) outcomes:
 
 ### Next Hardening Step
 
-- Complete the remaining Stage 8 operator-workflow hardening pass (final branch-level rough-edge cleanup and runbook-tightening) using the now-stable contract validation baseline.
+- Completed in this checkpoint: Stage 8 operator-workflow hardening pass (final branch-level rough-edge cleanup and runbook-tightening) using the now-stable contract validation baseline.
+
+## Stage 8 Operator-Workflow Hardening And Rough-Edge Cleanup
+
+**Status:** ✅ complete
+
+### What was hardened
+
+- `docs/stack-lifecycle-refactor/validation.md`
+  - replaced open-item placeholders with an execution-ready operator workflow baseline
+  - standardized validation command sequence for bounded stack runs (target guard -> check -> live -> rerun -> health)
+  - standardized evidence file expectations and location pattern under `docs/sessions/evidence/`
+  - documented accepted shared non-idempotent baseline classes that can carry forward to Stage 9 with explicit reporting
+- `docs/stack-lifecycle-refactor/drift-policy.md`
+  - replaced open questions with Stage 8 operational defaults for managed/observed/adoptable drift classes
+  - documented operator surfacing rules using check/live/rerun evidence logs
+  - documented pre-Stage9 enforcement stance (reporting-first for accepted shared baseline churn; enforce new regressions)
+
+### Boundaries preserved
+
+- no Stage 9 teardown/redeploy/reconcile execution was started
+- no new rollout sequencing or architecture/design work introduced
+- only small safe documentation hardening changes were made
+
+### Remaining before Stage 9
+
+- Stage 8 documentation hardening is complete; remaining work is to execute Stage 9 promotion-readiness validation as a separate step.
+
+### Accepted baseline behavior still carrying forward
+
+- known shared rerun churn classes from Stage 6-8 evidence remain accepted (DNS resolver/fallback rewrites, trust-install churn, proxy CA bundle always-changed task)
+- these are reporting-first baselines and should not hide new stack-specific regressions

@@ -37,8 +37,28 @@ Provide a clear operational model for day-2 drift handling.
 
 - Docker and compose-level service reconfiguration is the first likely candidate for an adoption workflow.
 
-## Open Questions
+## Stage 8 Operational Defaults
 
-- exact paths and settings per stack that belong in each class
-- how drift should be surfaced to the operator
-- whether the first implementation is reporting-only before enforcement
+### Class Mapping Baseline
+
+- Managed (default):
+	- `stack.yaml` deployment metadata (zone/IP/gateway/vmid/playbook/dependency declarations)
+	- generated inventory and generated edge/traefik artifacts that are rendered from source metadata
+	- playbook-managed service/unit/config files under stack deployment paths
+- Observed:
+	- runtime application state inside persistent data volumes/databases
+	- external system state that reconcile probes but does not fully own (for example external auth/API side effects)
+- Adoptable (opt-in only):
+	- stack-specific runtime tuning paths explicitly documented in the stack contract and promoted to managed only after validation evidence
+
+### Operator Surfacing Rules
+
+- Surface drift through the standard check/live/rerun evidence set (`check.log`, `live.log`, `rerun.log`, `health.log`).
+- Treat new unexpected rerun churn as actionable drift unless it matches accepted shared baselines documented in `validation.md`.
+- Record accepted baseline drift explicitly in handoff/plan updates when it is intentionally carried forward.
+
+### Enforcement Stance Before Stage 9
+
+- Reporting-first for known shared baseline churn classes already accepted in Stage 6-8 evidence.
+- Enforcement for new or stack-specific drift regressions that are not on the accepted baseline list.
+- No new drift framework design in Stage 8; only execution-safe documentation and consistency hardening.

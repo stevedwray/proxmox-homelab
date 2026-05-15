@@ -46,8 +46,48 @@ Recommended mandatory checks:
 - config-only changes verify convergence and service health
 - coordinated changes verify integration
 
-## Open Items
+## Operator Workflow Baseline (Stage 8 Hardened)
 
-- exact commands and evidence format per stack
-- what counts as acceptable non-idempotent output for bootstrap-heavy stacks
-- which checks are global vs stack-specific
+Use this execution order for bounded stack validation before Stage 9:
+
+1. Target guard (required before infra/apply or reconcile commands):
+	- `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` must return `pve-test`.
+2. Check mode reconcile (post-infra when inventory exists):
+	- `./with-secrets ./scripts/provision.sh --stack <stack-name> --check`
+3. Live reconcile:
+	- `./with-secrets ./scripts/provision.sh --stack <stack-name>`
+4. Idempotent rerun:
+	- repeat the live reconcile command once and compare changed/failed summary.
+5. Stack-specific health probe:
+	- systemd service stacks: verify service active status and stack-specific endpoint/query where applicable.
+	- compose stacks: verify container/service health endpoint and expected auth/route behavior where applicable.
+
+## Evidence Format (Stage 8 Baseline)
+
+For each bounded stack validation slice, capture at least:
+
+- `check.log`
+- `live.log`
+- `rerun.log`
+- `health.log`
+- optional infra logs (`terraform-plan.log`, `terraform-apply.log`) when infra apply is in-scope
+- optional summary file (`EVIDENCE.md`) when multiple logs need a concise findings index
+
+Evidence should be stored in a dedicated directory under `docs/sessions/evidence/<slice-name>/`.
+
+## Accepted Non-Idempotent Baseline Behavior (Carry Forward)
+
+Reruns are considered acceptable when all fatal failures remain at zero and observed churn is limited to known shared baseline tasks such as:
+
+- `lxc_base` DNS resolver rewrites/fallback interactions
+- temporary public DNS fallback rewrites to `/etc/resolv.conf`
+- proxy CA bundle rebuild tasks intentionally marked changed on each run
+- trust-install tasks that report changed due to shared base-role behavior
+
+Any new rerun churn outside these known classes should be treated as a hardening candidate and documented with evidence before Stage 9.
+
+## Check Scope Guidance
+
+- Global checks: target guard, check/live/rerun command flow, evidence capture format.
+- Stack-specific checks: service health probe details, auth integration assertions, and dependency-path validations.
+- Do not add new design or rollout-order work in this phase; keep fixes bounded to operational clarity and safe consistency corrections.
