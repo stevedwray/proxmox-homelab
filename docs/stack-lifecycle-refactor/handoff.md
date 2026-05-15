@@ -625,7 +625,7 @@ Stage 7b validates bounded observability integration across dependencies:
 ### Remaining Accepted Risks
 
 - The local NetBox admin sync task is now non-fatal on runtime edge-case failure; this preserves reconcile continuity but may hide user-sync drift until explicit follow-up hardening.
-- `STACK_CONTRACT.md` remains missing for `monitoring-stack`, `dns-stack`, and `proxy-stack`; this remains tracked documentation debt.
+- `STACK_CONTRACT.md` remains missing for `dns-stack` and `proxy-stack`; this remains tracked documentation debt.
 
 ### Stage 7c Closure Decision
 
@@ -633,6 +633,6 @@ Stage 7b validates bounded observability integration across dependencies:
 
 ## Stage 8 Entry Point
 
-**Recommended starting point:** contract-doc debt cleanup for `monitoring-stack`, `dns-stack`, and `proxy-stack`.
+**Recommended starting point:** contract-doc debt cleanup for `dns-stack` and `proxy-stack`.
 
 Reasoning: the Stage 7 special-case model is now closed out, and the remaining missing `STACK_CONTRACT.md` files are the last documented gaps before broader consistency/hardening work. Clearing those docs first keeps Stage 8 grounded in the shared contract model before any branch-wide workflow tightening.
