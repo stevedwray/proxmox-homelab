@@ -463,7 +463,7 @@ Suggested branch:
 Goals:
 
 - contract-doc debt cleanup is complete (all stacks covered)
-- consistency pass completed: IP notation normalized, portainer_agent drift fixed, Stage 4 scaffolding sections removed
+- consistency pass completed: IP/gateway notation normalized, portainer_agent drift fixed, Stage 4 scaffolding sections removed
 - remaining work: tighten validation, operator workflows, and branch-level rough edges before final validation
 
 Deliverables:
@@ -471,6 +471,14 @@ Deliverables:
 - cleaned-up docs
 - resolved cross-stage issues
 - branch-wide validation checklist
+
+Bounded Stage 8 validation checklist (operator workflow tightening):
+
+- verify each covered stack contract matches `stack.yaml` for zone/IP/gateway/vmid and `ansible_playbook`
+- verify each covered stack contract aligns with current playbook behavior for service type (`direct_stack`, compose, or systemd binary install)
+- verify `portainer_agent` statements in contracts match runtime behavior (agent enabled vs masked)
+- verify contract dependency language matches actual runtime dependency semantics (deploy-time vs request-time dependency where applicable)
+- keep fixes documentation-only unless a trivial, safe consistency bug requires a tiny code/doc correction
 
 Exit criteria:
 

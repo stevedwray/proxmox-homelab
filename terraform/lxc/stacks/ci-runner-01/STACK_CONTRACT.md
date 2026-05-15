@@ -13,7 +13,7 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 |--------------|--------------------------|
 | Zone         | `build_seg` (VLAN 10)    |
 | IP           | `${lab_ip_ci_runner}/24` |
-| Gateway      | `10.57.0.1` (MikroTik)  |
+| Gateway      | `${lab_gw_build}`        |
 | VMID         | 141                      |
 
 ## Inputs
@@ -22,15 +22,14 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 |-----------------------------|-------------|-------|
 | `GITHUB_RUNNER_TOKEN`       | env var     | Registration token from GitHub Actions |
 | `GITHUB_RUNNER_REPO`        | env var     | Repository the runner registers with |
-| Harbor registry             | `registry_host` (`10.57.3.10`) | Runtime job container pulls via proxy cache |
+| Harbor registry             | `registry_host` | Runtime job container pulls via proxy cache |
 | apt-cacher                  | `apt_cacher_host:3142` | apt proxy during provisioning |
 
 **Current implementation:** `lxc_base` consumes `apt_cacher_host` from generated
-inventory host vars during provisioning, and Portainer agent registration consumes
-`portainer_server_ip`. Harbor remains a declared platform dependency for runner job
-container pulls, but the runner playbook does not yet inject a stack-local
-`REGISTRY_HOST` because those pulls happen later at job runtime rather than during
-provisioning.
+inventory host vars during provisioning. Harbor remains a declared platform
+dependency for runner job container pulls, but the runner playbook does not yet
+inject a stack-local `REGISTRY_HOST` because those pulls happen later at job runtime
+rather than during provisioning.
 
 ## Provides
 

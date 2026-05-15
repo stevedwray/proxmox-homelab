@@ -625,7 +625,7 @@ Stage 7b validates bounded observability integration across dependencies:
 ### Remaining Accepted Risks
 
 - The local NetBox admin sync task is now non-fatal on runtime edge-case failure; this preserves reconcile continuity but may hide user-sync drift until explicit follow-up hardening.
-- `STACK_CONTRACT.md` remains missing for `dns-stack` and `proxy-stack`; this remains tracked documentation debt.
+- Stage 7-era contract-doc debt note is now resolved in Stage 8: all covered stacks have `STACK_CONTRACT.md` and the consistency pass is complete.
 
 ### Stage 7c Closure Decision
 
@@ -637,5 +637,11 @@ Stage 7b validates bounded observability integration across dependencies:
 
 - All stack contract docs are now present (`proxy-stack` added).
 - Consistency pass: normalized IP notation to `${lab_ip_*}` across older contracts (harbor, step-ca, authentik, apt-cacher, ci-runner-01); removed stale portainer_agent role references and incorrect portainer Provides rows from harbor, authentik, and ci-runner-01; fixed incorrect portainer_agent note in step-ca; removed leftover Stage 4 scaffolding sections from harbor and apt-cacher.
+
+Validation/hardening pass (bounded Stage 8) outcomes:
+
+- Contract-doc network tables are now aligned to `stack.yaml` gateway variables for covered stacks (`${lab_gw_mgmt}`, `${lab_gw_infra}`, `${lab_gw_build}`) instead of environment-specific literal gateway IPs.
+- `ci-runner-01` contract no longer claims Portainer agent registration behavior; wording now matches `deploy-ci-runner.yml` (agent masked, runner is outbound-only).
+- Harbor and apt-cacher contract notes now reference environment-variable driven sources (`registry_host`, `${lab_ip_apt_cacher}`) instead of stale concrete pve-test/pve literals.
 
 **Next:** branch-wide validation and operator workflow tightening (no design work remaining).

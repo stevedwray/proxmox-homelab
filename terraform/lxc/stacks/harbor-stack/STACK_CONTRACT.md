@@ -13,7 +13,7 @@ reporting.
 |--------------|--------------------------|
 | Zone         | `infra_seg` (VLAN 40)    |
 | IP           | `${lab_ip_harbor}/24`    |
-| Gateway      | `10.57.3.1` (MikroTik)  |
+| Gateway      | `${lab_gw_infra}`        |
 | VMID         | 121                      |
 
 ## Inputs
@@ -36,7 +36,8 @@ reporting.
 
 Bootstrap note: on the first pass of a fresh pve-test node, Harbor itself pulls from
 Docker Hub directly (Harbor is not yet running). All subsequent stacks pull from
-`10.57.3.10`. This is expected and not a misconfiguration.
+`${REGISTRY_HOST}` (injected from `registry_host` host vars). This is expected and
+not a misconfiguration.
 
 ## Persistent State
 
