@@ -10,7 +10,7 @@
 ## Current Phase
 
 - Stage 6: first implementation slice complete for `ci-runner-01`.
-- Current branch name is `task/slr-06-rollout-portainer-stack`, but the rollout target documented below is corrected to match the approved platform deployment order.
+- Current branch name is `task/slr-06-rollout-ci-runner-01`, matching the approved platform deployment order.
 
 ## Established Working Assumptions
 
@@ -22,7 +22,7 @@
 
 ## Suggested Next Step
 
-Choose the next bounded Stage 6 platform rollout target after `ci-runner-01`, or rename the current branch so it matches the corrected rollout target before further Stage 6 work.
+Choose the next bounded Stage 6 platform rollout target after `ci-runner-01` before further Stage 6 work.
 
 Stage 6 scope definition for this branch:
 
@@ -43,7 +43,7 @@ Stage 6 scope definition for this branch:
 - Risks:
   - stack-specific bootstrap tasks may expose new check-mode edge cases
   - GitHub token lifecycle and online-registration checks are external dependencies that can make dry-run behavior noisier than the earlier exemplar pair unless explicitly handled
-  - the current branch name still reflects the superseded Portainer-first planning assumption
+  - branch naming now matches the `ci-runner-01` rollout target
 - Non-goals:
   - no multi-stack rollout in the first Stage 6 slice
   - no special-case redesign work
@@ -58,7 +58,7 @@ Stage 6 scope definition for this branch:
 ## Stage 6 Kickoff Outcomes
 
 - Stage: 6 — Clean Platform Stack Rollout.
-- Branch: `task/slr-06-rollout-portainer-stack`.
+- Branch: `task/slr-06-rollout-ci-runner-01`.
 - What changed:
   - corrected Stage 6 candidate list and first-rollout scope to follow the approved platform deployment order after the validated exemplar pair
   - documented `ci-runner-01` as the actual next rollout target and deferred `portainer-stack` because its current implementation also depends on later identity and proxy publication flows
