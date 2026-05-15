@@ -254,28 +254,41 @@ Goals:
 
 Candidate early rollout targets:
 
-- `portainer-stack` (primary): Docker Compose platform stack with a contained service boundary and straightforward health checks, making it the next low-risk fit after the exemplar pair
-- `monitoring-stack` (secondary): still platform-tier and mostly self-contained, useful as a follow-on once the Stage 6 rollout pattern is proven on `portainer-stack`
+- `ci-runner-01` (primary): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
+- `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):
 
-- First rollout target: `portainer-stack` only
-- Why this first: lower operational complexity than identity, DNS, trust, and ingress stacks; clear service boundary; existing health endpoint makes validation straightforward
+- First rollout target: `ci-runner-01` only
+- Why this first: it is the next stack in the approved platform deployment order after `apt-cacher-stack` and `harbor-stack`, and its service boundary is narrower than later identity, ingress, and cross-stack registration flows
 - Expected changes for this kickoff step:
-  - define the rollout checklist and acceptance gates for `portainer-stack`
-  - map expected contract and reconcile touchpoints without broad rewrites
+  - define the rollout checklist and acceptance gates for `ci-runner-01`
+  - keep the first implementation slice limited to `terraform/lxc/ansible/playbooks/deploy-ci-runner.yml`
+  - make only bounded changes needed for check mode and idempotent rerun behavior around GitHub registration token generation, runner configure/remove commands, systemd install/start, and GitHub online verification
   - document evidence locations and pass/fail expectations before implementation work
 - Validation evidence required for this kickoff step:
   - updated Stage 6 scope in `plan.md` and `handoff.md`
-  - explicit command/evidence checklist for check mode, live reconcile, and health checks for `portainer-stack`
+  - explicit command/evidence checklist for check mode, live reconcile, and health checks for `ci-runner-01`
+  - check-mode expectations that skip or tolerate GitHub-side registration effects while still validating local configuration flow
+  - health evidence based on the runner systemd unit (`actions.runner.*.service`) rather than a Docker or HTTP probe
   - clear list of risks and non-goals for this first rollout slice
 - Risks:
-  - hidden stack-specific assumptions in existing `deploy-portainer-stack` tasks may require bounded check-mode handling updates
-  - shared-pattern assumptions from exemplars may not map 1:1 to Portainer bootstrap behavior
+  - hidden stack-specific assumptions in existing `deploy-ci-runner.yml` tasks may require bounded check-mode handling updates
+  - GitHub runner registration tokens are short-lived and single-use, so rerun safety depends on keeping registration side effects out of dry runs and unnecessary reconfiguration paths
+  - the current branch name still reflects the earlier `portainer-stack` planning assumption and should not be treated as the deployment-order source of truth
 - Non-goals:
   - no broad migration of multiple stacks in the same session
   - no special-case redesign (DNS, trust distribution, ingress, identity)
   - no branch-wide hardening or directory reorganization
+
+First implementation slice outcome (`ci-runner-01`):
+
+- bounded changes made only in `terraform/lxc/ansible/playbooks/deploy-ci-runner.yml`
+- check mode now skips or tolerates non-materialized runner install and GitHub-side registration steps on a fresh runner while still validating local configuration flow
+- live reconcile completed successfully, including runner registration, systemd service install/start, and GitHub online verification
+- health validation passed via the running `actions.runner.*.service` unit
+- evidence captured under `docs/sessions/evidence/slr-06-rollout-ci-runner-01/`
+- follow-up risk: this session had to regenerate the generated `inventory.yml` handoff artifact for `ci-runner-01`; the targeted recovery apply also recreated the stack's LXC and SDN attachment because those resources were absent from local state, so inventory-artifact availability should be treated as an operator preflight check in later rollout sessions
 
 Deliverables:
 

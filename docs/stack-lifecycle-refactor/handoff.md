@@ -5,10 +5,12 @@
 - Stages 1–5 are complete.
 - Exemplar pair `apt-cacher-stack` and `harbor-stack` validated end-to-end on branch `task/slr-05-exemplar-validation`.
 - Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.
+- First Stage 6 implementation slice for `ci-runner-01` is complete with check mode, live reconcile, and systemd health validation passing.
 
 ## Current Phase
 
-- Stage 6 kickoff (planning/doc-only): Clean platform stack rollout on `task/slr-06-rollout-portainer-stack`.
+- Stage 6: first implementation slice complete for `ci-runner-01`.
+- Current branch name is `task/slr-06-rollout-portainer-stack`, but the rollout target documented below is corrected to match the approved platform deployment order.
 
 ## Established Working Assumptions
 
@@ -20,24 +22,28 @@
 
 ## Suggested Next Step
 
-Execute the first narrow Stage 6 rollout slice for `portainer-stack`.
+Choose the next bounded Stage 6 platform rollout target after `ci-runner-01`, or rename the current branch so it matches the corrected rollout target before further Stage 6 work.
 
 Stage 6 scope definition for this branch:
 
-- First rollout target: `portainer-stack` (single-stack slice)
-- Why chosen: lower-complexity platform stack with a contained boundary and straightforward health checks; avoids DNS/trust/identity/ingress special-case work in the first rollout
+- First rollout target: `ci-runner-01` (single-stack slice)
+- Why chosen: next in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and fewer cross-stack touchpoints than later stacks
 - Expected changes (next implementation session):
-  - apply exemplar-proven reconcile pattern to `portainer-stack` only
+  - apply exemplar-proven reconcile pattern to `ci-runner-01` only
   - make only bounded fixes required for check-mode and idempotent rerun behavior
-  - keep contract and workflow updates limited to what `portainer-stack` needs
+  - keep those fixes inside `deploy-ci-runner.yml`, specifically around GitHub token generation, `config.sh` registration/removal, `svc.sh install`, runner service start, and GitHub online verification
+  - keep contract and workflow updates limited to what `ci-runner-01` needs
 - Validation evidence required:
   - check-mode pass for the stack-specific reconcile path
   - live reconcile pass with no fatal failures
-  - health check pass against Portainer API status endpoint
-  - evidence captured under `docs/sessions/evidence/slr-06-rollout-portainer-stack/`
+  - health check pass against the runner service or unit status path used for `ci-runner-01`
+  - evidence captured under a stack-specific Stage 6 evidence directory for `ci-runner-01`
+  - check-mode log should show local configuration tasks converging without requiring a live GitHub registration side effect
+  - live health log should confirm `actions.runner.*.service` is running, matching the existing repo health check model
 - Risks:
   - stack-specific bootstrap tasks may expose new check-mode edge cases
-  - shared pattern assumptions may need small adaptations for Portainer service flow
+  - GitHub token lifecycle and online-registration checks are external dependencies that can make dry-run behavior noisier than the earlier exemplar pair unless explicitly handled
+  - the current branch name still reflects the superseded Portainer-first planning assumption
 - Non-goals:
   - no multi-stack rollout in the first Stage 6 slice
   - no special-case redesign work
@@ -51,13 +57,22 @@ Stage 6 scope definition for this branch:
 
 ## Stage 6 Kickoff Outcomes
 
-- Stage: 6 — Clean Platform Stack Rollout (planning/doc-only kickoff).
+- Stage: 6 — Clean Platform Stack Rollout.
 - Branch: `task/slr-06-rollout-portainer-stack`.
 - What changed:
-  - corrected Stage 6 candidate list in `plan.md` to remove already-validated exemplars
-  - defined narrow first-rollout scope for `portainer-stack` with explicit rationale, evidence expectations, risks, and non-goals
-- What remains next:
-  - execute the first implementation slice for `portainer-stack` using the scoped gates above
+  - corrected Stage 6 candidate list and first-rollout scope to follow the approved platform deployment order after the validated exemplar pair
+  - documented `ci-runner-01` as the actual next rollout target and deferred `portainer-stack` because its current implementation also depends on later identity and proxy publication flows
+  - defined the bounded first implementation slice for `ci-runner-01` around `deploy-ci-runner.yml` registration, service install/start, and runner health verification tasks
+  - updated `deploy-ci-runner.yml` so check mode skips non-materialized runner install and GitHub-side registration steps while still validating local configuration work
+- What was validated:
+  - check mode: `./with-secrets ./scripts/provision.sh --stack ci-runner-01 --check` exited 0 after the bounded playbook fixes
+  - live reconcile: `./with-secrets ./scripts/provision.sh --stack ci-runner-01` exited 0 and completed runner registration plus GitHub online verification
+  - health check: runner unit `actions.runner.stevedwray-proxmox-homelab.ci-runner-pve-test.service` is active and running
+  - evidence: `docs/sessions/evidence/slr-06-rollout-ci-runner-01/check.log`, `docs/sessions/evidence/slr-06-rollout-ci-runner-01/live.log`, `docs/sessions/evidence/slr-06-rollout-ci-runner-01/health.log`
+- Remaining risks / follow-up:
+  - this session first had to recover the generated `inventory.yml` handoff artifact for `ci-runner-01`; the targeted recovery apply also recreated the stack LXC and SDN attachment because they were absent from local state
+  - the branch name still reflects the superseded Portainer-first planning assumption
+  - next Stage 6 work should decide whether to continue on the next platform stack or first clean up the branch naming mismatch
 
 ## Session Closeout Checklist
 
