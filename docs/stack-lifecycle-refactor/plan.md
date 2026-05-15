@@ -462,6 +462,7 @@ Suggested branch:
 
 Goals:
 
+- start with the remaining contract-doc debt cleanup for `monitoring-stack`, `dns-stack`, and `proxy-stack`
 - review consistency across migrated stacks
 - tighten documentation, validation, and operator workflows
 - resolve remaining branch-level rough edges before final validation

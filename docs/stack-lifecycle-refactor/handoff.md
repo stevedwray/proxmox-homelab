@@ -630,3 +630,9 @@ Stage 7b validates bounded observability integration across dependencies:
 ### Stage 7c Closure Decision
 
 **Ready to merge to `refactor/stack-lifecycle`:** netbox-stack infra/apply path, check mode, live reconcile, idempotent rerun behavior, and scoped health validation all pass with bounded netbox-only changes.
+
+## Stage 8 Entry Point
+
+**Recommended starting point:** contract-doc debt cleanup for `monitoring-stack`, `dns-stack`, and `proxy-stack`.
+
+Reasoning: the Stage 7 special-case model is now closed out, and the remaining missing `STACK_CONTRACT.md` files are the last documented gaps before broader consistency/hardening work. Clearing those docs first keeps Stage 8 grounded in the shared contract model before any branch-wide workflow tightening.
