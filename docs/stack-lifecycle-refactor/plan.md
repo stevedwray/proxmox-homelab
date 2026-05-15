@@ -257,7 +257,7 @@ Candidate early rollout targets:
 - `ci-runner-01` (primary, **complete**): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
 - `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
 - `dns-stack` (**complete**): closes trust-distribution dependency surfaced during step-ca rollout and validates generated zone publication plus CoreDNS systemd lifecycle under the Stage 6 model
-- `authentik-stack` (next, **tentative narrow Stage 6 follow-on scope**): next in platform dependency order after dns/step-ca and a prerequisite for proxy/edge rollout
+- `authentik-stack` (next, **selected single-stack Stage 6 target**): next in platform dependency order after dns/step-ca and a prerequisite for proxy/edge rollout while still supporting a bounded rollout slice
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):

@@ -9,6 +9,7 @@
 - Second Stage 6 implementation slice for `step-ca-stack` is complete with check mode, live reconcile, ACME health check (HTTP 200), and idempotent rerun all passing.
 - Third Stage 6 implementation slice for `dns-stack` is complete with Terraform apply, live reconcile, post-deploy check mode, and DNS health validation passing.
 - Stage 6 closeout for `step-ca-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
+- Stage 6 closeout for `dns-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
 
 ## Stage 6 Closeout: dns-stack
 
@@ -46,8 +47,8 @@
 
 ### Next narrow Stage 6 target
 
-- `authentik-stack` (tentative).
-- Why next: it follows dns/step-ca in platform dependency order and unblocks proxy/edge rollout, while still allowing a bounded single-stack Stage 6 slice.
+- `authentik-stack`.
+- Why next: it follows dns/step-ca in platform dependency order and unblocks proxy/edge rollout while keeping the next slice bounded to one stack.
 
 ## Stage 6 Closeout: step-ca-stack
 
