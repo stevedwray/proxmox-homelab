@@ -257,7 +257,7 @@ Candidate early rollout targets:
 - `ci-runner-01` (primary, **complete**): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
 - `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
 - `dns-stack` (**complete**): closes trust-distribution dependency surfaced during step-ca rollout and validates generated zone publication plus CoreDNS systemd lifecycle under the Stage 6 model
-- `authentik-stack` (next, **selected single-stack Stage 6 target**): next in platform dependency order after dns/step-ca and a prerequisite for proxy/edge rollout while still supporting a bounded rollout slice
+- `authentik-stack` (**complete**): validated as a bounded Stage 6 identity slice with Terraform apply, check-mode guards for runtime bootstrap/API tasks, successful live reconcile, and stable rerun behavior
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):
@@ -348,6 +348,34 @@ Stage 6 closeout status (`dns-stack`):
   - `docs/sessions/evidence/slr-06-rollout-dns-stack/rerun.log`
   - `docs/sessions/evidence/slr-06-rollout-dns-stack/health.log`
 
+Fourth implementation slice outcome (`authentik-stack`, **complete**):
+
+- Terraform apply executed in `terraform/lxc/stacks/authentik-stack` and created authentik-stack infra cleanly on pve-test (`vmid 150`, `192.168.20.10/24`, `mgmt_seg/tvmgmt`)
+- bounded playbook fixes applied only in `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml`:
+  - runtime compose/startup/health/API bootstrap tasks now skip in check mode (`when: not ansible_check_mode`) to avoid false failures before runtime state exists
+  - Docker restart now runs only when `/etc/docker/daemon.json` changes, reducing rerun churn
+- post-infra check mode passes: exit 0, 0 failed
+- live reconcile passes: exit 0, 0 failed
+- idempotent rerun passes: exit 0, 0 failed; only 2 expected baseline changes (`lxc_base` DNS resolver and temporary public DNS fallback task)
+- explicit Authentik health/API probes pass:
+  - `/-/health/live/` -> HTTP 200
+  - `/-/health/ready/` -> HTTP 200
+  - `/api/v3/core/users/?username=steve` (Bearer bootstrap token) -> HTTP 200 with one matching user in `homelab-admins`
+- evidence captured under `docs/sessions/evidence/slr-06-rollout-authentik-stack/`
+
+Stage 6 closeout status (`authentik-stack`):
+
+- completed and validated end-to-end (terraform apply, check mode, live reconcile, rerun, Authentik health/API probes)
+- accepted residual risks are bounded to pre-infra inventory assumptions and known DNS resolver fallback churn in shared base tasks
+- evidence index:
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/terraform-apply.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/check-preinfra.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/check.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/live.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/rerun.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/health.log`
+  - `docs/sessions/evidence/slr-06-rollout-authentik-stack/check-final.log`
+
 Deliverables:
 
 - migrated clean-stack set
@@ -387,7 +415,7 @@ Likely stacks:
 - `monitoring-stack` (depends on all core services)
 - `portainer-stack` (only if Stage 6 rollout reveals special-case behavior, currently deferred)
 
-Note: `step-ca-stack`, `ci-runner-01`, and `dns-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity.
+Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity.
 
 Exit criteria:
 

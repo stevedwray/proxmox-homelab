@@ -8,8 +8,46 @@
 - First Stage 6 implementation slice for `ci-runner-01` is complete with check mode, live reconcile, and systemd health validation passing.
 - Second Stage 6 implementation slice for `step-ca-stack` is complete with check mode, live reconcile, ACME health check (HTTP 200), and idempotent rerun all passing.
 - Third Stage 6 implementation slice for `dns-stack` is complete with Terraform apply, live reconcile, post-deploy check mode, and DNS health validation passing.
+- Fourth Stage 6 implementation slice for `authentik-stack` is complete with Terraform apply, check mode, live reconcile, rerun, and Authentik health/API validation passing.
 - Stage 6 closeout for `step-ca-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
 - Stage 6 closeout for `dns-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
+- Stage 6 closeout for `authentik-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
+
+## Stage 6 Closeout: authentik-stack
+
+### What changed
+
+- Applied authentik-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/authentik-stack` (container `150`, `192.168.20.10/24`, `mgmt_seg/tvmgmt`).
+- Kept Ansible scope strictly in `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` with bounded rollout fixes:
+  - Added `ansible_check_mode` guards around runtime compose startup, health waits, and Authentik API bootstrap/user-group tasks so dry-runs validate rendering without failing on non-materialized runtime state.
+  - Made Docker restart conditional on daemon config changes so reruns avoid unnecessary service restarts.
+
+### What was validated
+
+- Terraform apply: `8 added, 0 changed, 0 destroyed` for authentik-stack infra and generated handoff artifacts.
+- Check mode (post-infra): exit 0, 0 failed.
+- Live reconcile: exit 0, 0 failed.
+- Idempotent rerun: exit 0, 0 failed; only two expected baseline changes (`lxc_base` DNS resolver behavior and temporary DNS fallback task).
+- Authentik health/API probes passed:
+  - `/-/health/live/` -> HTTP 200
+  - `/-/health/ready/` -> HTTP 200
+  - `/api/v3/core/users/?username=steve` (Bearer bootstrap token) -> HTTP 200 with one result and expected `homelab-admins` membership
+
+### Evidence paths
+
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/terraform-apply.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/check-preinfra.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/check.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/live.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/rerun.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/health.log`
+- `docs/sessions/evidence/slr-06-rollout-authentik-stack/check-final.log`
+
+### Remaining accepted risks
+
+- `scripts/provision.sh --check` still assumes target inventory/host exists; first check-mode run is skipped before infrastructure apply if inventory is missing.
+- `lxc_base` DNS resolver task remains known non-idempotent baseline churn on reruns.
+- `Ensure temporary public DNS fallback so Docker can pull images` can still report changed on reruns by rewriting `/etc/resolv.conf` when upstream name resolution checks fail.
 
 ## Stage 6 Closeout: dns-stack
 
@@ -90,8 +128,8 @@
 
 ## Current Phase
 
-- Stage 6: third implementation slice complete for `dns-stack`.
-- Current branch is `task/slr-06-rollout-dns-stack`.
+- Stage 6: fourth implementation slice complete for `authentik-stack`.
+- Current branch is `task/slr-06-rollout-authentik-stack`.
 
 ## Established Working Assumptions
 
