@@ -408,18 +408,21 @@ Goals:
 
 Priority special-case themes and targets:
 
-1. **Identity and OAuth Integration (Stage 7a): `portainer-stack`**
-   - Authentik-backed OAuth bootstrap
-   - Proxy-published edge routes for management UI
-   - Requires coordination between identity layer (authentik) and ingress layer (proxy)
+1. **Identity and OAuth Integration (Stage 7a): `portainer-stack`** ✅ COMPLETE
+   - Authentik-backed OAuth bootstrap: ✅ Configured and verified
+   - Proxy-published edge routes for management UI: ✅ Published at portainer.lab.gibbsgreatly.xyz
+   - Requires coordination between identity layer (authentik) and ingress layer (proxy): ✅ Proven functional
+   - **Status:** Terraform applied, check-mode validated, live deployment complete, health checks pass
+   - **Branch:** `task/slr-07-special-case-portainer-oauth` (ready for merge to `refactor/stack-lifecycle`)
+   - **Evidence:** `docs/sessions/evidence/slr-07-portainer-oauth/EVIDENCE.md`
 
-2. **Multi-service Observability (Stage 7b): `monitoring-stack`**
+2. **Multi-service Observability (Stage 7b): `monitoring-stack`** ⏳ PENDING
    - Authentik OIDC client reconciliation in pre-tasks
    - Grafana OAuth integration
    - Multi-service scraping registration pattern
    - Requires coordination between monitoring stack and all core platform services
 
-3. **Deferred Data-Centric Stacks (Stage 7c+): `netbox-stack`, others**
+3. **Deferred Data-Centric Stacks (Stage 7c+): `netbox-stack`, others** ⏳ PENDING
    - Simpler dependencies but still benefit from hardened multi-stack patterns
    - Execute after 7a and 7b prove the integration model
 
@@ -427,9 +430,9 @@ Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are no
 
 Likely stacks requiring Stage 7 treatment:
 
-- `portainer-stack` (Authentik OAuth + edge route publishing)
-- `monitoring-stack` (Authentik OIDC + multi-service scraping)
-- `netbox-stack` (data-centric; can follow after integration patterns proven)
+- `portainer-stack` ✅ (completed: Authentik OAuth + edge route publishing)
+- `monitoring-stack` ⏳ (Authentik OIDC + multi-service scraping)
+- `netbox-stack` ⏳ (data-centric; can follow after integration patterns proven)
 
 Exit criteria:
 

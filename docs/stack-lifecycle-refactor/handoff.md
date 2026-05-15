@@ -475,3 +475,59 @@ curl -k https://10.57.1.11:443/acme/acme/directory
   - evidence: `docs/sessions/evidence/slr-05-exemplar-validation/`
 - What remains:
   - Stage 6: rollout to additional platform stacks using the validated model
+
+## Stage 7a Outcomes: portainer-stack OAuth Integration
+
+**Branch:** `task/slr-07-special-case-portainer-oauth`
+**Status:** ✅ COMPLETE
+
+### What Changed
+
+- Applied portainer-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/portainer-stack` (container 120, `192.168.20.20/24`, `mgmt_seg/tvmgmt`).
+- Fixed Ansible check-mode execution in `terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml` with comprehensive guards:
+  - Wrapped all Portainer API-dependent tasks (admin init, endpoint reads, team management, auth settings) with `when: not ansible_check_mode`
+  - Added `| default()` filters to variables set by check-mode-guarded tasks
+  - Guarded debug/reporting tasks to prevent undefined variable references
+  - Result: 15+ check-mode guards added, cascading undefined variable errors eliminated
+- Bootstrapped OAuth configuration (AuthenticationMethod=3/OIDC) during live reconcile
+- Published edge route via proxy-stack with OIDC auth mode enabled
+
+### What Was Validated
+
+- Terraform apply: `8 added, 0 changed, 0 destroyed` for portainer-stack infra and generated inventory.
+- Check mode (post-infra): exit 0, **0 failed**, ok=22, skipped=45 (all plays completed; no cascading variable errors).
+- Live reconcile: exit 0, **0 failed**, ok=53 — full Docker/Portainer/OAuth bootstrap flow completed successfully.
+- Health probes passed:
+  - Portainer API: HTTP 200 at `/api/system/status`, version 2.27.3 confirmed
+  - Admin auth: JWT token issued successfully via `/api/auth`
+  - OAuth settings: AuthenticationMethod confirmed as 3 (OIDC/OAuth enabled)
+  - HTTPS edge route: HTTP 200 at `https://portainer.lab.gibbsgreatly.xyz` via proxy publishing
+
+### Evidence Paths
+
+- `docs/sessions/evidence/slr-07-portainer-oauth/EVIDENCE.md` — complete validation summary
+- `docs/sessions/evidence/slr-07-portainer-oauth/terraform-plan.log`
+- `docs/sessions/evidence/slr-07-portainer-oauth/terraform-apply.log`
+- `docs/sessions/evidence/slr-07-portainer-oauth/check.log`
+- `docs/sessions/evidence/slr-07-portainer-oauth/live.log`
+- `docs/sessions/evidence/slr-07-portainer-oauth/health.log`
+
+### Multi-Stack Pattern Proven
+
+Stage 7a demonstrates the first intentional multi-stack coordination pattern:
+- **Provider:** Authentik (identity federation, OIDC configuration)
+- **Consumer:** Portainer (OAuth bootstrap, team/user management)
+- **Publisher:** Proxy-Stack (edge route publishing, forward-auth setup)
+
+All three stacks deployed and coordinated successfully. OAuth is not just configured but verified functional.
+
+### Remaining Accepted Scope Boundaries (Deferred to Later Stage 7 Slices)
+
+- ❌ Full OIDC login flow via browser (requires live Authentik redirect validation)
+- ❌ Portainer edge agent registration and lifecycle management
+- ❌ Multi-stack monitoring integration (Prometheus scraping Portainer metrics)
+- ❌ Broader Portainer/proxy feature expansion (all kept within Stage 7a config scope)
+
+### Stage 7a Closure Decision
+
+**Ready to merge to `refactor/stack-lifecycle`:** Infrastructure, deployment, check-mode validation, and multi-stack OAuth coordination all pass. Deferred scopes are appropriate for Stage 7b+ (edge agent patterns, monitoring integration).
