@@ -6,11 +6,12 @@
 - Exemplar pair `apt-cacher-stack` and `harbor-stack` validated end-to-end on branch `task/slr-05-exemplar-validation`.
 - Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.
 - First Stage 6 implementation slice for `ci-runner-01` is complete with check mode, live reconcile, and systemd health validation passing.
+- Second Stage 6 implementation slice for `step-ca-stack` is complete with check mode, live reconcile, ACME health check (HTTP 200), and idempotent rerun all passing.
 
 ## Current Phase
 
-- Stage 6: first implementation slice complete for `ci-runner-01`.
-- Current branch name is `task/slr-06-rollout-ci-runner-01`, matching the approved platform deployment order.
+- Stage 6: second implementation slice complete for `step-ca-stack`.
+- Current branch is `task/slr-06-rollout-step-ca-stack`.
 
 ## Established Working Assumptions
 
@@ -21,6 +22,34 @@
 - Terraform may offer an approved post-change day-2 reconcile path.
 
 ## Current Session Progress
+
+### Step 2: step-ca-stack Rollout (Stage 6 Second Slice — completed)
+
+**Branch:** `task/slr-06-rollout-step-ca-stack`
+
+**What changed:**
+- Created `terraform/lxc/stacks/step-ca-stack/inventory.yml` — first-time inventory for this stack (IP 192.168.20.11, vmid 152, mgmt_seg zone, ProxyJump through pve-test)
+- Applied bounded check-mode fixes to `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`:
+  - Download/extract/find/install binary tasks: added `and not ansible_check_mode` guard (prevents `get_url` from attempting DNS resolution and `first` filter from failing on empty find results in check mode on a fresh container)
+  - `Bootstrap step-ca configuration` (`step ca init`): added `and not ansible_check_mode` (binary not present and password files not written in check mode on fresh container)
+  - `Enable and start step-ca`: added `ignore_errors: "{{ ansible_check_mode }}"` (service unit not installed yet in check mode on fresh container)
+  - `Wait for step-ca to answer health checks`: added `when: not ansible_check_mode` (step-ca not running in check mode; 30-retry loop would block for 5 minutes otherwise)
+  - `Export root CA certificate` and `Fetch root CA certificate`: added `ignore_errors: "{{ ansible_check_mode }}"` (root_ca.crt not present in check mode on fresh container)
+
+**What was validated:**
+- Terraform apply: LXC container 152 (step-ca, 192.168.20.11/24, mgmt_seg/tvmgmt) created cleanly on pve-test
+- Check mode (fresh container): exit 0, 0 failed, 2 expected ignores (enable/start and export) — `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-run-2.log`
+- Live reconcile: exit 0, 0 failed, 0 ignored — full install path (download binaries, `step ca init`, systemd enable/start, health check, root cert fetch) — `docs/sessions/evidence/slr-06-rollout-step-ca-stack/live.log`
+- ACME health check: `curl -sk https://192.168.20.11:443/acme/acme/directory` → HTTP 200, valid ACME directory JSON — `docs/sessions/evidence/slr-06-rollout-step-ca-stack/health.log`
+- Idempotent rerun: exit 0, 0 failed — only 4 changes from lxc_base DNS resolver and DNS fallback shell task (same non-idempotent baseline as other stacks) — `docs/sessions/evidence/slr-06-rollout-step-ca-stack/rerun.log`
+- Check mode (post-deploy): exit 0, 0 failed, 0 ignored — binary skip path works correctly with installed binaries — `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-final.log`
+- Root cert fetched to `certs/homelab-root.crt`
+
+**Remaining risks / follow-up:**
+- `lxc_base : Configure guest DNS resolver` reports changed on every run (resolv.conf written by DNS fallback shell overrides the managed config); same pattern seen across all stacks, within accepted non-idempotent threshold
+- `lxc_base : Install homelab root CA` reports changed on every rerun (check mode shows ok); this is an lxc_base role issue common to all stacks
+- Second play (`Retroactively trust homelab root CA on dns-stack`) is a no-op because `dns-stack` is not in the step-ca-stack inventory; this is intentional — trust distribution to dns-stack is deferred until dns-stack is rolled out and its inventory can be included or the play moved to a separate coordination playbook
+- `certs/homelab-root.crt` has been updated in this session; downstream stacks (Traefik, dns-stack) need this cert but are not yet rolled out
 
 ### Step 1: Scope Definition for step-ca-stack (completed)
 

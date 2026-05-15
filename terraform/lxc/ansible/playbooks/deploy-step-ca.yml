@@ -71,7 +71,7 @@
       until: step_cli_download is succeeded
       retries: 5
       delay: 5
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Download step-ca release
       ansible.builtin.get_url:
@@ -83,35 +83,35 @@
       until: step_ca_download is succeeded
       retries: 5
       delay: 5
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Create step CLI installation directory
       ansible.builtin.file:
         path: "{{ step_cli_install_dir }}"
         state: directory
         mode: "0755"
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Create step-ca installation directory
       ansible.builtin.file:
         path: "{{ step_ca_install_dir }}"
         state: directory
         mode: "0755"
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Extract step CLI binaries
       ansible.builtin.unarchive:
         src: "/tmp/step_linux_{{ step_cli_version }}_amd64.tar.gz"
         dest: "{{ step_cli_install_dir }}"
         remote_src: true
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Extract step-ca binaries
       ansible.builtin.unarchive:
         src: "/tmp/step-ca_linux_{{ step_ca_version }}_amd64.tar.gz"
         dest: "{{ step_ca_install_dir }}"
         remote_src: true
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Locate step CLI binary
       ansible.builtin.find:
@@ -120,7 +120,7 @@
         file_type: file
         recurse: true
       register: step_cli_binary_find
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Locate step-ca binary
       ansible.builtin.find:
@@ -129,7 +129,7 @@
         file_type: file
         recurse: true
       register: step_ca_binary_find
-      when: step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0
+      when: (step_binary_stats.results | selectattr('stat.exists', 'equalto', false) | list | length > 0) and not ansible_check_mode
 
     - name: Install step CLI binary
       ansible.builtin.copy:
@@ -137,7 +137,9 @@
         dest: /usr/local/bin/step
         remote_src: true
         mode: "0755"
-      when: step_binary_stats.results[0].stat.exists is not defined or not step_binary_stats.results[0].stat.exists
+      when:
+        - not ansible_check_mode
+        - step_binary_stats.results[0].stat.exists is not defined or not step_binary_stats.results[0].stat.exists
 
     - name: Install step-ca binary
       ansible.builtin.copy:
@@ -145,7 +147,9 @@
         dest: /usr/local/bin/step-ca
         remote_src: true
         mode: "0755"
-      when: step_binary_stats.results[1].stat.exists is not defined or not step_binary_stats.results[1].stat.exists
+      when:
+        - not ansible_check_mode
+        - step_binary_stats.results[1].stat.exists is not defined or not step_binary_stats.results[1].stat.exists
 
     - name: Create step-ca configuration directory
       ansible.builtin.file:
@@ -199,7 +203,7 @@
         chdir: "{{ step_ca_steppath }}"
       environment:
         STEPPATH: "{{ step_ca_steppath }}"
-      when: not step_ca_config_stat.stat.exists
+      when: not step_ca_config_stat.stat.exists and not ansible_check_mode
       no_log: true
 
     - name: Install step-ca systemd unit
@@ -233,6 +237,7 @@
         name: step-ca
         enabled: true
         state: started
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Wait for step-ca to answer health checks
       ansible.builtin.command:
@@ -249,6 +254,7 @@
       delay: 10
       until: step_ca_health.rc == 0
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Create local certs directory
       ansible.builtin.file:
@@ -266,6 +272,7 @@
         mode: "0644"
         remote_src: true
       changed_when: false
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Fetch root CA certificate to the repository
       ansible.builtin.fetch:
@@ -273,6 +280,7 @@
         dest: "{{ step_ca_root_cert_local }}"
         flat: true
       run_once: true
+      ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Retroactively trust homelab root CA on dns-stack
   hosts: dns-stack

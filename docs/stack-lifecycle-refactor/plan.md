@@ -255,7 +255,7 @@ Goals:
 Candidate early rollout targets:
 
 - `ci-runner-01` (primary, **complete**): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
-- `step-ca-stack` (secondary, **scope-definition step**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
+- `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):
@@ -291,36 +291,23 @@ First implementation slice outcome (`ci-runner-01`):
 - evidence captured under `docs/sessions/evidence/slr-06-rollout-ci-runner-01/`
 - follow-up risk: this session had to regenerate the generated `inventory.yml` handoff artifact for `ci-runner-01`; the targeted recovery apply also recreated the stack's LXC and SDN attachment because those resources were absent from local state, so inventory-artifact availability should be treated as an operator preflight check in later rollout sessions
 
-Second implementation slice scope (`step-ca-stack`, **scope-definition step**):
+Second implementation slice outcome (`step-ca-stack`, **complete**):
 
-- Why this second: depends only on apt-cacher-stack (exemplar, validated); represents a non-Docker systemd service proving the pattern works across service types; simpler infrastructure than Docker/database stacks; logical ordering before dns-stack, proxy-stack, and identity services which have broader dependencies
-- Expected changes for this implementation slice:
-  - apply exemplar-proven reconcile pattern to `step-ca-stack` only
-  - make bounded fixes required for check-mode and idempotent rerun behavior inside `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`, specifically around:
-    - binary download/installation from GitHub releases (may fail fresh in check mode if binary path does not exist)
-    - systemd unit enable/start tasks (may fail if service not yet installed)
-    - root certificate export to repo (should tolerate if cert does not exist yet in check mode)
-    - step-ca initialization and provisioner password handling (must remain idempotent across reruns)
-  - keep contract and workflow updates limited to what `step-ca-stack` needs
-- Validation evidence required:
-  - check-mode pass for the stack-specific reconcile path: `./with-secrets ./scripts/provision.sh --stack step-ca-stack --check`
-  - live reconcile pass with no fatal failures
-  - health check pass: `curl -k https://10.57.1.11:443/acme/acme/directory` returns 200 (or equivalent step-ca health endpoint)
-  - evidence captured under `docs/sessions/evidence/slr-06-rollout-step-ca-stack/`
-  - check-mode log should show local configuration tasks converging without requiring live GitHub/external side effects
-  - live health log should confirm step-ca systemd service is running and responding to ACME queries
-- Risks:
-  - binary installation from GitHub releases is subject to rate-limiting and availability
-  - step-ca password lifecycle and initialization must remain deterministic on rerun (not idempotent by default)
-  - root certificate export to repo requires file system permissions and may expose timing issues in check mode
-  - ACME provisioner token lifecycle may require bounded handling if provisioner password changes between runs
-  - systemd unit may already exist from previous runs, requiring reuse logic
-  - different from ci-runner-01 (no external registration service like GitHub); good test case for local-only state
-- Non-goals:
-  - no refactoring of secret handling or env var flow
-  - no reorganization of binary or certificate storage paths
-  - no changes to step-ca configuration format or version handling
-  - no multi-stack coordination or identity service integration yet
+- inventory.yml created for step-ca-stack (first-time inventory: IP 192.168.20.11, vmid 152, mgmt_seg zone)
+- bounded changes made only in `terraform/lxc/ansible/playbooks/deploy-step-ca.yml`:
+  - download/extract/find/install binary block guarded with `and not ansible_check_mode` (prevents DNS resolution attempts and empty-list failures on fresh container in check mode)
+  - `step ca init` bootstrap guarded with `and not ansible_check_mode` (binary not available in check mode)
+  - `Enable and start step-ca` uses `ignore_errors: "{{ ansible_check_mode }}"` (service unit not installed yet in check mode)
+  - `Wait for step-ca to answer health checks` skipped in check mode (`when: not ansible_check_mode`) to avoid 5-minute retry loop
+  - root cert export and fetch use `ignore_errors: "{{ ansible_check_mode }}"` (cert not present in check mode)
+- Terraform apply created container 152 cleanly on pve-test (mgmt_seg, tvmgmt bridge, 192.168.20.11/24)
+- check mode passes: exit 0, 0 failed, 2 expected ignores (enable/start and cert export)
+- live reconcile passes: exit 0, 0 failed — full install path including `step ca init`, systemd enable/start, CA health check, and root cert fetch all succeed
+- health check passes: `https://192.168.20.11:443/acme/acme/directory` → HTTP 200 with valid ACME directory JSON
+- idempotent rerun passes: exit 0, only 4 changes from lxc_base DNS/CA trust patterns (same non-idempotent baseline as other stacks)
+- root cert fetched to `certs/homelab-root.crt`
+- evidence captured under `docs/sessions/evidence/slr-06-rollout-step-ca-stack/`
+- follow-up: second play (retroactive trust distribution to dns-stack) is a no-op until dns-stack is rolled out
 
 Deliverables:
 
