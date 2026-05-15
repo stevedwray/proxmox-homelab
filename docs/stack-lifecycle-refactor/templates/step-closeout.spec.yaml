@@ -1,0 +1,59 @@
+step:
+  id: "example-closeout-01"
+  stage: "1"
+  type: "closeout"
+  title: "Close out bounded step changes"
+  branch: "task/example-branch"
+
+goal:
+  summary: "Commit and push only the bounded files for the completed step."
+
+scope:
+  allowed_paths:
+    - "docs/stack-lifecycle-refactor/example.md"
+  forbidden_actions:
+    - "Terraform, Ansible, or scripts/ execution"
+    - "Edits outside allowed_paths"
+    - "Merge or promotion"
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  starting_sha: "0123456789abcdef0123456789abcdef01234567"
+
+env:
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-branch"
+  approvals_required: false
+  disposable: false
+  scan_gate: "pr"
+
+gates:
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-branch"
+    critical: true
+  - id: "stage-approved-files"
+    cmd: "git add docs/stack-lifecycle-refactor/example.md"
+    expect: "exit 0"
+    critical: true
+  - id: "verify-staged-scope"
+    cmd: "git diff --cached --name-only"
+    expect: "docs/stack-lifecycle-refactor/example.md"
+    critical: true
+  - id: "commit-closeout"
+    cmd: "git commit -m \"example: close out bounded step\""
+    expect: "exit 0"
+    critical: true
+  - id: "push-branch"
+    cmd: "git push origin task/example-branch"
+    expect: "exit 0"
+    critical: true
+
+report:
+  path: ".git/ai/reports/example-closeout-01.md"
+
+plan_state:
+  path: ".git/ai/plan-state.yaml"
+
+model_hint: "heavy"

@@ -1,0 +1,8 @@
+step_id: "example-step-01"
+status: "blocked"
+blocker_type: "technical"
+summary: "Brief blocker summary"
+details: "Exact technical issue and why autonomous execution could not continue."
+report_path: ".git/ai/reports/example-step-01.md"
+requires:
+  - "planner review"

@@ -3,6 +3,9 @@ kind: EdgeManifest
 metadata:
   name: portainer-edge
   stack: portainer-stack
+  annotations:
+    repo.auth.oidc.client_id_env: PORTAINER_OAUTH_CLIENT_ID
+    repo.auth.oidc.client_secret_env: PORTAINER_OAUTH_CLIENT_SECRET
 spec:
   routes:
     - name: portainer

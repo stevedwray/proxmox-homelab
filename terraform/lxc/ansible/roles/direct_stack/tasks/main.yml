@@ -47,10 +47,13 @@
   ansible.builtin.command:
     cmd: docker compose -f "{{ direct_stack_compose_path }}" config -q
   changed_when: false
-  when: direct_stack_compose_write is changed
+  when:
+    - direct_stack_compose_write is changed
+    - not ansible_check_mode
 
 - name: Deploy compose project
   community.docker.docker_compose_v2:
     project_src: "{{ direct_stack_compose_dir }}"
     state: present
     remove_orphans: "{{ direct_stack_prune_on_update }}"
+  when: not ansible_check_mode

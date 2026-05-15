@@ -12,7 +12,7 @@ a Portainer agent so that their containers are visible and manageable from one U
 |--------------|--------------------------|
 | Zone         | `mgmt_seg` (VLAN 20)     |
 | IP           | `${lab_ip_portainer}/24`          |
-| Gateway      | `10.57.1.1` (MikroTik)  |
+| Gateway      | `${lab_gw_mgmt}`         |
 | VMID         | 120                      |
 
 ## Inputs

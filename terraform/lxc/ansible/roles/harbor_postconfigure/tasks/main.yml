@@ -3,6 +3,10 @@
 # Creates: Docker Hub proxy cache endpoint, dockerhub project, CI robot account.
 # All tasks delegate to localhost (Ansible controller calls Harbor API directly).
 
+- name: Skip Harbor post-configuration in check mode (requires live Harbor API)
+  ansible.builtin.meta: end_play
+  when: ansible_check_mode
+
 - name: Authenticate with Harbor API
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/current"
@@ -221,7 +225,7 @@
 - name: Check if Docker Hub endpoint already exists
   ansible.builtin.set_fact:
     harbor_postconfigure_dockerhub_endpoint_id: "{{ item.id }}"
-  loop: "{{ harbor_postconfigure_registries.json }}"
+  loop: "{{ harbor_postconfigure_registries.json | default([]) }}"
   when: item.name == harbor_postconfigure_dockerhub_endpoint_name
   delegate_to: localhost
 
@@ -279,6 +283,7 @@
         if harbor_postconfigure_endpoint_result is not skipped
         else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
       }}
+  when: harbor_postconfigure_dockerhub_endpoint_id is defined
   delegate_to: localhost
 
 # -----------------------------------------------------------------------

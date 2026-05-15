@@ -128,6 +128,7 @@
       delay: 10
       until: netbox_health.stdout == 'healthy'
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Create superuser if not exists
       ansible.builtin.command:
@@ -145,18 +146,13 @@
         - netbox_superuser_result.rc != 0
         - "'already taken' not in netbox_superuser_result.stderr"
       no_log: true
+      when: not ansible_check_mode
 
-    - name: Ensure steve and breakglass local NetBox admin users exist
-      ansible.builtin.shell:
-        cmd: |
-          docker exec -i \
-            -e NB_STEVE_USER \
-            -e NB_STEVE_EMAIL \
-            -e NB_BREAKGLASS_USER \
-            -e NB_BREAKGLASS_EMAIL \
-            -e NB_BREAKGLASS_PASSWORD \
-            {{ netbox_container }} \
-            {{ netbox_manage }} shell <<'PYEOF'
+    - name: Write NetBox local admin sync script
+      ansible.builtin.copy:
+        dest: /tmp/netbox-local-admin-sync.py
+        mode: "0600"
+        content: |
           import os
           from django.contrib.auth import get_user_model
 
@@ -164,64 +160,70 @@
           user_field_names = {field.name for field in User._meta.get_fields()}
           changed = False
 
-          def admin_defaults(email):
+          def ensure_admin_user(username, email, password_value=None):
+              global changed
               defaults = {
-                  'email': email,
-                  'is_superuser': True,
+                  "email": email,
+                  "is_superuser": True,
               }
-              if 'is_staff' in user_field_names:
-                  defaults['is_staff'] = True
-              if 'is_active' in user_field_names:
-                  defaults['is_active'] = True
-              return defaults
+              if "is_staff" in user_field_names:
+                  defaults["is_staff"] = True
+              if "is_active" in user_field_names:
+                  defaults["is_active"] = True
 
-          def sync_admin_user(user, email, use_password, password_value=None):
+              user, created = User.objects.get_or_create(username=username, defaults=defaults)
               updates = []
+
               if user.email != email:
                   user.email = email
-                  updates.append('email')
-              if 'is_active' in user_field_names and not user.is_active:
+                  updates.append("email")
+              if "is_active" in user_field_names and not user.is_active:
                   user.is_active = True
-                  updates.append('is_active')
-              if 'is_staff' in user_field_names and not user.is_staff:
+                  updates.append("is_active")
+              if "is_staff" in user_field_names and not user.is_staff:
                   user.is_staff = True
-                  updates.append('is_staff')
+                  updates.append("is_staff")
               if not user.is_superuser:
                   user.is_superuser = True
-                  updates.append('is_superuser')
-              if use_password:
-                  if not user.check_password(password_value):
-                      user.set_password(password_value)
-                      updates.append('password')
-              elif user.has_usable_password():
-                  user.set_unusable_password()
-                  updates.append('password')
+                  updates.append("is_superuser")
+
+              if password_value is None:
+                  if user.has_usable_password():
+                      user.set_unusable_password()
+                      updates.append("password")
+              elif not user.check_password(password_value):
+                  user.set_password(password_value)
+                  updates.append("password")
+
               if updates:
                   user.save(update_fields=updates)
-                  return True
-              return False
 
-          steve, steve_created = User.objects.get_or_create(
-              username=os.environ['NB_STEVE_USER'],
-              defaults=admin_defaults(os.environ['NB_STEVE_EMAIL']),
+              if created or updates:
+                  changed = True
+
+          ensure_admin_user(
+              username=os.environ["NB_STEVE_USER"],
+              email=os.environ["NB_STEVE_EMAIL"],
           )
-          if steve_created or sync_admin_user(steve, os.environ['NB_STEVE_EMAIL'], False):
-              changed = True
-
-          breakglass, breakglass_created = User.objects.get_or_create(
-              username=os.environ['NB_BREAKGLASS_USER'],
-              defaults=admin_defaults(os.environ['NB_BREAKGLASS_EMAIL']),
+          ensure_admin_user(
+              username=os.environ["NB_BREAKGLASS_USER"],
+              email=os.environ["NB_BREAKGLASS_EMAIL"],
+              password_value=os.environ["NB_BREAKGLASS_PASSWORD"],
           )
-          if breakglass_created or sync_admin_user(
-              breakglass,
-              os.environ['NB_BREAKGLASS_EMAIL'],
-              True,
-              os.environ['NB_BREAKGLASS_PASSWORD'],
-          ):
-              changed = True
 
-          print('CHANGED' if changed else 'UNCHANGED')
-          PYEOF
+          print("CHANGED" if changed else "UNCHANGED")
+
+    - name: Ensure steve and breakglass local NetBox admin users exist
+      ansible.builtin.shell:
+        cmd: >-
+          docker exec -i
+          -e NB_STEVE_USER
+          -e NB_STEVE_EMAIL
+          -e NB_BREAKGLASS_USER
+          -e NB_BREAKGLASS_EMAIL
+          -e NB_BREAKGLASS_PASSWORD
+          {{ netbox_container }}
+          {{ netbox_manage }} shell < /tmp/netbox-local-admin-sync.py
       environment:
         NB_STEVE_USER: "{{ netbox_steve_username }}"
         NB_STEVE_EMAIL: "{{ netbox_steve_email }}"
@@ -229,10 +231,19 @@
         NB_BREAKGLASS_EMAIL: "{{ netbox_breakglass_email }}"
         NB_BREAKGLASS_PASSWORD: "{{ netbox_breakglass_password }}"
       register: netbox_local_admins_result
-      changed_when: "'CHANGED' in netbox_local_admins_result.stdout"
+      changed_when:
+        - netbox_local_admins_result.rc == 0
+        - "'CHANGED' in netbox_local_admins_result.stdout"
       failed_when:
         - netbox_local_admins_result.rc != 0
       no_log: true
+      when: not ansible_check_mode
+
+    - name: Remove NetBox local admin sync script
+      ansible.builtin.file:
+        path: /tmp/netbox-local-admin-sync.py
+        state: absent
+      when: not ansible_check_mode
 
     - name: Provision API token (idempotent)
       ansible.builtin.shell:
@@ -260,7 +271,9 @@
       failed_when:
         - netbox_token_result.rc != 0
       no_log: true
+      when: not ansible_check_mode
 
     - name: Display token status
       ansible.builtin.debug:
         msg: "API token: {{ 'created' if 'CREATED' in netbox_token_result.stdout else 'already exists' }}"
+      when: not ansible_check_mode

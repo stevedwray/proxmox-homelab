@@ -1,0 +1,50 @@
+step:
+  id: "example-main-work-01"
+  stage: "1"
+  type: "main_work"
+  title: "Execute bounded main-work step"
+  branch: "task/example-branch"
+
+goal:
+  summary: "Perform the bounded implementation work for this step without closeout."
+
+scope:
+  allowed_paths:
+    - "docs/stack-lifecycle-refactor/"
+  forbidden_actions:
+    - "Terraform, Ansible, or scripts/ execution"
+    - "git commit, push, merge, or promotion"
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  starting_sha: "0123456789abcdef0123456789abcdef01234567"
+
+env:
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-branch"
+  approvals_required: false
+  disposable: false
+  scan_gate: "pr"
+
+gates:
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-branch"
+    critical: true
+  - id: "record-starting-head"
+    cmd: "git rev-parse HEAD"
+    expect: "40-character SHA"
+    critical: true
+  - id: "verify-bounded-change-scope"
+    cmd: "git diff --name-only"
+    expect: "output remains within allowed_paths"
+    critical: true
+
+report:
+  path: ".git/ai/reports/example-main-work-01.md"
+
+plan_state:
+  path: ".git/ai/plan-state.yaml"
+
+model_hint: "lightweight"

@@ -1,157 +1,25 @@
 ---
-description: 'executor (heavy) — bounded session execution for complex or ambiguous homelab tasks'
+description: 'executor (heavy) — runs complex or ambiguous current-step packets'
 tools: [execute/runNotebookCell, execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runTask, execute/createAndRunTask, execute/runInTerminal, execute/runTests, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/searchSubagent, search/usages, web/fetch, web/githubRepo]
-model: gpt-4.1
 handoffs:
-  - label: 'Hand off to Architect'
+  - label: 'Escalate Blocker'
     agent: architect
-    prompt: 'Review executor report. Load context from .git/ai/handoff-to-architect.yaml'
+    prompt: 'Review blocker. Load context from .git/ai/blocker.yaml'
     send: false
 ---
 
-# Executor Agent (Heavy)
+# Executor (Heavy)
 
-All behavioral rules, evidence standards, branch/issue protocol, and output
-contract from [executor.agent.md](executor.agent.md) apply without modification.
+All rules from [executor.agent.md](executor.agent.md) apply.
 
-Session activation accepts the same validated inputs as the standard executor:
+Use this agent when:
 
-- `.git/ai/handoff-to-executor.yaml`
-- `.git/ai/session-<NN>.yaml`
+- `model_hint: heavy`
+- branch/bootstrap semantics are non-trivial
+- closeout or promotion work involves multiple risky git operations
+- a prior lightweight run hit a real technical blocker
 
-## Pre-Execution Checklist (required — read this section, do not rely on executor.agent.md link)
+Additional rule:
 
-Run these five checks in order before any gate work. Record all results in the
-session metadata table before continuing.
-
-1. **Branch** — confirm current branch matches `session.branch`.
-   The architect creates the branch before handoff. If the branch does not exist
-   locally: `git fetch origin && git checkout <session.branch>`
-   If it does not exist on the remote either: stop — this is an architect error,
-   do not create the branch.
-   If on a different branch: `git checkout <session.branch>`
-
-2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
-   `env.target_guard_expect`. If it does not, stop.
-
-3. **Baseline** — confirm `refs.baseline_sha` is an ancestor of HEAD:
-   `git merge-base --is-ancestor <sha> HEAD`
-   If it is not, stop.
-
-4. **Open issues** — search for issues in scope:
-   `gh issue list --label executor --state open`
-   List any found; do not open new ones at session start.
-
-5. **Approval** (destructive sessions only) — if the session includes any destructive
-   or deploy gates, validate the `approvals` block before running any gates:
-   - Confirm `approvals.destructive: true` is set.
-   - If `approvals.packet_path` is not null, confirm the file exists:
-     `test -f <approvals.packet_path>`
-   - If `approvals.packet_path` is not null, confirm the packet file contains the
-     exact value of `refs.current_head_sha`:
-     `grep -qF <current_head_sha> <approvals.packet_path>`
-   If any check fails, stop immediately — record the missing or mismatched field and
-   do not run destructive gates.
-
----
-
-## Terminal Resilience (required — read this section, do not rely on executor.agent.md link)
-
-**Long-running gate output capture**
-For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
-applies, Ansible playbooks), append `2>&1 | tee /tmp/gate-<gate-id>.log` to the
-command before running. If the terminal dies mid-execution, open a new terminal,
-`cat /tmp/gate-<gate-id>.log`, and use that output as the gate evidence. Clean up
-`/tmp/gate-*.log` files at session end.
-
-**Terminal recovery**
-If a terminal becomes unavailable during gate execution:
-- Do not hang waiting for output that will never arrive — open a new terminal immediately
-- Verify actual system state independently before deciding gate status:
-  for teardown: `ssh root@<host> 'pct list'`; for deploy: check container or service status
-- Record the gate as FAIL with a note about terminal loss and the observed system state
-- Do not assume the command ran or succeeded based solely on the terminal dying
-- Commit any changes the partial run may have left in the working tree before continuing
-
----
-
-## Session Metadata Table (required — read this section, do not rely on executor.agent.md link)
-
-Include this table at the top of the session report:
-
-| Field | Value |
-|---|---|
-| Session ID | |
-| Branch | |
-| HEAD SHA | |
-| Baseline anchor | |
-| Runtime validated SHA | |
-| Delta type (`none` / `metadata-only` / `runtime-change`) | |
-| Lineage check | PASS / FAIL |
-| Target guard | PASS / FAIL |
-| Working tree | clean / dirty |
-| Open issues at start | #N title, or none |
-| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
-| Approval: packet found | PASS / FAIL / N/A |
-| Approval: packet SHA match | PASS / FAIL / N/A |
-
----
-
-## Handoff (required — read this section, do not rely on executor.agent.md link)
-
-Run `mkdir -p .git/ai` before writing the handoff file.
-
-Write `.git/ai/handoff-to-architect.yaml` using **exactly** the structure below.
-Write **only** valid YAML conforming to this schema — no prose, no analysis, no
-extra keys. All narrative, root-cause analysis, and blocker detail belongs in the
-session report at `output_report`. The `notes` field is the only place for brief
-per-gate blocker context.
-
-If a previous session left content in `.git/ai/handoff-to-architect.yaml`, overwrite
-it completely. Do not append to or preserve old content.
-
-```yaml
-# Generated by executor session <id>
-session:
-  id: ""
-  branch: ""
-  issue: ""
-
-input:
-  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
-  prior_architect_review: null    # path or null
-
-refs:
-  baseline_sha: ""
-  runtime_validated_sha: ""      # SHA tied to runtime evidence in report
-  current_head_sha: ""           # SHA at handoff write time
-  delta_type: "none"             # none | metadata-only | runtime-change
-
-gates:
-  - id: ""
-    status: ""                    # PASS | FAIL | SKIP
-    notes: ""                     # brief; include blocker detail if FAIL
-```
-
-**Self-check before clicking Hand off:** Verify the written file starts with a
-`session:` key and contains `input:`, `refs:`, and `gates:` as top-level keys.
-If it does not, rewrite it from the template above.
-
-Click **Hand off to Architect** or paste the block.
-
----
-
-Use this agent when the architect sets `model_hint: heavy` — specifically when:
-
-- A gate requires interpreting ambiguous or multi-step output: Terraform plans
-  with non-obvious resource changes, Ansible failures with complex dependency
-  chains, or container boot logs with non-trivial error paths
-- State from a prior session was not fully diagnosed and you may need to reason
-  about what you find before deciding how to proceed
-- The session includes a conditional branch that the architect could not
-  pre-resolve: "if service X is in state Y, do Z; otherwise do W"
-- An unexpected failure mode was found in a prior session and root cause is
-  still unclear
-
-For sessions where all gates are explicit command + expected output with no
-ambiguity, use [executor.agent.md](executor.agent.md) instead.
+- For long-running gates, preserve durable logs with `tee` under
+  `.git/ai/reports/` or a step-local evidence directory when the packet allows it.

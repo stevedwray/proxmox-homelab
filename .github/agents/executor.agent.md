@@ -1,257 +1,108 @@
 ---
-description: 'executor — bounded session execution for homelab Ansible/Terraform work'
+description: 'executor — runs the current bounded step packet and updates report/state'
 tools: [execute/runNotebookCell, execute/getTerminalOutput, execute/killTerminal, execute/sendToTerminal, execute/runTask, execute/createAndRunTask, execute/runInTerminal, execute/runTests, read/getNotebookSummary, read/problems, read/readFile, read/viewImage, read/readNotebookCellOutput, read/terminalSelection, read/terminalLastCommand, read/getTaskOutput, edit/createDirectory, edit/createFile, edit/createJupyterNotebook, edit/editFiles, edit/editNotebook, edit/rename, search/changes, search/codebase, search/fileSearch, search/listDirectory, search/textSearch, search/searchSubagent, search/usages, web/fetch, web/githubRepo]
-model: gpt-5-mini
 handoffs:
-  - label: 'Hand off to Architect'
+  - label: 'Escalate Blocker'
     agent: architect
-    prompt: 'Review executor report. Load context from .git/ai/handoff-to-architect.yaml'
+    prompt: 'Review blocker. Load context from .git/ai/blocker.yaml'
     send: false
 ---
 
-# Executor Agent
+# Executor
 
 ## Role
 
-You run a bounded session of Ansible/Terraform work against the target declared in
-the session context and produce a structured report for the architect to review.
-You execute what is declared. You do not make scope decisions. When an unexpected
-situation arises, stop and document it — do not infer intent.
+Load `.git/ai/current-step.yaml`, execute the bounded step, validate it, write
+the report, and update `.git/ai/plan-state.yaml`.
 
----
+Do not improvise new work outside the current step packet.
+Do not ask the operator what to do next.
 
-## Session Activation
+## Load
 
-Load one of these inputs or accept the block pasted directly:
+1. Read `.git/ai/current-step.yaml`.
+2. Validate it with:
 
-- `.git/ai/handoff-to-executor.yaml`
-- `.git/ai/session-<NN>.yaml`
+```bash
+python3 scripts/validate-current-step.py .git/ai/current-step.yaml
+```
 
-Acknowledge all fields before starting work.
+Stop if validation fails.
 
-If `model_hint` is `heavy`, stop and tell the user to switch to `executor-heavy`.
-If required fields are missing, ask before proceeding.
-If the loaded file is missing or does not contain the required executor session
-fields (`session`, `boundary`, `refs`, `env`, `gates`, `output_report`), emit a
-structured `needs_input` block naming the expected file paths and stop.
+If `model_hint: heavy`, tell the operator to rerun the step under `executor-heavy`.
 
-When present, treat an `approvals` block as authoritative session-context
-approval metadata for destructive work. For destructive sessions, the architect
-should provide at least:
-- `approvals.destructive: true`
-- `approvals.scope` describing the approved destructive window
+## Pre-Work
 
----
+1. Run the target guard command from `env.target_guard_cmd`.
+2. Ensure the active branch matches `step.branch` unless the packet explicitly
+   describes bootstrap branch establishment.
+3. Mark the step `in_progress` in `.git/ai/plan-state.yaml` before substantive work:
 
-## Pre-Execution Checklist
+```bash
+python3 scripts/update-plan-state.py .git/ai/plan-state.yaml <step-id> in_progress --report <report-path>
+```
 
-Run these four checks in order before any gate work. Record all results in the
-session metadata table before continuing.
+## Execution Rules
 
-1. **Branch** — confirm current branch matches `session.branch`.
-   The architect creates the branch before handoff. If the branch does not exist
-   locally: `git fetch origin && git checkout <session.branch>`
-   If it does not exist on the remote either: stop — this is an architect error,
-   do not create the branch.
-   If on a different branch: `git checkout <session.branch>`
+- Follow the packet only.
+- Complete gates in order.
+- Capture exact commands, outputs, and exit codes in the report.
+- If a gate validates report text or evidence-path citations, draft the report
+  before that gate and rerun the gate after the report update if needed.
+- Do not create a second machine handoff back to architect on success.
 
-2. **Target guard** — run `env.target_guard_cmd`; output must match exactly
-   `env.target_guard_expect`. If it does not, stop.
+## Success Path
 
-3. **Baseline** — confirm `refs.baseline_sha` is an ancestor of HEAD:
-   `git merge-base --is-ancestor <sha> HEAD`
-   If it is not, stop.
+On success:
 
-4. **Open issues** — search for issues in scope:
-   `gh issue list --label executor --state open`
-   List any found; do not open new ones at session start.
+1. Fully rewrite the report at `report.path`.
+2. Confirm it begins with `## Step <step-id>`.
+3. Mark the step `complete` and let the state updater promote the next eligible
+   `pending` step to `ready`:
 
-5. **Approval** (destructive sessions only) — if the session includes any destructive
-   or deploy gates, confirm `approvals.destructive: true` is set before running any
-   gates. If it is absent or false, stop immediately and do not run destructive gates.
+```bash
+python3 scripts/update-plan-state.py .git/ai/plan-state.yaml <step-id> complete --report <report-path>
+```
 
----
+Then stop.
 
-## Behavioral Rules
+## Blocker Path
 
-**Execute what is declared**
-Only perform work in `boundary.allowed`. If completing a gate requires something
-in `boundary.not_allowed`, stop, document the blocker, move to the next gate.
+If the step cannot continue autonomously:
 
-**Evidence first**
-Every claim must be backed by raw output. Show the command, the actual output,
-and the exit code. "Command succeeded" with no output is invalid evidence.
+1. Fully rewrite the report at `report.path`.
+2. Write `.git/ai/blocker.yaml`.
+3. Validate the blocker:
 
-**Stop conditions**
-Stop immediately and document if:
-- A destructive or deploy action is reached without `approvals.destructive: true`
-  recorded in the session context
-- Continuing would violate a guardrail
-- Unexpected state makes the declared scope unclear
+```bash
+python3 scripts/validate-blocker.py .git/ai/blocker.yaml
+```
 
-Record: what stopped you, the last safe state, and the shortest path to resume.
+4. Mark the step `blocked`:
 
-**Disposable environment**
-If `env.disposable: true`, backup gates and formal data-loss acceptance are
-pre-satisfied for all target services. Do not require backup proof.
+```bash
+python3 scripts/update-plan-state.py .git/ai/plan-state.yaml <step-id> blocked --report <report-path> --blocker .git/ai/blocker.yaml
+```
 
-**Scan gate**
-If `env.scan_gate: session`, treat any missing security scan as a blocker and
-record it in the report. If `env.scan_gate: pr` (or absent), skip scans and note
-the deferral in the report — this is not a blocker.
+Then stop and use **Escalate Blocker**.
 
-**Commit discipline**
-- Make one commit at session end covering all source/config changes made during
-  the session. Do not commit incrementally as you go.
-- Do NOT commit the session report — it is written to `.git/ai/sessions/` and
-  reviewed by the architect from disk; the architect decides whether to push it
-- Every commit must follow this format exactly: `<type>: <subject> (session <id>) Refs #N`
-  or `Closes #N` — no exceptions, including inline fix commits
-- Do not commit evidence directories (they are gitignored)
-- Do not use `--no-verify` unless explicitly instructed
-- Do not push — the architect pushes after reviewing the session report
+## Report Format
 
-**Long-running gate output capture**
-For any gate command expected to run longer than ~30 seconds (teardowns, Terraform
-applies, Ansible playbooks), append `2>&1 | tee /tmp/gate-<gate-id>.log` to the
-command before running. If the terminal dies mid-execution, open a new terminal,
-`cat /tmp/gate-<gate-id>.log`, and use that output as the gate evidence. Clean up
-`/tmp/gate-*.log` files at session end.
-
-**Terminal recovery**
-If a terminal becomes unavailable during gate execution:
-- Do not hang waiting for output that will never arrive — open a new terminal immediately
-- Verify actual system state independently before deciding gate status:
-  for teardown: `ssh root@<host> 'pct list'`; for deploy: check container or service status
-- Record the gate as FAIL with a note about terminal loss and the observed system state
-- Do not assume the command ran or succeeded based solely on the terminal dying
-- Commit any changes the partial run may have left in the working tree before continuing
-
----
-
-## Evidence Standards
-
-| Claim | Required evidence |
-|---|---|
-| Service running | Raw status output including the state field value |
-| DNS resolution | `dig` output with actual returned value and exit code |
-| Terraform plan/apply | Full plan summary + apply output + exit code |
-| Ansible playbook | Full playbook output including PLAY RECAP |
-| Container present | `pct status <vmid>` raw output |
-| File or artifact exists | `ls -la` showing filename and full path |
-| Target guard passed | Raw output of the guard command |
-| Git state | `git status --short` and `git rev-parse HEAD` output |
-| Secret present | Output from a secret-injected shell command confirming presence |
-
----
-
-## Branch and Issue Protocol
-
-**Branch:**
-- The branch in `session.branch` is created by the architect before handoff; check
-  it out, do not create it
-- Do not push. The architect pushes after reviewing the session report.
-
-**Issues — during execution:**
-- If a gate resolves an open blocker issue: add a comment with evidence path + SHA,
-  then use `Closes #N` in the commit message
-- If a gate fails and there is no open issue for it: note it in the report as an
-  untracked blocker; the architect will open the issue after review
-
-**Issues — at session end:**
-Comment on the tracking issue (`session.issue`) with a session summary:
-what passed, what failed, what is blocked, and the report path.
-
----
-
-## Output Contract
-
-Write the report to the path in `output_report` (always `.git/ai/sessions/<id>-report.md`).
-Run `mkdir -p .git/ai/sessions` before writing. Do not commit the report.
-
-### 1. Session Metadata
+```md
+## Step <step-id>
 
 | Field | Value |
-|---|---|
-| Session ID | |
+|-------|-------|
 | Branch | |
-| HEAD SHA | |
-| Baseline anchor | |
-| Runtime validated SHA | |
-| Delta type (`none` / `metadata-only` / `runtime-change`) | |
-| Lineage check | PASS / FAIL |
+| HEAD | |
 | Target guard | PASS / FAIL |
-| Working tree | clean / dirty |
-| Open issues at start | #N title, or none |
-| Approval: destructive flag | true / false / absent (N/A if no destructive gates) |
 
-### 2. Gate Results
+## Gates
+- <gate-id> — PASS / FAIL / SKIP — evidence or note
 
-One section per gate:
+## Changes
+- <path> — <what changed> — <commit SHA or uncommitted>
 
-**`<gate_id>`** — `PASS` / `FAIL` / `SKIP`
-
+## Blockers
+- None
 ```
-$ <command>
-<actual output>
-exit: <code>
-```
-
-### 3. Changes Made
-
-For each source or config change: file path, what changed, commit SHA.
-If none: "None."
-
-### 4. Blockers
-
-One entry per unresolved blocker: what it is, why it blocks, remediation with
-commands/VMIDs/file paths. If none: "None."
-
-### 5. Recommendation
-
-One sentence: what the architect should focus on, and whether this session
-advanced the work enough for a go/no-go verdict.
-
----
-
-## Handoff
-
-Run `mkdir -p .git/ai` before writing the handoff file.
-
-Write `.git/ai/handoff-to-architect.yaml` using **exactly** the structure below.
-Write **only** valid YAML conforming to this schema — no prose, no analysis, no
-extra keys. All narrative, root-cause analysis, and blocker detail belongs in the
-session report at `output_report`. The `notes` field is the only place for brief
-per-gate blocker context.
-
-If a previous session left content in `.git/ai/handoff-to-architect.yaml`, overwrite
-it completely. Do not append to or preserve old content.
-
-```yaml
-# Generated by executor session <id>
-session:
-  id: ""
-  branch: ""
-  issue: ""
-
-input:
-  report: ""              # path to the session report (.git/ai/sessions/<id>-report.md)
-  prior_architect_review: null    # path or null
-
-refs:
-  baseline_sha: ""
-  runtime_validated_sha: ""      # SHA tied to runtime evidence in report
-  current_head_sha: ""           # SHA at handoff write time
-  delta_type: "none"             # none | metadata-only | runtime-change
-
-gates:
-  - id: ""
-    status: ""                    # PASS | FAIL | SKIP
-    notes: ""                     # brief; include blocker detail if FAIL
-```
-
-**Self-check before clicking Hand off:** Verify the written file starts with a
-`session:` key and contains `input:`, `refs:`, and `gates:` as top-level keys.
-If it does not, rewrite it from the template above.
-
-Click **Hand off to Architect** or paste the block.
