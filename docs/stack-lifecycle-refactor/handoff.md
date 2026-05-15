@@ -7,7 +7,47 @@
 - Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.
 - First Stage 6 implementation slice for `ci-runner-01` is complete with check mode, live reconcile, and systemd health validation passing.
 - Second Stage 6 implementation slice for `step-ca-stack` is complete with check mode, live reconcile, ACME health check (HTTP 200), and idempotent rerun all passing.
+- Third Stage 6 implementation slice for `dns-stack` is complete with Terraform apply, live reconcile, post-deploy check mode, and DNS health validation passing.
 - Stage 6 closeout for `step-ca-stack` is complete: scope, implementation, validation, and evidence capture are all finalized.
+
+## Stage 6 Closeout: dns-stack
+
+### What changed
+
+- Applied dns-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/dns-stack` (container `151`, `192.168.20.13/24`, `mgmt_seg/tvmgmt`).
+- Kept Ansible scope strictly in `terraform/lxc/ansible/playbooks/deploy-coredns.yml` with one bounded check-mode fix:
+  - Added `when: not ansible_check_mode` to authority/recursion fallback assertions so dry-runs do not fail after query commands are skipped in check mode.
+
+### What was validated
+
+- Terraform apply: `8 added, 0 changed, 0 destroyed` for dns-stack infra and generated handoff artifacts.
+- Live reconcile: exit 0, 0 failed — CoreDNS install/config/systemd lifecycle and in-play DNS verification all passed.
+- Post-deploy check mode: exit 0, 0 failed.
+- Idempotent rerun: exit 0, 0 failed; only two expected baseline changes (`lxc_base` DNS resolver fallback task and `Ensure temporary public DNS fallback`).
+- DNS health probes (outside playbook) passed:
+  - authoritative query: `traefik.lab.gibbsgreatly.xyz` -> `192.168.30.10`
+  - recursive query: `github.com` returns records
+  - NS query: `lab.gibbsgreatly.xyz` -> `ns1.lab.gibbsgreatly.xyz.`
+
+### Evidence paths
+
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/terraform-apply.log`
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/live.log`
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/check.log`
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/check-final.log`
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/rerun.log`
+- `docs/sessions/evidence/slr-06-rollout-dns-stack/health.log`
+
+### Remaining accepted risks
+
+- `scripts/provision.sh --check` assumes target inventory/host already exists; first dns check-mode run fails as unreachable before infrastructure apply.
+- `lxc_base` DNS resolver task remains non-idempotent baseline churn on reruns.
+- `Ensure temporary public DNS fallback so downloads succeed` can report changed on reruns because it rewrites `/etc/resolv.conf` when upstream resolution check fails.
+
+### Next narrow Stage 6 target
+
+- `authentik-stack` (tentative).
+- Why next: it follows dns/step-ca in platform dependency order and unblocks proxy/edge rollout, while still allowing a bounded single-stack Stage 6 slice.
 
 ## Stage 6 Closeout: step-ca-stack
 
@@ -49,8 +89,8 @@
 
 ## Current Phase
 
-- Stage 6: second implementation slice complete for `step-ca-stack`.
-- Current branch is `task/slr-06-rollout-step-ca-stack`.
+- Stage 6: third implementation slice complete for `dns-stack`.
+- Current branch is `task/slr-06-rollout-dns-stack`.
 
 ## Established Working Assumptions
 

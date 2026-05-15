@@ -256,7 +256,8 @@ Candidate early rollout targets:
 
 - `ci-runner-01` (primary, **complete**): next stack in the approved platform deployment order after the validated exemplar pair, with a contained systemd service boundary and straightforward health checks
 - `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
-- `dns-stack` (next, **selected for narrow Stage 6 follow-on scope**): directly closes the trust-distribution dependency surfaced during step-ca rollout and remains narrower than ingress/identity stacks with broader coupling
+- `dns-stack` (**complete**): closes trust-distribution dependency surfaced during step-ca rollout and validates generated zone publication plus CoreDNS systemd lifecycle under the Stage 6 model
+- `authentik-stack` (next, **tentative narrow Stage 6 follow-on scope**): next in platform dependency order after dns/step-ca and a prerequisite for proxy/edge rollout
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):
@@ -321,6 +322,32 @@ Stage 6 closeout status (`step-ca-stack`):
   - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/rerun.log`
   - `docs/sessions/evidence/slr-06-rollout-step-ca-stack/check-final.log`
 
+Third implementation slice outcome (`dns-stack`, **complete**):
+
+- Terraform apply executed in `terraform/lxc/stacks/dns-stack` and created dns-stack infra cleanly on pve-test (`vmid 151`, `192.168.20.13/24`, `mgmt_seg/tvmgmt`)
+- bounded playbook fix applied only in `terraform/lxc/ansible/playbooks/deploy-coredns.yml`:
+  - authority/recursion fallback assertions now skip in check mode (`when: not ansible_check_mode`) to avoid false failures when query commands are skipped
+- live reconcile passes: exit 0, 0 failed — CoreDNS install/config/systemd and in-play authority/recursion checks succeed
+- post-deploy check mode passes: exit 0, 0 failed
+- idempotent rerun passes: exit 0, 0 failed; only 2 expected baseline changes (`lxc_base` DNS resolver fallback behavior)
+- explicit DNS health probes pass:
+  - `traefik.lab.gibbsgreatly.xyz` authoritative answer -> `192.168.30.10`
+  - recursive query returns records for `github.com`
+  - NS query returns `ns1.lab.gibbsgreatly.xyz.`
+- evidence captured under `docs/sessions/evidence/slr-06-rollout-dns-stack/`
+
+Stage 6 closeout status (`dns-stack`):
+
+- completed and validated end-to-end (terraform apply, live reconcile, check mode, rerun, DNS health)
+- accepted residual risks are bounded to pre-infra check-mode reachability assumptions and known DNS resolver idempotency churn in base tasks
+- evidence index:
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/terraform-apply.log`
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/live.log`
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/check.log`
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/check-final.log`
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/rerun.log`
+  - `docs/sessions/evidence/slr-06-rollout-dns-stack/health.log`
+
 Deliverables:
 
 - migrated clean-stack set
@@ -360,7 +387,7 @@ Likely stacks:
 - `monitoring-stack` (depends on all core services)
 - `portainer-stack` (only if Stage 6 rollout reveals special-case behavior, currently deferred)
 
-Note: `step-ca-stack` and `ci-runner-01` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity.
+Note: `step-ca-stack`, `ci-runner-01`, and `dns-stack` are now covered under Stage 6 rollout; no Stage 7 special-case work needed for them unless implementation reveals unexpected complexity.
 
 Exit criteria:
 
