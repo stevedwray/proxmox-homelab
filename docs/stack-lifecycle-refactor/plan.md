@@ -416,11 +416,14 @@ Priority special-case themes and targets:
    - **Branch:** `task/slr-07-special-case-portainer-oauth` (ready for merge to `refactor/stack-lifecycle`)
    - **Evidence:** `docs/sessions/evidence/slr-07-portainer-oauth/EVIDENCE.md`
 
-2. **Multi-service Observability (Stage 7b): `monitoring-stack`** ⏳ PENDING
-   - Authentik OIDC client reconciliation in pre-tasks
-   - Grafana OAuth integration
-   - Multi-service scraping registration pattern
-   - Requires coordination between monitoring stack and all core platform services
+2. **Multi-service Observability (Stage 7b): `monitoring-stack`** ✅ COMPLETE
+  - Authentik OIDC client reconciliation in pre-tasks: ✅ validated during live reconcile
+  - Grafana OAuth integration: ✅ enabled and verified via Grafana admin settings API
+  - Multi-service scraping registration pattern: ✅ Grafana datasources and service readiness validated
+  - Requires coordination between monitoring stack and all core platform services: ✅ bounded coordination proven
+  - **Status:** Terraform applied, check-mode validated, live deployment complete, health checks pass
+  - **Branch:** `task/slr-07-monitoring-oidc` (ready for merge to `refactor/stack-lifecycle`)
+  - **Evidence:** `docs/sessions/evidence/slr-07-monitoring-oidc/EVIDENCE.md`
 
 3. **Deferred Data-Centric Stacks (Stage 7c+): `netbox-stack`, others** ⏳ PENDING
    - Simpler dependencies but still benefit from hardened multi-stack patterns
@@ -431,7 +434,7 @@ Note: `step-ca-stack`, `ci-runner-01`, `dns-stack`, and `authentik-stack` are no
 Likely stacks requiring Stage 7 treatment:
 
 - `portainer-stack` ✅ (completed: Authentik OAuth + edge route publishing)
-- `monitoring-stack` ⏳ (Authentik OIDC + multi-service scraping)
+- `monitoring-stack` ✅ (completed: Authentik OIDC + multi-service scraping)
 - `netbox-stack` ⏳ (data-centric; can follow after integration patterns proven)
 
 Exit criteria:

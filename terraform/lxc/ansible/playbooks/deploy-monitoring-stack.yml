@@ -353,6 +353,7 @@
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ monitoring_compose_dir }}"
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Add temporary /etc/hosts entry for Harbor when DNS lookup fails
       ansible.builtin.lineinfile:
@@ -377,6 +378,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ monitoring_compose_dir }}"
         state: present
+      when: not ansible_check_mode
 
     - name: Wait for Grafana health endpoint
       ansible.builtin.uri:
@@ -387,6 +389,7 @@
       retries: 30
       delay: 10
       until: grafana_health.status == 200
+      when: not ansible_check_mode
 
     - name: Wait for VictoriaMetrics endpoint
       ansible.builtin.uri:
@@ -397,6 +400,7 @@
       retries: 30
       delay: 10
       until: vm_health.status == 200
+      when: not ansible_check_mode
 
     - name: Wait for Loki readiness endpoint
       ansible.builtin.uri:
@@ -407,6 +411,7 @@
       retries: 30
       delay: 10
       until: loki_health.status == 200
+      when: not ansible_check_mode
 
     - name: Restore resolv.conf from backup if we modified it
       ansible.builtin.copy:
@@ -434,6 +439,7 @@
         status_code: [200, 404]
       register: grafana_breakglass_lookup
       no_log: true
+      when: not ansible_check_mode
 
     - name: Create Grafana breakglass local user when missing
       ansible.builtin.uri:
@@ -449,7 +455,9 @@
           login: "{{ grafana_breakglass_username }}"
           password: "{{ grafana_breakglass_password }}"
         status_code: [200, 201]
-      when: grafana_breakglass_lookup.status == 404
+      when:
+        - not ansible_check_mode
+        - grafana_breakglass_lookup.status == 404
       no_log: true
 
     - name: Refresh Grafana breakglass user lookup
@@ -462,6 +470,7 @@
         status_code: 200
       register: grafana_breakglass_lookup_after
       no_log: true
+      when: not ansible_check_mode
 
     - name: Sync Grafana breakglass user password
       ansible.builtin.uri:
@@ -475,6 +484,7 @@
           password: "{{ grafana_breakglass_password }}"
         status_code: 200
       no_log: true
+      when: not ansible_check_mode
 
     - name: Ensure Grafana breakglass user is Grafana admin
       ansible.builtin.uri:
@@ -488,3 +498,4 @@
           isGrafanaAdmin: true
         status_code: 200
       no_log: true
+      when: not ansible_check_mode

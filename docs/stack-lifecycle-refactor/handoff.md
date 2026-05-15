@@ -531,3 +531,56 @@ All three stacks deployed and coordinated successfully. OAuth is not just config
 ### Stage 7a Closure Decision
 
 **Ready to merge to `refactor/stack-lifecycle`:** Infrastructure, deployment, check-mode validation, and multi-stack OAuth coordination all pass. Deferred scopes are appropriate for Stage 7b+ (edge agent patterns, monitoring integration).
+
+## Stage 7b Outcomes: monitoring-stack OIDC + Observability Integration
+
+**Branch:** `task/slr-07-monitoring-oidc`
+**Status:** ✅ COMPLETE
+
+### What Changed
+
+- Applied monitoring-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/monitoring-stack` (container 154, `192.168.20.12/24`, `mgmt_seg/tvmgmt`).
+- Kept code changes bounded to `terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml` and added check-mode guards for runtime-only tasks:
+  - compose validation with `chdir` requiring materialized directory
+  - compose startup and service health wait loops
+  - Grafana breakglass API user lifecycle tasks
+- Confirmed Authentik OIDC reconciliation pre-task runs during live reconcile and Grafana OAuth settings remain enabled/configured.
+
+### What Was Validated
+
+- Terraform apply: `8 added, 0 changed, 0 destroyed` for monitoring-stack infra and generated inventory.
+- Check mode (post-infra): exit 0, **0 failed**, ok=21, skipped=31.
+- Live reconcile: exit 0, **0 failed**, ok=43 — compose stack converged and OIDC client reconcile executed.
+- Health probes passed:
+  - Grafana health: database `ok`
+  - VictoriaMetrics: metrics endpoint HTTP 200
+  - Loki: readiness endpoint reports ready
+  - Grafana datasources: includes VictoriaMetrics and Loki
+  - Grafana edge route: HTTPS returns `302` to `/login` (expected unauthenticated redirect)
+  - Grafana OAuth config: enabled with Authentik auth/token/api URLs configured
+
+### Evidence Paths
+
+- `docs/sessions/evidence/slr-07-monitoring-oidc/terraform-apply.log`
+- `docs/sessions/evidence/slr-07-monitoring-oidc/check.log`
+- `docs/sessions/evidence/slr-07-monitoring-oidc/live.log`
+- `docs/sessions/evidence/slr-07-monitoring-oidc/health.log`
+- `docs/sessions/evidence/slr-07-monitoring-oidc/EVIDENCE.md`
+
+### Multi-Stack Pattern Proven
+
+Stage 7b validates bounded observability integration across dependencies:
+- **Identity provider:** Authentik (OIDC client reconcile + endpoints)
+- **Consumer/UI:** Grafana OAuth generic provider configuration
+- **Publisher/edge:** Proxy-routed Grafana endpoint behavior (`/login` redirect)
+- **Core services:** VictoriaMetrics + Loki + datasource registration in Grafana
+
+### Remaining Accepted Scope Boundaries (Deferred)
+
+- ❌ Full browser-based OIDC interactive login flow validation (manual redirect/callback/session test)
+- ❌ Expanded cross-stack scrape target redesign beyond current monitoring stack behavior
+- ❌ Any NetBox or unrelated stack cleanup/refactor
+
+### Stage 7b Closure Decision
+
+**Ready to merge to `refactor/stack-lifecycle`:** Monitoring-stack infrastructure, bounded check-mode behavior, live reconcile, and scoped OIDC/observability health validation all pass.
