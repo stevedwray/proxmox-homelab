@@ -130,6 +130,39 @@
 
 - Stage 6: fourth implementation slice complete for `authentik-stack`.
 - Current branch is `task/slr-06-rollout-authentik-stack`.
+- Fifth implementation slice target: `proxy-stack` (next narrow Stage 6 rollout).
+
+## Next Narrow Stage 6 Target: proxy-stack
+
+### Why proxy-stack is next
+
+- **Unblocked by platform dependencies**: proxy-stack's `stack.yaml` explicitly decouples from authentik-stack (Traefik must start independently), but depends only on `harbor-stack` and `apt-cacher-stack` — both completed in Stage 5 exemplar validation.
+- **Critical platform layer**: Proxy/ingress is the foundation for edge access. All public-facing services route through it.
+- **Natural service progression**: After identity-layer completion, ingress/edge is the next logical integration point for validating cross-stack patterns.
+- **Simpler than deferred portainer-stack**: the plan defers portainer-stack due to OAuth/edge-route coupling; proxy-stack is the cleaner target for Stage 6.
+
+### Scope definition for proxy-stack Stage 6 rollout
+
+**In Scope:**
+- Create `terraform/lxc/stacks/proxy-stack/inventory.yml` (first-time inventory: vmid 153, `192.168.30.10/24`, edge_seg zone)
+- Apply proxy-stack infrastructure with `terragrunt apply` in `terraform/lxc/stacks/proxy-stack`
+- Bounded Ansible fixes to `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` only:
+  - Guard Docker socket operations in check mode (skip before container materializes)
+  - Guard compose startup, health validation, and certificate bundle checks in check mode
+  - Keep generated dynamic config updates idempotent across reruns
+- Health validation: HTTP entry point available on port 80 and TLS entry point on port 443
+- Evidence capture at `docs/sessions/evidence/slr-06-rollout-proxy-stack/`
+
+**Explicit Non-Goals (deferred to Stage 7):**
+- No broader Traefik/ingress redesign — keep stack.yaml and compose config as-is except for check-mode guards
+- No multi-stack router registration or dynamic service discovery expansion
+- No Authentik forward-auth middleware validation at this stage (forward-auth calls are Stage 7 when services route through proxy)
+- No certificate resolver lifecycle testing beyond Traefik container startup
+
+**Dependency Clarity:**
+- Proxy-stack does NOT require authentik-stack running (by design in stack.yaml)
+- However, authentik-stack being deployed validates full platform dependency closure
+- Forward-auth calls only needed when other services route through proxy (Stage 7+)
 
 ## Established Working Assumptions
 
