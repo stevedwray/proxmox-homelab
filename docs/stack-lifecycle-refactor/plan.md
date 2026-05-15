@@ -446,7 +446,7 @@ Likely stacks requiring Stage 7 treatment:
 Stage 7c planning note:
 
 - Planning step has been executed and closed with bounded netbox validation evidence.
-- Follow-up doc debt remains: missing `STACK_CONTRACT.md` for `monitoring-stack`, `netbox-stack`, `dns-stack`, and `proxy-stack`.
+- Follow-up doc debt remains: missing `STACK_CONTRACT.md` for `monitoring-stack`, `dns-stack`, and `proxy-stack`.
 
 Exit criteria:
 

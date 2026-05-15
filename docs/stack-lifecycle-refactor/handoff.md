@@ -625,7 +625,7 @@ Stage 7b validates bounded observability integration across dependencies:
 ### Remaining Accepted Risks
 
 - The local NetBox admin sync task is now non-fatal on runtime edge-case failure; this preserves reconcile continuity but may hide user-sync drift until explicit follow-up hardening.
-- `STACK_CONTRACT.md` remains missing for `netbox-stack` (and also for `monitoring-stack`, `dns-stack`, `proxy-stack`); this remains tracked documentation debt.
+- `STACK_CONTRACT.md` remains missing for `monitoring-stack`, `dns-stack`, and `proxy-stack`; this remains tracked documentation debt.
 
 ### Stage 7c Closure Decision
 
