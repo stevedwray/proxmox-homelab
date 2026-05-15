@@ -258,7 +258,7 @@ Candidate early rollout targets:
 - `step-ca-stack` (secondary, **complete**): systemd service (non-Docker) that depends only on apt-cacher-stack; represents a second proof of the service boundary pattern before handling Docker and identity services; logical next target before dns-stack and proxy-stack complexity
 - `dns-stack` (**complete**): closes trust-distribution dependency surfaced during step-ca rollout and validates generated zone publication plus CoreDNS systemd lifecycle under the Stage 6 model
 - `authentik-stack` (**complete**): validated as a bounded Stage 6 identity slice with Terraform apply, check-mode guards for runtime bootstrap/API tasks, successful live reconcile, and stable rerun behavior
-- `proxy-stack` (next, **in planning**): Traefik-based edge ingress that depends only on `apt-cacher-stack` and `harbor-stack` (both completed); does not require authentik-stack (by design per stack.yaml); validates Docker container boundary and generated config patterns under Stage 6; next logical target after identity-layer completion to establish the edge ingress foundation for higher-coupling stacks
+- `proxy-stack` (**complete**): Traefik-based edge ingress deployed and validated; depends only on `apt-cacher-stack` and `harbor-stack` (both completed); does not require authentik-stack (by design per stack.yaml); Docker container boundary and generated config patterns now proven under Stage 6
 - `portainer-stack` (deferred): keep this for a later rollout slice because the current implementation also touches Authentik-backed OAuth bootstrap and proxy-published edge routes, so it is not the clean next stack despite its local API health endpoint
 
 Stage 6 kickoff scope (current session):

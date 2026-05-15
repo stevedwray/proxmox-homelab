@@ -128,9 +128,52 @@
 
 ## Current Phase
 
-- Stage 6: fourth implementation slice complete for `authentik-stack`.
-- Current branch is `task/slr-06-rollout-authentik-stack`.
-- Fifth implementation slice target: `proxy-stack` (next narrow Stage 6 rollout).
+- Stage 6: fifth implementation slice complete for `proxy-stack`.
+- Current branch is `task/slr-06-rollout-proxy-stack`.
+
+## Stage 6 Closeout: proxy-stack
+
+### What changed
+
+- Created `terraform/lxc/stacks/proxy-stack/inventory.yml` (first-time inventory: vmid 153, `192.168.30.10/24`, edge_seg zone)
+- Applied proxy-stack infrastructure to pve-test with `terragrunt apply` in `terraform/lxc/stacks/proxy-stack` (container `153`, `192.168.30.10/24`, `edge_seg/tvedge`).
+- Kept Ansible scope strictly in `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` with bounded check-mode fixes:
+  - Added `when: not ansible_check_mode` to "Build combined CA bundle for lego" so shell task does not execute in check mode.
+  - Added `when: not ansible_check_mode` to "Validate Traefik compose configuration" to skip docker compose validation in check mode.
+  - Added `when: not ansible_check_mode` to "Start Traefik via compose" so container startup does not occur in check mode.
+
+### What was validated
+
+- Terraform apply: `8 added, 0 changed, 0 destroyed` for proxy-stack infra and generated handoff artifacts.
+- Check mode (post-infra): exit 0, 0 failed; 15 tasks skipped as expected (runtime tasks guarded with check-mode conditions).
+- Live reconcile: exit 0, 0 failed; Traefik container deployed and starting successfully.
+- Idempotent rerun: exit 0, 0 failed; 1 expected change (CA bundle rebuild shell task marked as always-changed), rest remain idempotent.
+- Health probes passed:
+  - HTTP entry point (port 80): responding with 308 redirect to HTTPS
+  - HTTPS entry point (port 443): responding with HTTP/1.1 header
+  - Container SSH connectivity: verified via ProxyJump through pve-test
+
+### Evidence paths
+
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/terraform-plan.log`
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/terraform-apply.log`
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/check.log`
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/live.log`
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/health.log`
+- `docs/sessions/evidence/slr-06-rollout-proxy-stack/rerun.log`
+
+### Remaining accepted risks
+
+- CA bundle task reports as "changed" every rerun (shell task with `changed_when: true`) — this is acceptable as it rebuilds the combined system + homelab CA bundle; the important idempotence metric is that no container restart or configuration rewrite occurs.
+- No forward-auth validation at this stage (Authentik integration deferred to Stage 7).
+- Generated dynamic Traefik config files are expected to evolve as additional stacks route through proxy in later stages.
+
+### Scope boundaries (explicitly NOT included in this slice)
+
+- No multi-stack router registration or dynamic service discovery expansion.
+- No Authentik forward-auth middleware validation (forward-auth calls only needed when other services route through proxy).
+- No certificate resolver lifecycle testing beyond Traefik container startup.
+- No broader Traefik/ingress redesign — kept stack.yaml and compose config as-is except for check-mode guards.
 
 ## Next Narrow Stage 6 Target: proxy-stack
 
