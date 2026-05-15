@@ -717,3 +717,44 @@ Validation/hardening pass (bounded Stage 8) outcomes:
 
 - known shared rerun churn classes from Stage 6-8 evidence remain accepted (DNS resolver/fallback rewrites, trust-install churn, proxy CA bundle always-changed task)
 - these are reporting-first baselines and should not hide new stack-specific regressions
+
+## Stage 9 Promotion-Readiness Preparation
+
+**Status:** ready to execute, not yet started
+
+### First real Stage 9 session
+
+Run this sequence from a clean tree after the target guard passes:
+
+1. `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` and confirm it prints `pve-test`.
+2. `./scripts/teardown-deploy-test.sh approval-preflight --require-clean`.
+3. `./scripts/teardown-deploy-test.sh cycle --execute --approval-text <text containing the required approval phrase plus OP-06 destroy-only scope markers> --approval-packet <path>`.
+4. Stop on the first failed phase; do not continue the remaining cycle phases in the same session.
+
+### Cycle order to expect
+
+- `destroy`
+- `deploy-foundation`
+- `deploy-edge`
+- `activate-edge`
+- `deploy-platform`
+- `final-validation`
+
+### Evidence matrix summary
+
+- Target guard: capture terminal output only.
+- Approval preflight: capture the preflight log and clean-tree/approval checks.
+- Destroy: capture per-stack destroy logs plus the aggregated cycle log and `state.json`.
+- Deploy foundation / edge / platform: capture phase logs under `docs/teardown-test/evidence/<stamp>/logs/`.
+- Activate edge: capture reconcile apply, DNS publish, Traefik publish, and post-activate dry-run logs.
+- Final validation: capture DNS, HTTP, API, and final reconcile dry-run logs.
+
+### Pass / fail summary
+
+- Pass means the approved sequence completes end to end with no failed phases and the final validation is clean.
+- Fail means any phase error, missing approval artifact, wrong target node, unexpected replacement, or post-redeploy health mismatch.
+
+### Baseline behavior carried forward
+
+- Known shared base-role churn remains acceptable only if it matches the documented Stage 6-8 baseline classes.
+- Any new destroy/redeploy or final-validation drift outside that baseline is a real regression and should stop the session.

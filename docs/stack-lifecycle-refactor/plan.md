@@ -116,6 +116,48 @@ Notes:
 
 - no large code movement in this stage
 - this is the primary kickoff stage for the refactor
+
+Stage 9 execution checklist (first real promotion-readiness session):
+
+1. Target guard must return `pve-test` before any destructive command:
+  - `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'`
+2. Run the non-destructive approval preflight in a clean tree:
+  - `./scripts/teardown-deploy-test.sh approval-preflight --require-clean`
+3. Run the full destructive cycle only after the approval packet and approval text are validated:
+  - `./scripts/teardown-deploy-test.sh cycle --execute --approval-text <text containing the required approval phrase plus OP-06 destroy-only scope markers> --approval-packet <path>`
+  - use `--disposable` only if the environment has been explicitly marked disposable and the approval-packet requirement has been waived for that session
+4. Execute the internal cycle phases in order and stop immediately on the first failure:
+  - `destroy`
+  - `deploy-foundation`
+  - `deploy-edge`
+  - `activate-edge`
+  - `deploy-platform`
+  - `final-validation`
+
+Stage 9 evidence matrix:
+
+| Phase | Primary command / output | Evidence to capture | Pass criteria | Stop / escalate if... |
+|---|---|---|---|---|
+| Target guard | `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` | terminal output in session notes | returns `pve-test` exactly | guard returns anything else |
+| Approval preflight | `./scripts/teardown-deploy-test.sh approval-preflight --require-clean` | phase log under `docs/teardown-test/evidence/<stamp>/logs/` | clean-tree check passes and preflight reports no blockers | working tree dirty, backup/approval assumptions missing, or preflight reports a blocker |
+| Destroy | `destroy` inside `cycle` | `destroy-*.log` entries plus aggregated cycle log and `state.json` | approved stacks are destroyed in the approved order and no unexpected survivors remain | any destroy failure, unexpected survivor, or approval-packet mismatch |
+| Deploy foundation | `deploy-foundation` | `deploy-foundation-*.log` entries and aggregated cycle log | foundation stacks re-apply successfully and containers return with expected VMIDs/IPs | any apply failure, unexpected replacement, or infra drift outside the approved plan |
+| Deploy edge | `deploy-edge` | `render-edge-coredns-*.log`, `render-edge-traefik-*.log`, and `deploy-edge-*.log` entries | generated edge artifacts render and apply successfully before activation | render failure, apply failure, or missing generated artifact output |
+| Activate edge | `activate-edge` | `reconcile-edge-apply.log`, `publish-coredns.log`, `publish-traefik.log`, and `reconcile-edge-post-activate-dry-run.log` | Authentik reconcile succeeds, generated DNS/Traefik artifacts are published, and the post-activate dry run is a no-op | reconcile failure, publish failure, or post-activate dry run reports changes/errors |
+| Deploy platform | `deploy-platform` | `deploy-platform-*.log` entries | platform stacks re-apply successfully in approved order | any apply failure or unexpected replacement |
+| Final validation | `final-validation` | DNS, HTTP, API, and final reconcile dry-run logs | browser/service endpoints respond as expected and final reconcile dry-run is a no-op | any health check fails, any route/API mismatch, or final reconcile dry-run reports changes |
+
+Accepted baseline behavior during Stage 9:
+
+- shared base-role churn that was already accepted in Stage 6-8 evidence remains reportable but not automatically fatal if the cycle otherwise completes cleanly
+- generated artifact regeneration is expected during deploy-edge and activate-edge phases
+- final-validation should still be clean: treat any new endpoint, auth, DNS, or reconcile drift as a real regression
+
+Stop conditions and escalation points:
+
+- stop immediately on target guard failure, missing approval packet, missing approval text, or a dirty-tree preflight failure
+- stop on the first failed destroy/apply/reconcile/health step; do not continue later phases in the same session
+- if the failure is outside the current execution scope or cannot be resolved by a small safe fix, emit blocker evidence in `.git/ai/blocker.yaml` and pause for operator input before retrying
 - do not draft from first principles without first reconciling with the current implemented contract
 
 ### Stage 2: Workflow And Validation Design
@@ -508,6 +550,10 @@ Exit criteria:
 - the remaining work is validation-oriented rather than design-oriented
 
 ### Stage 9: Promotion Readiness
+
+Status:
+
+- ready to execute, not yet started
 
 Suggested branch:
 
