@@ -8,7 +8,7 @@
 
 ## Current Phase
 
-- Stage 6 preparation: Clean platform stack rollout.
+- Stage 6 kickoff (planning/doc-only): Clean platform stack rollout on `task/slr-06-rollout-portainer-stack`.
 
 ## Established Working Assumptions
 
@@ -20,27 +20,44 @@
 
 ## Suggested Next Step
 
-Start Stage 6 on a short-lived branch from the Stage 5 baseline:
+Execute the first narrow Stage 6 rollout slice for `portainer-stack`.
 
-- `task/slr-06-rollout-<stack-or-group>`
+Stage 6 scope definition for this branch:
 
-Primary objective:
-
-- extend the validated exemplar model to additional lower-complexity platform stacks
-
-Initial focus:
-
-- identify the next candidate stacks (see Stage 6 candidates in `plan.md`)
-- apply the shared contract pattern to each
-- validate with the same check/live/health-check gates used in Stage 5
-
-Do not broaden scope or rework the exemplar model during Stage 6.
+- First rollout target: `portainer-stack` (single-stack slice)
+- Why chosen: lower-complexity platform stack with a contained boundary and straightforward health checks; avoids DNS/trust/identity/ingress special-case work in the first rollout
+- Expected changes (next implementation session):
+  - apply exemplar-proven reconcile pattern to `portainer-stack` only
+  - make only bounded fixes required for check-mode and idempotent rerun behavior
+  - keep contract and workflow updates limited to what `portainer-stack` needs
+- Validation evidence required:
+  - check-mode pass for the stack-specific reconcile path
+  - live reconcile pass with no fatal failures
+  - health check pass against Portainer API status endpoint
+  - evidence captured under `docs/sessions/evidence/slr-06-rollout-portainer-stack/`
+- Risks:
+  - stack-specific bootstrap tasks may expose new check-mode edge cases
+  - shared pattern assumptions may need small adaptations for Portainer service flow
+- Non-goals:
+  - no multi-stack rollout in the first Stage 6 slice
+  - no special-case redesign work
+  - no broad Terraform/Ansible architecture rewrites
 
 ## Open Questions To Carry Forward
 
 - acceptable non-idempotent output threshold for exemplar bootstrap/reconcile runs
 - whether drift handling remains reporting-only or needs early hard-fail rules for exemplars
 - whether any exemplar-specific contract extension is needed before wider rollout
+
+## Stage 6 Kickoff Outcomes
+
+- Stage: 6 — Clean Platform Stack Rollout (planning/doc-only kickoff).
+- Branch: `task/slr-06-rollout-portainer-stack`.
+- What changed:
+  - corrected Stage 6 candidate list in `plan.md` to remove already-validated exemplars
+  - defined narrow first-rollout scope for `portainer-stack` with explicit rationale, evidence expectations, risks, and non-goals
+- What remains next:
+  - execute the first implementation slice for `portainer-stack` using the scoped gates above
 
 ## Session Closeout Checklist
 

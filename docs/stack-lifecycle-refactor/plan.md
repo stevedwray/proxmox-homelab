@@ -254,8 +254,28 @@ Goals:
 
 Candidate early rollout targets:
 
-- `apt-cacher-stack`
-- `harbor-stack`
+- `portainer-stack` (primary): Docker Compose platform stack with a contained service boundary and straightforward health checks, making it the next low-risk fit after the exemplar pair
+- `monitoring-stack` (secondary): still platform-tier and mostly self-contained, useful as a follow-on once the Stage 6 rollout pattern is proven on `portainer-stack`
+
+Stage 6 kickoff scope (current session):
+
+- First rollout target: `portainer-stack` only
+- Why this first: lower operational complexity than identity, DNS, trust, and ingress stacks; clear service boundary; existing health endpoint makes validation straightforward
+- Expected changes for this kickoff step:
+  - define the rollout checklist and acceptance gates for `portainer-stack`
+  - map expected contract and reconcile touchpoints without broad rewrites
+  - document evidence locations and pass/fail expectations before implementation work
+- Validation evidence required for this kickoff step:
+  - updated Stage 6 scope in `plan.md` and `handoff.md`
+  - explicit command/evidence checklist for check mode, live reconcile, and health checks for `portainer-stack`
+  - clear list of risks and non-goals for this first rollout slice
+- Risks:
+  - hidden stack-specific assumptions in existing `deploy-portainer-stack` tasks may require bounded check-mode handling updates
+  - shared-pattern assumptions from exemplars may not map 1:1 to Portainer bootstrap behavior
+- Non-goals:
+  - no broad migration of multiple stacks in the same session
+  - no special-case redesign (DNS, trust distribution, ingress, identity)
+  - no branch-wide hardening or directory reorganization
 
 Deliverables:
 
@@ -296,7 +316,7 @@ Likely stacks:
 - `authentik-stack`
 - `monitoring-stack`
 - `ci-runner-01`
-- `portainer-stack`
+- `portainer-stack` (only if Stage 6 rollout reveals special-case behavior)
 
 Exit criteria:
 
