@@ -2,13 +2,13 @@
 
 ## Current State
 
-- Stage 1, Stage 2, and Stage 3 are complete.
-- Stage 4 exemplar scaffolding is complete for the selected pair.
-- Changes are intentionally bounded to operator entrypoint scaffolding and refactor tracking docs.
+- Stages 1–5 are complete.
+- Exemplar pair `apt-cacher-stack` and `harbor-stack` validated end-to-end on branch `task/slr-05-exemplar-validation`.
+- Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.
 
 ## Current Phase
 
-- Stage 5 preparation: Exemplar validation and adjustment.
+- Stage 6 preparation: Clean platform stack rollout.
 
 ## Established Working Assumptions
 
@@ -20,21 +20,21 @@
 
 ## Suggested Next Step
 
-Start Stage 5 on a short-lived branch from the Stage 4 baseline:
+Start Stage 6 on a short-lived branch from the Stage 5 baseline:
 
-- `task/slr-05-exemplar-validation`
+- `task/slr-06-rollout-<stack-or-group>`
 
 Primary objective:
 
-- validate the Stage 4 exemplar scaffolding end-to-end for `apt-cacher-stack` and `harbor-stack`
+- extend the validated exemplar model to additional lower-complexity platform stacks
 
 Initial focus:
 
-- run infra-only and config-only validation gates for both exemplars
-- verify approval-gated post-infra reconcile invocation path
-- capture evidence under a Stage 5 evidence directory and summarize pass/fail/waive status
+- identify the next candidate stacks (see Stage 6 candidates in `plan.md`)
+- apply the shared contract pattern to each
+- validate with the same check/live/health-check gates used in Stage 5
 
-Do not broaden into additional stack rollout during Stage 5.
+Do not broaden scope or rework the exemplar model during Stage 6.
 
 ## Open Questions To Carry Forward
 
@@ -74,4 +74,21 @@ Do not broaden into additional stack rollout during Stage 5.
   - script argument parsing and gating logic pass static shell parsing (`bash -n`)
   - help output and command wiring are in place for exemplar-only scope
 - Next:
-  - execute Stage 5 validation gates and collect runtime evidence
+  - execute Stage 6 rollout for additional platform stacks
+
+## Stage 5 Outcomes
+
+- Stage: 5 — Exemplar Validation And Adjustment.
+- Branch: `task/slr-05-exemplar-validation`.
+- What changed:
+  - fixed check-mode failures in `deploy-apt-cacher-stack.yml`: added `ignore_errors: "{{ ansible_check_mode }}"` to service and lineinfile tasks that cascade when the package is not yet installed in check mode
+  - fixed check-mode failures in `harbor_installer` role: added `and not ansible_check_mode` to download/unpack block, `ignore_errors` to enable/start service tasks
+  - fixed check-mode robustness in `harbor_postconfigure` role: `meta: end_play` guard at top (all tasks are Harbor API calls requiring a live instance), `default([])` on registries loop, `when` guard on display task
+- What was validated:
+  - check mode: both stacks exit 0 with no fatal unignored failures
+  - live reconcile: apt-cacher (ok=6, changed=3, failed=0); harbor (ok=63, changed=14, failed=0)
+  - health checks: apt-cacher HTTP 406 (PASS); harbor v2 registry HTTP 401 (PASS); pct status running for both
+  - post-infra approval gate: apt-cacher (ok=5, changed=0, failed=0); gate correctly accepted approval text
+  - evidence: `docs/sessions/evidence/slr-05-exemplar-validation/`
+- What remains:
+  - Stage 6: rollout to additional platform stacks using the validated model

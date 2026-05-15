@@ -30,13 +30,13 @@
     url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_installer_version }}/md5sum"
     dest: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
     mode: '0640'
-  when: not harbor_installer_stat.stat.exists
+  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
 
 - name: Read Harbor md5sum file
   ansible.builtin.slurp:
     src: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
   register: harbor_installer_checksum_file
-  when: not harbor_installer_stat.stat.exists
+  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
 
 - name: Extract online installer MD5 checksum
   ansible.builtin.set_fact:
@@ -44,7 +44,7 @@
       md5:{{ (harbor_installer_checksum_file.content | b64decode).splitlines()
         | select('search', 'harbor-online-installer-v' + harbor_installer_version + '.tgz')
         | first | split() | first }}
-  when: not harbor_installer_stat.stat.exists
+  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
 
 - name: Download Harbor online installer
   ansible.builtin.get_url:
@@ -53,14 +53,14 @@
     checksum: "{{ harbor_installer_checksum }}"
     mode: '0640'
     timeout: 120
-  when: not harbor_installer_stat.stat.exists
+  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
 
 - name: Unpack Harbor installer
   ansible.builtin.unarchive:
     src: "{{ harbor_installer_install_dir }}/harbor-online-installer-v{{ harbor_installer_version }}.tgz"
     dest: "{{ harbor_installer_install_dir }}/"
     remote_src: true
-  when: not harbor_installer_stat.stat.exists
+  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
 
 - name: Template harbor.yml configuration
   ansible.builtin.template:
@@ -79,7 +79,7 @@
   ansible.builtin.command:
     cmd: "./prepare{{ ' --with-trivy' if harbor_installer_with_trivy else '' }}"
     chdir: "{{ harbor_installer_install_dir }}/harbor"
-  when: harbor_installer_config_result.changed or not harbor_installer_compose_stat.stat.exists
+  when: (harbor_installer_config_result.changed or not harbor_installer_compose_stat.stat.exists) and not ansible_check_mode
   register: harbor_installer_prepare_result
   changed_when: true
 
@@ -99,12 +99,14 @@
   ansible.builtin.systemd:
     name: harbor
     enabled: true
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Start Harbor service (first run)
   ansible.builtin.systemd:
     name: harbor
     state: started
   when: harbor_installer_prepare_result is skipped
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Restart Harbor service (config changed)
   ansible.builtin.systemd:

@@ -23,6 +23,7 @@
         name: apt-cacher-ng
         enabled: true
         state: started
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Configure PassThroughPattern to allow HTTPS passthrough
       ansible.builtin.lineinfile:
@@ -30,6 +31,7 @@
         regexp: "^#?PassThroughPattern:"
         line: "PassThroughPattern: .*"
       notify: Restart apt-cacher-ng
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Check whether UFW is active
       ansible.builtin.command:

@@ -230,6 +230,17 @@ Exit criteria:
 - rerun behavior is acceptable
 - remaining problems are specific rather than structural
 
+Status:
+
+- complete
+
+Outcomes:
+
+- check mode, live reconcile, and approval-gated post-infra path validated for both `apt-cacher-stack` and `harbor-stack`
+- minimal check-mode fixes applied to `deploy-apt-cacher-stack.yml`, `harbor_installer` role, and `harbor_postconfigure` role
+- evidence captured at `docs/sessions/evidence/slr-05-exemplar-validation/`
+- no structural problems found; remaining open questions are specific and carry forward to Stage 6
+
 ### Stage 6: Clean Platform Stack Rollout
 
 Suggested branch pattern:
