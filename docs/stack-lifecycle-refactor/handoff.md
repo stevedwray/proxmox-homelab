@@ -633,6 +633,6 @@ Stage 7b validates bounded observability integration across dependencies:
 
 ## Stage 8 Entry Point
 
-**Recommended starting point:** contract-doc debt cleanup for `dns-stack` and `proxy-stack`.
+**Recommended starting point:** contract-doc debt cleanup for `proxy-stack`.
 
-Reasoning: the Stage 7 special-case model is now closed out, and the remaining missing `STACK_CONTRACT.md` files are the last documented gaps before broader consistency/hardening work. Clearing those docs first keeps Stage 8 grounded in the shared contract model before any branch-wide workflow tightening.
+Reasoning: `dns-stack` contract doc is now complete. Only `proxy-stack` remains before broader consistency/hardening work. Clearing that doc first keeps Stage 8 grounded in the shared contract model before any branch-wide workflow tightening.
