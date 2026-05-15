@@ -57,3 +57,6 @@ Every other stack (via `lxc_base` role apt proxy configuration).
 ## Playbook
 
 `deploy-apt-cacher-stack`
+
+This stack is deployed as a direct systemd-managed host service (package install +
+service unit), not a Docker Compose workload.

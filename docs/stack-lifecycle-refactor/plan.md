@@ -480,6 +480,20 @@ Bounded Stage 8 validation checklist (operator workflow tightening):
 - verify contract dependency language matches actual runtime dependency semantics (deploy-time vs request-time dependency where applicable)
 - keep fixes documentation-only unless a trivial, safe consistency bug requires a tiny code/doc correction
 
+Stage 8 validation evidence tightening checkpoint (2026-05-15):
+
+- executed branch-wide contract validation sweep for all covered stack contracts (`apt-cacher-stack`, `authentik-stack`, `ci-runner-01`, `dns-stack`, `harbor-stack`, `monitoring-stack`, `netbox-stack`, `portainer-stack`, `proxy-stack`, `step-ca-stack`)
+- captured evidence in `docs/sessions/evidence/slr-08-validation-tightening/`
+- final checklist status: PASS for contract/stack metadata alignment, dependency and portainer-agent semantics alignment, and playbook/service-mode alignment
+- bounded doc-only corrections applied to keep validation state coherent:
+  - `terraform/lxc/stacks/dns-stack/STACK_CONTRACT.md` dependency semantics clarification (no explicit `depends_on` in `stack.yaml`; listed items are runtime coupling)
+  - `terraform/lxc/stacks/apt-cacher-stack/STACK_CONTRACT.md` explicit systemd direct-host-service note
+  - `terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md` explicit systemd service-mode note (`actions.runner.*.service`)
+
+Status:
+
+- in progress (validation evidence tightening complete; remaining Stage 8 work is operator-workflow hardening and final branch-level rough-edge cleanup)
+
 Exit criteria:
 
 - `refactor/stack-lifecycle` is internally coherent

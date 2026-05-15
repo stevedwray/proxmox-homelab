@@ -645,3 +645,44 @@ Validation/hardening pass (bounded Stage 8) outcomes:
 - Harbor and apt-cacher contract notes now reference environment-variable driven sources (`registry_host`, `${lab_ip_apt_cacher}`) instead of stale concrete pve-test/pve literals.
 
 **Next:** branch-wide validation and operator workflow tightening (no design work remaining).
+
+## Stage 8 Validation Evidence Tightening (Bounded Step)
+
+**Status:** ✅ checkpoint complete (execution-oriented validation sweep)
+
+### What Was Run
+
+- Branch-wide contract-to-`stack.yaml` field alignment audit (zone/IP/gateway/vmid/`ansible_playbook`) across all 10 covered stack contracts.
+- Branch-wide dependency/`portainer_agent` semantics audit.
+- Branch-wide playbook/service-mode audit (direct_stack vs compose vs systemd/direct host tasks).
+
+### Validation Outcomes
+
+- Final sweep status: **PASS** on all three checklist areas for all 10 covered stacks.
+- Initial heuristic runs surfaced wording gaps and one dependency-semantics ambiguity; these were resolved with bounded documentation-only corrections.
+- No rollout sequencing, architecture, or implementation-scope changes were introduced.
+
+### Narrow Corrections Applied
+
+- `terraform/lxc/stacks/dns-stack/STACK_CONTRACT.md`
+  - clarified that `stack.yaml` has no explicit `depends_on` entries and listed dependency notes are operational/runtime coupling
+- `terraform/lxc/stacks/apt-cacher-stack/STACK_CONTRACT.md`
+  - added explicit systemd direct-host-service deployment note
+- `terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md`
+  - added explicit systemd service-mode note (`actions.runner.*.service`)
+
+### Evidence Paths
+
+- `docs/sessions/evidence/slr-08-validation-tightening/EVIDENCE.md`
+- `docs/sessions/evidence/slr-08-validation-tightening/contract-stackyaml-alignment-final.log`
+- `docs/sessions/evidence/slr-08-validation-tightening/contract-dependency-portainer-agent-final.log`
+- `docs/sessions/evidence/slr-08-validation-tightening/playbook-service-mode-alignment-final.log`
+
+### Accepted Baseline Behavior
+
+- This step is documentation/consistency evidence tightening only and does not replace Stage 9 full teardown/redeploy/reconcile validation.
+- No new runtime failures were discovered in this bounded Stage 8 checklist pass.
+
+### Next Hardening Step
+
+- Complete the remaining Stage 8 operator-workflow hardening pass (final branch-level rough-edge cleanup and runbook-tightening) using the now-stable contract validation baseline.

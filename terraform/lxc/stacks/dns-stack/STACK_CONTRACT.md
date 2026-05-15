@@ -50,6 +50,9 @@ No secret values are committed here. All sensitive values must come from the env
 
 ## Dependencies
 
+`stack.yaml` currently has no explicit `depends_on` entries for `dns-stack`; the
+dependencies below describe operational/runtime coupling rather than a hard deploy-order gate.
+
 - `apt-cacher-stack` for package cache availability during host provisioning.
 - `step-ca-stack` for the trust and certificate path used by the broader platform.
 - No Docker or Harbor dependency — CoreDNS is installed as a bare binary from a GitHub release tarball.

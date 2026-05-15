@@ -72,3 +72,6 @@ not a provider.
 ## Playbook
 
 `deploy-ci-runner`
+
+This stack is deployed with `lxc_base` plus direct host tasks, and the runner is
+managed as a systemd service (`actions.runner.*.service`) rather than a Docker Compose app.
