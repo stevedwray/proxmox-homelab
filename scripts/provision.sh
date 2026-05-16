@@ -64,9 +64,12 @@ ensure_portainer_oauth_secret() {
   log "Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)"
   log "Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility"
 
+  [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
+
   log "Reconciling Authentik OIDC provider for Portainer with generated secret"
   python3 "${REPO_ROOT}/terraform/lxc/reconcile-authentik-edge.py" \
     "$edge_manifest" \
+    --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
     --apply \
     --json \
     --no-verify-tls
@@ -86,16 +89,20 @@ ensure_portainer_edge_publish() {
   [[ -f "$proxy_inventory" ]] || fail "expected proxy inventory not found: ${proxy_inventory}"
   [[ -f "$proxy_playbook" ]] || fail "expected proxy playbook not found: ${proxy_playbook}"
 
+  [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
+
   if [[ "$check_mode" == "true" ]]; then
     log "Reconcile edge dry-run for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
+      --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
       --json \
       --no-verify-tls
   else
     log "Reconcile edge apply for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
+      --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
       --apply \
       --json \
       --no-verify-tls
