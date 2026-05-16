@@ -74,15 +74,16 @@ Current implementation:
 
 - `scripts/teardown-deploy-test.sh` now requires `--approval-packet PATH` for
   `destroy` and `cycle`.
-- The harness validates minimum packet metadata before any Terragrunt destroy:
-  stamp, `pve-test` target, commit reference, outage/window, rollback deadline,
-  non-loss backup evidence references, and recreatable-service approval/evidence.
+- The harness validates structured approval packet fields before any Terragrunt
+  destroy: `stamp`, `target`, `approved commit SHA`, outage/rollback fields,
+  scope fields, and explicit `backup evidence path` entries for required
+  non-loss services (plus recreatable-service evidence or explicit approval).
 - The harness records approval packet SHA256 under the evidence stamp.
 
 Remaining next step:
 
-- Keep refining packet schema/validation so language is less heuristic and more
-  structured.
+- Consider promoting the packet format to a tracked template or machine-readable
+  schema once operators agree on long-term field names.
 - Validate that the packet contains:
   - evidence stamp
   - approved commit SHA

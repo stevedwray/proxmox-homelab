@@ -171,13 +171,15 @@ scripts/teardown-deploy-test.sh destroy --execute \
 Minimum approval packet checks for destructive phases:
 
 - packet file exists
-- packet references the active `--stamp` value
-- packet references `pve-test`
-- packet references the current commit SHA or an approved commit SHA
-- packet includes outage/window metadata
-- packet includes rollback deadline metadata
-- packet includes backup evidence references for `step-ca`, `authentik`, `harbor`, `netbox`, `monitoring`, and `portainer`
-- packet includes recreatable-service backup evidence or explicit data-loss/recreate approval
+- packet has a `stamp: <value>` field matching active `--stamp`
+- packet has a `target: pve-test` field
+- packet has `approved commit SHA: <sha>` and it matches current HEAD
+- packet has non-empty `outage window:` and `rollback deadline:` fields
+- packet has non-empty `scope approval:` and `scope exclusions:` fields
+- packet includes `service evidence:` heading with explicit `backup evidence path:` entries for `step-ca`, `authentik`, `harbor`, `netbox`, `monitoring`, and `portainer`
+- packet includes either:
+  - `recreatable services evidence:` heading with explicit `backup evidence path:` entries for `apt-cacher`, `ci-runner`, `dns`, and `proxy`, or
+  - `recreatable services approval:` text that explicitly accepts/acknowledges data loss or recreation
 
 When accepted, the harness logs the packet path and records its SHA256 under the
 evidence stamp (`logs/approval-packet.sha256`).
