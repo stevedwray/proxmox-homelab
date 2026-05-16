@@ -120,6 +120,7 @@
     portainer_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     portainer_lab_fqdn_portainer: "{{ lookup('env', 'LAB_FQDN_PORTAINER') | default('portainer.' ~ portainer_lab_domain, true) }}"
     portainer_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ portainer_lab_domain, true) }}"
     portainer_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     portainer_admin_password: >-
       {{
@@ -135,8 +136,8 @@
         | default('', true)
       }}
     portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
-    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required')) ~ ':9000/application/o/token/', true) }}"
-    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('http://' ~ (lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required')) ~ ':9000/application/o/userinfo/', true) }}"
+    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/token/', true) }}"
+    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/userinfo/', true) }}"
     portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
