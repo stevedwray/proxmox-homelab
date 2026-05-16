@@ -9,16 +9,42 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    harbor_docker_daemon_config:
+      dns:
+        - "{{ harbor_lab_ip_dns }}"
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+      storage-driver: overlay2
   roles:
     - lxc_base
     - docker_base
   tasks:
+    - name: Normalize Docker daemon DNS for Harbor runtime
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ harbor_docker_daemon_config | to_nice_json }}\n"
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before Harbor install
+      ansible.builtin.meta: flush_handlers
+
     - name: Mask portainer-agent service (platform tier — no agent on this host)
       ansible.builtin.systemd:
         name: portainer-agent.service
         masked: true
         enabled: false
       failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Install and start Harbor
   hosts: all
@@ -37,6 +63,7 @@
   vars:
     harbor_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     harbor_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ harbor_lab_domain, true) }}"
+    harbor_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ harbor_lab_domain, true) }}"
     harbor_postconfigure_host: "{{ ansible_host }}"
     harbor_postconfigure_oidc_enabled: "{{ lookup('env', 'HARBOR_OIDC_ENABLED') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_name: "{{ lookup('env', 'HARBOR_OIDC_PROVIDER_NAME') | default('authentik', true) }}"
@@ -68,10 +95,10 @@
 
     - name: Check Authentik health endpoint reachability for Harbor OIDC reconcile
       ansible.builtin.uri:
-        url: "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000/-/health/live/"
+        url: "https://{{ harbor_lab_fqdn_authentik_internal }}:9443/-/health/live/"
         method: GET
         status_code: 200
-        validate_certs: false
+        validate_certs: true
       register: harbor_authentik_health
       failed_when: false
       changed_when: false
@@ -90,14 +117,13 @@
 
     - name: Reconcile Harbor Authentik OIDC client
       ansible.builtin.command:
-        # Keep API reconcile on direct endpoint, sourced from LAB_IP_AUTHENTIK.
+        # Keep API reconcile on internal direct-TLS endpoint for controller paths
         argv:
           - python3
           - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
           - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
           - --authentik-url
-          - "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000"
-          - --no-verify-tls
+          - "https://{{ harbor_lab_fqdn_authentik_internal }}:9443"
           - --apply
           - --json
       register: harbor_authentik_reconcile

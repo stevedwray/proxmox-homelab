@@ -20,6 +20,7 @@ WITH_SECRETS="${REPO_ROOT}/with-secrets"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
+HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 PVE_TEST_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
@@ -897,22 +898,8 @@ load_stack_specs() {
 }
 
 get_authentik_url() {
-  local output stack ip
-
-  if ! output="$(resolve_stack_specs all)"; then
-    log "ERROR failed to resolve stack specs for authentik_url derivation"
-    return 1
-  fi
-
-  while IFS=: read -r stack _ ip; do
-    if [[ "${stack}" == "authentik-stack" ]]; then
-      printf 'http://%s:9000\n' "${ip}"
-      return 0
-    fi
-  done <<<"${output}"
-
-  log "ERROR authentik-stack not found in resolved stack specs"
-  return 1
+  printf 'https://authentik-int.%s:9443\n' "${LAB_DOMAIN}"
+  return 0
 }
 
 wait_for_authentik_api_ready() {
@@ -1605,11 +1592,11 @@ run_live_preflight_checks() {
   run_logged "https-route-traefik" \
     bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
-    curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
+    curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_source_preflight() {
@@ -1751,7 +1738,7 @@ phase_activate_edge() {
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --apply --json
+      --authentik-url "${authentik_url}" --apply --json
 
   guard_pve_test
   run_logged "publish-coredns" \
@@ -1763,7 +1750,7 @@ phase_activate_edge() {
 
   run_logged "reconcile-edge-post-activate-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_deploy_platform() {
@@ -1802,10 +1789,10 @@ phase_final_validation() {
 
   run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
-  run_logged "authentik-direct-health" curl -fsS "http://${LAB_IP_AUTHENTIK}:9000/-/health/live/"
+  run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_cycle() {

@@ -7,6 +7,7 @@
   vars:
     step_ca_version: "0.30.2"
     step_cli_version: "0.30.2"
+    step_ca_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     step_ca_install_dir: /tmp/step-ca-install
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
@@ -281,6 +282,13 @@
         flat: true
       run_once: true
       ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Restore host resolver to internal DNS after bootstrap fallback
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ step_ca_lab_ip_dns }}
 
 - name: Retroactively trust homelab root CA on dns-stack
   hosts: dns-stack

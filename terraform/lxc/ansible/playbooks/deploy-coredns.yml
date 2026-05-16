@@ -271,6 +271,13 @@
         fail_msg: "Recursive query for github.com returned no records (even after public fallback)"
       when: not ansible_check_mode
 
+    - name: Restore host resolver to internal DNS after bootstrap fallback
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ lab_ip_dns }}
+
     - name: Clean up temporary installation files
       ansible.builtin.file:
         path: "{{ item }}"

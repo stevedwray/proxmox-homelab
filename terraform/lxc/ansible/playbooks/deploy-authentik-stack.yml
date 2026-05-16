@@ -27,6 +27,16 @@
     authentik_compose_dir: /opt/authentik-stack
     authentik_compose_path: /opt/authentik-stack/docker-compose.yml
     authentik_compose_content: "{{ lookup('file', '../../stacks/authentik-stack/docker-compose.yml') }}"
+    authentik_step_cli_version: "0.30.2"
+    authentik_step_cli_install_dir: /tmp/step-cli-install
+    authentik_step_cli_cert_dir: "{{ authentik_compose_dir }}/certs/direct"
+    authentik_step_cli_root_cert: /usr/local/share/ca-certificates/homelab-root.crt
+    authentik_step_cli_cert_file: "{{ authentik_step_cli_cert_dir }}/tls.crt"
+    authentik_step_cli_key_file: "{{ authentik_step_cli_cert_dir }}/tls.key"
+    authentik_step_cli_password_file: "{{ authentik_compose_dir }}/.step/provisioner-password.txt"
+    authentik_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
+    authentik_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
+    authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
     authentik_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
@@ -35,7 +45,9 @@
     lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(lab_admin_username ~ '@' ~ lab_domain, true) }}"
+    authentik_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
+    authentik_internal_tls_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
 
   tasks:
     - name: Create Authentik compose directory
@@ -49,6 +61,179 @@
         dest: "{{ authentik_compose_path }}"
         mode: "0640"
         content: "{{ authentik_compose_content }}"
+
+    - name: Create direct TLS asset directories
+      ansible.builtin.file:
+        path: "{{ item.path }}"
+        state: directory
+        mode: "{{ item.mode }}"
+      loop:
+        - { path: "{{ authentik_compose_dir }}/nginx", mode: "0750" }
+        - { path: "{{ authentik_compose_dir }}/certs", mode: "0750" }
+        - { path: "{{ authentik_step_cli_cert_dir }}", mode: "0750" }
+        - { path: "{{ authentik_compose_dir }}/.step", mode: "0700" }
+
+    - name: Check whether step CLI is installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/step
+      register: authentik_step_cli_stat
+
+    - name: Ensure DNS is configured for external downloads
+      ansible.builtin.shell: |
+        if ! nslookup github.com 1>/dev/null 2>&1; then
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+        fi
+      args:
+        executable: /bin/bash
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Download step CLI release
+      ansible.builtin.get_url:
+        url: "https://github.com/smallstep/cli/releases/download/v{{ authentik_step_cli_version }}/step_linux_{{ authentik_step_cli_version }}_amd64.tar.gz"
+        dest: "/tmp/step_linux_{{ authentik_step_cli_version }}_amd64.tar.gz"
+        mode: "0644"
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Create step CLI temporary extraction directory
+      ansible.builtin.file:
+        path: "{{ authentik_step_cli_install_dir }}"
+        state: directory
+        mode: "0755"
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Extract step CLI archive
+      ansible.builtin.unarchive:
+        src: "/tmp/step_linux_{{ authentik_step_cli_version }}_amd64.tar.gz"
+        dest: "{{ authentik_step_cli_install_dir }}"
+        remote_src: true
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Locate extracted step binary
+      ansible.builtin.find:
+        paths: "{{ authentik_step_cli_install_dir }}"
+        patterns: step
+        file_type: file
+      register: authentik_step_cli_find
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Install step CLI binary from nested archive path
+      ansible.builtin.copy:
+        src: "{{ authentik_step_cli_install_dir }}/step_{{ authentik_step_cli_version }}/bin/step"
+        dest: /usr/local/bin/step
+        mode: "0755"
+        remote_src: true
+      when:
+        - not authentik_step_cli_stat.stat.exists
+        - not ansible_check_mode
+
+    - name: Clean up temporary step CLI extraction directory
+      ansible.builtin.file:
+        path: "{{ authentik_step_cli_install_dir }}"
+        state: absent
+      when:
+        - not ansible_check_mode
+
+    - name: Clean up step CLI archive
+      ansible.builtin.file:
+        path: "/tmp/step_linux_{{ authentik_step_cli_version }}_amd64.tar.gz"
+        state: absent
+      when:
+        - not ansible_check_mode
+
+    - name: Verify step CLI is installed and executable
+      ansible.builtin.command:
+        cmd: /usr/local/bin/step version
+      register: authentik_step_cli_version_check
+      changed_when: false
+
+
+    - name: Write step-ca provisioner password file for Authentik direct cert issuance
+      ansible.builtin.copy:
+        dest: "{{ authentik_step_cli_password_file }}"
+        mode: "0600"
+        content: "{{ authentik_step_ca_provisioner_password }}\n"
+      no_log: true
+
+    - name: Ensure step-ca root cert is present before issuing Authentik direct cert
+      ansible.builtin.stat:
+        path: "{{ authentik_step_cli_root_cert }}"
+      register: authentik_step_cli_root_cert_stat
+
+    - name: Fail when homelab root cert is missing on host
+      ansible.builtin.fail:
+        msg: "Required trust anchor {{ authentik_step_cli_root_cert }} is missing on host. Ensure lxc_base/trust-homelab-ca has run before Authentik direct TLS issuance."
+      when: not authentik_step_cli_root_cert_stat.stat.exists
+
+    - name: Issue or renew Authentik direct TLS certificate from step-ca
+      ansible.builtin.shell: |
+        set -euo pipefail
+
+        issue_needed=0
+
+        if [[ ! -s "{{ authentik_step_cli_cert_file }}" || ! -s "{{ authentik_step_cli_key_file }}" ]]; then
+          issue_needed=1
+        elif ! openssl x509 -checkend 2592000 -noout -in "{{ authentik_step_cli_cert_file }}" >/dev/null 2>&1; then
+          issue_needed=1
+        fi
+
+        if [[ "${issue_needed}" -eq 1 ]]; then
+          /usr/local/bin/step ca certificate "{{ authentik_internal_tls_fqdn }}" "{{ authentik_step_cli_cert_file }}" "{{ authentik_step_cli_key_file }}" \
+            --san "{{ authentik_internal_tls_fqdn }}" \
+            --ca-url "{{ authentik_step_ca_url }}" \
+            --root "{{ authentik_step_cli_root_cert }}" \
+            --provisioner "{{ authentik_step_ca_provisioner }}" \
+            --provisioner-password-file "{{ authentik_step_cli_password_file }}" \
+            --force >/dev/null
+          echo "issued"
+        fi
+      args:
+        executable: /bin/bash
+      register: authentik_step_cert_issue
+      changed_when: "'issued' in authentik_step_cert_issue.stdout"
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Ensure Authentik direct TLS private key permissions are strict
+      ansible.builtin.file:
+        path: "{{ authentik_step_cli_key_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+      when: not ansible_check_mode
+
+    - name: Write Authentik direct TLS nginx config
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_dir }}/nginx/direct-tls.conf"
+        mode: "0640"
+        content: |
+          server {
+            listen 9443 ssl;
+            server_name {{ authentik_internal_tls_fqdn }};
+
+            ssl_certificate /certs/direct/tls.crt;
+            ssl_certificate_key /certs/direct/tls.key;
+
+            location / {
+              proxy_pass http://server:9000;
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto https;
+              proxy_set_header X-Forwarded-Host $host;
+              proxy_read_timeout 300;
+            }
+          }
 
     - name: Write Authentik environment file
       ansible.builtin.copy:
@@ -70,6 +255,7 @@
         content: |
           {
             "insecure-registries": ["{{ authentik_registry_host }}"],
+            "dns": ["{{ authentik_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",
@@ -118,6 +304,13 @@
         state: present
       when: not ansible_check_mode
 
+    - name: Restore host resolver to internal DNS after bootstrap fallback
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ authentik_lab_ip_dns }}
+
     - name: Wait for Authentik live health endpoint
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/-/health/live/"
@@ -140,6 +333,26 @@
       until: authentik_ready_health.status in [200, 204]
       when: not ansible_check_mode
 
+    - name: Wait for Authentik direct TLS endpoint with verified cert chain
+      ansible.builtin.command:
+        argv:
+          - curl
+          - --silent
+          - --show-error
+          - --fail
+          - --cacert
+          - "{{ authentik_step_cli_root_cert }}"
+          - --resolve
+          - "{{ authentik_internal_tls_fqdn }}:9443:{{ ansible_host }}"
+          - "https://{{ authentik_internal_tls_fqdn }}:9443/-/health/live/"
+      register: authentik_direct_tls_health
+      changed_when: false
+      retries: 30
+      delay: 10
+      until: authentik_direct_tls_health.rc == 0
+      when: not ansible_check_mode
+
+
     - name: Confirm bootstrap credentials were injected
       ansible.builtin.debug:
         msg: >-
@@ -148,6 +361,16 @@
           injected from SOPS via .env. The akadmin account and API token are
           created automatically on first boot — no manual setup wizard required.
       when: not ansible_check_mode
+
+
+    - name: Confirm direct TLS is available
+      ansible.builtin.debug:
+        msg: >-
+          Authentik is healthy at http://{{ ansible_host }}:9000/.
+          Internal direct TLS is available at https://{{ authentik_internal_tls_fqdn }}:9443/.
+          AUTHENTIK_BOOTSTRAP_PASSWORD and AUTHENTIK_BOOTSTRAP_TOKEN were
+          injected from SOPS via .env. The akadmin account and API token are
+          created automatically on first boot — no manual setup wizard required.
 
     - name: Check if lab admin user exists in Authentik
       ansible.builtin.uri:

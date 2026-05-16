@@ -4,11 +4,11 @@
 # Portainer server connection details.
 # Prefer the generated inventory host var when present.
 portainer_api_server_ip: >-
-	{{
-		portainer_server_ip
-		| default(lookup('env', 'LAB_IP_PORTAINER'), true)
-		| mandatory('portainer_server_ip var or LAB_IP_PORTAINER env var is required')
-	}}
+  {{
+    portainer_server_ip
+    | default(lookup('env', 'LAB_IP_PORTAINER'), true)
+    | mandatory('portainer_server_ip var or LAB_IP_PORTAINER env var is required')
+  }}
 portainer_api_server_port: "9000"
 
 # Authentication credentials
