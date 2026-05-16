@@ -1,82 +1,71 @@
 # Next Session Note
 
-## What We Are Doing
+## Current State
 
-This refactor is aimed at proving that the stack lifecycle model is coherent
-from end to end:
+- `work/step-ca-authentik-direct-tls-01` has been promoted to
+  `baseline/teardown-validated`.
+- Promotion merge commit on baseline: `7ed6044`
+- Successful full teardown/redeploy evidence remains:
+  `docs/teardown-test/reports/20260516-052235.md`
+- The `step-ca` / Authentik direct-TLS rollout is complete for the intended
+  scope:
+  - Grafana backchannel migrated
+  - Portainer backchannel migrated
+  - Traefik forward-auth migrated
+  - Harbor direct/Auth backchannel remains intentionally deferred
 
-- Terraform owns day-1 infrastructure and Proxmox-side state
-- Ansible owns day-2 managed state inside containers
-- `stack.yaml` is the shared contract between those layers
-- generated inventory and rendered artifacts are derived, not source of truth
+## What Is Done Enough
 
-The work has been progressing in narrow stages:
+Do not reopen these without a new explicit requirement:
 
-- Stage 1–5 established the shared contract and validated exemplar stacks
-- Stage 6–7 rolled the model across additional real stacks
-- Stage 8 hardened docs, validation rules, and workflow expectations
-- Stage 9 is the promotion-readiness proof: full teardown, redeploy, reconcile,
-  and final validation from scratch
+- stack-owned edge architecture basics
+- Stage 9 teardown/redeploy proof
+- baseline promotion decision for the step-ca direct-TLS branch
+- Grafana/Portainer/Traefik Authentik direct-TLS migration work
 
-## How We Are Working
+## What Actually Needs Attention Next
 
-- Work directly in a normal high-context session, not with planner/executor/architect handoff loops.
-- Prefer narrow, bounded steps over broad redesigns.
-- Keep AI workflow/agent files out of scope unless explicitly needed.
-- Update the refactor docs as the durable source of truth:
-  - `docs/stack-lifecycle-refactor/plan.md`
-  - `docs/stack-lifecycle-refactor/handoff.md`
-  - `docs/stack-lifecycle-refactor/validation.md`
-  - `docs/stack-lifecycle-refactor/drift-policy.md`
-- Treat evidence directories and logs as operational proof, and record only the important outcome in tracked docs.
-- For now, stay focused on factual closeout and follow-up issues, not new architecture work.
+The next useful work is convergence and hardening, not more platform redesign.
 
-## Handoff
+Priority order:
 
-- Stop point: Stage 9 execution and documentation closeout are both recorded.
-- Current known outcome:
-  - full teardown + redeploy + reconcile validation cycle passed
-  - evidence directory: `docs/teardown-test/evidence/20260515-075219/`
-  - promotion-readiness execution is satisfied from recorded evidence
-- NetBox/Auth follow-up closeout:
-  - root cause identified (local NetBox user bootstrap gap under `REMOTE_AUTH_AUTO_CREATE_USER=false`)
-  - narrow fix applied and targeted stack validation passed
-  - operator confirmed successful real-browser NetBox login via Authentik
-- Intended next step:
-  - keep Stage 9 and NetBox/Auth closeout docs as the durable record
-  - reassess promotion timing to `baseline/teardown-validated` based on any remaining non-NetBox blockers
+1. Documentation convergence
+   - align stale docs with the current branch model and validated baseline
+   - remove old `dev/pve-test` / `refactor/stack-lifecycle` assumptions where
+     they are no longer authoritative
+   - update stale app-migration and ingress references that still mention
+     `homelab.internal`, NPM, or pre-refactor routing behavior
 
-## What Tomorrow's Session Should Achieve
+2. Teardown harness hardening
+   - treat `scripts/teardown-deploy-test.sh` as product code
+   - add stronger approval-packet validation, self-tests, and cleaner summary
+     output
 
-In order:
+3. Shared stack-contract tidyup
+   - close small real contract gaps like explicit `dns_server` coverage and
+     validation so rebuild behavior is less implicit
 
-1. Keep the successful Stage 9 outcome and evidence reference as the durable record.
-2. Keep the NetBox/Auth follow-up closeout recorded as resolved.
-3. Decide promotion readiness to `baseline/teardown-validated` based on remaining blockers, if any.
-4. Avoid opening unrelated implementation streams before promotion decision.
+4. Re-plan app migration against the repo as it exists now
+   - update Phase 06 docs to the stack-owned edge model and current naming
+     (`*.lab.gibbsgreatly.xyz`)
+   - only then start app-stack implementation slices
 
-## Prompt
+5. Narrow `step-ca` follow-up
+   - Harbor-specific posture
+   - direct-cert renewal/expiry checks
+   - CA rotation/compromise response docs
 
-```text
-Continue the stack lifecycle refactor directly in this session.
+## Recommended Execution Style
 
-Current state:
-- Stage 9 teardown/redeploy/reconcile validation completed successfully
-- evidence directory: docs/teardown-test/evidence/20260515-075219
-- do not use planner/executor/architect handoffs
+- Do small bookkeeping/tidyup directly in-session.
+- For broader edits, code changes, or multi-file command-heavy work, prefer a
+  Copilot handoff prompt with bounded scope and explicit validation.
 
-Task:
-Do the Stage 9 closeout only.
+## Prompt Pack
 
-Requirements:
-- update docs/stack-lifecycle-refactor/handoff.md with the successful Stage 9 outcome
-- update docs/stack-lifecycle-refactor/plan.md to mark Stage 9 complete
-- record the evidence directory and the fact that the full cycle passed
-- keep this documentation-only
-- commit the closeout
-- leave AI workflow/agent files alone
+Use:
 
-Before finishing:
-- summarize whether the branch is now ready for promotion to baseline/teardown-validated
-- note any remaining blockers that still need explicit acceptance or remediation
-```
+- [docs/prompts/post-baseline-evolution-pack.md](../prompts/post-baseline-evolution-pack.md)
+
+Start with prompt 01, then 02, then 03, then 04. Prompt 05 is optional and
+should wait until the earlier convergence/hardening work is finished.
