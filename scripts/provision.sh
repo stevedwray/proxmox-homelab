@@ -69,10 +69,9 @@ ensure_portainer_oauth_secret() {
   log "Reconciling Authentik OIDC provider for Portainer with generated secret"
   python3 "${REPO_ROOT}/terraform/lxc/reconcile-authentik-edge.py" \
     "$edge_manifest" \
-    --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
+    --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
     --apply \
-    --json \
-    --no-verify-tls
+    --json
 }
 
 ensure_portainer_edge_publish() {
@@ -95,17 +94,15 @@ ensure_portainer_edge_publish() {
     log "Reconcile edge dry-run for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
-      --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
-      --json \
-      --no-verify-tls
+      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+      --json
   else
     log "Reconcile edge apply for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
-      --authentik-url "http://${LAB_IP_AUTHENTIK}:9000" \
+      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
       --apply \
-      --json \
-      --no-verify-tls
+      --json
 
     log "Publish generated Traefik files for Portainer route"
     ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \
