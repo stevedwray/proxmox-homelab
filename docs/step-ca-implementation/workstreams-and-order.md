@@ -16,6 +16,12 @@ This is an implementation plan, not a redesign.
 - Most non-browser backchannels remain HTTP, IP-based, or insecure-verify.
 - CoreDNS direct-access records and browser-route records are different paths;
   first direct TLS work should follow current direct-access behavior.
+- Deploy order already puts `dns-stack` before `step-ca-stack`, `proxy-stack`,
+  and `authentik-stack`, with `activate-edge` publishing generated CoreDNS state
+  before Stage 3b platform stacks such as `harbor-stack` and `monitoring-stack`.
+- Even with correct deploy order, Docker containers can still inherit stale or
+  public resolver upstreams if provisioning temporarily rewrites host
+  `/etc/resolv.conf` before container startup.
 
 ## Workstreams
 
@@ -23,6 +29,7 @@ This is an implementation plan, not a redesign.
 | --- | --- | --- | --- |
 | Trust anchor ownership (`certs/homelab-root.crt`) | Shared | Export and host install path already exist | Make refresh/fingerprint/fan-out workflow explicit |
 | Fleet trust rollout | Shared | New hosts inherit via `lxc_base`; retrofit playbook exists | One standard day-2 operator command sequence |
+| Internal DNS readiness for TLS consumers | Shared policy + stack runtime checks | DNS stack deploys early, but container resolver state is inconsistent | One standard host-plus-container DNS validation workflow and explicit DNS policy for Docker stacks that need internal names |
 | Direct endpoint naming for non-browser clients | Shared policy + stack usage | `*-bg` names are current direct-access truth | Keep using current direct names first; postpone naming redesign |
 | First direct certificate consumer | Stack-specific (`authentik-stack`) + shared pattern | Authentik is already central and exposes `9443` | Prove one cert presentation + one verified client |
 | Authentik backchannel migration | Stack-specific per consumer | Grafana/Harbor/Portainer/Traefik flows still weak | Migrate to verified HTTPS one by one |
@@ -43,6 +50,9 @@ Rationale:
 
 - same dependency target (`authentik-stack`)
 - visible HTTP/insecure patterns today
+- DNS resolution failures present as misleading auth/token errors, so fixing the
+  Authentik consumer class gives the fastest feedback on both trust and DNS
+  readiness
 - narrower blast radius than Harbor registry TLS rework
 
 ## Trust-Only Versus Active Issuance
@@ -53,6 +63,7 @@ Trust-only first:
 - `ci-runner-01`
 - `apt-cacher-stack`
 - `monitoring-stack`, `netbox-stack`, `harbor-stack`, `portainer-stack` host OS trust
+- container runtimes that do not yet consume internal service FQDNs
 
 Active issuance first:
 
@@ -73,30 +84,59 @@ After deploying a new dependent host:
 1. Confirm `step-ca-stack` health and refresh status of `certs/homelab-root.crt`.
 2. Run normal host reconcile (trust via `lxc_base`).
 3. Verify host trust before any client URL migration.
-4. Apply stack-specific HTTPS/FQDN changes.
+4. Verify internal DNS from the consuming runtime:
+   - host-level for systemd/non-container clients
+   - in-container for Docker-backed clients
+5. Apply stack-specific HTTPS/FQDN changes.
 
 After CA-affecting change, run one retrofit trust fan-out action with
 `trust-homelab-ca.yml` for already-deployed hosts.
 
+## Deployment Order Implication
+
+Current deploy order already supports internal DNS before TLS-consuming
+platform stacks:
+
+1. `apt-cacher-stack`
+2. `ci-runner-01`
+3. `dns-stack`
+4. `step-ca-stack`
+5. `proxy-stack`
+6. `authentik-stack`
+7. `activate-edge`
+8. `harbor-stack`
+9. `monitoring-stack`
+10. `netbox-stack`
+11. `portainer-stack`
+
+That means later TLS consumers should not need a reorder. The remaining gap is
+runtime DNS consistency, especially for Docker containers created while a host
+has temporary public resolver fallback configured.
+
 ## Shortest Recommended Implementation Order
 
 1. Normalize shared trust distribution and verification workflow.
-2. Implement Authentik direct certificate pattern.
-3. Migrate Grafana/Harbor/Portainer Authentik backchannels.
-4. Migrate Traefik forward-auth to verified HTTPS.
-5. Add shared direct-cert renewal/expiry checks.
-6. Plan Harbor registry TLS normalization and CA compromise/rotation response.
+2. Normalize internal DNS readiness checks for Docker-backed consumers.
+3. Implement Authentik direct certificate pattern.
+4. Migrate Grafana/Harbor/Portainer Authentik backchannels.
+5. Migrate Traefik forward-auth to verified HTTPS.
+6. Add shared direct-cert renewal/expiry checks.
+7. Plan Harbor registry TLS normalization and CA compromise/rotation response.
 
 ## Smallest Useful First Slice
 
 1. Keep `certs/homelab-root.crt` as the trust anchor source.
-2. Make Authentik present one step-issued cert on direct-access name.
-3. Switch Grafana to verified HTTPS for Authentik backchannel.
-4. Capture a repeatable operator runbook for issue, verify, renew, and reload.
+2. Ensure the first client can resolve the internal Authentik hostname from its
+   actual runtime.
+3. Make Authentik present one step-issued cert on internal service name.
+4. Switch Grafana to verified HTTPS for Authentik backchannel.
+5. Capture a repeatable operator runbook for issue, verify, renew, reload, and
+   DNS validation.
 
 ## Highest-Risk Or Least-Defined Areas
 
 - Harbor registry TLS normalization (broad client impact).
 - Direct-service naming beyond current `*-bg` path.
+- Inconsistent Docker resolver upstreams across stacks after temporary host DNS fallback.
 - CA compromise and root rotation procedures.
 - Consistent trust lifecycle for non-managed endpoints.

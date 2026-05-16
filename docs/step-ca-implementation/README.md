@@ -25,6 +25,10 @@ Scope is intentionally narrow:
   verification patterns.
 - CoreDNS direct-access behavior matters: browser-facing names and direct
   service names are not always the same thing.
+- Docker-backed consumers do not automatically prove internal DNS correctness
+  just because the host trusts the homelab CA. Container resolver state can
+  diverge from host resolver state during provisioning and remain wrong even
+  after host DNS is restored.
 
 ## Canonical Decisions For This Planning Set
 
@@ -45,6 +49,7 @@ Trust-only first:
 - `ci-runner-01`
 - `apt-cacher-stack`
 - `monitoring-stack` host OS
+- `monitoring-stack` container trust for non-Authentik services
 - `netbox-stack` host OS
 - `harbor-stack` host OS
 - `portainer-stack` host OS
@@ -66,8 +71,9 @@ Active issuance later / case-by-case:
 
 1. Confirm `step-ca-stack` health and that `certs/homelab-root.crt` is current.
 2. Run the host's normal reconcile so `lxc_base` installs trust.
-3. Verify trust on that host before changing client URLs.
-4. Apply stack-specific HTTPS/FQDN client changes only after trust is verified.
+3. Verify host trust on that host before changing client URLs.
+4. Verify internal DNS from the actual consuming runtime, not just from the host.
+5. Apply stack-specific HTTPS/FQDN client changes only after trust and DNS are verified.
 
 For already-deployed hosts, or after CA-affecting changes, run one explicit
 retrofit trust rollout using `trust-homelab-ca.yml`.
@@ -88,6 +94,8 @@ Shared tooling:
 
 - root cert export/fingerprint tracking
 - trust fan-out and trust verification workflow
+- internal DNS verification workflow for managed hosts and containerized clients
+- guidance for when Docker-backed stacks should pin `LAB_IP_DNS`
 - trust-only vs issuance classification
 - expiry/trust validation checks
 
@@ -96,29 +104,55 @@ Stack-specific logic:
 - local TLS termination ports and direct FQDN choice
 - cert/key file paths and reload behavior
 - client URL migrations from HTTP/IP to HTTPS/FQDN
+- stack-local container DNS overrides when internal service discovery is required
 
 ### 6. Shortest recommended implementation order
 
 1. Normalize one shared trust distribution workflow.
-2. Prove Authentik direct certificate issuance and service presentation.
-3. Migrate Grafana, Harbor, and Portainer Authentik backchannels to verified HTTPS.
-4. Move Traefik forward-auth to verified HTTPS.
-5. Add shared renewal/expiry checks and service reload validation.
-6. Plan Harbor registry TLS normalization and CA compromise/rotation response.
+2. Normalize internal DNS readiness for Docker-backed consumers.
+3. Prove Authentik direct certificate issuance and service presentation.
+4. Migrate Grafana, Harbor, and Portainer Authentik backchannels to verified HTTPS.
+5. Move Traefik forward-auth to verified HTTPS.
+6. Add shared renewal/expiry checks and service reload validation.
+7. Plan Harbor registry TLS normalization and CA compromise/rotation response.
 
 ### 7. Smallest useful first implementation slice
 
 1. Keep `certs/homelab-root.crt` as trust anchor source.
-2. Issue/present one direct Authentik certificate on the direct-access name.
-3. Move one client (Grafana) to verified HTTPS on that name.
-4. Document renewal owner, reload behavior, and verification steps.
+2. Ensure the consuming runtime can resolve the internal Authentik hostname through lab DNS.
+3. Issue/present one direct Authentik certificate on the internal service name.
+4. Move one client (Grafana) to verified HTTPS on that name.
+5. Document renewal owner, reload behavior, and trust-plus-DNS verification steps.
 
 ### 8. Highest-risk or least-defined areas
 
 - Harbor registry TLS normalization (largest blast radius).
 - Direct service naming conventions beyond existing `*-bg` records.
+- Container DNS drift caused by temporary provisioning fallbacks or inherited host resolver state.
 - CA rotation and compromise response.
 - Normalized trust handling for non-managed endpoints (control node, Proxmox).
+
+## DNS As Part Of Internal TLS
+
+Internal TLS adoption depends on three independent prerequisites:
+
+1. the consumer trusts the homelab CA
+2. the server presents the expected internal certificate
+3. the consuming runtime can resolve the internal FQDN to the right service IP
+
+For Docker-backed stacks, item 3 must be verified from inside the container.
+Host-level DNS success is not enough. A host can resolve lab-internal names
+correctly while a container still uses Docker's embedded resolver with public
+upstreams and returns `NXDOMAIN`.
+
+Planning rule for future sessions:
+
+- treat in-container DNS verification as part of the certificate migration gate
+- do not classify an internal TLS migration as complete until the consumer can
+  resolve and validate the target FQDN from its real runtime context
+- where a stack's containers need reliable internal service discovery, prefer an
+  explicit DNS policy instead of relying on temporary host resolver state during
+  provisioning
 
 ## Document Map
 
