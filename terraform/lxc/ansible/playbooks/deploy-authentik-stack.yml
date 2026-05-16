@@ -295,6 +295,13 @@
         project_src: "{{ authentik_compose_dir }}"
         state: present
 
+    - name: Restore host resolver to internal DNS after bootstrap fallback
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: "0644"
+        content: |
+          nameserver {{ authentik_lab_ip_dns }}
+
     - name: Wait for Authentik live health endpoint
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:9000/-/health/live/"
