@@ -9,6 +9,7 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     docker_registry_host: "{{ monitoring_registry_host }}"
@@ -60,6 +61,7 @@
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
@@ -238,6 +240,8 @@
               image: {{ grafana_image }}
               container_name: grafana
               restart: unless-stopped
+              dns:
+                - "{{ monitoring_lab_ip_dns }}"
               env_file:
                 - .env
               ports:
