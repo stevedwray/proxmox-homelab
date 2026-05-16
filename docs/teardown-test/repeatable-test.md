@@ -156,7 +156,7 @@ scripts/teardown-deploy-test.sh status --stamp <stamp>
 Mutating phases require both `--execute` and an approval phrase containing:
 
 ```text
-approve pve-test teardown deploy test
+approve
 ```
 
 `destroy` and `cycle` also require an approval packet. The approval text itself
@@ -164,7 +164,7 @@ is intentionally simple; the approval packet is the detailed safety record:
 
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
-  --approval-text "I approve pve-test teardown deploy test" \
+  --approval-text "approve" \
   --approval-packet docs/teardown-test/packets/20260423-010203.md \
   --stamp 20260423-010203
 ```
@@ -189,7 +189,7 @@ Example:
 
 ```bash
 scripts/teardown-deploy-test.sh deploy-edge --execute \
-  --approval-text "I approve pve-test teardown deploy test"
+  --approval-text "approve"
 ```
 
 Available live phases:
@@ -229,7 +229,7 @@ Example:
 
 ```bash
 scripts/teardown-deploy-test.sh deploy-edge --stamp 20260423-010203 --execute \
-  --approval-text "I approve pve-test teardown deploy test resume deploy-edge"
+  --approval-text "approve"
 ```
 
 ## Relationship To The Runbook

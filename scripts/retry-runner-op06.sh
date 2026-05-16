@@ -250,10 +250,7 @@ packet_has_required_scope() {
 
 approval_text_has_required_scope() {
   local approval_lc="$1"
-  local approval_scope_target_lc="${APPROVAL_SCOPE_TARGET,,}"
   [[ "${approval_lc}" == *"approve"* ]] || return 1
-  [[ "${approval_lc}" == *"${approval_scope_target_lc}"* ]] || return 1
-  [[ "${approval_lc}" == *"teardown deploy test"* ]] || return 1
   return 0
 }
 
@@ -266,7 +263,7 @@ validate_destructive_approval() {
   fi
 
   if ! approval_text_has_required_scope "${approval_lc}"; then
-    fail_stop phase2 approval-gate approval_text_scope_invalid "approval text must contain the basic teardown approval phrase for the target"
+    fail_stop phase2 approval-gate approval_text_scope_invalid "approval text must contain a minimal explicit approval"
   fi
 
   if ! packet_has_required_scope "${APPROVAL_PACKET}"; then

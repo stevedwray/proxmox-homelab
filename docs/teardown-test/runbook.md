@@ -161,7 +161,7 @@ addition to `--execute` and `--approval-text`:
 
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
-	--approval-text "I approve pve-test teardown deploy test validation only" \
+	--approval-text "approve" \
 	--approval-packet docs/teardown-test/packets/<stamp>.md \
 	--stamp <stamp>
 ```
