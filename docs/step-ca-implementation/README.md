@@ -128,7 +128,7 @@ Remaining:
 
 6. Define and implement Harbor OIDC backchannel migration approach.
 7. Add shared renewal/expiry checks and service reload validation.
-8. Plan Harbor registry TLS normalization and CA compromise/rotation response.
+8. Plan Harbor registry TLS normalization.
 
 ### 7. Smallest useful first implementation slice
 
@@ -145,7 +145,7 @@ Remaining:
 - Harbor registry TLS normalization (largest blast radius).
 - Direct service naming conventions beyond existing `*-bg` records.
 - Container DNS drift caused by temporary provisioning fallbacks or inherited host resolver state.
-- CA rotation and compromise response.
+- CA rotation and compromise response execution rehearsal and automation follow-up.
 - Normalized trust handling for non-managed endpoints (control node, Proxmox).
 
 ## DNS As Part Of Internal TLS
@@ -180,3 +180,5 @@ Planning rule for future sessions:
   anchor fan-out and day-2 operations
 - [certificate-lifecycle.md](certificate-lifecycle.md): issuance, renewal,
   rotation, and failure/compromise planning
+- [ca-compromise-rotation-runbook.md](ca-compromise-rotation-runbook.md):
+  minimum manual operator response for CA compromise or forced root rotation
