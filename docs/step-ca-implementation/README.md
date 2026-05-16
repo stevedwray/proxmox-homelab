@@ -21,8 +21,11 @@ Scope is intentionally narrow:
   managed hosts.
 - Traefik already has a `step-ca` ACME resolver and combined CA bundle logic in
   `deploy-proxy-stack.yml`.
-- Most non-browser backchannels still use HTTP, IP-based URLs, or insecure
-  verification patterns.
+- Grafana, Portainer, and Traefik forward-auth Authentik backchannels now use
+  verified internal direct TLS.
+- Harbor Authentik backchannel migration is intentionally deferred because
+  Harbor derives token and userinfo endpoints from OIDC discovery and does not
+  expose the same independent override fields used by Grafana and Portainer.
 - CoreDNS direct-access behavior matters: browser-facing names and direct
   service names are not always the same thing.
 - Docker-backed consumers do not automatically prove internal DNS correctness
@@ -32,14 +35,19 @@ Scope is intentionally narrow:
 
 ## Canonical Decisions For This Planning Set
 
-### 1. Which internal flows move first?
+### 1. Which internal flows moved first?
 
-Move Authentik non-browser backchannels first, in this order:
+Completed Authentik non-browser backchannel migrations:
 
-1. Grafana token/API backchannel -> Authentik
-2. Harbor OIDC reconcile/health path -> Authentik
-3. Portainer OAuth token/resource path -> Authentik
-4. Traefik forward-auth backchannel -> Authentik
+1. Grafana token/API backchannel -> Authentik direct TLS
+2. Portainer OAuth token/resource path -> Authentik direct TLS
+3. Traefik forward-auth backchannel -> Authentik direct TLS
+
+Deferred from the first rollout tranche:
+
+4. Harbor OIDC reconcile/health path -> deferred pending a Harbor-specific
+  approach because discovery-derived endpoints cannot be independently
+  overridden like Grafana/Portainer token and API URLs.
 
 ### 2. Which stacks are trust-only vs active issuance?
 
@@ -108,13 +116,19 @@ Stack-specific logic:
 
 ### 6. Shortest recommended implementation order
 
+Completed:
+
 1. Normalize one shared trust distribution workflow.
 2. Normalize internal DNS readiness for Docker-backed consumers.
 3. Prove Authentik direct certificate issuance and service presentation.
-4. Migrate Grafana, Harbor, and Portainer Authentik backchannels to verified HTTPS.
+4. Migrate Grafana and Portainer Authentik backchannels to verified HTTPS.
 5. Move Traefik forward-auth to verified HTTPS.
-6. Add shared renewal/expiry checks and service reload validation.
-7. Plan Harbor registry TLS normalization and CA compromise/rotation response.
+
+Remaining:
+
+6. Define and implement Harbor OIDC backchannel migration approach.
+7. Add shared renewal/expiry checks and service reload validation.
+8. Plan Harbor registry TLS normalization and CA compromise/rotation response.
 
 ### 7. Smallest useful first implementation slice
 
@@ -126,6 +140,8 @@ Stack-specific logic:
 
 ### 8. Highest-risk or least-defined areas
 
+- Harbor OIDC backchannel migration details under discovery-coupled endpoint
+  behavior (deferred from first rollout tranche).
 - Harbor registry TLS normalization (largest blast radius).
 - Direct service naming conventions beyond existing `*-bg` records.
 - Container DNS drift caused by temporary provisioning fallbacks or inherited host resolver state.

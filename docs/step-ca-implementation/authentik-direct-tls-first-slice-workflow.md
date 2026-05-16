@@ -8,8 +8,10 @@ This runbook captures the implemented first slice:
 - issue/present a step-ca-backed cert on a dedicated internal Authentik hostname
 - move Grafana Authentik token/API backchannel to verified HTTPS direct endpoint
 
-This workflow is limited to Authentik and Grafana. It does not cover Harbor
-registry TLS normalization or broader multi-service rollout.
+This workflow started with Authentik plus Grafana, and now also records the
+completed follow-on migrations for Portainer OAuth/resource and Traefik
+forward-auth runtime paths. It does not cover Harbor registry TLS
+normalization.
 
 ## Implemented Behavior
 
@@ -25,6 +27,10 @@ registry TLS normalization or broader multi-service rollout.
   - `GF_AUTH_GENERIC_OAUTH_TLS_SKIP_VERIFY_INSECURE=false`
   - bind-mounts the host CA trust store into the Grafana container so the
     homelab root CA is trusted at runtime
+- Portainer Authentik OAuth/resource backchannel now uses the internal direct
+  TLS Authentik path with verification enabled (completed migration).
+- Traefik forward-auth runtime backchannel now uses the internal direct TLS
+  Authentik path (completed migration).
 - `authentik-bg.<lab-domain>` remains a separate breakglass direct-access name and
   is no longer the intended machine-to-machine TLS endpoint for this slice
 
@@ -112,6 +118,9 @@ Then re-run monitoring reconcile to ensure Grafana config remains aligned:
 - This slice separates machine-to-machine trust from browser breakglass access:
   `authentik-int.<lab-domain>` is the step-ca-backed internal endpoint, while
   `authentik-bg.<lab-domain>` can remain a manual/self-signed operator path.
-- This slice intentionally does not change Harbor, Portainer, or Traefik forward-auth paths.
+- Harbor Authentik backchannel migration remains intentionally deferred.
+- Defer rationale: Harbor derives token and userinfo behavior from OIDC
+  discovery and does not expose the same independent endpoint override pattern
+  used by Grafana and Portainer.
 - Authentik API reconcile helpers in some workflows still use existing HTTP or `--no-verify-tls`
   conventions and are out of scope for this first slice.
