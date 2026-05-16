@@ -9,16 +9,42 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    harbor_docker_daemon_config:
+      dns:
+        - "{{ harbor_lab_ip_dns }}"
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+      storage-driver: overlay2
   roles:
     - lxc_base
     - docker_base
   tasks:
+    - name: Normalize Docker daemon DNS for Harbor runtime
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ harbor_docker_daemon_config | to_nice_json }}\n"
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before Harbor install
+      ansible.builtin.meta: flush_handlers
+
     - name: Mask portainer-agent service (platform tier — no agent on this host)
       ansible.builtin.systemd:
         name: portainer-agent.service
         masked: true
         enabled: false
       failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Install and start Harbor
   hosts: all
