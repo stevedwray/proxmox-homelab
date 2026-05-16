@@ -45,6 +45,7 @@
     lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(lab_admin_username ~ '@' ~ lab_domain, true) }}"
+    authentik_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
     authentik_internal_tls_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
 
@@ -254,6 +255,7 @@
         content: |
           {
             "insecure-registries": ["{{ authentik_registry_host }}"],
+            "dns": ["{{ authentik_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",

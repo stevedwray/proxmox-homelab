@@ -8,6 +8,7 @@
   gather_facts: true
   vars:
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    netbox_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
   roles:
     - lxc_base
     - docker_base
@@ -20,6 +21,7 @@
         content: |
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ netbox_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",

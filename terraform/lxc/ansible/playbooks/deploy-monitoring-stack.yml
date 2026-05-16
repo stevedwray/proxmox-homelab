@@ -25,6 +25,7 @@
         content: |
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ monitoring_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",
