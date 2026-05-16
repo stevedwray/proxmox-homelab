@@ -58,3 +58,22 @@ class TestStackClassification(unittest.TestCase):
                     str(data.get("dns_server", "")).strip(),
                     f"{stack}/stack.yaml must set a non-empty dns_server",
                 )
+
+    def test_validation_net_stacks_dns_server_matches_gateway(self):
+        for stack_yaml in sorted(glob.glob(os.path.join(self.STACKS_DIR, "net-*", "stack.yaml"))):
+            stack = os.path.basename(os.path.dirname(stack_yaml))
+
+            with self.subTest(stack=stack):
+                data = self._load_stack_yaml(stack)
+                gateway = str(data.get("gateway", "")).strip()
+                dns_server = str(data.get("dns_server", "")).strip()
+
+                self.assertTrue(
+                    gateway,
+                    f"{stack}/stack.yaml must set a non-empty gateway",
+                )
+                self.assertEqual(
+                    dns_server,
+                    gateway,
+                    f"{stack}/stack.yaml must set dns_server to the stack gateway",
+                )
