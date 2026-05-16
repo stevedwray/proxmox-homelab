@@ -835,6 +835,11 @@ def _probe_forwardauth_endpoint(
         context = ssl.create_default_context()
         context.check_hostname = False
         context.verify_mode = ssl.CERT_NONE
+    else:
+        extra_ca = os.environ.get("AUTHENTIK_EXTRA_CA")
+        if extra_ca:
+            context = ssl.create_default_context()
+            context.load_verify_locations(cafile=extra_ca)
 
     # Forward-auth commonly replies with redirects. Do not follow redirects here;
     # the redirect status itself is the signal that the endpoint is serving.
