@@ -2,6 +2,7 @@
 hostname: net-service-01
 ip_address: "10.55.0.62/24"
 gateway: "10.55.0.1"
+dns_server: "10.57.0.1"
 vmid: 133
 cores: 1
 memory: 512

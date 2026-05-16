@@ -2,6 +2,7 @@
 hostname: apt-cacher-stack
 ip_address: "${lab_ip_apt_cacher}/24"
 gateway: "${lab_gw_infra}"
+dns_server: "${lab_gw_infra}"
 proxmox_node: pve-test
 network:
   zone: infra_seg

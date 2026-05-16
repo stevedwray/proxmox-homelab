@@ -1,3 +1,4 @@
+import glob
 import os
 import unittest
 import yaml
@@ -40,4 +41,20 @@ class TestStackClassification(unittest.TestCase):
                 self.assertFalse(
                     data.get("portainer_agent", False),
                     f"{stack}/stack.yaml must have portainer_agent: false",
+                )
+
+    def test_all_stacks_define_dns_server(self):
+        for stack_yaml in sorted(glob.glob(os.path.join(self.STACKS_DIR, "*", "stack.yaml"))):
+            stack = os.path.basename(os.path.dirname(stack_yaml))
+
+            with self.subTest(stack=stack):
+                data = self._load_stack_yaml(stack)
+                self.assertIn(
+                    "dns_server",
+                    data,
+                    f"{stack}/stack.yaml must set dns_server explicitly",
+                )
+                self.assertTrue(
+                    str(data.get("dns_server", "")).strip(),
+                    f"{stack}/stack.yaml must set a non-empty dns_server",
                 )

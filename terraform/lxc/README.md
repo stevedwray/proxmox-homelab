@@ -92,6 +92,7 @@ orchestration intent.
 ```yaml
 hostname: my-app
 ip_address: "10.57.4.20/24"
+dns_server: "10.57.4.1"
 deployment_tier: apps
 
 # Optional (shown with common defaults)
@@ -104,6 +105,7 @@ docker_storage_size: "20G"
 ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
 target_node: pve-test
 gateway: "10.57.4.1"
+dns_server: "10.57.4.1"
 ansible_playbook: "deploy-stack"
 portainer_agent: true
 app_stack_name: "my-app"
@@ -133,6 +135,7 @@ stack's LXC configuration playbook automatically.
 | `hostname` | Yes | — | Container hostname and stack identity |
 | `ip_address` | Yes | — | Static IP in CIDR notation (for example `10.57.3.10/24`) |
 | `deployment_tier` | Yes | — | Explicit orchestration tier: `platform` or `apps` |
+| `dns_server` | Yes | — | Resolver written into the guest; use the zone gateway or bridge gateway explicitly |
 | `vmid` | No | Auto | Proxmox VM ID |
 | `cores` | No | `2` | CPU cores |
 | `memory` | No | `2048` | Memory in MB |

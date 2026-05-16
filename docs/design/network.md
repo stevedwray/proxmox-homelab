@@ -112,4 +112,4 @@ The staging issuer shows `(STAGING) Let's Encrypt` in browsers — this is expec
 | MikroTik has no IaC | TM-09 | All ACL rules, VLAN config, and DNS forwarding rules are applied manually. A pve-test rebuild requires manual MikroTik reconfiguration. |
 | VNet firewall cross-zone rule bug | — | `vnet_policy_candidates` in `terraform/lxc/main.tf:86-95` requires both `from` and `to` to match the current container's VNet, making cross-zone ACCEPT rules impossible to generate. Proxmox VNet firewall is disabled for dev passes. |
 | SDN VLAN zone Terraform support | — | `configure-network-sdn-vnet.yml` handles Simple zones only. VLAN zones are applied by `ansible/00-initial-setup/proxmox-sdn-setup.yml` until this is fixed. |
-| `dns_server` not set in all stacks | — | `proxy-stack` (edge_seg) and `harbor-stack` (infra_seg) do not set `dns_server` in `stack.yaml`. DNS may fall back to template defaults on rebuild. |
+| `dns_server` contract coverage | — | Explicit `dns_server` is now set in stack metadata and validated from generated inventories; future stacks should continue to use the zone or bridge gateway explicitly. |

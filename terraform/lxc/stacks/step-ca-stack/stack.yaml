@@ -2,6 +2,7 @@
 hostname: step-ca
 ip_address: "${lab_ip_step_ca}/24"
 gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
 proxmox_node: pve-test
 vmid: 152
 cores: 1
