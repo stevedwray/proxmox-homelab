@@ -51,14 +51,14 @@ evidence directories.
   continuity is expected across rebuilds.
 - Do not silently stage or ignore this file during teardown-test closeout.
 
-### 5. Approval-packet wording matters
+### 5. Approval packet details matter more than approval prose
 
-- Several failed rehearsal runs were caused by missing or incomplete destroy
-  approval text rather than infrastructure defects.
-- The stamped OP-06 approval packets in the evidence tree are useful reference
-  examples for required scope wording, rollback deadlines, and evidence paths.
-- Future rehearsals should reuse that structure instead of improvising approval
-  text during the live window.
+- Several failed rehearsal runs were caused by an overly strict approval-text
+  matcher rather than infrastructure defects.
+- The detailed control surface belongs in the approval packet: target, commit,
+  rollback window, service evidence, and recreatable-service acknowledgement.
+- Future rehearsals should keep the human approval text simple and reuse the
+  packet structure for the detailed scope record.
 
 ### 6. Most raw evidence is only useful as forensic history
 

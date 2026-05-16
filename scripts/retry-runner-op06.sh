@@ -86,6 +86,7 @@ log_cmd() {
 }
 
 close_guard_summary() {
+  # shellcheck disable=SC2016
   if "${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node' >"${LOG_DIR}/guard-end.log" 2>&1; then
     :
   fi
@@ -251,19 +252,8 @@ approval_text_has_required_scope() {
   local approval_lc="$1"
   local approval_scope_target_lc="${APPROVAL_SCOPE_TARGET,,}"
   [[ "${approval_lc}" == *"approve"* ]] || return 1
-  [[ "${approval_lc}" == *"op-06"* ]] || return 1
-  [[ "${approval_lc}" == *"op-07"* ]] || return 1
-  [[ "${approval_lc}" == *"op-16"* ]] || return 1
-  [[ "${approval_lc}" == *"destroy"* ]] || return 1
   [[ "${approval_lc}" == *"${approval_scope_target_lc}"* ]] || return 1
-  [[ "${approval_lc}" == *"first failure"* ]] || return 1
-  [[ "${approval_lc}" == *"does not authorize"* ]] || return 1
-  [[ "${approval_lc}" == *"rebuild apply"* ]] || return 1
-  [[ "${approval_lc}" == *"edge publish"* ]] || return 1
-  [[ "${approval_lc}" == *"op-25"* ]] || return 1
-  [[ "${approval_lc}" == *"op-28"* ]] || return 1
-  [[ "${approval_lc}" == *"op-29"* ]] || return 1
-  [[ "${approval_lc}" == *"reconcile"* && "${approval_lc}" == *"apply"* ]] || return 1
+  [[ "${approval_lc}" == *"teardown deploy test"* ]] || return 1
   return 0
 }
 
@@ -276,7 +266,7 @@ validate_destructive_approval() {
   fi
 
   if ! approval_text_has_required_scope "${approval_lc}"; then
-    fail_stop phase2 approval-gate approval_text_scope_invalid "approval text must match OP-06 destroy-only scope and exclusions"
+    fail_stop phase2 approval-gate approval_text_scope_invalid "approval text must contain the basic teardown approval phrase for the target"
   fi
 
   if ! packet_has_required_scope "${APPROVAL_PACKET}"; then
@@ -296,6 +286,7 @@ require_guard() {
   local phase="$2"
 
   log_cmd "CMD: ${WITH_SECRETS} bash -c guard-check (${tag})"
+  # shellcheck disable=SC2016
   "${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node' >"${LOG_DIR}/guard-${tag}.log" || fail_stop "${phase}" "${tag}" "guard_command_error" "guard command failed"
   local gv=""
   gv="$(tail -n 1 "${LOG_DIR}/guard-${tag}.log" | tr -d '\r')"

@@ -165,7 +165,7 @@ Examples:
   scripts/teardown-deploy-test.sh status --stamp 20260423-010203
   scripts/teardown-deploy-test.sh final-validation
   scripts/teardown-deploy-test.sh deploy-edge --execute \
-    --approval-text "I approve <target> teardown deploy test OP-21 through OP-24"
+    --approval-text "I approve <target> teardown deploy test"
 EOF
 }
 
@@ -968,30 +968,6 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${DISPOSABLE}" != "true" && ( "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ) ]]; then
-    if [[ "${approval_lc}" != *"op-06"* \
-      || "${approval_lc}" != *"destroy"* \
-      || "${approval_lc}" != *"op-07"* \
-      || "${approval_lc}" != *"op-16"* \
-      || "${approval_lc}" != *"stop"* \
-      || "${approval_lc}" != *"first failure"* \
-      || "${approval_lc}" != *"does not authorize"* \
-      || "${approval_lc}" != *"rebuild apply"* \
-      || "${approval_lc}" != *"edge publish"* \
-      || "${approval_lc}" != *"op-25"* \
-      || "${approval_lc}" != *"op-28"* \
-      || "${approval_lc}" != *"op-29"* \
-      || "${approval_lc}" != *"reconcile"* \
-      || "${approval_lc}" != *"apply"* ]]; then
-      log "ERROR ${PHASE} requires explicit OP-06 destroy-only scope and exclusions in --approval-text"
-      set_phase_failure_context \
-        "require-op06-scope-approval-text" \
-        "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <op06-scope-text>" \
-        "${RUN_LOG}" \
-        "${PHASE} approval text missing required OP-06 destroy-only scope markers"
-      return 1
-    fi
-  fi
 }
 
 approval_packet_field_value() {

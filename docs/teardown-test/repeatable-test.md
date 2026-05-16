@@ -159,11 +159,12 @@ Mutating phases require both `--execute` and an approval phrase containing:
 approve pve-test teardown deploy test
 ```
 
-`destroy` and `cycle` also require an approval packet:
+`destroy` and `cycle` also require an approval packet. The approval text itself
+is intentionally simple; the approval packet is the detailed safety record:
 
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
-  --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24" \
+  --approval-text "I approve pve-test teardown deploy test" \
   --approval-packet docs/teardown-test/packets/20260423-010203.md \
   --stamp 20260423-010203
 ```
@@ -188,7 +189,7 @@ Example:
 
 ```bash
 scripts/teardown-deploy-test.sh deploy-edge --execute \
-  --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24"
+  --approval-text "I approve pve-test teardown deploy test"
 ```
 
 Available live phases:
