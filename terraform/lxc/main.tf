@@ -61,7 +61,7 @@ locals {
     local.storage_manifest_default_path
   )
   storage_manifest_exists = fileexists(local.effective_storage_manifest_path)
-  storage_manifest        = local.storage_manifest_exists ? yamldecode(file(local.effective_storage_manifest_path)) : {}
+  storage_manifest        = try(yamldecode(file(local.effective_storage_manifest_path)), {})
 
   # Transitional compatibility: consume legacy stack fields only as selectors
   # into manifest mappings. Root resolves concrete backends before module call.
