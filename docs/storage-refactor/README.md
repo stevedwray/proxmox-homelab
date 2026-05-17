@@ -23,17 +23,24 @@ promotion workflow rather than edited directly on the baseline branch.
 `pve-test` currently has a deployed set of containers on the active storage
 configuration. This is not a greenfield host.
 
-At the time this plan was written:
+At the time the storage refactor plan was written:
 
 - the internal SSD (`sda`) provides `local` and `local-lvm`
-- the live `pve-test` deployment currently uses `infrastructure-containers`
-- the repo still contains stack references to both `infrastructure-containers`
-  and `storage-containers`, so the migration surface is broader than a single
-  pool name
-- the current `storage-template` directory pool is mounted at
-  `/storage/template`
-- the active `infrastructure-containers` and `storage-template` pools are backed
-  by the external Samsung T7 USB drive (`sdb`)
+- the live `pve-test` deployment used `infrastructure-containers` (USB-backed)
+- stack files directly referenced both `infrastructure-containers` and
+  `storage-containers` pool names
+- the `storage-template` directory pool was mounted at `/storage/template` on
+  the USB drive (`sdb`)
+
+**As of the SSD cutover (branch `work/storage-ssd-cutover`, 2026-05-17):**
+
+- `terraform/lxc/storage/pve-test.yaml` is the single source of truth for
+  storage policy on `pve-test`
+- `platform-default` resolves to `local-lvm` (SSD)
+- `durable-default` extra-mount profile resolves to `local-lvm` (SSD)
+- template resolution uses `local-template` pointing to `local` (SSD)
+- stack files carry only intent fields (`storage_profile`, `template_name`,
+  `extra_mount_profile`) — no physical pool names
 
 This matters because the refactor must not pretend that storage can be changed
 only in code while ignoring the currently deployed containers and host storage

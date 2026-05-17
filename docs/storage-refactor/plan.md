@@ -62,6 +62,12 @@ After the refactor:
 - template storage should be resolved through the same configuration model as
   runtime storage
 
+**Status (2026-05-17):** The manifest-driven refactor is complete and
+promoted to `baseline/teardown-validated`. The subsequent SSD storage
+cutover (`work/storage-ssd-cutover`) updated `terraform/lxc/storage/pve-test.yaml`
+so that `platform-default`, `durable-default`, and the default template profile
+all resolve to `local-lvm` / `local` (SSD). Stack files were not modified.
+
 ## Proposed Configuration Model
 
 Use logical storage profiles rather than physical pool names in stack files.

@@ -3,7 +3,7 @@ version: 1
 defaults:
   storage_profile: platform-default
   extra_mount_profile: durable-default
-  template_profile: usb-template
+  template_profile: local-template
 
 templates:
   default:
@@ -23,13 +23,13 @@ storage_backends:
 
 profiles:
   platform-default:
-    rootfs_storage: infrastructure-containers
-    docker_storage: infrastructure-containers
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   validation-small:
-    rootfs_storage: storage-containers
-    docker_storage: storage-containers
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   ssd-runtime:
@@ -40,10 +40,10 @@ profiles:
 
 extra_mount_profiles:
   durable-default:
-    storage: infrastructure-containers
+    storage: local-lvm
     required_content_type: rootdir
   durable-small:
-    storage: storage-containers
+    storage: local-lvm
     required_content_type: rootdir
   durable-ssd:
     storage: local-lvm
