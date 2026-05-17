@@ -103,6 +103,12 @@ evidence stamp:
 This phase is read-only. A degraded or missing stack is reported in the table;
 the phase itself is an observation pass, not a repair action.
 
+If `platform-status` cannot collect `pct status` because the operator host
+cannot reach or resolve the Proxmox SSH host, that stack is reported as
+`overall=blocked` with an explicit `status collection blocked` detail. This
+prevents SSH collection failures from being misreported as container stop
+states.
+
 Use `approval-preflight` as the go/no-go check before preparing any destructive
 approval packet:
 

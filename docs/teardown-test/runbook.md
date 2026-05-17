@@ -46,6 +46,9 @@ Expected:
 - the target guard reports `pve-test`
 - every in-scope stack is listed with VMID, IP, `pct` state, direct health
   status, and evidence log paths
+- SSH collection failures (for example operator-host DNS resolution failures for
+	`pve-test.gibbsgreatly.xyz`) are reported as `overall=blocked` with explicit
+	blocker detail, not as stopped stacks
 - the generated `platform-status.tsv` and `platform-status.json` files are kept
   under the command's evidence stamp
 
