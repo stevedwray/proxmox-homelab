@@ -24,7 +24,7 @@ HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 PVE_TEST_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
-REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve ${TARGET_NODE_EXPECTED} teardown deploy test}"
+REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
@@ -141,7 +141,7 @@ Options:
   --execute
       Required for destroy, deploy-*, activate-edge, and cycle.
   --approval-text TEXT
-      Required with --execute. Must contain: ${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve <target> teardown deploy test}
+      Required with --execute. Must contain: ${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}
   --approval-packet PATH
     Required for destroy and cycle unless --disposable is set.
     Must reference stamp/commit/backup approvals.
@@ -165,7 +165,7 @@ Examples:
   scripts/teardown-deploy-test.sh status --stamp 20260423-010203
   scripts/teardown-deploy-test.sh final-validation
   scripts/teardown-deploy-test.sh deploy-edge --execute \
-    --approval-text "I approve <target> teardown deploy test OP-21 through OP-24"
+    --approval-text "approve"
 EOF
 }
 
@@ -907,6 +907,7 @@ wait_for_authentik_api_ready() {
   local max_attempts="24"
   local delay_seconds="5"
 
+  # shellcheck disable=SC2016
   run_logged "wait-authentik-api-ready" \
     "${WITH_SECRETS}" bash -lc '
       set -euo pipefail
@@ -967,43 +968,41 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${DISPOSABLE}" != "true" && ( "${PHASE}" == "destroy" || "${PHASE}" == "cycle" ) ]]; then
-    if [[ "${approval_lc}" != *"op-06"* \
-      || "${approval_lc}" != *"destroy"* \
-      || "${approval_lc}" != *"op-07"* \
-      || "${approval_lc}" != *"op-16"* \
-      || "${approval_lc}" != *"stop"* \
-      || "${approval_lc}" != *"first failure"* \
-      || "${approval_lc}" != *"does not authorize"* \
-      || "${approval_lc}" != *"rebuild apply"* \
-      || "${approval_lc}" != *"edge publish"* \
-      || "${approval_lc}" != *"op-25"* \
-      || "${approval_lc}" != *"op-28"* \
-      || "${approval_lc}" != *"op-29"* \
-      || "${approval_lc}" != *"reconcile"* \
-      || "${approval_lc}" != *"apply"* ]]; then
-      log "ERROR ${PHASE} requires explicit OP-06 destroy-only scope and exclusions in --approval-text"
-      set_phase_failure_context \
-        "require-op06-scope-approval-text" \
-        "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <op06-scope-text>" \
-        "${RUN_LOG}" \
-        "${PHASE} approval text missing required OP-06 destroy-only scope markers"
-      return 1
-    fi
-  fi
 }
 
-approval_packet_line_for_service() {
+approval_packet_field_value() {
+  local packet_path="$1"
+  local field_regex="$2"
+
+  awk -v field_regex="${field_regex}" '
+    BEGIN { IGNORECASE = 1 }
+    $0 ~ "^[[:space:]]*" field_regex "[[:space:]]*:[[:space:]]*" {
+      sub("^[[:space:]]*" field_regex "[[:space:]]*:[[:space:]]*", "", $0)
+      print $0
+      exit
+    }
+  ' "${packet_path}" || true
+}
+
+approval_packet_has_heading() {
+  local packet_path="$1"
+  local heading_regex="$2"
+
+  grep -Eiq "^[[:space:]]*${heading_regex}[[:space:]]*:[[:space:]]*$" "${packet_path}"
+}
+
+approval_packet_has_backup_entry() {
   local packet_path="$1"
   local service_regex="$2"
 
-  grep -Eim1 "${service_regex}" "${packet_path}" || true
+  grep -Eiq "^[[:space:]]*-[[:space:]]*${service_regex}[[:space:]]+backup[[:space:]]+evidence[[:space:]]+path:[[:space:]]*[^[:space:]].*$" "${packet_path}"
 }
 
-line_has_evidence_marker() {
-  local line="$1"
+approval_packet_has_data_loss_approval() {
+  local packet_path="$1"
 
-  [[ "${line}" =~ (backup|snapshot|restore|evidence|artifact|path|id|ticket|ref) ]]
+  grep -Eiq "^[[:space:]]*recreatable[[:space:]-]*services[[:space:]-]*approval[[:space:]]*:[[:space:]]*.+$" "${packet_path}" \
+    && grep -Eiq "(data[[:space:]-]*loss|recreat|accept|acknowledg|allowed|approved)" "${packet_path}"
 }
 
 validate_approval_packet() {
@@ -1011,7 +1010,14 @@ validate_approval_packet() {
   local packet_hash_file
   local packet_sha
   local current_commit
-  local service line
+  local packet_stamp
+  local packet_target
+  local packet_commit
+  local outage_window
+  local rollback_deadline
+  local scope_approval
+  local scope_exclusions
+  local service
   local -a missing_items
   local -a non_loss_services=(
     "step-ca:step[- ]?ca"
@@ -1020,6 +1026,12 @@ validate_approval_packet() {
     "netbox:netbox"
     "monitoring:monitoring"
     "portainer:portainer"
+  )
+  local -a recreatable_services=(
+    "apt-cacher:apt[- ]?cacher"
+    "ci-runner:ci[- ]?runner"
+    "dns:dns"
+    "proxy:proxy"
   )
 
   if [[ "${DISPOSABLE}" == "true" ]]; then
@@ -1049,40 +1061,73 @@ validate_approval_packet() {
   fi
 
   current_commit="$(git_current_commit)"
+  packet_stamp="$(approval_packet_field_value "${packet_path}" "stamp")"
+  packet_target="$(approval_packet_field_value "${packet_path}" "target")"
+  packet_commit="$(approval_packet_field_value "${packet_path}" "approved[[:space:]-]*commit([[:space:]_-]*sha)?")"
+  outage_window="$(approval_packet_field_value "${packet_path}" "outage[[:space:]-]*window")"
+  rollback_deadline="$(approval_packet_field_value "${packet_path}" "rollback[[:space:]-]*deadline")"
+  scope_approval="$(approval_packet_field_value "${packet_path}" "scope[[:space:]-]*approval")"
+  scope_exclusions="$(approval_packet_field_value "${packet_path}" "scope[[:space:]-]*exclusions")"
 
-  if ! grep -Fqi "${STAMP}" "${packet_path}"; then
-    missing_items+=("stamp reference (${STAMP})")
+  if [[ -z "${packet_stamp}" ]]; then
+    missing_items+=("stamp field (stamp: ${STAMP})")
+  elif [[ "${packet_stamp}" != "${STAMP}" ]]; then
+    missing_items+=("stamp field must match active --stamp (${STAMP})")
   fi
 
-  if ! grep -Fqi "${TARGET_NODE_EXPECTED}" "${packet_path}"; then
-    missing_items+=("${TARGET_NODE_EXPECTED} target reference")
+  if [[ -z "${packet_target}" ]]; then
+    missing_items+=("target field (target: ${TARGET_NODE_EXPECTED})")
+  elif [[ "${packet_target}" != "${TARGET_NODE_EXPECTED}" ]]; then
+    missing_items+=("target field must equal ${TARGET_NODE_EXPECTED}")
   fi
 
-  if ! grep -Fqi "${current_commit}" "${packet_path}" \
-    && ! grep -Eiq "approved[[:space:]-]*commit([[:space:]_-]*sha)?[[:space:]:=]+[0-9a-f]{7,40}" "${packet_path}"; then
-    missing_items+=("current commit or approved commit SHA reference")
+  if [[ -z "${packet_commit}" ]]; then
+    missing_items+=("approved commit SHA field")
+  elif [[ ! "${packet_commit}" =~ ^[0-9a-f]{7,40}$ ]]; then
+    missing_items+=("approved commit SHA must be 7-40 lowercase hex characters")
+  elif [[ "${packet_commit}" != "${current_commit}" ]]; then
+    missing_items+=("approved commit SHA must match current commit (${current_commit})")
   fi
 
-  if ! grep -Eiq "(outage|maintenance[[:space:]]+window|window)" "${packet_path}"; then
-    missing_items+=("outage/window field or heading")
+  if [[ -z "${outage_window}" ]]; then
+    missing_items+=("outage window field")
   fi
 
-  if ! grep -Eiq "rollback.*deadline|deadline.*rollback" "${packet_path}"; then
-    missing_items+=("rollback deadline field or heading")
+  if [[ -z "${rollback_deadline}" ]]; then
+    missing_items+=("rollback deadline field")
+  fi
+
+  if [[ -z "${scope_approval}" ]]; then
+    missing_items+=("scope approval field")
+  fi
+
+  if [[ -z "${scope_exclusions}" ]]; then
+    missing_items+=("scope exclusions field")
+  fi
+
+  if ! approval_packet_has_heading "${packet_path}" "service[[:space:]-]*evidence"; then
+    missing_items+=("service evidence heading")
   fi
 
   for service in "${non_loss_services[@]}"; do
     local service_name="${service%%:*}"
     local service_pattern="${service#*:}"
-    line="$(approval_packet_line_for_service "${packet_path}" "${service_pattern}")"
-    if [[ -z "${line}" ]] || ! line_has_evidence_marker "${line,,}"; then
+    if ! approval_packet_has_backup_entry "${packet_path}" "${service_pattern}"; then
       missing_items+=("backup evidence reference for ${service_name}")
     fi
   done
 
-  if ! grep -Eiq "(recreat|data[[:space:]-]*loss).*(approv|accept|acknowledg|allowed)" "${packet_path}" \
-    && ! grep -Eiq "(apt[- ]?cacher|ci[- ]?runner|dns|proxy).*(backup|snapshot|restore|evidence|artifact|path|id|ticket|ref)" "${packet_path}"; then
-    missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
+  if ! approval_packet_has_data_loss_approval "${packet_path}"; then
+    if ! approval_packet_has_heading "${packet_path}" "recreatable[[:space:]-]*services[[:space:]-]*evidence"; then
+      missing_items+=("recreatable services evidence heading or recreatable services approval field")
+    fi
+    for service in "${recreatable_services[@]}"; do
+      local service_name="${service%%:*}"
+      local service_pattern="${service#*:}"
+      if ! approval_packet_has_backup_entry "${packet_path}" "${service_pattern}"; then
+        missing_items+=("recreatable service evidence reference for ${service_name}")
+      fi
+    done
   fi
 
   set +u

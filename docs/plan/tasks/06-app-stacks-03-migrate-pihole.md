@@ -56,7 +56,7 @@ Pi-hole is running in a new LXC (`pihole-stack`, VMID 160) at `10.60.0.10`, all 
 
 - Pi-hole is critical path for DNS. Deploy the new one **before** touching the old one. Only destroy old after the new is fully verified.
 - Image must be sourced from Harbor: `10.57.3.10/homelab/apps/pihole:<pin>`
-- `stack.yaml`: VMID 160, IP `10.60.0.10/24`, `gateway: 10.60.0.1`, `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`
+- `stack.yaml`: VMID 160, IP `10.60.0.10/24`, `gateway: 10.60.0.1`, `dns_server: 10.60.0.1`, `network.zone: app_seg`, `cores: 1`, `memory: 512`, `docker_storage_size: "5G"`
 - The new Pi-hole must be able to forward DNS queries upstream (ensure `10.60.0.0/24` has internet egress via the SDN gateway)
 - Test DNS resolution explicitly before updating any client resolver configs
 - **LAN ingress**: Pi-hole is on `app_seg` (`10.60.0.10`), not `mgmt_seg`. Port 53 (DNS) must be reachable from all LAN clients (`192.168.1.0/24`). This requires inter-segment routing between `10.60.0.0/24` and `192.168.1.0/24` via the SDN gateway (`10.60.0.1`). Verify this routing is in place before switching any client resolver configs. Port 80 (admin UI) should also be LAN-accessible for management.
@@ -99,7 +99,7 @@ STEP 3 — Snapshot old Pi-hole container:
   ssh root@<proxmox-host> "pct snapshot <old-vmid> pre-migration-$(date +%Y%m%d)"
 
 STEP 4 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/pihole-stack
 
 STEP 5 — Create stack files:
@@ -151,7 +151,8 @@ STEP 12 — Update NetBox, commit, merge:
           terraform/lxc/ansible/playbooks/deploy-pihole-stack.yml \
           .env.template
   git commit -m "feat(pihole): migrate Pi-hole DNS to new LXC stack (VMID 160, 10.60.0.10)"
-  git checkout dev/pve-test && git merge feat/pihole-stack
+  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git merge feat/pihole-stack
   git push origin dev/pve-test
 
 DONE WHEN: All clients using 10.60.0.10, blocklists loaded, old Pi-hole destroyed.

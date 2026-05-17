@@ -35,7 +35,7 @@ This is an implementation plan, not a redesign.
 | Authentik backchannel migration | Stack-specific per consumer | Grafana, Portainer, and Traefik forward-auth are migrated to verified internal direct TLS | Define Harbor-specific migration path for discovery-coupled OIDC endpoints |
 | Renewal/expiry/reload checks | Shared + stack hooks | Traefik ACME persistence exists | Define direct-cert renewal ownership + reload checks |
 | Higher-blast-radius service TLS | Stack-specific (`harbor-stack`) | Registry trust posture still mixed/insecure | Keep as later track after Authentik pattern is stable |
-| CA rotation/compromise procedures | Shared | Lightly defined today | Document minimum manual response path |
+| CA rotation/compromise procedures | Shared | Minimum manual response path documented | Exercise via tabletop and add stronger verification automation |
 
 ## Which Internal Flows Moved First
 
@@ -130,7 +130,7 @@ Remaining:
 
 6. Design and implement Harbor OIDC backchannel migration under discovery-derived endpoint behavior.
 7. Add shared direct-cert renewal/expiry checks.
-8. Plan Harbor registry TLS normalization and CA compromise/rotation response.
+8. Plan Harbor registry TLS normalization.
 
 ## Smallest Useful First Slice
 
@@ -150,5 +150,5 @@ OAuth/resource backchannel and Traefik forward-auth runtime path).
 - Harbor registry TLS normalization (broad client impact).
 - Direct-service naming beyond current `*-bg` path.
 - Inconsistent Docker resolver upstreams across stacks after temporary host DNS fallback.
-- CA compromise and root rotation procedures.
+- CA compromise and root rotation rehearsal/automation maturity.
 - Consistent trust lifecycle for non-managed endpoints.

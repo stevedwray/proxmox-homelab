@@ -2,6 +2,7 @@
 hostname: dns-stack
 ip_address: "${lab_ip_dns}/24"
 gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
 proxmox_node: pve-test
 vmid: 151
 cores: 1

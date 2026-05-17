@@ -15,7 +15,7 @@ Phase 06 — Application Stack Migration
 ## Prerequisites
 
 - Task 06-01 complete — workload discovery done; confirmed which IPs and subnets are needed
-- Phase 04 complete — Traefik running (traffic from these zones routes through it)
+- Validated stack-owned edge foundation is running (Traefik, Authentik, step-ca, Monitoring)
 - `terraform/lxc/network/` reviewed to understand existing SDN zone management approach
 
 ## Objective
@@ -104,11 +104,12 @@ STEP 5 — Verify routing from pve-test to new zones:
   # Should show routes via the SDN bridge now
 
 STEP 6 — Commit if code was changed:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/app-seg-zones
   git add terraform/lxc/network/
   git commit -m "feat(network): add app_seg (10.60.0.0/24) and game_seg (10.61.0.0/24) SDN zones"
-  git checkout dev/pve-test && git merge feat/app-seg-zones
+  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git merge feat/app-seg-zones
   git push origin dev/pve-test
 
 DONE WHEN: Both zones exist in Proxmox, subnets in NetBox, routing confirmed.

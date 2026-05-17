@@ -2,6 +2,7 @@
 hostname: proxy-stack
 ip_address: "${lab_ip_proxy}/24"
 gateway: "${lab_gw_edge}"
+dns_server: "${lab_gw_edge}"
 proxmox_node: pve-test
 network:
   zone: edge_seg

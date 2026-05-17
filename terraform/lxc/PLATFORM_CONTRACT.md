@@ -89,12 +89,14 @@ change to field names or semantics as a platform API change affecting all stacks
 | `hostname`         | string | LXC hostname |
 | `ip_address`       | string | CIDR notation (e.g. `10.57.3.10/24`) |
 | `deployment_tier`  | string | Explicit orchestration tier: `platform` or `apps` |
+| `dns_server`       | string | Guest resolver written into `/etc/resolv.conf`; set explicitly in every stack |
 
 ### Optional with platform defaults
 
 | Field                 | Type    | Default behavior |
 |-----------------------|---------|------------------|
 | `gateway`             | string  | Falls back to `default_gateway` from `variables.tf` |
+| `dns_server`          | string  | Explicit guest resolver; use the zone gateway for SDN-attached stacks |
 | `vmid`                | int     | Passed through if set; omitted otherwise |
 | `cores`               | int     | Defaults to `2` |
 | `memory`              | int     | Defaults to `2048` MiB |

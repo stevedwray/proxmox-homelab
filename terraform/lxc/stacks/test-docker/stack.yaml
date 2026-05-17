@@ -1,6 +1,7 @@
 # test-docker — Nginx test stack deployed via Portainer API
 hostname: test-docker
 ip_address: "192.168.1.52/24"
+dns_server: "192.168.1.1"
 vmid: 131
 cores: 2
 memory: 2048

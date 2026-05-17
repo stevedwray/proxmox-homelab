@@ -100,18 +100,25 @@ Failure class: CA host outage
 
 Required planning output: define restore path and outage survivability checks.
 
-## 5. Compromise Response (Least Defined / Highest Risk)
+## 5. Compromise Response (High Risk)
 
-This is least defined today and must be documented before broad direct issuance.
+The minimum manual operator workflow is now documented in
+`ca-compromise-rotation-runbook.md`.
 
-Minimum response sequence to define:
+Response sequence summary:
 
-1. stop issuance from compromised authority
-2. rebuild/restore authority on deliberate path
-3. export new trust anchor
+1. contain and pause non-essential issuance activity
+2. rebuild or restore CA authority on a deliberate path
+3. export and fingerprint the new trust anchor
 4. fan out trust to managed consumers
-5. reissue direct service certificates in priority order
-6. verify representative consumers stack-by-stack
+5. reissue direct certificates in approved priority order
+6. verify representative consumers stack-by-stack before exiting response mode
+
+Remaining maturity work:
+
+- tabletop rehearsal of the runbook
+- stronger shared verification automation during recovery
+- explicit non-managed endpoint trust refresh tracking
 
 ## Shortest Session Order
 
@@ -119,7 +126,7 @@ Minimum response sequence to define:
 2. Define renewal owner and reload behavior for that pattern.
 3. Apply same pattern to Harbor and Portainer Authentik backchannels.
 4. Add shared expiry/trust verification checks.
-5. Document CA rotation and compromise runbook.
+5. Exercise CA rotation and compromise runbook with repeatable evidence capture.
 
 ## Smallest Useful First Slice
 

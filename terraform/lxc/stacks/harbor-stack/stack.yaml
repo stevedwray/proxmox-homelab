@@ -2,6 +2,7 @@
 hostname: harbor-stack
 ip_address: "${lab_ip_harbor}/24"
 gateway: "${lab_gw_infra}"
+dns_server: "${lab_gw_infra}"
 proxmox_node: pve-test
 network:
   zone: infra_seg
