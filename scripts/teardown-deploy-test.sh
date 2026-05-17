@@ -1314,12 +1314,34 @@ validate_stack_smoke() {
 run_status_capture() {
   local logfile="$1"
   shift
+  local status=0
 
   mkdir -p "${LOG_DIR}"
-  if "$@" >"${logfile}" 2>&1; then
+  "$@" >"${logfile}" 2>&1
+  status=$?
+  if [[ "${status}" -eq 0 ]]; then
     return 0
   fi
-  return "$?"
+  return "${status}"
+}
+
+classify_pct_capture_failure() {
+  local pct_log="$1"
+
+  PLATFORM_PCT_STATUS="missing"
+  PLATFORM_PCT_DETAIL="pct status unavailable"
+
+  if grep -Eq 'Could not resolve hostname|Temporary failure in name resolution|Name or service not known' "${pct_log}"; then
+    PLATFORM_PCT_STATUS="blocked"
+    PLATFORM_PCT_DETAIL="status collection blocked: operator host cannot resolve ${PVE_TEST_HOST}"
+    return 0
+  fi
+
+  if grep -Eq 'No route to host|Connection timed out|Connection refused|Host key verification failed|Permission denied' "${pct_log}"; then
+    PLATFORM_PCT_STATUS="blocked"
+    PLATFORM_PCT_DETAIL="status collection blocked: cannot reach Proxmox host via SSH"
+    return 0
+  fi
 }
 
 probe_stack_health() {
@@ -1466,6 +1488,7 @@ summary = {
     "healthy": sum(1 for row in rows if row["overall"] == "healthy"),
     "running": sum(1 for row in rows if row["overall"] == "running"),
     "degraded": sum(1 for row in rows if row["overall"] == "degraded"),
+    "blocked": sum(1 for row in rows if row["overall"] == "blocked"),
     "stopped": sum(1 for row in rows if row["overall"] == "stopped"),
     "missing": sum(1 for row in rows if row["overall"] == "missing"),
 }
@@ -1500,7 +1523,8 @@ generate_platform_status_report() {
         pct_status="unknown"
       fi
     else
-      pct_status="missing"
+      classify_pct_capture_failure "${pct_log}"
+      pct_status="${PLATFORM_PCT_STATUS}"
     fi
 
     health_status="skipped"
@@ -1523,7 +1547,10 @@ generate_platform_status_report() {
       health_log="${PLATFORM_HEALTH_LOG}"
     fi
 
-    if [[ "${pct_status}" == "missing" ]]; then
+    if [[ "${pct_status}" == "blocked" ]]; then
+      overall="blocked"
+      health_detail="${PLATFORM_PCT_DETAIL}"
+    elif [[ "${pct_status}" == "missing" ]]; then
       overall="missing"
     elif [[ "${pct_status}" != "running" ]]; then
       overall="stopped"
