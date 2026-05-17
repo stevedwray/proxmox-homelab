@@ -287,14 +287,14 @@ check "storage_manifest_exists" {
 check "legacy_rootfs_storage_mapping_exists" {
   assert {
     condition     = local.legacy_rootfs_storage == null || can(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage])
-    error_message = "Legacy rootfs_storage '${local.legacy_rootfs_storage}' is not mapped in '${local.effective_storage_manifest_path}'."
+    error_message = "Legacy rootfs_storage '${coalesce(local.legacy_rootfs_storage, "<unset>")}' is not mapped in '${local.effective_storage_manifest_path}'."
   }
 }
 
 check "legacy_extra_mount_storage_mapping_exists" {
   assert {
     condition     = local.legacy_extra_mount_storage == null || can(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage])
-    error_message = "Legacy extra_mount_storage '${local.legacy_extra_mount_storage}' is not mapped in '${local.effective_storage_manifest_path}'."
+    error_message = "Legacy extra_mount_storage '${coalesce(local.legacy_extra_mount_storage, "<unset>")}' is not mapped in '${local.effective_storage_manifest_path}'."
   }
 }
 
@@ -371,7 +371,7 @@ check "extra_mount_backend_supports_required_content" {
       try(local.storage_backend_catalog[local.resolved_extra_mount_storage].content_types, []),
       coalesce(try(local.resolved_extra_mount_profile_mapping.required_content_type, null), "rootdir")
     )
-    error_message = "Resolved extra mount backend '${local.resolved_extra_mount_storage}' does not advertise required content type for stack '${local.stack_name}'."
+    error_message = "Resolved extra mount backend '${coalesce(local.resolved_extra_mount_storage, "<unset>")}' does not advertise required content type for stack '${local.stack_name}'."
   }
 }
 
