@@ -17,7 +17,9 @@ This phase still follows the platform foundation, but the target is no longer a 
 - Phase 05 supply-chain pipeline active: Harbor scanning, SBOM generation, signing, and Harbor-only image policy are in place
 - Harbor at `10.57.3.10` operational with projects and scanning configured
 - NetBox updated with current IP allocations
-- Current branch workflow from `AGENTS.md` applies: start from `baseline/teardown-validated`, use a short-lived `feat/`/`task/` branch, validate, then merge to `dev/pve-test`
+- Current branch workflow from `AGENTS.md` applies: start from the current
+  active development HEAD, use a short-lived `feat/`/`task/` branch, validate,
+  then merge to `dev/pve-test`
 
 ## Current state of application workloads
 

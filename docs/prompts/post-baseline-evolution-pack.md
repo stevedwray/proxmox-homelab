@@ -1,238 +1,166 @@
 # Post-Baseline Evolution Prompt Pack
 
-These prompts are for the next phase after promoting
-`work/step-ca-authentik-direct-tls-01` into
-`baseline/teardown-validated`.
+This pack now serves two purposes:
 
-Use them in order. Prompts 01 through 04 are the main line. Prompt 05 is a
-later narrow platform-hardening slice.
+1. record the already-completed post-baseline follow-up work
+2. provide the next Copilot handoff for the highest-value remaining hardening
+   slice
 
-## Prompt 01: Documentation Convergence
+`baseline/teardown-validated` now includes:
+
+- teardown harness hardening slice
+- `dns_server` stack-contract cleanup
+- Phase 06 replanning
+- `step-ca` CA compromise/rotation runbook
+- simplified homelab teardown approval flow
+- successful teardown/redeploy closeout
+  `docs/teardown-test/reports/20260516-235620.md`
+
+Historical prompt status:
+
+- Prompt 01: completed
+- Prompt 02: completed
+- Prompt 03: completed
+- Prompt 04: completed
+- Prompt 05: completed
+
+The next useful work is not another broad post-baseline sweep. It is targeted
+hardening of `platform-status`, then real Phase 06 execution planning.
+
+## Next Prompt: Platform-Status Hardening
 
 ```text
 You are working in /home/steve/git/proxmox-homelab.
 
+Branch workflow:
+1. Verify your current checkout is an active development branch or other
+   non-promotion working HEAD.
+2. Create a fresh short-lived branch for this work from the current working
+   HEAD:
+   - git checkout -b task/platform-status-hardening-01
+3. Do not use baseline/teardown-validated or dev/pve-test as the base for this
+   branch. They are promotion targets only.
+4. If your current checkout is baseline/teardown-validated or dev/pve-test,
+   stop and report a branch-base blocker instead of branching from it.
+5. Do not work directly on a promotion target branch.
+6. Do not merge anything at the end. Stop only after implementation,
+   validation, issue workflow, commit, and a clear summary.
+
+Workspace handling:
+- If unrelated pre-existing working tree changes are present, leave them
+  untouched and continue.
+- Do not stop just to report unrelated modified files.
+- Only stop if an existing uncommitted change directly conflicts with a file you
+  must edit for this task.
+- In the final report, distinguish clearly between:
+  - files changed for this task
+  - unrelated pre-existing modified files left untouched
+
 Goal:
-Bring the durable docs back into alignment with the current validated platform
-state and branch model.
+Harden `scripts/teardown-deploy-test.sh platform-status` so it remains
+trustworthy after a successful rehearsal and does not falsely report the entire
+platform as stopped when the operator host cannot resolve the Proxmox SSH
+hostname.
 
 Context:
-- baseline/teardown-validated now includes the completed step-ca/AuthentiK
-  direct-TLS rollout and the validated teardown/redeploy evidence.
-- Several docs still describe older branch flows (`dev/pve-test`,
-  `refactor/stack-lifecycle`) or stale implementation assumptions.
-- Do not redesign architecture. This is a convergence pass.
-
-Focus files first:
-- docs/plan/README.md
-- docs/plan/development-status.md
-- docs/design/stack-owned-ingress-auth-dns.md
-- docs/teardown-test/operations-plan.md
-- docs/teardown-test/inventory.md
-- docs/stack-lifecycle-refactor/plan.md
-
-What to do:
-1. Read the current validated docs and recent state:
-   - docs/teardown-test/reports/20260516-052235.md
-   - docs/stack-lifecycle-refactor/handoff.md
-   - docs/provisioning-refactor/README.md
-   - docs/step-ca-implementation/README.md
-2. Update the target files so they reflect the repo’s current promotion model
-   and validated baseline state.
-3. Remove or clearly mark stale references to:
-   - dev/pve-test as the active integration branch where it is no longer true
-   - refactor/stack-lifecycle as the live execution branch where it is no
-     longer true
-   - homelab.internal / old ingress assumptions where current docs use
-     lab.gibbsgreatly.xyz
-   - Nginx Proxy Manager as an active future dependency where it conflicts with
-     current architecture
-4. Keep edits factual and minimal. Do not rewrite the whole plan set.
-
-Validation:
-- grep for remaining stale references in the edited files
-- ensure statements do not conflict with docs/teardown-test/reports/20260516-052235.md
-- run ./with-secrets /home/steve/.local/bin/sonar-scanner if code-style-sensitive
-  docs/scripts are touched; otherwise summarize why not needed
-
-Deliver:
-- concise summary of what was stale and what was updated
-- list of files changed
-- any residual docs that still need a later deeper rewrite
-```
-
-## Prompt 02: Teardown Harness Hardening
-
-```text
-You are working in /home/steve/git/proxmox-homelab.
-
-Goal:
-Advance scripts/teardown-deploy-test.sh from "working harness" toward
-"reusable productized harness" using the already-written roadmap.
+- The latest successful teardown/redeploy cycle is:
+  - docs/teardown-test/reports/20260516-235620.md
+- The cycle itself passed, including final validation.
+- A later `platform-status` rerun under the same stamp falsely reported all
+  stacks as stopped because SSH to `pve-test.gibbsgreatly.xyz` failed local name
+  resolution on the operator workstation.
+- Relevant evidence:
+  - docs/teardown-test/evidence/20260516-235620/logs/platform-status-*.log
+  - docs/teardown-test/evidence/20260516-235620/logs/platform-status.json
+  - docs/teardown-test/evidence/20260516-235620/logs/pct-status-*.log
+  - docs/teardown-test/evidence/20260516-235620/logs/teardown-deploy-test-20260516-235620.log
 
 Primary references:
-- docs/teardown-test/harness-roadmap.md
-- docs/teardown-test/repeatable-test.md
-- docs/teardown-test/decisions.md
-- docs/teardown-test/reports/20260516-052235.md
-
-Scope:
-Implement one bounded hardening slice only:
-- structural approval-packet validation improvements
-- and/or harness self-tests for safety gates
-- and/or summary/report generation
-
-Pick the single best slice based on the roadmap and explain why.
-
-Rules:
-- Do not weaken destructive safeguards.
-- Do not add any automatic destructive execution.
-- Keep changes bounded to the harness and its direct docs/tests.
-- Prefer source-only verification and mockable tests over live pve-test
-  dependency.
-
-Expected files may include:
 - scripts/teardown-deploy-test.sh
 - docs/teardown-test/repeatable-test.md
-- docs/teardown-test/harness-roadmap.md
-- a new tests file if appropriate
+- docs/teardown-test/runbook.md
+- docs/teardown-test/reports/20260516-235620.md
+- docs/teardown-test/evidence/20260516-235620/logs/platform-status.json
+
+Task:
+1. Read the current platform-status implementation and the latest successful
+   cycle evidence.
+2. Diagnose exactly why platform-status produced a false `stopped` summary after
+   a successful cycle.
+3. Implement the smallest safe fix so platform-status either:
+   - uses a more reliable host/address path for `pct status` checks, or
+   - reports an explicit status-collection blocker instead of converting SSH
+     name-resolution failure into `stopped`
+4. Preserve the useful direct health checks and evidence output.
+5. Update the teardown docs only where needed so the behavior and fallback are
+   clear.
+6. Finish the repo workflow completely:
+   - use an existing suitable GitHub issue only if it exactly fits this slice
+   - otherwise create a new narrow issue specifically for platform-status
+     hardening
+   - commit only this task’s files
+   - use a commit message with Closes #N
+   - run gh issue close N --comment "Fixed in commit <sha>"
+
+Autonomy rules:
+- Do not stop to ask whether the successful cycle or the later platform-status
+  output is more authoritative; the cycle and direct final-validation logs are
+  authoritative, and platform-status is the thing to harden.
+- Do not stop to ask whether to update a small adjacent doc if it is needed for
+  consistency; just do it.
+- Prefer a coherent finished hardening slice over a minimal patch that still
+  allows false “everything stopped” summaries.
+
+Decision rule:
+- Prefer the smallest implementation-grounded fix that improves operator trust.
+- If there are multiple viable fixes, prefer one that makes failure mode
+  explicit over silently guessing wrong state.
+- Do not broaden into unrelated teardown-harness refactors in this prompt.
 
 Validation:
 - bash -n scripts/teardown-deploy-test.sh
 - shellcheck scripts/teardown-deploy-test.sh
-- run any new harness tests you add
+- run any relevant unit/source-only tests you add
 - run safe non-mutating commands only, such as:
-  - scripts/teardown-deploy-test.sh --help
-  - scripts/teardown-deploy-test.sh plan
-  - scripts/teardown-deploy-test.sh status --stamp 20260516-052235
+  - bash -lc 'source .env && ./scripts/teardown-deploy-test.sh --help'
+  - bash -lc 'source .env && ./scripts/teardown-deploy-test.sh status --stamp 20260516-235620'
+  - bash -lc 'source .env && ./scripts/teardown-deploy-test.sh platform-status --stamp 20260516-235620'
+- run ./with-secrets /home/steve/.local/bin/sonar-scanner because shell code is touched
+- do not run a destructive teardown cycle in this prompt
+
+Stop only if:
+- there is a direct uncommitted-file conflict in files you must edit
+- required validation fails and you cannot resolve it safely within this slice
+- GitHub issue creation/closure is impossible due to auth or network failure
+- the current code path is so entangled that platform-status cannot be hardened
+  safely without a broader redesign
+If you stop, explain the exact blocker and the narrowest safe next step.
+
+Done means done:
+- the false stopped-summary behavior is fixed or safely reclassified as an
+  explicit collection blocker
+- relevant docs are updated if needed
+- validations have been run
+- issue workflow is completed
+- commit is created
+- branch remains unmerged
 
 Deliver:
-- the specific roadmap item completed
-- evidence that safety behavior still holds
-- what should be the next harness hardening slice after this one
+- the exact failure mode you found
+- the fix you chose and why
+- issue number
+- commit sha
+- files changed for this task
+- validations/checks performed and outcomes
+- whether the branch is clean except for any unrelated pre-existing modified
+  files
+- what the next harness hardening slice should be after this one
 ```
 
-## Prompt 03: Shared Stack Contract Tidyup
+## After That
 
-```text
-You are working in /home/steve/git/proxmox-homelab.
+Once `platform-status` is trustworthy again, the next practical work should be:
 
-Goal:
-Close small real contract gaps in stack metadata that can affect rebuild
-consistency, starting with explicit dns_server handling.
-
-Context:
-- docs/design/network.md calls out dns_server coverage as a known gap.
-- Multiple terraform/lxc/stacks/*/stack.yaml files still omit dns_server.
-- This is a contract cleanup and validation pass, not a large refactor.
-
-What to do:
-1. Audit current dns_server handling across stack.yaml files and the code that
-   consumes stack metadata.
-2. Decide the minimal safe contract rule:
-   - either require dns_server explicitly everywhere relevant
-   - or document/enforce a deterministic derived default per zone
-3. Implement the smallest safe fix in code and source files.
-4. Update the relevant docs so the rule is explicit.
-
-Likely touch points:
-- terraform/lxc/stacks/*/stack.yaml
-- terraform/lxc/edge_manifest.py or related stack parsing/validation code if needed
-- docs/design/network.md
-- docs/plan/development-status.md or related contract docs if needed
-
-Validation:
-- run relevant unit tests if stack metadata parsing is touched
-- run /home/steve/.local/bin/snyk iac test terraform/
-- run ./with-secrets /home/steve/.local/bin/sonar-scanner if Python/shell/YAML
-  code is touched
-
-Deliver:
-- the contract rule you chose
-- files updated
-- whether any remaining stack-metadata gaps should be queued next
-```
-
-## Prompt 04: Re-plan Phase 06 App Migration
-
-```text
-You are working in /home/steve/git/proxmox-homelab.
-
-Goal:
-Rewrite the application-migration plan so it matches the platform that now
-actually exists.
-
-Context:
-- The platform foundation and stack-owned edge model are now validated.
-- docs/plan/phase-06-app-stacks.md still contains stale assumptions
-  (homelab.internal, NPM cleanup, older branch model, older ingress flow).
-- This is a planning/doc task only. Do not implement app stacks yet.
-
-What to do:
-1. Read the current authoritative context:
-   - docs/provisioning-refactor/README.md
-   - docs/provisioning-refactor/runbook.md
-   - docs/teardown-test/reports/20260516-052235.md
-   - docs/design/network.md
-   - docs/plan/phase-05-supply-chain.md
-2. Update docs/plan/phase-06-app-stacks.md so it reflects:
-   - current naming and routing conventions
-   - current branch/promotion model
-   - stack-owned edge expectations
-   - Harbor-only image sourcing and current supply-chain expectations
-   - current prerequisites based on what is already validated
-3. Keep the migration order pragmatic and incremental.
-4. Identify the first real implementation slice that should follow the replanning
-   pass.
-
-Validation:
-- grep for stale terms removed or intentionally retained:
-  - homelab.internal
-  - Nginx Proxy Manager / NPM
-  - outdated branch references
-- ensure the updated plan does not conflict with current edge and teardown docs
-
-Deliver:
-- summary of stale assumptions removed
-- recommended first app-migration slice after replanning
-- any dependencies still genuinely missing before Phase 06 starts
-```
-
-## Prompt 05: Narrow step-ca Follow-Up
-
-```text
-You are working in /home/steve/git/proxmox-homelab.
-
-Goal:
-Take the next bounded step in the post-AuthentiK direct-TLS work without
-reopening the already-completed migrations.
-
-Context:
-- Grafana, Portainer, and Traefik forward-auth Authentik backchannels are done.
-- Harbor remains the main special case.
-- The remaining roadmap in docs/step-ca-implementation/workstreams-and-order.md
-  points to Harbor posture, renewal/expiry checks, and CA rotation response.
-
-Task:
-Choose exactly one of these slices and complete only that slice:
-1. Harbor-specific Authentik/TLS posture clarification in docs and code comments
-2. Shared renewal/expiry/reload validation checks
-3. CA rotation / compromise response documentation and operator workflow
-
-Rules:
-- Do not reopen Grafana/Portainer/Traefik migration work.
-- Do not force Harbor onto a design that the repo has already deferred unless
-  the code clearly supports it.
-- Prefer the smallest implementation-grounded step.
-
-Validation:
-- run the appropriate local tests/checks for changed code
-- run /home/steve/.local/bin/snyk iac test terraform/ if Terraform/YAML is touched
-- run ./with-secrets /home/steve/.local/bin/sonar-scanner if Python/shell/YAML
-  code is touched
-
-Deliver:
-- which slice you chose and why
-- what it resolves
-- what remains deferred after this slice
-```
+1. real Phase 06 workload discovery and inventory capture
+2. confirming or creating `app_seg` / `game_seg`
+3. choosing the first application migration slice
