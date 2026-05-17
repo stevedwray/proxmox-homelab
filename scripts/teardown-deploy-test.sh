@@ -97,19 +97,19 @@ BREAKGLASS_DNS_HOSTS=(
   "proxy-bg"
 )
 
-LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .env}"
-LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
-LAB_IP_DNS="${LAB_IP_DNS:?LAB_IP_DNS must be set in .env}"
-LAB_IP_PORTAINER="${LAB_IP_PORTAINER:?LAB_IP_PORTAINER must be set in .env}"
-LAB_IP_PROXY="${LAB_IP_PROXY:?LAB_IP_PROXY must be set in .env}"
-LAB_GW_MGMT="${LAB_GW_MGMT:?LAB_GW_MGMT must be set in .env}"
+LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-}"
+LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
+LAB_IP_DNS="${LAB_IP_DNS:-}"
+LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
+LAB_IP_PROXY="${LAB_IP_PROXY:-}"
+LAB_GW_MGMT="${LAB_GW_MGMT:-}"
 LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
 export LAB_BASE_DOMAIN="${LAB_BASE_DOMAIN:-${LAB_DOMAIN}}"
 LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
 LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
 LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
 LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
-BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY}"
+BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY:-}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
 EXPECTED_RUNTIME_DIRTY_PATHS=(
@@ -902,6 +902,36 @@ get_authentik_url() {
   return 0
 }
 
+require_live_env_contract() {
+  local missing=()
+  local vars=(
+    LAB_IP_AUTHENTIK
+    LAB_IP_STEP_CA
+    LAB_IP_DNS
+    LAB_IP_PORTAINER
+    LAB_IP_PROXY
+    LAB_GW_MGMT
+  )
+
+  for key in "${vars[@]}"; do
+    if [[ -z "${!key:-}" ]]; then
+      missing+=("${key}")
+    fi
+  done
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  log "ERROR Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}"). Source your environment first (for example: source .env && source .env.pve-test). source-preflight is source-only and does not require these values."
+  set_phase_failure_context \
+    "live-env-contract" \
+    "require_live_env_contract" \
+    "${RUN_LOG}" \
+    "Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}")"
+  return 1
+}
+
 wait_for_authentik_api_ready() {
   local authentik_url="$1"
   local max_attempts="24"
@@ -1606,6 +1636,12 @@ create_evidence_dirs() {
 }
 
 run_source_preflight_checks() {
+  run_logged "validate-storage-contract-offline" \
+    python3 "${TERRAFORM_LXC}/validate-storage-contract.py" \
+    --manifest "${TERRAFORM_LXC}/storage/${TARGET_NODE_EXPECTED}.yaml" \
+    --stacks-dir "${TERRAFORM_LXC}/stacks" \
+    --proxmox-node "${TARGET_NODE_EXPECTED}" \
+    --offline
   run_logged "validate-edge-manifests" \
     python3 "${TERRAFORM_LXC}/validate-edge-manifests.py" "${TERRAFORM_LXC}"/stacks/*/edge.yaml
   run_logged "edge-unit-tests" \
@@ -1656,7 +1692,13 @@ run_source_preflight_checks() {
 
 run_live_preflight_checks() {
   local authentik_url
+  require_live_env_contract
   guard_pve_test
+  run_logged "validate-storage-contract-live" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/validate-storage-contract.py" \
+    --manifest "${TERRAFORM_LXC}/storage/${TARGET_NODE_EXPECTED}.yaml" \
+    --stacks-dir "${TERRAFORM_LXC}/stacks" \
+    --proxmox-node "${TARGET_NODE_EXPECTED}"
   run_logged "dns-authoritative-traefik" \
     bash -lc "dig @${LAB_IP_DNS} +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "dns-delegated-traefik" \
@@ -1843,6 +1885,7 @@ phase_final_validation() {
   local host fqdn authentik_url bg_host bg_fqdn
   create_evidence_dirs
   record_working_tree_state
+  require_live_env_contract
   guard_pve_test
   authentik_url="$(get_authentik_url)" || return 1
 

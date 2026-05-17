@@ -11,9 +11,9 @@ cores: 2
 memory: 1024
 swap: 4096
 rootfs_size: 8
-rootfs_storage: infrastructure-containers
+storage_profile: platform-default
 docker_storage_size: "32G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - netbox
   - test

@@ -11,9 +11,9 @@ cores: 4
 memory: 2048
 swap: 2048
 rootfs_size: 16
-rootfs_storage: infrastructure-containers
+storage_profile: platform-default
 docker_storage_size: "20G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - harbor
   - registry
@@ -32,7 +32,7 @@ provides:
 # Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
 extra_mount_path: "/var/lib/harbor"
 extra_mount_size: "100G"
-extra_mount_storage: infrastructure-containers
+extra_mount_profile: durable-default
 
 # pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
 portainer_server_ip: "${lab_ip_portainer}"

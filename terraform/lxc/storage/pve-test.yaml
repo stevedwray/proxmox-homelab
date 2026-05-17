@@ -1,0 +1,74 @@
+version: 1
+
+defaults:
+  storage_profile: platform-default
+  extra_mount_profile: durable-default
+  template_profile: usb-template
+
+templates:
+  default:
+    name: debian-13.1-2-docker-template.tar.gz
+
+storage_backends:
+  infrastructure-containers:
+    content_types: [rootdir]
+  storage-containers:
+    content_types: [rootdir]
+  storage-template:
+    content_types: [vztmpl]
+  local-lvm:
+    content_types: [images, rootdir]
+  local:
+    content_types: [backup, iso, snippets, vztmpl]
+
+profiles:
+  platform-default:
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  validation-small:
+    rootfs_storage: storage-containers
+    docker_storage: storage-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  ssd-runtime:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
+extra_mount_profiles:
+  durable-default:
+    storage: infrastructure-containers
+    required_content_type: rootdir
+  durable-small:
+    storage: storage-containers
+    required_content_type: rootdir
+  durable-ssd:
+    storage: local-lvm
+    required_content_type: rootdir
+
+template_profiles:
+  usb-template:
+    storage: storage-template
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+  local-template:
+    storage: local
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+
+legacy_rootfs_storage_profiles:
+  infrastructure-containers: platform-default
+  storage-containers: validation-small
+
+legacy_extra_mount_storage_profiles:
+  infrastructure-containers: durable-default
+  storage-containers: durable-small
+
+legacy_template_storage_profiles:
+  storage-template: usb-template
+  local: local-template

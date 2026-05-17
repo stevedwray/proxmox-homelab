@@ -102,9 +102,10 @@ change to field names or semantics as a platform API change affecting all stacks
 | `memory`              | int     | Defaults to `2048` MiB |
 | `swap`                | int     | Defaults to `512` MiB |
 | `rootfs_size`         | int     | Defaults to `8` GiB |
-| `rootfs_storage`      | string  | Falls back to `default_storage` |
+| `storage_profile`     | string  | Falls back to `storage/<env>.yaml` defaults and maps to concrete runtime backends |
 | `docker_storage_size` | string  | Defaults to `"20G"` |
-| `ostemplate`          | string  | Defaults to the shared Debian Docker template |
+| `template_name`       | string  | Defaults to manifest template name and resolves into `<storage>:vztmpl/<name>` |
+| `template_profile`    | string  | Falls back to `storage/<env>.yaml` defaults and maps to template storage |
 | `tags`                | list    | Defaults to `[stack_name]` |
 | `network.zone`        | string  | Optional; when omitted, the stack uses bridge defaults rather than network intent |
 | `ansible_playbook`    | string  | Playbook name consumed by `scripts/provision.sh` during the explicit Ansible phase |
@@ -113,9 +114,13 @@ change to field names or semantics as a platform API change affecting all stacks
 | `app_stack_name`      | string  | Defaults to stack directory name |
 | `extra_mount_path`    | string  | No extra mount when omitted |
 | `extra_mount_size`    | string  | No extra mount when omitted |
-| `extra_mount_storage` | string  | Falls back to `rootfs_storage` when extra mount is used |
+| `extra_mount_profile` | string  | Falls back to `storage/<env>.yaml` defaults and maps to concrete extra mount storage |
 | `depends_on`          | list    | Orchestration metadata used to document and order stack application in the explicit provisioning path |
 | `provides`            | list    | Contract/validation metadata used by stack-boundary documentation tooling |
+
+Storage policy authority lives in `terraform/lxc/storage/<proxmox-node>.yaml`.
+The root module resolves storage/template intent from stack fields before
+invoking `modules/lxc-docker-host`.
 
 ## Orchestration boundary
 

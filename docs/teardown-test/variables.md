@@ -65,7 +65,7 @@ data-loss posture for recreatable services).
 
 | Variable | Value |
 |---|---|
-| LXC template available | VERIFY `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz` |
+| LXC template available | VERIFY template artifact `debian-13.1-2-docker-template.tar.gz` exists in the storage backend resolved by `terraform/lxc/storage/pve-test.yaml` |
 | Harbor bootstrap image source policy | REQUIRES_OPERATOR_INPUT |
 | Docker Hub fallback allowed for Stage 1/2 | REQUIRES_OPERATOR_INPUT |
 | Harbor robot credentials available through SOPS | VERIFY |

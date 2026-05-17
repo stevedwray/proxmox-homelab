@@ -9,9 +9,9 @@ cores: 2
 memory: 4096
 swap: 1024
 rootfs_size: 20
-rootfs_storage: infrastructure-containers
+storage_profile: platform-default
 docker_storage_size: "10G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - ci
   - runner

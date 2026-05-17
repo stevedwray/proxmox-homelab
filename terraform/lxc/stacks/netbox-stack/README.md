@@ -13,8 +13,12 @@ NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service
 | VMID | 143 |
 | IP | 10.57.3.12 (see `stack.yaml`) |
 | Cores / RAM | 2 / 1 GB |
-| Storage | `infrastructure-containers` (8 GB rootfs) |
+| Storage intent | `storage_profile: platform-default` + `template_name: debian-13.1-2-docker-template.tar.gz` |
 | Web UI | http://10.57.3.12:8080 (derives from IP above) |
+
+Concrete Proxmox backends are resolved by the environment storage manifest
+(`terraform/lxc/storage/pve-test.yaml`). Stack authors should not set physical
+pool names directly in `stack.yaml`.
 
 ## Services
 

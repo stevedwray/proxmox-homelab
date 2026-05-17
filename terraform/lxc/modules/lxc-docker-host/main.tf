@@ -34,7 +34,7 @@ resource "proxmox_virtual_environment_container" "docker_host" {
   }
 
   mount_point {
-    volume = var.rootfs_storage
+    volume = var.docker_storage
     size   = var.docker_storage_size
     path   = "/var/lib/docker"
   }
@@ -42,7 +42,7 @@ resource "proxmox_virtual_environment_container" "docker_host" {
   dynamic "mount_point" {
     for_each = var.extra_mount_path != null ? [1] : []
     content {
-      volume = coalesce(var.extra_mount_storage, var.rootfs_storage)
+      volume = var.extra_mount_storage
       size   = var.extra_mount_size
       path   = var.extra_mount_path
     }

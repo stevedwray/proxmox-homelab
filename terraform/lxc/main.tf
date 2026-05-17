@@ -52,9 +52,69 @@ locals {
 
   # Optional declarative network intent. Existing stacks continue to use the
   # current bridge defaults unless they opt in with stack.network.zone.
-  stack_network               = try(local.stack.network, null)
-  stack_network_zone          = try(local.stack.network.zone, null)
-  effective_proxmox_node      = try(local.stack.proxmox_node, var.proxmox_node)
+  stack_network                 = try(local.stack.network, null)
+  stack_network_zone            = try(local.stack.network.zone, null)
+  effective_proxmox_node        = try(local.stack.proxmox_node, var.proxmox_node)
+  storage_manifest_default_path = "${local.lxc_root}/storage/${local.effective_proxmox_node}.yaml"
+  effective_storage_manifest_path = coalesce(
+    var.storage_manifest_path,
+    local.storage_manifest_default_path
+  )
+  storage_manifest_exists = fileexists(local.effective_storage_manifest_path)
+  storage_manifest        = local.storage_manifest_exists ? yamldecode(file(local.effective_storage_manifest_path)) : {}
+
+  # Transitional compatibility: consume legacy stack fields only as selectors
+  # into manifest mappings. Root resolves concrete backends before module call.
+  legacy_rootfs_storage      = try(local.stack.rootfs_storage, null)
+  legacy_extra_mount_storage = try(local.stack.extra_mount_storage, null)
+  legacy_ostemplate          = try(local.stack.ostemplate, null)
+  legacy_ostemplate_parts    = local.legacy_ostemplate != null ? split(":", local.legacy_ostemplate) : []
+  legacy_template_storage    = length(local.legacy_ostemplate_parts) == 2 ? local.legacy_ostemplate_parts[0] : null
+  legacy_template_name       = length(local.legacy_ostemplate_parts) == 2 ? trimprefix(local.legacy_ostemplate_parts[1], "vztmpl/") : null
+
+  resolved_storage_profile = coalesce(
+    try(local.stack.storage_profile, null),
+    try(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage], null),
+    try(local.storage_manifest.defaults.storage_profile, null)
+  )
+  resolved_storage_profile_mapping = try(local.storage_manifest.profiles[local.resolved_storage_profile], null)
+  resolved_rootfs_storage          = try(local.resolved_storage_profile_mapping.rootfs_storage, null)
+  resolved_docker_storage          = coalesce(try(local.resolved_storage_profile_mapping.docker_storage, null), local.resolved_rootfs_storage)
+
+  resolved_extra_mount_profile = coalesce(
+    try(local.stack.extra_mount_profile, null),
+    try(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage], null),
+    try(local.storage_manifest.defaults.extra_mount_profile, null),
+    local.resolved_storage_profile
+  )
+  resolved_extra_mount_profile_mapping = try(local.storage_manifest.extra_mount_profiles[local.resolved_extra_mount_profile], null)
+  resolved_extra_mount_storage = try(local.stack.extra_mount_path, null) != null ? coalesce(
+    try(local.resolved_extra_mount_profile_mapping.storage, null),
+    local.resolved_rootfs_storage
+  ) : null
+
+  resolved_template_profile = coalesce(
+    try(local.stack.template_profile, null),
+    try(local.storage_manifest.legacy_template_storage_profiles[local.legacy_template_storage], null),
+    try(local.storage_manifest.defaults.template_profile, null)
+  )
+  resolved_template_profile_mapping = try(local.storage_manifest.template_profiles[local.resolved_template_profile], null)
+  resolved_template_storage         = try(local.resolved_template_profile_mapping.storage, null)
+  resolved_template_name = coalesce(
+    try(local.stack.template_name, null),
+    local.legacy_template_name,
+    try(local.storage_manifest.templates.default.name, null)
+  )
+  resolved_ostemplate = "${local.resolved_template_storage}:vztmpl/${local.resolved_template_name}"
+
+  storage_backend_catalog = try(local.storage_manifest.storage_backends, {})
+  resolved_storage_backends = toset(compact([
+    local.resolved_rootfs_storage,
+    local.resolved_docker_storage,
+    local.resolved_extra_mount_storage,
+    local.resolved_template_storage,
+  ]))
+
   network_intent_default_path = "${local.lxc_root}/network/${local.effective_proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
@@ -217,6 +277,121 @@ check "network_layer_sdn_attachment_egress_is_complete" {
   }
 }
 
+check "storage_manifest_exists" {
+  assert {
+    condition     = local.storage_manifest_exists
+    error_message = "Storage manifest is missing at '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_rootfs_storage_mapping_exists" {
+  assert {
+    condition     = local.legacy_rootfs_storage == null || can(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage])
+    error_message = "Legacy rootfs_storage '${local.legacy_rootfs_storage}' is not mapped in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_extra_mount_storage_mapping_exists" {
+  assert {
+    condition     = local.legacy_extra_mount_storage == null || can(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage])
+    error_message = "Legacy extra_mount_storage '${local.legacy_extra_mount_storage}' is not mapped in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_ostemplate_mapping_exists" {
+  assert {
+    condition = local.legacy_ostemplate == null || (
+      length(local.legacy_ostemplate_parts) == 2 &&
+      startswith(local.legacy_ostemplate_parts[1], "vztmpl/") &&
+      can(local.storage_manifest.legacy_template_storage_profiles[local.legacy_template_storage])
+    )
+    error_message = "Legacy ostemplate must match '<storage>:vztmpl/<name>' and map storage via legacy_template_storage_profiles in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "storage_profile_resolves" {
+  assert {
+    condition = (
+      local.resolved_storage_profile != null &&
+      local.resolved_storage_profile_mapping != null &&
+      local.resolved_rootfs_storage != null &&
+      local.resolved_docker_storage != null
+    )
+    error_message = "Unable to resolve storage_profile for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_profile_resolves" {
+  assert {
+    condition = try(local.stack.extra_mount_path, null) == null || (
+      local.resolved_extra_mount_profile != null &&
+      local.resolved_extra_mount_profile_mapping != null &&
+      local.resolved_extra_mount_storage != null
+    )
+    error_message = "Stack '${local.stack_name}' defines extra_mount_path but no resolvable extra mount storage profile."
+  }
+}
+
+check "template_profile_resolves" {
+  assert {
+    condition = (
+      local.resolved_template_profile != null &&
+      local.resolved_template_profile_mapping != null &&
+      local.resolved_template_storage != null &&
+      local.resolved_template_name != null
+    )
+    error_message = "Unable to resolve template profile/name for stack '${local.stack_name}'."
+  }
+}
+
+check "resolved_backends_declared" {
+  assert {
+    condition     = alltrue([for backend in local.resolved_storage_backends : contains(keys(local.storage_backend_catalog), backend)])
+    error_message = "Resolved storage backend(s) for stack '${local.stack_name}' are missing from storage_backends in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "rootfs_backend_supports_required_content" {
+  assert {
+    condition     = contains(try(local.storage_backend_catalog[local.resolved_rootfs_storage].content_types, []), coalesce(try(local.resolved_storage_profile_mapping.rootfs_required_content_type, null), "rootdir"))
+    error_message = "Resolved rootfs backend '${local.resolved_rootfs_storage}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "docker_backend_supports_required_content" {
+  assert {
+    condition     = contains(try(local.storage_backend_catalog[local.resolved_docker_storage].content_types, []), coalesce(try(local.resolved_storage_profile_mapping.docker_required_content_type, null), "rootdir"))
+    error_message = "Resolved docker backend '${local.resolved_docker_storage}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_backend_supports_required_content" {
+  assert {
+    condition = try(local.stack.extra_mount_path, null) == null || contains(
+      try(local.storage_backend_catalog[local.resolved_extra_mount_storage].content_types, []),
+      coalesce(try(local.resolved_extra_mount_profile_mapping.required_content_type, null), "rootdir")
+    )
+    error_message = "Resolved extra mount backend '${local.resolved_extra_mount_storage}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "template_backend_supports_required_content" {
+  assert {
+    condition = contains(
+      try(local.storage_backend_catalog[local.resolved_template_storage].content_types, []),
+      coalesce(try(local.resolved_template_profile_mapping.required_content_type, null), "vztmpl")
+    )
+    error_message = "Resolved template backend '${local.resolved_template_storage}' does not advertise vztmpl support for stack '${local.stack_name}'."
+  }
+}
+
+check "template_name_allowed_by_profile" {
+  assert {
+    condition     = length(try(local.resolved_template_profile_mapping.allowed_templates, [])) == 0 || contains(local.resolved_template_profile_mapping.allowed_templates, local.resolved_template_name)
+    error_message = "Template '${local.resolved_template_name}' is not allowed by template profile '${local.resolved_template_profile}' for stack '${local.stack_name}'."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
 # Ensures the attachment exists on pve-test before the LXC is created.
@@ -318,10 +493,11 @@ module "lxc" {
   memory              = try(local.stack.memory, 2048)
   swap                = try(local.stack.swap, 512)
   rootfs_size         = try(local.stack.rootfs_size, 8)
-  rootfs_storage      = try(local.stack.rootfs_storage, var.default_storage)
+  rootfs_storage      = local.resolved_rootfs_storage
+  docker_storage      = local.resolved_docker_storage
   docker_storage_size = try(local.stack.docker_storage_size, "20G")
 
-  ostemplate       = try(local.stack.ostemplate, "local:vztmpl/debian-docker-template.tar.gz")
+  ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))
   tags             = try(local.stack.tags, [local.stack_name])
   network_bridge   = local.effective_network_bridge
@@ -330,7 +506,7 @@ module "lxc" {
 
   extra_mount_path    = try(local.stack.extra_mount_path, null)
   extra_mount_size    = try(local.stack.extra_mount_size, null)
-  extra_mount_storage = try(local.stack.extra_mount_storage, null)
+  extra_mount_storage = local.resolved_extra_mount_storage
 
   depends_on = [null_resource.configure_network_sdn_attachment]
 }
