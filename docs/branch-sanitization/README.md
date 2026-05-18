@@ -6,6 +6,9 @@ This plan defines how to evaluate the remaining candidate branches against the
 current `baseline/teardown-validated` state without polluting the baseline
 branch or its working tree.
 
+Status: evaluation complete (2026-05-18). This document now serves as both the
+evaluation checklist and the final closeout record.
+
 Baseline takes absolute precedence. No branch under evaluation is assumed to be
 correct. A candidate branch must prove value on top of the current baseline
 state through isolated replay and branch-class-appropriate regression testing
@@ -158,7 +161,38 @@ Each branch should end in one of three states:
 The final result of this process should be a small set of baseline-based,
 well-tested retained changes and the removal of all stale or redundant branches.
 
+## Evaluation Closeout (Completed)
+
+Final decision for this evaluation pass: all five candidate branches are
+classified as `delete`.
+
+No retained baseline-based slices survived from this pass.
+
+Post-review hygiene is complete: eval worktrees were removed and local `eval/*`
+branches were deleted after review.
+
+### Final Disposition Table
+
+| Candidate branch | Final disposition | High-signal drop reason |
+|---|---|---|
+| `task/stack-contract-tidyup-01` | `delete` | Candidate delta already superseded by baseline and/or represented in cleaner baseline state; no unique retained slice remained worth replay. |
+| `task/teardown-harness-hardening-01` | `delete` | Harness hardening outcome already covered in baseline path; replay did not leave a unique baseline-forward value slice. |
+| `task/34-basic-sdn-reset` | `delete` | SDN smoke harness content overlapped previously rejected work and conflicted with current baseline behavior; no non-regressive functional slice survived. |
+| `work/pve-test-teardown-cycle-194-03` | `delete` | Deferred commit set was superseded/obsolete on top of baseline and not worth further slicing; no coherent retained replay candidate remained. |
+| `exec/teardown-deploy-validate` | `delete` | Bundled branch decomposed into mostly baseline-equivalent or doc/process-only residue; no unique functional retained slice justified replay. |
+
+### Closeout Notes
+
+- Evaluation pass is complete; no further branch-level replay is pending for the
+  five candidates above.
+- Candidate branches remain present pending explicit deletion, but the
+  sanitization outcome for all five is finalized as `delete`.
+
 ## GitHub Copilot Prompt Pack
+
+Historical note: this prompt pack is preserved as operator guidance used during
+the now-completed evaluation pass. It is archived here for auditability and
+future adaptation, not as active branch-sanitization execution guidance.
 
 The current repo-level Copilot setup is still fairly thin. In this working
 tree, `.github/copilot-instructions.md` is present, but `.github/agents/` and
@@ -177,23 +211,28 @@ full branch diff.
 
 ### Current Candidate Reality Check
 
-Use these current facts when steering Copilot:
+Use these recorded facts from the completed pass when reviewing how evaluation
+was performed:
 
 - `task/stack-contract-tidyup-01` has one unique commit on top of baseline:
-  `b5caf14`
+  `b5caf14`; final disposition was `delete`
 - `task/teardown-harness-hardening-01` has one unique commit on top of
-  baseline: `055b8ec`
-- `task/34-basic-sdn-reset` carries one likely retainable functional commit:
-  `7d8d9a6`, plus older docs/report commits that should not be replayed unless
-  they prove necessary
+  baseline: `055b8ec`; final disposition was `delete`
+- `task/34-basic-sdn-reset` was decomposed around commit `7d8d9a6`, but ended
+  as `delete` after overlap/regression review
 - `work/pve-test-teardown-cycle-194-03` currently has seven unique commits on
-  top of baseline, so do not treat it as a one-commit branch without checking
-  first:
+  top of baseline at review time and was finalized as `delete` after
+  decomposition/supersession analysis:
   `4349057`, `a2e8adc`, `5d69e13`, `e7a7e39`, `fb35a73`, `8dcbe07`, `2a1340e`
-- `exec/teardown-deploy-validate` is bundled and must be decomposed before any
-  replay attempt
+- `exec/teardown-deploy-validate` was treated as bundled, decomposed into
+  slices, and finalized as `delete`
+
+All five candidate branches in this pass ended as `delete`.
 
 ### How To Use These Prompts
+
+These prompts are archived examples from the completed run. If reused for a
+future pass, update candidate names, commit IDs, and expected outcomes first.
 
 1. Paste one prompt at a time into Copilot Chat or Copilot Agent.
 2. Wait for it to finish before moving to the next prompt.
