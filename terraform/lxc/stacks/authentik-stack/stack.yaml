@@ -4,7 +4,7 @@ ip_address: "${lab_ip_authentik}/24"
 gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
 proxmox_node: pve-test
-vmid: 150
+vmid: 20010
 cores: 2
 memory: 2048
 swap: 1024

@@ -14,7 +14,7 @@ homelab root CA rather than self-signed or public certificates.
 | Zone         | `mgmt_seg` (VLAN 20)     |
 | IP           | `${lab_ip_step_ca}/24`   |
 | Gateway      | `${lab_gw_mgmt}`         |
-| VMID         | 152                      |
+| VMID         | 20011                    |
 
 ## Inputs
 

@@ -28,16 +28,16 @@ Future zones (Phase 06+): `app_seg`, `game_seg`.
 
 | Container | Zone | IP | VMID | Phase |
 |---|---|---|---|---|
-| ci-runner-01 | `build_seg` | `10.57.0.63` | 141 | 01 |
-| Portainer | `mgmt_seg` | `10.57.1.20` | 120 | 00b |
-| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | 04 |
-| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | 04 |
-| Monitoring | `mgmt_seg` | `10.57.1.12` | 154 | 04 |
-| CoreDNS | `mgmt_seg` | `10.57.1.13` | 151 | 04b |
-| Traefik | `edge_seg` | `10.57.2.10` | 153 | 04 |
-| Harbor | `infra_seg` | `10.57.3.10` | 121 | 03b |
-| apt-cacher-ng | `infra_seg` | `10.57.3.11` | 142 | 03c |
-| NetBox | `infra_seg` | `10.57.3.12` | 143 | 03b |
+| ci-runner-01 | `build_seg` | `10.57.0.63` | 10063 | 01 |
+| Portainer | `mgmt_seg` | `10.57.1.20` | 20020 | 00b |
+| Authentik | `mgmt_seg` | `10.57.1.10` | 20010 | 04 |
+| step-ca | `mgmt_seg` | `10.57.1.11` | 20011 | 04 |
+| Monitoring | `mgmt_seg` | `10.57.1.12` | 20012 | 04 |
+| CoreDNS | `mgmt_seg` | `10.57.1.13` | 20013 | 04b |
+| Traefik | `edge_seg` | `10.57.2.10` | 30010 | 04 |
+| Harbor | `infra_seg` | `10.57.3.10` | 40010 | 03b |
+| apt-cacher-ng | `infra_seg` | `10.57.3.11` | 40011 | 03c |
+| NetBox | `infra_seg` | `10.57.3.12` | 40012 | 03b |
 
 ## Cross-zone traffic policy
 

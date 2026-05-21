@@ -69,7 +69,7 @@ attachments:
   # -------------------------------------------------------------------------
   # vmbr0 — Bootstrap exception (Portainer only)
   #
-  # Portainer (VMID 120) — 192.168.1.20
+  # Portainer (VMID 20020) — native bridge exception retained for documentation only
   #   Bootstrap dependency: Portainer is deployed before any SDN zone exists,
   #   so it cannot be placed in an SDN zone. All other services run in named
   #   SDN zones. Access is controlled via Authentik forward-auth (Phase 04)
@@ -172,7 +172,7 @@ attachments:
   #
   # Purpose: Self-hosted CI runner execution environment.
   # Gateway: MikroTik VLAN 10 interface (10.57.0.1)
-  # Containers: ci-runner-01 (10.57.0.63, VMID 141)
+  # Containers: ci-runner-01 (10.57.0.63, VMID 10063)
   # -------------------------------------------------------------------------
   seg_c:
     description: CI build workload zone
@@ -197,27 +197,27 @@ zones:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
     attachment: infra_seg
     containers:
-      - "Harbor (VMID 121)    — ${lab_ip_harbor}"
-      - "apt-cacher (VMID 142) — ${lab_ip_apt_cacher}"
-      - "NetBox (VMID 143)    — ${lab_ip_netbox}"
+      - "Harbor (VMID 40010)    — ${lab_ip_harbor}"
+      - "apt-cacher (VMID 40011) — ${lab_ip_apt_cacher}"
+      - "NetBox (VMID 40012)    — ${lab_ip_netbox}"
   mgmt_seg:
     description: Management plane — Portainer, Authentik, step-ca, Monitoring
     attachment: mgmt_seg
     containers:
-      - "Portainer (VMID 120)  — ${lab_ip_portainer}"
-      - "Authentik (VMID 150)  — ${lab_ip_authentik}"
-      - "step-ca (VMID 152)    — ${lab_ip_step_ca}"
-      - "Monitoring (VMID 154) — ${lab_ip_monitoring}"
+      - "Portainer (VMID 20020)  — ${lab_ip_portainer}"
+      - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
+      - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
+      - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
   edge_seg:
     description: Edge ingress — Traefik reverse proxy
     attachment: edge_seg
     containers:
-      - "Traefik (VMID 153) — ${lab_ip_proxy}"
+      - "Traefik (VMID 30010) — ${lab_ip_proxy}"
   build_seg:
     description: CI build workload zone
     attachment: seg_c
     containers:
-      - "ci-runner-01 (VMID 141) — ${lab_ip_ci_runner}"
+      - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
 
 policies:
   # Cross-zone policies. Enforced at the MikroTik firewall.

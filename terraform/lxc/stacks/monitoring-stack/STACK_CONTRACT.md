@@ -13,7 +13,7 @@ logs, and the operator-facing observability entry point for the homelab.
 | Zone | `mgmt_seg` |
 | IP | `${lab_ip_monitoring}/24` |
 | Gateway | `${lab_gw_mgmt}` |
-| VMID | 154 |
+| VMID | 20012 |
 
 ## Inputs
 

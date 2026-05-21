@@ -14,7 +14,7 @@ platform routes.
 | Zone | `edge_seg` |
 | IP | `${lab_ip_proxy}/24` |
 | Gateway | `${lab_gw_edge}` |
-| VMID | 153 |
+| VMID | 30010 |
 
 ## Inputs
 
