@@ -16,10 +16,12 @@ Read these in order:
 1. [README.md](/home/steve/git/proxmox-homelab/docs/network-refactor/README.md:1)
 2. [checkpoint.md](/home/steve/git/proxmox-homelab/docs/network-refactor/checkpoint.md:1)
 3. [plan.md](/home/steve/git/proxmox-homelab/docs/network-refactor/plan.md:1)
-4. [terraform/lxc/templates/inventory.tpl](/home/steve/git/proxmox-homelab/terraform/lxc/templates/inventory.tpl:1)
-5. [terraform/lxc/main.tf](/home/steve/git/proxmox-homelab/terraform/lxc/main.tf:595)
-6. [terraform/lxc/network/pve-test.yaml](/home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test.yaml:1)
-7. [docs/design/network.md](/home/steve/git/proxmox-homelab/docs/design/network.md:1)
+4. [target-model.md](/home/steve/git/proxmox-homelab/docs/network-refactor/target-model.md:1)
+5. [validation-gate.md](/home/steve/git/proxmox-homelab/docs/network-refactor/validation-gate.md:1)
+6. [terraform/lxc/templates/inventory.tpl](/home/steve/git/proxmox-homelab/terraform/lxc/templates/inventory.tpl:1)
+7. [terraform/lxc/main.tf](/home/steve/git/proxmox-homelab/terraform/lxc/main.tf:595)
+8. [terraform/lxc/network/pve-test.yaml](/home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test.yaml:1)
+9. [docs/design/network.md](/home/steve/git/proxmox-homelab/docs/design/network.md:1)
 
 ## What Is Already Known
 
@@ -33,25 +35,19 @@ Read these in order:
 
 ## What The Next Session Should Do
 
-1. Confirm the intended L3 model:
-   - which networks are routed by the main router
-   - which hosts/admin workstations are supposed to reach which guest subnets
-2. Map the current implementation assumptions:
-   - inventory generation
-   - ProxyJump usage
-   - host-route priming
-   - any manual router/proxmox configuration
-3. Convert the current `plan.md` into a more concrete task breakdown under
-   `docs/network-refactor/`.
-4. Define the teardown validation gate for the refactor.
+1. Start from the session roadmap in `plan.md` rather than re-scoping the
+   architecture from scratch.
+2. Confirm the current session's place in the roadmap and update the docs.
+3. Map the exact code or validation changes for that session only.
+4. Capture evidence and stop points so the next session can continue cleanly.
 
 ## Expected Outputs From The Next Session
 
 At minimum, produce:
 
-1. a clarified target network/provisioning model doc
-2. a concrete implementation plan doc
-3. a teardown validation plan doc
+1. an updated target network/provisioning model doc when new evidence changes it
+2. an updated implementation plan doc with session progress recorded
+3. an updated teardown validation plan doc when validation mechanics change
 4. explicit open questions that still require operator decisions
 
 ## Constraints

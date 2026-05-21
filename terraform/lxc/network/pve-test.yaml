@@ -52,14 +52,11 @@
 #   Then on the host: ifreload -a
 #   Verify: bridge vlan show
 #
-# Code gap: configure-network-sdn-vnet.yml currently handles Simple zone
-# creation only. It must be updated to support zone_type: vlan before
-# these zones can be applied via Terraform. Until then, run
-# ansible/00-initial-setup/proxmox-sdn-setup.yml or apply manually:
-#   pvesh create /cluster/sdn/zones --type vlan --zone <zone> --bridge vmbr0 --nodes pve-test
-#   pvesh create /cluster/sdn/vnets --vnet <vnet> --zone <zone> --tag <vlan_id>
-#   pvesh create /cluster/sdn/vnets/<vnet>/subnets --subnet <cidr> --gateway <gw> --type subnet
-#   pvesh set /cluster/sdn
+# Automation note: `configure-network-sdn-vnet.yml` now handles
+# `zone_type: vlan` for `pve-test` SDN attachment creation. The remaining
+# out-of-band dependency is the MikroTik side: VLAN interfaces, gateway IPs,
+# DNS behavior, and firewall policy must already exist before stack
+# provisioning relies on direct routed access.
 
 proxmox:
   target_node: pve-test

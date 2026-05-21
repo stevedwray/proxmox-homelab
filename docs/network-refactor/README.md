@@ -42,6 +42,10 @@ See the preserved checkpoint:
 
 - main planning doc:
   [plan.md](/home/steve/git/proxmox-homelab/docs/network-refactor/plan.md:1)
+- target model:
+  [target-model.md](/home/steve/git/proxmox-homelab/docs/network-refactor/target-model.md:1)
+- teardown validation gate:
+  [validation-gate.md](/home/steve/git/proxmox-homelab/docs/network-refactor/validation-gate.md:1)
 - session handoff:
   [handoff.md](/home/steve/git/proxmox-homelab/docs/network-refactor/handoff.md:1)
 
