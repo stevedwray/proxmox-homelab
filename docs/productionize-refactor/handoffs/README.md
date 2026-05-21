@@ -23,6 +23,7 @@ the whole program context into every session.
 5. [05-stack-target-decoupling.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/05-stack-target-decoupling.md:1)
 6. [06-canary-validation-gate.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/06-canary-validation-gate.md:1)
 7. [07-incremental-migration-plan.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/07-incremental-migration-plan.md:1)
+8. [08-networking-refactor-checkpoint.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/08-networking-refactor-checkpoint.md:1)
 
 ## Source Documents
 
