@@ -95,6 +95,8 @@ Related docs:
 - **Use:** Only for intentional production workflows
 - **Loading:** Automatically decrypted when using `./with-secrets-prod`
 - **Template:** See `SECRETS_PVE_TEMPLATE.md` for expected structure
+- **Commit policy:** Keep this file encrypted and operator-local; do not commit
+  it casually during production enablement work
 
 ### Separation Rationale
 
@@ -105,6 +107,10 @@ with `ALLOW_PVE=true`, and the `./with-secrets-prod` wrapper loads production se
 The production secret file is intentionally separate from the dev path and can
 be created locally from `SECRETS_PVE_TEMPLATE.md` when the operator is ready to
 enable production access.
+
+As of May 22, 2026, the production Proxmox API token stored in
+`terraform/secrets.pve.enc.yaml` has been validated successfully with a
+read-only API call to `pve.gibbsgreatly.xyz`.
 
 For details on credential controls, approval flows, and environment targeting, see:
 - [`docs/reference/production-credentials.md`](../docs/reference/production-credentials.md)

@@ -6,6 +6,23 @@ This document defines how production credentials are managed and accessed in thi
 
 Production secrets are kept separate from development secrets to prevent accidental exposure and to enforce strict access controls. Production access defaults to read-only and requires explicit operator approval for any mutations.
 
+## Current Status
+
+As of May 22, 2026, the production Proxmox API token path has been validated
+successfully:
+
+- `terraform/secrets.pve.enc.yaml` is the active operator-managed production
+  SOPS file
+- the production token authenticated successfully to
+  `https://pve.gibbsgreatly.xyz:8006/api2/json/version`
+- the validation was read-only and returned HTTP 200
+
+What is still incomplete:
+
+- a committed `.env.pve` pattern has not been finalized yet
+- local non-secret production targeting may still require explicit overrides
+  until Task 02 is completed
+
 ## Secret Storage
 
 ### Development Secrets
@@ -19,6 +36,9 @@ Production secrets are kept separate from development secrets to prevent acciden
 - **Wrapper:** `./with-secrets-prod` (explicit production wrapper)
 - **Environment:** pve (production)
 - **Access:** Restricted to intentional production workflows only
+
+This file is operator-managed local state. It should remain SOPS-encrypted and
+must not be committed accidentally as plaintext.
 
 Both files are encrypted with SOPS using age keys. See `terraform/README.md` for decryption setup.
 
@@ -274,6 +294,18 @@ If you are an operator ready to work on production:
    - Say "proceed" or similar in chat (explicit approval)
    - Copilot will set `TASK_APPROVAL` and run the command
    - Review the after-action summary
+
+## Verified Production Auth Check
+
+The simplest read-only check that proved the current production token works was:
+
+```bash
+curl -ks -H "Authorization: PVEAPIToken=automation@pve!terraform=<TOKEN_SECRET>" \
+  "https://pve.gibbsgreatly.xyz:8006/api2/json/version"
+```
+
+On May 22, 2026, this returned HTTP 200 for the production token stored in
+`terraform/secrets.pve.enc.yaml`.
 
 ## Related Documentation
 

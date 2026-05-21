@@ -53,6 +53,20 @@ Environment modeling must support:
 
 - task 01 design should inform how production env material is accessed
 
+## Current Planning Note
+
+As of May 22, 2026, production credential validation is ahead of production
+environment modeling:
+
+- the production Proxmox token has already been validated successfully
+- there is still no finalized `.env.pve` overlay in the repo
+- the read-only production auth check required explicit non-secret overrides for
+  the production API URL and host because local defaults were still
+  `pve-test`-oriented
+
+This means Task 02 should treat `.env.pve` and production non-secret targeting
+as an active gap, not a solved prerequisite.
+
 ## Validation
 
 - a production env overlay can be sourced or injected without overwriting dev

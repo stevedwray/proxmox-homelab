@@ -153,6 +153,24 @@ These commands alter production state and require pre-approval:
 - none for the design phase
 - implementation should land before broad production secret usage
 
+## Current State
+
+As of May 22, 2026, the first credential-control slice has been proven far
+enough to support read-only production API validation:
+
+- production secrets are split into `terraform/secrets.pve.enc.yaml`
+- `with-secrets-prod` exists as the dedicated production wrapper
+- the production Proxmox token authenticated successfully to
+  `https://pve.gibbsgreatly.xyz:8006/api2/json/version`
+
+Still outstanding for this workstream:
+
+- finalize the long-term operator workflow for creating and rotating production
+  secrets
+- ensure the local production secret file remains operator-managed and is not
+  committed accidentally
+- keep the wrapper/docs aligned as additional production commands are enabled
+
 ## Approval Flow For Production Mutations
 
 **Before any production mutation:**
