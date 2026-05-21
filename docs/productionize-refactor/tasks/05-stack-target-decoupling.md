@@ -41,6 +41,12 @@ Move out of the stack file:
 
 - environment-specific target node assumptions
 
+Target selection after this task:
+
+- wrappers and env overlays set `TF_VAR_proxmox_node`
+- Terraform resolves `storage/<proxmox_node>.yaml` and `network/<proxmox_node>.yaml`
+- the same active stack definition should render against either `pve-test` or `pve`
+
 ## Files Likely Involved
 
 - `terraform/lxc/stacks/*/stack.yaml`

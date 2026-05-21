@@ -3,7 +3,6 @@ hostname: authentik-stack
 ip_address: "${lab_ip_authentik}/24"
 gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
-proxmox_node: pve-test
 vmid: 20010
 cores: 2
 memory: 2048
@@ -34,7 +33,7 @@ ansible_playbook: "deploy-authentik-stack"
 deployment_tier: platform
 portainer_agent: false
 
-# pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -52,9 +52,9 @@ variable "pm_tls_insecure" {
 # Defaults applied to all stacks (overridable per-stack in YAML)
 # ---------------------------------------------------------------------------
 variable "proxmox_node" {
-  description = "Default Proxmox node name"
+  description = "Default Proxmox node name; wrappers/env vars override this per environment"
   type        = string
-  default     = "pve"
+  default     = "pve-test"
 }
 
 variable "stack_hostname" {

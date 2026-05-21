@@ -1,8 +1,7 @@
-# Portainer CE management server for pve-test — mgmt_seg zone
+# Portainer CE management server — mgmt_seg zone
 hostname: portainer-stack
 ip_address: "${lab_ip_portainer}/24"
 gateway: "${lab_gw_mgmt}"
-proxmox_node: pve-test
 vmid: 20020
 cores: 1
 memory: 512

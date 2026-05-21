@@ -48,6 +48,12 @@ Out of scope:
 - active platform stacks are no longer hardcoded to `pve-test`
 - docs explain how the environment now determines the target
 
+## Target Selection Rule
+
+- `./with-secrets` remains the default-safe wrapper and sets the development target
+- `./with-secrets-prod` sets the production target under its existing approval controls
+- active stacks should not pin `proxmox_node`; shared Terraform resolves storage and network manifests from the selected environment
+
 ## Validation
 
 - stack metadata still renders correctly

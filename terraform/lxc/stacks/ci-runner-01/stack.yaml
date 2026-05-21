@@ -3,7 +3,6 @@ hostname: ci-runner-01
 ip_address: "${lab_ip_ci_runner}/24"
 gateway: "${lab_gw_build}"
 dns_server: "${lab_gw_build}"
-proxmox_node: pve-test
 vmid: 10063
 cores: 2
 memory: 4096
@@ -25,7 +24,7 @@ network:
   zone: build_seg
 
 # Phase 03c: apt-cacher-ng is deployed on infra_seg via LAB_IP_APT_CACHER.
-# pve-test service IPs (explicit — do not rely on variable defaults)
+# Environment-selected service IPs (explicit — do not rely on variable defaults)
 apt_cacher_host: "${lab_ip_apt_cacher}"
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
