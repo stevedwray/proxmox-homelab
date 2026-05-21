@@ -8,6 +8,8 @@ storage-audit
 *.env
 .env.*
 !.env.template
+!.env.pve-test.template
+!.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
