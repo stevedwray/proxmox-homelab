@@ -1,102 +1,124 @@
 # Proxmox-only network intent for the pve production environment.
-# Mirrors the zone structure of pve-test.yaml; SDN zones/vnets are
-# created on pve by the same Terraform/Ansible pipeline used on pve-test.
+#
+# Target model (Task 04): VLAN-backed SDN zones bound to vmbr0, matching the
+# active platform zone contract used by stack metadata:
+#   - build_seg
+#   - mgmt_seg
+#   - edge_seg
+#   - infra_seg
+#
+# Values for subnets/gateways are templated to avoid fake certainty. The
+# operator-provided production env overlay controls their concrete values.
 
 proxmox:
   target_node: pve
-  pve_host: pve.gibbsgreatly.xyz
+  pve_host: ${proxmox_host}
 
 attachments:
-  lan:
-    description: Default LAN bridge on pve
-    type: bridge
-    bridge: vmbr0
-    vlan_tag: null
-    firewall: true
-  seg_a:
-    description: First SDN VNet for microsegmentation on pve
+  infra_seg:
+    description: Infrastructure services - registry, artifact cache, IPAM
     type: sdn_vnet
-    bridge: pvneta
-    firewall: true
+    bridge: tvinfra
+    firewall: false
     sdn:
-      zone: pvsega
-      zone_type: simple
+      zone: tvinfra
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvneta
-      alias: pve network layer
-  seg_b:
-    description: Second SDN VNet for independent microsegmentation on pve
+      vnet: tvinfra
+      vlan_tag: 40
+      alias: pve infrastructure segment
+      subnet: "${lab_subnet_infra_cidr}"
+      gateway: "${lab_gw_infra}"
+      snat: false
+
+  mgmt_seg:
+    description: Management plane - identity, PKI, monitoring
     type: sdn_vnet
-    bridge: pvnetb
+    bridge: tvmgmt
     firewall: true
     sdn:
-      zone: pvsegb
-      zone_type: simple
+      zone: tvmgmt
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvnetb
-      alias: pve network layer 2
-  seg_c:
-    description: Third SDN VNet for artifact flow on pve
+      vnet: tvmgmt
+      vlan_tag: 20
+      alias: pve management segment
+      subnet: "${lab_subnet_mgmt_cidr}"
+      gateway: "${lab_gw_mgmt}"
+      snat: false
+
+  edge_seg:
+    description: Edge ingress - reverse proxy only
     type: sdn_vnet
-    bridge: pvnetc
+    bridge: tvedge
     firewall: true
     sdn:
-      zone: pvsegc
-      zone_type: simple
+      zone: tvedge
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvnetc
-      alias: pve network layer 3
+      vnet: tvedge
+      vlan_tag: 30
+      alias: pve edge segment
+      subnet: "${lab_subnet_edge_cidr}"
+      gateway: "${lab_gw_edge}"
+      snat: false
+
+  build_seg:
+    description: CI build workload zone
+    type: sdn_vnet
+    bridge: tvnetc
+    firewall: false
+    sdn:
+      zone: tvsegc
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvnetc
+      vlan_tag: 10
+      alias: pve build segment
+      subnet: "${lab_subnet_build_cidr}"
+      gateway: "${lab_gw_build}"
+      snat: false
 
 zones:
-  apps:
-    description: Application workload zone on the default LAN bridge
-    attachment: lan
-  infra:
-    description: Service endpoint zone on the default LAN bridge
-    attachment: lan
-  isolated:
-    description: Bridge-attached isolated zone with no inbound policy overrides
-    attachment: lan
-  apps_seg:
-    description: Application workload zone on the first SDN VNet
-    attachment: seg_a
   infra_seg:
-    description: Service endpoint zone on the first SDN VNet
-    attachment: seg_a
-  media_seg:
-    description: Application workload zone on the second SDN VNet
-    attachment: seg_b
-  observe_seg:
-    description: Service endpoint zone on the second SDN VNet
-    attachment: seg_b
+    description: Infrastructure services - Harbor, apt-cacher, NetBox
+    attachment: infra_seg
+  mgmt_seg:
+    description: Management plane - Portainer, Authentik, step-ca, Monitoring, CoreDNS
+    attachment: mgmt_seg
+  edge_seg:
+    description: Edge ingress - Traefik reverse proxy
+    attachment: edge_seg
   build_seg:
-    description: Build workload zone on the third SDN VNet
-    attachment: seg_c
-  artifacts_seg:
-    description: Artifact service zone on the third SDN VNet
-    attachment: seg_c
+    description: CI build workload zone
+    attachment: build_seg
 
 policies:
-  - from: apps
-    to: infra
+  - from: edge_seg
+    to: mgmt_seg
     protocol: tcp
-    ports: [8080, 9000]
-    description: apps can reach infra on tcp/8080 and tcp/9000
-  - from: apps_seg
+    ports: [9000, 9443]
+    description: Traefik forward-auth to Authentik
+  - from: mgmt_seg
+    to: edge_seg
+    protocol: tcp
+    ports: [80]
+    description: step-ca ACME httpChallenge callback to Traefik
+  - from: build_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9000, 8428, 3100]
+    description: CI runner to Authentik and monitoring APIs
+  - from: all_zones
     to: infra_seg
     protocol: tcp
-    ports: [8080]
-    description: apps_seg can reach infra_seg on tcp/8080
-  - from: media_seg
-    to: observe_seg
-    protocol: tcp
-    ports: [8080]
-    description: media_seg can reach observe_seg on tcp/8080
-  - from: build_seg
-    to: artifacts_seg
-    protocol: tcp
-    ports: [5000, 8081]
-    description: build_seg can reach artifacts_seg on tcp/5000 and tcp/8081
+    ports: [80, 443, 3142]
+    description: All zones and LAN to Harbor and apt-cacher

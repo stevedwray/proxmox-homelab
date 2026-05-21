@@ -173,7 +173,7 @@ locals {
       )
     ]
   }) : tomap({})
-  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(file(local.effective_zone_members_index_path)) : null
+  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(templatefile(local.effective_zone_members_index_path, local.stack_template_vars)) : null
   zone_members                 = local.generated_zone_members_index != null ? try(tomap(local.generated_zone_members_index.zones), tomap({})) : local.inferred_zone_members
 
   inbound_zone_policies = try([
