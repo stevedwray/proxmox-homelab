@@ -394,28 +394,33 @@ check "template_name_allowed_by_profile" {
 
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
-# Ensures the attachment exists on pve-test before the LXC is created.
+# Ensures the attachment exists on the selected target environment before the
+# LXC is created, while keeping destroy-time SDN teardown on the default-safe
+# environment unless explicitly widened later.
 # ---------------------------------------------------------------------------
 resource "local_file" "network_sdn_vars" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
 
   filename = "${local.stack_dir}/network-sdn-vars.yml"
   content = yamlencode({
-    network_sdn_enable     = true
-    network_sdn_target     = local.effective_target_node
-    network_sdn_pve_host   = local.effective_pve_host
-    network_sdn_vmid       = try(local.stack.vmid, null)
-    network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
-    network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
-    network_sdn_bridge     = try(local.resolved_sdn_attachment.bridge, null)
-    network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
-    network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
-    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
-    network_sdn_subnet     = local.resolved_sdn_subnet
-    network_sdn_gateway    = local.resolved_sdn_gateway
-    network_sdn_snat       = local.resolved_sdn_snat
-    network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
+    network_sdn_enable            = true
+    network_sdn_target            = local.effective_target_node
+    network_sdn_pve_host          = local.effective_pve_host
+    network_sdn_expected_target   = local.effective_target_node
+    network_sdn_expected_pve_host = local.effective_pve_host
+    network_sdn_allow_destroy     = local.effective_target_node == "pve-test"
+    network_sdn_vmid              = try(local.stack.vmid, null)
+    network_sdn_zone              = try(local.resolved_sdn_attachment.zone, null)
+    network_sdn_zone_type         = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_bridge            = try(local.resolved_sdn_attachment.bridge, null)
+    network_sdn_nodes             = try(local.resolved_sdn_attachment.nodes, [])
+    network_sdn_vnet              = try(local.resolved_sdn_attachment.vnet, null)
+    network_sdn_vlan_tag          = try(local.resolved_sdn_attachment.vlan_tag, null)
+    network_sdn_vnet_alias        = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
+    network_sdn_subnet            = local.resolved_sdn_subnet
+    network_sdn_gateway           = local.resolved_sdn_gateway
+    network_sdn_snat              = local.resolved_sdn_snat
+    network_sdn_ssh_key           = pathexpand(var.ssh_private_key_path)
   })
 }
 

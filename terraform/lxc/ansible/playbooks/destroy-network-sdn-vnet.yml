@@ -1,25 +1,30 @@
----
-- name: Remove an SDN VNet and zone from pve-test when no guests still use them
+- name: Remove an SDN VNet and zone from target Proxmox environment when no guests still use them
   hosts: localhost
   gather_facts: false
 
   vars:
-    expected_pve_test_host: "{{ lookup('env', 'PVE_TEST_FQDN') | default('pve-test.gibbsgreatly.xyz', true) }}"
+    configured_proxmox_node: "{{ lookup('env', 'TF_VAR_proxmox_node') | default('', true) }}"
+    configured_proxmox_host: "{{ lookup('env', 'TF_VAR_proxmox_host') | default('', true) }}"
     network_sdn_vmid_exclude_effective: "{{ network_sdn_vmid_exclude | default('') }}"
 
   tasks:
-    - name: Assert pve-test-only execution
+    - name: Assert SDN destroy execution is allowed for the active target environment
       ansible.builtin.assert:
         that:
           - network_sdn_enable | bool
-          - network_sdn_target == 'pve-test'
-          - network_sdn_pve_host == expected_pve_test_host
+          - network_sdn_allow_destroy | default(false) | bool
+          - (network_sdn_expected_target | default('', true)) | length > 0
+          - (network_sdn_expected_pve_host | default('', true)) | length > 0
+          - network_sdn_target == network_sdn_expected_target
+          - network_sdn_pve_host == network_sdn_expected_pve_host
+          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_expected_target
+          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_expected_pve_host
           - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN destroy automation is restricted to pve-test SDN zones and must not run on pve."
-        success_msg: "SDN destroy automation is pinned to pve-test."
+        fail_msg: "SDN destroy automation is not permitted for this target environment or its target/host metadata does not match the active selection."
+        success_msg: "SDN destroy automation is permitted and matches the active environment."
 
-    - name: Inspect pve-test LXC configs for remaining VNet bridge usage
+    - name: Inspect target LXC configs for remaining VNet bridge usage
       ansible.builtin.shell: |
         set -o pipefail
         grep -R "bridge={{ network_sdn_vnet }}\([, ]\|$\)" /etc/pve/lxc/*.conf 2>/dev/null \
@@ -181,7 +186,7 @@
       register: network_sdn_zone_delete
       changed_when: true
 
-    - name: Apply pending SDN changes on pve-test
+    - name: Apply pending SDN changes on target Proxmox environment
       ansible.builtin.command:
         cmd: pvesh set /cluster/sdn
       delegate_to: "{{ network_sdn_pve_host }}"
@@ -197,7 +202,7 @@
         (network_sdn_zone_delete is defined and network_sdn_zone_delete is changed)
       changed_when: true
 
-    - name: Validate proxmox-firewall compilation on pve-test
+    - name: Validate proxmox-firewall compilation on target Proxmox environment
       ansible.builtin.command:
         cmd: /usr/libexec/proxmox/proxmox-firewall compile
       delegate_to: "{{ network_sdn_pve_host }}"
