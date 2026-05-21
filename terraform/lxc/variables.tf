@@ -126,6 +126,8 @@ variable "apt_cacher_host" {
 variable "portainer_admin_password" {
   description = "Admin password for the Portainer server"
   type        = string
+  default     = null
+  nullable    = true
   sensitive   = true
 }
 
