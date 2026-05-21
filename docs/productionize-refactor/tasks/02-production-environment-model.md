@@ -98,6 +98,15 @@ Production-explicit behavior:
 - `TF_VAR_proxmox_node=pve`
 - `TF_WORKSPACE=pve`
 - production-specific `LAB_IP_*`, `LAB_GW_*`, `LAB_SUBNET_*`, and service endpoints
+- explicit `LAB_DOMAIN` plus the active-stack `LAB_FQDN_*` surface used by OIDC,
+  ingress, and DNS playbooks
+- optional `LAB_ADMIN_USERNAME` and `LAB_ADMIN_EMAIL` values for playbooks that
+  derive bootstrap/admin identity from the environment
+- matching `TF_VAR_lab_*` exports because Terraform renders stack templates from
+  `TF_VAR_*`, while the active playbooks consume raw `LAB_*` values
+- a clear split between:
+  - tracked production network defaults (gateway, subnet, domain model)
+  - operator-supplied service IP allocations that are not yet confirmed in repo
 
 ### Never in plaintext env files
 

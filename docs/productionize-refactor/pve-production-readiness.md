@@ -331,6 +331,10 @@ Create a production env overlay, for example `.env.pve`, that defines:
 - production `LAB_IP_*`
 - production `LAB_GW_*`
 - production `LAB_SUBNET_*`
+- production `LAB_DOMAIN` and active-stack `LAB_FQDN_*`
+- optional `LAB_ADMIN_USERNAME` / `LAB_ADMIN_EMAIL` values when operator identity
+  should be explicit instead of playbook-defaulted
+- matching `TF_VAR_lab_*` exports for Terraform template rendering
 - production-specific route, DNS, and certificate settings as needed
 
 Files likely involved:
@@ -343,7 +347,18 @@ Deliverables:
 
 - production env overlay documented and isolated from dev defaults
 - explicit variable inventory for `LAB_IP_*`, `LAB_GW_*`, `LAB_SUBNET_*`
+- explicit statement of which production address values are confirmed vs still
+  operator-supplied placeholders
 - clear load order rules for `.env`, `.env.<env>`, and secret injection
+
+Practical blocker detail:
+
+- Terraform stack rendering reads `TF_VAR_lab_*` values via `terraform/lxc/main.tf`
+- active stack playbooks and helper renders also read raw `LAB_*` values directly
+- because `./with-secrets-prod` sources `.env.pve` only, the production overlay
+  must export both surfaces explicitly
+- current repo state confirms the segmented production gateway/subnet/domain
+  model, but does not yet confirm the full production `LAB_IP_*` service set
 
 ## Workstream 2: Production storage manifest
 

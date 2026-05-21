@@ -2,7 +2,7 @@
 # Adapted for Portainer API deployment: env vars inlined, absolute config path.
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is injected by deploy-netbox-stack.yml via Portainer env vars.
-# pve-test: 10.57.3.10  pve: 192.168.1.10
+# Service addressing is environment-driven via stack.yaml and the selected LAB_IP_* overlay.
 # Upstream: https://github.com/netbox-community/netbox-docker
 services:
   netbox: &netbox

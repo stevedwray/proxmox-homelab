@@ -2,8 +2,9 @@
 
 NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service Docker Compose stack, managed via Portainer.
 
-> **Environment note:** This stack (`netbox-stack/`) is the active **pve-test** instance
-> (VMID 40012, `10.57.3.12` in `infra_seg`).
+> **Environment note:** This stack keeps a stable service identity (VMID 40012,
+> `infra_seg`) while its concrete IP and backend selection come from the chosen
+> environment overlay and manifests.
 
 ## Resources
 
@@ -11,14 +12,14 @@ NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service
 |----------|-------|
 | Hostname | `netbox-stack` |
 | VMID | 40012 |
-| IP | 10.57.3.12 (see `stack.yaml`) |
+| IP | Environment-driven via `stack.yaml` + `LAB_IP_NETBOX` |
 | Cores / RAM | 2 / 1 GB |
 | Storage intent | `storage_profile: platform-default` + `template_name: debian-13.1-2-docker-template.tar.gz` |
-| Web UI | http://10.57.3.12:8080 (derives from IP above) |
+| Web UI | `http://<LAB_IP_NETBOX>:8080` (derived from the selected environment) |
 
 Concrete Proxmox backends are resolved by the environment storage manifest
-(`terraform/lxc/storage/pve-test.yaml`). Stack authors should not set physical
-pool names directly in `stack.yaml`.
+(`terraform/lxc/storage/<proxmox_node>.yaml`). Stack authors should not set
+physical pool names directly in `stack.yaml`.
 
 ## Services
 
