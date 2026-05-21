@@ -14,7 +14,7 @@ Identity provider (IdP) and SSO gateway for the platform. Authentik provides:
 | Zone         | `mgmt_seg` (VLAN 20)     |
 | IP           | `${lab_ip_authentik}/24` |
 | Gateway      | `${lab_gw_mgmt}`         |
-| VMID         | 150                      |
+| VMID         | 20010                    |
 
 ## Inputs
 

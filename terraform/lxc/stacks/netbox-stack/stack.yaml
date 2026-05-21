@@ -6,7 +6,7 @@ dns_server: "${lab_gw_infra}"
 proxmox_node: pve-test
 network:
   zone: infra_seg
-vmid: 143
+vmid: 40012
 cores: 2
 memory: 1024
 swap: 4096

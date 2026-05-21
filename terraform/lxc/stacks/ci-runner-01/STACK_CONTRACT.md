@@ -14,7 +14,7 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 | Zone         | `build_seg` (VLAN 10)    |
 | IP           | `${lab_ip_ci_runner}/24` |
 | Gateway      | `${lab_gw_build}`        |
-| VMID         | 141                      |
+| VMID         | 10063                    |
 
 ## Inputs
 

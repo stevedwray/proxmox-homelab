@@ -14,7 +14,7 @@ rather than the upstream Debian mirrors.
 | Zone         | `infra_seg` (VLAN 40)    |
 | IP           | `${lab_ip_apt_cacher}/24`|
 | Gateway      | `${lab_gw_infra}`        |
-| VMID         | 142                      |
+| VMID         | 40011                    |
 
 ## Inputs
 

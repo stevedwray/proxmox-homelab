@@ -4,7 +4,7 @@ ip_address: "${lab_ip_ci_runner}/24"
 gateway: "${lab_gw_build}"
 dns_server: "${lab_gw_build}"
 proxmox_node: pve-test
-vmid: 141
+vmid: 10063
 cores: 2
 memory: 4096
 swap: 1024

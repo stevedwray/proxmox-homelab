@@ -13,7 +13,7 @@ a Portainer agent so that their containers are visible and manageable from one U
 | Zone         | `mgmt_seg` (VLAN 20)     |
 | IP           | `${lab_ip_portainer}/24`          |
 | Gateway      | `${lab_gw_mgmt}`         |
-| VMID         | 120                      |
+| VMID         | 20020                    |
 
 ## Inputs
 

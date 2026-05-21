@@ -6,7 +6,7 @@ dns_server: "${lab_gw_mgmt}"
 proxmox_node: pve-test
 network:
   zone: mgmt_seg
-vmid: 154
+vmid: 20012
 cores: 2
 memory: 1536
 swap: 1024

@@ -49,16 +49,16 @@ NON_LOSS_BACKUP_DIRS=(
 )
 
 STACK_ORDER=(
-  "netbox-stack:143"
-  "monitoring-stack:154"
-  "authentik-stack:150"
-  "step-ca-stack:152"
-  "proxy-stack:153"
-  "dns-stack:151"
-  "ci-runner-01:141"
-  "harbor-stack:121"
-  "apt-cacher-stack:142"
-  "portainer-stack:120"
+  "netbox-stack:40012"
+  "monitoring-stack:20012"
+  "authentik-stack:20010"
+  "step-ca-stack:20011"
+  "proxy-stack:30010"
+  "dns-stack:20013"
+  "ci-runner-01:10063"
+  "harbor-stack:40010"
+  "apt-cacher-stack:40011"
+  "portainer-stack:20020"
 )
 
 usage() {

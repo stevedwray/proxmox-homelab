@@ -14,7 +14,7 @@ resolve lab FQDNs through this service.
 | Zone | `mgmt_seg` |
 | IP | `${lab_ip_dns}/24` |
 | Gateway | `${lab_gw_mgmt}` |
-| VMID | 151 |
+| VMID | 20013 |
 
 ## Inputs
 

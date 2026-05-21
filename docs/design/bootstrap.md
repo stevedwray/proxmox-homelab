@@ -99,9 +99,9 @@ throughout the bootstrap.
 
 | Service | VMID | Zone | IP |
 |---|---|---|---|
-| Portainer (temporary) | 120 | `mgmt_seg` | `10.57.1.20` |
-| Harbor (temporary) | 121 | `infra_seg` | `10.57.3.10` |
-| CI runner (temporary) | 141 | `build_seg` | `10.57.0.63` |
+| Portainer (temporary) | 20020 | `mgmt_seg` | `10.57.1.20` |
+| Harbor (temporary) | 40010 | `infra_seg` | `10.57.3.10` |
+| CI runner (temporary) | 10063 | `build_seg` | `10.57.0.63` |
 
 All Stage 1 containers pull their images directly from Docker Hub. This is the only phase
 in which Docker Hub direct pulls are permitted at deployment time. Harbor's proxy cache
@@ -151,9 +151,9 @@ healthy. After Stage 2, the platform has the foundation required for Phase 04.
 
 | Service | VMID | Zone | IP |
 |---|---|---|---|
-| Portainer (permanent) | 120 | `mgmt_seg` | `10.57.1.20` |
-| Harbor (permanent) | 121 | `infra_seg` | `10.57.3.10` |
-| CI runner (permanent) | 141 | `build_seg` | `10.57.0.63` |
+| Portainer (permanent) | 20020 | `mgmt_seg` | `10.57.1.20` |
+| Harbor (permanent) | 40010 | `infra_seg` | `10.57.3.10` |
+| CI runner (permanent) | 10063 | `build_seg` | `10.57.0.63` |
 
 Stage 2 uses the same VMIDs as Stage 1. The transition is an in-place replacement:
 `terragrunt destroy` of the Stage 1 stack followed by `terragrunt apply` of the Stage 2
@@ -163,7 +163,7 @@ Harbor is replaced by Stage 2 Harbor.
 
 The recommended deployment order is Portainer first (Stage 1 Harbor remains available),
 then CI runner, then Harbor last. The Harbor replacement carries brief downtime: Stage 1
-Harbor is destroyed and Stage 2 Harbor is provisioned at VMID 121 in sequence. Stage 2
+Harbor is destroyed and Stage 2 Harbor is provisioned at VMID 40010 in sequence. Stage 2
 Harbor bootstraps its component images from Docker Hub on first boot, paralleling the Stage
 1 approach. Once Stage 2 Harbor is healthy, it becomes the sole image source for all
 subsequent deployments.
@@ -210,17 +210,17 @@ Authentik API access exist.
 
 Stage 3a order is load-bearing in Mode 2:
 
-1. **CoreDNS** (`dns-stack`, VMID 151, `10.57.1.13`) with a seed
+1. **CoreDNS** (`dns-stack`, VMID 20013, `10.57.1.13`) with a seed
    `lab.gibbsgreatly.xyz` zone. The seed zone contains only bootstrap and
    non-browser records required before generated browser records exist.
-2. **Traefik** (`proxy-stack`, VMID 153, `10.57.2.10`) with static runtime
+2. **Traefik** (`proxy-stack`, VMID 30010, `10.57.2.10`) with static runtime
    configuration: entrypoints, providers, certificate resolvers, default store,
    and shared middleware definitions. Per-service browser routes are not
    considered stack-owned until the edge reconciler publishes generated files.
-3. **step-ca** (`step-ca-stack`, VMID 152, `10.57.1.11`). ACME challenge paths
+3. **step-ca** (`step-ca-stack`, VMID 20011, `10.57.1.11`). ACME challenge paths
    that depend on Traefik are validated only after Traefik and the required
    MikroTik policy are in place.
-4. **Authentik** (`authentik-stack`, VMID 150, `10.57.1.10`) via direct IP
+4. **Authentik** (`authentik-stack`, VMID 20010, `10.57.1.10`) via direct IP
    first boot. The operator completes first setup and stores the automation API
    token in SOPS before Authentik reconciliation is allowed.
 

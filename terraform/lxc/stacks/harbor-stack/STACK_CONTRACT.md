@@ -14,7 +14,7 @@ reporting.
 | Zone         | `infra_seg` (VLAN 40)    |
 | IP           | `${lab_ip_harbor}/24`    |
 | Gateway      | `${lab_gw_infra}`        |
-| VMID         | 121                      |
+| VMID         | 40010                    |
 
 ## Inputs
 

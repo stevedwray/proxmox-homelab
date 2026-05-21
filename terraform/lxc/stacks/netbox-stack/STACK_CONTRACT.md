@@ -13,7 +13,7 @@ services, IPs, and related infrastructure metadata.
 | Zone | `infra_seg` |
 | IP | `${lab_ip_netbox}/24` |
 | Gateway | `${lab_gw_infra}` |
-| VMID | 143 |
+| VMID | 40012 |
 
 ## Inputs
 
