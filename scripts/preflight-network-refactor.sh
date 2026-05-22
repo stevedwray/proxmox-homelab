@@ -41,7 +41,7 @@ set -euo pipefail
 _COLOUR=true
 if [[ ! -t 1 ]]; then _COLOUR=false; fi
 
-colour_on()  { [[ "$_COLOUR" == true ]] && printf '%s' "$1" || true; }
+colour_on()  { [[ "$_COLOUR" == true ]] && printf '%b' "$1" || true; }
 RED=$(    colour_on '\033[0;31m')
 GREEN=$(  colour_on '\033[0;32m')
 YELLOW=$( colour_on '\033[1;33m')
