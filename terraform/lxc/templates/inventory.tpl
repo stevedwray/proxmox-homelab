@@ -6,11 +6,12 @@ all:
           ansible_host: ${ip_address}
           ansible_user: root
           ansible_ssh_private_key_file: ${ssh_key}
-%{ if pve_host != "" ~}
+%{ if use_proxyjump ~}
           ansible_ssh_common_args: '-F /dev/null -o ProxyJump=root@${pve_host} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 %{ else ~}
           ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 %{ endif ~}
+          ssh_access_mode: ${ssh_access_mode}
           portainer_server_ip: ${portainer_server_ip}
           registry_host: "${registry_host}"
           apt_cacher_host: ${apt_cacher_host}
@@ -26,7 +27,7 @@ all:
           ansible_playbook: ${ansible_playbook}
 %{ endif ~}
           vmid: ${vmid}
-%{ if pve_host != "" ~}
+%{ if use_proxyjump ~}
           pve_host: ${pve_host}
 %{ endif ~}
 %{ if app_stack_name != "" ~}
