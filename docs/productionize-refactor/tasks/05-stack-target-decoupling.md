@@ -9,6 +9,19 @@ can follow the selected environment instead of a hardcoded node.
 
 Make the stack catalog describe service intent, not environment lock-in.
 
+## Current Status
+
+The branch-local implementation work for this task appears substantially in
+place after the network-refactor merge-forward:
+
+- active platform `stack.yaml` files no longer appear to carry
+  `proxmox_node: pve-test`
+- target selection is now expected to flow through environment overlays and the
+  selected `network/<proxmox_node>.yaml` and `storage/<proxmox_node>.yaml`
+
+Treat this task as a closeout verification step unless new evidence shows an
+active stack still embeds `pve-test` targeting.
+
 ## Deliverables
 
 - active platform stacks no longer require `proxmox_node: pve-test`

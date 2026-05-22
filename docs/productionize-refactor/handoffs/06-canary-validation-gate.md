@@ -33,6 +33,10 @@ Out of scope:
 - [docs/productionize-refactor/tasks/06-canary-validation-gate.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/tasks/06-canary-validation-gate.md:1)
 - [docs/productionize-refactor/pve-production-readiness.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/pve-production-readiness.md:1)
 - [docs/design/network.md](/home/steve/git/proxmox-homelab/docs/design/network.md:1)
+- [docs/productionize-refactor/handoffs/08-networking-refactor-checkpoint.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/08-networking-refactor-checkpoint.md:1)
+- [docs/network-refactor/session-8-summary.md](/home/steve/git/proxmox-homelab/docs/network-refactor/session-8-summary.md:1)
+- [docs/network-refactor/validation-gate.md](/home/steve/git/proxmox-homelab/docs/network-refactor/validation-gate.md:1)
+- [scripts/preflight-network-refactor.sh](/home/steve/git/proxmox-homelab/scripts/preflight-network-refactor.sh:1)
 
 ## Files Most Likely To Change
 
@@ -44,6 +48,8 @@ Out of scope:
 - validate early
 - keep the first canary low-risk
 - assume VLAN work exists outside the repo but must still be proven
+- use the validated direct-access network model; do not reintroduce
+  `prime_sdn_host_route` or default `ProxyJump` behavior
 
 ## Done When
 
@@ -62,5 +68,7 @@ Out of scope:
 Work on Task 06 in docs/productionize-refactor/tasks/06-canary-validation-gate.md.
 Create a practical canary validation workflow for pve.
 Keep the first canary low-risk and focused on proving network and environment behavior before real migration.
+Assume the pve-test network refactor has already passed and use its direct-access
+validation model as the baseline.
 Do not turn this into a full migration plan; keep it as a gate.
 ```
