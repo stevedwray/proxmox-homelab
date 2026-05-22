@@ -3,74 +3,202 @@
 ## Goal
 
 Prove that production networking and environment targeting work on `pve` before
-moving a higher-value real service.
+moving a higher-value real service. Perform a low-risk, isolated test of the
+direct-access network model that was validated on `pve-test`.
 
 ## Objective
 
-Create a canary workflow that validates:
+Validate end-to-end production provisioning for a single, non-critical service:
 
-- VLAN transport on `vmbr0`
-- gateway reachability
-- DNS behavior
-- expected cross-segment reachability
-- compatibility with services that still remain on `pve-test`
+- VLAN transport on `vmbr0` and correct IP assignment from zone subnet
+- gateway reachability and DNS behavior through MikroTik zone gateway
+- direct SSH access from workstation (no ProxyJump or host-route priming required)
+- service health proof (meaningful smoke test of deployed function)
+- no environment-targeting regressions (correct node, correct storage, correct network)
+- confirmation that the provisioning model has NOT reverted to pve-test assumptions
 
-## Deliverables
+## Recommended First Canary Target
 
-- canary runbook
-- defined validation commands
-- success/failure criteria
-- documented first canary target
+**`apt-cacher-stack` on `pve`** — VLAN 40 (infra_seg), IP 192.168.40.11
 
-## Candidate Canary Targets
+**Why:**
+- No external service dependencies (Harbor not required, Authentik not required)
+- Simple, meaningful health check (`HTTP GET /acng-report.html`)
+- Easy to destroy and retry if something fails
+- Lowest impact on production platform if it takes extra attempts
+- Already validated on `pve-test` with direct-access model
 
-Best lowest-risk options:
+**Other low-risk options (after apt-cacher succeeds):**
+- Disposable single-container LXC if available
+- `dns-stack` on `pve` (mgmt_seg, validates cross-zone DNS if needed)
 
-- disposable test LXC
-- `apt-cacher-stack`
-
-Avoid as first canaries:
-
-- `harbor-stack`
-- `authentik-stack`
-- `proxy-stack`
+**Avoid as first canary:**
+- `harbor-stack` — dependency chain (storage permissions, app stacks rely on it)
+- `authentik-stack` — authentication for other services, state-bearing, higher risk
+- `proxy-stack` — Traefik, affects ingress path, depends on downstream services
 
 ## Validation Matrix
 
-The canary should verify at least:
+The canary MUST verify all of:
 
-- container gets the intended IP address
-- container gets the intended gateway
-- container can reach the VLAN gateway
-- container can resolve via the intended DNS path
-- container can reach one expected dependency
-- container does not require special-case routing surprises
+| Check | Expected Result | Evidence |
+|---|---|---|
+| Container IP assignment | 192.168.40.11/24 (infra_seg subnet) | `pct exec <vmid> ip -4 addr show eth0` |
+| Gateway reachability | Ping success, no packet loss | `pct exec <vmid> ping -c 1 192.168.40.1` |
+| DNS via zone gateway | Resolves internal and public names | `dig @192.168.40.1 traefik.lab.gibbsgreatly.xyz && dig @192.168.40.1 github.com` |
+| Workstation → container SSH | Direct IP access, no ProxyJump | `ssh root@192.168.40.11 hostname` from workstation |
+| Service-specific health | apt-cacher HTTP 200, service running | `curl -s http://192.168.40.11:3142/acng-report.html` + `HTTP 200` |
+| Network config target | pve not pve-test | Terraform plan + generated inventory |
+| No host route priming needed | Direct routed access works | Provisioning completes without manual Proxmox-side config |
+
+---
+
+## Production Credential Controls
+
+This canary uses **production `pve` credentials** for the first time on this branch.
+Credential handling is strict per [CLAUDE.md](/home/steve/git/proxmox-homelab/CLAUDE.md):
+
+### Environment Setup
+
+Before attempting any canary work:
+
+```bash
+# Source environment in this order:
+source .env                    # Non-secret defaults (hostnames, IPs, usernames)
+source .env.pve                # Production overrides (prod environment vars)
+source terraform/secrets.pve.enc.yaml  # (handled by ./with-secrets-prod)
+```
+
+**Do NOT source `.env.pve-test` or any test-only config — this is production.**
+
+### Approval Workflow
+
+1. **Preflight checks** (read-only, no approval needed):
+   ```bash
+   ./with-secrets bash -c 'scripts/preflight-network-refactor.sh'
+   export ALLOW_PVE=true
+   ./with-secrets-prod bash -c 'terraform plan -target=module.apt-cacher-stack'
+   ```
+
+2. **Operator explicit approval** (in chat):
+   > I approve deploying apt-cacher-stack to production pve as a low-risk canary validation.
+
+3. **Mutating run** (with approval):
+   ```bash
+   export ALLOW_PVE=true
+   export TASK_APPROVAL="canary-apt-cacher-pve-20260522"
+   ./with-secrets-prod bash -c 'terraform apply -target=module.apt-cacher-stack'
+   ```
+
+The `./with-secrets-prod` wrapper enforces:
+- `TF_VAR_proxmox_node=pve` (production targeting)
+- Mutating commands (apply, destroy) blocked without `TASK_APPROVAL` export
+- Only SOPS-decrypted production secrets loaded
+- Read-only commands (plan, show, output) allowed by default
+
+### Stop Conditions for Preconditions
+
+**Do not proceed past any of these without intervention:**
+
+1. Preflight check fails (network, DNS, or targeting guard)
+2. Terraform plan shows creation on wrong node or targets pve-test
+3. Storage backends missing on pve (infrastructure-containers, local-zfs)
+4. Proxmox API token invalid (401 Unauthorized)
+5. Network prerequisites not met (MikroTik VLAN, gateway IP, firewall rules)
+
+## Deliverables
+
+✅ **Detailed runbook:** [docs/productionize-refactor/runbooks/06-pve-canary-apt-cacher.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/runbooks/06-pve-canary-apt-cacher.md)
+- Pre-canary checklist (code, network, Proxmox)
+- Pre-apply validation (preflight, terraform plan, inventory check)
+- Apply command with approval flow
+- Post-apply evidence collection (IP, gateway, DNS, SSH, HTTP health, state)
+- Evidence checklist and success/failure criteria
+- Remediation and cleanup procedures
+
+✅ **Named first canary:** `apt-cacher-stack` on pve, infra_seg, IP 192.168.40.11
+
+✅ **Production credential preconditions:**
+- Credential sourcing order (`.env` → `.env.pve` → SOPS production secrets)
+- `./with-secrets-prod` wrapper enforcement
+- Approval workflow (explicit operator confirmation in chat)
+- `TASK_APPROVAL` export for mutating commands
+
+✅ **Evidence checklist (7 items):**
+1. Container IP in intended subnet
+2. Gateway reachable from container
+3. DNS resolution via zone gateway
+4. Direct SSH from workstation (no ProxyJump)
+5. Service HTTP health check passes
+6. Terraform state reflects pve deployment
+7. No manual Proxmox route configuration required
 
 ## Files Likely Involved
 
-- `terraform/lxc/network/pve.yaml`
-- potentially a disposable stack definition or a chosen low-risk stack
-- docs in this refactor directory
+- `docs/productionize-refactor/runbooks/06-pve-canary-apt-cacher.md` ← **NEW detailed runbook**
+- `terraform/lxc/network/pve.yaml` ← production network intent
+- `terraform/lxc/storage/pve.yaml` ← production storage intent
+- `terraform/lxc/stacks/apt-cacher-stack/stack.yaml` ← stack metadata (must not hardcode pve-test)
+- `terraform/lxc/ansible/playbooks/deploy-apt-cacher-stack.yml` ← provisioning playbook
+- `.env.pve` ← production environment overlay (not in git)
+- `terraform/secrets.pve.enc.yaml` ← production SOPS-encrypted secrets
 
 ## Dependencies
 
-- task 03 storage manifest
-- task 04 network intent
-- task 05 stack decoupling
-- task 01 controls if production credentials are used during the validation
+- Task 01: Production Credential Controls (with-secrets-prod, approval flow)
+- Task 02: Production Environment Model (.env.pve overlay)
+- Task 03: Production Storage Manifest (storage/pve.yaml)
+- Task 04: Production Network Intent (network/pve.yaml with 4 zones)
+- Task 05: Stack Target Decoupling (apt-cacher-stack not hardcoded to pve-test)
 
-## Validation
+## Validation Gate
 
-- one target on `pve` works end-to-end on the intended VLAN path
-- evidence is collected and documented
-- any failures are categorized as host/network, manifest, or stack-level issues
+**Pass criteria (all must be true):**
+1. ✅ Pre-canary checklist passes (code state, network, Proxmox, environment)
+2. ✅ Preflight script exits 0 (targeting guard, gateway reachability, DNS)
+3. ✅ Terraform plan shows intended pve target with correct IP/zone/storage
+4. ✅ Apply succeeds (no Ansible errors, no Proxmox API failures)
+5. ✅ All 7 post-apply evidence items collected and pass validation
+6. ✅ Session doc created with full evidence trail
 
-## Risks
+**Fail handling:**
+- If pre-apply check fails → investigate and fix; do not apply
+- If apply fails → destroy immediately, document failure root cause
+- If post-apply evidence fails → investigate service health, network config, or state
+- Document and categorize failures as: code/environment, network, Proxmox infrastructure, or stack provisioning
 
-- choosing a canary that is too central or stateful
-- validating only host reachability and not real service behavior
-- skipping the canary and discovering network flaws during a real migration
+---
+
+## Risks Mitigated
+
+1. ✅ **Too-central or stateful canary** — apt-cacher-stack has no external deps, easy to destroy
+2. ✅ **Only host reachability tested** — HTTP 200 response validates service function
+3. ✅ **Environment regression** — network/pve.yaml and stack.yaml decoupling validated upfront
+4. ✅ **ProxyJump reintroduction** — direct SSH access confirmed from workstation
+5. ✅ **Manual route priming** — preflight script confirms direct-access model
+
+---
+
+## Done When
+
+1. ✅ Runbook doc created and tested against pre-apply environment
+2. ✅ First canary target named (apt-cacher-stack)
+3. ✅ Production credential preconditions documented
+4. ✅ Evidence checklist defined
+5. ✅ Task doc updated with specifics
+6. ✅ Branch is ready for execution session (no further planning work needed)
+
+---
+
+## Next Steps (After Canary Pass)
+
+- **Task 07: Incremental Migration Plan** — Define which services migrate to pve in what order
+- Update this task doc with successful execution timestamp and evidence link
+- Plan follow-up canaries if validation reveals gaps
+
+---
 
 ## Suggested Branch
 
-- `work/productionize-06-canary-validation`
+- `work/productionize-06-canary-validation` ← current branch
+- Merge to `dev/pve-test` once canary passes and evidence is documented
