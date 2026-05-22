@@ -54,6 +54,7 @@ locals {
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network                 = try(local.stack.network, null)
   stack_network_zone            = try(local.stack.network.zone, null)
+  requested_network_access_path = try(local.stack.network.access_path, null)
   effective_proxmox_node        = try(local.stack.proxmox_node, var.proxmox_node)
   storage_manifest_default_path = "${local.lxc_root}/storage/${local.effective_proxmox_node}.yaml"
   effective_storage_manifest_path = coalesce(
@@ -133,8 +134,15 @@ locals {
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
   effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
+  normalized_network_access_path = local.requested_network_access_path == null ? null : try(lower(trimspace(local.requested_network_access_path)), null)
+  # Session 4 migration contract:
+  # - sdn_vnet defaults to direct SSH
+  # - bridge/default path preserves ProxyJump compatibility behavior
+  effective_network_access_path = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? coalesce(local.normalized_network_access_path, "direct") : coalesce(local.normalized_network_access_path, "proxyjump_compat")
+
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
+  use_proxyjump         = local.effective_network_access_path == "proxyjump_compat" && local.effective_pve_host != ""
 
   effective_network_bridge = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.bridge, "vmbr0") : try(local.stack.network_bridge, "vmbr0")
   effective_vlan_tag       = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.vlan_tag, null) : null
@@ -244,6 +252,20 @@ check "network_layer_attachment_type_is_supported" {
   assert {
     condition     = local.stack_network_zone == null || contains(["bridge", "sdn_vnet"], local.resolved_attachment_type)
     error_message = "Network intent attachments must use type 'bridge' or 'sdn_vnet'."
+  }
+}
+
+check "network_access_path_is_supported" {
+  assert {
+    condition     = local.normalized_network_access_path == null || contains(["direct", "proxyjump_compat"], local.normalized_network_access_path)
+    error_message = "stack.network.access_path must be either 'direct' or 'proxyjump_compat' when set."
+  }
+}
+
+check "network_access_path_proxyjump_requires_pve_host" {
+  assert {
+    condition     = local.effective_network_access_path != "proxyjump_compat" || local.effective_pve_host != ""
+    error_message = "stack.network.access_path is 'proxyjump_compat' but no pve_host is available for ProxyJump."
   }
 }
 
@@ -531,6 +553,8 @@ resource "local_file" "ansible_inventory" {
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host
+    ssh_access_mode     = local.effective_network_access_path
+    use_proxyjump       = local.use_proxyjump
   })
 }
 
@@ -581,37 +605,6 @@ resource "local_file" "network_firewall_vars" {
     network_firewall_target     = local.effective_target_node
     network_firewall_pve_host   = local.effective_pve_host
   })
-
-  depends_on = [module.lxc]
-}
-
-# ---------------------------------------------------------------------------
-# Ensure the Proxmox host can reach SDN-attached guests for Ansible
-# provisioning. Without a direct route, ProxyJump sessions to VNet-backed
-# containers follow the LAN default route and fail with "No route to host".
-# ---------------------------------------------------------------------------
-resource "null_resource" "prime_sdn_host_route" {
-  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && try(local.stack.ansible_playbook, "") != "" && local.effective_pve_host != "" ? 1 : 0
-
-  triggers = {
-    container_id = module.lxc.container_id
-    guest_ip     = replace(module.lxc.ip_address, "/24", "")
-    pve_host     = local.effective_pve_host
-    subnet       = local.resolved_sdn_subnet
-    bridge       = local.effective_network_bridge
-    host_ip      = cidrhost(local.resolved_sdn_subnet, 254)
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      ssh -F /dev/null \
-        -o BatchMode=yes \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        'root@${local.effective_pve_host}' \
-        'ip addr replace ${cidrhost(local.resolved_sdn_subnet, 254)}/${split("/", local.resolved_sdn_subnet)[1]} dev ${local.effective_network_bridge} && ip route replace ${local.resolved_sdn_subnet} dev ${local.effective_network_bridge} src ${cidrhost(local.resolved_sdn_subnet, 254)} && ip route get ${replace(module.lxc.ip_address, "/24", "")}'
-    EOT
-  }
 
   depends_on = [module.lxc]
 }
