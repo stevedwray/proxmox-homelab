@@ -54,19 +54,26 @@ proves otherwise:
 5. SDN VLAN definitions remain environment data in
    `terraform/lxc/network/<env>.yaml`, with router prerequisites still handled
    out of band for now.
+6. The operator workstation on LAN `192.168.1.0/24` is the canonical Ansible
+   automation origin. Proxmox is not. A dedicated bastion is deferred to a
+   future phase and is outside this refactor's scope.
+7. `ProxyJump` through Proxmox is the accepted temporary escape hatch during
+   migration. It must be explicitly labeled in any stack that still uses it and
+   must be removed before the teardown validation gate passes.
+8. Portainer is on `mgmt_seg` (confirmed in
+   `terraform/lxc/stacks/portainer-stack/stack.yaml`). The `vmbr0` (`lan`)
+   attachment in `pve-test.yaml` is retained for legacy test stacks only and
+   is not an active exception in the platform model.
 
 ## Remaining Decisions
 
-The plan should explicitly force answers to these before any risky code removal:
+These must be answered before any risky code removal (Session 3+):
 
-1. Is the operator workstation the canonical automation origin for Ansible, or
-   should there be a separate bastion later?
-2. Which exact router prerequisites must exist before a stack apply is allowed
-   to proceed?
-3. Do any bootstrap exceptions remain, or can every active stack move to the
-   same direct-SSH contract?
-4. What temporary escape hatch, if any, is acceptable if one stack still needs
-   `ProxyJump` during the migration?
+1. Which exact router prerequisites must exist before a stack apply is allowed
+   to proceed, and where should the preflight check live?
+2. Should `ansible_ssh_common_args` become conditional (on attachment type,
+   environment flag, or explicit opt-in) or be removed from the template
+   entirely once direct-SSH is the default?
 
 ## Workstreams
 
@@ -137,6 +144,9 @@ Done when:
 1. No future session needs to debate whether Proxmox is allowed to be the L3
    gateway.
 2. The target access path is written down in one place.
+3. Current temporary exceptions (`ProxyJump` and `prime_sdn_host_route`) are
+   explicitly named with retirement conditions in `target-model.md`.
+4. Non-goals are explicitly stated so future sessions do not re-open them.
 
 ### Session 2 - Capture current implementation and evidence
 
@@ -172,16 +182,90 @@ Goal:
 Tasks:
 
 1. Define the desired inventory contract for router-reachable guests.
-2. Decide whether `ansible_ssh_common_args` becomes conditional on attachment
-   type, environment intent, or an explicit compatibility flag.
+2. Decide the logic for when to set `pve_host` (which gates ProxyJump generation):
+    - Decide the default behavior for `sdn_vnet` attachments.
+    - Decide how compatibility fallback is explicitly requested.
+    - Decide how legacy bridge-path stacks behave during migration.
 3. Decide where router reachability preflights should run:
    before inventory generation, before Ansible, or in a dedicated validator.
-4. Decide what temporary fallback is allowed during migration.
+4. Decide what temporary fallback is allowed during migration (if any).
 
 Outputs:
 
-1. An implementation checklist in this doc.
-2. Any new feature flags or manifest fields documented before code changes.
+1. A concrete inventory contract for SDN-backed stacks.
+2. A concrete `pve_host` migration rule and compatibility mechanism.
+3. A concrete preflight placement model.
+4. A concrete temporary fallback policy.
+5. Any new feature flags or manifest fields documented before code changes.
+
+Session 3 decision outcomes (2026-05-22):
+
+1. Desired inventory contract for router-reachable SDN-backed guests:
+    - `ansible_host` remains the guest IP rendered from Terraform state.
+    - Direct SSH is the default for `sdn_vnet` attachments.
+    - `ansible_ssh_common_args` for the default path includes only strict host
+       key bypass options already used in this repo; it does not include
+       `ProxyJump`.
+    - `pve_host` is no longer the default transport selector for SDN-backed
+       guests; it is treated as compatibility-only metadata when explicitly
+       requested.
+
+2. Preferred migration approach for `pve_host`:
+    - Use a hybrid control model: attachment-type default plus explicit
+       compatibility override.
+    - Attachment-type default:
+       - `sdn_vnet` => direct SSH default (no `ProxyJump`).
+       - `bridge` => preserve existing behavior during migration to avoid
+          surprise regressions in legacy/test stacks.
+    - Explicit compatibility override:
+       - Add a stack-level migration flag in `stack.yaml` for Session 4
+          implementation: `network.access_path` with allowed values:
+          - `direct` (default for `sdn_vnet`)
+          - `proxyjump_compat` (temporary fallback)
+       - Template/locals logic should generate `ProxyJump` only when
+          `network.access_path == "proxyjump_compat"`.
+    - Legacy bridge-path stacks:
+       - Continue with current behavior unless explicitly opted into
+          `network.access_path: direct`.
+       - They remain out of the SDN direct-SSH success criteria until migrated.
+
+3. Preflight placement decision:
+    - Use a combination model with one source of truth.
+    - Source of truth: a standalone validator command that checks router
+       reachability and DNS path assumptions from the workstation.
+    - Required invocation point: before Terraform apply (including teardown/
+       redeploy workflows).
+    - Secondary invocation point: before Ansible provisioning for stacks marked
+       `network.access_path: direct` (enforced by Session 4/6 wiring).
+    - Rationale: one validator avoids duplicated logic and drift, while two
+       invocation points catch both upfront readiness and per-stack access-path
+       mismatches.
+
+4. Temporary fallback policy (`ProxyJump` during migration):
+    - Allowed only when a stack is explicitly labeled
+       `network.access_path: proxyjump_compat`.
+    - Any fallback stack must include a migration annotation in `stack.yaml`
+       comment or adjacent docs with:
+       - reason for fallback
+       - owner
+       - review date/remove-by target
+    - `ProxyJump` fallback is disallowed for new SDN-backed stacks unless a
+       blocking preflight finding is documented.
+    - Removal readiness criteria for each fallback stack:
+       - router preflight passes for the stack zone
+       - one successful provisioning run using `network.access_path: direct`
+       - no dependency on `prime_sdn_host_route` for that stack path
+    - Global retirement condition remains unchanged: default `ProxyJump` must be
+       gone before the validation gate can pass.
+
+5. Session 4 implementation checklist (derived from these decisions):
+    - Add `network.access_path` parsing and validation in Terraform locals.
+    - Make inventory rendering use explicit `access_path` instead of
+       `pve_host != ""` as the ProxyJump gate.
+    - Keep existing bridge behavior unless explicitly overridden.
+    - Emit clear inventory metadata so operators can see whether a stack is in
+       `direct` or `proxyjump_compat` mode.
+    - Document migration labeling requirements in stack docs.
 
 Done when:
 
@@ -241,6 +325,15 @@ Validation:
 1. Run a representative stack plan/apply in a safe scope.
 2. Prove guest provisioning succeeds without adding a Proxmox-side route.
 
+Session 5 implementation note (2026-05-22):
+
+1. `null_resource.prime_sdn_host_route` has been removed from
+   `terraform/lxc/main.tf`.
+2. The remaining compatibility path is explicit `network.access_path:
+   proxyjump_compat`; there is no host-route fallback.
+3. The next live validation work is Session 6 preflight/evidence capture,
+   followed by Session 7 representative stack validation.
+
 Stop if:
 
 1. Any stack still depends on host-side reachability that the router path does
@@ -262,6 +355,24 @@ Tasks:
 2. Decide whether these checks belong in Terraform-adjacent scripts, session
    docs, or both.
 3. Add evidence capture guidance for future sessions.
+
+Session 6 implementation note (2026-05-22):
+
+1. `scripts/preflight-network-refactor.sh` added as a standalone preflight
+   validator. Invoke with `./with-secrets scripts/preflight-network-refactor.sh`.
+2. Checks implemented:
+   - Check 1: targeting guard (`TF_VAR_proxmox_node == pve-test`)
+   - Check 2: ICMP ping to all four SDN gateways (`192.168.10.1` –
+     `192.168.40.1`)
+   - Check 3: DNS via MikroTik gateway (`192.168.20.1`) for delegated internal
+     name
+     and public name
+   - Check 4: TCP:22 probe to at least one representative guest IP
+3. Evidence capture: `--save-evidence <dir>` writes a timestamped evidence file.
+4. `validation-gate.md` updated with a "Preflight Script" section that
+   documents standard, explicit-IP, and evidence-capture invocations.
+5. Check 4 is warn-only when no stacks are deployed and the default candidate
+   list is used; it becomes a hard check when explicit IPs are passed.
 
 Done when:
 
@@ -289,6 +400,18 @@ Stop if:
 
 1. Any representative stack requires reintroducing `ProxyJump` or host-route
    priming to succeed.
+
+Session 7 implementation note (2026-05-22):
+
+1. Session blocked at precondition stage from the current operator context.
+2. `./with-secrets scripts/preflight-network-refactor.sh 192.168.40.11`
+   exited 1
+   with failed gateway reachability, DNS via MikroTik gateway, and
+   representative guest TCP:22 checks.
+3. No representative stack re-apply/provision run was executed after preflight
+   failure.
+4. See `docs/network-refactor/session-7-summary.md` for captured evidence and
+   restart checklist.
 
 ### Session 8 - Execute teardown and redeploy gate
 
@@ -331,7 +454,7 @@ Use this as the quick tracker across sessions:
 2. Current implementation inventory captured with file references.
 3. Direct-SSH inventory contract designed.
 4. Inventory generation updated.
-5. `prime_sdn_host_route` removed or explicitly quarantined.
+5. `prime_sdn_host_route` removed.
 6. Preflight checks documented or automated.
 7. Representative live stacks validated.
 8. One teardown/redeploy cycle completed on `pve-test`.

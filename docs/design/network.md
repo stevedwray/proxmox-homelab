@@ -17,10 +17,10 @@ for per-container inbound filtering but has a known cross-zone rule generation b
 
 | Zone | Internal name | VLAN ID | Subnet | Gateway | Purpose |
 |---|---|---|---|---|---|
-| build_seg | `tvsegc` | 10 | `10.57.0.0/24` | `10.57.0.1` | CI runner — isolated build environment |
-| mgmt_seg | `tvmgmt` | 20 | `10.57.1.0/24` | `10.57.1.1` | Management plane — Portainer, Authentik, step-ca, monitoring, CoreDNS |
-| edge_seg | `tvedge` | 30 | `10.57.2.0/24` | `10.57.2.1` | Public ingress — Traefik only |
-| infra_seg | `tvinfra` | 40 | `10.57.3.0/24` | `10.57.3.1` | Infrastructure services — Harbor, apt-cacher, NetBox |
+| build_seg | `tvsegc` | 10 | `192.168.10.0/24` | `192.168.10.1` | CI runner — isolated build environment |
+| mgmt_seg | `tvmgmt` | 20 | `192.168.20.0/24` | `192.168.20.1` | Management plane — Portainer, Authentik, step-ca, monitoring, CoreDNS |
+| edge_seg | `tvedge` | 30 | `192.168.30.0/24` | `192.168.30.1` | Public ingress — Traefik only |
+| infra_seg | `tvinfra` | 40 | `192.168.40.0/24` | `192.168.40.1` | Infrastructure services — Harbor, apt-cacher, NetBox |
 
 Future zones (Phase 06+): `app_seg`, `game_seg`.
 
@@ -28,16 +28,16 @@ Future zones (Phase 06+): `app_seg`, `game_seg`.
 
 | Container | Zone | IP | VMID | Phase |
 |---|---|---|---|---|
-| ci-runner-01 | `build_seg` | `10.57.0.63` | 10063 | 01 |
-| Portainer | `mgmt_seg` | `10.57.1.20` | 20020 | 00b |
-| Authentik | `mgmt_seg` | `10.57.1.10` | 20010 | 04 |
-| step-ca | `mgmt_seg` | `10.57.1.11` | 20011 | 04 |
-| Monitoring | `mgmt_seg` | `10.57.1.12` | 20012 | 04 |
-| CoreDNS | `mgmt_seg` | `10.57.1.13` | 20013 | 04b |
-| Traefik | `edge_seg` | `10.57.2.10` | 30010 | 04 |
-| Harbor | `infra_seg` | `10.57.3.10` | 40010 | 03b |
-| apt-cacher-ng | `infra_seg` | `10.57.3.11` | 40011 | 03c |
-| NetBox | `infra_seg` | `10.57.3.12` | 40012 | 03b |
+| ci-runner-01 | `build_seg` | `192.168.10.63` | 10063 | 01 |
+| Portainer | `mgmt_seg` | `192.168.20.20` | 20020 | 00b |
+| Authentik | `mgmt_seg` | `192.168.20.10` | 20010 | 04 |
+| step-ca | `mgmt_seg` | `192.168.20.11` | 20011 | 04 |
+| Monitoring | `mgmt_seg` | `192.168.20.12` | 20012 | 04 |
+| CoreDNS | `mgmt_seg` | `192.168.20.13` | 20013 | 04b |
+| Traefik | `edge_seg` | `192.168.30.10` | 30010 | 04 |
+| Harbor | `infra_seg` | `192.168.40.10` | 40010 | 03b |
+| apt-cacher-ng | `infra_seg` | `192.168.40.11` | 40011 | 03c |
+| NetBox | `infra_seg` | `192.168.40.12` | 40012 | 03b |
 
 ## Cross-zone traffic policy
 
@@ -59,11 +59,11 @@ configuration (TM-09). A full pve-test rebuild requires manual MikroTik reconfig
 
 Two-tier model:
 
-1. **MikroTik** (`10.57.x.1` on each zone) is the DNS entry point for all SDN clients.
+1. **MikroTik** (`192.168.<vlan-id>.1` on each zone) is the DNS entry point for all SDN clients.
    Each zone's gateway IP is the resolver that containers use. The MikroTik handles public
    name resolution and conditionally forwards the internal zone.
 
-2. **CoreDNS** (`10.57.1.13`) holds authority for `lab.gibbsgreatly.xyz`. MikroTik
+2. **CoreDNS** (`192.168.20.13`) holds authority for `lab.gibbsgreatly.xyz`. MikroTik
    conditionally forwards queries matching `lab.gibbsgreatly.xyz` to CoreDNS via a FWD
    rule. All other queries are resolved by MikroTik directly (public DNS via DoH upstream).
 
@@ -80,10 +80,10 @@ Each LXC's `/etc/resolv.conf` points to its zone's MikroTik gateway IP:
 
 | Zone | DNS server in resolv.conf |
 |---|---|
-| `build_seg` | `10.57.0.1` |
-| `mgmt_seg` | `10.57.1.1` |
-| `edge_seg` | `10.57.2.1` |
-| `infra_seg` | `10.57.3.1` |
+| `build_seg` | `192.168.10.1` |
+| `mgmt_seg` | `192.168.20.1` |
+| `edge_seg` | `192.168.30.1` |
+| `infra_seg` | `192.168.40.1` |
 
 The `lxc_base` Ansible role writes the correct resolver based on the `dns_server` variable
 in each stack's `stack.yaml`. All `stack.yaml` files must set `dns_server` explicitly — do

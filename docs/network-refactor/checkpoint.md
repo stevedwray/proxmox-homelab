@@ -78,9 +78,9 @@ Read-only checks against `pve-test` showed:
    - route `192.168.20.0/24 dev tvmgmt src 192.168.20.254`
 4. `tvinfra` exists as a link, but did not show comparable working host-side
    reachability during inspection
-5. route lookup from `pve-test` to `10.57.3.11` fell back to the default route
+5. route lookup from `pve-test` to `192.168.40.11` fell back to the default route
    via `vmbr0`
-6. ping from `pve-test` to `10.57.3.11` failed
+6. ping from `pve-test` to `192.168.40.11` failed
 
 Interpretation:
 

@@ -33,8 +33,8 @@ See the preserved checkpoint:
    intended routed VLAN design.
 2. Terraform-generated inventories do not need Proxmox to act as a general
    jump host for SDN-backed stack provisioning.
-3. `prime_sdn_host_route` is either removed or retained only as an explicitly
-   temporary compatibility shim.
+3. `prime_sdn_host_route` has been removed; only `ProxyJump` remains as an
+   explicitly temporary compatibility shim.
 4. The corrected model is validated on `pve-test` with at least one teardown +
    redeploy cycle before production canary progression resumes.
 
@@ -44,6 +44,8 @@ See the preserved checkpoint:
   [plan.md](/home/steve/git/proxmox-homelab/docs/network-refactor/plan.md:1)
 - target model:
   [target-model.md](/home/steve/git/proxmox-homelab/docs/network-refactor/target-model.md:1)
+- migration mechanics decisions:
+   [migration-mechanics.md](/home/steve/git/proxmox-homelab/docs/network-refactor/migration-mechanics.md:1)
 - teardown validation gate:
   [validation-gate.md](/home/steve/git/proxmox-homelab/docs/network-refactor/validation-gate.md:1)
 - session handoff:

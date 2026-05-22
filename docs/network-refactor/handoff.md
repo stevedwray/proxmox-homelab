@@ -26,7 +26,8 @@ Read these in order:
 ## What Is Already Known
 
 1. The current generated inventory uses `ProxyJump=root@${pve_host}`.
-2. `prime_sdn_host_route` adds host-side IP/route state on the Proxmox host.
+2. `prime_sdn_host_route` was removed in Session 5; host-side route priming
+   is no longer part of the current Terraform apply flow.
 3. Production canary prep for `apt-cacher-stack` worked up to the point where
    the jump-host/routing model became the design concern.
 4. `pve-test` live state is inconsistent:
@@ -37,9 +38,10 @@ Read these in order:
 
 1. Start from the session roadmap in `plan.md` rather than re-scoping the
    architecture from scratch.
-2. Confirm the current session's place in the roadmap and update the docs.
-3. Map the exact code or validation changes for that session only.
-4. Capture evidence and stop points so the next session can continue cleanly.
+2. Run Session 6 preflight and evidence capture, then Session 7 representative
+   stack validation.
+3. Capture inventory, SSH-path, DNS, and health evidence for the direct path.
+4. Record any stack-specific exceptions that still prevent the teardown gate.
 
 ## Expected Outputs From The Next Session
 

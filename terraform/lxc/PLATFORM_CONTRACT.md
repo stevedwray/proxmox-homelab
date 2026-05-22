@@ -55,8 +55,8 @@ These are declared in `variables.tf` and may be overridden per environment:
 
 | Variable                | Default        | pve-test value  | Notes |
 |-------------------------|----------------|-----------------|-------|
-| `registry_host`         | `192.168.1.10` | `10.57.3.10`    | Harbor IP for Docker pulls |
-| `apt_cacher_host`       | `192.168.1.35` | `10.57.3.11`    | apt-cacher-ng proxy |
+| `registry_host`         | `192.168.1.10` | `192.168.40.10` | Harbor IP for Docker pulls |
+| `apt_cacher_host`       | `192.168.1.35` | `192.168.40.11` | apt-cacher-ng proxy |
 | `portainer_server_ip`   | `192.168.1.4`  | `${lab_ip_portainer}`    | Portainer server for app-tier endpoint registration |
 
 `registry_host` and `apt_cacher_host` now flow through `variables.tf` →
@@ -87,7 +87,7 @@ change to field names or semantics as a platform API change affecting all stacks
 | Field              | Type   | Notes |
 |--------------------|--------|-------|
 | `hostname`         | string | LXC hostname |
-| `ip_address`       | string | CIDR notation (e.g. `10.57.3.10/24`) |
+| `ip_address`       | string | CIDR notation (e.g. `192.168.40.10/24`) |
 | `deployment_tier`  | string | Explicit orchestration tier: `platform` or `apps` |
 | `dns_server`       | string | Guest resolver written into `/etc/resolv.conf`; set explicitly in every stack |
 
@@ -108,6 +108,7 @@ change to field names or semantics as a platform API change affecting all stacks
 | `template_profile`    | string  | Falls back to `storage/<env>.yaml` defaults and maps to template storage |
 | `tags`                | list    | Defaults to `[stack_name]` |
 | `network.zone`        | string  | Optional; when omitted, the stack uses bridge defaults rather than network intent |
+| `network.access_path` | string  | Optional; allowed values are `direct` and `proxyjump_compat`; defaults to `direct` for `sdn_vnet` attachments and `proxyjump_compat` for bridge/default path |
 | `ansible_playbook`    | string  | Playbook name consumed by `scripts/provision.sh` during the explicit Ansible phase |
 | `portainer_agent`     | bool    | Defaults to `false`; relevant for app-tier/legacy Portainer cleanup behavior only |
 | `keyctl`              | bool    | Defaults to `false` |
@@ -186,8 +187,8 @@ apt_cacher_host = try(local.stack.apt_cacher_host, var.apt_cacher_host)
 
 `.env.pve-test` — add (if not already present):
 ```
-export TF_VAR_registry_host=10.57.3.10
-export TF_VAR_apt_cacher_host=10.57.3.11
+export TF_VAR_registry_host=192.168.40.10
+export TF_VAR_apt_cacher_host=192.168.40.11
 ```
 
 ### 2. Parameterize apt proxy in `lxc_base`
