@@ -68,7 +68,27 @@ ls -l .env .env.pve
 
 **Run these in sequence. Stop on any failure.**
 
-### 4a. Preflight Script
+### 4a. Counterpart Stop Check
+
+```bash
+./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct status 40011 || true"'
+```
+
+| Check | Status | Expected |
+|---|---|---|
+| Matching pve-test counterpart stopped | ☐ | `stopped` or `does not exist` |
+
+**If this check fails:** stop the `pve-test` counterpart before bringing up the
+`pve` canary. Reusing `192.168.40.11` in both environments at the same time is
+a duplicate-IP hazard.
+
+If the counterpart is disposable, run:
+
+```bash
+./scripts/dispose-pve-test-counterpart.sh --stack apt-cacher-stack --execute
+```
+
+### 4b. Preflight Script
 
 ```bash
 ./with-secrets bash -c 'TF_VAR_proxmox_node=pve scripts/preflight-network-refactor.sh \
@@ -84,7 +104,7 @@ ls -l .env .env.pve
 
 **Evidence file location:** `docs/productionize-refactor/evidence/preflight-evidence-*.txt`
 
-### 4b. Terraform Plan
+### 4c. Terraform Plan
 
 ```bash
 export ALLOW_PVE=true
@@ -100,7 +120,7 @@ export ALLOW_PVE=true
 | Plan creates only apt-cacher resources | ☐ | No other stacks affected |
 | Storage backend correct | ☐ | Uses `infrastructure-containers` |
 
-### 4c. Generated Inventory Check
+### 4d. Generated Inventory Check
 
 ```bash
 ls -l terraform/lxc/.generated/inventory.pve.yml
@@ -229,7 +249,7 @@ cd terraform/lxc && terragrunt show -json module.apt-cacher-stack 2>/dev/null | 
 
 ## Phase 8: Success Criteria & Next Steps
 
-**Canary PASSES if all 7 evidence items are collected AND:**
+**Canary PASSES if all 7 technical evidence items are collected AND:**
 
 1. ✅ Container IP is 192.168.40.11/24
 2. ✅ Gateway 192.168.40.1 reachable (0% loss)
@@ -237,14 +257,16 @@ cd terraform/lxc && terragrunt show -json module.apt-cacher-stack 2>/dev/null | 
 4. ✅ SSH from workstation succeeds (direct, no ProxyJump)
 5. ✅ HTTP 200 response from apt-cacher service
 6. ✅ Terraform state reflects pve deployment
-7. ✅ No manual Proxmox config required
+7. ✅ Matching `pve-test` counterpart is stopped before the shared service IP is reused
+8. ✅ No manual Proxmox config required
 
 **Next steps:**
 
 1. Create session notes doc with evidence results
 2. Update Task 06 doc with execution timestamp and evidence link
 3. Close Task 06
-4. Proceed to Task 07: Incremental Migration Plan
+4. Carry forward the duplicate-IP safeguard for future cutovers
+5. Proceed to Task 07: Incremental Migration Plan
 
 ---
 

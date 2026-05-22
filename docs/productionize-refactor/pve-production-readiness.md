@@ -11,6 +11,17 @@ This plan is based on:
 - repo inspection of the current Terraform, stack, storage, and network model
 - read-only SSH inspection of `root@pve.gibbsgreatly.xyz`
 
+## Status Update
+
+As of May 22, 2026:
+
+- the `apt-cacher-stack` production canary on `pve` passed after the VLAN 40
+  trunk fix
+- the direct-access provisioning model is now proven on `pve`
+- the main operational lesson is collision control: if a stack reuses the same
+  service IP on `pve-test` and `pve`, stop or destroy the `pve-test`
+  counterpart before bringing up the `pve` instance
+
 ## Refactor Scope
 
 This refactor covers five tightly related concerns:
@@ -228,6 +239,8 @@ Conclusion:
   with the current `192.168.1.0/24` workloads
 - if we attempted to deploy onto the flat LAN instead, there would be immediate
   addressing and routing ambiguity
+- when a service intentionally reuses its `pve-test` segmented IP on `pve`,
+  cutover sequencing must ensure the `pve-test` counterpart is stopped first
 
 ## Hostname and service-role collisions
 

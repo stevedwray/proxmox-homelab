@@ -76,9 +76,10 @@ source terraform/secrets.pve.enc.yaml  # (handled by ./with-secrets-prod)
 
 1. **Preflight checks** (read-only, no approval needed):
    ```bash
-   ./with-secrets bash -c 'scripts/preflight-network-refactor.sh'
-   export ALLOW_PVE=true
-   ./with-secrets-prod bash -c 'terraform plan -target=module.apt-cacher-stack'
+   cd terraform/lxc/stacks/apt-cacher-stack
+   /home/steve/git/proxmox-homelab/with-secrets-prod terragrunt plan -no-color
+   /home/steve/git/proxmox-homelab/with-secrets bash -lc \
+     'ssh root@pve-test.gibbsgreatly.xyz "pct status 40011 || true"'
    ```
 
 2. **Operator explicit approval** (in chat):
@@ -125,14 +126,15 @@ The `./with-secrets-prod` wrapper enforces:
 - Approval workflow (explicit operator confirmation in chat)
 - `TASK_APPROVAL` export for mutating commands
 
-✅ **Evidence checklist (7 items):**
+✅ **Evidence checklist (8 items):**
 1. Container IP in intended subnet
 2. Gateway reachable from container
 3. DNS resolution via zone gateway
 4. Direct SSH from workstation (no ProxyJump)
 5. Service HTTP health check passes
 6. Terraform state reflects pve deployment
-7. No manual Proxmox route configuration required
+7. Matching `pve-test` counterpart is stopped before reusing `192.168.40.11`
+8. No manual Proxmox route configuration required
 
 ## Files Likely Involved
 
@@ -156,7 +158,7 @@ The `./with-secrets-prod` wrapper enforces:
 
 **Pass criteria (all must be true):**
 1. ✅ Pre-canary checklist passes (code state, network, Proxmox, environment)
-2. ✅ Preflight script exits 0 (targeting guard, gateway reachability, DNS)
+2. ✅ Production preflight validations pass (targeting, direct-access plan, inventory, counterpart stop check)
 3. ✅ Terraform plan shows intended pve target with correct IP/zone/storage
 4. ✅ Apply succeeds (no Ansible errors, no Proxmox API failures)
 5. ✅ Matching `pve-test` counterpart is stopped before the `pve` canary uses the same service IP
@@ -188,7 +190,7 @@ The `./with-secrets-prod` wrapper enforces:
 3. ✅ Production credential preconditions documented
 4. ✅ Evidence checklist defined
 5. ✅ Task doc updated with specifics
-6. ✅ Branch is ready for execution session (no further planning work needed)
+6. ✅ The canary workflow is documented clearly enough to execute and later close out with evidence
 
 ---
 
@@ -197,8 +199,8 @@ The `./with-secrets-prod` wrapper enforces:
 ### 2026-05-22 Production Canary Validation
 
 - Execution record: `docs/productionize-refactor/06-canary-execution-2026-05-22.md`
-- Result: **IN PROGRESS / PARTIALLY RECOVERED**
-- Gate decision: **Task 06 is not passed yet**
+- Result: **PASSED**
+- Gate decision: **Task 06 passed on `pve`; follow-up work is an operational duplicate-IP safeguard**
 
 Validated evidence summary:
 
@@ -206,12 +208,13 @@ Validated evidence summary:
 2. The stack exists on `pve` as VMID `40011` with IP `192.168.40.11/24` and default route via `192.168.40.1`.
 3. Direct-access model remains correct: inventory has `ssh_access_mode: direct`, no default ProxyJump, and no `prime_sdn_host_route` dependency in state.
 4. Initial gateway/data-plane validation failed because VLAN 40 was not tagged on the `pve` uplink at the MikroTik side.
-5. That network blocker was corrected, and direct guest connectivity later recovered:
+5. That network blocker was corrected, and the remedial rerun passed end-to-end:
    - guest ping to `192.168.40.1` succeeded
    - direct SSH to `192.168.40.11` succeeded
    - `apt-cacher-ng.service` was later present and active inside the guest
-6. During the same canary, the operator noticed the `pve-test` counterpart had not been torn down first. Because both environments use `192.168.40.11` for `apt-cacher-stack`, future runs must stop the `pve-test` counterpart before reusing that IP on `pve`.
-7. End-to-end canary closeout should not be marked complete until the final HTTP health check and evidence doc are refreshed after the post-network remediation rerun.
+6. HTTP service validation later returned `HTTP 200`, confirming the production provisioning model on `pve`.
+7. During the same canary, the operator noticed the `pve-test` counterpart had not been torn down first. Because both environments use `192.168.40.11` for `apt-cacher-stack`, future runs must stop the `pve-test` counterpart before reusing that IP on `pve`.
+8. Treat that duplicate-IP protection as a newly discovered precondition for future canaries and migrations, not as a failure of the `pve` canary itself.
 
 The legacy `scripts/preflight-network-refactor.sh` remains pve-test-gated and is
 not the production canary gate. Do not use it as the sole production preflight
@@ -221,14 +224,13 @@ check until it is made environment-aware.
 
 ## Next Steps (After This Run)
 
-- Before the next `pve` canary or retry, stop the matching `pve-test` `apt-cacher-stack` instance so `192.168.40.11` is not duplicated across environments.
-- Refresh the final service-health evidence on `pve` now that the VLAN blocker is resolved and provisioning has been rerun.
-- Update the same execution record with the post-remediation HTTP result and final gate decision.
-- Proceed to **Task 07** only after Task 06 canary evidence passes end-to-end.
+- Carry the duplicate-IP safeguard forward into future `pve` canaries and migrations: if a service reuses its `pve-test` IP on `pve`, stop or destroy the `pve-test` counterpart first.
+- Use the successful `apt-cacher-stack` `pve` canary as the proven baseline for **Task 07: Incremental Migration Plan**.
+- Add collision checks for reused IPs, hostnames, and live counterparts to each migration step before cutover.
 
 ---
 
 ## Suggested Branch
 
 - `work/productionize-06-canary-validation` ← current branch
-- Merge to `dev/pve-test` once the canary evidence is captured and reviewed
+- Merge to `dev/pve-test` once the passed canary evidence and duplicate-IP safeguard are captured and reviewed

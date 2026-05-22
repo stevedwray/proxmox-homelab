@@ -13,6 +13,9 @@ end-to-end on `pve` before attempting a higher-value service migration.
 **Not a full production rollout.** This is a single, isolated test of the direct-access
 network model that was validated on `pve-test`.
 
+**Status note:** this canary later passed on 2026-05-22. Keep this runbook as
+the reference workflow for future reruns and similar low-risk `pve` cutovers.
+
 ## Why apt-cacher-stack
 
 1. **No external dependencies** — Does not require Authentik, Harbor, or any other
@@ -55,14 +58,21 @@ This stack reuses the same service IP on `pve` and `pve-test`. During the
 which would have created a duplicate-IP condition on the network. The operator
 noticed and shut the `pve-test` instance down before continuing.
 
-**Required rule for future runs:** before any `pve` canary or retry, stop the
+**Required rule for future runs:** before any `pve` canary, retry, or migration
+that reuses the same service IP, stop the
 matching `pve-test` instance first unless the IP assignment has been changed.
 
 **How to verify / enforce:**
 ```bash
 ./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct status 40011 || true"'
 ./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct shutdown 40011 || pct stop 40011 || true"'
+./scripts/dispose-pve-test-counterpart.sh --stack apt-cacher-stack --plan
+./scripts/dispose-pve-test-counterpart.sh --stack apt-cacher-stack --execute
 ```
+
+If the `pve-test` counterpart is disposable, prefer the helper above in
+`--execute` mode. It stop-first destroys the managed stack on `pve-test` before
+the `pve` cutover.
 
 ### 3. Network Preconditions
 
@@ -443,7 +453,8 @@ The canary PASSES if ALL of the following are true:
 1. ✅ Document in `docs/productionize-refactor/sessions/` with evidence checklist
 2. ✅ Update `docs/productionize-refactor/tasks/06-canary-validation-gate.md` to mark as validated
 3. ✅ Close any related issues
-4. ✅ Prepare for **Task 07: Incremental Migration Plan** (next production service candidate)
+4. ✅ Carry forward any newly discovered cutover safeguards
+5. ✅ Prepare for **Task 07: Incremental Migration Plan** (next production service candidate)
 
 ### If Canary Fails and Is Unrecoverable
 

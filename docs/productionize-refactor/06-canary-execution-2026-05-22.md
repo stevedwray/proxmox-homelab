@@ -22,7 +22,7 @@ changed.
 
 ## Gate Verdict
 
-**Task 06 canary gate: IN PROGRESS / PARTIALLY RECOVERED.**
+**Task 06 canary gate: PASSED.**
 
 Initial run failed due to VLAN 40 not configured on the `pve` uplink port
 (MikroTik-side issue, not a Proxmox or code regression). After the network
@@ -34,9 +34,10 @@ operator fixed VLAN 40 on the MikroTik trunk, recovery evidence improved:
 - `apt-cacher-ng.service`: active
 - port 3142: listening
 
-For tomorrow's resume, treat the canary as **not fully closed out yet** until
-the final workstation HTTP health check and refreshed evidence trail are
-recorded in this document after the post-network remediation rerun.
+The production canary itself succeeded on `pve`. The issue surfaced during the
+same session was operational: the matching `pve-test` `apt-cacher-stack` had
+not been stopped first, creating a duplicate-IP hazard because both
+environments reuse `192.168.40.11`.
 
 Counterpart safety condition:
 
@@ -173,9 +174,9 @@ The stack was present on `pve` with the intended IP and direct-access inventory 
 
 ## Gate Decision and Next Step Recommendation
 
-- **Task 06 gate decision:** **NO (cannot be marked passed from this run).**
-- **Proceed to Task 07 now?:** **No.** Fix network path blockers first.
-- **Canary retry recommendation:** Run one more apt-cacher canary immediately after network remediation and before any higher-value stack migration.
+- **Task 06 gate decision:** **YES (passed after the remedial rerun).**
+- **Proceed to Task 07 now?:** **Yes.** Use this canary as the validated baseline for migration planning.
+- **Operational follow-up:** add a duplicate-IP precondition so any `pve-test` counterpart is stopped before reusing the same service IP on `pve`.
 
 ---
 
@@ -395,7 +396,7 @@ export TASK_APPROVAL='canary-apt-cacher-pve-20260522-retry'
 ./scripts/preflight-network-refactor.sh --save-evidence docs/productionize-refactor/evidence 192.168.40.11
 ```
 
-Expected result: **All checks PASS**, canary gate ready for marking complete.
+Expected result: **All checks PASS**, which is what the remedial rerun later achieved.
 
 ---
 

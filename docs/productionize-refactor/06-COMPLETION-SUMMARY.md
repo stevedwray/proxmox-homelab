@@ -2,7 +2,7 @@
 
 **Date:** 2026-05-22
 **Branch:** `work/productionize-06-canary-validation`
-**Status:** ✅ Planning and documentation complete — ready for execution session
+**Status:** ✅ Task 06 passed on 2026-05-22; operational follow-up is duplicate-IP prevention across `pve-test` and `pve`
 
 ---
 
@@ -17,7 +17,7 @@
 - **Pre-canary checklist:** 5 sections covering code state, network prerequisites, Proxmox infrastructure, session environment
 - **Pre-apply validation:** Preflight script, Terraform plan review, generated inventory check for ProxyJump regression
 - **Apply phase:** Explicit operator approval workflow using `./with-secrets-prod` + `TASK_APPROVAL` export
-- **Post-apply evidence:** 7 mandatory checks (IP, gateway, DNS, SSH, HTTP, state, no manual priming)
+- **Post-apply evidence:** 7 technical checks plus the duplicate-IP safeguard
 - **Remediation procedures:** Step-by-step failure handling and cleanup
 - **Stop conditions:** Explicit failure categorization and when to abandon vs. retry
 
@@ -113,7 +113,7 @@ User            ./with-secrets-prod       terraform/secrets.pve.enc.yaml    Prox
 
 ---
 
-## Evidence Checklist (7 Required Items)
+## Evidence Checklist (8 Required Conditions)
 
 **Must be collected post-apply within 5 minutes:**
 
@@ -125,15 +125,16 @@ User            ./with-secrets-prod       terraform/secrets.pve.enc.yaml    Prox
 | 4 | Direct SSH access | `ssh root@192.168.40.11 hostname` (from workstation) | Success, no ProxyJump | ☐ |
 | 5 | Service health | `curl http://192.168.40.11:3142/acng-report.html` | HTTP 200 | ☐ |
 | 6 | Terraform state | `terragrunt show -json module.apt-cacher-stack` | Reflects pve deployment | ☐ |
-| 7 | No manual config | Deployment completed without Proxmox-side route priming | Clean apply, no workarounds | ☐ |
+| 7 | Counterpart stop check | `pct status 40011` on `pve-test` | `stopped` or absent before reusing IP | ☐ |
+| 8 | No manual config | Deployment completed without Proxmox-side route priming | Clean apply, no workarounds | ☐ |
 
-**Success = all 7 pass with documented values**
+**Success = all 8 conditions pass with documented values**
 
 ---
 
 ## Branch Readiness Assessment
 
-### Ready for Execution: YES ✅
+### Execution Outcome: PASSED ✅
 
 **Preconditions Met:**
 
@@ -148,6 +149,7 @@ User            ./with-secrets-prod       terraform/secrets.pve.enc.yaml    Prox
 - Preflight script covers all prerequisite checks
 - DNS and gateway reachability validated
 - No ProxyJump or host-route assumptions
+- Production `apt-cacher-stack` canary on `pve` later passed after the VLAN 40 trunk fix
 
 ✅ **Production Infrastructure**
 - pve host accessible (read-only verified)
@@ -191,7 +193,7 @@ User            ./with-secrets-prod       terraform/secrets.pve.enc.yaml    Prox
 
 ---
 
-## Execution Flow (Reference for Next Session)
+## Execution Flow (Reference Baseline)
 
 When operator is ready to execute:
 
@@ -208,9 +210,10 @@ PHASE 2: Operator verifies Proxmox infrastructure
    └─ Template available
 
 PHASE 3: AI system runs pre-apply validation
-   ├─ Preflight script passes
+   ├─ Production target and direct-access plan validate
    ├─ Terraform plan targets pve (not pve-test)
    ├─ Generated inventory has no ProxyJump
+   ├─ Matching pve-test counterpart is stopped if the same service IP is reused
    └─ All checks pass
 
 PHASE 4: Operator provides explicit approval
@@ -236,7 +239,7 @@ PHASE 7: AI system documents results
    ├─ Updates Task 06 doc with execution timestamp
    └─ Closes Task 06
 
-PHASE 8: Proceed to Task 07 (Migration Plan)
+PHASE 8: Proceed to Task 07 (Migration Plan) with collision safeguards
 ```
 
 ---
@@ -265,21 +268,13 @@ PHASE 8: Proceed to Task 07 (Migration Plan)
 
 ## Summary Statement
 
-**Task 06: Production Canary Validation Gate is complete and ready for execution.**
+**Task 06: Production Canary Validation Gate passed on `pve`.**
 
-The planning phase has delivered:
-1. ✅ A practical, low-risk canary runbook targeting apt-cacher-stack
-2. ✅ Explicit preconditions and stop conditions for production mutations
-3. ✅ A 7-item evidence checklist with exact commands and expected values
-4. ✅ An approval workflow using `./with-secrets-prod` and `TASK_APPROVAL` exports
-5. ✅ Detailed remediation and rollback procedures
-6. ✅ An 8-phase execution checklist for operator reference
+The workstream delivered:
+1. ✅ A practical, low-risk canary runbook targeting `apt-cacher-stack`
+2. ✅ A successful `pve` canary proving the direct-access provisioning model
+3. ✅ Evidence that the initial failure was network infrastructure, not stack logic
+4. ✅ A newly discovered safeguard: stop any `pve-test` counterpart before reusing the same service IP on `pve`
+5. ✅ A clear handoff into Task 07 with collision-aware migration rules
 
-**No further planning work needed.** The branch is ready to transition to an execution session where:
-- Operator verifies network and Proxmox prerequisites
-- Operator provides explicit approval in chat
-- AI system executes the canary with full evidence capture
-- Results are documented and Task 06 is closed
-
-If the canary passes, Task 07 (Incremental Migration Plan) can proceed.
-If the canary fails, root cause will be documented and remediation planned.
+**Planning follow-up only:** carry the duplicate-IP safeguard into future canaries and migration steps. The canary itself does not need to be reopened.

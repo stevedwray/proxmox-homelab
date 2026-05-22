@@ -37,7 +37,9 @@ attachments:
     description: Management plane - identity, PKI, monitoring
     type: sdn_vnet
     bridge: tvmgmt
-    firewall: true
+    # Keep the Proxmox VNet firewall disabled until cross-zone rule generation
+    # is fixed in main.tf and promoted beyond pve-test validation.
+    firewall: false
     sdn:
       zone: tvmgmt
       zone_type: vlan
@@ -55,7 +57,9 @@ attachments:
     description: Edge ingress - reverse proxy only
     type: sdn_vnet
     bridge: tvedge
-    firewall: true
+    # Keep the Proxmox VNet firewall disabled until cross-zone rule generation
+    # is fixed in main.tf and promoted beyond pve-test validation.
+    firewall: false
     sdn:
       zone: tvedge
       zone_type: vlan

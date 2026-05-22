@@ -16,6 +16,7 @@ plan that can be executed gradually.
 - per-service dependency notes
 - collision and coexistence notes
 - rollback guidance per service
+- pre-cutover checks for reused IPs, hostnames, and live counterpart state
 - explicit statement of whether each service is:
   - parallel-first
   - cutover-first
@@ -58,6 +59,14 @@ Late:
 
 ## Collision-Aware Notes
 
+Task 06 proved that production provisioning on `pve` works, but it also exposed
+an operational cutover risk:
+
+- `apt-cacher-stack` reused `192.168.40.11` on both `pve-test` and `pve`
+- the `pve-test` counterpart was still running when the `pve` canary came up
+- future migrations must stop or destroy the `pve-test` counterpart before
+  reusing the same service IP on `pve`
+
 Known existing production role/name overlaps:
 
 - `harbor-stack`
@@ -75,12 +84,13 @@ deployments.
 
 ## Dependencies
 
-- task 06 canary validation should complete first
+- task 06 canary validation has completed and should inform the migration rules
 
 ## Validation
 
 - migration order reflects actual canary findings
 - every service has a clear entry in the migration sheet
+- each service has explicit collision checks before cutover
 - dependencies and rollback assumptions are documented before execution begins
 
 ## Risks
