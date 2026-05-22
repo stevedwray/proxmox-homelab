@@ -43,10 +43,10 @@ Early:
 - disposable test LXC
 - `apt-cacher-stack`
 - `dns-stack`
+- `step-ca-stack`
 
 Middle:
 
-- `step-ca-stack`
 - `monitoring-stack`
 - `portainer-stack`
 

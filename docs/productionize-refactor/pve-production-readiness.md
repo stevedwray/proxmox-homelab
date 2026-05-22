@@ -21,6 +21,9 @@ As of May 22, 2026:
 - the main operational lesson is collision control: if a stack reuses the same
   service IP on `pve-test` and `pve`, stop or destroy the `pve-test`
   counterpart before bringing up the `pve` instance
+- the next low-risk production canary after `dns-stack` is `step-ca-stack`,
+  which exercises the PKI/trust path without depending on the DNS record-creation
+  work that is still being repaired
 
 ## Refactor Scope
 
