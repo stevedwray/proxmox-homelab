@@ -101,33 +101,32 @@ If it prints anything other than `pve`, stop and check environment sourcing orde
 
 ### Preflight 1: Direct-Access Network Model
 
-Run the pve-test preflight script, adapted for pve IPs and gateways:
+The legacy `scripts/preflight-network-refactor.sh` is still pve-test-gated, so do
+not use it as the production canary gate. For pve, verify the production target
+and the direct-access plan instead:
 
 ```bash
-./with-secrets bash -c 'TF_VAR_proxmox_node=pve scripts/preflight-network-refactor.sh \
-  --save-evidence docs/productionize-refactor/evidence/ 192.168.40.11'
+cd terraform/lxc/stacks/apt-cacher-stack
+/home/steve/git/proxmox-homelab/with-secrets-prod terragrunt plan -no-color
 ```
 
-**Expected result:** Exit code 0 (all checks pass).
-
-**Evidence output:** Timestamped file under `docs/productionize-refactor/evidence/`.
+**Expected result:** The plan shows `node_name = "pve"`, `ip_address = "192.168.40.11/24"`,
+`gateway = "192.168.40.1"`, and `ssh_access_mode: direct`.
 
 **What this checks:**
-1. TF_VAR_proxmox_node guard (confirms target is production)
-2. Gateway reachability from workstation (192.168.40.1)
-3. DNS via MikroTik (if the stack was already deployed)
-4. Representative guest SSH reachability (skipped on first run; passes on validation run post-deploy)
+1. Production wrapper targeting is pve
+2. The stack renders the direct-access model
+3. The intended subnet, gateway, and SSH mode match the production canary
 
-### Preflight 2: Terraform Plan
+### Preflight 2: Terraform Apply Readiness
 
 ```bash
-export ALLOW_PVE=true
-./with-secrets-prod bash -c 'cd terraform/lxc && terragrunt plan \
-  -target=module.apt-cacher-stack \
-  -out=/tmp/apt-cacher.plan'
+cd terraform/lxc/stacks/apt-cacher-stack
+TASK_APPROVAL='canary-apt-cacher-pve-20260522' \
+   /home/steve/git/proxmox-homelab/with-secrets-prod terragrunt apply -auto-approve
 ```
 
-**Expected result:** Terraform shows creation plan for apt-cacher-stack containers/resources.
+**Expected result:** OpenTofu creates the container and renders `ssh_access_mode: direct`.
 
 **Red flags (stop if you see these):**
 - Plan attempts to destroy something on pve-test (wrong target)
@@ -137,19 +136,19 @@ export ALLOW_PVE=true
 
 ### Preflight 3: Generated Inventory Check
 
-Before apply, verify the generated inventory uses direct-access (no ProxyJump):
+After plan or apply, verify the generated inventory uses direct-access (no ProxyJump):
 
 ```bash
-ls -la terraform/lxc/.generated/inventory.pve.yml
-grep -E '(ProxyJump|ansible_host|dns_nameservers)' terraform/lxc/.generated/inventory.pve.yml
+grep -E '(ProxyJump|ansible_host|ssh_access_mode|pve_host)' terraform/lxc/stacks/apt-cacher-stack/inventory.yml
+ssh -G root@192.168.40.11 | rg '^proxyjump ' || echo 'proxyjump=none'
 ```
 
 **Expected:**
-- File exists and is recent (timestamp within last 5 minutes of plan)
 - `ansible_host: 192.168.40.11`
-- `dns_nameservers: ['192.168.40.1']`
+- `ssh_access_mode: direct`
 - NO `ProxyJump` entries
-- NO `pve_host` fallback needed (direct access via IP)
+- `proxyjump=none`
+- NO `pve_host` fallback needed for the direct SSH path
 
 **Red flag:** If `ProxyJump` appears or `ansible_host` is not the direct IP, **stop**.
 This indicates the network model has regressed.
@@ -171,11 +170,9 @@ The AI system will then proceed with apply using `./with-secrets-prod`.
 ### Apply Command
 
 ```bash
-export ALLOW_PVE=true
-export TASK_APPROVAL="canary-apt-cacher-pve-20260522"  # Replace date
-./with-secrets-prod bash -c 'cd terraform/lxc && terragrunt apply \
-  -target=module.apt-cacher-stack \
-  terraform.tfplan 2>&1 | tee /tmp/apply-apt-cacher.log'
+cd terraform/lxc/stacks/apt-cacher-stack
+export TASK_APPROVAL="canary-apt-cacher-pve-20260522"
+/home/steve/git/proxmox-homelab/with-secrets-prod terragrunt apply -auto-approve
 ```
 
 **Monitor the apply output for:**
@@ -206,8 +203,7 @@ Then investigate the failure, document findings, and prepare for retry once issu
 ### 1. LXC Container Confirmation
 
 ```bash
-export ALLOW_PVE=true
-./with-secrets-prod bash -c 'pct list | grep apt-cacher'
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@192.168.40.11 hostname
 ```
 
 **Expected output:**
@@ -222,8 +218,7 @@ VMID    NAME            STATUS      NODE
 ### 2. IP Address Verification
 
 ```bash
-export ALLOW_PVE=true
-./with-secrets-prod bash -c 'pct exec 40011 ip -4 addr show eth0'
+ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@192.168.40.11 'ip -4 addr show eth0'
 ```
 
 **Expected output:**
@@ -238,8 +233,7 @@ inet 192.168.40.11/24 brd 192.168.40.255 scope global eth0
 ### 3. Gateway Reachability
 
 ```bash
-export ALLOW_PVE=true
-./with-secrets-prod bash -c 'pct exec 40011 ping -c 1 192.168.40.1'
+ping -c 1 -W 3 192.168.40.1
 ```
 
 **Expected output:** 1 packet sent, 1 received, 0% packet loss.
@@ -251,8 +245,7 @@ export ALLOW_PVE=true
 ### 4. DNS Resolution
 
 ```bash
-export ALLOW_PVE=true
-./with-secrets-prod bash -c 'pct exec 40011 dig @192.168.40.1 github.com +short'
+dig @192.168.40.1 +short github.com
 ```
 
 **Expected output:** One or more IP addresses (e.g., `140.82.113.4`).
@@ -300,7 +293,9 @@ logs with `pct exec 40011 journalctl -u apt-cacher-ng -n 50`.
 ### 7. Terraform State Consistency
 
 ```bash
-cd terraform/lxc && terragrunt show module.apt-cacher-stack 2>/dev/null | grep -E '(ip|node|zone)'
+cd terraform/lxc/stacks/apt-cacher-stack
+set -a && [ -f ../../../../.env ] && source ../../../../.env || true && [ -f ../../../../.env.pve ] && source ../../../../.env.pve || true && set +a
+PVE_ENV=pve terragrunt state list
 ```
 
 **Expected output:** State reflects the actual pve deployment (node = pve, IP = 192.168.40.11, zone = infra_seg).

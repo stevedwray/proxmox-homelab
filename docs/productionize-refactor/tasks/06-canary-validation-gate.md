@@ -190,15 +190,37 @@ The `./with-secrets-prod` wrapper enforces:
 
 ---
 
-## Next Steps (After Canary Pass)
+## Execution Status
 
-- **Task 07: Incremental Migration Plan** — Define which services migrate to pve in what order
-- Update this task doc with successful execution timestamp and evidence link
-- Plan follow-up canaries if validation reveals gaps
+### 2026-05-22 Production Canary Validation
+
+- Execution record: `docs/productionize-refactor/06-canary-execution-2026-05-22.md`
+- Result: **FAILED (this run)**
+- Gate decision: **Task 06 is not passed yet**
+
+Validated evidence summary:
+
+1. Production target controls are correct: `./with-secrets-prod` resolves `TF_VAR_proxmox_node=pve` and stack outputs confirm `target_node = pve`.
+2. The stack exists on `pve` as VMID `40011` with IP `192.168.40.11/24` and default route via `192.168.40.1`.
+3. Direct-access model remains correct: inventory has `ssh_access_mode: direct`, no default ProxyJump, and no `prime_sdn_host_route` dependency in state.
+4. Gateway/data-plane validation failed: from inside the container, `ping -c 1 192.168.40.1` returns `Destination Host Unreachable`.
+5. Workstation direct-path validation failed: SSH to `192.168.40.11` reports `No route to host`, and apt-cacher HTTP health is unreachable (`HTTP 000`).
+
+The legacy `scripts/preflight-network-refactor.sh` remains pve-test-gated and is
+not the production canary gate. Do not use it as the sole production preflight
+check until it is made environment-aware.
+
+---
+
+## Next Steps (After This Run)
+
+- Resolve the infra network path blocker so `192.168.40.11` can reach `192.168.40.1` from inside the guest and workstation routing to `192.168.40.11` is restored.
+- Re-run the apt-cacher canary and update the same execution record with pass/fail deltas.
+- Proceed to **Task 07** only after Task 06 canary evidence passes end-to-end.
 
 ---
 
 ## Suggested Branch
 
 - `work/productionize-06-canary-validation` ← current branch
-- Merge to `dev/pve-test` once canary passes and evidence is documented
+- Merge to `dev/pve-test` once the canary evidence is captured and reviewed
