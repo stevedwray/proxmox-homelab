@@ -50,6 +50,7 @@ The canary MUST verify all of:
 | Service-specific health | apt-cacher HTTP 200, service running | `curl -s http://192.168.40.11:3142/acng-report.html` + `HTTP 200` |
 | Network config target | pve not pve-test | Terraform plan + generated inventory |
 | No host route priming needed | Direct routed access works | Provisioning completes without manual Proxmox-side config |
+| Duplicate-IP avoidance | matching pve-test counterpart stopped first | `pct status 40011` on `pve-test` shows stopped or absent |
 
 ---
 
@@ -158,8 +159,9 @@ The `./with-secrets-prod` wrapper enforces:
 2. ✅ Preflight script exits 0 (targeting guard, gateway reachability, DNS)
 3. ✅ Terraform plan shows intended pve target with correct IP/zone/storage
 4. ✅ Apply succeeds (no Ansible errors, no Proxmox API failures)
-5. ✅ All 7 post-apply evidence items collected and pass validation
-6. ✅ Session doc created with full evidence trail
+5. ✅ Matching `pve-test` counterpart is stopped before the `pve` canary uses the same service IP
+6. ✅ All post-apply evidence items collected and pass validation
+7. ✅ Session doc created with full evidence trail
 
 **Fail handling:**
 - If pre-apply check fails → investigate and fix; do not apply
@@ -195,7 +197,7 @@ The `./with-secrets-prod` wrapper enforces:
 ### 2026-05-22 Production Canary Validation
 
 - Execution record: `docs/productionize-refactor/06-canary-execution-2026-05-22.md`
-- Result: **FAILED (this run)**
+- Result: **IN PROGRESS / PARTIALLY RECOVERED**
 - Gate decision: **Task 06 is not passed yet**
 
 Validated evidence summary:
@@ -203,8 +205,13 @@ Validated evidence summary:
 1. Production target controls are correct: `./with-secrets-prod` resolves `TF_VAR_proxmox_node=pve` and stack outputs confirm `target_node = pve`.
 2. The stack exists on `pve` as VMID `40011` with IP `192.168.40.11/24` and default route via `192.168.40.1`.
 3. Direct-access model remains correct: inventory has `ssh_access_mode: direct`, no default ProxyJump, and no `prime_sdn_host_route` dependency in state.
-4. Gateway/data-plane validation failed: from inside the container, `ping -c 1 192.168.40.1` returns `Destination Host Unreachable`.
-5. Workstation direct-path validation failed: SSH to `192.168.40.11` reports `No route to host`, and apt-cacher HTTP health is unreachable (`HTTP 000`).
+4. Initial gateway/data-plane validation failed because VLAN 40 was not tagged on the `pve` uplink at the MikroTik side.
+5. That network blocker was corrected, and direct guest connectivity later recovered:
+   - guest ping to `192.168.40.1` succeeded
+   - direct SSH to `192.168.40.11` succeeded
+   - `apt-cacher-ng.service` was later present and active inside the guest
+6. During the same canary, the operator noticed the `pve-test` counterpart had not been torn down first. Because both environments use `192.168.40.11` for `apt-cacher-stack`, future runs must stop the `pve-test` counterpart before reusing that IP on `pve`.
+7. End-to-end canary closeout should not be marked complete until the final HTTP health check and evidence doc are refreshed after the post-network remediation rerun.
 
 The legacy `scripts/preflight-network-refactor.sh` remains pve-test-gated and is
 not the production canary gate. Do not use it as the sole production preflight
@@ -214,8 +221,9 @@ check until it is made environment-aware.
 
 ## Next Steps (After This Run)
 
-- Resolve the infra network path blocker so `192.168.40.11` can reach `192.168.40.1` from inside the guest and workstation routing to `192.168.40.11` is restored.
-- Re-run the apt-cacher canary and update the same execution record with pass/fail deltas.
+- Before the next `pve` canary or retry, stop the matching `pve-test` `apt-cacher-stack` instance so `192.168.40.11` is not duplicated across environments.
+- Refresh the final service-health evidence on `pve` now that the VLAN blocker is resolved and provisioning has been rerun.
+- Update the same execution record with the post-remediation HTTP result and final gate decision.
 - Proceed to **Task 07** only after Task 06 canary evidence passes end-to-end.
 
 ---

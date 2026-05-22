@@ -4,18 +4,44 @@
 
 Production canary validation for `apt-cacher-stack` targeting `pve`, executed from branch `work/productionize-06-canary-validation`.
 
+## Operator Note For Resume
+
+This canary surfaced an operational safety rule that was not documented clearly
+enough at the start of the run:
+
+- `apt-cacher-stack` uses the same service IP (`192.168.40.11`) on `pve-test`
+  and `pve`
+- the `pve-test` counterpart had not been torn down before the production canary
+  was attempted
+- the operator noticed this in time and shut the `pve-test` instance down before
+  continuing
+
+**Required rule for future runs:** shut down the matching `pve-test`
+counterpart before bringing up the `pve` canary unless the service IP has been
+changed.
+
 ## Gate Verdict
 
-**Task 06 canary gate: YES (PASSED — remedial rerun 2026-05-22).**
+**Task 06 canary gate: IN PROGRESS / PARTIALLY RECOVERED.**
 
-Initial run failed due to VLAN 40 not configured on the pve uplink port (MikroTik-side issue, not a Proxmox or code regression). After the network operator fixed VLAN 40 on the MikroTik trunk, a remedial provisioning rerun completed successfully:
+Initial run failed due to VLAN 40 not configured on the `pve` uplink port
+(MikroTik-side issue, not a Proxmox or code regression). After the network
+operator fixed VLAN 40 on the MikroTik trunk, recovery evidence improved:
 
 - container IP: `192.168.40.11/24` (correct)
 - gateway reachable: `192.168.40.1` (ping 0% loss)
 - direct SSH: `root@192.168.40.11` works (no ProxyJump)
 - `apt-cacher-ng.service`: active
 - port 3142: listening
-- HTTP health: `HTTP 200` from `/acng-report.html`
+
+For tomorrow's resume, treat the canary as **not fully closed out yet** until
+the final workstation HTTP health check and refreshed evidence trail are
+recorded in this document after the post-network remediation rerun.
+
+Counterpart safety condition:
+
+- `pve-test` `apt-cacher-stack` must remain stopped during any future rerun that
+  reuses `192.168.40.11`
 
 ---
 

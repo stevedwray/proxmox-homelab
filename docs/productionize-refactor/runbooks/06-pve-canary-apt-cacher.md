@@ -44,6 +44,26 @@ network model that was validated on `pve-test`.
 
 **How to verify:** Run `grep -r 'pve-test' terraform/lxc/stacks/apt-cacher-stack/ ansible/playbooks/deploy-apt-cacher-stack.yml || echo "PASS"`
 
+### 2b. Duplicate-IP Guard
+
+- [ ] Any existing `apt-cacher-stack` instance on `pve-test` is stopped before bringing up the
+      production canary on `pve`
+- [ ] No other live guest is currently using `192.168.40.11`
+
+This stack reuses the same service IP on `pve` and `pve-test`. During the
+2026-05-22 canary, the `pve-test` counterpart had not been torn down first,
+which would have created a duplicate-IP condition on the network. The operator
+noticed and shut the `pve-test` instance down before continuing.
+
+**Required rule for future runs:** before any `pve` canary or retry, stop the
+matching `pve-test` instance first unless the IP assignment has been changed.
+
+**How to verify / enforce:**
+```bash
+./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct status 40011 || true"'
+./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct shutdown 40011 || pct stop 40011 || true"'
+```
+
 ### 3. Network Preconditions
 
 Network configuration is **out of scope** for this runbook. These MUST be in place
@@ -133,6 +153,7 @@ TASK_APPROVAL='canary-apt-cacher-pve-20260522' \
 - Plan targets `proxmox_node: pve-test` (environment not decoupled)
 - Error: "Proxmox API 401" (token invalid or expired)
 - Error: "Storage backend not found" (pve infrastructure missing)
+- The matching `pve-test` stack is still running on the same IP (`192.168.40.11`)
 
 ### Preflight 3: Generated Inventory Check
 
@@ -289,6 +310,18 @@ HTTP 200
 
 **Stop condition:** If HTTP is not 200, the service did not start correctly. Check container
 logs with `pct exec 40011 journalctl -u apt-cacher-ng -n 50`.
+
+### 6b. Counterpart Safety Check
+
+Before declaring the canary healthy, confirm the old `pve-test` counterpart is
+still stopped so the service result is not polluted by duplicate addressing or
+ambiguous replies:
+
+```bash
+./with-secrets bash -lc 'ssh root@pve-test.gibbsgreatly.xyz "pct status 40011 || true"'
+```
+
+**Expected result:** `stopped` or `does not exist`.
 
 ### 7. Terraform State Consistency
 
