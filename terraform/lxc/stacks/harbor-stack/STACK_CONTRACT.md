@@ -39,6 +39,11 @@ Docker Hub directly (Harbor is not yet running). All subsequent stacks pull from
 `${REGISTRY_HOST}` (injected from `registry_host` host vars). This is expected and
 not a misconfiguration.
 
+OIDC convergence note: Harbor OIDC configuration is only applied after the
+Authentik Harbor client reconcile has run successfully in the same playbook pass.
+If Authentik is unavailable, Harbor postconfigure keeps Harbor on local auth for
+that run and defers OIDC to a later rerun to avoid partial OIDC state.
+
 ## Persistent State
 
 | Path                 | Storage               | Contents |

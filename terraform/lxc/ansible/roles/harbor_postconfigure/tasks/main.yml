@@ -19,6 +19,28 @@
   delegate_to: localhost
   no_log: true
 
+- name: Get Harbor current auth mode
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_current_config
+  delegate_to: localhost
+  no_log: true
+
+- name: Record Harbor current auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_current_auth_mode: "{{ harbor_postconfigure_current_config.json.auth_mode | default('db_auth') }}"
+  delegate_to: localhost
+
+- name: Start with Harbor current auth mode as the effective auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "{{ harbor_postconfigure_current_auth_mode }}"
+  delegate_to: localhost
+
 # -----------------------------------------------------------------------
 # Browser SSO (OIDC)
 # -----------------------------------------------------------------------
@@ -76,6 +98,12 @@
   when: harbor_postconfigure_oidc_enabled
   delegate_to: localhost
 
+- name: Record Harbor effective auth mode after OIDC configuration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "oidc_auth"
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
 - name: Look up Harbor breakglass user
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
@@ -105,7 +133,7 @@
     status_code: [201, 409]
   when:
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
-    - not harbor_postconfigure_oidc_enabled
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth'
   delegate_to: localhost
   no_log: true
 
@@ -116,7 +144,7 @@
       new local users after auth_mode is switched to oidc_auth. The built-in admin
       account remains the local recovery path.
   when:
-    - harbor_postconfigure_oidc_enabled
+    - harbor_postconfigure_effective_auth_mode == 'oidc_auth'
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
   delegate_to: localhost
 
@@ -130,13 +158,18 @@
     status_code: 200
   register: harbor_postconfigure_breakglass_lookup_after
   when:
-    - not harbor_postconfigure_oidc_enabled or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth' or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
   delegate_to: localhost
   no_log: true
 
 - name: Ensure Harbor breakglass user has sysadmin role
   ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/{{ harbor_postconfigure_breakglass_lookup_after.json[0].user_id }}/sysadmin"
+    url: >-
+      {{
+        'http://' ~ harbor_postconfigure_host ~ ':' ~ harbor_postconfigure_port
+        ~ '/api/v2.0/users/' ~ harbor_postconfigure_breakglass_lookup_after.json[0].user_id
+        ~ '/sysadmin'
+      }}
     method: PUT
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
