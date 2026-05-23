@@ -33,7 +33,14 @@
 
 - name: Record Harbor current auth mode
   ansible.builtin.set_fact:
-    harbor_postconfigure_current_auth_mode: "{{ harbor_postconfigure_current_config.json.auth_mode | default('db_auth') }}"
+    harbor_postconfigure_current_auth_mode: >-
+      {{
+        (
+          harbor_postconfigure_current_config.json.auth_mode.value
+          if (harbor_postconfigure_current_config.json.auth_mode is mapping)
+          else harbor_postconfigure_current_config.json.auth_mode
+        ) | default('db_auth', true)
+      }}
   delegate_to: localhost
 
 - name: Start with Harbor current auth mode as the effective auth mode
