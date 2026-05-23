@@ -64,11 +64,10 @@ The current advisory posture for infra-only teardown planning is:
    - if absent there, playbook defaults are expected and should be reviewed as
      intentional behavior, not assumed parity
 
-3. Harbor `HARBOR_OIDC_PRIMARY_AUTH_MODE` ownership is documented as
-   non-secret env overlay input.
-   - canonical production owner: `.env.pve`
-   - a parallel definition in `terraform/secrets.pve.enc.yaml` is treated as
-     precedence ambiguity and should be reviewed before teardown approval
+3. Harbor `HARBOR_OIDC_PRIMARY_AUTH_MODE` is resolved as single-sourced.
+   - canonical production owner: `.env.pve` (sole source)
+   - `terraform/secrets.pve.enc.yaml` entry removed (handback 20)
+   - no precedence ambiguity remains
 
 ## Practical Safety Reading
 

@@ -158,9 +158,8 @@ OIDC tuning inputs as follows:
      record that as a parity review item rather than assuming full parity
 
 2. Harbor `HARBOR_OIDC_PRIMARY_AUTH_MODE` is a non-secret runtime tuning value.
-   - canonical review owner for `pve`: `.env.pve`
-   - if a value is also present in `terraform/secrets.pve.enc.yaml`, treat this
-     as precedence ambiguity and flag for operator review before teardown
+   - canonical review owner for `pve`: `.env.pve` (sole source — resolved in handback 20)
+   - `terraform/secrets.pve.enc.yaml` entry has been removed; no precedence ambiguity
 
 ## Guardrails For A Later Mutating Phase
 
