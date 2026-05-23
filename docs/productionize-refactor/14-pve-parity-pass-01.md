@@ -113,6 +113,35 @@ the operator injects them some other way.
 | `TRAEFIK_DNS_RESOLVER_PRIMARY` | Mandatory `proxy-stack` input | yes | no |
 | `TRAEFIK_DNS_RESOLVER_SECONDARY` | Mandatory `proxy-stack` input | yes | no |
 
+### Harbor-specific production wrapper parity lesson
+
+The live Harbor reprovisioning validation on May 23, 2026 exposed another
+production-wrapper parity gap: `./with-secrets-prod` could not run the Harbor
+playbook successfully until `.env.pve` also carried the Harbor non-secret
+runtime settings that had previously only existed in `.env`.
+
+Keys that must be present in `.env.pve` for the current Harbor production path:
+
+| Key | Why it matters on `pve` |
+|---|---|
+| `HARBOR_HOSTNAME` | Mandatory input for `harbor_installer` |
+| `HARBOR_OIDC_PROVIDER_NAME` | Keeps Harbor OIDC provider naming aligned with the working path |
+| `HARBOR_OIDC_ENDPOINT` | Required Harbor OIDC endpoint override |
+| `HARBOR_OIDC_CLIENT_ID` | Required Harbor OIDC client identity |
+| `HARBOR_OIDC_GROUPS_CLAIM` | Required Harbor group-claim mapping |
+| `HARBOR_OIDC_ADMIN_GROUP` | Required Harbor admin-group mapping |
+| `HARBOR_OIDC_GROUP_FILTER` | Required Harbor group filter |
+| `HARBOR_OIDC_SCOPE` | Required Harbor OIDC scope set |
+| `HARBOR_OIDC_USER_CLAIM` | Required Harbor username-claim mapping |
+| `HARBOR_OIDC_VERIFY_CERT` | Current Harbor playbook input surface |
+| `HARBOR_OIDC_AUTO_ONBOARD` | Current Harbor playbook input surface |
+| `HARBOR_OIDC_LOGOUT` | Current Harbor playbook input surface |
+| `HARBOR_OIDC_PRIMARY_AUTH_MODE` | Current Harbor playbook input surface |
+
+These are non-secret values and should be treated the same way as the Traefik
+resolver entries above: if production workflows depend on `./with-secrets-prod`,
+they belong in `.env.pve`, not only in `.env`.
+
 ### Not current blockers
 
 | Key | Current read |
@@ -135,6 +164,8 @@ the operator injects them some other way.
 4. After parity fill, re-run the affected production provisioning paths from the
    `pve-test`-known-good contract rather than preserving canary-time workarounds
    as permanent drift.
+5. Keep Harbor non-secret OIDC/runtime inputs duplicated in `.env.pve` while
+   `./with-secrets-prod` continues to source only the production overlay.
 
 ## Recommended Follow-On Pass
 
