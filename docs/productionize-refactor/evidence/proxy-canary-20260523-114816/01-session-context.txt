@@ -1,0 +1,3 @@
+timestamp=2026-05-23T11:48:16+12:00
+hostname=garuda
+pwd=/home/steve/git/proxmox-homelab
