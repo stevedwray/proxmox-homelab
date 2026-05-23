@@ -1,0 +1,99 @@
+[provision] RUN monitoring-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/monitoring-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [monitoring-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+ok: [monitoring-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+ok: [monitoring-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+skipping: [monitoring-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [monitoring-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+ok: [monitoring-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+ok: [monitoring-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+skipping: [monitoring-stack] => (item=apt-daily.service)
+skipping: [monitoring-stack] => (item=apt-daily.timer)
+skipping: [monitoring-stack] => (item=apt-daily-upgrade.service)
+skipping: [monitoring-stack] => (item=apt-daily-upgrade.timer)
+skipping: [monitoring-stack]
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+skipping: [monitoring-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [monitoring-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [monitoring-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [monitoring-stack]
+
+TASK [Trust Harbor HTTP registry in Docker daemon] *****************************
+ok: [monitoring-stack]
+
+TASK [Flush handlers to apply Docker daemon config before stack deploy] ********
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+ok: [monitoring-stack]
+
+PLAY [Deploy monitoring compose stack] *****************************************
+
+TASK [Reconcile Grafana Authentik OIDC client] *********************************
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml:103:7
+
+101
+102   pre_tasks:
+103     - name: Reconcile Grafana Authentik OIDC client
+          ^ column 7
+
+fatal: [monitoring-stack -> localhost]: FAILED! => {"changed": false, "cmd": ["python3", "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/../../reconcile-authentik-edge.py", "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/../../stacks/monitoring-stack/edge.yaml", "--authentik-url", "https://authentik-int.lab.gibbsgreatly.xyz:9443", "--apply", "--json"], "delta": "0:00:00.066254", "end": "2026-05-23 10:25:57.294263", "msg": "non-zero return code", "rc": 1, "start": "2026-05-23 10:25:57.228009", "stderr": "", "stderr_lines": [], "stdout": "{\n  \"action_count\": 0,\n  \"action_counts\": {},\n  \"actions\": [],\n  \"issue_count\": 1,\n  \"issues\": [\n    {\n      \"code\": \"AKD100\",\n      \"message\": \"failed to query Authentik read-only endpoints: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1081)>\"\n    }\n  ],\n  \"mode\": \"apply\",\n  \"request_methods\": [\n    \"GET\"\n  ],\n  \"status\": \"failed\",\n  \"stop_condition_count\": 0,\n  \"stop_conditions\": [],\n  \"write_count\": 0\n}", "stdout_lines": ["{", "  \"action_count\": 0,", "  \"action_counts\": {},", "  \"actions\": [],", "  \"issue_count\": 1,", "  \"issues\": [", "    {", "      \"code\": \"AKD100\",", "      \"message\": \"failed to query Authentik read-only endpoints: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1081)>\"", "    }", "  ],", "  \"mode\": \"apply\",", "  \"request_methods\": [", "    \"GET\"", "  ],", "  \"status\": \"failed\",", "  \"stop_condition_count\": 0,", "  \"stop_conditions\": [],", "  \"write_count\": 0", "}"]}
+
+PLAY RECAP *********************************************************************
+monitoring-stack           : ok=14   changed=0    unreachable=0    failed=1    skipped=10   rescued=0    ignored=0

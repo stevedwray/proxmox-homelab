@@ -70,6 +70,7 @@ ensure_portainer_oauth_secret() {
   python3 "${REPO_ROOT}/terraform/lxc/reconcile-authentik-edge.py" \
     "$edge_manifest" \
     --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+    --no-verify-tls \
     --apply \
     --json
 }
@@ -95,12 +96,14 @@ ensure_portainer_edge_publish() {
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
       --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+      --no-verify-tls \
       --json
   else
     log "Reconcile edge apply for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
       --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+      --no-verify-tls \
       --apply \
       --json
 

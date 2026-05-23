@@ -1,0 +1,269 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: canary-portainer-pve-20260523
+Command: ./scripts/provision.sh --stack portainer-stack
+
+[provision] Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)
+[provision] Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility
+[provision] Reconciling Authentik OIDC provider for Portainer with generated secret
+{
+  "action_count": 2,
+  "action_counts": {
+    "noop": 1,
+    "update": 1
+  },
+  "actions": [
+    {
+      "object_id": "7563d163-a91e-4ffe-8e19-adaf04620bf7",
+      "object_kind": "application",
+      "object_name": "edge-portainer-stack-portainer-app",
+      "operation": "noop",
+      "reason": "owned application already matches desired state",
+      "route": "portainer",
+      "stack": "portainer-stack"
+    },
+    {
+      "object_id": "4",
+      "object_kind": "provider",
+      "object_name": "edge-portainer-stack-portainer-provider",
+      "operation": "update",
+      "reason": "owned provider differs from desired state",
+      "route": "portainer",
+      "stack": "portainer-stack"
+    }
+  ],
+  "issue_count": 0,
+  "issues": [],
+  "mode": "apply",
+  "request_methods": [
+    "GET",
+    "GET",
+    "GET",
+    "GET",
+    "GET",
+    "GET",
+    "GET",
+    "PATCH"
+  ],
+  "status": "passed",
+  "stop_condition_count": 0,
+  "stop_conditions": [],
+  "write_count": 1
+}
+[provision] Reconcile edge apply for Portainer route publication
+{
+  "authentik": {
+    "discovery": {
+      "classification_counts": {
+        "ambiguous": 0,
+        "differing": 0,
+        "matching": 1,
+        "missing": 0
+      },
+      "issue_count": 0,
+      "issues": [],
+      "request_methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET"
+      ],
+      "route_count": 1,
+      "route_results": [
+        {
+          "auth_mode": "oidc",
+          "classification": "matching",
+          "host": "portainer.lab.gibbsgreatly.xyz",
+          "identifiers": [
+            {
+              "id": "7563d163-a91e-4ffe-8e19-adaf04620bf7",
+              "kind": "application",
+              "name": "edge-portainer-stack-portainer-app"
+            },
+            {
+              "id": "4",
+              "kind": "provider",
+              "name": "edge-portainer-stack-portainer-provider"
+            }
+          ],
+          "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+          "reasons": [
+            "discovered objects match route auth intent"
+          ],
+          "route": "portainer",
+          "stack": "portainer-stack"
+        }
+      ],
+      "status": "passed",
+      "stop_condition_count": 0,
+      "stop_conditions": [],
+      "unmanaged": [
+        {
+          "id": "a8b5a8cf-0e6f-4f75-a212-87dad8f1912b",
+          "kind": "application",
+          "name": "edge-harbor-stack-harbor-app"
+        },
+        {
+          "id": "64d8df5d-2f14-4e99-a5fd-d48afb2c4e5e",
+          "kind": "application",
+          "name": "edge-monitoring-stack-grafana-app"
+        },
+        {
+          "id": "c844fa5a-410d-4003-ac9b-8b8ac72db4ac",
+          "kind": "application",
+          "name": "edge-netbox-stack-netbox-app"
+        },
+        {
+          "id": "564d7c76-4916-4261-87f0-1eb9e32112b9",
+          "kind": "application",
+          "name": "edge-proxy-stack-traefik-dashboard-app"
+        },
+        {
+          "id": "1",
+          "kind": "provider",
+          "name": "edge-harbor-stack-harbor-provider"
+        },
+        {
+          "id": "2",
+          "kind": "provider",
+          "name": "edge-monitoring-stack-grafana-provider"
+        },
+        {
+          "id": "3",
+          "kind": "provider",
+          "name": "edge-netbox-stack-netbox-provider"
+        },
+        {
+          "id": "5",
+          "kind": "provider",
+          "name": "edge-proxy-stack-traefik-dashboard-provider"
+        }
+      ],
+      "unmanaged_count": 8
+    },
+    "post_apply_discovery": null,
+    "reconcile": {
+      "action_count": 2,
+      "action_counts": {
+        "noop": 1,
+        "update": 1
+      },
+      "actions": [
+        {
+          "object_id": "7563d163-a91e-4ffe-8e19-adaf04620bf7",
+          "object_kind": "application",
+          "object_name": "edge-portainer-stack-portainer-app",
+          "operation": "noop",
+          "reason": "owned application already matches desired state",
+          "route": "portainer",
+          "stack": "portainer-stack"
+        },
+        {
+          "object_id": "4",
+          "object_kind": "provider",
+          "object_name": "edge-portainer-stack-portainer-provider",
+          "operation": "update",
+          "reason": "owned provider differs from desired state",
+          "route": "portainer",
+          "stack": "portainer-stack"
+        }
+      ],
+      "issue_count": 0,
+      "issues": [],
+      "mode": "dry-run",
+      "request_methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET"
+      ],
+      "status": "passed",
+      "stop_condition_count": 0,
+      "stop_conditions": [],
+      "write_count": 0
+    },
+    "required": true
+  },
+  "coredns": {
+    "diff": "--- /home/steve/git/proxmox-homelab/terraform/lxc/ansible/files/coredns-lab.zone\n+++ /home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone\n@@ -34,3 +34,6 @@\n ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)\n ; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)\n ; jellyfin     A   10.60.0.30          (Jellyfin, migrated in Phase 06)\n+\n+; Generated browser edge records (manifest-owned)\n+portainer       5m   IN  A   192.168.30.10 ; generated from EdgeManifest",
+    "generated_record_count": 1,
+    "generated_records": [
+      {
+        "host": "portainer.lab.gibbsgreatly.xyz",
+        "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+        "target": "192.168.30.10",
+        "ttl": "5m"
+      }
+    ],
+    "issue_count": 0,
+    "issues": [],
+    "output_zone": "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone",
+    "status": "passed",
+    "warning_count": 0,
+    "warnings": []
+  },
+  "issues": [
+    {
+      "code": "EGR200",
+      "message": "target preflight reported 'pve', expected 'pve-test'"
+    }
+  ],
+  "manifests": [
+    "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml"
+  ],
+  "mode": "apply",
+  "preflight": {
+    "health": {
+      "coredns": {
+        "detail": "authoritative dns probe succeeded (answer includes 192.168.30.10)",
+        "name": "coredns",
+        "ok": true,
+        "url": "dig @192.168.20.13 +short traefik.lab.gibbsgreatly.xyz"
+      },
+      "traefik": {
+        "detail": "tcp reachability probe succeeded",
+        "name": "traefik",
+        "ok": true,
+        "url": "tcp://192.168.30.10:443"
+      }
+    },
+    "targeting": {
+      "command": "./with-secrets bash -c echo $TF_VAR_proxmox_node",
+      "detail": "target preflight reported 'pve', expected 'pve-test'",
+      "ok": false
+    }
+  },
+  "status": "failed",
+  "terraform_state_mutation": false,
+  "traefik": {
+    "files": [
+      "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik/portainer-stack.yml"
+    ],
+    "issue_count": 0,
+    "issues": [],
+    "legacy_route_count": 0,
+    "output_dir": "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik",
+    "stack_count": 1,
+    "stacks": [
+      {
+        "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+        "stack": "portainer-stack"
+      }
+    ],
+    "status": "passed",
+    "warning_count": 0,
+    "warnings": []
+  },
+  "validation": {
+    "issue_count": 0,
+    "issues": [],
+    "manifest_count": 1,
+    "manifests": [
+      "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml"
+    ],
+    "status": "passed"
+  }
+}
+exit status 1

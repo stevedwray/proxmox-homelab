@@ -76,6 +76,27 @@ Known existing production role/name overlaps:
 These need explicit cutover treatment and should not be treated like empty-slot
 deployments.
 
+## Current Canary Sequence State
+
+As of this planning slice:
+
+1. `dns-stack` is the completed reference canary for direct-access production validation on `pve`.
+2. `step-ca-stack` remains the documented transition canary after `dns-stack`.
+3. `monitoring-stack` canary execution on `pve` has completed and passed.
+4. `portainer-stack` canary execution on `pve` has completed and passed.
+5. `netbox-stack` canary execution on `pve` has completed and passed.
+6. `ci-runner-01` is the next low-risk production migration after `netbox-stack`.
+
+Primary execution docs for the next migration:
+
+- `terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md`
+- `terraform/lxc/stacks/ci-runner-01/terragrunt.hcl`
+- `terraform/lxc/stacks/ci-runner-01/stack.yaml`
+
+Next migration after netbox:
+
+- `ci-runner-01`
+
 ## Files Likely Involved
 
 - this refactor doc set
@@ -89,6 +110,7 @@ deployments.
 ## Validation
 
 - migration order reflects actual canary findings
+- migration order explicitly identifies `ci-runner-01` as next after `netbox-stack`
 - every service has a clear entry in the migration sheet
 - each service has explicit collision checks before cutover
 - dependencies and rollback assumptions are documented before execution begins

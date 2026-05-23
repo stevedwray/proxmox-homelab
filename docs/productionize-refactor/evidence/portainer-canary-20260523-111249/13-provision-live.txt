@@ -1,0 +1,28 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: canary-portainer-pve-20260523
+Command: ./scripts/provision.sh --stack portainer-stack
+
+[provision] Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)
+[provision] Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility
+[provision] Reconciling Authentik OIDC provider for Portainer with generated secret
+{
+  "action_count": 0,
+  "action_counts": {},
+  "actions": [],
+  "issue_count": 1,
+  "issues": [
+    {
+      "code": "AKD100",
+      "message": "failed to query Authentik read-only endpoints: <urlopen error [SSL: CERTIFICATE_VERIFY_FAILED] certificate verify failed: unable to get local issuer certificate (_ssl.c:1081)>"
+    }
+  ],
+  "mode": "apply",
+  "request_methods": [
+    "GET"
+  ],
+  "status": "failed",
+  "stop_condition_count": 0,
+  "stop_conditions": [],
+  "write_count": 0
+}
+exit status 1

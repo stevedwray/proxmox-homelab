@@ -22,6 +22,23 @@ if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
     exec python3 "${PYTHON_IMPL}" "$@"
 fi
 
+REEXEC_GUARD_VAR="PREFLIGHT_PROD_MIKROTIK_BOOTSTRAPPED"
+
+missing_required_vars() {
+    local missing=()
+
+    [[ "${PVE_ENV:-}" == "pve" ]] || missing+=("PVE_ENV=pve")
+    [[ "${TF_VAR_proxmox_node:-}" == "pve" ]] || missing+=("TF_VAR_proxmox_node=pve")
+    [[ -n "${PROXMOX_HOST:-}" ]] || missing+=("PROXMOX_HOST")
+    [[ -n "${MIKROTIK_HOST:-}" ]] || missing+=("MIKROTIK_HOST")
+    [[ -n "${MIKROTIK_USER:-}" ]] || missing+=("MIKROTIK_USER")
+    [[ -n "${MIKROTIK_PASSWORD:-}" ]] || missing+=("MIKROTIK_PASSWORD")
+
+    if [[ ${#missing[@]} -gt 0 ]]; then
+        printf '%s\n' "${missing[@]}"
+    fi
+}
+
 needs_bootstrap=false
 [[ -z "${PVE_ENV:-}" || "${PVE_ENV:-}" != "pve" ]] && needs_bootstrap=true
 [[ -z "${TF_VAR_proxmox_node:-}" || "${TF_VAR_proxmox_node:-}" != "pve" ]] && needs_bootstrap=true
@@ -31,6 +48,16 @@ needs_bootstrap=false
 [[ -z "${MIKROTIK_PASSWORD:-}" ]] && needs_bootstrap=true
 
 if [[ "${needs_bootstrap}" == true ]]; then
+    if [[ "${!REEXEC_GUARD_VAR:-}" == "1" ]]; then
+        echo "ERROR: production MikroTik preflight bootstrap did not populate required environment variables" >&2
+        echo "Missing requirements:" >&2
+        while IFS= read -r item; do
+            echo "  - ${item}" >&2
+        done < <(missing_required_vars)
+        echo "Expected source: terraform/secrets.pve.enc.yaml and/or .env.pve" >&2
+        exit 1
+    fi
+
     if [[ ! -f "${AGE_KEY_FILE}" ]]; then
         echo "ERROR: age private key not found at ${AGE_KEY_FILE}" >&2
         exit 1
@@ -50,6 +77,7 @@ if [[ "${needs_bootstrap}" == true ]]; then
 
     export PVE_ENV="pve"
     export TF_VAR_proxmox_node="${TF_VAR_proxmox_node:-pve}"
+    export "${REEXEC_GUARD_VAR}=1"
 
     exec env SOPS_AGE_KEY_FILE="${AGE_KEY_FILE}" \
         sops exec-env "${PROD_SECRETS_FILE}" "$(printf '%q ' "$0" "$@")"

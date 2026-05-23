@@ -485,6 +485,15 @@ resource "null_resource" "configure_network_sdn_attachment" {
       cat >"$tmp_vars_file" <<'EOF'
 ${self.triggers.sdn_vars}
 EOF
+      if [ "$${NETWORK_SDN_ALLOW_DESTROY_OVERRIDE:-}" = "true" ]; then
+        printf '%s\n' '"network_sdn_allow_destroy": true' >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_TARGET:-}" ]; then
+        printf '%s\n' "\"network_sdn_expected_target\": \"$${NETWORK_SDN_EXPECTED_TARGET}\"" >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_PVE_HOST:-}" ]; then
+        printf '%s\n' "\"network_sdn_expected_pve_host\": \"$${NETWORK_SDN_EXPECTED_PVE_HOST}\"" >>"$tmp_vars_file"
+      fi
       ansible-playbook \
         -i localhost, \
         playbooks/destroy-network-sdn-vnet.yml \

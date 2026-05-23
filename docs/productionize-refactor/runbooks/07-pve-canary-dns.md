@@ -10,7 +10,7 @@
 Prepare the next low-risk production canary after the successful `apt-cacher-stack`
 validation. This run verifies that the direct-access model also holds for
 `mgmt_seg` on `pve` and that `dns-stack` can be provisioned and validated without
-reintroducing ProxyJump, host-route priming, or pve-test-only assumptions.
+reintroducing ProxyJump, host-route priming, or legacy pve-test-era assumptions.
 
 **Not a speculative production mutation.** This runbook is an operator-reviewed,
 production-guarded command plan. Production apply and provisioning require

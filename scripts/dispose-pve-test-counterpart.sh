@@ -198,6 +198,9 @@ run_destroy() {
 
   stop_counterpart_if_running
   log "Destroying ${STACK_NAME} Terragrunt state on ${TARGET_NODE_EXPECTED}"
+  NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
+  NETWORK_SDN_EXPECTED_TARGET="${TARGET_NODE_EXPECTED}" \
+  NETWORK_SDN_EXPECTED_PVE_HOST="${TARGET_HOST}" \
   "${destroy_cmd[@]}"
   verify_absent
   log "Destroy complete: ${STACK_NAME} counterpart is absent on ${TARGET_HOST}"

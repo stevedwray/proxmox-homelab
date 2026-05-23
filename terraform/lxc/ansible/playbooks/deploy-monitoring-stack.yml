@@ -109,6 +109,7 @@
           - "{{ playbook_dir }}/../../stacks/monitoring-stack/edge.yaml"
           - --authentik-url
           - "https://{{ monitoring_lab_fqdn_authentik_internal }}:9443"
+          - --no-verify-tls
           - --apply
           - --json
       environment:

@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Monitoring and observability stack for the pve-test environment.
+Monitoring and observability stack for the lab environment.
 VictoriaMetrics, Grafana, Loki, and Promtail provide metrics, dashboards,
 logs, and the operator-facing observability entry point for the homelab.
 

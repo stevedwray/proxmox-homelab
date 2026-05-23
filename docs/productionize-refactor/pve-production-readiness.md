@@ -13,7 +13,7 @@ This plan is based on:
 
 ## Status Update
 
-As of May 22, 2026:
+As of May 23, 2026:
 
 - the `apt-cacher-stack` production canary on `pve` passed after the VLAN 40
   trunk fix
@@ -21,9 +21,15 @@ As of May 22, 2026:
 - the main operational lesson is collision control: if a stack reuses the same
   service IP on `pve-test` and `pve`, stop or destroy the `pve-test`
   counterpart before bringing up the `pve` instance
-- the next low-risk production canary after `dns-stack` is `step-ca-stack`,
-  which exercises the PKI/trust path without depending on the DNS record-creation
-  work that is still being repaired
+- the `monitoring-stack` canary on `pve` completed and passed
+- the `portainer-stack` canary on `pve` completed and passed
+- the `netbox-stack` canary on `pve` completed and passed
+- the next low-risk production migration after `netbox-stack` is
+  `ci-runner-01`
+- monitoring canary closure evidence is captured under
+  `docs/productionize-refactor/09-monitoring-canary-closure.md`
+- portainer canary closure evidence is captured under
+  `docs/productionize-refactor/11-portainer-canary-closure.md`
 
 ## Refactor Scope
 

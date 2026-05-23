@@ -1,5 +1,37 @@
 # Production Canary Execution Checklist
 
+## Current Canary Doc Set (Use These First)
+
+This file is a legacy apt-cacher-focused checklist. For current productionize
+canary execution, start with the stack-specific docs below.
+
+### dns-stack
+
+- `docs/productionize-refactor/runbooks/07-pve-canary-dns.md`
+- `docs/productionize-refactor/runbooks/07-pve-canary-dns-checklist.md`
+
+### step-ca-stack
+
+- `docs/productionize-refactor/runbooks/08-pve-canary-step-ca.md`
+- `docs/productionize-refactor/runbooks/08-pve-canary-step-ca-checklist.md`
+- `docs/productionize-refactor/08-step-ca-canary-execution-packet.md`
+
+### monitoring-stack (next after step-ca)
+
+- `docs/productionize-refactor/runbooks/09-pve-canary-monitoring.md`
+- `docs/productionize-refactor/runbooks/09-pve-canary-monitoring-checklist.md`
+- `docs/productionize-refactor/09-monitoring-canary-execution-packet.md`
+
+### ci-runner-01 (next after netbox)
+
+- `docs/productionize-refactor/handoffs/13-ci-runner-canary.md`
+
+### netbox-stack (completed; historical reference)
+
+- `docs/productionize-refactor/runbooks/10-pve-canary-netbox.md`
+- `docs/productionize-refactor/runbooks/10-pve-canary-netbox-checklist.md`
+- `docs/productionize-refactor/10-netbox-canary-execution-packet.md`
+
 **Task:** Deploy apt-cacher-stack to pve as low-risk network validation
 **Target:** pve (production)
 **Canary:** apt-cacher-stack, infra_seg, 192.168.40.11

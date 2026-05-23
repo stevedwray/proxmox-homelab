@@ -21,6 +21,11 @@ checks use only commands the wrapper actually permits (`pvesh get`,
 `terragrunt plan`) or workstation-side commands that do not go through the
 wrapper (`ssh`, `grep`, `rg`).
 
+Use this runbook together with:
+
+- `docs/productionize-refactor/runbooks/08-pve-canary-step-ca-checklist.md`
+- `docs/productionize-refactor/08-step-ca-canary-execution-packet.md`
+
 ## Why step-ca-stack
 
 1. `step-ca-stack` is the next low-risk service after `apt-cacher-stack` and `dns-stack`.
@@ -81,21 +86,25 @@ source .env
 source .env.pve
 set +a
 printf 'LAB_IP_STEP_CA=%s\nLAB_GW_MGMT=%s\nLAB_IP_PROXY=%s\n' "$LAB_IP_STEP_CA" "$LAB_GW_MGMT" "$LAB_IP_PROXY"
-./with-secrets-prod pvesh get /nodes/pve
+if command -v pvesh >/dev/null 2>&1; then
+	./with-secrets-prod pvesh get /nodes/pve
+else
+	echo 'INFO: pvesh not installed on this workstation; rely on terragrunt plan target_node validation below.'
+fi
 ```
 
 **How to inspect and dispose the disposable `pve-test` counterpart:**
 
 ```bash
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
 ```
 
 The helper must be run from the repo root. It preflights `TF_VAR_proxmox_node=pve-test`,
 stops the counterpart if needed, then destroys the managed `step-ca-stack`
 resources on `pve-test`.
-Run `./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute` only
-if the production canary is reusing the same step-ca service IP as the `pve-test`
-counterpart.
+Run `env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute`
+only if the production canary is reusing the same step-ca service IP as the
+`pve-test` counterpart.
 
 ### 4. Network Preconditions
 
@@ -113,6 +122,10 @@ the first `pve` canary exposed real MikroTik drift.
 ```bash
 ./scripts/preflight-production-mikrotik.sh --save-evidence /tmp/preflight-production-mikrotik.txt
 ```
+
+The preflight requires `MIKROTIK_PASSWORD` in the runtime environment. For
+production canaries, ensure it is available via `terraform/secrets.pve.enc.yaml`
+before running this step.
 
 **Expected result:**
 
@@ -142,6 +155,7 @@ the first `pve` canary exposed real MikroTik drift.
 - [ ] `.env.pve` exists locally and contains the production overlay
 - [ ] Production commands will be run through `./with-secrets-prod`
 - [ ] There are no lingering manual `TF_VAR_*` exports overriding the wrapper
+- [ ] `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` are present as non-empty production secrets
 
 ## Pre-Apply Validation
 
@@ -188,42 +202,23 @@ captured a passing result for this exact canary window.
 6. `mgmt dns tcp acl`
 7. `step-ca host can reach Traefik 80`
 
-### Preflight 2: Generated Inventory Inspection
+### Preflight 2: Evidence Directory Preparation
 
-The stack-local generated inventory is the primary artifact to inspect.
-
-```bash
-rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host|dns_server|contract_dns_server|ansible_playbook' terraform/lxc/stacks/step-ca-stack/inventory.yml
-```
-
-If a shared production inventory snapshot exists, inspect the `step-ca-stack` stanza there too:
+Create an evidence directory before any production mutation so all command
+output for this canary window is captured in one place.
 
 ```bash
-rg -n 'step-ca-stack|ansible_host|ssh_access_mode|ProxyJump|dns_server|contract_dns_server' terraform/lxc/.generated/inventory.pve.yml || true
+export EVIDENCE_DIR="docs/productionize-refactor/evidence/step-ca-canary-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+echo "$EVIDENCE_DIR"
 ```
 
-**Expected result:**
-
-1. `ansible_host` is the direct `step-ca` guest IP
-2. `ssh_access_mode: direct`
-3. No `ProxyJump`
-4. No `pve_host` fallback for the default SSH path
-5. `ansible_playbook: deploy-step-ca`
-6. `dns_server` and `contract_dns_server` resolve to `${LAB_GW_MGMT}`
-
-### Preflight 3: Direct-Access Contract Check
+Use `tee` while executing mutation-gated steps in the future canary session.
+Example:
 
 ```bash
-rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host' terraform/lxc/stacks/step-ca-stack/inventory.yml
+./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/step-ca-stack -no-color | tee "$EVIDENCE_DIR/01-plan.txt"
 ```
-
-**Expected result:**
-
-1. `ansible_host` is the direct guest IP
-2. `ssh_access_mode: direct`
-3. No `ProxyJump`
-4. No `pve_host` fallback for the default SSH path
-5. No manual host-route priming step is part of this runbook
 
 ## Apply Phase
 
@@ -264,14 +259,37 @@ export TASK_APPROVAL="canary-step-ca-pve-$(date +%Y%m%d)"
 ### Post-Deploy Health Evidence
 
 ```bash
-./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+if command -v pct >/dev/null 2>&1; then
+	./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+else
+	echo 'INFO: pct not installed on this workstation; skipping local pct list check.'
+fi
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" "ip -4 addr show dev eth0 && echo '---' && ip route show default && echo '---' && ping -c 1 '$LAB_GW_MGMT'"
 ssh -G root@"$LAB_IP_STEP_CA" | rg '^proxyjump ' || echo 'proxyjump=none'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" hostname
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'systemctl is-active step-ca'
-ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://127.0.0.1 --root /etc/step-ca/certs/root_ca.crt'
+ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://'"$LAB_IP_STEP_CA"' --root /etc/step-ca/certs/root_ca.crt'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'nc -z -w3 '"$LAB_IP_PROXY"' 80'
 ```
+
+### Post-Apply Inventory Contract Check
+
+The stack-local inventory is rendered by Terraform. Treat the post-apply file
+as the source of truth for direct-access behavior.
+
+```bash
+rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host|dns_server|contract_dns_server|ansible_playbook' terraform/lxc/stacks/step-ca-stack/inventory.yml
+rg -n 'step-ca-stack|ansible_host|ssh_access_mode|ProxyJump|dns_server|contract_dns_server' terraform/lxc/.generated/inventory.pve.yml || true
+```
+
+**Expected result:**
+
+1. `ansible_host` is the direct `step-ca` guest IP
+2. `ssh_access_mode: direct`
+3. No `ProxyJump`
+4. No `pve_host` fallback for the default SSH path
+5. `ansible_playbook: deploy-step-ca`
+6. `dns_server` and `contract_dns_server` resolve to `${LAB_GW_MGMT}`
 
 ## Gate Decision
 

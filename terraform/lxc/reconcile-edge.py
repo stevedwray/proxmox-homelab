@@ -41,6 +41,7 @@ RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "rec
 
 
 TARGET_PREFLIGHT_COMMAND: tuple[str, ...] = ("./with-secrets", "bash", "-c", "echo $TF_VAR_proxmox_node")
+DEFAULT_TARGET_PREFLIGHT_EXPECTED = os.environ.get("EDGE_TARGET_PREFLIGHT_EXPECTED") or os.environ.get("PVE_ENV", "pve-test")
 DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
 DEFAULT_TRAEFIK_PROBE_PORT = 443
 DEFAULT_COREDNS_PROBE_SERVER = os.environ["LAB_IP_DNS"]
@@ -166,6 +167,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--coredns-probe-name",
         default=DEFAULT_COREDNS_PROBE_NAME,
         help="DNS name queried during apply-mode authoritative CoreDNS probe.",
+    )
+    parser.add_argument(
+        "--target-preflight-expected",
+        default=DEFAULT_TARGET_PREFLIGHT_EXPECTED,
+        help="Expected target value returned by target preflight command in apply mode.",
     )
     parser.add_argument(
         "--coredns-probe-expected",
@@ -333,7 +339,7 @@ def _render_outputs(
     return traefik_result, coredns_result, issues
 
 
-def _run_pve_target_preflight() -> tuple[bool, str]:
+def _run_pve_target_preflight(expected_target: str) -> tuple[bool, str]:
     repo_root = SCRIPT_DIR.parents[1]
     result = subprocess.run(
         list(TARGET_PREFLIGHT_COMMAND),
@@ -350,9 +356,9 @@ def _run_pve_target_preflight() -> tuple[bool, str]:
         return False, message
 
     target = result.stdout.strip()
-    if target != "pve-test":
-        return False, f"target preflight reported {target!r}, expected 'pve-test'"
-    return True, "target preflight passed (pve-test)"
+    if target != expected_target:
+        return False, f"target preflight reported {target!r}, expected {expected_target!r}"
+    return True, f"target preflight passed ({expected_target})"
 
 
 def _tcp_health_check(host: str, port: int) -> HealthCheckResult:
@@ -442,7 +448,7 @@ def _build_failed_result(
 
 def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckResult, HealthCheckResult, list[EdgeIssue]]:
     issues: list[EdgeIssue] = []
-    target_ok, target_detail = _run_pve_target_preflight()
+    target_ok, target_detail = _run_pve_target_preflight(args.target_preflight_expected)
     if not target_ok:
         issues.append(EdgeIssue(code="EGR200", message=target_detail))
 

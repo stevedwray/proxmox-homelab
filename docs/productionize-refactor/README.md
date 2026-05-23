@@ -14,6 +14,13 @@ This refactor is not a single cutover. It is a staged program covering:
 - migration sequencing from `pve-test` to `pve`
 - early validation and canary workflows
 
+Current migration sequence status:
+
+- `monitoring-stack` canary completed
+- `portainer-stack` canary completed
+- `netbox-stack` canary completed
+- `ci-runner-01` is the next production migration after netbox
+
 ## Branch Model
 
 Primary branch for this refactor:

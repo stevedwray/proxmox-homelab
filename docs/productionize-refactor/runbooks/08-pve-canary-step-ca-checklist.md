@@ -23,9 +23,13 @@ source .env
 source .env.pve
 set +a
 printf 'LAB_IP_STEP_CA=%s\nLAB_GW_MGMT=%s\nLAB_IP_PROXY=%s\n' "$LAB_IP_STEP_CA" "$LAB_GW_MGMT" "$LAB_IP_PROXY"
-./with-secrets-prod pvesh get /nodes/pve
+if command -v pvesh >/dev/null 2>&1; then
+	./with-secrets-prod pvesh get /nodes/pve
+else
+	echo 'INFO: pvesh not installed on this workstation; rely on terragrunt plan target_node validation in Phase 2.'
+fi
 ./scripts/preflight-production-mikrotik.sh --save-evidence /tmp/preflight-production-mikrotik.txt
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
 ```
 
 | Check | Status | Expected |
@@ -35,14 +39,18 @@ printf 'LAB_IP_STEP_CA=%s\nLAB_GW_MGMT=%s\nLAB_IP_PROXY=%s\n' "$LAB_IP_STEP_CA" 
 | Production step-ca IP resolved | ☐ | Intended `${LAB_IP_STEP_CA}` for `mgmt_seg` |
 | Production gateway resolved | ☐ | Intended `${LAB_GW_MGMT}` |
 | Traefik reachability target resolved | ☐ | Intended `${LAB_IP_PROXY}` |
+| step-ca secret env vars present | ☐ | `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` resolve to non-empty values |
 | `pve-test` counterpart disposed first when IP reused | ☐ | Counterpart absent before cutover |
 
 Run the destroy step only if the production step-ca IP is the same IP currently in
 use on `pve-test`:
 
 ```bash
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute
 ```
+
+If MikroTik preflight fails with missing credentials, ensure
+`MIKROTIK_PASSWORD` is available from `terraform/secrets.pve.enc.yaml`.
 
 ---
 
@@ -64,21 +72,24 @@ use on `pve-test`:
 
 ---
 
-## Phase 3: Generated Inventory Expectations
+## Phase 3: Evidence Directory Setup (Before Apply)
 
 ```bash
-rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host|dns_server|contract_dns_server|ansible_playbook' terraform/lxc/stacks/step-ca-stack/inventory.yml
-rg -n 'step-ca-stack|ansible_host|ssh_access_mode|ProxyJump|dns_server|contract_dns_server' terraform/lxc/.generated/inventory.pve.yml || true
+export EVIDENCE_DIR="docs/productionize-refactor/evidence/step-ca-canary-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+echo "$EVIDENCE_DIR"
 ```
 
 | Check | Status | Expected |
 |---|---|---|
-| Stack inventory exists | ☐ | `terraform/lxc/stacks/step-ca-stack/inventory.yml` present |
-| Direct host path | ☐ | `ansible_host` is the guest IP |
-| SSH mode | ☐ | `ssh_access_mode: direct` |
-| ProxyJump removed | ☐ | No `ProxyJump` and no `pve_host` fallback |
-| Playbook identity | ☐ | `ansible_playbook: deploy-step-ca` |
-| DNS metadata | ☐ | `dns_server` and `contract_dns_server` match `${LAB_GW_MGMT}` |
+| Evidence directory exists | ☐ | `$EVIDENCE_DIR` path printed and created |
+| Plan output captured | ☐ | Plan command output saved under `$EVIDENCE_DIR` |
+
+Suggested capture form:
+
+```bash
+./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/step-ca-stack -no-color | tee "$EVIDENCE_DIR/01-plan.txt"
+```
 
 ---
 
@@ -101,7 +112,25 @@ export TASK_APPROVAL="canary-step-ca-pve-$(date +%Y%m%d)"
 
 ---
 
-## Phase 5: Provisioning Checks
+## Phase 5: Post-Apply Inventory Expectations
+
+```bash
+rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host|dns_server|contract_dns_server|ansible_playbook' terraform/lxc/stacks/step-ca-stack/inventory.yml
+rg -n 'step-ca-stack|ansible_host|ssh_access_mode|ProxyJump|dns_server|contract_dns_server' terraform/lxc/.generated/inventory.pve.yml || true
+```
+
+| Check | Status | Expected |
+|---|---|---|
+| Stack inventory exists | ☐ | `terraform/lxc/stacks/step-ca-stack/inventory.yml` present |
+| Direct host path | ☐ | `ansible_host` is the guest IP |
+| SSH mode | ☐ | `ssh_access_mode: direct` |
+| ProxyJump removed | ☐ | No `ProxyJump` and no `pve_host` fallback |
+| Playbook identity | ☐ | `ansible_playbook: deploy-step-ca` |
+| DNS metadata | ☐ | `dns_server` and `contract_dns_server` match `${LAB_GW_MGMT}` |
+
+---
+
+## Phase 6: Provisioning Checks
 
 These two commands are approval-gated in practice because `./with-secrets-prod`
 classifies `./scripts/provision.sh` as a production command. Run them only after
@@ -128,15 +157,19 @@ rg -n 'ansible_host|ssh_access_mode|ProxyJump|pve_host' terraform/lxc/stacks/ste
 
 ---
 
-## Phase 6: Post-Apply Health Evidence
+## Phase 7: Post-Apply Health Evidence
 
 ```bash
-./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+if command -v pct >/dev/null 2>&1; then
+	./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+else
+	echo 'INFO: pct not installed on this workstation; skipping local pct list check.'
+fi
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" "ip -4 addr show dev eth0 && echo '---' && ip route show default && echo '---' && ping -c 1 '$LAB_GW_MGMT'"
 ssh -G root@"$LAB_IP_STEP_CA" | rg '^proxyjump ' || echo 'proxyjump=none'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" hostname
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'systemctl is-active step-ca'
-ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://127.0.0.1 --root /etc/step-ca/certs/root_ca.crt'
+ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://'"$LAB_IP_STEP_CA"' --root /etc/step-ca/certs/root_ca.crt'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'nc -z -w3 '"$LAB_IP_PROXY"' 80'
 ```
 
@@ -149,6 +182,18 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnow
 | step-ca active | ☐ | `active` |
 | step-ca health passes | ☐ | `step ca health` exits `0` |
 | Traefik port 80 reachable | ☐ | `nc -z` to `${LAB_IP_PROXY}:80` succeeds |
+
+---
+
+## Phase 8: Counterpart Safety Recheck
+
+```bash
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
+```
+
+| Check | Status | Expected |
+|---|---|---|
+| No lingering disposable counterpart | ☐ | Plan output shows no managed `pve-test` counterpart resources |
 
 ---
 

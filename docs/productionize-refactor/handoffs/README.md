@@ -24,6 +24,11 @@ the whole program context into every session.
 6. [06-canary-validation-gate.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/06-canary-validation-gate.md:1)
 7. [07-incremental-migration-plan.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/07-incremental-migration-plan.md:1)
 8. [08-networking-refactor-checkpoint.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/08-networking-refactor-checkpoint.md:1)
+9. [09-step-ca-canary.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/09-step-ca-canary.md:1)
+10. [10-monitoring-canary.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/10-monitoring-canary.md:1)
+11. [11-portainer-canary.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/11-portainer-canary.md:1)
+12. [12-netbox-canary.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/12-netbox-canary.md:1)
+13. [13-ci-runner-canary.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/13-ci-runner-canary.md:1)
 
 ## Source Documents
 

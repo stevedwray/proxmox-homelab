@@ -1,0 +1,7 @@
+PASS LAB_IP_PORTAINER set (192.168.20.20)
+PASS LAB_GW_MGMT set (192.168.20.1)
+PASS LAB_IP_PROXY set (192.168.30.10)
+PASS LAB_IP_DNS set (192.168.20.13)
+FAIL secrets.pve missing key TF_VAR_portainer_admin_password
+FAIL secrets.pve missing key PORTAINER_OAUTH_CLIENT_SECRET
+PASS secrets.pve has key AUTHENTIK_SUPERUSER_API_TOKEN

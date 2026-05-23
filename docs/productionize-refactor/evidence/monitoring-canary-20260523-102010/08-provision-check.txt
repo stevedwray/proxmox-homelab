@@ -1,0 +1,178 @@
+[provision] RUN monitoring-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/monitoring-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml --check
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+ok: [monitoring-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+changed: [monitoring-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+changed: [monitoring-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+skipping: [monitoring-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [monitoring-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+changed: [monitoring-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+skipping: [monitoring-stack] => (item=apt-daily.service)
+skipping: [monitoring-stack] => (item=apt-daily.timer)
+skipping: [monitoring-stack] => (item=apt-daily-upgrade.service)
+skipping: [monitoring-stack] => (item=apt-daily-upgrade.timer)
+skipping: [monitoring-stack]
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+skipping: [monitoring-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [monitoring-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+changed: [monitoring-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [monitoring-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [monitoring-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [monitoring-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [monitoring-stack]
+
+TASK [Trust Harbor HTTP registry in Docker daemon] *****************************
+changed: [monitoring-stack]
+
+TASK [Flush handlers to apply Docker daemon config before stack deploy] ********
+
+RUNNING HANDLER [Restart Docker] ***********************************************
+changed: [monitoring-stack]
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+changed: [monitoring-stack]
+
+PLAY [Deploy monitoring compose stack] *****************************************
+
+TASK [Reconcile Grafana Authentik OIDC client] *********************************
+skipping: [monitoring-stack]
+
+TASK [Create monitoring directory structure] ***********************************
+changed: [monitoring-stack] => (item={'path': '/opt/monitoring-stack', 'mode': '0750'})
+changed: [monitoring-stack] => (item={'path': '/opt/monitoring-stack/grafana', 'mode': '0750'})
+changed: [monitoring-stack] => (item={'path': '/opt/monitoring-stack/grafana/provisioning', 'mode': '0750'})
+changed: [monitoring-stack] => (item={'path': '/opt/monitoring-stack/grafana/provisioning/datasources', 'mode': '0750'})
+changed: [monitoring-stack] => (item={'path': '/opt/monitoring-stack/loki', 'mode': '0750'})
+
+TASK [Write Loki configuration] ************************************************
+changed: [monitoring-stack]
+
+TASK [Write Promtail configuration] ********************************************
+changed: [monitoring-stack]
+
+TASK [Write Grafana datasource provisioning] ***********************************
+changed: [monitoring-stack]
+
+TASK [Write monitoring secrets env file] ***************************************
+changed: [monitoring-stack]
+
+TASK [Write monitoring compose definition] *************************************
+changed: [monitoring-stack]
+
+TASK [Test DNS resolution for Harbor] ******************************************
+skipping: [monitoring-stack]
+
+TASK [Test DNS resolution for Docker Hub registry] *****************************
+skipping: [monitoring-stack]
+
+TASK [Decide whether temporary DNS fallback is needed] *************************
+ok: [monitoring-stack]
+
+TASK [Backup resolv.conf when Harbor DNS lookup fails] *************************
+skipping: [monitoring-stack]
+
+TASK [Probe Harbor token endpoint over TLS] ************************************
+skipping: [monitoring-stack]
+
+TASK [Rewrite compose images to use upstream Docker Hub (dependency-tolerant mode)] ***
+ok: [monitoring-stack]
+
+TASK [Validate monitoring compose configuration] *******************************
+skipping: [monitoring-stack]
+
+TASK [Add temporary /etc/hosts entry for Harbor when DNS lookup fails] *********
+skipping: [monitoring-stack]
+
+TASK [Write temporary public DNS fallback when Harbor DNS lookup fails] ********
+skipping: [monitoring-stack]
+
+TASK [Start monitoring stack via compose] **************************************
+skipping: [monitoring-stack]
+
+TASK [Wait for Grafana health endpoint] ****************************************
+skipping: [monitoring-stack]
+
+TASK [Wait for VictoriaMetrics endpoint] ***************************************
+skipping: [monitoring-stack]
+
+TASK [Wait for Loki readiness endpoint] ****************************************
+skipping: [monitoring-stack]
+
+TASK [Restore resolv.conf from backup if we modified it] ***********************
+skipping: [monitoring-stack]
+
+TASK [Remove temporary /etc/hosts entry for Harbor] ****************************
+skipping: [monitoring-stack]
+
+TASK [Look up Grafana breakglass local user] ***********************************
+skipping: [monitoring-stack]
+
+TASK [Create Grafana breakglass local user when missing] ***********************
+skipping: [monitoring-stack]
+
+TASK [Refresh Grafana breakglass user lookup] **********************************
+skipping: [monitoring-stack]
+
+TASK [Sync Grafana breakglass user password] ***********************************
+skipping: [monitoring-stack]
+
+TASK [Ensure Grafana breakglass user is Grafana admin] *************************
+skipping: [monitoring-stack]
+
+PLAY RECAP *********************************************************************
+monitoring-stack           : ok=21   changed=13   unreachable=0    failed=0    skipped=31   rescued=0    ignored=0
+
+[provision] Completed provision orchestration

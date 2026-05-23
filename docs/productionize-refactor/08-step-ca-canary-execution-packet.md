@@ -2,6 +2,9 @@
 
 Use this as the short-form operator run script for the upcoming `step-ca-stack` production canary on `pve`.
 
+This packet is for future execution handoff only. Do not run mutation steps in a
+documentation-prep session.
+
 Detailed references:
 - `docs/productionize-refactor/runbooks/08-pve-canary-step-ca.md`
 - `docs/productionize-refactor/runbooks/08-pve-canary-step-ca-checklist.md`
@@ -28,8 +31,15 @@ Validate `step-ca-stack` can be deployed and provisioned on production `pve` usi
 ## Pre-Run Decisions And Preconditions
 
 1. Confirm the production MikroTik preflight passes for the live `pve` uplink, required VLAN tags, and current `vlan20-mgmt` ACLs.
-2. Counterpart disposal is required before production cutover because the `pve` canary will reuse the active `pve-test` step-ca service IP.
+2. Confirm whether production is still reusing the active `pve-test` `step-ca` service IP.
 3. Confirm `.env.pve` still sets the intended `LAB_IP_STEP_CA` and `LAB_IP_PROXY` values.
+4. Confirm `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` are populated as non-empty production secrets.
+
+If IP reuse is confirmed, counterpart disposal is mandatory before production
+cutover.
+
+If step-ca secrets are empty, provisioning fails during bootstrap with an
+interactive prompt fallback (`/dev/tty` error in non-interactive runs).
 
 ## Execution Sequence (In Order)
 
@@ -43,7 +53,11 @@ source .env
 source .env.pve
 set +a
 printf 'LAB_IP_STEP_CA=%s\nLAB_GW_MGMT=%s\nLAB_IP_PROXY=%s\n' "$LAB_IP_STEP_CA" "$LAB_GW_MGMT" "$LAB_IP_PROXY"
-./with-secrets-prod pvesh get /nodes/pve
+if command -v pvesh >/dev/null 2>&1; then
+	./with-secrets-prod pvesh get /nodes/pve
+else
+	echo 'INFO: pvesh not installed on this workstation; rely on step 5 terragrunt plan target_node validation.'
+fi
 ```
 
 ### 2) Production Router Preflight
@@ -52,20 +66,25 @@ printf 'LAB_IP_STEP_CA=%s\nLAB_GW_MGMT=%s\nLAB_IP_PROXY=%s\n' "$LAB_IP_STEP_CA" 
 ./scripts/preflight-production-mikrotik.sh --save-evidence /tmp/preflight-production-mikrotik.txt
 ```
 
+If this fails with a missing credential error, ensure `MIKROTIK_PASSWORD` is
+present in `terraform/secrets.pve.enc.yaml`.
+
 Expected signals: `Verdict: PASS`, live `pve` uplink tagged for VLANs `10/20/30/40`, and `mgmt icmp/dns` ACLs aligned to `192.168.20.0/24` and `192.168.20.1`.
 
 ### 3) Counterpart Check (Always Plan)
 
 ```bash
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
 ```
 
 ### 4) Required Counterpart Destroy (`pve-test`)
 
+Run this only when the service IP is being reused from `pve-test` to `pve`.
+
 Approval point: operator approves counterpart teardown on `pve-test` before production cutover.
 
 ```bash
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --execute
 ```
 
 ### 5) Read-Only Terraform Plan (Production Wrapper)
@@ -81,6 +100,9 @@ Expected signals: `target_node = pve`, `network.zone = mgmt_seg`, intended IP/ga
 Required operator confirmation in chat before apply/provision:
 
 > I approve deploying step-ca-stack to production pve as the next canary validation.
+
+Use one `TASK_APPROVAL` value for all mutation-gated steps in this canary
+window (`apply`, `provision --check`, `provision`).
 
 ### 7) Apply (Approval-Gated)
 
@@ -122,19 +144,23 @@ Expected: `unreachable=0 failed=0`.
 ### 11) Post-Deploy Health Evidence
 
 ```bash
-./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+if command -v pct >/dev/null 2>&1; then
+	./with-secrets-prod pct list | grep -E '(step-ca-stack|20011)'
+else
+	echo 'INFO: pct not installed on this workstation; skipping local pct list check.'
+fi
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" "ip -4 addr show dev eth0 && echo '---' && ip route show default && echo '---' && ping -c 1 '$LAB_GW_MGMT'"
 ssh -G root@"$LAB_IP_STEP_CA" | rg '^proxyjump ' || echo 'proxyjump=none'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" hostname
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'systemctl is-active step-ca'
-ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://127.0.0.1 --root /etc/step-ca/certs/root_ca.crt'
+ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'step ca health --ca-url https://'"$LAB_IP_STEP_CA"' --root /etc/step-ca/certs/root_ca.crt'
 ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@"$LAB_IP_STEP_CA" 'nc -z -w3 '"$LAB_IP_PROXY"' 80'
 ```
 
 ### 12) Counterpart Safety Recheck
 
 ```bash
-./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
+env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
 ```
 
 ## Expected Evidence To Collect
@@ -148,6 +174,31 @@ ssh -o BatchMode=yes -o ConnectTimeout=5 -o StrictHostKeyChecking=no -o UserKnow
 7. Provision check output (`unreachable=0 failed=0`)
 8. Live provision output (`unreachable=0 failed=0`)
 9. Post-deploy health outputs: IP/gateway, direct SSH/no ProxyJump, step-ca active, `step ca health` success, and Traefik port 80 reachable
+
+## Issues Encountered And Fixes
+
+1. `pvesh` is not available on the workstation shell; treat `terragrunt plan`
+	as the target validation source when that happens.
+2. The counterpart destroy path may hit SDN teardown guards; use the documented
+	`--plan` and `--stop-only` fallback path to remove the live counterpart
+	before cutover.
+3. `step ca health` must use the IP SAN for the certificate, not `127.0.0.1`.
+4. Empty step-ca password secrets cause bootstrap to fail non-interactively;
+	keep `STEP_CA_PASSWORD` and `STEP_CA_PROVISIONER_PASSWORD` non-empty.
+5. `pct list` is optional on workstations without the Proxmox CLI installed.
+
+Suggested evidence directory setup before mutation-gated commands:
+
+```bash
+export EVIDENCE_DIR="docs/productionize-refactor/evidence/step-ca-canary-$(date +%Y%m%d-%H%M%S)"
+mkdir -p "$EVIDENCE_DIR"
+```
+
+Suggested capture style:
+
+```bash
+./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/step-ca-stack -no-color | tee "$EVIDENCE_DIR/01-plan.txt"
+```
 
 ## Stop Conditions
 
@@ -169,7 +220,7 @@ Do not improvise additional production mutations outside explicit operator appro
 Pass only if all conditions are true:
 
 1. Target validated for `pve` and intended `mgmt_seg` values
-2. `pve-test` counterpart destroyed before cutover
+2. `pve-test` counterpart destroyed before cutover when IP reuse applies
 3. Plan and post-apply inventory confirm direct-access contract
 4. Apply succeeds
 5. Provision check and live provisioning both succeed with `unreachable=0 failed=0`
