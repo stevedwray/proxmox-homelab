@@ -5,12 +5,13 @@ Branch: work/productionize-06-canary-validation
 
 ## Executive Summary
 
-This handback resolves the three critical runtime parity gaps that were blocking a
+This handback resolves two critical runtime parity gaps and documents one remaining
+runtime ownership ambiguity that was blocking a
 sensible pve infra-only teardown/redeploy rehearsal:
 
 1. **GRAFANA_OAUTH_SCOPES** - Copied to `.env.pve` for explicit parity with pve-test behavior
 2. **GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH** - Copied to `.env.pve` for explicit groups-based RBAC parity
-3. **HARBOR_OIDC_PRIMARY_AUTH_MODE** - Clarified as non-secret, canonical owner is `.env.pve`
+3. **HARBOR_OIDC_PRIMARY_AUTH_MODE** - Clarified as non-secret, but still dual-sourced until future cleanup
 
 All decisions are intentional, documented, and driven by pve-test as the known-good reference
 unless explicitly documented otherwise.
@@ -49,8 +50,12 @@ unless explicitly documented otherwise.
 
 **Action Taken:**
 - Added `GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH="contains(groups[*], 'homelab-admins') && 'GrafanaAdmin' || 'Viewer'"` to `.env.pve` (line 64)
-- Added `GRAFANA_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN=true` to `.env.pve` (line 65)
 - Included inline comment explaining the parity requirement and fallback behavior
+
+**Note:**
+- `GRAFANA_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN=true` was also added to `.env.pve` as
+  an explicit operator-facing Grafana OAuth setting, but it is not part of the
+  demonstrated runtime parity proof in this handback.
 
 ### 3. HARBOR_OIDC_PRIMARY_AUTH_MODE - Canonical Ownership Clarified
 
@@ -127,9 +132,9 @@ The following files were reviewed but intentionally unchanged:
    - Role mapping is groups-based, not username-based
    - No ambiguity about intended behavior
 
-2. ✅ **Harbor OIDC ownership** - RESOLVED (Documented)
+2. ⚠️ **Harbor OIDC ownership** - PARTIALLY RESOLVED
    - Canonical source documented as `.env.pve`
-   - Precedence rule documented in handback
+   - Dual-source ambiguity still exists until the redundant SOPS copy is removed
    - Future cleanup target identified
 
 3. ⚠️ **Shared-host blast-radius review** - STILL OPEN
@@ -178,7 +183,7 @@ Before a human should approve a real teardown test on production `pve`:
 | GRAFANA_OAUTH_SCOPES | Absent from `.env.pve` | Present in `.env.pve` | `.env.pve` |
 | GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH | Absent from `.env.pve` | Present in `.env.pve` | `.env.pve` |
 | GRAFANA_OAUTH_ALLOW_ASSIGN_GRAFANA_ADMIN | Absent from `.env.pve` | Present in `.env.pve` | `.env.pve` |
-| HARBOR_OIDC_PRIMARY_AUTH_MODE ownership | Ambiguous (dual-source) | Clarified in handback (canonical: `.env.pve`) | `.env.pve` |
+| HARBOR_OIDC_PRIMARY_AUTH_MODE ownership | Ambiguous (dual-source) | Canonical owner documented, but still dual-sourced | `.env.pve` |
 
 ## Validation Artifacts
 
@@ -203,6 +208,10 @@ Before a human should approve a real teardown test on production `pve`:
 
    See handoff 19 for decision rationale and validation guidance."
    ```
+
+   Note: `.env.pve` is non-secret configuration and must be trackable in Git for
+   this workflow. Ensure the repo ignore policy permits tracked `.env`, `.env.pve`,
+   and `.env.pve-test` files.
 
 2. **When ready for teardown rehearsal:**
    - Run the advisory planner again to refresh evidence with new env values

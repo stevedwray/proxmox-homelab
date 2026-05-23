@@ -5,10 +5,12 @@ docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 # Environment files
 storage-audit
-.env
 .env.local
 *.env
 .env.*
+!.env
+!.env.pve
+!.env.pve-test
 !.env.template
 !.env.pve-test.template
 !.env.pve.template
