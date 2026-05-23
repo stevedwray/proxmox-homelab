@@ -18,5 +18,5 @@ Harbor v2.14.3 deployed to production pve as VMID 40010 at 192.168.40.10.
 
 ## Notes
 - OIDC Authentik reconcile deferred (Authentik not reachable at reconcile time — expected)
-- CI robot account created: robot$ci-runner (save secret to Bitwarden)
+- CI robot account created: robot$ci-runner (secret was displayed at creation time; store in SOPS under HARBOR_ROBOT_USER / HARBOR_ROBOT_PASSWORD)
 - Breakglass: built-in admin account (local user creation blocked in oidc_auth mode)
