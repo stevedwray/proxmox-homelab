@@ -9,6 +9,9 @@ unrelated guest, VM, or storage on `pve`.
 This document is deliberately planner-first. It does not authorize live
 destroy execution.
 
+The current planner implementation remains advisory and read-only. It is a
+preflight evidence tool, not a production destroy authority.
+
 ## Why The Existing Harness Is Not Enough
 
 The current harness, [scripts/teardown-deploy-test.sh](/home/steve/git/proxmox-homelab/scripts/teardown-deploy-test.sh:1),
@@ -96,6 +99,8 @@ Checks:
 - VMID and IP in inventory match `stack.yaml`
 - destroy order only references in-scope stacks
 - no stack in scope has `enabled: false`
+- if `ci-runner-01` is in scope, operator GitHub CLI auth preflight passes
+  (`gh auth status`)
 
 ### 2. `platform-status`
 
@@ -140,6 +145,22 @@ Produce a human-readable approval packet draft containing:
 - a final verdict:
   - `SAFE TO REVIEW FURTHER`
   - or `BLOCKED`
+
+## OIDC Input Ownership And Precedence
+
+For this planner/advisory pass, treat ownership and precedence for the audited
+OIDC tuning inputs as follows:
+
+1. Grafana OAuth tuning keys are non-secret environment overlay values.
+   - keys: `GRAFANA_OAUTH_SCOPES`, `GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH`
+   - canonical review owner for `pve`: `.env.pve`
+   - if these keys are absent from `.env.pve`, playbook defaults are expected;
+     record that as a parity review item rather than assuming full parity
+
+2. Harbor `HARBOR_OIDC_PRIMARY_AUTH_MODE` is a non-secret runtime tuning value.
+   - canonical review owner for `pve`: `.env.pve`
+   - if a value is also present in `terraform/secrets.pve.enc.yaml`, treat this
+     as precedence ambiguity and flag for operator review before teardown
 
 ## Guardrails For A Later Mutating Phase
 

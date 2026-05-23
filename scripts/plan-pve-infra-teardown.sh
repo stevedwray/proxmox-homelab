@@ -320,9 +320,33 @@ run_logged_capture_status() {
 
 phase_source_preflight() {
   local rows=()
+  local row stack vmid ip stage zone service_type depends_on playbook
+  local runner_in_scope="false"
+  local gh_status_file="${LOG_DIR}/source-preflight-gh-auth-status.status"
+
   map_inventory_rows rows
   log "validated inventory against current stack.yaml files"
   printf '%s\n' "${rows[@]}" | tee "${LOG_DIR}/source-preflight-stacks.log" >/dev/null
+
+  for row in "${rows[@]}"; do
+    IFS=$'\t' read -r stack vmid ip stage zone service_type depends_on playbook <<<"${row}"
+    if [[ "${stack}" == "ci-runner-01" ]]; then
+      runner_in_scope="true"
+      break
+    fi
+  done
+
+  if [[ "${runner_in_scope}" == "true" ]]; then
+    if ! command -v gh >/dev/null 2>&1; then
+      fail "ci-runner-01 is in scope but gh CLI is not installed or not on PATH"
+    fi
+
+    run_logged_capture_status "source-preflight-gh-auth-status" gh auth status
+    if [[ -f "${gh_status_file}" && "$(<"${gh_status_file}")" != "0" ]]; then
+      fail "ci-runner-01 is in scope but gh auth status failed; operator must authenticate GitHub CLI before planner phases"
+    fi
+    log "validated operator gh auth status prerequisite for ci-runner-01"
+  fi
 }
 
 phase_platform_status() {

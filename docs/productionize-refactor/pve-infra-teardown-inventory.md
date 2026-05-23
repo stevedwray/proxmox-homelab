@@ -111,6 +111,8 @@ before a destructive execution path can even be proposed:
 5. No `pve-test` resource is referenced.
 6. Live `pct list` / `qm list` output is captured so out-of-scope guests on
    `pve` are explicitly named in the approval packet as untouched.
+7. When `ci-runner-01` is in scope, operator GitHub CLI auth is preflighted
+  (`gh auth status`) before planner phases continue.
 
 ## Live Inventory Refresh Requirement
 

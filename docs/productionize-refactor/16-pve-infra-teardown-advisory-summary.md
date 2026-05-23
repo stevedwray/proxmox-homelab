@@ -48,6 +48,28 @@ human log review because:
 - shared-storage impact is visible through evidence, but not yet classified into
   a trusted machine-checked safety verdict
 
+## Input Parity Clarifications (Audit Follow-Up)
+
+The current advisory posture for infra-only teardown planning is:
+
+1. Runner auth is an operator preflight prerequisite when `ci-runner-01` is in
+   scope.
+   - required check: `gh auth status`
+   - planner runs should be treated as blocked for runner-inclusive scope if
+     this preflight is not healthy
+
+2. Grafana OAuth tuning parity remains a known review item.
+   - keys: `GRAFANA_OAUTH_SCOPES`, `GRAFANA_OAUTH_ROLE_ATTRIBUTE_PATH`
+   - canonical production owner: `.env.pve`
+   - if absent there, playbook defaults are expected and should be reviewed as
+     intentional behavior, not assumed parity
+
+3. Harbor `HARBOR_OIDC_PRIMARY_AUTH_MODE` ownership is documented as
+   non-secret env overlay input.
+   - canonical production owner: `.env.pve`
+   - a parallel definition in `terraform/secrets.pve.enc.yaml` is treated as
+     precedence ambiguity and should be reviewed before teardown approval
+
 ## Practical Safety Reading
 
 Treat the planner as a read-only preparation aid for these questions:
@@ -58,6 +80,8 @@ Treat the planner as a read-only preparation aid for these questions:
 3. Do the in-scope destroy plans target `pve` and avoid obvious `pve-test`
    bleed-through?
 4. What logs must a human inspect before any real teardown approval?
+5. Have runner auth preflight and OIDC parity review items been explicitly
+  acknowledged for this run?
 
 Do **not** treat it as:
 
