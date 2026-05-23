@@ -39,7 +39,11 @@ GitHub registration passing, and the build-seg path reachable from the host.
 1. Confirm the production MikroTik preflight passes for the live `pve` uplink, required VLAN tags, and current `build_seg` ACLs.
 2. Confirm whether production is still reusing the active `pve-test` `ci-runner-01` service IP.
 3. Confirm `.env.pve` still sets intended `LAB_IP_CI_RUNNER`, `LAB_GW_BUILD`, and `LAB_IP_HARBOR` values.
-4. Confirm required inputs are non-empty in production runtime: `GITHUB_RUNNER_TOKEN`, `GITHUB_RUNNER_REPO`, `LAB_IP_HARBOR`, and `LAB_IP_APT_CACHER`.
+4. Confirm the runner registration path is available: either an authenticated
+   local `gh` session can mint a registration token, or an explicit
+   `runner_registration_token` will be supplied at run time.
+5. Confirm required production runtime inputs are non-empty:
+   `LAB_IP_HARBOR` and `LAB_IP_APT_CACHER`.
 
 If IP reuse is confirmed, counterpart disposal is mandatory before production
 cutover.
@@ -72,13 +76,15 @@ fi
 If this fails with a missing credential error, ensure `MIKROTIK_PASSWORD` is
 present in `terraform/secrets.pve.enc.yaml`.
 
-### 3) Required Input Variable Check (Read-Only)
+### 3) Runner Registration And Input Check (Read-Only)
 
 ```bash
-./with-secrets-prod bash -lc 'for v in GITHUB_RUNNER_TOKEN GITHUB_RUNNER_REPO LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
+gh auth status
+./with-secrets-prod bash -lc 'for v in LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
 ```
 
-Stop if any line reports `FAIL`.
+Stop if `gh auth status` is not healthy for the repository owner context, or if
+any line reports `FAIL`.
 
 ### 4) Counterpart Check (Always Plan)
 

@@ -10,6 +10,7 @@ Use this packet to prepare the next low-risk production migration after NetBox:
 - validate the current `ci-runner-01` contract against the production target
 - confirm the runner remains a consumer of the platform, not a dependency for it
 - verify build-seg networking, Docker provisioning, and direct-access behavior
+- verify the GitHub registration path matches the current `gh`-backed playbook flow
 - identify any IP reuse or counterpart cleanup risk before cutover
 
 ## Source Documents

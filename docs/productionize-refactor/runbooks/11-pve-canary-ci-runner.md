@@ -66,7 +66,7 @@ Stale assumptions that do not apply here:
 
 ```bash
 grep -r 'pve-test' terraform/lxc/stacks/ci-runner-01/ terraform/lxc/ansible/playbooks/deploy-ci-runner.yml || echo 'PASS'
-rg -n 'lab_ip_ci_runner|lab_gw_build|GITHUB_RUNNER_TOKEN|GITHUB_RUNNER_REPO|runner_name|runner_labels|deploy-ci-runner' terraform/lxc/stacks/ci-runner-01/stack.yaml terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
+rg -n 'lab_ip_ci_runner|lab_gw_build|runner_registration_token|runner_repo|runner_name|runner_labels|deploy-ci-runner|gh api' terraform/lxc/stacks/ci-runner-01/stack.yaml terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md terraform/lxc/ansible/playbooks/deploy-ci-runner.yml
 ```
 
 ### 3. Target Validation And Duplicate-IP Guard
@@ -140,20 +140,22 @@ Minimum skip note to capture in evidence/logs:
 2. evidence file path used as baseline
 3. operator statement that VLAN and ACL state is unchanged
 
-### 5. Runner Input Preconditions
+### 5. Runner Registration And Input Preconditions
 
-`deploy-ci-runner.yml` has mandatory env requirements. Treat any missing
-or empty value as a hard stop before apply/provision.
+`deploy-ci-runner.yml` no longer requires static `GITHUB_RUNNER_*` values for
+the default path. Treat any missing or unhealthy prerequisite below as a hard
+stop before apply/provision.
 
-- [ ] `GITHUB_RUNNER_TOKEN` is non-empty
-- [ ] `GITHUB_RUNNER_REPO` is non-empty
+- [ ] `gh auth status` is healthy on the operator workstation
+- [ ] The authenticated GitHub context is appropriate for minting a runner registration token for this repository
 - [ ] `LAB_IP_HARBOR` is set to the intended Harbor endpoint
 - [ ] `LAB_IP_APT_CACHER` is set to the intended apt-cacher endpoint if the runner inventory requires it
 
 **How to verify:**
 
 ```bash
-./with-secrets-prod bash -lc 'for v in GITHUB_RUNNER_TOKEN GITHUB_RUNNER_REPO LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
+gh auth status
+./with-secrets-prod bash -lc 'for v in LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
 ```
 
 ### 6. Session Environment

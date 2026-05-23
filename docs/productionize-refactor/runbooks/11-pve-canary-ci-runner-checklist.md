@@ -48,7 +48,7 @@ window, you may skip rerunning the MikroTik preflight. In that case, record:
 | MikroTik production preflight (or approved skip) | ☐ | `Verdict: PASS` output OR documented skip with prior evidence + unchanged-network attestation |
 | Production ci-runner IP resolved | ☐ | Intended `${LAB_IP_CI_RUNNER}` for `build_seg` |
 | Production gateway resolved | ☐ | Intended `${LAB_GW_BUILD}` |
-| Runner required input vars present | ☐ | `GITHUB_RUNNER_TOKEN`, `GITHUB_RUNNER_REPO`, `LAB_IP_HARBOR` (and `LAB_IP_APT_CACHER` if needed) are non-empty |
+| Runner registration path and required inputs present | ☐ | `gh auth status` is healthy; `LAB_IP_HARBOR` (and `LAB_IP_APT_CACHER` if needed) are non-empty |
 | `pve-test` counterpart disposed first when IP reused | ☐ | Counterpart absent before cutover |
 
 Run the destroy step only if the production runner IP is the same IP currently
@@ -58,10 +58,11 @@ in use on `pve-test`:
 env -u PVE_ENV -u TF_VAR_proxmox_node ./scripts/dispose-pve-test-counterpart.sh --stack ci-runner-01 --execute
 ```
 
-Input-variable quick check (non-empty):
+Runner registration and input quick check:
 
 ```bash
-./with-secrets-prod bash -lc 'for v in GITHUB_RUNNER_TOKEN GITHUB_RUNNER_REPO LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
+gh auth status
+./with-secrets-prod bash -lc 'for v in LAB_IP_HARBOR LAB_IP_APT_CACHER; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done'
 ```
 
 ---

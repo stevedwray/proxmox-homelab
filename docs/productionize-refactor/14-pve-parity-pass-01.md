@@ -50,16 +50,20 @@ These are current blockers or latent blockers for repeatable production runs.
 |---|---|---|
 | `CF_DNS_API_TOKEN` | Mandatory input for `proxy-stack` ACME DNS challenge flow | yes |
 
-### Missing from both current SOPS files
+### Presently documented as required, but not current `pve` blockers
 
-These are current runtime requirements, but they are not available from either
-the `pve-test` or `pve` SOPS file and therefore cannot be copied across from
-the existing secret split.
+The current runner canary docs still refer to `GITHUB_RUNNER_TOKEN` and
+`GITHUB_RUNNER_REPO` as mandatory inputs. The live playbook path no longer
+depends on those names:
 
-| Key | Why it matters |
-|---|---|
-| `GITHUB_RUNNER_TOKEN` | Required to register `ci-runner-01` |
-| `GITHUB_RUNNER_REPO` | Required to register `ci-runner-01` |
+- `runner_repo` defaults internally to
+  `https://github.com/stevedwray/proxmox-homelab`
+- the playbook generates a fresh runner registration token through `gh api`
+  when `runner_registration_token` is not provided
+
+That means the actual precondition for `ci-runner-01` is an authenticated local
+GitHub CLI session with permission to mint runner registration tokens, not
+static `GITHUB_RUNNER_*` entries in either SOPS file.
 
 ### Present in `terraform/secrets.enc.yaml` only, but not current `pve` blockers
 
@@ -125,9 +129,9 @@ the operator injects them some other way.
 2. Add `TRAEFIK_DNS_RESOLVER_PRIMARY` and
    `TRAEFIK_DNS_RESOLVER_SECONDARY` to `.env.pve` so the production wrapper has
    the same effective input surface as the working `pve-test` path.
-3. Decide the intended source of `GITHUB_RUNNER_TOKEN` and
-   `GITHUB_RUNNER_REPO` for `ci-runner-01`; these cannot currently be derived
-   from the split SOPS files because they are missing from both.
+3. Reconcile the `ci-runner-01` production docs and preflights with the actual
+   `gh`-backed runner registration flow so the next canary does not block on
+   stale `GITHUB_RUNNER_*` requirements.
 4. After parity fill, re-run the affected production provisioning paths from the
    `pve-test`-known-good contract rather than preserving canary-time workarounds
    as permanent drift.
