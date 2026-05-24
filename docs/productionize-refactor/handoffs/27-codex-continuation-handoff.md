@@ -142,22 +142,51 @@ keys on `pve`.
 
 ## Status Since Handoff Creation
 
-The fresh full infra-only teardown/rebuild retry has already completed and
-failed.
+Two substantive execution slices have completed since this handoff was first
+written.
+
+### NetBox recovery completed
+
+Tracked outcomes:
+
+- `docs/productionize-refactor/handoffs/26-pve-infra-teardown-rebuild-retry-handback.md`
+- `docs/productionize-refactor/handoffs/28-netbox-day2-bootstrap-fix-handback.md`
+- `docs/productionize-refactor/handoffs/29-netbox-memory-rerun-handback.md`
+
+What this proved:
+
+- the failed rebuild retry really did stop at NetBox day-2 bootstrap
+- the NetBox bootstrap path was repaired in source
+- `netbox-stack` memory was raised to `4096`
+- targeted production rerun proved `./scripts/provision.sh --stack netbox-stack`
+  now succeeds on `pve`
+
+### Fresh full proof rerun also completed and failed
 
 Tracked outcome:
 
-- `docs/productionize-refactor/handoffs/26-pve-infra-teardown-rebuild-retry-handback.md`
+- `docs/productionize-refactor/handoffs/30-pve-infra-proof-rerun-handback.md`
 
-What that retry proved:
+What that full proof rerun proved:
 
-- all approved in-scope destroy phases succeeded
-- eight stacks rebuilt and provisioned successfully
-- `netbox-stack` apply succeeded
-- `netbox-stack` provision then hung at `Create superuser if not exists`
-- `portainer-stack` was not rebuilt because execution stopped at NetBox
+- all 10 approved in-scope destroy phases succeeded
+- all 10 approved in-scope apply phases succeeded
+- 9 of 10 approved provision phases succeeded
+- `netbox-stack` stayed fixed during the full proof run
+- `portainer-stack` CT `20020` was recreated on `pve`
+- the only remaining blocker is `portainer-stack` provision
 
-Current practical state on `pve`:
+What that failure did not prove:
+
+- it did not prove an Authentik apply-path bug yet
+- it proved the first blocker is Portainer edge target preflight:
+  `EGR200` because `reconcile-edge.py` still shells out through
+  `./with-secrets`, which expects `pve-test`
+- Authentik-owned Portainer route objects were discovered missing, but the
+  reconcile remained in `dry-run`, so the creation path was not actually
+  exercised
+
+Current practical state on `pve` after the failed full proof rerun:
 
 - present:
   - `10063` `ci-runner-01`
@@ -165,43 +194,45 @@ Current practical state on `pve`:
   - `20011` `step-ca`
   - `20012` `monitoring-stack`
   - `20013` `dns-stack`
+  - `20020` `portainer-stack`
   - `30010` `proxy-stack`
   - `40010` `harbor-stack`
   - `40011` `apt-cacher-stack`
   - `40012` `netbox-stack`
   - `910` `debian13-template-builder`
-- absent:
-  - `20020` `portainer-stack`
 
-This means the broad parity/root-cause search has narrowed substantially. The
-next task should focus on the source-controlled NetBox day-2/bootstrap path,
-not on repeating the full rebuild immediately.
+This means the broad infrastructure blockers have now been reduced and cleared
+one by one: NetBox recovery succeeded, then the narrow Portainer production
+targeting blocker was fixed and validated in isolation.
 
 ## Recommended Next Copilot Scope
 
-Use a narrow Copilot handoff to fix and validate the NetBox bootstrap logic on
-the existing `netbox-stack`.
+Use a fresh Copilot handoff to run another full infra-only proof on `pve` from
+the now-repaired branch state.
 
 Prepared handoff:
 
-- `docs/productionize-refactor/handoffs/28-netbox-day2-bootstrap-fix.md`
-- `docs/productionize-refactor/handoffs/29-netbox-memory-rerun.md`
+- `docs/productionize-refactor/handoffs/32-pve-infra-proof-rerun-after-portainer-fix.md`
 
 ## Review Rules For The Next Session
 
-When Copilot returns from the narrow NetBox task, review the handback before
+When Copilot returns from the next full proof rerun, review the handback before
 trusting the result.
 
 Do not accept a success claim unless the handback and evidence show:
 
-- the exact bootstrap command(s) that were blocking were identified
-- the source-controlled fix path is explained
+- the run started from the branch state that already includes the verified
+  NetBox and Portainer recovery fixes
 - `stash@{0}` was not applied
-- targeted validation stayed scoped to `netbox-stack`
-- the resulting live state of `netbox-stack` is captured
-- any remaining risks or operator follow-ups are explicit
+- fresh planner/preflight evidence path
+- fresh execution evidence path
+- every in-scope stack destroy/apply/provision result
+- post-redeploy validation result
+- whether `portainer-stack` was restored cleanly during the full packet
+- direct verification that out-of-scope guests remained untouched
+- no misleading completion summary that contradicts failed logs
 
-If a stack fails:
+If the next full proof rerun fails:
 
 - stay in recovery/rebuild assessment mode
 - do not move to functional tests
@@ -210,19 +241,12 @@ If a stack fails:
 
 ## Current Practical Next Step
 
-Hand off the narrow NetBox day-2/bootstrap fix to Copilot using:
+Hand off the next fresh full infra-only proof rerun to Copilot using:
 
-- `docs/productionize-refactor/handoffs/28-netbox-day2-bootstrap-fix.md`
-- `docs/productionize-refactor/handoffs/29-netbox-memory-rerun.md`
+- `docs/productionize-refactor/handoffs/32-pve-infra-proof-rerun-after-portainer-fix.md`
 
-The immediate next execution step should be the targeted memory-bump apply and
-rerun handoff in `29`, because the prior validation was blocked by a
-non-responsive `1 GiB` NetBox container under severe pressure.
+If the full proof succeeds, the next phase is post-proof assessment and then
+functional/application follow-up.
 
-If that targeted rerun succeeds and `netbox-stack` can be reprovisioned
-cleanly, the next decision is whether to restore `portainer-stack`
-operationally first or schedule another full infra-only proof run.
-
-If the targeted fix fails, keep the work bounded to NetBox bootstrap diagnosis
-rather than broadening back into platform-parity or full-teardown work without
-explicit operator approval.
+If the full proof fails, stay in recovery/rebuild assessment mode and classify
+the new blocker before broadening scope.

@@ -1,0 +1,617 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: portainer-prod-targeting-fix-20260524
+Command: ./scripts/provision.sh --stack portainer-stack
+
+[provision] PORTAINER_OAUTH_CLIENT_SECRET is already present
+[provision] Reconcile edge apply for Portainer route publication
+{
+  "authentik": {
+    "discovery": {
+      "classification_counts": {
+        "ambiguous": 0,
+        "differing": 0,
+        "matching": 0,
+        "missing": 1
+      },
+      "issue_count": 0,
+      "issues": [],
+      "request_methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET"
+      ],
+      "route_count": 1,
+      "route_results": [
+        {
+          "auth_mode": "oidc",
+          "classification": "missing",
+          "host": "portainer.lab.gibbsgreatly.xyz",
+          "identifiers": [],
+          "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+          "reasons": [
+            "application is missing",
+            "OIDC provider is missing"
+          ],
+          "route": "portainer",
+          "stack": "portainer-stack"
+        }
+      ],
+      "status": "failed",
+      "stop_condition_count": 0,
+      "stop_conditions": [],
+      "unmanaged": [
+        {
+          "id": "7f59da66-54ac-46f5-bd04-0b567658a604",
+          "kind": "application",
+          "name": "edge-monitoring-stack-grafana-app"
+        },
+        {
+          "id": "1",
+          "kind": "provider",
+          "name": "edge-monitoring-stack-grafana-provider"
+        }
+      ],
+      "unmanaged_count": 2
+    },
+    "post_apply_discovery": {
+      "classification_counts": {
+        "ambiguous": 0,
+        "differing": 0,
+        "matching": 1,
+        "missing": 0
+      },
+      "issue_count": 0,
+      "issues": [],
+      "request_methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET"
+      ],
+      "route_count": 1,
+      "route_results": [
+        {
+          "auth_mode": "oidc",
+          "classification": "matching",
+          "host": "portainer.lab.gibbsgreatly.xyz",
+          "identifiers": [
+            {
+              "id": "4e21d9b5-1669-4426-a968-dc1db575b57c",
+              "kind": "application",
+              "name": "edge-portainer-stack-portainer-app"
+            },
+            {
+              "id": "2",
+              "kind": "provider",
+              "name": "edge-portainer-stack-portainer-provider"
+            }
+          ],
+          "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+          "reasons": [
+            "discovered objects match route auth intent"
+          ],
+          "route": "portainer",
+          "stack": "portainer-stack"
+        }
+      ],
+      "status": "passed",
+      "stop_condition_count": 0,
+      "stop_conditions": [],
+      "unmanaged": [
+        {
+          "id": "7f59da66-54ac-46f5-bd04-0b567658a604",
+          "kind": "application",
+          "name": "edge-monitoring-stack-grafana-app"
+        },
+        {
+          "id": "1",
+          "kind": "provider",
+          "name": "edge-monitoring-stack-grafana-provider"
+        }
+      ],
+      "unmanaged_count": 2
+    },
+    "reconcile": {
+      "action_count": 2,
+      "action_counts": {
+        "create": 2
+      },
+      "actions": [
+        {
+          "object_kind": "application",
+          "object_name": "edge-portainer-stack-portainer-app",
+          "operation": "create",
+          "reason": "owned application is missing",
+          "route": "portainer",
+          "stack": "portainer-stack"
+        },
+        {
+          "object_kind": "provider",
+          "object_name": "edge-portainer-stack-portainer-provider",
+          "operation": "create",
+          "reason": "owned provider is missing",
+          "route": "portainer",
+          "stack": "portainer-stack"
+        }
+      ],
+      "issue_count": 0,
+      "issues": [],
+      "mode": "apply",
+      "request_methods": [
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "GET",
+        "POST",
+        "POST"
+      ],
+      "status": "passed",
+      "stop_condition_count": 0,
+      "stop_conditions": [],
+      "write_count": 2
+    },
+    "required": true
+  },
+  "coredns": {
+    "diff": "--- /home/steve/git/proxmox-homelab/terraform/lxc/ansible/files/coredns-lab.zone\n+++ /home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone\n@@ -34,3 +34,6 @@\n ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)\n ; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)\n ; jellyfin     A   10.60.0.30          (Jellyfin, migrated in Phase 06)\n+\n+; Generated browser edge records (manifest-owned)\n+portainer       5m   IN  A   192.168.30.10 ; generated from EdgeManifest",
+    "generated_record_count": 1,
+    "generated_records": [
+      {
+        "host": "portainer.lab.gibbsgreatly.xyz",
+        "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+        "target": "192.168.30.10",
+        "ttl": "5m"
+      }
+    ],
+    "issue_count": 0,
+    "issues": [],
+    "output_zone": "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/coredns/coredns-lab.zone",
+    "status": "passed",
+    "warning_count": 0,
+    "warnings": []
+  },
+  "issues": [],
+  "manifests": [
+    "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml"
+  ],
+  "mode": "apply",
+  "preflight": {
+    "health": {
+      "coredns": {
+        "detail": "authoritative dns probe succeeded (answer includes 192.168.30.10)",
+        "name": "coredns",
+        "ok": true,
+        "url": "dig @192.168.20.13 +short traefik.lab.gibbsgreatly.xyz"
+      },
+      "traefik": {
+        "detail": "tcp reachability probe succeeded",
+        "name": "traefik",
+        "ok": true,
+        "url": "tcp://192.168.30.10:443"
+      }
+    },
+    "targeting": {
+      "command": "/home/steve/git/proxmox-homelab/with-secrets-prod bash -c echo $TF_VAR_proxmox_node",
+      "detail": "target preflight passed (pve)",
+      "ok": true
+    }
+  },
+  "status": "passed",
+  "terraform_state_mutation": false,
+  "traefik": {
+    "files": [
+      "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik/portainer-stack.yml"
+    ],
+    "issue_count": 0,
+    "issues": [],
+    "legacy_route_count": 0,
+    "output_dir": "/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik",
+    "stack_count": 1,
+    "stacks": [
+      {
+        "manifest": "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml",
+        "stack": "portainer-stack"
+      }
+    ],
+    "status": "passed",
+    "warning_count": 0,
+    "warnings": []
+  },
+  "validation": {
+    "issue_count": 0,
+    "issues": [],
+    "manifest_count": 1,
+    "manifests": [
+      "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/edge.yaml"
+    ],
+    "status": "passed"
+  }
+}
+[provision] Publish generated Traefik files for Portainer route
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'proxy-stack' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.20/reference_appendices/interpreter_discovery.html for more information.
+ok: [proxy-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+ok: [proxy-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+ok: [proxy-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+skipping: [proxy-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [proxy-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+ok: [proxy-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+skipping: [proxy-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+ok: [proxy-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [proxy-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+ok: [proxy-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+skipping: [proxy-stack] => (item=apt-daily.service)
+skipping: [proxy-stack] => (item=apt-daily.timer)
+skipping: [proxy-stack] => (item=apt-daily-upgrade.service)
+skipping: [proxy-stack] => (item=apt-daily-upgrade.timer)
+skipping: [proxy-stack]
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+skipping: [proxy-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+skipping: [proxy-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [proxy-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+ok: [proxy-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [proxy-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [proxy-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [proxy-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [proxy-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [proxy-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [proxy-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [proxy-stack]
+
+TASK [Trust Harbor HTTP registry in Docker daemon] *****************************
+ok: [proxy-stack]
+
+TASK [Flush handlers to apply Docker daemon config before stack deploy] ********
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+ok: [proxy-stack]
+
+PLAY [Deploy Traefik compose stack] ********************************************
+
+TASK [Create Traefik directory structure] **************************************
+ok: [proxy-stack] => (item={'path': '/opt/proxy-stack', 'mode': '0750'})
+ok: [proxy-stack] => (item={'path': '/opt/proxy-stack/dynamic', 'mode': '0755'})
+ok: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs', 'mode': '0750'})
+ok: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs/letsencrypt', 'mode': '0700'})
+ok: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs/step-ca', 'mode': '0700'})
+
+TASK [Create ACME storage files with strict permissions] ***********************
+ok: [proxy-stack] => (item=/opt/proxy-stack/certs/letsencrypt/acme.json)
+ok: [proxy-stack] => (item=/opt/proxy-stack/certs/step-ca/acme.json)
+
+TASK [Write compose secrets env file] ******************************************
+ok: [proxy-stack]
+
+TASK [Write Traefik static configuration] **************************************
+ok: [proxy-stack]
+
+TASK [Write shared Authentik middleware config] ********************************
+ok: [proxy-stack]
+
+TASK [Write wildcard certificate request config] *******************************
+ok: [proxy-stack]
+
+TASK [Check whether homelab root CA exists on managed host] ********************
+ok: [proxy-stack]
+
+TASK [Build combined CA bundle for lego (system CAs + optional homelab step-ca CA)] ***
+changed: [proxy-stack]
+
+TASK [Write Traefik compose definition] ****************************************
+ok: [proxy-stack]
+
+TASK [Check requested generated Traefik source directory on control node] ******
+ok: [proxy-stack -> localhost]
+
+TASK [Assert generated Traefik source directory is valid when provided] ********
+ok: [proxy-stack] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Remove legacy generated Traefik stacks directory] ************************
+ok: [proxy-stack]
+
+TASK [Publish generated Traefik files into active dynamic directory] ***********
+ok: [proxy-stack]
+
+TASK [Validate Traefik compose configuration] **********************************
+ok: [proxy-stack]
+
+TASK [Start Traefik via compose] ***********************************************
+ok: [proxy-stack]
+
+PLAY RECAP *********************************************************************
+proxy-stack                : ok=29   changed=1    unreachable=0    failed=0    skipped=10   rescued=0    ignored=0
+
+[provision] RUN portainer-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/portainer-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-portainer-stack.yml
+
+PLAY [Install Docker base] *****************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'portainer-stack' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.20/reference_appendices/interpreter_discovery.html for more information.
+ok: [portainer-stack]
+
+TASK [Check for invalid empty Docker insecure registry] ************************
+ok: [portainer-stack]
+
+TASK [Replace invalid Docker daemon config before docker_base starts Docker] ***
+skipping: [portainer-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+changed: [portainer-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+skipping: [portainer-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+ok: [portainer-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [portainer-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+changed: [portainer-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+changed: [portainer-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+ok: [portainer-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [portainer-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+ok: [portainer-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+skipping: [portainer-stack] => (item=apt-daily.service)
+skipping: [portainer-stack] => (item=apt-daily.timer)
+skipping: [portainer-stack] => (item=apt-daily-upgrade.service)
+skipping: [portainer-stack] => (item=apt-daily-upgrade.timer)
+skipping: [portainer-stack]
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+skipping: [portainer-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+skipping: [portainer-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [portainer-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+changed: [portainer-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [portainer-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [portainer-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [portainer-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [portainer-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [portainer-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [portainer-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [portainer-stack]
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+ok: [portainer-stack]
+
+TASK [Trust Harbor HTTP registry in Docker daemon] *****************************
+changed: [portainer-stack]
+
+TASK [Flush handlers to apply Docker daemon config] ****************************
+
+RUNNING HANDLER [Restart Docker] ***********************************************
+changed: [portainer-stack]
+
+PLAY [Deploy Portainer CE server] **********************************************
+
+TASK [Create Portainer compose directory] **************************************
+ok: [portainer-stack]
+
+TASK [Write docker-compose.yml] ************************************************
+changed: [portainer-stack]
+
+TASK [Pull Portainer image] ****************************************************
+changed: [portainer-stack]
+
+TASK [Start Portainer via compose] *********************************************
+[WARNING]: Found orphan containers ([portainer-agent]) for this project. If you removed or renamed this service in your compose file, you can run this command with the --remove-orphans flag to clean it up.
+changed: [portainer-stack]
+
+PLAY [Initialise Portainer admin account] **************************************
+
+TASK [Assert Portainer admin password is configured] ***************************
+ok: [portainer-stack] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Assert Portainer OAuth secret is configured when OAuth enabled] **********
+ok: [portainer-stack] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Wait for Portainer API to become available] ******************************
+ok: [portainer-stack]
+
+TASK [Initialise admin credentials] ********************************************
+ok: [portainer-stack]
+
+TASK [Get Portainer auth token] ************************************************
+ok: [portainer-stack]
+
+TASK [Get existing Portainer endpoints] ****************************************
+ok: [portainer-stack]
+
+TASK [Check for local Docker endpoint] *****************************************
+skipping: [portainer-stack]
+
+TASK [Create local Docker endpoint when missing] *******************************
+ok: [portainer-stack]
+
+TASK [Persist local Docker endpoint ID] ****************************************
+ok: [portainer-stack]
+
+TASK [Set local Docker endpoint group ID from existing endpoint list] **********
+skipping: [portainer-stack]
+
+TASK [Persist local Docker endpoint group ID when endpoint created] ************
+ok: [portainer-stack]
+
+TASK [Fall back local Docker endpoint group ID to Unassigned] ******************
+skipping: [portainer-stack]
+
+TASK [Read current Portainer settings] *****************************************
+ok: [portainer-stack]
+
+TASK [Read current Portainer teams] ********************************************
+ok: [portainer-stack]
+
+TASK [Set OAuth default team ID when team already exists] **********************
+skipping: [portainer-stack]
+
+TASK [Create OAuth default team when missing] **********************************
+ok: [portainer-stack]
+
+TASK [Persist OAuth default team ID] *******************************************
+ok: [portainer-stack]
+
+TASK [Assert OAuth default team ID resolved when OAuth enabled] ****************
+ok: [portainer-stack] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Read local endpoint group access policy] *********************************
+ok: [portainer-stack]
+
+TASK [Build desired local endpoint group team access policy] *******************
+ok: [portainer-stack]
+
+TASK [Check whether local endpoint group team policy needs update] *************
+ok: [portainer-stack]
+
+TASK [Update local endpoint group policy for OAuth default team] ***************
+ok: [portainer-stack]
+
+TASK [Build desired Portainer OAuth settings] **********************************
+ok: [portainer-stack]
+
+TASK [Build list of OAuth usernames to promote to Portainer admin] *************
+ok: [portainer-stack]
+
+TASK [Check whether Portainer auth settings need update] ***********************
+ok: [portainer-stack]
+
+TASK [Update Portainer authentication settings] ********************************
+ok: [portainer-stack]
+
+TASK [Read current Portainer users] ********************************************
+ok: [portainer-stack]
+
+TASK [Build list of existing Portainer usernames] ******************************
+ok: [portainer-stack]
+
+TASK [Build list of missing OAuth admin users] *********************************
+ok: [portainer-stack]
+
+TASK [Pre-create missing OAuth users for deterministic admin promotion] ********
+ok: [portainer-stack] => (item=(censored due to no_log))
+ok: [portainer-stack] => (item=(censored due to no_log))
+
+TASK [Refresh Portainer users after OAuth user pre-creation] *******************
+ok: [portainer-stack]
+
+TASK [Re-read Portainer users for admin role promotion] ************************
+ok: [portainer-stack]
+
+TASK [Promote configured OAuth usernames to Portainer admin role] **************
+skipping: [portainer-stack] => (item=(censored due to no_log))
+ok: [portainer-stack] => (item=(censored due to no_log))
+ok: [portainer-stack] => (item=(censored due to no_log))
+
+TASK [Report init outcome] *****************************************************
+ok: [portainer-stack] => {
+    "msg": "Portainer admin account initialised."
+}
+
+TASK [Report Portainer auth settings outcome] **********************************
+ok: [portainer-stack] => {
+    "msg": "Portainer OAuth settings updated."
+}
+
+TASK [Report local endpoint group policy outcome] ******************************
+ok: [portainer-stack] => {
+    "msg": "Portainer local endpoint group policy updated for OAuth default team."
+}
+
+PLAY RECAP *********************************************************************
+portainer-stack            : ok=53   changed=9    unreachable=0    failed=0    skipped=14   rescued=0    ignored=0
+
+[provision] Completed provision orchestration
