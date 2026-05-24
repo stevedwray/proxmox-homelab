@@ -349,7 +349,9 @@ This packet does not authorize:
 2. Any change to out-of-scope guests, VMs, containers, storage pools,
 	templates, backups, snapshots, or host/network configuration.
 3. Any use of `scripts/teardown-deploy-test.sh` for production `pve` mutation
-	(that harness is `pve-test` oriented).
+	without explicit production target inputs and wrapper selection
+	(for example `TEARDOWN_TARGET_NODE_EXPECTED=pve`,
+	`TEARDOWN_PVE_HOST=pve.gibbsgreatly.xyz`, and `TEARDOWN_WITH_SECRETS=./with-secrets-prod`).
 4. Treating advisory planner output as automatic go/no-go authority.
 5. Silent scope expansion due to convenience, partial failure, or ambiguous
 	logs.
