@@ -3,7 +3,6 @@ hostname: apt-cacher-stack
 ip_address: "${lab_ip_apt_cacher}/24"
 gateway: "${lab_gw_infra}"
 dns_server: "${lab_gw_infra}"
-proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 40011
@@ -27,7 +26,7 @@ ansible_playbook: "deploy-apt-cacher-stack"
 deployment_tier: platform
 portainer_agent: false
 
-# pve-test service IPs (explicit — do not rely on variable defaults)
+# Environment-selected service IPs (explicit — do not rely on variable defaults)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: ""  # This container IS the apt-cacher; no self-proxy

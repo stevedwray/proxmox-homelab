@@ -104,6 +104,9 @@
   vars:
     netbox_container: "netbox-netbox-1"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
+    netbox_bootstrap_timeout: 120
+    netbox_bootstrap_retries: 18
+    netbox_bootstrap_delay: 10
     netbox_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     netbox_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     netbox_lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(netbox_lab_admin_username ~ '@' ~ netbox_lab_domain, true) }}"
@@ -132,31 +135,38 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Create superuser if not exists
+    - name: Wait for NetBox bootstrap shell to respond
       ansible.builtin.command:
-        cmd: >-
-          docker exec
-          -e DJANGO_SUPERUSER_PASSWORD={{ netbox_superuser_password }}
-          {{ netbox_container }}
-          {{ netbox_manage }} createsuperuser
-          --no-input
-          --username {{ netbox_superuser_username }}
-          --email {{ netbox_superuser_email }}
-      register: netbox_superuser_result
-      changed_when: "'Superuser created' in netbox_superuser_result.stderr"
-      failed_when:
-        - netbox_superuser_result.rc != 0
-        - "'already taken' not in netbox_superuser_result.stderr"
-      no_log: true
+        argv:
+          - timeout
+          - -k
+          - 10s
+          - "{{ netbox_bootstrap_timeout }}s"
+          - docker
+          - exec
+          - "{{ netbox_container }}"
+          - /opt/netbox/venv/bin/python
+          - /opt/netbox/netbox/manage.py
+          - shell
+          - -c
+          - print('NETBOX_BOOTSTRAP_READY')
+      register: netbox_bootstrap_ready
+      retries: "{{ netbox_bootstrap_retries }}"
+      delay: "{{ netbox_bootstrap_delay }}"
+      until:
+        - netbox_bootstrap_ready.rc == 0
+        - "'NETBOX_BOOTSTRAP_READY' in netbox_bootstrap_ready.stdout"
+      changed_when: false
       when: not ansible_check_mode
 
-    - name: Write NetBox local admin sync script
+    - name: Write NetBox bootstrap sync script
       ansible.builtin.copy:
-        dest: /tmp/netbox-local-admin-sync.py
+        dest: /tmp/netbox-bootstrap-sync.py
         mode: "0600"
         content: |
           import os
           from django.contrib.auth import get_user_model
+          from users.models import Token
 
           User = get_user_model()
           user_field_names = {field.name for field in User._meta.get_fields()}
@@ -203,6 +213,11 @@
               if created or updates:
                   changed = True
 
+              ensure_admin_user(
+                username=os.environ["NB_SUPERUSER_USER"],
+                email=os.environ["NB_SUPERUSER_EMAIL"],
+                password_value=os.environ["NB_SUPERUSER_PASSWORD"],
+              )
           ensure_admin_user(
               username=os.environ["NB_STEVE_USER"],
               email=os.environ["NB_STEVE_EMAIL"],
@@ -213,69 +228,62 @@
               password_value=os.environ["NB_BREAKGLASS_PASSWORD"],
           )
 
+          admin_user = User.objects.get(username=os.environ["NB_SUPERUSER_USER"])
+          if not Token.objects.filter(user=admin_user, description="automation").exists():
+              token = Token(
+                  user=admin_user,
+                  version=1,
+                  description="automation",
+                  write_enabled=True,
+              )
+              token.token = os.environ["NB_API_TOKEN"]
+              token.save()
+              changed = True
+
           print("CHANGED" if changed else "UNCHANGED")
 
-    - name: Ensure steve and breakglass local NetBox admin users exist
+    - name: Run NetBox bootstrap sync
       ansible.builtin.shell:
         cmd: >-
+          timeout -k 10s {{ netbox_bootstrap_timeout }}s
           docker exec -i
+          -e NB_SUPERUSER_USER
+          -e NB_SUPERUSER_EMAIL
+          -e NB_SUPERUSER_PASSWORD
           -e NB_STEVE_USER
           -e NB_STEVE_EMAIL
           -e NB_BREAKGLASS_USER
           -e NB_BREAKGLASS_EMAIL
           -e NB_BREAKGLASS_PASSWORD
+          -e NB_API_TOKEN
           {{ netbox_container }}
-          {{ netbox_manage }} shell < /tmp/netbox-local-admin-sync.py
+          {{ netbox_manage }} shell < /tmp/netbox-bootstrap-sync.py
       environment:
+        NB_SUPERUSER_USER: "{{ netbox_superuser_username }}"
+        NB_SUPERUSER_EMAIL: "{{ netbox_superuser_email }}"
+        NB_SUPERUSER_PASSWORD: "{{ netbox_superuser_password }}"
         NB_STEVE_USER: "{{ netbox_steve_username }}"
         NB_STEVE_EMAIL: "{{ netbox_steve_email }}"
         NB_BREAKGLASS_USER: "{{ netbox_breakglass_username }}"
         NB_BREAKGLASS_EMAIL: "{{ netbox_breakglass_email }}"
         NB_BREAKGLASS_PASSWORD: "{{ netbox_breakglass_password }}"
-      register: netbox_local_admins_result
+        NB_API_TOKEN: "{{ netbox_api_token }}"
+      register: netbox_bootstrap_result
       changed_when:
-        - netbox_local_admins_result.rc == 0
-        - "'CHANGED' in netbox_local_admins_result.stdout"
+        - netbox_bootstrap_result.rc == 0
+        - "'CHANGED' in netbox_bootstrap_result.stdout"
       failed_when:
-        - netbox_local_admins_result.rc != 0
+        - netbox_bootstrap_result.rc != 0
       no_log: true
       when: not ansible_check_mode
 
-    - name: Remove NetBox local admin sync script
+    - name: Remove NetBox bootstrap sync script
       ansible.builtin.file:
-        path: /tmp/netbox-local-admin-sync.py
+        path: /tmp/netbox-bootstrap-sync.py
         state: absent
       when: not ansible_check_mode
 
-    - name: Provision API token (idempotent)
-      ansible.builtin.shell:
-        cmd: |
-          docker exec -i \
-            -e NB_USER='{{ netbox_superuser_username }}' \
-            -e NB_TOKEN='{{ netbox_api_token }}' \
-            {{ netbox_container }} \
-            {{ netbox_manage }} shell <<'PYEOF'
-          import os
-          from django.contrib.auth import get_user_model
-          from users.models import Token
-          User = get_user_model()
-          u = User.objects.get(username=os.environ['NB_USER'])
-          if Token.objects.filter(user=u, description='automation').exists():
-              print('EXISTS')
-          else:
-              t = Token(user=u, version=1, description='automation', write_enabled=True)
-              t.token = os.environ['NB_TOKEN']
-              t.save()
-              print('CREATED')
-          PYEOF
-      register: netbox_token_result
-      changed_when: "'CREATED' in netbox_token_result.stdout"
-      failed_when:
-        - netbox_token_result.rc != 0
-      no_log: true
-      when: not ansible_check_mode
-
-    - name: Display token status
+    - name: Display bootstrap status
       ansible.builtin.debug:
-        msg: "API token: {{ 'created' if 'CREATED' in netbox_token_result.stdout else 'already exists' }}"
+        msg: "NetBox bootstrap: {{ 'changed' if 'CHANGED' in netbox_bootstrap_result.stdout else 'already converged' }}"
       when: not ansible_check_mode

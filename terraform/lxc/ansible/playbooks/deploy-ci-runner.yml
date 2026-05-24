@@ -10,8 +10,8 @@
     runner_user: runner
     runner_home: /opt/actions-runner
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
-    runner_labels: "self-hosted,pve-test,build,linux,x64"
-    runner_name: "ci-runner-pve-test"
+    runner_labels: "{{ lookup('env', 'RUNNER_LABELS') | default('self-hosted,pve-test,build,linux,x64', true) }}"
+    runner_name: "{{ lookup('env', 'RUNNER_NAME') | default('ci-runner-01', true) }}"
     runner_service_name: >-
       {{
         lookup('env', 'RUNNER_SERVICE_NAME')

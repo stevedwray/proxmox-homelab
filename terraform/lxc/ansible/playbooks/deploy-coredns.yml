@@ -26,7 +26,7 @@
     coredns_zone_src: "{{ (coredns_generated_zone_src | trim) if (coredns_generated_zone_src | trim | length > 0) else coredns_seed_zone_src }}"
     coredns_zone_file: "{{ coredns_config_dir }}/lab.zone"
     coredns_zone_stage_file: "{{ coredns_config_dir }}/lab.zone.candidate"
-    coredns_loopback_ip: "{{ lookup('env', 'COREDNS_LOOPBACK_IP') | mandatory('COREDNS_LOOPBACK_IP env var is required') }}"
+    coredns_loopback_ip: "{{ lookup('env', 'COREDNS_LOOPBACK_IP') | default('127.0.0.1', true) }}"
 
   pre_tasks:
     - name: Wait for SSH to become available after container creation
@@ -219,11 +219,17 @@
     - name: Apply pending CoreDNS configuration changes
       ansible.builtin.meta: flush_handlers
 
-    - name: Wait for CoreDNS to be ready
-      ansible.builtin.wait_for:
-        host: "{{ coredns_loopback_ip }}"
-        port: 53
-        timeout: 30
+    - name: Wait for CoreDNS loopback query to succeed
+      ansible.builtin.shell: >
+        dig @{{ coredns_loopback_ip }} +short {{ lab_fqdn_traefik }}
+      register: coredns_loopback_ready
+      args:
+        executable: /bin/bash
+      check_mode: false
+      changed_when: false
+      retries: 30
+      delay: 1
+      until: (coredns_loopback_ready.stdout | default('')) | length > 0
 
     - name: Gather service facts
       ansible.builtin.service_facts:
@@ -236,8 +242,12 @@
         fail_msg: "CoreDNS service is not running"
 
     - name: Test authority query for delegated lab probe name
-      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short {{ lab_fqdn_traefik }}
+      ansible.builtin.shell: >
+        dig @{{ coredns_loopback_ip }} +short {{ lab_fqdn_traefik }}
       register: coredns_authority_test
+      args:
+        executable: /bin/bash
+      check_mode: false
       changed_when: false
 
     - name: Verify authority query returns expected address
@@ -248,8 +258,12 @@
       when: not ansible_check_mode
 
     - name: Test recursive query for github.com
-      ansible.builtin.command: dig @{{ coredns_loopback_ip }} +short github.com
+      ansible.builtin.shell: >
+        dig @{{ coredns_loopback_ip }} +short github.com
       register: coredns_recursion_test
+      args:
+        executable: /bin/bash
+      check_mode: false
       changed_when: false
 
     - name: If recursion returned nothing, try public resolver fallback

@@ -12,8 +12,8 @@
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
     step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
-    step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') }}"
-    step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
+    step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') | trim }}"
+    step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') | trim }}"
 
   roles:
     - lxc_base
@@ -23,7 +23,6 @@
       ansible.builtin.wait_for_connection:
         timeout: 300
         delay: 2
-        sleep: 3
 
     - name: Gather facts after the guest is reachable
       ansible.builtin.setup:
@@ -44,6 +43,15 @@
           - tar
         state: present
         update_cache: true
+
+    - name: Assert step-ca bootstrap passwords are non-empty
+      ansible.builtin.assert:
+        that:
+          - step_ca_password | length > 0
+          - step_ca_provisioner_password | length > 0
+        fail_msg: >-
+          STEP_CA_PASSWORD and STEP_CA_PROVISIONER_PASSWORD must be set to
+          non-empty values in the runtime environment before step-ca bootstrap.
 
     - name: Ensure temporary public DNS fallback so downloads succeed
       ansible.builtin.shell: |

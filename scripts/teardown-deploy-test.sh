@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Repeatable pve-test teardown/deploy harness.
+# Repeatable teardown/deploy harness with explicit target selection.
 #
 # Safe-by-default phases:
 #   source-preflight   non-destructive source-only validation
@@ -16,14 +16,22 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WITH_SECRETS="${REPO_ROOT}/with-secrets"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
 HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
-PVE_TEST_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+if [[ "${TARGET_NODE_EXPECTED}" == "pve-test" ]]; then
+  DEFAULT_TARGET_PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.pve-test"
+else
+  DEFAULT_TARGET_PVE_HOST="${PVE_PROD_FQDN:-${TARGET_NODE_EXPECTED}.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.${TARGET_NODE_EXPECTED}"
+fi
+WITH_SECRETS="${TEARDOWN_WITH_SECRETS:-${REPO_ROOT}/with-secrets}"
+TARGET_PVE_HOST="${TEARDOWN_PVE_HOST:-${DEFAULT_TARGET_PVE_HOST}}"
+TARGET_ENV_FILE="${TEARDOWN_ENV_FILE:-${REPO_ROOT}/${DEFAULT_ENV_HINT}}"
 REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
@@ -523,7 +531,7 @@ run_dns_nonempty_check() {
     ' _ "${resolver}" "${fqdn}"
 }
 
-guard_pve_test() {
+guard_target() {
   local output
   # shellcheck disable=SC2016
   output="$("${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node')"
@@ -721,7 +729,7 @@ PY
 resolve_stack_specs() {
   local group="$1"
 
-  python3 - "${group}" "${INVENTORY_FILE}" "${TERRAFORM_LXC}" <<'PY'
+  bash -lc "set -a && source '${REPO_ROOT}/.env' && source '${TARGET_ENV_FILE}' && python3 - '${group}' '${INVENTORY_FILE}' '${TERRAFORM_LXC}'" <<'PY'
 import os
 import re
 import sys
@@ -923,7 +931,7 @@ require_live_env_contract() {
     return 0
   fi
 
-  log "ERROR Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}"). Source your environment first (for example: source .env && source .env.pve-test). source-preflight is source-only and does not require these values."
+  log "ERROR Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}"). Source your environment first (for example: source .env && source ${DEFAULT_ENV_HINT}). source-preflight is source-only and does not require these values."
   set_phase_failure_context \
     "live-env-contract" \
     "require_live_env_contract" \
@@ -1250,7 +1258,7 @@ validate_backup_artifacts_present() {
     log "WARNING backup evidence artifacts missing under ${backup_root} (advisory only)"
   fi
 
-  log "backup evidence check complete (advisory only for fully destructible pve-test)"
+  log "backup evidence check complete"
 }
 
 stack_name() {
@@ -1271,10 +1279,10 @@ stack_apply() {
   local stack
   stack="$(stack_name "${spec}")"
 
-  guard_pve_test
+  guard_target
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt apply -auto-approve"
-  guard_pve_test
+  guard_target
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
   validate_stack_smoke "${spec}"
@@ -1286,11 +1294,11 @@ stack_destroy() {
   stack="$(stack_name "${spec}")"
   vmid="$(stack_vmid "${spec}")"
 
-  guard_pve_test
+  guard_target
   run_logged "destroy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
   run_logged "verify-destroy-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
+    ssh -F /dev/null "root@${TARGET_PVE_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
 
 validate_stack_smoke() {
@@ -1301,7 +1309,7 @@ validate_stack_smoke() {
   ip="$(stack_ip "${spec}")"
 
   run_logged "pct-status-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
+    ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
 
   case "${stack}" in
     portainer-stack)
@@ -1317,7 +1325,7 @@ validate_stack_smoke() {
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
       ;;
     dns-stack)
       run_logged "health-${stack}-authoritative" dig "@${ip}" +short "${LAB_FQDN_TRAEFIK}"
@@ -1363,7 +1371,7 @@ classify_pct_capture_failure() {
 
   if grep -Eq 'Could not resolve hostname|Temporary failure in name resolution|Name or service not known' "${pct_log}"; then
     PLATFORM_PCT_STATUS="blocked"
-    PLATFORM_PCT_DETAIL="status collection blocked: operator host cannot resolve ${PVE_TEST_HOST}"
+    PLATFORM_PCT_DETAIL="status collection blocked: operator host cannot resolve ${TARGET_PVE_HOST}"
     return 0
   fi
 
@@ -1419,7 +1427,7 @@ probe_stack_health() {
     ci-runner-01)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"; then
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="github actions runner service running"
       else
@@ -1547,7 +1555,7 @@ generate_platform_status_report() {
     docker_log="${LOG_DIR}/platform-status-${stack}-docker.log"
     listeners_log="${LOG_DIR}/platform-status-${stack}-listeners.log"
 
-    if run_status_capture "${pct_log}" ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct status '${vmid}'"; then
+    if run_status_capture "${pct_log}" ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}'"; then
       pct_status="$(awk -F': ' '/^status:/ {print $2; exit}' "${pct_log}")"
       if [[ -z "${pct_status}" ]]; then
         pct_status="unknown"
@@ -1565,10 +1573,10 @@ generate_platform_status_report() {
 
     if [[ "${pct_status}" == "running" ]]; then
       run_status_capture "${docker_log}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
           "pct exec '${vmid}' -- sh -lc 'if command -v docker >/dev/null 2>&1; then docker ps --format \"{{.Names}}|{{.Status}}|{{.Ports}}\"; else echo docker-unavailable; fi'" || true
       run_status_capture "${listeners_log}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
           "pct exec '${vmid}' -- sh -lc 'if command -v ss >/dev/null 2>&1; then ss -ltnp; else echo ss-unavailable; fi'" || true
 
       probe_stack_health "${stack}" "${vmid}" "${ip}"
@@ -1693,7 +1701,7 @@ run_source_preflight_checks() {
 run_live_preflight_checks() {
   local authentik_url
   require_live_env_contract
-  guard_pve_test
+  guard_target
   run_logged "validate-storage-contract-live" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/validate-storage-contract.py" \
     --manifest "${TERRAFORM_LXC}/storage/${TARGET_NODE_EXPECTED}.yaml" \
@@ -1787,7 +1795,7 @@ phase_platform_status() {
   log "evidence_dir=${EVIDENCE_DIR}"
   record_working_tree_state
   record_branch_and_commit
-  guard_pve_test
+  guard_target
   load_stack_specs all specs
   set_current_phase_stack_specs "${specs[@]}"
   generate_platform_status_report "${specs[@]}"
@@ -1845,7 +1853,7 @@ phase_activate_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
-  guard_pve_test
+  guard_target
   authentik_url="$(get_authentik_url)" || return 1
   wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
@@ -1854,11 +1862,11 @@ phase_activate_edge() {
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
 
-  guard_pve_test
+  guard_target
   run_logged "publish-coredns" \
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
 
-  guard_pve_test
+  guard_target
   run_logged "publish-traefik" \
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
@@ -1886,7 +1894,7 @@ phase_final_validation() {
   create_evidence_dirs
   record_working_tree_state
   require_live_env_contract
-  guard_pve_test
+  guard_target
   authentik_url="$(get_authentik_url)" || return 1
 
   for host in "${BROWSER_HOSTS[@]}"; do

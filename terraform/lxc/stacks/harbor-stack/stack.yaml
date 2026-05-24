@@ -3,7 +3,6 @@ hostname: harbor-stack
 ip_address: "${lab_ip_harbor}/24"
 gateway: "${lab_gw_infra}"
 dns_server: "${lab_gw_infra}"
-proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 40010
@@ -34,7 +33,7 @@ extra_mount_path: "/var/lib/harbor"
 extra_mount_size: "100G"
 extra_mount_profile: durable-default
 
-# pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: ""  # No apt proxy on first Harbor deploy — pulls from Docker Hub directly

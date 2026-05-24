@@ -98,7 +98,7 @@
         url: "https://{{ harbor_lab_fqdn_authentik_internal }}:9443/-/health/live/"
         method: GET
         status_code: 200
-        validate_certs: true
+        validate_certs: false
       register: harbor_authentik_health
       failed_when: false
       changed_when: false
@@ -124,6 +124,7 @@
           - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
           - --authentik-url
           - "https://{{ harbor_lab_fqdn_authentik_internal }}:9443"
+          - --no-verify-tls
           - --apply
           - --json
       register: harbor_authentik_reconcile
@@ -133,5 +134,34 @@
         - (harbor_authentik_health.status | default(0)) == 200
       delegate_to: localhost
       run_once: true
+
+    - name: Determine Harbor OIDC readiness for this run
+      ansible.builtin.set_fact:
+        harbor_postconfigure_oidc_ready: >-
+          {{
+            (harbor_postconfigure_oidc_enabled | bool)
+            and ((harbor_authentik_health.status | default(0)) == 200)
+            and (harbor_authentik_reconcile is defined)
+            and not (harbor_authentik_reconcile is skipped)
+            and ((harbor_authentik_reconcile.rc | default(0)) == 0)
+          }}
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
+    - name: Defer Harbor OIDC config until Authentik reconcile succeeds
+      ansible.builtin.debug:
+        msg: >-
+          Harbor OIDC was requested but Authentik client reconcile did not run
+          successfully in this pass, so Harbor OIDC config is deferred to keep
+          Harbor out of a partial OIDC state.
+      when:
+        - harbor_postconfigure_oidc_enabled
+        - not (harbor_postconfigure_oidc_ready | default(false) | bool)
+      delegate_to: localhost
+      run_once: true
   roles:
-    - harbor_postconfigure
+    - role: harbor_postconfigure
+      vars:
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+        harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"

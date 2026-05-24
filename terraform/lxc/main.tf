@@ -54,6 +54,7 @@ locals {
   # current bridge defaults unless they opt in with stack.network.zone.
   stack_network                 = try(local.stack.network, null)
   stack_network_zone            = try(local.stack.network.zone, null)
+  requested_network_access_path = try(local.stack.network.access_path, null)
   effective_proxmox_node        = try(local.stack.proxmox_node, var.proxmox_node)
   storage_manifest_default_path = "${local.lxc_root}/storage/${local.effective_proxmox_node}.yaml"
   effective_storage_manifest_path = coalesce(
@@ -133,8 +134,15 @@ locals {
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
   effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
+  normalized_network_access_path = local.requested_network_access_path == null ? null : try(lower(trimspace(local.requested_network_access_path)), null)
+  # Session 4 migration contract:
+  # - sdn_vnet defaults to direct SSH
+  # - bridge/default path preserves ProxyJump compatibility behavior
+  effective_network_access_path = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? coalesce(local.normalized_network_access_path, "direct") : coalesce(local.normalized_network_access_path, "proxyjump_compat")
+
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
+  use_proxyjump         = local.effective_network_access_path == "proxyjump_compat" && local.effective_pve_host != ""
 
   effective_network_bridge = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.bridge, "vmbr0") : try(local.stack.network_bridge, "vmbr0")
   effective_vlan_tag       = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.vlan_tag, null) : null
@@ -173,7 +181,7 @@ locals {
       )
     ]
   }) : tomap({})
-  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(file(local.effective_zone_members_index_path)) : null
+  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(templatefile(local.effective_zone_members_index_path, local.stack_template_vars)) : null
   zone_members                 = local.generated_zone_members_index != null ? try(tomap(local.generated_zone_members_index.zones), tomap({})) : local.inferred_zone_members
 
   inbound_zone_policies = try([
@@ -244,6 +252,20 @@ check "network_layer_attachment_type_is_supported" {
   assert {
     condition     = local.stack_network_zone == null || contains(["bridge", "sdn_vnet"], local.resolved_attachment_type)
     error_message = "Network intent attachments must use type 'bridge' or 'sdn_vnet'."
+  }
+}
+
+check "network_access_path_is_supported" {
+  assert {
+    condition     = local.normalized_network_access_path == null || contains(["direct", "proxyjump_compat"], local.normalized_network_access_path)
+    error_message = "stack.network.access_path must be either 'direct' or 'proxyjump_compat' when set."
+  }
+}
+
+check "network_access_path_proxyjump_requires_pve_host" {
+  assert {
+    condition     = local.effective_network_access_path != "proxyjump_compat" || local.effective_pve_host != ""
+    error_message = "stack.network.access_path is 'proxyjump_compat' but no pve_host is available for ProxyJump."
   }
 }
 
@@ -401,21 +423,24 @@ resource "local_file" "network_sdn_vars" {
 
   filename = "${local.stack_dir}/network-sdn-vars.yml"
   content = yamlencode({
-    network_sdn_enable     = true
-    network_sdn_target     = local.effective_target_node
-    network_sdn_pve_host   = local.effective_pve_host
-    network_sdn_vmid       = try(local.stack.vmid, null)
-    network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
-    network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
-    network_sdn_bridge     = try(local.resolved_sdn_attachment.bridge, null)
-    network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
-    network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
-    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
-    network_sdn_subnet     = local.resolved_sdn_subnet
-    network_sdn_gateway    = local.resolved_sdn_gateway
-    network_sdn_snat       = local.resolved_sdn_snat
-    network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
+    network_sdn_enable            = true
+    network_sdn_target            = local.effective_target_node
+    network_sdn_pve_host          = local.effective_pve_host
+    network_sdn_expected_target   = local.effective_target_node
+    network_sdn_expected_pve_host = local.effective_pve_host
+    network_sdn_allow_destroy     = local.effective_target_node == "pve-test"
+    network_sdn_vmid              = try(local.stack.vmid, null)
+    network_sdn_zone              = try(local.resolved_sdn_attachment.zone, null)
+    network_sdn_zone_type         = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_bridge            = try(local.resolved_sdn_attachment.bridge, null)
+    network_sdn_nodes             = try(local.resolved_sdn_attachment.nodes, [])
+    network_sdn_vnet              = try(local.resolved_sdn_attachment.vnet, null)
+    network_sdn_vlan_tag          = try(local.resolved_sdn_attachment.vlan_tag, null)
+    network_sdn_vnet_alias        = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
+    network_sdn_subnet            = local.resolved_sdn_subnet
+    network_sdn_gateway           = local.resolved_sdn_gateway
+    network_sdn_snat              = local.resolved_sdn_snat
+    network_sdn_ssh_key           = pathexpand(var.ssh_private_key_path)
   })
 }
 
@@ -458,6 +483,15 @@ resource "null_resource" "configure_network_sdn_attachment" {
       cat >"$tmp_vars_file" <<'EOF'
 ${self.triggers.sdn_vars}
 EOF
+      if [ "$${NETWORK_SDN_ALLOW_DESTROY_OVERRIDE:-}" = "true" ]; then
+        printf '%s\n' '"network_sdn_allow_destroy": true' >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_TARGET:-}" ]; then
+        printf '%s\n' '"network_sdn_expected_target": '"'"'"$${NETWORK_SDN_EXPECTED_TARGET}"'"'"'' >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_PVE_HOST:-}" ]; then
+        printf '%s\n' '"network_sdn_expected_pve_host": '"'"'"$${NETWORK_SDN_EXPECTED_PVE_HOST}"'"'"'' >>"$tmp_vars_file"
+      fi
       ansible-playbook \
         -i localhost, \
         playbooks/destroy-network-sdn-vnet.yml \
@@ -531,6 +565,8 @@ resource "local_file" "ansible_inventory" {
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host
+    ssh_access_mode     = local.effective_network_access_path
+    use_proxyjump       = local.use_proxyjump
   })
 }
 
