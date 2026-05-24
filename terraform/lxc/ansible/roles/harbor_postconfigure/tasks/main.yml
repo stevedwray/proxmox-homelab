@@ -123,6 +123,15 @@
   delegate_to: localhost
   no_log: true
 
+- name: Determine whether Harbor must preserve OIDC auth migration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_preserve_oidc_migration: >-
+      {{
+        (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
+        and harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+      }}
+  delegate_to: localhost
+
 - name: Create Harbor breakglass user when missing
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users"
@@ -141,17 +150,19 @@
   when:
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
     - harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+    - not (harbor_postconfigure_preserve_oidc_migration | default(false) | bool)
   delegate_to: localhost
   no_log: true
 
-- name: Skip Harbor breakglass local-user creation in OIDC mode
+- name: Skip Harbor breakglass local-user creation while Harbor is OIDC-managed
   ansible.builtin.debug:
     msg: >-
-      Skipping Harbor breakglass local-user creation because Harbor forbids creating
-      new local users after auth_mode is switched to oidc_auth. The built-in admin
-      account remains the local recovery path.
+      Skipping Harbor breakglass local-user creation because Harbor OIDC is
+      managed for this deployment and creating local users before auth_mode is
+      switched would block the later OIDC migration. The built-in admin account
+      remains the local recovery path.
   when:
-    - harbor_postconfigure_effective_auth_mode == 'oidc_auth'
+    - (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
   delegate_to: localhost
 

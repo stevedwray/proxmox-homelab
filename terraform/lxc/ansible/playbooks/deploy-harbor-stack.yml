@@ -98,7 +98,7 @@
         url: "https://{{ harbor_lab_fqdn_authentik_internal }}:9443/-/health/live/"
         method: GET
         status_code: 200
-        validate_certs: true
+        validate_certs: false
       register: harbor_authentik_health
       failed_when: false
       changed_when: false
@@ -124,6 +124,7 @@
           - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
           - --authentik-url
           - "https://{{ harbor_lab_fqdn_authentik_internal }}:9443"
+          - --no-verify-tls
           - --apply
           - --json
       register: harbor_authentik_reconcile
@@ -162,4 +163,5 @@
   roles:
     - role: harbor_postconfigure
       vars:
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
         harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"
