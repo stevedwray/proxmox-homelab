@@ -4,6 +4,7 @@ docs/sessions/evidence/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
+docs/productionize-refactor/handoffs/*handoff*.md
 # Environment files
 storage-audit
 .env.local

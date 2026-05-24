@@ -14,12 +14,12 @@ This refactor is not a single cutover. It is a staged program covering:
 - migration sequencing from `pve-test` to `pve`
 - early validation and canary workflows
 
-Current migration sequence status:
+Current migration sequence status as of May 25, 2026:
 
-- `monitoring-stack` canary completed
-- `portainer-stack` canary completed
-- `netbox-stack` canary completed
-- `ci-runner-01` is the next production migration after netbox
+- production `pve` recovery is operational for the currently validated access path
+- operator sign-in is confirmed through Authentik for `portainer`, `grafana`, `harbor`, and `netbox`
+- the current question is promotion and production day-2 follow-up work, not active break/fix
+- `ci-runner-01` remains the next production migration after the already-recovered service set
 
 ## Branch Model
 
@@ -27,9 +27,13 @@ Primary branch for this refactor:
 
 - `refactor/productionize`
 
-Base branch:
+Original base branch for the refactor program:
 
 - `baseline/teardown-validated`
+
+Production promotion target now that `pve` has been validated:
+
+- `prod/pve-infra`
 
 Recommended child-branch pattern during implementation:
 
@@ -45,6 +49,8 @@ Working rule:
 - keep `refactor/productionize` as the integration branch for this whole
   program
 - do not promote directly from partial work branches
+- once the integrated production branch state is validated on `pve`, promote it
+  to `prod/pve-infra` rather than `baseline/teardown-validated`
 
 ## Documents
 

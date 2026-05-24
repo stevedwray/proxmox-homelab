@@ -13,7 +13,7 @@ This plan is based on:
 
 ## Status Update
 
-As of May 23, 2026:
+As of May 25, 2026:
 
 - the `apt-cacher-stack` production canary on `pve` passed after the VLAN 40
   trunk fix
@@ -24,6 +24,10 @@ As of May 23, 2026:
 - the `monitoring-stack` canary on `pve` completed and passed
 - the `portainer-stack` canary on `pve` completed and passed
 - the `netbox-stack` canary on `pve` completed and passed
+- operator sign-in is currently confirmed through Authentik for `portainer`,
+  `grafana`, `harbor`, and `netbox`
+- the live `pve` branch state now looks ready for promotion planning to a
+  production-focused long-lived branch instead of more break/fix work
 - the next low-risk production migration after `netbox-stack` is
   `ci-runner-01`
 - monitoring canary closure evidence is captured under
@@ -65,9 +69,13 @@ Refactor integration branch:
 
 - `refactor/productionize`
 
-Base:
+Original refactor base:
 
 - `baseline/teardown-validated`
+
+Production promotion target after `pve` validation:
+
+- `prod/pve-infra`
 
 Recommended implementation branches:
 
@@ -84,6 +92,8 @@ Branching rule:
 - merge each slice into `refactor/productionize`
 - keep productionization planning and implementation grouped under this branch
   family until the whole program is coherent
+- once the production branch state is validated on `pve`, promote it to
+  `prod/pve-infra`
 
 ## Task Breakdown
 

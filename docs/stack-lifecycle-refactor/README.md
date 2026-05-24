@@ -15,6 +15,7 @@ Use this tree as the durable context for future work. Do not rely on chat histor
 - [plan.md](./plan.md): phased roadmap, scope, exemplars, and rollout
 - [execution-plan.md](./execution-plan.md): autonomous execution roadmap and step inventory
 - [handoff.md](./handoff.md): current state for the next session
+- [day-2-credential-rotation.md](./day-2-credential-rotation.md): supported credential rotation path and current limits
 - [validation.md](./validation.md): validation policy and required checks
 - [inventory-model.md](./inventory-model.md): shared stack contract and generated artifact model
 - [drift-policy.md](./drift-policy.md): managed, observed, and adoptable drift rules
@@ -36,6 +37,8 @@ Then confirm the current phase and work only on the next scoped item unless a bl
 
 - Terraform owns infrastructure lifecycle and Proxmox-side state.
 - Ansible owns in-container managed state and day-2 maintenance.
+- Supported credential rotation should update SOPS first, then use per-stack
+  Ansible reconcile to push the new value.
 - `stack.yaml` will evolve into the shared stack contract.
 - Generated artifacts remain derived, not source of truth.
 - Terraform may offer an approved safe path to run day-2 reconciliation after infra changes.

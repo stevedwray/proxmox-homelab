@@ -3,30 +3,32 @@
 ## Branch Model
 
 ```
-work/* branches                    ← active development
-       ↓  full infrastructure teardown + redeploy validated
-baseline/teardown-validated        ← infrastructure foundation known good
-       ↓  application stacks deploy successfully on top
-dev/pve-test                       ← application deployment known good
-       ↓  stable and tested
-main
+work/*, feat/*, fix/*, task/*      ← active development
+       ├─→ baseline/teardown-validated  ← pve-test infrastructure foundation known good
+       │         ↓  application stacks deploy successfully on top
+       │   dev/pve-test                  ← pve-test application deployment known good
+       │         ↓  stable and tested
+       │        main
+       └─→ prod/pve-infra                ← production pve infrastructure/services known good
 ```
 
 | Branch | Meaning | Promotion gate |
 |---|---|---|
 | `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
 | `dev/pve-test` | Application stacks deploy successfully on the infrastructure. | Validate application stacks on top of `baseline/teardown-validated`. |
+| `prod/pve-infra` | Production-targeted infrastructure and production access flows are validated on `pve`. | Validate the intended production `pve` stacks and operator sign-in paths from the source branch before promotion. |
 
-Do not develop directly in either branch. Active development happens on `work/*` or short-lived `feat/`, `fix/`, `task/` branches.
-Promotion merges into either branch are allowed once the corresponding gate is satisfied.
-If the operator explicitly names a merge target (`baseline/teardown-validated` or `dev/pve-test`), use that exact target and do not silently retarget.
+Do not develop directly in any promotion branch. Active development happens on `work/*` or short-lived `feat/`, `fix/`, `task/` branches.
+Promotion merges into a promotion branch are allowed once the corresponding gate is satisfied.
+If the operator explicitly names a merge target (`baseline/teardown-validated`, `dev/pve-test`, or `prod/pve-infra`), use that exact target and do not silently retarget.
 
 ## Branching
 
 - Infrastructure work: cut `work/*` from the intended stable base branch for that effort, normally `baseline/teardown-validated`; validate through a full teardown + redeploy cycle; promote to `baseline/teardown-validated`.
 - Application stack work: cut `feat/`, `fix/`, or `task/` from the intended stable base branch for that effort, normally `baseline/teardown-validated`; validate stacks on top of `baseline/teardown-validated`; promote to `dev/pve-test`.
+- Production `pve` infrastructure/service work: cut `work/*` from `prod/pve-infra` once it exists, or from the current production work branch while the promotion is being established; validate on `pve`; promote to `prod/pve-infra`.
 - AI tooling / workflow changes: cut `feat/` from the current working HEAD; merge directly to `dev/pve-test` (no infrastructure gate required).
-- `dev/pve-test` and `baseline/teardown-validated` are promotion branches. Do not develop directly on them, but do branch from the appropriate one when starting new work.
+- `dev/pve-test`, `baseline/teardown-validated`, and `prod/pve-infra` are promotion branches. Do not develop directly on them, but do branch from the appropriate one when starting new work.
 - Validate in the short-lived branch before merging. If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `dev/pve-test` → `main` only when stable and tested on the test server.
 - After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync.

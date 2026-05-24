@@ -5,11 +5,13 @@ on:
     branches:
       - main
       - 'dev/pve-test'
+      - 'prod/pve-infra'
       - 'dev/**'
   pull_request:
     branches:
       - main
       - 'dev/pve-test'
+      - 'prod/pve-infra'
   workflow_dispatch:
     inputs:
       image_ref:
