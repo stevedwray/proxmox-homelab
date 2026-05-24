@@ -28,8 +28,7 @@ Use the current branch state exactly as-is:
 - branch: `work/productionize-06-canary-validation`
 - HEAD includes:
   - `860df0a` `fix(prod): recover netbox bootstrap on pve`
-  - the uncommitted but reviewed Portainer targeting fix in
-    `terraform/lxc/reconcile-edge.py`
+  - `81d6c33` `fix(prod): unblock portainer proof rerun on pve`
 
 Supporting handbacks for the current repaired state:
 
@@ -102,6 +101,7 @@ Before destructive action, confirm:
 - the current branch is still `work/productionize-06-canary-validation`
 - the current HEAD still includes the verified NetBox recovery commit
 - the working tree still includes the reviewed Portainer targeting fix
+  already committed in `81d6c33`
 
 ## Suggested Work Sequence
 

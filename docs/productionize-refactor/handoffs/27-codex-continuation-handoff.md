@@ -186,6 +186,22 @@ What that failure did not prove:
   reconcile remained in `dry-run`, so the creation path was not actually
   exercised
 
+### Portainer targeted recovery completed
+
+Tracked outcome:
+
+- `docs/productionize-refactor/handoffs/31-portainer-prod-targeting-fix-handback.md`
+
+What that targeted recovery proved:
+
+- the Portainer blocker was the production target-preflight path in
+  `reconcile-edge.py`
+- `EGR200` was resolved by making the preflight wrapper target-aware
+- Portainer reconcile reached real apply mode on `pve`
+- the previously missing Authentik-owned Portainer route objects were created
+- targeted `./with-secrets-prod ./scripts/provision.sh --stack portainer-stack`
+  succeeded
+
 Current practical state on `pve` after the failed full proof rerun:
 
 - present:
