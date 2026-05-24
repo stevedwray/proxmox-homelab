@@ -124,60 +124,82 @@ Known issue in stashed patch:
 - `deploy-netbox-stack.yml` admin-sync superuser call was accidentally nested
   inside `ensure_admin_user()`, causing recursion.
 
-## Current Copilot Work In Progress
+### Secret key-surface parity
 
-Copilot has been handed a prompt to run a fresh full infra-only teardown/rebuild
-retry on production `pve`, using only committed source fixes and without
-applying `stash@{0}`.
+The non-secret env baseline convergence is now complemented by a narrow secret
+key-surface cleanup.
 
-Expected handback:
+Current state:
+
+- prod SOPS now includes the keys that previously existed only in
+  `terraform/secrets.enc.yaml`
+- no existing prod secret values were intentionally changed during this cleanup
+- the remaining key-surface difference is intentional:
+  `PORTAINER_ADMIN_PASSWORD` exists only in production
+
+This means the remaining NetBox issue should not be treated as missing secret
+keys on `pve`.
+
+## Status Since Handoff Creation
+
+The fresh full infra-only teardown/rebuild retry has already completed and
+failed.
+
+Tracked outcome:
 
 - `docs/productionize-refactor/handoffs/26-pve-infra-teardown-rebuild-retry-handback.md`
 
-Required scope:
+What that retry proved:
 
-- full infra-only teardown/rebuild on `pve`
-- in-scope stacks only:
-  - `ci-runner-01`
-  - `authentik-stack`
-  - `step-ca-stack`
-  - `monitoring-stack`
-  - `dns-stack`
-  - `portainer-stack`
-  - `proxy-stack`
-  - `harbor-stack`
-  - `apt-cacher-stack`
-  - `netbox-stack`
+- all approved in-scope destroy phases succeeded
+- eight stacks rebuilt and provisioned successfully
+- `netbox-stack` apply succeeded
+- `netbox-stack` provision then hung at `Create superuser if not exists`
+- `portainer-stack` was not rebuilt because execution stopped at NetBox
 
-Out of scope:
+Current practical state on `pve`:
 
-- every other `pve` guest
-- storage, templates, backups, unrelated host config
-- `pve-test` VM
-- application stacks and unrelated services
+- present:
+  - `10063` `ci-runner-01`
+  - `20010` `authentik-stack`
+  - `20011` `step-ca`
+  - `20012` `monitoring-stack`
+  - `20013` `dns-stack`
+  - `30010` `proxy-stack`
+  - `40010` `harbor-stack`
+  - `40011` `apt-cacher-stack`
+  - `40012` `netbox-stack`
+  - `910` `debian13-template-builder`
+- absent:
+  - `20020` `portainer-stack`
 
-Required production env/approval details:
+This means the broad parity/root-cause search has narrowed substantially. The
+next task should focus on the source-controlled NetBox day-2/bootstrap path,
+not on repeating the full rebuild immediately.
 
-- `TASK_APPROVAL=pve-infra-teardown-rebuild-retry-20260524`
-- `NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true`
-- `NETWORK_SDN_EXPECTED_TARGET=pve`
-- `NETWORK_SDN_EXPECTED_PVE_HOST=pve.gibbsgreatly.xyz`
+## Recommended Next Copilot Scope
+
+Use a narrow Copilot handoff to fix and validate the NetBox bootstrap logic on
+the existing `netbox-stack`.
+
+Prepared handoff:
+
+- `docs/productionize-refactor/handoffs/28-netbox-day2-bootstrap-fix.md`
+- `docs/productionize-refactor/handoffs/29-netbox-memory-rerun.md`
 
 ## Review Rules For The Next Session
 
-When Copilot returns, review the handback before trusting the result.
+When Copilot returns from the narrow NetBox task, review the handback before
+trusting the result.
 
 Do not accept a success claim unless the handback and evidence show:
 
-- clean starting git status
+- the exact bootstrap command(s) that were blocking were identified
+- the source-controlled fix path is explained
 - `stash@{0}` was not applied
-- planner/preflight evidence path
-- execution evidence path
-- every in-scope stack destroy phase result
-- every in-scope stack apply/provision result
-- post-redeploy validation result
-- direct verification that out-of-scope guests remained untouched
-- no misleading completion marker that contradicts failed logs
+- targeted validation stayed scoped to `netbox-stack`
+- the resulting live state of `netbox-stack` is captured
+- any remaining risks or operator follow-ups are explicit
 
 If a stack fails:
 
@@ -188,11 +210,19 @@ If a stack fails:
 
 ## Current Practical Next Step
 
-Wait for Copilot's `26` handback, then review it.
+Hand off the narrow NetBox day-2/bootstrap fix to Copilot using:
 
-If the full rebuild succeeds, the next phase is post-redeploy validation and
-then functional tests.
+- `docs/productionize-refactor/handoffs/28-netbox-day2-bootstrap-fix.md`
+- `docs/productionize-refactor/handoffs/29-netbox-memory-rerun.md`
 
-If the full rebuild fails, classify the failure as source/config/ordering/env
-and decide whether to fix source and rerun the full rebuild, rather than
-repairing the specific live container in place.
+The immediate next execution step should be the targeted memory-bump apply and
+rerun handoff in `29`, because the prior validation was blocked by a
+non-responsive `1 GiB` NetBox container under severe pressure.
+
+If that targeted rerun succeeds and `netbox-stack` can be reprovisioned
+cleanly, the next decision is whether to restore `portainer-stack`
+operationally first or schedule another full infra-only proof run.
+
+If the targeted fix fails, keep the work bounded to NetBox bootstrap diagnosis
+rather than broadening back into platform-parity or full-teardown work without
+explicit operator approval.

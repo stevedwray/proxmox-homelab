@@ -7,7 +7,7 @@ network:
   zone: infra_seg
 vmid: 40012
 cores: 2
-memory: 1024
+memory: 4096
 swap: 4096
 rootfs_size: 8
 storage_profile: platform-default
