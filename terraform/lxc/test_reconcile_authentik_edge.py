@@ -735,6 +735,56 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             payload["redirect_uris"],
         )
 
+    def test_harbor_oidc_apply_updates_existing_application_launch_url(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient(
+                applications=[
+                    {
+                        "pk": 302,
+                        "name": "edge-harbor-stack-harbor-app",
+                        "slug": "edge-harbor-stack-harbor",
+                        "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                        "provider": 402,
+                    }
+                ],
+                oauth2_providers=[
+                    {
+                        "pk": 402,
+                        "name": "edge-harbor-stack-harbor-provider",
+                        "client_id": "harbor",
+                        "redirect_uris": [
+                            {"matching_mode": "strict", "url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
+                        ],
+                    }
+                ],
+            )
+
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
+                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(result.write_count, 1)
+        self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertIn(
+            ("application", "update", {"meta_launch_url": "https://harbor.gibbsgreatly.xyz/"}),
+            client.writes,
+        )
+
     def test_harbor_oidc_requires_secret_before_writes(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "harbor.yaml"

@@ -1216,8 +1216,7 @@ def reconcile_authentik(
                     )
                 )
                 if apply and not route_stops and not stop_conditions and app_id:
-                    app_slug = app_obj.get("slug") or intent.app_slug
-                    updated = client.update_application(app_slug, app_patch)
+                    updated = client.update_application(app_id, app_patch)
                     write_count += 1
                     app_obj.update(updated)
             else:
