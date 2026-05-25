@@ -104,6 +104,7 @@ class FakeClient:
         )
         self.request_methods: list[str] = []
         self.writes: list[tuple[str, str, dict]] = []
+        self.application_update_targets: list[str] = []
         self._next_id = 1000
 
     def _new_id(self) -> int:
@@ -179,9 +180,10 @@ class FakeClient:
 
     def update_application(self, application_id: str, payload: dict):
         self.request_methods.append("PATCH")
+        self.application_update_targets.append(str(application_id))
         self.writes.append(("application", "update", dict(payload)))
         for app in self.applications:
-            if str(app.get("pk")) == str(application_id):
+            if str(app.get("slug")) == str(application_id):
                 app.update(payload)
                 return app
         raise AssertionError("application not found")
@@ -780,6 +782,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertGreaterEqual(result.write_count, 1)
         self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertEqual(["edge-harbor-stack-harbor"], client.application_update_targets)
         self.assertIn(
             ("application", "update", {"meta_launch_url": "https://harbor.gibbsgreatly.xyz/"}),
             client.writes,
