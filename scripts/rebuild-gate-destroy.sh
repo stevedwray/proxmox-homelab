@@ -13,6 +13,11 @@ SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ss
 EXECUTE=false
 CONTAINER_STATE_ADDRESS="module.lxc.proxmox_virtual_environment_container.docker_host"
 SELECTED_STACK=""
+DEFAULT_TIMEOUT_CLONE=1800
+DEFAULT_TIMEOUT_CREATE=1800
+DEFAULT_TIMEOUT_DELETE=60
+DEFAULT_TIMEOUT_START=300
+DEFAULT_TIMEOUT_UPDATE=1800
 
 usage() {
   cat <<'EOF'
@@ -220,6 +225,72 @@ state_list_for_stack() {
   "${WITH_SECRETS}" terragrunt state list --working-dir "terraform/lxc/stacks/${stack}" 2>/dev/null || true
 }
 
+normalize_destroy_state_contract() {
+  local stack="$1"
+  local vmid="$2"
+  local state_before state_after temp_input temp_state
+
+  state_before="$(${WITH_SECRETS} terragrunt state pull --working-dir "terraform/lxc/stacks/${stack}")"
+  temp_input="$(mktemp)"
+  printf '%s\n' "${state_before}" > "${temp_input}"
+  state_after="$(python3 - "${temp_input}" "${vmid}" "${DEFAULT_TIMEOUT_CLONE}" "${DEFAULT_TIMEOUT_CREATE}" "${DEFAULT_TIMEOUT_DELETE}" "${DEFAULT_TIMEOUT_START}" "${DEFAULT_TIMEOUT_UPDATE}" <<'PY'
+import json
+import sys
+
+state_path = sys.argv[1]
+vmid = int(sys.argv[2])
+timeout_clone = int(sys.argv[3])
+timeout_create = int(sys.argv[4])
+timeout_delete = int(sys.argv[5])
+timeout_start = int(sys.argv[6])
+timeout_update = int(sys.argv[7])
+
+with open(state_path, encoding="utf-8") as handle:
+    state = json.load(handle)
+changed = False
+
+for resource in state.get("resources", []):
+    if resource.get("module") != "module.lxc":
+        continue
+    if resource.get("type") != "proxmox_virtual_environment_container":
+        continue
+    if resource.get("name") != "docker_host":
+        continue
+
+    for instance in resource.get("instances", []):
+        attributes = instance.setdefault("attributes", {})
+        for key, value in {
+            "timeout_clone": timeout_clone,
+            "timeout_create": timeout_create,
+            "timeout_delete": timeout_delete,
+            "timeout_start": timeout_start,
+            "timeout_update": timeout_update,
+            "vm_id": vmid,
+        }.items():
+            if attributes.get(key) is None:
+                attributes[key] = value
+                changed = True
+
+print(json.dumps(state, separators=(",", ":")))
+sys.exit(0 if changed else 10)
+PY
+  )" || {
+    local status=$?
+    rm -f "${temp_input}"
+    if [[ ${status} -eq 10 ]]; then
+      return 0
+    fi
+    fail "unable to normalize imported state contract for ${stack}"
+  }
+  rm -f "${temp_input}"
+
+  temp_state="$(mktemp)"
+  printf '%s\n' "${state_after}" > "${temp_state}"
+  "${WITH_SECRETS}" terragrunt state push --working-dir "terraform/lxc/stacks/${stack}" "${temp_state}" >/dev/null
+  rm -f "${temp_state}"
+  log "State repair: normalized imported timeout/vm_id contract for ${stack}"
+}
+
 ensure_destroy_state_ownership() {
   local stack="$1"
   local vmid="$2"
@@ -227,6 +298,7 @@ ensure_destroy_state_ownership() {
 
   state_output="$(state_list_for_stack "${stack}")"
   if grep -qx "${CONTAINER_STATE_ADDRESS}" <<<"${state_output}"; then
+    normalize_destroy_state_contract "${stack}" "${vmid}"
     return 0
   fi
 
@@ -248,6 +320,7 @@ ensure_destroy_state_ownership() {
       if ! grep -qx "${CONTAINER_STATE_ADDRESS}" <<<"${state_output}"; then
         fail "state repair import did not record ${CONTAINER_STATE_ADDRESS} for ${stack}"
       fi
+      normalize_destroy_state_contract "${stack}" "${vmid}"
       ;;
     *)
       printf '%s\n' "${status_output}" >&2
