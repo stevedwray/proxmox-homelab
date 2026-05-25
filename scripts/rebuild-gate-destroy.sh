@@ -271,6 +271,9 @@ for resource in state.get("resources", []):
                 attributes[key] = value
                 changed = True
 
+  if changed:
+    state["serial"] = int(state.get("serial", 0)) + 1
+
 print(json.dumps(state, separators=(",", ":")))
 sys.exit(0 if changed else 10)
 PY
@@ -366,7 +369,7 @@ print_dry_run_actions() {
 }
 
 run_destroy() {
-  local i stack
+  local i stack vmid
 
   if [[ "${EXECUTE}" == true ]]; then
     stop_running_targets
