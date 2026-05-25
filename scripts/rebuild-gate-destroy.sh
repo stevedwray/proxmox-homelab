@@ -12,15 +12,17 @@ TARGET_HOST=""
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ssh/known_hosts")
 EXECUTE=false
 CONTAINER_STATE_ADDRESS="module.lxc.proxmox_virtual_environment_container.docker_host"
+SELECTED_STACK=""
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/rebuild-gate-destroy.sh [--dry-run|--plan] [--execute]
+  ./scripts/rebuild-gate-destroy.sh [--dry-run|--plan] [--execute] [--stack NAME]
 
 Options:
   --dry-run, --plan   Show target scope and actions without mutating state (default)
   --execute           Stop running target CTs, then run the stack-only Terragrunt destroy
+  --stack NAME        Limit execution to one approved destroy stack
   --help              Show this help text
 EOF
 }
@@ -42,6 +44,11 @@ parse_args() {
         ;;
       --execute)
         EXECUTE=true
+        ;;
+      --stack)
+        shift
+        [[ $# -gt 0 ]] || fail "missing value for --stack"
+        SELECTED_STACK="$1"
         ;;
       --help|-h)
         usage
@@ -108,6 +115,9 @@ collect_stack_specs() {
 
   while IFS= read -r stack_name; do
     [[ -n "${stack_name}" ]] || continue
+    if [[ -n "${SELECTED_STACK}" && "${stack_name}" != "${SELECTED_STACK}" ]]; then
+      continue
+    fi
     stack_yaml="${STACKS_DIR}/${stack_name}/stack.yaml"
     if [[ ! -f "${stack_yaml}" ]]; then
       fail "missing stack.yaml for approved destroy stack ${stack_name}: ${stack_yaml}"
@@ -121,6 +131,9 @@ collect_stack_specs() {
   done < <(approved_destroy_stacks)
 
   if [[ "${#STACK_NAMES[@]}" -eq 0 ]]; then
+    if [[ -n "${SELECTED_STACK}" ]]; then
+      fail "requested stack is not in approved destroy scope: ${SELECTED_STACK}"
+    fi
     fail "no approved destroy stacks found in ${INVENTORY_FILE}"
   fi
 }

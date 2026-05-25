@@ -1344,8 +1344,13 @@ stack_destroy() {
   vmid="$(stack_vmid "${spec}")"
 
   guard_target
-  run_logged "destroy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
+  if [[ "${stack}" == "portainer-stack" ]]; then
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}' && '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
+  else
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
+  fi
   run_logged "verify-destroy-${stack}" \
     ssh -F /dev/null "root@${TARGET_PVE_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
