@@ -117,7 +117,6 @@ LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
 LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
 LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
 LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
-BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY:-}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
 EXPECTED_RUNTIME_DIRTY_PATHS=(
@@ -1945,17 +1944,27 @@ phase_deploy_platform() {
 }
 
 phase_final_validation() {
-  local host fqdn authentik_url bg_host bg_fqdn
+  local host fqdn authentik_url bg_host bg_fqdn browser_dns_target_ip
   create_evidence_dirs
   record_working_tree_state
   require_live_env_contract
   guard_target
   authentik_url="$(get_authentik_url)" || return 1
+  browser_dns_target_ip="${LAB_IP_PROXY:-}"
+
+  if [[ -z "${browser_dns_target_ip}" ]]; then
+    set_phase_failure_context \
+      "resolve-browser-dns-target" \
+      "LAB_IP_PROXY" \
+      "${RUN_LOG}" \
+      "LAB_IP_PROXY is required for final browser DNS validation"
+    return 1
+  fi
 
   for host in "${BROWSER_HOSTS[@]}"; do
     fqdn="${host}.${LAB_DOMAIN}"
-    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
+    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${browser_dns_target_ip}"
+    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${browser_dns_target_ip}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
