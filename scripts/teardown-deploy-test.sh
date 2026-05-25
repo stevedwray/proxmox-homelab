@@ -756,6 +756,22 @@ def normalize_ip(value: str) -> str:
     return clean_cell(value).split("/", 1)[0]
 
 
+PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def expand_stack_placeholders(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        candidates = (name, name.upper(), f"TF_VAR_{name}")
+        for candidate in candidates:
+            value = os.environ.get(candidate)
+            if value:
+                return value
+        return match.group(0)
+
+    return PLACEHOLDER_PATTERN.sub(replace, text)
+
+
 def parse_stack_table(text: str) -> None:
     in_table = False
     for line in text.splitlines():
@@ -797,16 +813,16 @@ def parse_order_section(text: str, header: str) -> list[str]:
 
 
 def read_stack_yaml(stack: str) -> tuple[str, str]:
-    stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
-    if not stack_yaml.is_file():
-        raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
+  stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
+  if not stack_yaml.is_file():
+    raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
 
-    text = os.path.expandvars(stack_yaml.read_text(encoding="utf-8"))
-    vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
-    ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
-    if not vmid_match or not ip_match:
-        raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
-    return vmid_match.group(1), normalize_ip(ip_match.group(1))
+  text = expand_stack_placeholders(stack_yaml.read_text(encoding="utf-8"))
+  vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
+  ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
+  if not vmid_match or not ip_match:
+    raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
+  return vmid_match.group(1), normalize_ip(ip_match.group(1))
 
 
 parse_stack_table(inventory_text)
