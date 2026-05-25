@@ -6,8 +6,9 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 WITH_SECRETS="${REPO_ROOT}/with-secrets"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
+INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 TARGET_NODE_EXPECTED="${REBUILD_GATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
-TARGET_HOST="${REBUILD_GATE_TARGET_HOST:-${PVE_TEST_FQDN:-${PROXMOX_HOST:-${TARGET_NODE_EXPECTED}.local}}}"
+TARGET_HOST=""
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ssh/known_hosts")
 EXECUTE=false
 
@@ -67,7 +68,11 @@ require_pve_test_preflight() {
   if [[ "${node}" != "${TARGET_NODE_EXPECTED}" ]]; then
     fail "preflight failed: expected TF_VAR_proxmox_node=${TARGET_NODE_EXPECTED}, got '${node}'"
   fi
-  log "Preflight passed: TF_VAR_proxmox_node=${node}"
+  TARGET_HOST="$("${WITH_SECRETS}" bash -c 'echo "${REBUILD_GATE_TARGET_HOST:-${PVE_TEST_FQDN:-${PROXMOX_HOST:-${TF_VAR_proxmox_node:-pve-test}.local}}}"' | tr -d '[:space:]')"
+  if [[ -z "${TARGET_HOST}" ]]; then
+    fail "preflight failed: unable to resolve target host from with-secrets environment"
+  fi
+  log "Preflight passed: TF_VAR_proxmox_node=${node}, target_host=${TARGET_HOST}"
 }
 
 read_vmid_from_stack_yaml() {
@@ -83,31 +88,45 @@ read_vmid_from_stack_yaml() {
   ' "${stack_yaml}"
 }
 
+approved_destroy_stacks() {
+  awk '
+    /^## Approved Destroy Order$/ {in_section=1; next}
+    in_section && /^## / {exit}
+    in_section {
+      if (match($0, /^[0-9]+\.[[:space:]]+`([^`]+)`/, matches)) {
+        print matches[1]
+      }
+    }
+  ' "${INVENTORY_FILE}"
+}
+
 collect_stack_specs() {
-  local stack_yaml stack_name vmid
+  local stack_name stack_yaml vmid
   STACK_NAMES=()
   STACK_VMIDS=()
 
-  shopt -s nullglob
-  for stack_yaml in "${STACKS_DIR}"/*/stack.yaml; do
-    stack_name="$(basename "$(dirname "${stack_yaml}")")"
+  while IFS= read -r stack_name; do
+    [[ -n "${stack_name}" ]] || continue
+    stack_yaml="${STACKS_DIR}/${stack_name}/stack.yaml"
+    if [[ ! -f "${stack_yaml}" ]]; then
+      fail "missing stack.yaml for approved destroy stack ${stack_name}: ${stack_yaml}"
+    fi
     vmid="$(read_vmid_from_stack_yaml "${stack_yaml}")"
     if [[ -z "${vmid}" ]]; then
       fail "missing numeric vmid in ${stack_yaml}"
     fi
     STACK_NAMES+=("${stack_name}")
     STACK_VMIDS+=("${vmid}")
-  done
-  shopt -u nullglob
+  done < <(approved_destroy_stacks)
 
   if [[ "${#STACK_NAMES[@]}" -eq 0 ]]; then
-    fail "no stack.yaml files found under ${STACKS_DIR}"
+    fail "no approved destroy stacks found in ${INVENTORY_FILE}"
   fi
 }
 
 print_target_scope() {
   local i
-  log "Target stack scope derived from terraform/lxc/stacks/*/stack.yaml:"
+  log "Target stack scope derived from docs/teardown-test/inventory.md Approved Destroy Order:"
   for i in "${!STACK_NAMES[@]}"; do
     printf '  - %s (vmid=%s)\n' "${STACK_NAMES[$i]}" "${STACK_VMIDS[$i]}"
   done
@@ -209,26 +228,24 @@ print_dry_run_actions() {
         ;;
     esac
   done
+
+  log "Terragrunt destroy commands that would run:"
+  for i in "${!STACK_NAMES[@]}"; do
+    stack="${STACK_NAMES[$i]}"
+    log "  - ${WITH_SECRETS} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+  done
 }
 
 run_destroy() {
-  local destroy_cmd=(
-    "${WITH_SECRETS}"
-    terragrunt
-    --working-dir terraform/lxc/stacks
-    --non-interactive
-    run
-    --all
-    --
-    destroy
-    -auto-approve
-  )
-
-  log "Terragrunt destroy command: ${destroy_cmd[*]}"
+  local i stack
 
   if [[ "${EXECUTE}" == true ]]; then
     stop_running_targets
-    "${destroy_cmd[@]}"
+    for i in "${!STACK_NAMES[@]}"; do
+      stack="${STACK_NAMES[$i]}"
+      log "Terragrunt destroy command: ${WITH_SECRETS} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+      "${WITH_SECRETS}" terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
+    done
   else
     print_dry_run_actions
   fi
