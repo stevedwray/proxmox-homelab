@@ -1358,6 +1358,8 @@ validate_stack_smoke() {
   vmid="$(stack_vmid "${spec}")"
   ip="$(stack_ip "${spec}")"
 
+  hydrate_live_env_contract
+
   run_logged "pct-status-${stack}" \
     ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
 
