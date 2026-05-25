@@ -1769,6 +1769,7 @@ run_live_preflight_checks() {
     curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -1911,6 +1912,7 @@ phase_activate_edge() {
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
 
@@ -1923,6 +1925,7 @@ phase_activate_edge() {
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -1966,6 +1969,7 @@ phase_final_validation() {
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
   run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
