@@ -215,13 +215,24 @@
   delegate_to: localhost
   no_log: true
 
+- name: Collect Harbor OIDC steve username matches
+  ansible.builtin.set_fact:
+    harbor_postconfigure_steve_candidates: >-
+      {{
+        harbor_postconfigure_steve_lookup.json | default([])
+        | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+        | list
+      }}
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
 - name: Resolve Harbor OIDC steve user
   ansible.builtin.set_fact:
     harbor_postconfigure_steve_user: >-
       {{
         (
-          harbor_postconfigure_steve_lookup.json | default([])
-          | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+          harbor_postconfigure_steve_candidates | default([])
+          | selectattr('email', 'defined')
           | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
           | list
           | first
@@ -230,8 +241,8 @@
           (harbor_postconfigure_steve_email | length) > 0
           and (
             (
-              harbor_postconfigure_steve_lookup.json | default([])
-              | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+              harbor_postconfigure_steve_candidates | default([])
+              | selectattr('email', 'defined')
               | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
               | list
               | length
@@ -239,8 +250,7 @@
           )
         )
         else (
-          harbor_postconfigure_steve_lookup.json | default([])
-          | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+          harbor_postconfigure_steve_candidates | default([])
           | list
           | first
         )
