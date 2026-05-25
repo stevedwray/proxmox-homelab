@@ -38,7 +38,7 @@ spec:
         url: http://10.57.1.20:9000
       dns:
         enabled: true
-        target: 10.57.2.10
+        target: ${{LAB_IP_PROXY}}
         ttl: 5m
       tls:
         resolver: letsencrypt
