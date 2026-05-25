@@ -213,11 +213,11 @@
               if created or updates:
                   changed = True
 
-              ensure_admin_user(
-                username=os.environ["NB_SUPERUSER_USER"],
-                email=os.environ["NB_SUPERUSER_EMAIL"],
-                password_value=os.environ["NB_SUPERUSER_PASSWORD"],
-              )
+          ensure_admin_user(
+              username=os.environ["NB_SUPERUSER_USER"],
+              email=os.environ["NB_SUPERUSER_EMAIL"],
+              password_value=os.environ["NB_SUPERUSER_PASSWORD"],
+          )
           ensure_admin_user(
               username=os.environ["NB_STEVE_USER"],
               email=os.environ["NB_STEVE_EMAIL"],
