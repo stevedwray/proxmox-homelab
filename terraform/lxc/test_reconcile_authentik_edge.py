@@ -684,7 +684,14 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             )
             client = FakeClient()
 
-            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
+                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
                 result = reconcile_authentik([manifest], client, apply=False)
 
         self.assertTrue(result.ok)
@@ -705,7 +712,14 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             )
             client = FakeClient()
 
-            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
+                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
                 result = reconcile_authentik([manifest], client, apply=True)
 
         self.assertTrue(result.ok)
@@ -717,7 +731,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual("certkey-default", payload["signing_key"])
         self.assertEqual(["scope-openid", "scope-profile", "scope-email"], payload["property_mappings"])
         self.assertEqual(
-            [{"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}],
+            [{"matching_mode": "strict", "url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}],
             payload["redirect_uris"],
         )
 
@@ -733,7 +747,11 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             )
             client = FakeClient()
 
-            with patch.dict(MODULE.os.environ, {}, clear=True):
+            with patch.dict(
+                MODULE.os.environ,
+                {"HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz"},
+                clear=True,
+            ):
                 result = reconcile_authentik([manifest], client, apply=True)
 
         self.assertFalse(result.ok)
@@ -753,7 +771,14 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
             )
             client = FakeClient(certificate_keypairs=[])
 
-            with patch.dict(MODULE.os.environ, {"HARBOR_OIDC_CLIENT_SECRET": "secret-value"}, clear=False):
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
+                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
                 result = reconcile_authentik([manifest], client, apply=True)
 
         self.assertFalse(result.ok)

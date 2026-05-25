@@ -623,7 +623,7 @@ def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[s
     payload: dict[str, Any] = {
         "name": intent.app_name,
         "slug": intent.app_slug,
-        "meta_launch_url": f"https://{intent.host}/",
+        "meta_launch_url": f"{_DISCOVER._oidc_base_url(intent)}/",
     }
     if provider_id:
         try:
