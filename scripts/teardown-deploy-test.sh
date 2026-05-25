@@ -934,6 +934,30 @@ get_authentik_url() {
   return 0
 }
 
+hydrate_live_env_contract() {
+  local key value
+  local vars=(
+    LAB_IP_AUTHENTIK
+    LAB_IP_STEP_CA
+    LAB_IP_DNS
+    LAB_IP_PORTAINER
+    LAB_IP_PROXY
+    LAB_GW_MGMT
+  )
+
+  for key in "${vars[@]}"; do
+    if [[ -n "${!key:-}" ]]; then
+      continue
+    fi
+
+    value="$("${WITH_SECRETS}" bash -lc "printf '%s' \"\${${key}:-}\"")"
+    if [[ -n "${value}" ]]; then
+      printf -v "${key}" '%s' "${value}"
+      export "${key}=${value}"
+    fi
+  done
+}
+
 require_live_env_contract() {
   local missing=()
   local vars=(
@@ -944,6 +968,8 @@ require_live_env_contract() {
     LAB_IP_PROXY
     LAB_GW_MGMT
   )
+
+  hydrate_live_env_contract
 
   for key in "${vars[@]}"; do
     if [[ -z "${!key:-}" ]]; then
