@@ -11,6 +11,7 @@ TARGET_NODE_EXPECTED="${REBUILD_GATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node
 TARGET_HOST=""
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o UserKnownHostsFile="${HOME}/.ssh/known_hosts")
 EXECUTE=false
+CONTAINER_STATE_ADDRESS="module.lxc.proxmox_virtual_environment_container.docker_host"
 
 usage() {
   cat <<'EOF'
@@ -200,6 +201,48 @@ stop_running_targets() {
   done
 }
 
+state_list_for_stack() {
+  local stack="$1"
+
+  "${WITH_SECRETS}" terragrunt state list --working-dir "terraform/lxc/stacks/${stack}" 2>/dev/null || true
+}
+
+ensure_destroy_state_ownership() {
+  local stack="$1"
+  local vmid="$2"
+  local state_output status_output status
+
+  state_output="$(state_list_for_stack "${stack}")"
+  if grep -qx "${CONTAINER_STATE_ADDRESS}" <<<"${state_output}"; then
+    return 0
+  fi
+
+  status_output="$(remote_pct_status "${vmid}" || true)"
+  status="$(classify_pct_status "${status_output}")"
+
+  case "${status}" in
+    absent)
+      log "No-op: ${stack} (vmid=${vmid}) has no state ownership and the CT is already absent"
+      return 0
+      ;;
+    running|stopped)
+      log "State repair: importing live ${stack} container into TF_WORKSPACE=${TARGET_NODE_EXPECTED} before destroy"
+      "${WITH_SECRETS}" terragrunt import \
+        --working-dir "terraform/lxc/stacks/${stack}" \
+        "${CONTAINER_STATE_ADDRESS}" \
+        "${TARGET_NODE_EXPECTED}/${vmid}"
+      state_output="$(state_list_for_stack "${stack}")"
+      if ! grep -qx "${CONTAINER_STATE_ADDRESS}" <<<"${state_output}"; then
+        fail "state repair import did not record ${CONTAINER_STATE_ADDRESS} for ${stack}"
+      fi
+      ;;
+    *)
+      printf '%s\n' "${status_output}" >&2
+      fail "unable to repair empty state for ${stack} (vmid=${vmid}); CT status was '${status}'"
+      ;;
+  esac
+}
+
 print_dry_run_actions() {
   local i stack vmid status_output status
 
@@ -243,6 +286,8 @@ run_destroy() {
     stop_running_targets
     for i in "${!STACK_NAMES[@]}"; do
       stack="${STACK_NAMES[$i]}"
+      vmid="${STACK_VMIDS[$i]}"
+      ensure_destroy_state_ownership "${stack}" "${vmid}"
       log "Terragrunt destroy command: ${WITH_SECRETS} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
       "${WITH_SECRETS}" terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
     done
