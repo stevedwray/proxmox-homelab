@@ -230,6 +230,13 @@ set_phase_failure_context() {
   CURRENT_PHASE_FAILURE_MESSAGE="${message}"
 }
 
+clear_phase_failure_context() {
+  CURRENT_PHASE_FAILURE_STEP=""
+  CURRENT_PHASE_FAILURE_COMMAND=""
+  CURRENT_PHASE_FAILURE_LOG=""
+  CURRENT_PHASE_FAILURE_MESSAGE=""
+}
+
 init_state_file() {
   local tracked_phases resume_sequence
 
@@ -433,6 +440,7 @@ run_phase_handler() {
 
     trap - ERR
     CURRENT_PHASE_END_TIME="$(now_utc)"
+    clear_phase_failure_context
     write_current_phase_state "passed" "0"
   )
 }
