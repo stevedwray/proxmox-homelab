@@ -5,8 +5,8 @@ gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
 vmid: 20011
 cores: 1
-memory: 512
-swap: 256
+memory: 1024
+swap: 512
 rootfs_size: 8
 storage_profile: platform-default
 template_name: "debian-13.1-2-docker-template.tar.gz"

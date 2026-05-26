@@ -5,7 +5,7 @@ gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
 vmid: 20010
 cores: 2
-memory: 2048
+memory: 3072
 swap: 1024
 rootfs_size: 8
 storage_profile: platform-default
