@@ -17,6 +17,8 @@
     - name: Lookup Harbor user by username
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
+        headers:
+          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: GET
         url_username: "{{ harbor_api_admin_user }}"
         url_password: "{{ harbor_api_admin_password }}"
@@ -52,6 +54,8 @@
     - name: Ensure Harbor user has sysadmin role
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
+        headers:
+          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: PUT
         url_username: "{{ harbor_api_admin_user }}"
         url_password: "{{ harbor_api_admin_password }}"
