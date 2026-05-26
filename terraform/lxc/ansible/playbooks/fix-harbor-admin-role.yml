@@ -7,7 +7,7 @@
   connection: local
   gather_facts: false
   vars:
-    harbor_host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+    harbor_host: "{{ lookup('env','LAB_IP_HARBOR') | default(lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true), true) }}"
     harbor_port: 80
     harbor_api_admin_user: "{{ lookup('env','HARBOR_ADMIN_USER') | default('admin', true) }}"
     harbor_api_admin_password: "{{ lookup('env','HARBOR_ADMIN_PASSWORD') | default(lookup('env','BREAKGLASS_PASSWORD'), true) | mandatory('HARBOR_ADMIN_PASSWORD or BREAKGLASS_PASSWORD is required') }}"
