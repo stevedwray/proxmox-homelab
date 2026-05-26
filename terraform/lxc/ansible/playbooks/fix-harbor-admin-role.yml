@@ -18,8 +18,9 @@
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
         method: GET
-        user: "{{ harbor_api_admin_user }}"
-        password: "{{ harbor_api_admin_password }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
         validate_certs: false
         status_code: 200
       register: harbor_user_lookup
@@ -52,8 +53,9 @@
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
         method: PUT
-        user: "{{ harbor_api_admin_user }}"
-        password: "{{ harbor_api_admin_password }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
         body_format: json
         body:
           sysadmin_flag: true
