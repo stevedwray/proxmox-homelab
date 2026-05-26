@@ -27,7 +27,7 @@ all:
           ansible_playbook: ${ansible_playbook}
 %{ endif ~}
           vmid: ${vmid}
-%{ if pve_host != "" ~}
+%{ if use_proxyjump ~}
           pve_host: ${pve_host}
 %{ endif ~}
 %{ if app_stack_name != "" ~}

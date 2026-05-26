@@ -622,37 +622,6 @@ resource "local_file" "network_firewall_vars" {
 }
 
 # ---------------------------------------------------------------------------
-# Ensure the Proxmox host can reach SDN-attached guests for Ansible
-# provisioning. Without a direct route, ProxyJump sessions to VNet-backed
-# containers follow the LAN default route and fail with "No route to host".
-# ---------------------------------------------------------------------------
-resource "null_resource" "prime_sdn_host_route" {
-  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && try(local.stack.ansible_playbook, "") != "" && local.effective_pve_host != "" ? 1 : 0
-
-  triggers = {
-    container_id = module.lxc.container_id
-    guest_ip     = replace(module.lxc.ip_address, "/24", "")
-    pve_host     = local.effective_pve_host
-    subnet       = local.resolved_sdn_subnet
-    bridge       = local.effective_network_bridge
-    host_ip      = cidrhost(local.resolved_sdn_subnet, 254)
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      ssh -F /dev/null \
-        -o BatchMode=yes \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        'root@${local.effective_pve_host}' \
-        'ip addr replace ${cidrhost(local.resolved_sdn_subnet, 254)}/${split("/", local.resolved_sdn_subnet)[1]} dev ${local.effective_network_bridge} && ip route replace ${local.resolved_sdn_subnet} dev ${local.effective_network_bridge} src ${cidrhost(local.resolved_sdn_subnet, 254)} && ip route get ${replace(module.lxc.ip_address, "/24", "")}'
-    EOT
-  }
-
-  depends_on = [module.lxc]
-}
-
-# ---------------------------------------------------------------------------
 # Proxmox firewall policy apply (only if network intent enables firewall)
 # Applies after any guest provisioning to avoid disrupting the existing flow.
 # ---------------------------------------------------------------------------

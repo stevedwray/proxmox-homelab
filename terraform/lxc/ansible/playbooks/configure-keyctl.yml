@@ -9,6 +9,8 @@
 - name: Configure keyctl feature flag on LXC container
   hosts: all
   gather_facts: false
+  vars:
+    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
 
   vars:
     proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
