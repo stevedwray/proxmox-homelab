@@ -1,7 +1,6 @@
-# Copilot Follow-Up Prompt
+# Copilot Storage Refactor Follow-Up Prompt
 
-Continue the storage refactor already in progress in
-`/home/steve/git/proxmox-homelab`.
+Continue the storage refactor in `/home/steve/git/proxmox-homelab`.
 
 Start by reading:
 
@@ -9,69 +8,58 @@ Start by reading:
 - `docs/storage-refactor/plan.md`
 - `docs/storage-refactor/copilot-init-prompt.md`
 
-Then inspect the current in-progress implementation and fix the next concrete
-gaps rather than redesigning the whole refactor.
+Then inspect the current branch state and determine which storage-refactor
+phase is partially complete.
 
-Current priority
+Your job for this pass:
 
-The manifest-driven storage refactor is mostly in place. The next job is to
-close the remaining contract and validation gaps so the branch is internally
-consistent and ready for deeper validation.
+1. Identify the current phase boundary.
+   - Determine which phase in `plan.md` is fully complete.
+   - Determine which phase is next and what its exit criteria require.
 
-Address these items in order:
+2. Finish the next unfinished phase rather than doing scattered cleanup.
+   - Complete the implementation work for that phase.
+   - Run the tests listed for that phase.
+   - Update docs or validators that are part of that phase.
 
-1. Restore the harness boundary between source-only and live validation.
-   - `scripts/teardown-deploy-test.sh` still defines `source-preflight` as
-     source-only.
-   - The new storage validation currently performs live Proxmox API checks from
-     `source-preflight`.
-   - Fix this by preserving the documented split:
-     - `source-preflight` should remain source-only/offline-safe.
-     - live Proxmox storage/backend/template checks should run from
-       `live-preflight`, or the validator should support an explicit offline
-       mode for source-only use plus a live mode for live-preflight.
-   - Update any affected docs if the contract changes.
+3. If the current branch has drifted from the plan:
+   - bring the branch back to the phase model in `plan.md`
+   - remove accidental scope growth
+   - document any justified deviation clearly
 
-2. Fix transitional compatibility in `terraform/lxc/validate-storage-contract.py`.
-   - The validator resolves `extra_mount_profile` one way, but later recomputes
-     required-content metadata using a different fallback path.
-   - Make the validator use one resolved profile path consistently, including
-     legacy `extra_mount_storage` mappings.
-   - Prefer one explicit resolved variable over duplicating fallback logic.
+4. If you hit a blocker:
+   - stop at the phase boundary
+   - summarize the exact blocker, affected files, commands run, and what design
+     choice or capability is missing
 
-3. Clean up stale storage-teaching docs that still name physical backends as
-   the normal authoring model.
-   - Start with `terraform/lxc/stacks/netbox-stack/README.md`.
-   - Grep for remaining docs that still teach `infrastructure-containers`,
-     `storage-template`, `rootfs_storage`, `extra_mount_storage`, or
-     `ostemplate` as the preferred interface and update the ones that are now
-     incorrect.
-   - Historical/refactor-planning docs can stay historical; active user-facing
-     docs should reflect the new intent model.
+Working rules:
 
-4. Re-run the appropriate non-destructive checks for the updated behavior.
-   - Run source-only checks for the source-only path.
-   - Run live read-only checks for the live path.
-   - Re-run Python syntax validation for the validator.
-   - Re-run any targeted Terraform formatting/validation steps that are safe in
-     the current environment.
+- do not reintroduce PBS restore or restore-testing scope
+- do not reintroduce storage-migration or dataset-redesign scope
+- prioritize safe mutation, explicit mount identity, explicit backup intent,
+  and plan safety
+- keep the dedicated test LXC as the primary mutation-development target
+- keep `test-storage` independent of platform-stack dependencies while still
+  using a normal SDN/VLAN-backed zone
+- keep unchanged real stacks on compatibility paths unless the current phase
+  explicitly needs representative validation coverage
+- keep Docker-managed volumes supported
+- do not touch unrelated local edits
 
-Working rules
+Definition of done for this pass:
 
-- Do not restart the refactor from scratch.
-- Keep the manifest-driven storage model.
-- Keep stack intent fields (`storage_profile`, `template_name`,
-  `extra_mount_profile`) as the preferred contract.
-- Make reasonable implementation choices without asking for routine approval.
-- Surface only real blockers or decisions with meaningful consequences.
-- Do not touch the unrelated local change in `next-session.md`.
+- one additional storage-refactor phase is completed, or
+- the exact blocker preventing phase completion is documented clearly
 
-Definition of done for this pass
+End the pass with a structured hand-back that includes:
 
-- `source-preflight` is source-only again, or its contract is explicitly and
-  correctly redefined everywhere.
-- live storage validation is still available in the harness.
-- validator profile resolution is internally consistent for legacy extra-mount
-  compatibility.
-- stale active docs teaching physical storage backends are updated.
-- the follow-up checks you ran and their outcomes are summarized clearly.
+- current phase and whether it is complete, partial, or blocked
+- files changed
+- tests and validations run
+- tests not run, if any
+- blockers, deviations, or assumptions
+- the exact recommended next pass:
+  - follow-up
+  - validation
+  - gate
+  - promotion

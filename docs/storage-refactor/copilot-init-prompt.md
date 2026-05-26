@@ -1,4 +1,4 @@
-# Copilot Refactor Kickoff Prompt
+# Copilot Storage Refactor Kickoff Prompt
 
 You are working in `/home/steve/git/proxmox-homelab` on the storage refactor
 documented in:
@@ -9,74 +9,84 @@ documented in:
 Start by reading those two files and then inspect the current implementation in:
 
 - `terraform/lxc/main.tf`
-- `terraform/lxc/variables.tf`
 - `terraform/lxc/modules/lxc-docker-host/*`
+- `terraform/lxc/storage/*`
 - `terraform/lxc/stacks/*/stack.yaml`
+- `terraform/lxc/stacks/*/STACK_CONTRACT.md`
 - `terraform/lxc/README.md`
 - `terraform/lxc/PLATFORM_CONTRACT.md`
+- `scripts/teardown-deploy-test.sh`
 
-Your job is to implement the refactor with as little supervision as possible.
+Your job is to execute the storage refactor, starting from the earliest
+unfinished phase in `docs/storage-refactor/plan.md`.
 
 Primary objective:
 
-- make storage backend selection an environment-level configuration concern
-  instead of a stack-file, Terraform-default, or template-string concern
+- make Terraform-driven LXC storage layout changes for Docker-on-LXC explicit,
+  low-risk, and provider-aware
 
 Required end state:
 
-- stacks express storage intent rather than physical Proxmox pool names
-- one `pve-test` storage manifest or equivalent env-scoped config resolves that
-  intent to concrete backends
-- Terraform root resolves storage before calling the LXC module
-- template identity is separated from template storage location
-- validation fails early when referenced storage backends or template artifacts
-  do not exist or do not support required content types
+- growing `/var/lib/docker` is a tested grow-only workflow
+- growing an existing extra mount is a tested grow-only workflow
+- attaching one additional persistent filesystem is a tested workflow
+- that additive workflow is explicitly limited to stacks that do not already use
+  the module's optional extra mount
+- persistent mounts have explicit logical identity and backup intent
+- unsafe `mount_point` mutations are classified before apply
 
 Important constraints:
 
-- treat `pve-test` as a live but rebuildable environment, not a greenfield host
-- keep implementation work on a short-lived `work/*` branch
-- do not rely on undocumented host-only knowledge
-- do not leave long-term storage policy in module defaults
-- do not assume every stack is a Docker stack just because the current module
-  always provisions `/var/lib/docker`
+- treat `pve-test` as the disposable validation target
+- do mutation development and testing on a dedicated test LXC, not on
+  interconnected infrastructure stacks
+- use the tracked stack `test-storage` for that purpose
+- keep `test-storage` on a normal SDN/VLAN-backed zone, preferably `build_seg`,
+  rather than the legacy `lan` bridge path
+- keep that dedicated test LXC as a tracked normal stack shape, not a special
+  one-off code path
+- keep the contract environment-scoped so it can later be applied to `pve`
+- stay on a short-lived `work/*` branch
+- keep Docker-managed volumes supported
+- do not add PBS restore testing
+- do not turn this into a data-migration or dataset-redesign project
+- do not assume a second optional extra mount is supported under the current
+  module shape
+- do not spend time removing an otherwise-unused `/var/lib/docker` mount from a
+  non-Docker stack unless the current phase makes that necessary
+- do not broaden scope beyond `README.md` and `plan.md` without explicit
+  approval
+- do not convert unchanged real stacks just for authoring cleanup when
+  compatibility support is sufficient
 
-Expected working style:
+Execution order:
 
-- make reasonable decisions and keep moving without asking for confirmation on
-  routine implementation details
-- use small, coherent commits as milestones when a piece is validated
-- update docs as the implementation changes the contract
-- surface only real decision points or blockers
+1. Determine the highest completed storage-refactor phase from the current
+   branch state.
+2. If no implementation exists yet, start with Phase 0:
+   capability check and storage audit.
+3. Complete one full phase at a time, including its tests and exit criteria,
+   before moving to the next phase.
+4. Update docs and validation tooling as the contract changes.
+5. Stop only for a real blocker, failed phase gate, or a decision with
+   meaningful architectural consequences.
 
-Decisions you should make deliberately and document if they matter:
+When reporting progress, focus on:
 
-- whether this branch uses a hard cutover or short transitional compatibility
-- whether `/var/lib/docker` remains always-on or becomes explicitly optional
-- the exact storage manifest schema, as long as it preserves the plan’s design
-  rules
-
-Suggested execution order:
-
-1. Audit and document every current storage decision point, including
-   `infrastructure-containers`, `storage-containers`, `storage-template`,
-   template references, and stack-specific docs that still teach physical pool
-   names.
-2. Introduce the canonical `pve-test` storage manifest.
-3. Move storage resolution into the Terraform root layer.
-4. Simplify the LXC module so it consumes resolved values.
-5. Split template identity from template storage.
-6. Refactor stack files to the new storage-intent model.
-7. Add storage validation and wire it into preflight/gate flows.
-8. Update README, platform contract, examples, and related docs.
-9. Run formatting, targeted validation, required scans, and then the full
-   teardown + redeploy gate when the branch is ready.
-
-When you report progress, focus on:
-
+- which phase you are working on
 - what changed
-- what remains
-- any real risks or blocking choices
+- what was tested
+- what blocks the next phase, if anything
 
-Do not stop after analysis. Continue through implementation and validation until
-you hit a genuine blocker or the refactor is complete.
+End the pass with a structured hand-back that includes:
+
+- current phase and whether it is complete, partial, or blocked
+- files changed
+- tests and validations run
+- tests not run, if any
+- blockers, deviations, or assumptions
+- the exact recommended next pass:
+  - follow-up
+  - validation
+  - gate
+  - promotion
