@@ -271,7 +271,7 @@ for resource in state.get("resources", []):
                 attributes[key] = value
                 changed = True
 
-  if changed:
+if changed:
     state["serial"] = int(state.get("serial", 0)) + 1
 
 print(json.dumps(state, separators=(",", ":")))
