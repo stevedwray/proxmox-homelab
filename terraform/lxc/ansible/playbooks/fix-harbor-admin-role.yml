@@ -17,12 +17,12 @@
     - name: Lookup Harbor user by username
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
-        headers:
-          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: GET
         headers:
           Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
-          Authorization: "Basic {{ (harbor_api_admin_user ~ ':' ~ harbor_api_admin_password) | b64encode }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
         validate_certs: false
         status_code: 200
       register: harbor_user_lookup
@@ -54,12 +54,12 @@
     - name: Ensure Harbor user has sysadmin role
       ansible.builtin.uri:
         url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
-        headers:
-          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: PUT
         headers:
           Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
-          Authorization: "Basic {{ (harbor_api_admin_user ~ ':' ~ harbor_api_admin_password) | b64encode }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
         body_format: json
         body:
           sysadmin_flag: true
