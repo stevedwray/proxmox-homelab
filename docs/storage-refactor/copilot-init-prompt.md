@@ -5,8 +5,9 @@ documented in:
 
 - `docs/storage-refactor/README.md`
 - `docs/storage-refactor/plan.md`
+- `docs/storage-refactor/phase-0-audit-notes.md`
 
-Start by reading those two files and then inspect the current implementation in:
+Start by reading those files and then inspect the current implementation in:
 
 - `terraform/lxc/main.tf`
 - `terraform/lxc/modules/lxc-docker-host/*`
@@ -19,6 +20,17 @@ Start by reading those two files and then inspect the current implementation in:
 
 Your job is to execute the storage refactor, starting from the earliest
 unfinished phase in `docs/storage-refactor/plan.md`.
+
+Current branch reality:
+
+- planning docs have been rewritten around the phased storage-safety model
+- `docs/storage-refactor/phase-0-audit-notes.md` records the lightweight source
+  audit already completed on this branch
+- `terraform/lxc/stacks/test-storage/` does not exist yet
+- the current code still uses the pre-refactor storage shape
+
+Use the audit note as established context. Do not restart with a broad
+free-form rediscovery pass if the note already answers the question.
 
 Primary objective:
 
@@ -63,12 +75,14 @@ Execution order:
 
 1. Determine the highest completed storage-refactor phase from the current
    branch state.
-2. If no implementation exists yet, start with Phase 0:
+2. If no implementation exists yet, continue with Phase 0:
    capability check and storage audit.
-3. Complete one full phase at a time, including its tests and exit criteria,
+3. Treat the current branch as "Phase 0 audit note present, implementation not
+   started" unless the code clearly proves otherwise.
+4. Complete one full phase at a time, including its tests and exit criteria,
    before moving to the next phase.
-4. Update docs and validation tooling as the contract changes.
-5. Stop only for a real blocker, failed phase gate, or a decision with
+5. Update docs and validation tooling as the contract changes.
+6. Stop only for a real blocker, failed phase gate, or a decision with
    meaningful architectural consequences.
 
 When reporting progress, focus on:

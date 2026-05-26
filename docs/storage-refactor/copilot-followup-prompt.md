@@ -6,10 +6,15 @@ Start by reading:
 
 - `docs/storage-refactor/README.md`
 - `docs/storage-refactor/plan.md`
+- `docs/storage-refactor/phase-0-audit-notes.md`
 - `docs/storage-refactor/copilot-init-prompt.md`
 
 Then inspect the current branch state and determine which storage-refactor
 phase is partially complete.
+
+If the branch still matches the current audit note, treat it as
+"Phase 0 audit note present, implementation still unfinished" unless the code
+clearly proves a later completed phase.
 
 Your job for this pass:
 

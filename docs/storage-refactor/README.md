@@ -179,3 +179,4 @@ This remains infrastructure work and should follow the repo branch model:
 ## Plan Document
 
 - [Execution Plan](plan.md)
+- [Phase 0 Audit Notes](phase-0-audit-notes.md)
