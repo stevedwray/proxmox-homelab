@@ -20,9 +20,9 @@
         headers:
           Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: GET
-        url_username: "{{ harbor_api_admin_user }}"
-        url_password: "{{ harbor_api_admin_password }}"
-        force_basic_auth: true
+        headers:
+          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+          Authorization: "Basic {{ (harbor_api_admin_user ~ ':' ~ harbor_api_admin_password) | b64encode }}"
         validate_certs: false
         status_code: 200
       register: harbor_user_lookup
@@ -57,9 +57,9 @@
         headers:
           Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
         method: PUT
-        url_username: "{{ harbor_api_admin_user }}"
-        url_password: "{{ harbor_api_admin_password }}"
-        force_basic_auth: true
+        headers:
+          Host: "{{ lookup('env','LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+          Authorization: "Basic {{ (harbor_api_admin_user ~ ':' ~ harbor_api_admin_password) | b64encode }}"
         body_format: json
         body:
           sysadmin_flag: true
