@@ -100,7 +100,13 @@
         status_code: 200
         validate_certs: false
       register: harbor_authentik_health
-      failed_when: false
+      # Retry briefly to allow Authentik to finish coming up during deploy.
+      # This reduces false deferral of Harbor OIDC configuration when Authentik
+      # is expected to be deployed earlier in the sequence but is still
+      # initializing at the moment the check runs.
+      retries: 18
+      delay: 10
+      until: harbor_authentik_health.status == 200
       changed_when: false
       when: harbor_postconfigure_oidc_enabled
       delegate_to: localhost
