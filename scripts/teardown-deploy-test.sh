@@ -1344,7 +1344,7 @@ stack_destroy() {
   vmid="$(stack_vmid "${spec}")"
 
   guard_target
-  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" ]]; then
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}' && '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
