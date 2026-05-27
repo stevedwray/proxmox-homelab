@@ -10,18 +10,18 @@ cores: 1
 memory: 1024
 swap: 512
 rootfs_size: 8
-storage_profile: platform-default
+storage_profile: platform-zfs
 docker_storage_size: "5G"
 extra_mount_path: "/opt/proxy-stack/certs"
-extra_mount_size: "5G"
-extra_mount_profile: durable-default
+extra_mount_size: "10G"
+extra_mount_profile: durable-zfs
 extra_mount:
   logical_name: proxy-certs
   path: /opt/proxy-stack/certs
-  size: "5G"
-  profile: durable-default
+  size: "10G"
+  profile: durable-zfs
   backup_policy: include
-  resize_control_plane: provider
+  resize_control_plane: operational
   mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:

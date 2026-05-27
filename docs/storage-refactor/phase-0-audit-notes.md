@@ -248,6 +248,73 @@ Files changed in this pass:
 - `docs/storage-refactor/capability-matrix.md`
 - `docs/storage-refactor/phase-0-audit-notes.md`
 
+## Durable Hand-back: proxy-stack ZFS rebuild-and-proof pass
+
+Date: 2026-05-28
+
+Validation scope: first real infrastructure-container rebuild proof for the
+existing-extra-mount ZFS operational grow workflow on `proxy-stack`.
+
+Validation status: passed — `proxy-stack` was rebuilt onto the approved
+ZFS-backed storage shape, the live certs mount was grown operationally, the
+service smoke succeeded after rebuild and after resize, and post-resize
+OpenTofu/Terraform returned to no drift.
+
+Summary of commands run (this pass):
+- `./with-secrets bash -lc 'echo $TF_VAR_proxmox_node'` — confirmed `pve-test`
+- `python3 terraform/lxc/validate-storage-contract.py --manifest terraform/lxc/storage/pve-test.yaml --stacks-dir terraform/lxc/stacks --proxmox-node pve-test --offline` — offline contract validation (PASS)
+- `./with-secrets bash -lc 'python3 terraform/lxc/validate-storage-contract.py --manifest terraform/lxc/storage/pve-test.yaml --stacks-dir terraform/lxc/stacks --proxmox-node pve-test'` — live contract validation (PASS)
+- `./with-secrets bash -lc 'curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"'` — pre-rebuild smoke baseline (`HTTP/2 500`, pre-existing)
+- `./with-secrets bash -lc 'target="${PVE_TEST_FQDN:-${PROXMOX_HOST:-${TF_VAR_proxmox_node}.local}}" && ssh -F /dev/null -o StrictHostKeyChecking=accept-new root@"$target" "pct status 30010 && pct exec 30010 -- test -d /opt/proxy-stack/certs" && ssh -F /dev/null -o StrictHostKeyChecking=accept-new root@"$target" "pct exec 30010 -- sh -lc '\''tar -C /opt/proxy-stack --exclude=certs/lost+found -czf - certs'\''" > /tmp/proxy-stack-zfs-rebuild/proxy-stack-certs-pre-destroy.tgz && gzip -t /tmp/proxy-stack-zfs-rebuild/proxy-stack-certs-pre-destroy.tgz'` — captured pre-destroy cert/state backup
+- `./scripts/rebuild-gate-destroy.sh --execute --stack proxy-stack` — destroyed live `proxy-stack` after importing the CT into the `pve-test` workspace
+- `./with-secrets bash -lc 'cd terraform/lxc/stacks/proxy-stack && terragrunt apply -auto-approve -no-color'` — rebuilt `proxy-stack` on `infrastructure-containers`
+- `./with-secrets scripts/provision.sh --stack proxy-stack` — reprovisioned the rebuilt container
+- `ANSIBLE_CONFIG=$PWD/terraform/lxc/ansible/ansible.cfg ANSIBLE_ROLES_PATH=$PWD/terraform/lxc/ansible/roles ./with-secrets ansible-playbook -i terraform/lxc/stacks/proxy-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` — republished proxy config after fixing generated Traefik rendering and internal Authentik forward-auth TLS handling
+- `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack proxy-stack --mount-path /opt/proxy-stack/certs'` — live operational extra-mount grow from `5G` to `10G`
+- `./with-secrets bash -lc 'cd terraform/lxc/stacks/proxy-stack && terragrunt plan -no-color'` — confirmed post-resize no drift (`No changes.`)
+- `/home/steve/.local/bin/snyk iac test terraform/` — Snyk IaC scan (SUCCESS; monthly private-test quota notice only)
+- `./with-secrets /home/steve/.local/bin/sonar-scanner` — Sonar analysis (SUCCESS)
+
+Key results:
+- Backup captured: `/tmp/proxy-stack-zfs-rebuild/proxy-stack-certs-pre-destroy.tgz`
+  - archive SHA-256: `564b017906b2022ebdf3569752f61c3baf74e2d4cc0e165fd4a66be7e9244dcf`
+  - contents verified: `certs/letsencrypt/acme.json`, `certs/step-ca/acme.json`, `certs/combined-ca.crt`
+  - note: `certs/lost+found` had to be excluded because it is unreadable through the unprivileged container view
+- Rebuild result: `proxy-stack` now runs as CT `30010` with
+  - `rootfs: infrastructure-containers:subvol-30010-disk-0,size=8G`
+  - `mp0: infrastructure-containers:subvol-30010-disk-1,mp=/var/lib/docker,size=5G`
+  - `mp1: infrastructure-containers:subvol-30010-disk-2,mp=/opt/proxy-stack/certs,size=5G` immediately after rebuild
+- Service verification after rebuild: passed after fixing two repo-local blockers uncovered by the rebuild
+  - `with-secrets` was not deriving missing `TF_VAR_lab_*` values from `LAB_*`, which blocked non-interactive import/destroy in the `pve-test` workspace path
+  - `deploy-proxy-stack.yml` was copying generated Traefik files without substituting `${LAB_IP_*}` placeholders, and the internal Authentik forward-auth hop needed relaxed TLS verification for the current homelab chain
+  - after those fixes, the required smoke check returned `HTTP/2 302` redirecting to Authentik instead of `HTTP/2 500`
+- Resize result: passed
+  - desired size updated from `5G` to `10G` in `terraform/lxc/stacks/proxy-stack/stack.yaml`
+  - `pct config 30010` now reports `mp1: infrastructure-containers:subvol-30010-disk-2,mp=/opt/proxy-stack/certs,size=10G`
+  - guest `df -h /opt/proxy-stack/certs` now reports `10G`
+  - cert/state files remained present after resize, including `combined-ca.crt` and both `acme.json` files
+- Post-resize drift result: passed
+  - `./with-secrets bash -lc 'cd terraform/lxc/stacks/proxy-stack && terragrunt plan -no-color'` returned `No changes. Your infrastructure matches the configuration.`
+- Required scans: passed
+  - Snyk IaC found `0` issues; the monthly private-test quota notice was non-blocking
+  - SonarScanner completed with `EXECUTION SUCCESS`
+
+Files changed in this pass:
+- `with-secrets`
+- `terraform/lxc/stacks/proxy-stack/stack.yaml`
+- `terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml`
+- `docs/storage-refactor/capability-matrix.md`
+- `docs/storage-refactor/phase-0-audit-notes.md`
+
+Residual risks / exact blockers addressed:
+- The rebuild surfaced two real workflow blockers that are now fixed in source:
+  - missing `TF_VAR_lab_*` derivation for `LAB_*` values in `with-secrets`
+  - generated Traefik publish path not rendering `${LAB_IP_*}` placeholders before deployment
+- Internal Authentik forward-auth on the proxy currently relies on relaxed TLS verification (`insecureSkipVerify: true`) rather than a fully trusted internal CA chain. This unblocked the live proof, but the trust chain should still be hardened in a later pass.
+
+Exact recommended next pass: workflow-hardening
+- Harden the internal Authentik trust path for proxy forward-auth so `deploy-proxy-stack.yml` can return to explicit CA verification, then run the same focused proxy smoke check and follow with the next representative rebuild candidate (`harbor-stack`).
+
 Blockers / environmental failures:
 - `source-preflight` is still blocked by the unrelated existing Harbor playbook
   syntax-check failure; this did not block the storage contract check or the

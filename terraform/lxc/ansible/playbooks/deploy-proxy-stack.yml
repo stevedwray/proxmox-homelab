@@ -151,7 +151,7 @@
                 forwardAuth:
                   address: "https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik"
                   tls:
-                    ca: /certs/combined-ca.crt
+                    insecureSkipVerify: true
                   trustForwardHeader: true
                   authResponseHeaders:
                     - X-authentik-username
@@ -234,11 +234,35 @@
         path: "{{ proxy_compose_dir }}/dynamic/stacks"
         state: absent
 
-    - name: Publish generated Traefik files into active dynamic directory
+    - name: Discover generated Traefik files on control node
+      ansible.builtin.find:
+        paths: "{{ traefik_generated_source_dir }}"
+        file_type: file
+        patterns: "*.yml"
+      register: traefik_generated_files
+      delegate_to: localhost
+      become: false
+      when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Publish rendered Traefik files into active dynamic directory
       ansible.builtin.copy:
-        src: "{{ traefik_generated_source_dir }}/"
-        dest: "{{ proxy_compose_dir }}/dynamic/"
+        dest: "{{ proxy_compose_dir }}/dynamic/{{ item.path | basename }}"
         mode: "0640"
+        content: >-
+          {{
+            lookup('file', item.path)
+            | replace('${LAB_IP_AUTHENTIK}', lookup('env', 'LAB_IP_AUTHENTIK'))
+            | replace('${LAB_IP_STEP_CA}', lookup('env', 'LAB_IP_STEP_CA'))
+            | replace('${LAB_IP_MONITORING}', lookup('env', 'LAB_IP_MONITORING'))
+            | replace('${LAB_IP_DNS}', lookup('env', 'LAB_IP_DNS'))
+            | replace('${LAB_IP_PORTAINER}', lookup('env', 'LAB_IP_PORTAINER'))
+            | replace('${LAB_IP_PROXY}', lookup('env', 'LAB_IP_PROXY'))
+            | replace('${LAB_IP_HARBOR}', lookup('env', 'LAB_IP_HARBOR'))
+            | replace('${LAB_IP_NETBOX}', lookup('env', 'LAB_IP_NETBOX'))
+          }}
+      loop: "{{ traefik_generated_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
       when: traefik_generated_source_dir | trim | length > 0
 
     - name: Validate Traefik compose configuration

@@ -66,6 +66,17 @@ Matrix
     `mp1: infrastructure-containers:subvol-151-disk-2,mp=/srv/test-extra,size=16G`,
     guest `df -h /srv/test-extra` reported `16G`, and the post-resize
     `terragrunt plan -no-color` for the stack returned `No changes.`
+    The same operational grow-only path is now also proved on the first real
+    infrastructure stack: `proxy-stack` was rebuilt onto
+    `platform-zfs` + `durable-zfs`, its existing extra mount at
+    `/opt/proxy-stack/certs` was grown live from `5G` to `10G` with
+    `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack proxy-stack --mount-path /opt/proxy-stack/certs'`,
+    `pct config 30010` reported
+    `mp1: infrastructure-containers:subvol-30010-disk-2,mp=/opt/proxy-stack/certs,size=10G`,
+    guest `df -h /opt/proxy-stack/certs` reported `10G`, the expected cert/state
+    files remained present, and the post-resize
+    `terragrunt plan -no-color` for `terraform/lxc/stacks/proxy-stack` returned
+    `No changes.`
 
 - mount_point: path change
   - expected_provider_action: replacement or provider-reported delete/create
