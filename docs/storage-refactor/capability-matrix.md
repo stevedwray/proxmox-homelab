@@ -77,6 +77,19 @@ Matrix
     files remained present, and the post-resize
     `terragrunt plan -no-color` for `terraform/lxc/stacks/proxy-stack` returned
     `No changes.`
+    On `harbor-stack`, the same operational sequence was attempted after the
+    stack was rebuilt onto `platform-zfs` + `durable-zfs` and the desired extra
+    mount size was increased from `100G` to `120G`. The live run updated
+    `pct config 40010` to
+    `mp1: infrastructure-containers:subvol-40010-disk-2,mp=/var/lib/harbor,size=120G`,
+    the backing dataset `infrastructure/subvol-40010-disk-2` reported
+    `refquota=120G`, Harbor health still passed, and the post-resize
+    `terragrunt plan -no-color` returned `No changes.` However, guest-visible
+    capacity at `/var/lib/harbor` remained capped at about `65.3G` because the
+    underlying `infrastructure` zpool only had about `78.8G` free at the time
+    of the test. This is an environment-capacity caveat, not a new contract
+    proof target, so it should not be used as the authoritative guest-visible
+    growth evidence for the workflow.
 
 - mount_point: path change
   - expected_provider_action: replacement or provider-reported delete/create

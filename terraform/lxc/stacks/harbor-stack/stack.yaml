@@ -10,7 +10,7 @@ cores: 4
 memory: 2048
 swap: 2048
 rootfs_size: 16
-storage_profile: platform-default
+storage_profile: platform-zfs
 docker_storage_size: "20G"
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
@@ -30,15 +30,15 @@ provides:
 
 # Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
 extra_mount_path: "/var/lib/harbor"
-extra_mount_size: "100G"
-extra_mount_profile: durable-default
+extra_mount_size: "120G"
+extra_mount_profile: durable-zfs
 extra_mount:
   logical_name: harbor-data
   path: /var/lib/harbor
-  size: "100G"
-  profile: durable-default
+  size: "120G"
+  profile: durable-zfs
   backup_policy: include
-  resize_control_plane: provider
+  resize_control_plane: operational
   mutation_policy: grow-only
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)

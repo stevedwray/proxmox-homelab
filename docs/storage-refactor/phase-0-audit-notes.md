@@ -248,6 +248,82 @@ Files changed in this pass:
 - `docs/storage-refactor/capability-matrix.md`
 - `docs/storage-refactor/phase-0-audit-notes.md`
 
+## Durable Hand-back: Harbor ZFS propagation pass
+
+Date: 2026-05-28
+
+Validation scope: propagate the proved extra-mount ZFS storage shape to the
+remaining real stack with an existing extra mount (`harbor-stack`), rebuild it,
+verify service health, and probe one real operational extra-mount grow.
+
+Validation status: mixed but gate-usable. The rebuild onto
+`platform-zfs` + `durable-zfs` succeeded and Harbor service health was
+re-established. The live extra-mount grow updated desired state, Proxmox config,
+and the backing ZFS dataset quota, but guest-visible free space remained capped
+by backing-pool capacity, so this pass does not add a new clean guest-visible
+growth proof.
+
+Summary of commands run (this pass):
+- `./with-secrets bash -lc 'echo $TF_VAR_proxmox_node'` — confirmed `pve-test`
+- `./with-secrets bash -lc "curl -sS -o /dev/null -w '%{http_code}\\n' http://\${LAB_IP_HARBOR}/v2/"` — pre-rebuild Harbor smoke baseline (`401`)
+- `./with-secrets bash -lc '... pct exec 40010 -- sh -lc '\''tar --exclude=harbor/lost+found -C /var/lib -czf - harbor'\'''` — captured `/var/lib/harbor` backup to `/tmp/harbor-stack-zfs-rebuild/harbor-var-lib-harbor-20260528-085813.tgz`
+- `python3 terraform/lxc/validate-storage-contract.py --manifest terraform/lxc/storage/pve-test.yaml --stacks-dir terraform/lxc/stacks --proxmox-node pve-test --offline` — contract validation (PASS)
+- `./with-secrets bash -lc 'python3 terraform/lxc/validate-storage-contract.py --manifest terraform/lxc/storage/pve-test.yaml --stacks-dir terraform/lxc/stacks --proxmox-node pve-test'` — live contract validation (PASS)
+- `./scripts/rebuild-gate-destroy.sh --execute --stack harbor-stack` — destroyed Harbor after creating the missing `pve-test` workspace and importing live state into it
+- `./with-secrets bash -lc 'cd terraform/lxc/stacks/harbor-stack && terragrunt apply -auto-approve -no-color'` — rebuilt Harbor on `infrastructure-containers`
+- `./with-secrets scripts/provision.sh --stack harbor-stack` — re-provisioned Harbor successfully
+- `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack harbor-stack --mount-path /var/lib/harbor'` — attempted operational grow from `100G` to `120G`
+- `./with-secrets bash -lc 'cd terraform/lxc/stacks/harbor-stack && terragrunt plan -no-color'` — post-resize no-drift check (PASS)
+
+Key results:
+- Harbor now resolves to `storage_profile: platform-zfs` and
+  `extra_mount_profile: durable-zfs`, with the canonical
+  `extra_mount.profile: durable-zfs` and
+  `extra_mount.resize_control_plane: operational` fields aligned.
+- Live Proxmox config after rebuild confirms the desired ZFS-backed shape:
+  - `rootfs: infrastructure-containers:subvol-40010-disk-0,size=16G`
+  - `mp0: infrastructure-containers:subvol-40010-disk-1,mp=/var/lib/docker,size=20G`
+  - `mp1: infrastructure-containers:subvol-40010-disk-2,mp=/var/lib/harbor,size=100G`
+- Guest verification after rebuild showed `/var/lib/harbor` mounted from
+  `infrastructure/subvol-40010-disk-2` with about `65.3G` available, which is
+  consistent with the free space then available in the underlying pool.
+- Harbor service health was restored after reprovisioning:
+  - `systemctl is-active harbor` returned `active`
+  - `curl ... /v2/` returned `401`
+  - expected Harbor state paths remained present under `/var/lib/harbor`
+- The operational extra-mount grow updated the desired state, `pct config`, and
+  dataset quota:
+  - `stack.yaml` now declares `extra_mount_size: "120G"` and
+    `extra_mount.size: "120G"`
+  - `pct config 40010` reports
+    `mp1: infrastructure-containers:subvol-40010-disk-2,mp=/var/lib/harbor,size=120G`
+  - `zfs get refquota infrastructure/subvol-40010-disk-2` reports `120G`
+- The same grow attempt did not produce a larger guest-visible capacity because
+  the backing `infrastructure` zpool only had about `78.8G` free:
+  - `zpool list infrastructure` showed `FREE 78.8G`
+  - `zfs list infrastructure/subvol-40010-disk-2` showed `AVAIL 65.3G`
+  - guest `df -h /var/lib/harbor` remained about `66G`
+- Despite that capacity cap, Harbor remained healthy and the stack returned to
+  a post-resize no-drift `terragrunt plan`.
+
+Files changed in this pass:
+- `terraform/lxc/stacks/harbor-stack/stack.yaml`
+- `docs/storage-refactor/capability-matrix.md`
+- `docs/storage-refactor/phase-0-audit-notes.md`
+
+Blockers / environmental caveats:
+- `harbor-stack` lacked a pre-existing `pve-test` workspace in its backend. The
+  pass repaired this locally by initializing from `default`, creating the
+  `pve-test` workspace, and then rerunning the normal destroy helper.
+- The Harbor live-resize attempt hit backing-pool capacity limits. This is not
+  a storage-contract drift issue, but it prevents treating the Harbor run as a
+  clean guest-visible `100G -> 120G` proof.
+
+Exact recommended next pass (single next action): full-teardown-gate
+- `full-teardown-gate`: run the full teardown/redeploy gate from this branch to
+  validate that the remaining real extra-mount stack now survives the
+  repo-native destroy/recreate cycle on the ZFS-backed storage shape.
+
 ## Durable Hand-back: proxy-stack ZFS rebuild-and-proof pass
 
 Date: 2026-05-28
