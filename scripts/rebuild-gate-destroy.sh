@@ -19,6 +19,10 @@ DEFAULT_TIMEOUT_DELETE=60
 DEFAULT_TIMEOUT_START=300
 DEFAULT_TIMEOUT_UPDATE=1800
 
+# Ensure a non-interactive Terragrunt/terraform workspace is selected to avoid
+# prompts that can block automated runs. Override with REBUILD_GATE_TERRAGRUNT_WORKSPACE.
+TF_WORKSPACE="${REBUILD_GATE_TERRAGRUNT_WORKSPACE:-default}"
+export TF_WORKSPACE
 usage() {
   cat <<'EOF'
 Usage:
@@ -86,6 +90,7 @@ require_pve_test_preflight() {
     fail "preflight failed: unable to resolve target host from with-secrets environment"
   fi
   log "Preflight passed: TF_VAR_proxmox_node=${node}, target_host=${TARGET_HOST}"
+  log "Using TF_WORKSPACE=${TF_WORKSPACE} for terragrunt operations"
 }
 
 read_vmid_from_stack_yaml() {
