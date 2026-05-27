@@ -196,6 +196,7 @@ stop_running_targets() {
         printf '%s\n' "${status_output}" >&2
         fail "unable to read CT status for ${stack} (vmid=${vmid})"
       fi
+      :
     fi
 
     case "${status}" in
@@ -227,7 +228,7 @@ stop_running_targets() {
 state_list_for_stack() {
   local stack="$1"
 
-  "${WITH_SECRETS}" terragrunt state list --working-dir "terraform/lxc/stacks/${stack}" 2>/dev/null || true
+  "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt state list --working-dir "terraform/lxc/stacks/${stack}" 2>/dev/null || true
 }
 
 normalize_destroy_state_contract() {
@@ -235,7 +236,7 @@ normalize_destroy_state_contract() {
   local vmid="$2"
   local state_before state_after temp_input temp_state
 
-  state_before="$(${WITH_SECRETS} terragrunt state pull --working-dir "terraform/lxc/stacks/${stack}")"
+  state_before="$(${WITH_SECRETS} env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt state pull --working-dir "terraform/lxc/stacks/${stack}")"
   temp_input="$(mktemp)"
   printf '%s\n' "${state_before}" > "${temp_input}"
   state_after="$(python3 - "${temp_input}" "${vmid}" "${DEFAULT_TIMEOUT_CLONE}" "${DEFAULT_TIMEOUT_CREATE}" "${DEFAULT_TIMEOUT_DELETE}" "${DEFAULT_TIMEOUT_START}" "${DEFAULT_TIMEOUT_UPDATE}" <<'PY'
@@ -294,7 +295,7 @@ PY
 
   temp_state="$(mktemp)"
   printf '%s\n' "${state_after}" > "${temp_state}"
-  "${WITH_SECRETS}" terragrunt state push --working-dir "terraform/lxc/stacks/${stack}" "${temp_state}" >/dev/null
+  "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt state push --working-dir "terraform/lxc/stacks/${stack}" "${temp_state}" >/dev/null
   rm -f "${temp_state}"
   log "State repair: normalized imported timeout/vm_id contract for ${stack}"
 }
@@ -319,8 +320,8 @@ ensure_destroy_state_ownership() {
       return 0
       ;;
     running|stopped)
-      log "State repair: importing live ${stack} container into TF_WORKSPACE=${TARGET_NODE_EXPECTED} before destroy"
-      "${WITH_SECRETS}" terragrunt import \
+      log "State repair: importing live ${stack} container into TF_WORKSPACE=${TF_WORKSPACE} before destroy"
+      "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt import \
         --working-dir "terraform/lxc/stacks/${stack}" \
         "${CONTAINER_STATE_ADDRESS}" \
         "${TARGET_NODE_EXPECTED}/${vmid}"
@@ -369,7 +370,7 @@ print_dry_run_actions() {
   log "Terragrunt destroy commands that would run:"
   for i in "${!STACK_NAMES[@]}"; do
     stack="${STACK_NAMES[$i]}"
-    log "  - ${WITH_SECRETS} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+    log "  - ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
   done
 }
 
@@ -382,8 +383,8 @@ run_destroy() {
       stack="${STACK_NAMES[$i]}"
       vmid="${STACK_VMIDS[$i]}"
       ensure_destroy_state_ownership "${stack}" "${vmid}"
-      log "Terragrunt destroy command: ${WITH_SECRETS} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
-      "${WITH_SECRETS}" terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
+      log "Terragrunt destroy command: ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+      "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
     done
   else
     print_dry_run_actions

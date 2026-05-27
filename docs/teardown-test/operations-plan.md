@@ -81,20 +81,22 @@ ci-runner-01 -> apt-cacher-stack
 
 Each destroy component starts by re-running the target guard. Each component
 destroys exactly one approved stack and verifies the VMID is absent before the
-next component begins.
+next component begins. In live execution the harness delegates stack destroy to
+`scripts/rebuild-gate-destroy.sh --execute --stack <name>` so stopped CTs and
+missing local state ownership can be repaired before `terragrunt destroy`.
 
 | ID | Component | Preconditions | Operation | Postconditions | Files modified or added |
 |---|---|---|---|---|---|
-| OP-07 | Destroy `netbox-stack` | OP-06 approved; stack is in scope. | `terragrunt destroy` for `terraform/lxc/stacks/netbox-stack`; verify VMID `143` absent. | NetBox is absent; no other VMID affected. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-netbox-stack.log`. |
-| OP-08 | Destroy `monitoring-stack` | OP-07 complete. | Destroy `monitoring-stack`; verify VMID `154` absent. | Monitoring is absent; no other VMID affected. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-monitoring-stack.log`. |
-| OP-09 | Destroy `authentik-stack` | OP-08 complete. | Destroy `authentik-stack`; verify VMID `150` absent. | Authentik is absent after dependent services are gone. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-authentik-stack.log`. |
-| OP-10 | Destroy `step-ca-stack` | OP-09 complete. | Destroy `step-ca-stack`; verify VMID `152` absent. | step-ca is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-step-ca-stack.log`. |
-| OP-11 | Destroy `proxy-stack` | OP-10 complete. | Destroy `proxy-stack`; verify VMID `153` absent. | Traefik is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-proxy-stack.log`. |
-| OP-12 | Destroy `dns-stack` | OP-11 complete. | Destroy `dns-stack`; verify VMID `151` absent. | CoreDNS is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-dns-stack.log`. |
-| OP-13 | Destroy `ci-runner-01` | OP-12 complete. | Destroy `ci-runner-01`; verify VMID `141` absent. | CI runner is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-ci-runner-01.log`. |
-| OP-14 | Destroy `harbor-stack` | OP-13 complete. | Destroy `harbor-stack`; verify VMID `121` absent. | Harbor is absent after consumers are gone. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-harbor-stack.log`. |
-| OP-15 | Destroy `apt-cacher-stack` | OP-14 complete. | Destroy `apt-cacher-stack`; verify VMID `142` absent. | apt-cacher is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-apt-cacher-stack.log`. |
-| OP-16 | Destroy `portainer-stack` | OP-15 complete. | Destroy `portainer-stack`; verify VMID `120` absent. | Approved platform scope is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-portainer-stack.log`. |
+| OP-07 | Destroy `netbox-stack` | OP-06 approved; stack is in scope. | Run the destroy helper for `netbox-stack`, then verify VMID `143` absent. | NetBox is absent; no other VMID affected. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-netbox-stack.log`. |
+| OP-08 | Destroy `monitoring-stack` | OP-07 complete. | Run the destroy helper for `monitoring-stack`, then verify VMID `154` absent. | Monitoring is absent; no other VMID affected. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-monitoring-stack.log`. |
+| OP-09 | Destroy `authentik-stack` | OP-08 complete. | Run the destroy helper for `authentik-stack`, then verify VMID `150` absent. | Authentik is absent after dependent services are gone. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-authentik-stack.log`. |
+| OP-10 | Destroy `step-ca-stack` | OP-09 complete. | Run the destroy helper for `step-ca-stack`, then verify VMID `152` absent. | step-ca is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-step-ca-stack.log`. |
+| OP-11 | Destroy `proxy-stack` | OP-10 complete. | Run the destroy helper for `proxy-stack`, then verify VMID `153` absent. | Traefik is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-proxy-stack.log`. |
+| OP-12 | Destroy `dns-stack` | OP-11 complete. | Run the destroy helper for `dns-stack`, then verify VMID `151` absent. | CoreDNS is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-dns-stack.log`. |
+| OP-13 | Destroy `ci-runner-01` | OP-12 complete. | Run the destroy helper for `ci-runner-01`, then verify VMID `141` absent. | CI runner is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-ci-runner-01.log`. |
+| OP-14 | Destroy `harbor-stack` | OP-13 complete. | Run the destroy helper for `harbor-stack`, then verify VMID `121` absent. | Harbor is absent after consumers are gone. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-harbor-stack.log`. |
+| OP-15 | Destroy `apt-cacher-stack` | OP-14 complete. | Run the destroy helper for `apt-cacher-stack`, then verify VMID `142` absent. | apt-cacher is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-apt-cacher-stack.log`. |
+| OP-16 | Destroy `portainer-stack` | OP-15 complete. | Run the destroy helper for `portainer-stack`, then verify VMID `120` absent. | Approved platform scope is absent. | No tracked source files; `docs/teardown-test/evidence/<stamp>/destroy-portainer-stack.log`. |
 
 ## Atomic Rebuild Components
 

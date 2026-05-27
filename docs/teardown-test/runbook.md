@@ -195,13 +195,18 @@ VMID="<vmid>"
 
 ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 
-(cd terraform/lxc/stacks/${STACK} && ../../../with-secrets terragrunt destroy -auto-approve) \
-  2>&1 | tee "$LOG_DIR/destroy-${STACK}.log"
+./scripts/rebuild-gate-destroy.sh --execute --stack "${STACK}" \
+	2>&1 | tee "$LOG_DIR/destroy-${STACK}.log"
 
 ssh -F /dev/null root@pve-test.gibbsgreatly.xyz \
   "if pct status '${VMID}' >/dev/null 2>&1; then echo 'VMID still present' >&2; exit 1; fi" \
   2>&1 | tee "$LOG_DIR/verify-destroy-${STACK}.log"
 ```
+
+The destroy helper is the source of truth for partially torn-down stacks. It
+stops running CTs, tolerates already-stopped CTs, repairs local state ownership
+when the live container exists outside the current worktree state, and only then
+runs stack-local `terragrunt destroy`.
 
 Expected:
 
