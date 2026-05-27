@@ -22,6 +22,19 @@ Your job for this pass:
    - confirm the resulting contract remains applicable to future `pve`
    - confirm there are no unresolved storage safety blockers
 
+Working rules:
+
+- do not create sibling worktrees under `..`
+- work in the current checkout unless a clean worktree is strictly required for
+  a gate or proof flow
+- if a clean worktree is strictly required, place it under
+  `/tmp/proxmox-homelab-worktrees/` and remove it when finished
+- do not create tracked temporary documents, evidence files, handoff notes, or
+  handback notes unless they are durable artifacts that truly need to survive
+  across branches or sessions
+- prefer inline gate hand-back in the response and ignored/temp locations for
+  transient notes or evidence
+
 2. Run the final validation sequence required by the plan.
    - re-run non-destructive validations
    - re-run targeted storage mutation validation on `test-storage`
@@ -48,3 +61,6 @@ Definition of done for this pass:
 
 - the final gate has been attempted and summarized clearly, or
 - the exact blocker preventing promotion is documented with evidence
+
+The hand-back must be review-ready in the response itself, not only written to
+files.

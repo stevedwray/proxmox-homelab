@@ -22,6 +22,19 @@ Your job for this pass:
    - summarize the branch, commit, evidence stamp, and scope of validated
      storage safety changes
 
+Working rules:
+
+- do not create sibling worktrees under `..`
+- work in the current checkout unless a clean worktree is strictly required for
+  a gate or proof flow
+- if a clean worktree is strictly required, place it under
+  `/tmp/proxmox-homelab-worktrees/` and remove it when finished
+- do not create tracked temporary documents, evidence files, handoff notes, or
+  handback notes unless they are durable artifacts that truly need to survive
+  across branches or sessions
+- prefer inline promotion hand-back in the response and ignored/temp
+  locations for transient notes or evidence
+
 2. Prepare the branch for promotion.
    - keep the working tree clean except for intentionally excluded unrelated
      local edits
@@ -45,3 +58,6 @@ Definition of done for this pass:
 - the validated storage-refactor branch is merged to
   `baseline/teardown-validated`, or
 - the exact promotion blocker is documented clearly
+
+The hand-back must be review-ready in the response itself, not only written to
+files.

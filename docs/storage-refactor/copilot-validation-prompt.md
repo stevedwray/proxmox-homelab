@@ -19,6 +19,19 @@ Your job for this pass:
    - Determine which phase tests should pass right now.
    - Do not invent a broader gate than the phase model requires.
 
+Working rules:
+
+- do not create sibling worktrees under `..`
+- work in the current checkout unless a clean worktree is strictly required for
+  a gate or proof flow
+- if a clean worktree is strictly required, place it under
+  `/tmp/proxmox-homelab-worktrees/` and remove it when finished
+- do not create tracked temporary documents, evidence files, handoff notes, or
+  handback notes unless they are durable artifacts that truly need to survive
+  across branches or sessions
+- prefer inline validation hand-back in the response and ignored/temp
+  locations for transient notes or evidence
+
 2. Re-run the intended non-destructive validation flow.
    - source-only checks
    - live read-only checks where the phase requires them
@@ -62,3 +75,6 @@ End the pass with a structured hand-back that includes:
   - follow-up
   - gate
   - promotion
+
+The hand-back must be review-ready in the response itself, not only written to
+files.

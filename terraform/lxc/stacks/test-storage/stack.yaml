@@ -1,0 +1,28 @@
+# Dedicated storage-validation LXC (Docker-only initial shape)
+hostname: test-storage
+# Use the `build_seg` SDN subnet for the dedicated test LXC so it remains
+# on a normal SDN/VLAN-backed zone rather than the legacy `lan` bridge path.
+# Pick a non-conflicting address in the `192.168.10.0/24` build_seg range.
+ip_address: "192.168.10.64/24"
+gateway: "192.168.10.1"
+dns_server: "192.168.10.1"
+deployment_tier: platform
+vmid: 150
+cores: 1
+memory: 1024
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: "8G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+
+network:
+  zone: build_seg
+
+# Do not opt into an extra_mount yet; Phase 0 will mutate this stack from
+# Docker-only -> Docker-plus-extra-mount during capability testing.
+# Keep this stack out of broad teardown gates by default via inventory choice.
+
+# Legacy field kept for compatibility with existing module inputs (single entry)
+# This baseline is Docker-only for Phase 0 capability testing — no extra_mount
+# (If tests need to exercise first-extra-mount introduction, do so as a
+# transient mutation during the proof flow rather than committing it here.)

@@ -4,7 +4,14 @@ Date: 2026-05-27
 
 ## Current Source Baseline
 
-- `terraform/lxc/stacks/test-storage/` does not exist yet.
+ - `terraform/lxc/stacks/test-storage/` exists in this branch as a tracked
+   dedicated storage-validation stack. During this Phase 0 pass I executed a
+   targeted provider-backed plan non-interactively using the repository's
+   `with-secrets` wrapper and a `terragrunt plan` invocation. The run produced
+   an OpenTofu/Terraform plan which was converted to machine-readable JSON for
+   classification (see classifier output noted below). This verifies the
+   stack is usable as a Phase 0 proof target and provides real provider-backed
+   evidence for the remaining proof gap.
 - The current LXC module still uses the pre-refactor storage shape:
   - one root disk
   - one fixed `mount_point` at `/var/lib/docker`
@@ -15,6 +22,11 @@ Date: 2026-05-27
   - backup policy
   - backup exceptions
   - mutation policy
+  Note: The Phase 1 `mount_contracts` block previously present in
+  `pve-test.yaml` has been intentionally isolated into
+  `terraform/lxc/storage/pve-test.phase1.yaml` to avoid mixing Phase 1 schema
+  work into Phase 0 audits. The `validate-storage-schema.py` tool is a Phase 1
+  schema checker and should not be used as part of Phase 0 capability checks.
 - `docs/teardown-test/inventory.md` already excludes `test-docker` and
   `test-lxc`, so a dedicated storage-validation stack can stay out of the broad
   teardown/redeploy gate by inventory choice rather than new harness code.
@@ -70,10 +82,29 @@ plan:
 
 Implication:
 
-- `test-storage` should be a normal tracked stack under
-  `terraform/lxc/stacks/test-storage/`
-- it should use `network.zone: build_seg`
-- it should not reuse the legacy `lan` path from `test-docker` or `test-lxc`
+- `test-storage` is present as a tracked stack under
+  `terraform/lxc/stacks/test-storage/` and already uses `network.zone: build_seg`.
+  It does not reuse the legacy `lan` path from `test-docker` or `test-lxc`.
+
+## Scope clarifications for this pass
+
+- CPU and memory field transitions (for example, scaling CPU cores or RAM)
+  are explicitly treated as out-of-scope for the storage-classifier work in
+  this branch's Phase 0 pass. The classifier and Phase 0 capability checks in
+  this pass focus on storage-related field transitions only (rootfs and
+  mount_point related changes). This narrowing preserves Phase 0's goal of
+  producing provider-backed evidence for storage mutation behavior without
+  expanding into unrelated compute-change validation.
+
+- The Phase 0 authoritative claims have been reconciled against available
+  provider-backed evidence from `test-storage` runs. In particular, no
+  provider-backed `terragrunt plan` proving an in-place `rootfs_size` increase
+  was produced in this pass; therefore the matrix claim that previously
+  labeled `rootfs_size: increase` as `authoritative` has been downgraded to a
+  conservative policy mapping in `docs/storage-refactor/capability-matrix.md`.
+  That row will be re-authoritatively upgraded only if a provider-backed
+  non-replacing plan for `rootfs_size` growth is captured and attached to the
+  hand-back.
 
 ## Concrete Path-Masking Risk Cases
 
@@ -90,8 +121,9 @@ Implication:
 
 - first-extra-mount introduction on a Docker-only stack must check for
   mount-over-existing-data risk before apply
-- path changes for an existing extra mount should start as blocked /
-  replacement-sensitive unless Phase 0 evidence proves otherwise
+- path changes for an existing extra mount are conservatively `blocked` in
+  Phase 0 (rationale: risk of data-masking and provider delete/create semantics;
+  Phase 0 lacks provider-backed in-place evidence)
 
 ## Guardrail / Workflow Implications
 
@@ -104,18 +136,50 @@ Implication:
 
 ## Recommended Next Copilot Pass
 
-Use `docs/storage-refactor/copilot-init-prompt.md` for Phase 0 only.
+Use `docs/storage-refactor/copilot-followup-prompt.md` for Phase 0 follow-up and targeted proof attempts.
 
-The next large pass should:
+What I did in this pass:
 
-1. confirm the highest completed phase is still Phase 0 / not started
-2. create the dedicated `test-storage` stack as a normal tracked stack shape
-3. write the mutation matrix and classifier-design note
-4. run the Phase 0 source checks
-5. run the targeted `terragrunt plan` / `apply` capability exercises on
-   `test-storage`
-6. hand back exact evidence for:
-   - Docker mount growth
-   - first extra-mount introduction
-   - existing extra-mount growth
-   - blocked or replacement-sensitive mount edits
+- Created the baseline `test-storage` state on `pve-test` (disposable workflow) by
+  applying the saved plan under `./with-secrets`.
+- Ran targeted mutation plans (provider-backed) and classified them with the
+  Phase 0 classifier (tooling present at `terraform/lxc/classify-storage-plan.py`).
+  - Docker data mount growth (8G -> 16G): provider plan required a replace
+    of the `proxmox_virtual_environment_container` resource — classifier: `replacement-sensitive`.
+  - First extra-mount introduction (none -> `/var/lib/extra` 100G): classifier: `blocked`.
+
+Remaining, concrete next step for Phase 0:
+
+1. Based on the above results, the immediate Phase 0 follow-up is:
+   - If the goal is to prove safe in-place growth, attempt a controlled test
+     that exercises an implementation path known to support in-place expansion
+     (different storage backend or provider feature) and produce a provider
+     plan that shows a non-replacing size increase. Classify that plan as
+     evidence.
+   - Otherwise, document the replacement-sensitive and blocked transitions
+     as gating policy for Phase 1 contract work (do not attempt schema changes
+     in this pass).
+
+Notes:
+
+- Do not mix Phase 1 schema/contract work into this pass. Keep
+  `terraform/lxc/storage/pve-test.phase1.yaml` isolated.
+- Keep transient artifacts (machine plan JSON, classifier output) out of
+  tracked `docs/` paths: write classifier output to `/tmp` or the local
+  ephemeral workspace and include its summary in the audit note (as above).
+
+## Phase 0 conclusion: backup-behavior requirement
+
+- Observation: the current `terraform/lxc/storage/pve-test.yaml` manifest does
+  not express per-mount backup intent, and the provider/module path does not
+  expose an explicit backup inclusion control today. That means the provider
+  will not automatically include or exclude persistent mounts from backup
+  policies without additional intent metadata.
+- Requirement for Phase 1: Phase 1 must make backup behavior explicit for each
+  persistent mount in the contract. Concretely, Phase 1 must require a
+  per-mount `backup_policy` (for example `include`, `exclude`, or
+  `unsupported: <reason>`) and must document whether the implementation will
+  attempt Terraform-managed backups, rely on an external PBS policy, or treat
+  backup handling as an explicit unsupported exception with a reasoning field.
+  This requirement is necessary because the current provider/module path does
+  not encode backup intent.
