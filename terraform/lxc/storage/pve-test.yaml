@@ -12,19 +12,29 @@ templates:
 storage_backends:
   infrastructure-containers:
     content_types: [rootdir]
+    backend_type: zfs
   storage-containers:
     content_types: [rootdir]
+    backend_type: dir
   storage-template:
     content_types: [vztmpl]
+    backend_type: dir
   local-lvm:
     content_types: [images, rootdir]
+    backend_type: lvm-thin
   local:
     content_types: [backup, iso, snippets, vztmpl]
+    backend_type: dir
 
 profiles:
   platform-default:
     rootfs_storage: local-lvm
     docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-zfs:
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   validation-small:
@@ -41,6 +51,9 @@ profiles:
 extra_mount_profiles:
   durable-default:
     storage: local-lvm
+    required_content_type: rootdir
+  durable-zfs:
+    storage: infrastructure-containers
     required_content_type: rootdir
   durable-small:
     storage: local-lvm

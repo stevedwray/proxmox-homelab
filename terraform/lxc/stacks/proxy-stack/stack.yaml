@@ -15,6 +15,14 @@ docker_storage_size: "5G"
 extra_mount_path: "/opt/proxy-stack/certs"
 extra_mount_size: "5G"
 extra_mount_profile: durable-default
+extra_mount:
+  logical_name: proxy-certs
+  path: /opt/proxy-stack/certs
+  size: "5G"
+  profile: durable-default
+  backup_policy: include
+  resize_control_plane: provider
+  mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - traefik

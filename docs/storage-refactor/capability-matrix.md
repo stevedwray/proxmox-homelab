@@ -16,16 +16,31 @@ Matrix
 - rootfs_size: increase
   - expected_provider_action: in-place update (resize)
   - mutation_class: safe-in-place
-  - authority: conservative policy (no provider-backed proof in this pass)
-  - evidence: No provider-backed `terragrunt plan` for `rootfs_size` increase
-    was produced in this branch's Phase 0 pass; downgraded to conservative
-    policy until an authoritative provider-backed plan is captured.
+  - authority: authoritative (observed on current `pve-test` profile)
+  - evidence: Provider-backed targeted plan for `rootfs_size` increase on
+    `test-storage` produced an in-place `disk` size update (8 -> 16). The
+    Phase 0 classifier recorded `rootfs_size_increase` => `safe-in-place`.
+    Reproduction: transiently increase `rootfs_size` in
+    `terraform/lxc/stacks/test-storage/stack.yaml`, run a targeted
+    `terragrunt plan -out=/tmp/test-storage-rootfs-grow.tfplan`, convert the
+    plan to JSON with the planner used by Terragrunt (e.g. `tofu show -json`),
+    and classify with `terraform/lxc/classify-storage-plan.py` (see
+    `/tmp/classified-rootfs-grow.json`).
 
 - docker_mount: increase size
-  - expected_provider_action: provider may report replacement for the current `pve-test` backend (replace of the container resource)
+  - expected_provider_action: provider reports replacement for the current
+    `pve-test` Docker-mount backends tested so far (replace of the container
+    resource)
   - mutation_class: replacement-sensitive
-  - authority: authoritative (observed on current `pve-test` profile)
-  - evidence: `docker_storage_size` increase on `test-storage` produced a provider replace in the observed plan output
+  - authority: authoritative (observed on current `pve-test` local-lvm and
+    `infrastructure-containers` zfs profiles)
+  - evidence: `docker_storage_size` increase on `test-storage` produced a
+    provider replace in the observed plan output on both backends tested so
+    far:
+    - `local-lvm` via the original `platform-default` profile
+    - `infrastructure-containers` zfs via the rebuilt `platform-zfs` profile,
+      where `mount_point.size = "8G" -> "16G"` still showed `# forces
+      replacement` and classified as `replacement-sensitive`
 
 - extra_mount: introduce (none -> first extra_mount)
   - expected_provider_action: create+attach (provider may report create of mount_point)
@@ -34,10 +49,23 @@ Matrix
   - evidence: attempted introduction on `test-storage` classified and treated as blocked in Phase 0
 
 - extra_mount: increase size
-  - expected_provider_action: provider-dependent; may be in-place or require replacement depending on backend/profile
-  - mutation_class: blocked
-  - authority: conservative policy (no Phase 0 in-place proof for extra-mount growth on current backends)
-  - evidence: no provider-backed non-replacing plan observed for extra-mount size increases on the current `pve-test` profile
+  - expected_provider_action: for the approved ZFS-backed operational workflow,
+    desired-state update plus Proxmox-native `pct resize` returns the stack to
+    a post-resize no-op `terragrunt plan`; direct provider-managed
+    `mount_point.size` reconciliation remains unsafe under the current provider
+  - mutation_class: safe-in-place
+  - authority: authoritative for the current `pve-test` ZFS-backed
+    `platform-zfs` + `durable-zfs` workflow on an already-existing extra mount
+  - evidence: `test-storage-extra` was created with
+    `mp1=/srv/test-extra,size=8G` on `infrastructure-containers`, then the
+    desired size in `terraform/lxc/stacks/test-storage-extra/stack.yaml` was
+    updated to `16G` and the operational workflow
+    `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack test-storage-extra --mount-path /srv/test-extra'`
+    completed successfully. Live verification showed
+    `pct config 151` reporting
+    `mp1: infrastructure-containers:subvol-151-disk-2,mp=/srv/test-extra,size=16G`,
+    guest `df -h /srv/test-extra` reported `16G`, and the post-resize
+    `terragrunt plan -no-color` for the stack returned `No changes.`
 
 - mount_point: path change
   - expected_provider_action: replacement or provider-reported delete/create
@@ -71,4 +99,16 @@ Notes
 - Backend differences (local-lvm vs directory vs zfs) are proximate causes of
   differing provider behavior. Tests must capture backend mapping via
   `storage/pve-test.yaml` and ensure the matrix records actual provider outputs.
+- The currently approved ZFS-backed grow-only workflow for non-rootfs mounts is
+  operational rather than provider-managed: update the desired size in
+  `stack.yaml`, run the Proxmox-native resize, verify the guest, then confirm a
+  no-op `terragrunt plan`. Direct provider-managed `mount_point.size` changes
+  remain replacement-sensitive.
+- This approved operational workflow is now proved on `pve-test` for both:
+  - the Docker mount at `/var/lib/docker`
+  - an already-existing extra mount at `/srv/test-extra`
+- Real stacks that still resolve extra-mount storage through `durable-default`
+  (`local-lvm`) must remain on `resize_control_plane: provider` until they are
+  rebuilt onto `durable-zfs` and revalidated against the approved operational
+  workflow.
 - If plan JSON is ambiguous, classifier must default to `blocked`.

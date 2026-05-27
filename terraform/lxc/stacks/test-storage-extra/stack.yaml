@@ -1,0 +1,35 @@
+# Dedicated disposable storage proof target with both the canonical Docker
+# mount and an existing extra mount created at initial provision time.
+hostname: test-storage-extra
+ip_address: "192.168.10.65/24"
+gateway: "192.168.10.1"
+dns_server: "192.168.10.1"
+deployment_tier: platform
+vmid: 151
+cores: 1
+memory: 1024
+rootfs_size: 16
+storage_profile: platform-zfs
+extra_mount_profile: durable-zfs
+docker_storage_size: "24G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "24G"
+  backup_policy: include
+  mutation_policy: grow-only
+  resize_control_plane: operational
+extra_mount_path: /srv/test-extra
+extra_mount_size: "16G"
+extra_mount:
+  logical_name: extra-data
+  path: /srv/test-extra
+  size: "16G"
+  profile: durable-zfs
+  backup_policy: include
+  mutation_policy: grow-only
+  resize_control_plane: operational
+template_name: "debian-13.1-2-docker-template.tar.gz"
+
+network:
+  zone: build_seg

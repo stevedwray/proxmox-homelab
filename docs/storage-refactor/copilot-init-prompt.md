@@ -80,6 +80,16 @@ Important constraints:
   approval
 - do not convert unchanged real stacks just for authoring cleanup when
   compatibility support is sufficient
+- do not stop after branch-state review or prompt/doc inspection if a concrete
+  next implementation/proof command is already implied by the plan
+- do not return a menu of options where the plan already defines a default next
+  action
+- if a validator or proof step fails because of an obvious repo-local fix that
+  can be made safely from repo context, make that fix and rerun in the same
+  pass
+- this pass must produce material progress:
+  at least one required validator/proof command run, one durable phase change,
+  or one exact blocker after attempting the required execution path
 
 Execution order:
 
@@ -94,6 +104,8 @@ Execution order:
 5. Update docs and validation tooling as the contract changes.
 6. Stop only for a real blocker, failed phase gate, or a decision with
    meaningful architectural consequences.
+7. Do not hand back "continue with follow-up" unless this pass also produced
+   new material phase evidence, a durable phase change, or an exact blocker.
 
 When reporting progress, focus on:
 

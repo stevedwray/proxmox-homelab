@@ -93,13 +93,15 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
             results.append({"field_transition": "new_size_introduced", "class": "blocked"})
         else:
             if new_size > old_size:
-                # Increase detected — classify conservatively per matrix:
-                # - rootfs -> safe-in-place
-                # - docker mount -> replacement-sensitive (observed on pve-test)
-                # - existing extra_mount -> blocked (no in-place proof yet)
-                if "rootfs" in path.lower() or "root" in path.lower():
+                # Increase detected — classify conservatively per matrix.
+                # Prefer detecting disk[] entries (rootfs) first, then docker mount,
+                # then fallback to blocked for ambiguous mount size changes.
+                p = path.lower()
+                if "disk[" in p or "/disk[" in p or "disk]/size" in p:
                     results.append({"field_transition": "rootfs_size_increase", "class": "safe-in-place"})
-                elif "docker" in path.lower() or any(isinstance(v[1], str) and "/var/lib/docker" in v[1] for v in before_items):
+                elif "rootfs" in p or "root" in p:
+                    results.append({"field_transition": "rootfs_size_increase", "class": "safe-in-place"})
+                elif "docker" in p or any(isinstance(v[1], str) and "/var/lib/docker" in v[1] for v in before_items):
                     results.append({"field_transition": "docker_mount_increase", "class": "replacement-sensitive"})
                 else:
                     results.append({"field_transition": "mount_size_increase", "class": "blocked"})

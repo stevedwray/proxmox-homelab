@@ -81,18 +81,49 @@ locals {
   resolved_storage_profile_mapping = try(local.storage_manifest.profiles[local.resolved_storage_profile], null)
   resolved_rootfs_storage          = try(local.resolved_storage_profile_mapping.rootfs_storage, null)
   resolved_docker_storage          = coalesce(try(local.resolved_storage_profile_mapping.docker_storage, null), local.resolved_rootfs_storage)
+  docker_mount_declared_size       = try(local.stack.docker_mount.size, null)
+  legacy_docker_storage_size       = try(local.stack.docker_storage_size, null)
+  resolved_docker_storage_size = coalesce(
+    local.docker_mount_declared_size,
+    local.legacy_docker_storage_size,
+    "20G"
+  )
+  docker_storage_size_mismatch = (
+    local.docker_mount_declared_size != null &&
+    local.legacy_docker_storage_size != null &&
+    tostring(local.docker_mount_declared_size) != tostring(local.legacy_docker_storage_size)
+  )
+
+  # Canonical extra_mount block support (while keeping legacy fields compatible)
+  extra_mount_declared                      = try(local.stack.extra_mount, null)
+  extra_mount_declared_path                 = try(local.extra_mount_declared.path, null)
+  extra_mount_declared_size                 = try(local.extra_mount_declared.size, null)
+  extra_mount_declared_profile              = try(local.extra_mount_declared.profile, null)
+  extra_mount_declared_resize_control_plane = try(local.extra_mount_declared.resize_control_plane, null)
+  extra_mount_declared_mutation_policy      = try(local.extra_mount_declared.mutation_policy, null)
+  resolved_extra_mount_path                 = local.extra_mount_declared_path != null ? local.extra_mount_declared_path : try(local.stack.extra_mount_path, null)
+  resolved_extra_mount_size                 = local.extra_mount_declared_size != null ? local.extra_mount_declared_size : try(local.stack.extra_mount_size, null)
 
   resolved_extra_mount_profile = coalesce(
+    local.extra_mount_declared_profile,
     try(local.stack.extra_mount_profile, null),
     try(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage], null),
     try(local.storage_manifest.defaults.extra_mount_profile, null),
     local.resolved_storage_profile
   )
   resolved_extra_mount_profile_mapping = try(local.storage_manifest.extra_mount_profiles[local.resolved_extra_mount_profile], null)
-  resolved_extra_mount_storage = try(local.stack.extra_mount_path, null) != null ? coalesce(
+  # Resolve extra mount storage only when either canonical or legacy path/size is present
+  resolved_extra_mount_storage = local.resolved_extra_mount_path != null ? coalesce(
     try(local.resolved_extra_mount_profile_mapping.storage, null),
     local.resolved_rootfs_storage
   ) : null
+  resolved_extra_mount_backend_type = try(local.storage_manifest.storage_backends[local.resolved_extra_mount_storage].backend_type, null)
+
+  extra_mount_size_mismatch = (
+    local.extra_mount_declared_size != null &&
+    try(local.stack.extra_mount_size, null) != null &&
+    tostring(local.extra_mount_declared_size) != tostring(try(local.stack.extra_mount_size, null))
+  )
 
   resolved_template_profile = coalesce(
     try(local.stack.template_profile, null),
@@ -345,7 +376,7 @@ check "storage_profile_resolves" {
 
 check "extra_mount_profile_resolves" {
   assert {
-    condition = try(local.stack.extra_mount_path, null) == null || (
+    condition = local.resolved_extra_mount_path == null || (
       local.resolved_extra_mount_profile != null &&
       local.resolved_extra_mount_profile_mapping != null &&
       local.resolved_extra_mount_storage != null
@@ -387,13 +418,45 @@ check "docker_backend_supports_required_content" {
   }
 }
 
+check "extra_mount_canonical_legacy_mismatch" {
+  assert {
+    condition = !(
+      (local.extra_mount_declared_path != null && try(local.stack.extra_mount_path, null) != null && tostring(local.extra_mount_declared_path) != tostring(try(local.stack.extra_mount_path, null))) ||
+      (local.extra_mount_declared_size != null && try(local.stack.extra_mount_size, null) != null && tostring(local.extra_mount_declared_size) != tostring(try(local.stack.extra_mount_size, null))) ||
+      (local.extra_mount_declared_profile != null && try(local.stack.extra_mount_profile, null) != null && tostring(local.extra_mount_declared_profile) != tostring(try(local.stack.extra_mount_profile, null)))
+    )
+    error_message = "Canonical extra_mount fields (extra_mount.*) must match legacy extra_mount_path/size/profile while both are present"
+  }
+}
+
+check "docker_mount_size_contract_is_consistent" {
+  assert {
+    condition     = !local.docker_storage_size_mismatch
+    error_message = "Stack '${local.stack_name}' declares mismatched docker mount sizes: docker_mount.size must match legacy docker_storage_size while both are present."
+  }
+}
+
 check "extra_mount_backend_supports_required_content" {
   assert {
-    condition = try(local.stack.extra_mount_path, null) == null || contains(
+    condition = local.resolved_extra_mount_path == null || contains(
       try(local.storage_backend_catalog[local.resolved_extra_mount_storage].content_types, []),
       coalesce(try(local.resolved_extra_mount_profile_mapping.required_content_type, null), "rootdir")
     )
     error_message = "Resolved extra mount backend '${coalesce(local.resolved_extra_mount_storage, "<unset>")}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_operational_contract_is_supported" {
+  assert {
+    condition = local.extra_mount_declared == null || (
+      contains(["provider", "operational"], coalesce(local.extra_mount_declared_resize_control_plane, "provider")) &&
+      coalesce(local.extra_mount_declared_mutation_policy, "grow-only") == "grow-only" &&
+      (
+        coalesce(local.extra_mount_declared_resize_control_plane, "provider") != "operational" ||
+        local.resolved_extra_mount_backend_type == "zfs"
+      )
+    )
+    error_message = "Stack '${local.stack_name}' may declare extra_mount.resize_control_plane='operational' only for grow-only extra mounts resolved to a zfs-backed extra-mount storage profile."
   }
 }
 
@@ -529,7 +592,7 @@ module "lxc" {
   rootfs_size         = try(local.stack.rootfs_size, 8)
   rootfs_storage      = local.resolved_rootfs_storage
   docker_storage      = local.resolved_docker_storage
-  docker_storage_size = try(local.stack.docker_storage_size, "20G")
+  docker_storage_size = local.resolved_docker_storage_size
 
   ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))
@@ -538,8 +601,8 @@ module "lxc" {
   network_firewall = local.effective_firewall == true
   dns_servers      = local.effective_dns_server != null ? [local.effective_dns_server] : null
 
-  extra_mount_path    = try(local.stack.extra_mount_path, null)
-  extra_mount_size    = try(local.stack.extra_mount_size, null)
+  extra_mount_path    = local.resolved_extra_mount_path
+  extra_mount_size    = local.resolved_extra_mount_size
   extra_mount_storage = local.resolved_extra_mount_storage
 
   depends_on = [null_resource.configure_network_sdn_attachment]

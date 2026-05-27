@@ -2,13 +2,15 @@
 
 ## Goal
 
-Refactor the `terraform/lxc` platform so Terraform-driven LXC storage layout
+Refactor the `terraform/lxc` platform so stack-declared LXC storage layout
 changes for Docker-on-LXC are modeled safely and explicitly.
 
 The refactor must allow us to:
 
-- grow the `/var/lib/docker` mount safely
-- grow an existing persistent extra mount safely
+- grow the `/var/lib/docker` mount safely through the approved backend-specific
+  mutation engine
+- grow an existing persistent extra mount safely through the approved
+  backend-specific mutation engine
 - attach an additional persistent filesystem safely for stacks that do not
   already consume the module's optional extra mount
 - make persistent mount intent explicit and reviewable
@@ -65,6 +67,14 @@ This is not a backup/restore program and not a data-migration program.
 - root disk growth is supported in place
 - CPU and memory changes are in-place or reboot-type mutations
 - LXC `mount_point` edits remain replacement-sensitive in the provider
+- on the ZFS-backed `infrastructure-containers` pool, Proxmox-native
+  `pct resize` for the Docker mount works live and the guest sees the new size
+  immediately
+- after that operational resize, a normal `terragrunt plan` returns no changes
+  once `stack.yaml` is updated to the same desired size
+- if `stack.yaml` is changed first and Terraform/OpenTofu reconciles before the
+  operational resize happens, the provider still plans the
+  replacement-sensitive path
 
 That last point is the main reason this refactor exists.
 
@@ -133,6 +143,35 @@ The implementation should follow these rules:
 18. Direct/rootfs service stacks must remain no-op safe under the new contract.
 19. This plan does not require PBS restore drills, stack-by-stack restore
     proofs, or broad data migration waves.
+20. `stack.yaml` remains the source of truth for desired mount sizes, even when
+    Terraform/OpenTofu is not the day-2 mutation engine for that field.
+21. For ZFS-backed non-rootfs mounts, the approved grow-only day-2 workflow is:
+    update desired size in `stack.yaml`, execute the resize operationally on
+    the Proxmox host, verify the live result, then confirm a no-op
+    `terragrunt plan`.
+22. Direct Terraform/OpenTofu apply of non-rootfs mount-size growth remains
+    blocked under the current provider unless a later validated provider change
+    proves an in-place path.
+23. The same operational grow-only pattern should remain extensible to multiple
+    non-rootfs mounts later, provided the contract gives each mount a stable
+    logical identity and mutation policy.
+
+### Phase 0 implementation status
+
+The first narrow implementation slice is now present for the ZFS-backed Docker
+mount on `test-storage`.
+
+- stack intent is declared in `docker_mount`
+- the storage contract validator blocks non-ZFS or non-grow-only operational
+  declarations for this slice
+- the operational mutation engine is
+  `terraform/lxc/ansible/playbooks/resize-lxc-mount.yml`
+- the repo-native entrypoint is `scripts/resize-lxc-mount.sh`
+- the validated proof target remains `terraform/lxc/stacks/test-storage/`
+
+This does not yet broaden to environment-wide stack migration or a full
+multi-mount rollout. The current slice is intentionally limited to the Docker
+mount at `/var/lib/docker`.
 
 ## Target Contract
 
@@ -149,6 +188,7 @@ docker_mount:
   logical_name: docker-data
   size: 32G
   backup_policy: include
+  resize_control_plane: operational
 
 extra_mount:
   logical_name: harbor-data
@@ -156,6 +196,7 @@ extra_mount:
   size: 100G
   profile: durable-default
   backup_policy: include
+  resize_control_plane: operational
 ```
 
 The exact schema can change during implementation, but the design rules should
@@ -164,6 +205,8 @@ hold:
 - the stack declares mount intent explicitly
 - the environment decides how that intent maps to concrete backends
 - validation can reason about identity, size, backup intent, and mutation class
+- the contract can distinguish desired state from the approved day-2 resize
+  control plane for that mount
 - the contract stays honest about the current module limit of one optional extra
   mount
 - compatibility/default paths remain available for unchanged real stacks during
@@ -191,9 +234,11 @@ as an invitation for broad free-form implementation.
    `docs/storage-refactor/copilot-followup-prompt.md`.
 4. Before accepting a phase as complete, run a separate validation pass with
    `docs/storage-refactor/copilot-validation-prompt.md`.
-5. Use `docs/storage-refactor/copilot-gate-prompt.md` only after implementation
+5. If delegated passes start churning without new material evidence, reset with
+   `docs/storage-refactor/copilot-execution-recovery-prompt.md`.
+6. Use `docs/storage-refactor/copilot-gate-prompt.md` only after implementation
    phases are complete and the branch is ready for final gate work.
-6. Use `docs/storage-refactor/copilot-promotion-prompt.md` only after the final
+7. Use `docs/storage-refactor/copilot-promotion-prompt.md` only after the final
    gate succeeds or is explicitly accepted.
 
 ### Delegation rule
@@ -202,6 +247,34 @@ as an invitation for broad free-form implementation.
 - do not ask an implementation pass to span multiple unfinished phases
 - do not advance the branch to the next phase until the current phase satisfies
   its exit criteria and the phase completion checklist
+
+### Process Churn Guardrails
+
+- The purpose of delegated passes is to produce material execution progress,
+  not repeated prompt refinement, branch-state summaries, or manager-facing
+  option lists.
+- Every delegated pass must do at least one of the following before handing
+  back:
+  - run a required validator, scan, or proof command from the current phase
+  - make a durable code or document change required by the current phase
+  - run a targeted provider-backed plan/apply/proof step on the current phase's
+    disposable validation target
+- A pass must not stop only because there are multiple reasonable next actions.
+  If the plan already makes one path the default, take that path.
+- A pass must not hand back "use follow-up next" unless it also reports a
+  concrete blocker or a concrete newly completed phase deliverable from this
+  pass.
+- If a validator fails because of an obvious repo-local deficiency that can be
+  repaired safely from repo context, repair it and rerun the validator in the
+  same pass rather than asking the manager to choose between repair options.
+- If two consecutive delegated passes produce only review churn, prompt edits,
+  or hand-back wording changes without new phase evidence, live validation, or
+  durable implementation changes, the next pass must be execution-only:
+  either perform the pending commands/tests/applies or stop with an exact
+  blocker after attempting them.
+- The manager session should treat repeated "partial, continue" loops without
+  new material evidence as a process failure and reset the next pass to a
+  narrow execution brief.
 
 ### Required hand-back
 
@@ -224,6 +297,10 @@ Every delegated pass should end with a structured hand-back that includes:
   plan before delegating the next pass
 - if a delegated pass broadens scope beyond this plan, the manager session
   should stop and realign before work continues
+- if a delegated pass returns only narration, option lists, or prompt/policy
+  edits without new material phase evidence, the manager session should not
+  request another generic follow-up; it should issue a narrow execution-only
+  brief or stop the loop
 
 ## Phase Plan
 
@@ -334,6 +411,7 @@ storage-migration redesign.
    - Docker mount intent
    - extra mount intent
    - logical mount identity
+   - resize control plane / mutation engine metadata
    - backup policy metadata
    - backup exception metadata when explicit Terraform control is unsupported
    - mutation policy metadata
@@ -389,7 +467,8 @@ storage-migration redesign.
 
 ### Objective
 
-Make the two core operator workflows low-risk and repeatable:
+Make the two core operator workflows low-risk and repeatable using the
+approved backend-specific control plane:
 
 - grow the Docker mount
 - grow an existing extra mount
@@ -402,6 +481,11 @@ Make the two core operator workflows low-risk and repeatable:
    extra mount workflow.
    - Existing extra mounts that already occupy the one optional extra-mount slot
      are in scope for grow-only resize.
+   - Rootfs growth may remain Terraform/OpenTofu-managed where the provider
+     proves an in-place path.
+   - ZFS-backed non-rootfs growth must use the approved operational workflow:
+     update desired size in `stack.yaml`, perform the host-side resize, verify
+     the live result, then confirm Terraform/OpenTofu returns to no drift.
 2. Implement additive extra-mount attachment rules for the supported
    "zero extra mounts" to "one extra mount" transition without silent path
    masking or surprise replacement behavior.
@@ -432,15 +516,18 @@ Make the two core operator workflows low-risk and repeatable:
 8. Document approved operator workflows for:
    - expand `/var/lib/docker`
    - attach one extra mount
+   - expand an existing extra mount
+   - sequence `stack.yaml` updates vs operational resize steps
    - stop conditions when a requested change remains replacement-sensitive
 
 ### Tests
 
 - targeted resize exercise on the dedicated storage-validation LXC:
   - write sentinel data under Docker-managed state
-  - grow the Docker mount
-  - reapply or restart as needed
+  - change desired size in `stack.yaml`
+  - grow the Docker mount with the approved operational workflow
   - verify sentinel data remains
+  - verify a fresh `terragrunt plan` returns no drift
 - targeted additive-mount exercise on the same dedicated storage-validation LXC:
   - attach a new filesystem
   - write sentinel data
@@ -449,9 +536,10 @@ Make the two core operator workflows low-risk and repeatable:
 - targeted existing-extra-mount resize exercise on the same dedicated
   storage-validation LXC after the first extra mount exists:
   - write sentinel data to the extra mount
-  - grow the extra mount
-  - reapply or restart as needed
+  - change desired size in `stack.yaml`
+  - grow the extra mount with the approved operational workflow
   - verify sentinel data remains and the mount path is unchanged
+  - verify a fresh `terragrunt plan` returns no drift
 - targeted negative plan for a stack shape that already uses `extra_mount_*`,
   proving a second-extra-mount request is blocked or surfaced as out of scope
 - reapply without changes and prove the rendered mount intent remains stable
@@ -533,6 +621,8 @@ Make storage safety machine-checkable in normal repo workflows.
    - shrink attempts
    - path masking
    - replacement-sensitive mount edits
+   - direct Terraform/OpenTofu apply attempts for mount-size changes whose
+     declared resize control plane is operational
    - missing backup policy
    - missing required backup exception detail
 4. Add a live validator that checks:
@@ -638,8 +728,10 @@ Do not advance a phase until all of the following are true:
 This refactor is complete when:
 
 - persistent mount intent is modeled explicitly
-- grow-only Docker mount updates are supported and tested
-- grow-only existing extra-mount updates are supported and tested
+- grow-only Docker mount updates are supported and tested through the approved
+  backend-specific workflow
+- grow-only existing extra-mount updates are supported and tested through the
+  approved backend-specific workflow
 - additive extra-mount attachment is supported and tested
 - the supported additive workflow is clearly limited to the current module shape
   of zero or one optional extra mount

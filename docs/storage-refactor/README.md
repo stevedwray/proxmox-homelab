@@ -2,8 +2,9 @@
 
 ## Purpose
 
-Improve the `terraform/lxc` storage model so Terraform-driven storage layout
-changes for Docker-on-LXC are explicit, predictable, and low-risk.
+Improve the `terraform/lxc` storage model so stack-declared storage layout
+changes for Docker-on-LXC are explicit, predictable, and low-risk, even when
+Terraform is not the day-2 mutation engine for every backend.
 
 This project is about the gap between what Proxmox LXC can safely do and what
 the current Terraform/provider contract safely models.
@@ -74,8 +75,9 @@ normal lifecycle edits into surprising replacement risk?"
 The refactor is done only when all of the following are true:
 
 - growing the Docker data mount is a documented, tested, grow-only workflow
+  through the approved backend-specific control plane
 - growing an existing persistent extra mount is a documented, tested, grow-only
-  workflow
+  workflow through the approved backend-specific control plane
 - attaching an additional persistent filesystem is a documented, tested
   workflow for the current module shape
 - every persistent mount has explicit:
@@ -139,6 +141,58 @@ later with approval:
   `/var/lib/docker` mount unless that directly improves safety.
 - Use disposable `pve-test` validation to prove the workflows; preserving
   current `pve-test` state or proving PBS restore is not part of this project.
+
+## Approved Day-2 Resize Model
+
+The current provider results mean the repo has to separate desired state from
+the mutation engine for some storage edits.
+
+- `stack.yaml` remains the source of truth for desired mount sizes and other
+  storage intent.
+- Rootfs growth can stay Terraform/OpenTofu-managed where the provider proves
+  in-place behavior.
+- ZFS-backed non-rootfs mounts are created by Terraform, but grow-only day-2
+  size changes are performed operationally through Proxmox-native resize
+  commands executed by Ansible or an equivalent host-side workflow.
+- The approved sequence for a ZFS-backed non-rootfs grow is:
+  1. update the desired size in `stack.yaml`
+  2. run the operational resize on the Proxmox host
+  3. verify the new size in Proxmox and in the guest
+  4. run a fresh `terragrunt plan` and expect a no-op
+- Direct Terraform/OpenTofu apply of a non-rootfs mount-size increase remains
+  unsafe under the current provider because the provider still models that
+  change as replacement-sensitive.
+- Sequencing matters. If Terraform/OpenTofu reconciles after `stack.yaml` is
+  changed but before the operational resize happens, it will still plan the
+  unsafe replacement-sensitive path.
+- This pattern generalizes to multiple non-rootfs ZFS-backed mounts later, as
+  long as the contract gives each mount a stable logical identity and keeps the
+  workflow grow-only.
+
+### Implemented first slice
+
+The repo now contains a first supported operational resize workflow for the
+ZFS-backed Docker mount on `test-storage`.
+
+- `terraform/lxc/stacks/test-storage/stack.yaml` declares Docker mount intent
+  in `docker_mount`
+- `terraform/lxc/validate-storage-contract.py` enforces the first-slice policy:
+  operational control plane, grow-only mutation policy, `/var/lib/docker`, and
+  a ZFS-backed resolved Docker backend
+- `scripts/resize-lxc-mount.sh --stack test-storage` is the narrow repo-native
+  entrypoint
+- `terraform/lxc/ansible/playbooks/resize-lxc-mount.yml` performs the host-side
+  `pct resize`, verifies `pct config`, and verifies guest-visible size with
+  `pct exec ... df -h`
+
+Supported operator sequence for this slice:
+
+1. update `docker_mount.size` and the compatibility field
+   `docker_storage_size` in `stack.yaml`
+2. run `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack test-storage'`
+3. verify the playbook output for `pct config` and guest `df -h`
+4. run `./with-secrets bash -lc 'cd terraform/lxc/stacks/test-storage && terragrunt plan -no-color'`
+   and expect `No changes`
 
 ## Current Risk Map
 

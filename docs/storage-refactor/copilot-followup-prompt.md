@@ -88,6 +88,16 @@ Working rules:
   explicitly needs representative validation coverage
 - keep Docker-managed volumes supported
 - do not touch unrelated local edits
+- do not stop after review, doc reading, or partial command output if the next
+  required execution step is already clear from this prompt
+- do not present a menu of options where the plan already implies a default
+  next action
+- if a validator or proof step fails because of an obvious repo-local fix that
+  can be made safely from repo context, make that fix and rerun in the same
+  pass
+- this pass must produce material progress:
+  at least one required validator/proof command run, one durable phase change,
+  or one exact blocker after attempting the required execution path
 
 Definition of done for this pass:
 
