@@ -1330,7 +1330,7 @@ stack_apply() {
 
   guard_target
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt apply -auto-approve"
   guard_target
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
