@@ -180,8 +180,10 @@ fleet.
 This does not yet complete the full refactor plan. The current proven slice is
 the Docker mount at `/var/lib/docker`, the ZFS-backed first-extra-mount attach
 workflow on `test-storage`, and the already-documented ZFS-backed
-existing-extra-mount workflow. Remaining planned work still includes
-backup-intent completion and final guardrail integration.
+existing-extra-mount workflow. Backup-policy plumbing now exists in Terraform,
+validation, and stack authoring across the repo, and the new storage guardrails
+have been exercised in the normal `source-preflight` and `plan` harness paths.
+The remaining open work is full destructive gate validation and final closeout.
 
 ### Current phase position
 
@@ -195,21 +197,42 @@ backup-intent completion and final guardrail integration.
   - First extra-mount introduction is now proved as an operational attach
     workflow on the dedicated `test-storage` target.
   - Existing extra-mount growth is proved for the current ZFS-backed path.
-- Phases 3 through 5 remain open as written: backup intent, full guardrail
-  integration, and final validation/promotion are not finished.
+- Phase 3 is materially complete:
+  - explicit `backup_policy` fields are implemented in the canonical mount
+    contract
+  - Terraform now renders explicit Proxmox mount-point backup flags for Docker
+    and extra mounts
+  - validator checks and current operator docs understand `include` vs
+    `exclude`
+  - Docker-mount intent is now explicit repo-wide, and the current extra-mount
+    declarations also carry explicit backup intent
+  - every active non-`.hold` stack manifest that still carries
+    `docker_storage_size` now also declares `docker_mount` (`19/19` active
+    manifests)
+- Phase 4 is partially complete:
+  - offline storage contract validation runs in `source-preflight`
+  - storage plan-safety regression checks run in `source-preflight`
+  - targeted storage plan classification and safety checks now run in the
+    normal `plan` phase for stacks using the explicit contract
+  - the remaining work is proving the same storage contract through a full gate
+    cycle and deciding whether any additional live-plan integration is needed
+- Phase 5 remains open: final destructive validation/promotion evidence is not
+  finished.
 
 ### Current next target
 
-The next substantive storage-refactor target should be explicit backup intent
-for persistent mounts, followed by the remaining guardrail consolidation.
+The next substantive storage-refactor target should be a full teardown/deploy
+test so the updated storage contract and guardrails are validated through the
+normal destructive gate.
 
 That next pass should complete all of the following:
 
-- each persistent mount resolves to an explicit backup answer
-- the now-proved operational attach and grow workflows are reflected honestly in
-  validator output and operator docs
-- plan-classifier and preflight integration distinguish storage risk from
-  unrelated stack drift cleanly enough for normal workflow use
+- the current storage contract survives the normal teardown/deploy flow without
+  introducing unexpected storage drift or replacement behavior
+- the now-proved operational attach and grow workflows remain reflected
+  honestly in validator output and operator docs
+- final gate evidence shows the storage guardrails work in the same workflow
+  the branch will use for promotion
 
 ## Target Contract
 
@@ -605,9 +628,26 @@ approved backend-specific control plane:
 
 ## Phase 3: Make Backup Intent Explicit
 
+Status: materially complete
+
 ### Objective
 
 Ensure persistent mounts are not implicitly omitted from backup policy.
+
+Current status:
+
+- explicit `backup_policy` metadata now exists for the canonical `docker_mount`
+  and `extra_mount` declarations
+- Terraform renders explicit Proxmox `mount_point.backup` values from that
+  intent for both Docker and extra mounts
+- validator and docs enforce the supported `include` and `exclude` values
+- Docker-mount backup intent is now explicit across the repo and the current
+  extra-mount declarations also carry explicit backup intent
+- every active non-`.hold` stack manifest that still carries
+  `docker_storage_size` now also declares `docker_mount` (`19/19` active
+  manifests)
+- the remaining work in this phase is documenting any real unsupported
+  exception path only if a later gate run exposes one
 
 ### Work
 

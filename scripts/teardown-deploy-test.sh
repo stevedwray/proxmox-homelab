@@ -897,6 +897,63 @@ log_stack_plan() {
   printf '%s\n' "$@" | tee -a "${RUN_LOG}"
 }
 
+stack_uses_explicit_storage_contract() {
+  local stack="$1"
+  local stack_yaml="${REPO_ROOT}/terraform/lxc/stacks/${stack}/stack.yaml"
+
+  [[ -f "${stack_yaml}" ]] || return 1
+  grep -Eq '^(docker_mount|extra_mount):' "${stack_yaml}"
+}
+
+review_storage_plan_safety() {
+  local spec="$1"
+  local stack planfile planjson classified
+
+  stack="$(stack_name "${spec}")"
+  if ! stack_uses_explicit_storage_contract "${stack}"; then
+    log "skip storage-plan-review-${stack}: stack does not declare explicit storage contract"
+    return 0
+  fi
+
+  planfile="${LOG_DIR}/${stack}-storage.tfplan"
+  planjson="${LOG_DIR}/${stack}-storage.plan.json"
+  classified="${LOG_DIR}/${stack}-storage.classified.json"
+
+  run_logged "storage-plan-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
+  run_logged "storage-plan-json-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt show -json '${planfile}' >'${planjson}'"
+  run_logged "storage-plan-classify-${stack}" \
+    python3 "${TERRAFORM_LXC}/classify-storage-plan.py" --plan-json "${planjson}" --stack-name "${stack}" --out "${classified}"
+  run_logged "storage-plan-safety-${stack}" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${planjson}"
+}
+
+run_storage_classifier_regression_checks() {
+  local nonstorage_plan="${LOG_DIR}/storage-plan-nonstorage-fixture.json"
+  local unsafe_log="${LOG_DIR}/storage-plan-known-unsafe.log"
+
+  cat >"${nonstorage_plan}" <<'EOF'
+{
+  "resource_changes": [
+    {
+      "address": "module.lxc.proxmox_virtual_environment_container.docker_host",
+      "change": {
+        "actions": ["update"],
+        "before": {"memory": {"dedicated": 1024}},
+        "after": {"memory": {"dedicated": 2048}}
+      }
+    }
+  ]
+}
+EOF
+
+  run_logged "storage-plan-safety-nonstorage-fixture" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${nonstorage_plan}"
+  run_logged "storage-plan-safety-known-unsafe" \
+    bash -lc "if python3 '${TERRAFORM_LXC}/check-plan-safety.py' --plan-json '${REPO_ROOT}/docs/storage-refactor/fixtures/fixture-docker-grow-plan.json' >'${unsafe_log}' 2>&1; then echo 'expected unsafe storage fixture to fail' >&2; exit 1; else status=\$?; cat '${unsafe_log}'; [[ \"\${status}\" -eq 2 ]]; fi"
+}
+
 load_stack_specs() {
   local group="$1"
   local target_name="$2"
@@ -1706,6 +1763,7 @@ run_source_preflight_checks() {
     --stacks-dir "${TERRAFORM_LXC}/stacks" \
     --proxmox-node "${TARGET_NODE_EXPECTED}" \
     --offline
+  run_storage_classifier_regression_checks
   run_logged "validate-edge-manifests" \
     python3 "${TERRAFORM_LXC}/validate-edge-manifests.py" "${TERRAFORM_LXC}"/stacks/*/edge.yaml
   run_logged "edge-unit-tests" \
@@ -1817,9 +1875,12 @@ phase_preflight() {
 phase_plan() {
   local -a foundation_specs edge_specs platform_specs destroy_specs
   local -a state_specs
+  local spec
 
   create_evidence_dirs
   log "evidence_dir=${EVIDENCE_DIR}"
+  record_working_tree_state
+  record_branch_and_commit
   load_stack_specs foundation foundation_specs
   load_stack_specs edge edge_specs
   load_stack_specs platform platform_specs
@@ -1843,6 +1904,18 @@ phase_plan() {
   log_stack_plan "edge" "${edge_specs[@]}"
   log_stack_plan "platform" "${platform_specs[@]}"
   log_stack_plan "destroy" "${destroy_specs[@]}"
+
+  require_live_env_contract
+  guard_target
+  for spec in "${foundation_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${edge_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${platform_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
 }
 
 phase_platform_status() {

@@ -28,10 +28,6 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
     before = change.get("change", {}).get("before")
     after = change.get("change", {}).get("after")
 
-    # If provider reports replacement via actions, mark replacement-sensitive
-    if any(a in ("delete", "create", "replace") for a in actions):
-        results.append({"field_transition": "provider_replacement", "class": "replacement-sensitive"})
-        return results
     # Heuristics: traverse nested before/after structures to find keys that look
     # like storage-related attributes (size, path, mount_point, disk entries).
 
@@ -51,6 +47,41 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
 
     before_items = traverse(before) if before else []
     after_items = traverse(after) if after else []
+
+    def is_storage_related_item(path: str, value: Any) -> bool:
+        lowered = path.lower()
+        if any(token in lowered for token in (
+            "mount_point",
+            "mountpoint",
+            "docker",
+            "extra_mount",
+            "rootfs",
+            "datastore_id",
+            "volume",
+        )):
+            return True
+        if ("disk[" in lowered or "/disk[" in lowered or "disk]/" in lowered) and any(
+            token in lowered for token in ("size", "datastore_id", "volume")
+        ):
+            return True
+        if isinstance(value, str) and value == "/var/lib/docker":
+            return True
+        if isinstance(value, str) and value.startswith("/") and any(
+            token in lowered for token in ("mount", "path")
+        ):
+            return True
+        return False
+
+    storage_related = any(
+        is_storage_related_item(path, value) for path, value in [*before_items, *after_items]
+    )
+
+    # If provider reports replacement via actions, only treat it as storage
+    # risk when the diff surface is storage-related.
+    if any(a in ("delete", "create", "replace") for a in actions):
+        if storage_related:
+            results.append({"field_transition": "provider_replacement", "class": "replacement-sensitive"})
+        return results
 
     def find_size_entries(items: list[tuple[str, Any]]) -> dict[str, int]:
         found: dict[str, int] = {}
@@ -78,10 +109,21 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
                     found[path] = valv
         return found
 
+    def find_backup_entries(items: list[tuple[str, Any]]) -> dict[str, bool]:
+        found: dict[str, bool] = {}
+        for path, valv in items:
+            lowered = path.lower()
+            if lowered.endswith("/backup") or "/backup" in lowered:
+                if isinstance(valv, bool):
+                    found[path] = valv
+        return found
+
     before_sizes = find_size_entries(before_items)
     after_sizes = find_size_entries(after_items)
     before_paths = find_path_entries(before_items)
     after_paths = find_path_entries(after_items)
+    before_backups = find_backup_entries(before_items)
+    after_backups = find_backup_entries(after_items)
 
     # Compare size entries and map according to Phase 0 capability matrix
     for path, new_size in after_sizes.items():
@@ -118,8 +160,18 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
             # Path changes are conservatively blocked (risk of data-masking and delete/create semantics)
             results.append({"field_transition": "mount_path_change", "class": "blocked"})
 
-    # If nothing matched, be conservative and block
-    if not results:
+    # Detect explicit mount backup-policy updates. These are expected to be
+    # in-place metadata changes under the current provider path and should not
+    # be treated as unsafe storage mutations.
+    for path, new_backup in after_backups.items():
+        old_backup = before_backups.get(path)
+        if old_backup is not None and old_backup != new_backup:
+            results.append({"field_transition": "mount_backup_policy_update", "class": "safe-in-place"})
+
+    # If nothing matched, only block when the provider diff still looked
+    # storage-related. Non-storage container drift should not fail storage-only
+    # checks wired into broader workflow paths.
+    if not results and storage_related:
         results.append({"field_transition": "unknown_or_ambiguous", "class": "blocked"})
 
     return results

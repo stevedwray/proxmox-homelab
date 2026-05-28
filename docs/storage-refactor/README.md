@@ -228,6 +228,9 @@ extra-mount regression.
 - `terraform/lxc/modules/lxc-docker-host/main.tf` now renders explicit Proxmox
   mount-point `backup` fields for both Docker and extra mounts from stack
   `backup_policy` intent
+- every active non-`.hold` stack manifest that still carries the compatibility
+  field `docker_storage_size` now also declares explicit `docker_mount` intent
+  (`19/19` active manifests)
 
 Dedicated additive-attach validation is now established for:
 
@@ -272,15 +275,16 @@ What is now proved:
 
 What is not yet proved:
 
-- explicit backup-intent completion for every persistent mount
-- final preflight and guardrail integration across the whole refactor plan
+- full teardown/deploy validation of the storage-refactor changes through the
+  normal repo gate
+- final validation and promotion evidence for the completed storage contract
 
 Current next target:
 
-- explicit backup intent and backup exception handling for persistent mounts is
-  the next substantive gap
-- after that, the remaining work is guardrail and preflight consolidation
-  around the now-proved operational workflows
+- run a full teardown/deploy test so the now-updated storage contract and
+  guardrails are validated through the normal destructive gate
+- capture any remaining unsupported backup/restore exception explicitly if a
+  real gate run exposes one
 
 Current approved operator sequence for Docker mount growth:
 
@@ -293,8 +297,8 @@ Current approved operator sequence for Docker mount growth:
 
 This does not mean the whole refactor is done. The primary remaining gaps are:
 
-- explicit backup intent and backup exception handling
-- final guardrail and preflight consolidation across the full plan
+- full teardown/deploy validation through the normal gate flow
+- final validation, documentation closeout, and promotion evidence
 
 Current implementation note for existing live stacks:
 
