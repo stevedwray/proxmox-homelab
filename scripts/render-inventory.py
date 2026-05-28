@@ -82,17 +82,11 @@ def main():
     else:
         dns = resolve_placeholder(stack.get('gateway', ''), env)
 
-    # access path: prefer direct when SDN attachment explicitly provides SNAT/egress
+    # access path: sdn_vnet -> direct by repo contract
     att_type = attachment.get('type')
-    sdn = attachment.get('sdn') or {}
-    # if sdn.snat is explicitly true, assume egress exists and prefer direct
-    if att_type == 'sdn_vnet' and sdn.get('snat') is True:
+    if att_type == 'sdn_vnet':
         ssh_access_mode = 'direct'
         use_proxyjump = False
-    elif att_type == 'sdn_vnet' and sdn.get('snat') is not True:
-        # SDN without SNAT/egress: keep ProxyJump compatibility by default
-        ssh_access_mode = 'proxyjump_compat'
-        use_proxyjump = True
     else:
         ssh_access_mode = 'proxyjump_compat'
         use_proxyjump = True
