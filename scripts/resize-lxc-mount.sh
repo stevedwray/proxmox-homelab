@@ -8,7 +8,7 @@ PLAYBOOK_FILE="${ANSIBLE_DIR}/playbooks/resize-lxc-mount.yml"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/resize-lxc-mount.sh --stack <name> [--mount-path <path>] [--check]
+Usage: scripts/resize-lxc-mount.sh --stack <name> [--mount-path <path>] [--check] [--require-grow]
 
 Supported sequence:
   1. update desired size in stack.yaml
@@ -30,6 +30,7 @@ log() {
 stack_name=""
 mount_path="/var/lib/docker"
 check_mode=false
+require_grow=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -45,6 +46,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --check)
       check_mode=true
+      shift
+      ;;
+    --require-grow)
+      require_grow=true
       shift
       ;;
     -h|--help)
@@ -116,6 +121,10 @@ print(f"desired_size={desired_size}")
 PY
 
 cmd=(ansible-playbook -i "$inventory_file" "$PLAYBOOK_FILE" -e "stack_yaml_path=${stack_yaml}" -e "resize_mount_path=${mount_path}")
+
+if [[ "$require_grow" == "true" ]]; then
+  cmd+=(-e "resize_require_grow=true")
+fi
 
 if [[ -n "${PVE_TEST_FQDN:-}" ]]; then
   cmd+=(-e "proxmox_delegate_host=${PVE_TEST_FQDN}")

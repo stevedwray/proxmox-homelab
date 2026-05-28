@@ -350,9 +350,9 @@ def validate_operational_resize_policy(resolution: StackResolution) -> list[str]
                 f"stack '{resolution.stack_name}': docker_mount.mutation_policy must remain 'grow-only' for the supported resize workflow"
             )
         elif resize_control_plane == "operational":
-            if resolution.docker_backend_type != "zfs":
+            if resolution.docker_backend_type not in {"zfs", "lvm-thin"}:
                 errors.append(
-                    f"stack '{resolution.stack_name}': operational docker_mount resize is only supported on zfs-backed docker storage (resolved backend '{resolution.docker_storage}', backend_type '{resolution.docker_backend_type}')"
+                    f"stack '{resolution.stack_name}': operational docker_mount resize is only supported on zfs- or lvm-thin-backed docker storage (resolved backend '{resolution.docker_storage}', backend_type '{resolution.docker_backend_type}')"
                 )
             if mount.get("path") != "/var/lib/docker":
                 errors.append(

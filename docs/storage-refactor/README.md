@@ -151,10 +151,11 @@ the mutation engine for some storage edits.
   storage intent.
 - Rootfs growth can stay Terraform/OpenTofu-managed where the provider proves
   in-place behavior.
-- ZFS-backed non-rootfs mounts are created by Terraform, but grow-only day-2
-  size changes are performed operationally through Proxmox-native resize
-  commands executed by Ansible or an equivalent host-side workflow.
-- The approved sequence for a ZFS-backed non-rootfs grow is:
+- Non-rootfs mounts are created by Terraform, but grow-only day-2 size
+  changes may be performed operationally through Proxmox-native resize
+  commands executed by Ansible or an equivalent host-side workflow when that
+  backend/profile combination is explicitly supported by the repo contract.
+- The approved sequence for an operational non-rootfs grow is:
   1. update the desired size in `stack.yaml`
   2. run the operational resize on the Proxmox host
   3. verify the new size in Proxmox and in the guest
@@ -165,34 +166,78 @@ the mutation engine for some storage edits.
 - Sequencing matters. If Terraform/OpenTofu reconciles after `stack.yaml` is
   changed but before the operational resize happens, it will still plan the
   unsafe replacement-sensitive path.
-- This pattern generalizes to multiple non-rootfs ZFS-backed mounts later, as
-  long as the contract gives each mount a stable logical identity and keeps the
-  workflow grow-only.
+- This pattern generalizes to supported non-rootfs mounts later, as long as
+  the contract gives each mount a stable logical identity, keeps the workflow
+  grow-only, and records backend-specific limits honestly.
 
-### Implemented first slice
+### Current implementation status
 
-The repo now contains a first supported operational resize workflow for the
-ZFS-backed Docker mount on `test-storage`.
+The repo now contains a supported operational resize workflow for the Docker
+mount at `/var/lib/docker`, with the dedicated `test-storage` stack as the
+first proof target and representative live validation on the current `pve-test`
+fleet.
 
 - `terraform/lxc/stacks/test-storage/stack.yaml` declares Docker mount intent
   in `docker_mount`
-- `terraform/lxc/validate-storage-contract.py` enforces the first-slice policy:
-  operational control plane, grow-only mutation policy, `/var/lib/docker`, and
-  a ZFS-backed resolved Docker backend
+- `terraform/lxc/validate-storage-contract.py` enforces the current Docker
+  policy: operational control plane, grow-only mutation policy,
+  `/var/lib/docker`, and only backend/profile combinations the repo currently
+  supports for that operational path
 - `scripts/resize-lxc-mount.sh --stack test-storage` is the narrow repo-native
   entrypoint
 - `terraform/lxc/ansible/playbooks/resize-lxc-mount.yml` performs the host-side
-  `pct resize`, verifies `pct config`, and verifies guest-visible size with
-  `pct exec ... df -h`
+  `pct resize`, verifies `pct config`, and verifies guest-visible size inside
+  the guest
 
-Supported operator sequence for this slice:
+Representative Docker-mount validation is now established for:
+
+- `proxy-stack` on `infrastructure-containers` (`zfs`)
+- `harbor-stack` on `infrastructure-containers` (`zfs`)
+- `authentik-stack` on `local-lvm` (`lvm-thin`)
+- `monitoring-stack` on `local-lvm` (`lvm-thin`)
+- `netbox-stack` on `local-lvm` (`lvm-thin`)
+- `portainer-stack` on `local-lvm` (`lvm-thin`)
+
+### Current position
+
+What is now proved:
+
+- provider-managed non-rootfs mount-size growth remains
+  `replacement-sensitive`
+- operational Docker-mount growth at `/var/lib/docker` is a working day-2
+  path when the stack uses a backend/profile combination the repo currently
+  supports
+- operational existing-extra-mount growth is proved for the current
+  ZFS-backed workflow
+
+What is not yet proved:
+
+- first extra-mount introduction on an existing Docker-only stack
+- explicit backup-intent completion for every persistent mount
+- final preflight and guardrail integration across the whole refactor plan
+
+Current next target:
+
+- the first-extra-mount introduction workflow is the main remaining storage
+  mutation gap under the current module shape
+- that work should prove the transition from no `extra_mount_*` to one
+  declared extra mount without path masking, surprise replacement, or loss of
+  post-change no-drift verification
+
+Current approved operator sequence for Docker mount growth:
 
 1. update `docker_mount.size` and the compatibility field
    `docker_storage_size` in `stack.yaml`
 2. run `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack test-storage'`
-3. verify the playbook output for `pct config` and guest `df -h`
+3. verify the playbook output for `pct config` and guest-visible size
 4. run `./with-secrets bash -lc 'cd terraform/lxc/stacks/test-storage && terragrunt plan -no-color'`
    and expect `No changes`
+
+This does not mean the whole refactor is done. The primary remaining gaps are:
+
+- first extra-mount introduction on an existing Docker-only stack
+- explicit backup intent and backup exception handling
+- final guardrail and preflight consolidation across the full plan
 
 ## Current Risk Map
 
@@ -233,4 +278,6 @@ This remains infrastructure work and should follow the repo branch model:
 ## Plan Document
 
 - [Execution Plan](plan.md)
+- [Capability Matrix](capability-matrix.md)
+- [Docker Mount Resize Tests](docker-mount-resize-tests.md)
 - [Phase 0 Audit Notes](phase-0-audit-notes.md)

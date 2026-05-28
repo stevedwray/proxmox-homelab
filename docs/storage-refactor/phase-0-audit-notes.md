@@ -2,6 +2,20 @@
 
 Date: 2026-05-27
 
+Status note: this file is a chronological execution log, not the authoritative
+summary of the refactor's current state. Many sections below include
+time-specific "Exact recommended next pass" guidance that was correct when that
+entry was written but is no longer the canonical next-step document.
+
+For the current position, use these files first:
+
+- `docs/storage-refactor/README.md` for the top-level current-state summary
+- `docs/storage-refactor/plan.md` for phase goals and remaining scope
+- `docs/storage-refactor/capability-matrix.md` for the current authoritative
+  mutation-class mapping
+- `docs/storage-refactor/docker-mount-resize-tests.md` for the current
+  repo-native Docker-mount operational workflow
+
 ## Current Source Baseline
 
  - `terraform/lxc/stacks/test-storage/` exists in this branch as a tracked

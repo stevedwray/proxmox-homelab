@@ -145,7 +145,7 @@ The implementation should follow these rules:
     proofs, or broad data migration waves.
 20. `stack.yaml` remains the source of truth for desired mount sizes, even when
     Terraform/OpenTofu is not the day-2 mutation engine for that field.
-21. For ZFS-backed non-rootfs mounts, the approved grow-only day-2 workflow is:
+21. For supported non-rootfs mounts, the approved grow-only day-2 workflow is:
     update desired size in `stack.yaml`, execute the resize operationally on
     the Proxmox host, verify the live result, then confirm a no-op
     `terragrunt plan`.
@@ -154,24 +154,63 @@ The implementation should follow these rules:
     proves an in-place path.
 23. The same operational grow-only pattern should remain extensible to multiple
     non-rootfs mounts later, provided the contract gives each mount a stable
-    logical identity and mutation policy.
+    logical identity, mutation policy, and backend-specific support rules.
 
 ### Phase 0 implementation status
 
-The first narrow implementation slice is now present for the ZFS-backed Docker
-mount on `test-storage`.
+The initial implementation slice started on `test-storage` and now has live
+representative proof for Docker-mount growth across the current `pve-test`
+fleet.
 
 - stack intent is declared in `docker_mount`
-- the storage contract validator blocks non-ZFS or non-grow-only operational
-  declarations for this slice
+- the storage contract validator blocks invalid or unsupported operational
+  declarations for this slice and keeps backend-specific support explicit
 - the operational mutation engine is
   `terraform/lxc/ansible/playbooks/resize-lxc-mount.yml`
 - the repo-native entrypoint is `scripts/resize-lxc-mount.sh`
-- the validated proof target remains `terraform/lxc/stacks/test-storage/`
+- the dedicated proof target remains `terraform/lxc/stacks/test-storage/`
+- representative Docker-mount proof now exists on:
+  - `proxy-stack`
+  - `harbor-stack`
+  - `authentik-stack`
+  - `monitoring-stack`
+  - `netbox-stack`
+  - `portainer-stack`
 
-This does not yet broaden to environment-wide stack migration or a full
-multi-mount rollout. The current slice is intentionally limited to the Docker
-mount at `/var/lib/docker`.
+This does not yet complete the full refactor plan. The current proven slice is
+the Docker mount at `/var/lib/docker`, plus the already-documented ZFS-backed
+existing-extra-mount workflow. Remaining planned work still includes additive
+first-extra-mount attachment, backup-intent completion, and final guardrail
+integration.
+
+### Current phase position
+
+- Phase 0 capability work is materially complete for the currently tested
+  backends and workflows captured in the capability matrix.
+- Phase 1 contract work is partially implemented in live code and stack
+  authoring, but the broader refactor is not complete just because the Docker
+  operational path is proved.
+- Phase 2 is partially complete:
+  - Docker mount growth is proved through the operational workflow.
+  - Existing extra-mount growth is proved for the current ZFS-backed path.
+  - First extra-mount introduction remains the next unproven workflow.
+- Phases 3 through 5 remain open as written: backup intent, full guardrail
+  integration, and final validation/promotion are not finished.
+
+### Current next target
+
+The next substantive storage-refactor target should be the additive
+first-extra-mount workflow under the current module shape.
+
+That pass should prove all of the following on a disposable validation target:
+
+- a stack starting with no extra mount can declare exactly one extra mount
+- the workflow blocks unsafe mount-over-existing-data cases unless an explicit
+  safety rule is present
+- the change is surfaced honestly when provider behavior remains
+  replacement-sensitive
+- if an approved operational path exists for that transition, the stack
+  returns to a post-change no-drift `terragrunt plan`
 
 ## Target Contract
 
