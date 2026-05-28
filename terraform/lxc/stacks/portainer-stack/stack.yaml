@@ -8,7 +8,14 @@ memory: 512
 swap: 256
 rootfs_size: 8
 storage_profile: platform-default
-docker_storage_size: "10G"
+docker_storage_size: "12G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "12G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - portainer

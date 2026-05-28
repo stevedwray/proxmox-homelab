@@ -1,4 +1,4 @@
-# Copilot Gate Prompt
+# Copilot Storage Refactor Gate Prompt
 
 Continue the storage refactor from the current branch state in
 `/home/steve/git/proxmox-homelab`.
@@ -7,80 +7,60 @@ Start by reading:
 
 - `docs/storage-refactor/README.md`
 - `docs/storage-refactor/plan.md`
-- `docs/storage-refactor/copilot-init-prompt.md`
-- `docs/storage-refactor/copilot-followup-prompt.md`
-- `docs/storage-refactor/copilot-validation-prompt.md`
+- the current branch diff and latest refactor commits
 
-Then inspect the current branch and latest refactor commit:
+Use this prompt only when the branch has completed:
 
-- branch: `work/storage-refactor-plan`
-- latest commit: `951dd3e` (`Refactor storage intent validation and preflight boundaries`)
+- Phase 0 through Phase 4 in `plan.md`, and
+- the branch is ready for final gate work
 
-Current state
+Your job for this pass:
 
-- The storage refactor has been implemented with manifest-driven resolution.
-- Source-only vs live validation boundaries were restored.
-- Non-destructive validation and required scans were reported as passing in the
-  intended operator environment.
-- The next real milestone is the infrastructure promotion gate:
-  full teardown + redeploy validation with evidence.
+1. Confirm gate readiness.
+   - verify the current phase status against `plan.md`
+   - confirm the live validation target is still `pve-test`
+   - confirm the resulting contract remains applicable to future `pve`
+   - confirm there are no unresolved storage safety blockers
 
-Your job for this pass
+Working rules:
 
-1. Prepare the branch for the destructive rebuild gate.
-   - Confirm the target guard is still `pve-test`.
-   - Confirm the expected storage manifest and template assumptions still match
-     the intended environment.
-   - Review the current working tree and avoid touching unrelated local edits
-     such as `next-session.md` or untracked prompt files unless needed.
+- do not create sibling worktrees under `..`
+- work in the current checkout unless a clean worktree is strictly required for
+  a gate or proof flow
+- if a clean worktree is strictly required, place it under
+  `/tmp/proxmox-homelab-worktrees/` and remove it when finished
+- do not create tracked temporary documents, evidence files, handoff notes, or
+  handback notes unless they are durable artifacts that truly need to survive
+  across branches or sessions
+- prefer inline gate hand-back in the response and ignored/temp locations for
+  transient notes or evidence
 
-2. Run the full teardown + redeploy validation flow for this branch using the
-   repo’s documented harness.
-   - Follow the repo instructions for approval-preflight and destructive
-     execution.
-   - Use the correct evidence/approval-packet flow for this environment.
-   - Keep the validation sequence aligned with the repo workflow rather than
-     inventing a custom path.
+2. Run the final validation sequence required by the plan.
+   - re-run non-destructive validations
+   - re-run targeted storage mutation validation on `test-storage`
+   - re-run required scans if code changed since last validation
 
-3. Fix any genuine storage-refactor regressions exposed by the full cycle.
-   - Prioritize issues in:
-     - storage manifest resolution
-     - template resolution
-     - rootfs/docker/extra-mount backend selection
-     - host bootstrap or validation assumptions that still encode the old
-       storage model
-   - Avoid unrelated churn.
-   - If the cycle fails for an environmental or pre-existing reason, identify it
-     clearly with exact evidence.
+3. Run the repo-required promotion gate.
+   - follow the documented harness and approval flow
+   - treat this as infrastructure evidence work, not as an opportunity to
+     redesign the refactor
 
-4. Re-run required validations after any fixes.
-   - Re-run the relevant non-destructive checks.
-   - Re-run required scans if code changed again.
-   - Re-run the full gate if the branch needed fixes.
+4. Fix genuine storage-refactor regressions exposed by the gate.
+   - prioritize resize behavior
+   - prioritize existing extra-mount resize behavior
+   - prioritize additive mount behavior
+   - prioritize explicit handling of the second-extra-mount out-of-scope case
+   - prioritize path masking prevention
+   - prioritize explicit backup behavior
+   - prioritize storage plan-safety checks
+   - avoid unrelated churn
 
-5. Prepare merge/handoff readiness.
-   - Summarize whether the full teardown + redeploy gate passed.
-   - Summarize what evidence was captured.
-   - If the gate passed cleanly, prepare the branch for merge back to
-     `baseline/teardown-validated`.
-   - If it did not pass, leave a small, exact blocker list with file references,
-     failing command(s), and what still needs operator input.
+5. Summarize whether the branch is ready for promotion.
 
-Working rules
+Definition of done for this pass:
 
-- Do not redesign the storage refactor.
-- Preserve the manifest-driven intent model.
-- Follow the repo branching and gate policy exactly.
-- Treat this as infrastructure work: evidence and gate outcome matter more than
-  theoretical cleanliness.
-- Make reasonable implementation decisions without micromanagement.
-- Do not touch unrelated local edits unless absolutely necessary.
+- the final gate has been attempted and summarized clearly, or
+- the exact blocker preventing promotion is documented with evidence
 
-Definition of done for this pass
-
-- The full teardown + redeploy gate has been attempted on this branch using the
-  repo-approved flow.
-- Any storage-refactor-caused failures found in the gate have been fixed or
-  precisely documented.
-- Evidence and outcome are summarized clearly enough to decide whether the
-  branch can promote to `baseline/teardown-validated`.
+The hand-back must be review-ready in the response itself, not only written to
+files.

@@ -1,0 +1,17 @@
+# Phase 1: explicit persistent mount contract for future validation
+# This file is intentionally separated from `pve-test.yaml` to keep Phase 0
+# manifests free of speculative Phase 1 schema work. It is tracked as a
+# durable artifact for Phase 1 implementation and validation.
+
+mount_contracts:
+  docker_mount:
+    logical_name: docker-data
+    backup_policy: include
+    mutation_policy: grow-only
+    description: "Primary Docker-managed data mount; logical identity for validation"
+
+  extra_mount:
+    logical_name: extra-data
+    backup_policy: include
+    mutation_policy: grow-only
+    description: "Optional extra persistent mount (zero or one per stack under Phase 1)"

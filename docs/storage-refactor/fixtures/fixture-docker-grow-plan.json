@@ -1,0 +1,17 @@
+{
+  "format_version": "0.1",
+  "resource_changes": [
+    {
+      "address": "module.test_storage.proxmox_virtual_environment_container.test_storage",
+      "change": {
+        "actions": ["delete", "create"],
+        "before": {
+          "docker_storage_size": "8G"
+        },
+        "after": {
+          "docker_storage_size": "16G"
+        }
+      }
+    }
+  ]
+}

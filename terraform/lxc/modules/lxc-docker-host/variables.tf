@@ -95,6 +95,12 @@ variable "docker_storage_size" {
   default     = "20G"
 }
 
+variable "docker_mount_backup_enabled" {
+  description = "Whether the /var/lib/docker mountpoint is included in container backups"
+  type        = bool
+  default     = true
+}
+
 variable "network_bridge" {
   description = "Network bridge for the LXC container"
   type        = string
@@ -151,4 +157,10 @@ variable "extra_mount_storage" {
   description = "Storage backend for the optional extra data mount point"
   type        = string
   default     = null
+}
+
+variable "extra_mount_backup_enabled" {
+  description = "Whether the optional extra data mount point is included in container backups"
+  type        = bool
+  default     = true
 }

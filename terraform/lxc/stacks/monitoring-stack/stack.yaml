@@ -11,7 +11,14 @@ memory: 1536
 swap: 1024
 rootfs_size: 8
 storage_profile: platform-default
-docker_storage_size: "50G"
+docker_storage_size: "52G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "52G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - monitoring
