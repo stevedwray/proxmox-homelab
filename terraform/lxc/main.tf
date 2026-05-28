@@ -78,16 +78,19 @@ locals {
     try(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage], null),
     try(local.storage_manifest.defaults.storage_profile, null)
   )
-  resolved_storage_profile_mapping = try(local.storage_manifest.profiles[local.resolved_storage_profile], null)
-  resolved_rootfs_storage          = try(local.resolved_storage_profile_mapping.rootfs_storage, null)
-  resolved_docker_storage          = coalesce(try(local.resolved_storage_profile_mapping.docker_storage, null), local.resolved_rootfs_storage)
-  docker_mount_declared_size       = try(local.stack.docker_mount.size, null)
-  legacy_docker_storage_size       = try(local.stack.docker_storage_size, null)
+  resolved_storage_profile_mapping    = try(local.storage_manifest.profiles[local.resolved_storage_profile], null)
+  resolved_rootfs_storage             = try(local.resolved_storage_profile_mapping.rootfs_storage, null)
+  resolved_docker_storage             = coalesce(try(local.resolved_storage_profile_mapping.docker_storage, null), local.resolved_rootfs_storage)
+  docker_mount_declared_size          = try(local.stack.docker_mount.size, null)
+  docker_mount_declared_backup_policy = try(local.stack.docker_mount.backup_policy, null)
+  legacy_docker_storage_size          = try(local.stack.docker_storage_size, null)
   resolved_docker_storage_size = coalesce(
     local.docker_mount_declared_size,
     local.legacy_docker_storage_size,
     "20G"
   )
+  resolved_docker_mount_backup_policy  = coalesce(local.docker_mount_declared_backup_policy, "include")
+  resolved_docker_mount_backup_enabled = local.resolved_docker_mount_backup_policy == "include"
   docker_storage_size_mismatch = (
     local.docker_mount_declared_size != null &&
     local.legacy_docker_storage_size != null &&
@@ -99,10 +102,13 @@ locals {
   extra_mount_declared_path                 = try(local.extra_mount_declared.path, null)
   extra_mount_declared_size                 = try(local.extra_mount_declared.size, null)
   extra_mount_declared_profile              = try(local.extra_mount_declared.profile, null)
+  extra_mount_declared_backup_policy        = try(local.extra_mount_declared.backup_policy, null)
   extra_mount_declared_resize_control_plane = try(local.extra_mount_declared.resize_control_plane, null)
   extra_mount_declared_mutation_policy      = try(local.extra_mount_declared.mutation_policy, null)
   resolved_extra_mount_path                 = local.extra_mount_declared_path != null ? local.extra_mount_declared_path : try(local.stack.extra_mount_path, null)
   resolved_extra_mount_size                 = local.extra_mount_declared_size != null ? local.extra_mount_declared_size : try(local.stack.extra_mount_size, null)
+  resolved_extra_mount_backup_policy        = coalesce(local.extra_mount_declared_backup_policy, "include")
+  resolved_extra_mount_backup_enabled       = local.resolved_extra_mount_backup_policy == "include"
 
   resolved_extra_mount_profile = coalesce(
     local.extra_mount_declared_profile,
@@ -436,6 +442,13 @@ check "docker_mount_size_contract_is_consistent" {
   }
 }
 
+check "docker_mount_backup_policy_is_supported" {
+  assert {
+    condition     = contains(["include", "exclude"], local.resolved_docker_mount_backup_policy)
+    error_message = "Stack '${local.stack_name}' must set docker_mount.backup_policy to 'include' or 'exclude'."
+  }
+}
+
 check "extra_mount_backend_supports_required_content" {
   assert {
     condition = local.resolved_extra_mount_path == null || contains(
@@ -443,6 +456,13 @@ check "extra_mount_backend_supports_required_content" {
       coalesce(try(local.resolved_extra_mount_profile_mapping.required_content_type, null), "rootdir")
     )
     error_message = "Resolved extra mount backend '${coalesce(local.resolved_extra_mount_storage, "<unset>")}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_backup_policy_is_supported" {
+  assert {
+    condition     = local.resolved_extra_mount_path == null || contains(["include", "exclude"], local.resolved_extra_mount_backup_policy)
+    error_message = "Stack '${local.stack_name}' must set extra_mount.backup_policy to 'include' or 'exclude' when an extra mount is declared."
   }
 }
 
@@ -586,13 +606,14 @@ module "lxc" {
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
 
-  cores               = try(local.stack.cores, 2)
-  memory              = try(local.stack.memory, 2048)
-  swap                = try(local.stack.swap, 512)
-  rootfs_size         = try(local.stack.rootfs_size, 8)
-  rootfs_storage      = local.resolved_rootfs_storage
-  docker_storage      = local.resolved_docker_storage
-  docker_storage_size = local.resolved_docker_storage_size
+  cores                       = try(local.stack.cores, 2)
+  memory                      = try(local.stack.memory, 2048)
+  swap                        = try(local.stack.swap, 512)
+  rootfs_size                 = try(local.stack.rootfs_size, 8)
+  rootfs_storage              = local.resolved_rootfs_storage
+  docker_storage              = local.resolved_docker_storage
+  docker_storage_size         = local.resolved_docker_storage_size
+  docker_mount_backup_enabled = local.resolved_docker_mount_backup_enabled
 
   ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))
@@ -601,9 +622,10 @@ module "lxc" {
   network_firewall = local.effective_firewall == true
   dns_servers      = local.effective_dns_server != null ? [local.effective_dns_server] : null
 
-  extra_mount_path    = local.resolved_extra_mount_path
-  extra_mount_size    = local.resolved_extra_mount_size
-  extra_mount_storage = local.resolved_extra_mount_storage
+  extra_mount_path           = local.resolved_extra_mount_path
+  extra_mount_size           = local.resolved_extra_mount_size
+  extra_mount_storage        = local.resolved_extra_mount_storage
+  extra_mount_backup_enabled = local.resolved_extra_mount_backup_enabled
 
   depends_on = [null_resource.configure_network_sdn_attachment]
 }

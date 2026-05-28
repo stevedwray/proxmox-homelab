@@ -178,10 +178,10 @@ fleet.
   - `portainer-stack`
 
 This does not yet complete the full refactor plan. The current proven slice is
-the Docker mount at `/var/lib/docker`, plus the already-documented ZFS-backed
-existing-extra-mount workflow. Remaining planned work still includes additive
-first-extra-mount attachment, backup-intent completion, and final guardrail
-integration.
+the Docker mount at `/var/lib/docker`, the ZFS-backed first-extra-mount attach
+workflow on `test-storage`, and the already-documented ZFS-backed
+existing-extra-mount workflow. Remaining planned work still includes
+backup-intent completion and final guardrail integration.
 
 ### Current phase position
 
@@ -192,25 +192,24 @@ integration.
   operational path is proved.
 - Phase 2 is partially complete:
   - Docker mount growth is proved through the operational workflow.
+  - First extra-mount introduction is now proved as an operational attach
+    workflow on the dedicated `test-storage` target.
   - Existing extra-mount growth is proved for the current ZFS-backed path.
-  - First extra-mount introduction remains the next unproven workflow.
 - Phases 3 through 5 remain open as written: backup intent, full guardrail
   integration, and final validation/promotion are not finished.
 
 ### Current next target
 
-The next substantive storage-refactor target should be the additive
-first-extra-mount workflow under the current module shape.
+The next substantive storage-refactor target should be explicit backup intent
+for persistent mounts, followed by the remaining guardrail consolidation.
 
-That pass should prove all of the following on a disposable validation target:
+That next pass should complete all of the following:
 
-- a stack starting with no extra mount can declare exactly one extra mount
-- the workflow blocks unsafe mount-over-existing-data cases unless an explicit
-  safety rule is present
-- the change is surfaced honestly when provider behavior remains
-  replacement-sensitive
-- if an approved operational path exists for that transition, the stack
-  returns to a post-change no-drift `terragrunt plan`
+- each persistent mount resolves to an explicit backup answer
+- the now-proved operational attach and grow workflows are reflected honestly in
+  validator output and operator docs
+- plan-classifier and preflight integration distinguish storage risk from
+  unrelated stack drift cleanly enough for normal workflow use
 
 ## Target Contract
 
@@ -237,6 +236,15 @@ extra_mount:
   backup_policy: include
   resize_control_plane: operational
 ```
+
+Backup-policy semantics for the current implementation are explicit:
+
+- `backup_policy: include` maps to Terraform-rendered `mount_point.backup = true`
+- `backup_policy: exclude` maps to Terraform-rendered `mount_point.backup = false`
+- the currently supported values are exactly `include` and `exclude`
+- if a backend or workflow later cannot support explicit Terraform-managed
+  backup behavior, that case must be represented as an explicit documented
+  exception rather than falling back to an implicit default
 
 The exact schema can change during implementation, but the design rules should
 hold:
@@ -609,6 +617,11 @@ Ensure persistent mounts are not implicitly omitted from backup policy.
    - explicit unsupported exception with reason and operator note
 3. Set and validate mount-point backup behavior explicitly where the provider
    supports it.
+  - For the current Proxmox LXC mount-point path, this means:
+    `backup_policy: include` -> `mount_point.backup = true`
+    `backup_policy: exclude` -> `mount_point.backup = false`
+  - The validator should reject unsupported values rather than silently
+    defaulting to provider behavior.
 4. Document backend-specific backup caveats where they affect operator
    expectations.
 5. Document clearly that this phase is about backup inclusion policy, not
@@ -633,6 +646,8 @@ Ensure persistent mounts are not implicitly omitted from backup policy.
 - every persistent mount resolves either to explicit Terraform behavior or to an
   explicit documented unsupported exception
 - backup behavior is no longer left implicit for Docker or extra mounts
+- the meaning of `include` vs `exclude` is documented in operator-facing terms
+  and matches rendered Terraform fields
 - docs clearly describe what is and is not covered by the backup policy work
 
 ## Phase 4: Validation Tooling And Guardrails

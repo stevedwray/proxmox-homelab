@@ -43,10 +43,27 @@ Matrix
       replacement` and classified as `replacement-sensitive`
 
 - extra_mount: introduce (none -> first extra_mount)
-  - expected_provider_action: create+attach (provider may report create of mount_point)
-  - mutation_class: blocked
-  - authority: conservative policy (Phase 0 blocks first-additive mounts until explicit in-place proof exists)
-  - evidence: attempted introduction on `test-storage` classified and treated as blocked in Phase 0
+  - expected_provider_action: direct Terraform/OpenTofu reconciliation still
+    reports the provider's replacement-sensitive path for the container, but the
+    approved operational attach workflow can allocate and attach the first extra
+    mount live and return the module-scoped storage plan to no storage drift
+  - mutation_class: replacement-sensitive
+  - authority: authoritative for direct provider-plan classification on the
+    current provider, plus authoritative for the separate operational attach
+    workflow on the current `pve-test` ZFS-backed proof path
+  - evidence: on `test-storage`, declaring the first extra mount at
+    `/srv/test-extra-attach` still produced a replacement-sensitive direct plan,
+    so that provider path remains blocked for apply. The approved operational
+    workflow
+    `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack test-storage --mount-path /srv/test-extra-attach'`
+    then attached
+    `mp1: infrastructure-containers:subvol-150-disk-3,mp=/srv/test-extra-attach,backup=0,size=8G`
+    live, guest `df -h /srv/test-extra-attach` reported `8.0G`, a sentinel file
+    was written successfully on the new filesystem, and the follow-up
+    `terragrunt plan -target=module.lxc -no-color` for the stack no longer
+    reported storage drift for the attached mount. The root stack still has a
+    pre-existing SDN-attachment diff on `test-storage`, so module-scoped plan
+    inspection is the authoritative storage check for this proof.
 
 - extra_mount: increase size
   - expected_provider_action: for the approved ZFS-backed operational workflow,

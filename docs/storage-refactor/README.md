@@ -137,10 +137,40 @@ later with approval:
 - Keep unchanged real stacks on compatibility/default paths unless the plan
   explicitly needs them for representative validation.
 - Keep backend capability differences visible in the contract and docs.
+- Keep backup intent explicit and operator-controlled for every persistent
+  mount. `backup_policy` is not informational metadata; it is part of the
+  desired storage contract.
 - Avoid redesigning non-Docker stacks solely to remove an otherwise-unused
   `/var/lib/docker` mount unless that directly improves safety.
 - Use disposable `pve-test` validation to prove the workflows; preserving
   current `pve-test` state or proving PBS restore is not part of this project.
+
+## Backup Policy Contract
+
+Persistent mounts now use an explicit `backup_policy` field in stack intent.
+
+Supported values:
+
+- `include`: the mount should be included in container backup handling, and the
+  Terraform path renders `mount_point.backup = true`
+- `exclude`: the mount should be excluded from container backup handling, and
+  the Terraform path renders `mount_point.backup = false`
+
+This applies independently to both supported persistent mount types:
+
+- `docker_mount.backup_policy`
+- `extra_mount.backup_policy`
+
+Current rules:
+
+- `backup_policy` is required logically for every persistent mount, even when
+  older stack authoring still relies on validator defaults for compatibility
+- the allowed values are only `include` and `exclude`
+- backup intent is about Proxmox mount-point inclusion policy only; it is not a
+  restore guarantee and does not expand this refactor into PBS restore testing
+- when the repo uses an operational first-attach workflow for an extra mount,
+  the host-side `pct set` command must honor the same `backup_policy` value so
+  live state and Terraform intent remain aligned
 
 ## Approved Day-2 Resize Model
 
@@ -172,10 +202,17 @@ the mutation engine for some storage edits.
 
 ### Current implementation status
 
-The repo now contains a supported operational resize workflow for the Docker
-mount at `/var/lib/docker`, with the dedicated `test-storage` stack as the
-first proof target and representative live validation on the current `pve-test`
-fleet.
+The repo now contains a supported operational workflow for the current
+non-rootfs mount cases under the existing module shape:
+
+- Docker mount growth at `/var/lib/docker`
+- first extra-mount attachment from a Docker-only baseline to one declared
+  `extra_mount`
+- growth of an already-existing extra mount
+
+The dedicated proof targets remain `test-storage` for Docker-only to
+first-extra-mount transition work and `test-storage-extra` for existing
+extra-mount regression.
 
 - `terraform/lxc/stacks/test-storage/stack.yaml` declares Docker mount intent
   in `docker_mount`
@@ -183,11 +220,32 @@ fleet.
   policy: operational control plane, grow-only mutation policy,
   `/var/lib/docker`, and only backend/profile combinations the repo currently
   supports for that operational path
-- `scripts/resize-lxc-mount.sh --stack test-storage` is the narrow repo-native
-  entrypoint
+- `scripts/resize-lxc-mount.sh` is the narrow repo-native entrypoint for both
+  supported non-rootfs growth and first-extra-mount attachment
 - `terraform/lxc/ansible/playbooks/resize-lxc-mount.yml` performs the host-side
-  `pct resize`, verifies `pct config`, and verifies guest-visible size inside
+  `pct` mutation, verifies `pct config`, and verifies guest-visible size inside
   the guest
+- `terraform/lxc/modules/lxc-docker-host/main.tf` now renders explicit Proxmox
+  mount-point `backup` fields for both Docker and extra mounts from stack
+  `backup_policy` intent
+
+Dedicated additive-attach validation is now established for:
+
+- `test-storage` on `infrastructure-containers` (`zfs`) for the transition from
+  Docker-only to one declared extra mount at `/srv/test-extra-attach`
+
+That live proof showed all of the following:
+
+- direct Terraform/OpenTofu reconciliation of the new `extra_mount` still plans
+  the provider's replacement-sensitive path and must not be applied for this
+  transition
+- the approved operational attach path can allocate and attach the first extra
+  mount live through `pct set`
+- the attach workflow blocks mount-over-existing-data by default unless the
+  operator explicitly overrides that safety check
+- after the operational attach, the module-scoped
+  `terragrunt plan -target=module.lxc -no-color` no longer shows storage drift
+  for the new mount
 
 Representative Docker-mount validation is now established for:
 
@@ -207,22 +265,22 @@ What is now proved:
 - operational Docker-mount growth at `/var/lib/docker` is a working day-2
   path when the stack uses a backend/profile combination the repo currently
   supports
+- first-extra-mount attachment is proved as an operational workflow for the
+  current `platform-zfs` + `durable-zfs` dedicated proof path
 - operational existing-extra-mount growth is proved for the current
   ZFS-backed workflow
 
 What is not yet proved:
 
-- first extra-mount introduction on an existing Docker-only stack
 - explicit backup-intent completion for every persistent mount
 - final preflight and guardrail integration across the whole refactor plan
 
 Current next target:
 
-- the first-extra-mount introduction workflow is the main remaining storage
-  mutation gap under the current module shape
-- that work should prove the transition from no `extra_mount_*` to one
-  declared extra mount without path masking, surprise replacement, or loss of
-  post-change no-drift verification
+- explicit backup intent and backup exception handling for persistent mounts is
+  the next substantive gap
+- after that, the remaining work is guardrail and preflight consolidation
+  around the now-proved operational workflows
 
 Current approved operator sequence for Docker mount growth:
 
@@ -235,9 +293,32 @@ Current approved operator sequence for Docker mount growth:
 
 This does not mean the whole refactor is done. The primary remaining gaps are:
 
-- first extra-mount introduction on an existing Docker-only stack
 - explicit backup intent and backup exception handling
 - final guardrail and preflight consolidation across the full plan
+
+Current implementation note for existing live stacks:
+
+- older LXCs created before explicit backup-field rendering can still have live
+  mount-point `backup=0`; after this change, stacks that declare
+  `backup_policy: include` will plan an in-place `backup = false -> true`
+  update until they are reconciled
+- `backup_policy: exclude` is now the explicit way to keep `mount_point.backup`
+  at `false`
+
+Current approved operator sequence for first extra-mount attachment:
+
+1. update `stack.yaml` to declare the first `extra_mount` and keep the legacy
+  compatibility fields aligned while both exist
+2. run a targeted Terraform/OpenTofu plan only to classify the direct provider
+  path; if it shows replacement-sensitive storage behavior, do not apply it
+3. run
+  `./with-secrets bash -lc './scripts/resize-lxc-mount.sh --stack test-storage --mount-path /srv/test-extra-attach'`
+  or the equivalent target stack/mount path
+4. verify the playbook output for `pct config` and guest-visible filesystem
+  size, then write a sentinel file on the new mount
+5. run a fresh module-scoped plan such as
+  `./with-secrets bash -lc 'cd terraform/lxc/stacks/test-storage && terragrunt plan -target=module.lxc -no-color'`
+  and confirm no storage-related drift remains for the attached mount
 
 ## Current Risk Map
 
@@ -279,5 +360,6 @@ This remains infrastructure work and should follow the repo branch model:
 
 - [Execution Plan](plan.md)
 - [Capability Matrix](capability-matrix.md)
+- [First Extra-Mount Attach Tests](extra-mount-attach-tests.md)
 - [Docker Mount Resize Tests](docker-mount-resize-tests.md)
 - [Phase 0 Audit Notes](phase-0-audit-notes.md)

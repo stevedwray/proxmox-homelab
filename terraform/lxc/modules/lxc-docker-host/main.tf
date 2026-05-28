@@ -37,6 +37,7 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     volume = var.docker_storage
     size   = var.docker_storage_size
     path   = "/var/lib/docker"
+    backup = var.docker_mount_backup_enabled
   }
 
   dynamic "mount_point" {
@@ -45,6 +46,7 @@ resource "proxmox_virtual_environment_container" "docker_host" {
       volume = var.extra_mount_storage
       size   = var.extra_mount_size
       path   = var.extra_mount_path
+      backup = var.extra_mount_backup_enabled
     }
   }
 

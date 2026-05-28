@@ -1,5 +1,5 @@
 ---
-- name: Resize supported LXC mount through Proxmox pct
+- name: Mutate supported LXC mount through Proxmox pct
   hosts: all
   gather_facts: false
 
@@ -112,15 +112,28 @@
     - name: Fail on missing or ambiguous Proxmox mount-point resolution
       ansible.builtin.assert:
         that:
-          - matching_mp_lines | length == 1
+          - matching_mp_lines | length <= 1
         fail_msg: >-
-          Expected exactly one Proxmox mount point for {{ requested_mount.path }} on CT {{ vmid }};
+          Expected at most one Proxmox mount point for {{ requested_mount.path }} on CT {{ vmid }};
           found {{ matching_mp_lines | length }}.
+
+    - name: Mark requested mount as existing or first attach
+      ansible.builtin.set_fact:
+        mount_exists: "{{ matching_mp_lines | length == 1 }}"
+
+    - name: Require existing Docker mount to be present in Proxmox config
+      ansible.builtin.assert:
+        that:
+          - mount_exists
+        fail_msg: >-
+          Expected Docker mount {{ requested_mount.path }} to already exist on CT {{ vmid }}.
+      when: requested_mount.path == '/var/lib/docker'
 
     - name: Extract Proxmox mount-point key and current size
       ansible.builtin.set_fact:
         resize_mount_key: "{{ matching_mp_lines[0] | regex_replace('^(mp[0-9]+):.*$', '\\1') }}"
         current_mount_size: "{{ matching_mp_lines[0] | regex_replace('^.*size=([^,]+).*$', '\\1') }}"
+      when: mount_exists
 
     - name: Fail if current mount size is unreadable
       ansible.builtin.assert:
@@ -128,6 +141,42 @@
           - current_mount_size != matching_mp_lines[0]
         fail_msg: >-
           Could not parse current size from Proxmox config line: {{ matching_mp_lines[0] }}
+      when: mount_exists
+
+    - name: Parse desired mount size metadata
+      ansible.builtin.command:
+        argv:
+          - python3
+          - -c
+          - |
+              import re
+              import sys
+
+              def parse_size(value: str) -> int:
+                  match = re.fullmatch(r"(?i)\s*(\d+)\s*([kmgtp]?)(?:i?b)?\s*", value)
+                  if not match:
+                      raise ValueError(f"invalid size: {value}")
+                  number = int(match.group(1))
+                  unit = match.group(2).upper()
+                  scale = {"": 1, "K": 1024, "M": 1024**2, "G": 1024**3, "T": 1024**4, "P": 1024**5}[unit]
+                  return number * scale
+
+              requested_bytes = parse_size(sys.argv[1])
+              gib = 1024**3
+              if requested_bytes % gib != 0:
+                  raise SystemExit(f"requested size must align to whole GiB for attach workflow: {sys.argv[1]}")
+              print(f"requested_bytes={requested_bytes}")
+              print(f"requested_gib={requested_bytes // gib}")
+          - "{{ requested_mount.size }}"
+      register: requested_mount_size_meta
+      changed_when: false
+
+    - name: Extract parsed desired mount size values
+      ansible.builtin.set_fact:
+        requested_mount_bytes: >-
+          {{ (requested_mount_size_meta.stdout_lines | select('match', '^requested_bytes=') | first | default('requested_bytes=0')).split('=', 1)[1] | int }}
+        requested_mount_gib: >-
+          {{ (requested_mount_size_meta.stdout_lines | select('match', '^requested_gib=') | first | default('requested_gib=0')).split('=', 1)[1] | int }}
 
     - name: Classify requested resize relative to current size
       ansible.builtin.command:
@@ -160,6 +209,95 @@
           - "{{ requested_mount.size }}"
       register: resize_policy
       changed_when: false
+      when: mount_exists
+
+    - name: Mark first extra-mount attach action
+      ansible.builtin.set_fact:
+        resize_policy:
+          stdout: attach
+      when: not mount_exists
+
+    - name: Reject attach when a real grow was required
+      ansible.builtin.assert:
+        that:
+          - not (resize_require_grow | default(false) | bool)
+        fail_msg: >-
+          {{ requested_mount_path }} is not present yet; --require-grow only supports existing mounts.
+      when: not mount_exists
+
+    - name: Require extra-mount storage for first attach
+      ansible.builtin.assert:
+        that:
+          - resize_mount_storage is defined
+          - resize_mount_storage | length > 0
+        fail_msg: >-
+          resize_mount_storage must be provided when attaching a new extra mount.
+      when: not mount_exists
+
+    - name: Verify target path is absent or empty before attach
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ vmid }}"
+          - --
+          - sh
+          - -lc
+          - |
+              target="$1"
+              if [ ! -e "$target" ]; then
+                echo absent
+                exit 0
+              fi
+              if [ -d "$target" ] && [ -z "$(ls -A "$target")" ]; then
+                echo empty-dir
+                exit 0
+              fi
+              echo "mount target is not empty: $target" >&2
+              exit 2
+          - sh
+          - "{{ requested_mount.path }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: attach_path_safety
+      changed_when: false
+      when:
+        - not mount_exists
+        - not (resize_allow_nonempty_target | default(false) | bool)
+
+    - name: Ensure target directory exists before attach
+      ansible.builtin.command:
+        argv:
+          - pct
+          - exec
+          - "{{ vmid }}"
+          - --
+          - mkdir
+          - -p
+          - "{{ requested_mount.path }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: attach_mkdir
+      changed_when: false
+      when: not mount_exists
+
+    - name: Gather existing Proxmox mount indexes
+      ansible.builtin.set_fact:
+        existing_mount_indexes: >-
+          {{ pct_config_before.stdout | regex_findall('(?m)^mp([0-9]+):') | map('int') | list }}
+      when: not mount_exists
+
+    - name: Allocate next Proxmox mount key for first attach
+      ansible.builtin.set_fact:
+        resize_mount_key: >-
+          mp{{ ((existing_mount_indexes | max) + 1) if (existing_mount_indexes | length > 0) else 0 }}
+      when: not mount_exists
 
     - name: Require a real grow when explicitly requested
       ansible.builtin.assert:
@@ -169,6 +307,26 @@
           {{ requested_mount_path }} already matches the declared size {{ requested_mount.size }};
           update stack intent to a larger value before running a grow-only resize test.
       when: resize_require_grow | default(false) | bool
+
+    - name: Attach first extra mount through Proxmox pct
+      vars:
+        attach_backup_flag: >-
+          {{ 0 if requested_mount.backup_policy | default('include') == 'exclude' else 1 }}
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      ansible.builtin.command:
+        argv:
+          - pct
+          - set
+          - "{{ vmid }}"
+          - "--{{ resize_mount_key }}"
+          - >-
+            {{ resize_mount_storage }}:{{ requested_mount_gib }},mp={{ requested_mount.path }},backup={{ attach_backup_flag }}
+      delegate_to: "{{ proxmox_delegate_host }}"
+      when: resize_policy.stdout == 'attach'
+      register: attach_command
+      changed_when: true
 
     - name: Perform Proxmox mount resize
       ansible.builtin.command:
@@ -271,8 +429,9 @@
         msg:
           - "mount_path={{ requested_mount.path }}"
           - "mount_key={{ resize_mount_key }}"
-          - "current_size={{ current_mount_size }}"
+          - "current_size={{ current_mount_size | default('absent') }}"
           - "desired_size={{ requested_mount.size }}"
           - "resize_action={{ resize_policy.stdout }}"
+          - "resolved_storage={{ resize_mount_storage | default('existing-volume') }}"
           - "guest_df={{ guest_df.stdout_lines | join(' | ') }}"
           - "guest_df_bytes={{ guest_df_bytes.stdout_lines | join(' | ') }}"

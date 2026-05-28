@@ -19,8 +19,18 @@ Contract
 - `docker_mount.logical_name`: `docker-data`
 - `docker_mount.path`: `/var/lib/docker`
 - `docker_mount.size`: `24G`
+- `docker_mount.backup_policy`: `include`
 - `docker_mount.resize_control_plane`: `operational`
 - `docker_mount.mutation_policy`: `grow-only`
+
+Backup policy
+-------------
+
+- Persistent mount backup intent is explicit.
+- Supported values are `include` and `exclude`.
+- For the current Terraform/Proxmox path:
+  - `include` means the rendered Docker mount uses `mount_point.backup = true`
+  - `exclude` means the rendered Docker mount uses `mount_point.backup = false`
 
 Usage notes
 -----------

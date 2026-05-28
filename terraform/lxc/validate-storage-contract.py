@@ -18,6 +18,7 @@ import yaml
 
 
 PROXMOX_API_JSON_PATH = "/api2/json"
+SUPPORTED_BACKUP_POLICIES = {"include", "exclude"}
 
 
 @dataclass
@@ -95,6 +96,10 @@ def normalize_mount_block(stack_name: str, stack: dict[str, Any]) -> dict[str, A
         raise ValueError(f"stack '{stack_name}': docker_mount.size is required when docker_mount is declared")
     if not str(normalized.get("path", "")).startswith("/"):
         raise ValueError(f"stack '{stack_name}': docker_mount.path must be an absolute path")
+    if str(normalized.get("backup_policy")) not in SUPPORTED_BACKUP_POLICIES:
+        raise ValueError(
+            f"stack '{stack_name}': docker_mount.backup_policy must be one of {sorted(SUPPORTED_BACKUP_POLICIES)}"
+        )
 
     return normalized
 
@@ -142,6 +147,10 @@ def normalize_extra_mount_block(stack_name: str, stack: dict[str, Any]) -> dict[
         raise ValueError(f"stack '{stack_name}': extra_mount.size is required when extra_mount is declared")
     if not str(normalized.get("path", "")).startswith("/"):
         raise ValueError(f"stack '{stack_name}': extra_mount.path must be an absolute path")
+    if str(normalized.get("backup_policy")) not in SUPPORTED_BACKUP_POLICIES:
+        raise ValueError(
+            f"stack '{stack_name}': extra_mount.backup_policy must be one of {sorted(SUPPORTED_BACKUP_POLICIES)}"
+        )
 
     return normalized
 
