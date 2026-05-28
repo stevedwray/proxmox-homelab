@@ -1,8 +1,8 @@
 # Disposable validation service for the pve-test network layer
 hostname: net-service-01
-ip_address: "10.55.0.62/24"
-gateway: "10.55.0.1"
-dns_server: "10.55.0.1"
+ip_address: "192.168.40.62/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
 vmid: 133
 cores: 1
 memory: 512

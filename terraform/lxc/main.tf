@@ -172,10 +172,11 @@ locals {
   effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
   normalized_network_access_path = local.requested_network_access_path == null ? null : try(lower(trimspace(local.requested_network_access_path)), null)
-  # Session 4 migration contract:
-  # - sdn_vnet defaults to direct SSH
+  # Session 4 migration contract (updated):
+  # - If SDN attachment provides egress/SNAT, prefer direct SSH by default
+  # - If SDN attachment lacks egress/SNAT, prefer ProxyJump compatibility
   # - bridge/default path preserves ProxyJump compatibility behavior
-  effective_network_access_path = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? coalesce(local.normalized_network_access_path, "direct") : coalesce(local.normalized_network_access_path, "proxyjump_compat")
+  effective_network_access_path = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? coalesce(local.normalized_network_access_path, (local.resolved_sdn_snat == true ? "direct" : "proxyjump_compat")) : coalesce(local.normalized_network_access_path, "proxyjump_compat")
 
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
