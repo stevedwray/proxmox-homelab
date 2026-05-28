@@ -89,3 +89,6 @@ certs/homelab-root.crt
 # BMAD GenAI tooling (not committed — sourced from bmad-core)
 # .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
+
+# Local CI artifacts (logs, scan outputs)
+artifacts/
