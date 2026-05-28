@@ -42,9 +42,9 @@
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m           ssh_access_mode: proxyjump_compat[0m
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m           ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'[0m
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m           ssh_access_mode: direct[0m
-[0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      portainer_server_ip: 
+[0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      portainer_server_ip:
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      registry_host: "192.168.40.10"
-[0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      apt_cacher_host: 
+[0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      apt_cacher_host:
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      dns_server: 192.168.40.1
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      network_zone: infra_seg
 [0;90m20:04:11.609[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      contract_dns_server: 192.168.40.1

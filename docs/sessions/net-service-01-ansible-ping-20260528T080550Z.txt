@@ -9,7 +9,7 @@ ansible [core 2.21.0]
   pyyaml version = 6.0.3 (with libyaml v0.2.5)
 No config file found; using defaults
 setting up inventory plugins
-Loading collection ansible.builtin from 
+Loading collection ansible.builtin from
 host_list declined parsing /home/steve/git/proxmox-homelab/terraform/lxc/stacks/net-service-01/inventory.yml as it did not pass its verify_file() method
 Parsed /home/steve/git/proxmox-homelab/terraform/lxc/stacks/net-service-01/inventory.yml inventory source with yaml plugin
 Loading callback plugin minimal of type stdout, v2.0 from /usr/lib/python3.14/site-packages/ansible/plugins/callback/minimal.py
