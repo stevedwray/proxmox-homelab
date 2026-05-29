@@ -1,0 +1,6 @@
+[2026-05-28T08:08:06Z] disposable mode enabled; skipping approval packet validation
+[2026-05-28T08:08:06Z] disposable mode enabled; skipping approval packet validation
+[2026-05-28T08:08:06Z] disposable mode enabled; skipping backup artifact validation
+[2026-05-28T08:08:06Z] ERROR working tree is dirty
+?? docs/sessions/teardown-deploy-test-cycle-run-20260528T080751Z.txt
+exit:1
