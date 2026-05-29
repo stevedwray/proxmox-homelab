@@ -12,8 +12,10 @@ templates:
 storage_backends:
   infrastructure-containers:
     content_types: [rootdir]
+    backend_type: zfs
   storage-containers:
     content_types: [rootdir]
+    backend_type: zfs
   local-zfs:
     content_types: [images, rootdir]
   storage-template:
