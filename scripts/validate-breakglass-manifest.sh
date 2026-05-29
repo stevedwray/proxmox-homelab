@@ -15,6 +15,8 @@ services=(
   portainer
 )
 fields=(breakglass_username bg_fqdn bypass_authentik bypass_traefik)
+lab_domain="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+escaped_lab_domain="${lab_domain//./\\.}"
 
 if [[ ! -f "$manifest" ]]; then
   echo "FAIL: missing $manifest"
@@ -27,7 +29,7 @@ for service in "${services[@]}"; do
     exit 1
   fi
 
-  if ! rg -n "${service}-bg\.lab\.gibbsgreatly\.xyz" "$manifest" >/dev/null; then
+  if ! rg -n "${service}-bg\\.${escaped_lab_domain}" "$manifest" >/dev/null; then
     echo "FAIL: missing bg_fqdn for ${service}"
     exit 1
   fi

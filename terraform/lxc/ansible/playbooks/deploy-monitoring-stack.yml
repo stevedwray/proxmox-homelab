@@ -8,6 +8,8 @@
     monitoring_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     docker_registry_host: "{{ monitoring_registry_host }}"
@@ -23,6 +25,7 @@
         content: |
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ monitoring_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",
@@ -58,6 +61,8 @@
     monitoring_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ monitoring_lab_domain, true) }}"
+    monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
@@ -81,11 +86,13 @@
     grafana_oauth_scopes: "{{ lookup('env', 'GRAFANA_OAUTH_SCOPES') | default('openid profile email', true) }}"
     grafana_oauth_client_id: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_ID') | default('grafana', true) }}"
     grafana_oauth_client_secret: "{{ lookup('env', 'GRAFANA_OAUTH_CLIENT_SECRET') | mandatory('GRAFANA_OAUTH_CLIENT_SECRET env var is not set') }}"
+    # Use public Authentik URL for browser-facing authorize endpoint so existing cookies are used,
+    # while keeping token/api endpoints on a dedicated internal Authentik backchannel for server-to-server calls.
     grafana_oauth_auth_url: "{{ lookup('env', 'GRAFANA_OAUTH_AUTH_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
-    grafana_oauth_token_url: "{{ lookup('env', 'GRAFANA_OAUTH_TOKEN_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/token/', true) }}"
-    grafana_oauth_api_url: "{{ lookup('env', 'GRAFANA_OAUTH_API_URL') | default('', true) }}"
+    grafana_oauth_token_url: "{{ lookup('env', 'GRAFANA_OAUTH_TOKEN_URL') | default('https://' ~ monitoring_lab_fqdn_authentik_internal ~ ':9443/application/o/token/', true) }}"
+    grafana_oauth_api_url: "{{ lookup('env', 'GRAFANA_OAUTH_API_URL') | default('https://' ~ monitoring_lab_fqdn_authentik_internal ~ ':9443', true) }}"
     grafana_oauth_signout_redirect_url: "{{ lookup('env', 'GRAFANA_OAUTH_SIGNOUT_REDIRECT_URL') | default('https://' ~ monitoring_lab_fqdn_authentik ~ '/application/o/edge-monitoring-stack-grafana/end-session/', true) }}"
-    grafana_oauth_tls_skip_verify_insecure: "{{ lookup('env', 'GRAFANA_OAUTH_TLS_SKIP_VERIFY_INSECURE') | default('true', true) | bool }}"
+    grafana_oauth_tls_skip_verify_insecure: "{{ lookup('env', 'GRAFANA_OAUTH_TLS_SKIP_VERIFY_INSECURE') | default('false', true) | bool }}"
     grafana_oauth_login_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_LOGIN_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
     grafana_oauth_name_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_NAME_ATTRIBUTE_PATH') | default('name', true) }}"
     grafana_oauth_email_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
@@ -95,13 +102,13 @@
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
       ansible.builtin.command:
-        # Keep API reconcile on direct endpoint, sourced from LAB_IP_AUTHENTIK.
+        # Use the internal direct-TLS Authentik endpoint for controller-side reconcile.
         argv:
           - python3
           - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
           - "{{ playbook_dir }}/../../stacks/monitoring-stack/edge.yaml"
           - --authentik-url
-          - "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000"
+          - "https://{{ monitoring_lab_fqdn_authentik_internal }}:9443"
           - --no-verify-tls
           - --apply
           - --json
@@ -234,6 +241,8 @@
               image: {{ grafana_image }}
               container_name: grafana
               restart: unless-stopped
+              dns:
+                - "{{ monitoring_lab_ip_dns }}"
               env_file:
                 - .env
               ports:
@@ -259,6 +268,7 @@
               volumes:
                 - grafana-data:/var/lib/grafana
                 - ./grafana/provisioning:/etc/grafana/provisioning:ro
+                - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
                 - loki
@@ -291,16 +301,92 @@
             loki-data: {}
       no_log: true
 
+    - name: Test DNS resolution for Harbor
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import socket,sys
+        try:
+            socket.gethostbyname('{{ monitoring_lab_fqdn_harbor }}')
+            print('OK')
+        except Exception:
+            sys.exit(1)
+        PY
+      register: harbor_dns
+      failed_when: false
+
+    - name: Test DNS resolution for Docker Hub registry
+      ansible.builtin.shell: |
+        python3 - <<'PY'
+        import socket,sys
+        try:
+            socket.gethostbyname('registry-1.docker.io')
+            print('OK')
+        except Exception:
+            sys.exit(1)
+        PY
+      register: dockerhub_dns
+      failed_when: false
+
+    - name: Decide whether temporary DNS fallback is needed
+      ansible.builtin.set_fact:
+        monitoring_dns_fallback_needed: "{{ (harbor_dns.rc != 0) or (dockerhub_dns.rc != 0) }}"
+
+    - name: Backup resolv.conf when Harbor DNS lookup fails
+      ansible.builtin.copy:
+        src: /etc/resolv.conf
+        dest: /etc/resolv.conf.backup-ansible
+        remote_src: yes
+      when: monitoring_dns_fallback_needed
+      failed_when: false
+
+    - name: Probe Harbor token endpoint over TLS
+      ansible.builtin.uri:
+        url: "https://{{ monitoring_lab_fqdn_harbor }}/service/token"
+        method: GET
+        validate_certs: false
+        status_code: [200, 400, 401, 403, 404]
+      register: harbor_token_tls
+      failed_when: false
+      changed_when: false
+
+    - name: Rewrite compose images to use upstream Docker Hub (dependency-tolerant mode)
+      ansible.builtin.replace:
+        path: "{{ monitoring_compose_dir }}/docker-compose.yml"
+        regexp: "{{ monitoring_registry_host | regex_escape }}/dockerhub/"
+        replace: ""
+      failed_when: false
+
     - name: Validate monitoring compose configuration
       ansible.builtin.command:
         cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ monitoring_compose_dir }}"
       changed_when: false
+      when: not ansible_check_mode
+
+    - name: Add temporary /etc/hosts entry for Harbor when DNS lookup fails
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        line: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }} {{ monitoring_lab_fqdn_harbor }}"
+        state: present
+      when: harbor_dns.rc != 0
+      failed_when: false
+
+    - name: Write temporary public DNS fallback when Harbor DNS lookup fails
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        mode: '0644'
+        content: |
+          # Temporary fallback added by ansible for provisioning
+          nameserver 1.1.1.1
+          nameserver 8.8.8.8
+      when: monitoring_dns_fallback_needed
+      failed_when: false
 
     - name: Start monitoring stack via compose
       community.docker.docker_compose_v2:
         project_src: "{{ monitoring_compose_dir }}"
         state: present
+      when: not ansible_check_mode
 
     - name: Wait for Grafana health endpoint
       ansible.builtin.uri:
@@ -311,6 +397,7 @@
       retries: 30
       delay: 10
       until: grafana_health.status == 200
+      when: not ansible_check_mode
 
     - name: Wait for VictoriaMetrics endpoint
       ansible.builtin.uri:
@@ -321,6 +408,7 @@
       retries: 30
       delay: 10
       until: vm_health.status == 200
+      when: not ansible_check_mode
 
     - name: Wait for Loki readiness endpoint
       ansible.builtin.uri:
@@ -331,8 +419,26 @@
       retries: 30
       delay: 10
       until: loki_health.status == 200
+      when: not ansible_check_mode
+
+    - name: Restore resolv.conf from backup if we modified it
+      ansible.builtin.copy:
+        src: /etc/resolv.conf.backup-ansible
+        dest: /etc/resolv.conf
+        remote_src: yes
+      when: monitoring_dns_fallback_needed | default(false)
+      failed_when: false
+
+    - name: Remove temporary /etc/hosts entry for Harbor
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }}\\s+{{ monitoring_lab_fqdn_harbor }}"
+        state: absent
+      when: harbor_dns is defined and harbor_dns.rc != 0
+      failed_when: false
 
     - name: Look up Grafana breakglass local user
+      check_mode: false
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
         method: GET
@@ -342,6 +448,7 @@
         status_code: [200, 404]
       register: grafana_breakglass_lookup
       no_log: true
+      when: not ansible_check_mode
 
     - name: Create Grafana breakglass local user when missing
       ansible.builtin.uri:
@@ -357,10 +464,13 @@
           login: "{{ grafana_breakglass_username }}"
           password: "{{ grafana_breakglass_password }}"
         status_code: [200, 201]
-      when: grafana_breakglass_lookup.status == 404
+      when:
+        - not ansible_check_mode
+        - grafana_breakglass_lookup.status == 404
       no_log: true
 
     - name: Refresh Grafana breakglass user lookup
+      check_mode: false
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
         method: GET
@@ -370,6 +480,7 @@
         status_code: 200
       register: grafana_breakglass_lookup_after
       no_log: true
+      when: not ansible_check_mode
 
     - name: Sync Grafana breakglass user password
       ansible.builtin.uri:
@@ -383,6 +494,7 @@
           password: "{{ grafana_breakglass_password }}"
         status_code: 200
       no_log: true
+      when: not ansible_check_mode
 
     - name: Ensure Grafana breakglass user is Grafana admin
       ansible.builtin.uri:
@@ -396,3 +508,4 @@
           isGrafanaAdmin: true
         status_code: 200
       no_log: true
+      when: not ansible_check_mode

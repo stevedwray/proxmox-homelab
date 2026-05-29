@@ -23,6 +23,14 @@ The repeatable harness is documented in
 [repeatable-test.md](repeatable-test.md) and implemented at
 `scripts/teardown-deploy-test.sh`.
 
+The current storage-refactor branch has already proved the non-destructive gate
+path for the updated storage contract: `source-preflight` and `plan` now run
+the storage contract validator, storage classifier regression checks, and
+targeted plan-safety review for explicit-contract stacks. The next rehearsal on
+this branch should be a fresh `approval-preflight`, a freshly stamped approval
+packet, and then a full `cycle --execute` run to capture destructive proof for
+the storage-refactor changes.
+
 The harness is safe by default: non-destructive validation phases can run during
 development, while destroy/apply/publish phases require explicit execution
 approval.
@@ -38,7 +46,7 @@ At the end of the test:
 - Generated CoreDNS and Traefik state is regenerated from current manifests and
   published from fresh artifacts.
 - Authentik discovery/reconciliation is converged without automatic deletes.
-- All six browser routes resolve to Traefik at `10.57.2.10` and show expected
+- All six browser routes resolve to Traefik at `${lab_ip_proxy}` and show expected
   auth behavior.
 - The final edge reconciler dry-run is a no-op.
 - Destroy, deploy, validation, and rollback evidence are captured.

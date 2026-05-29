@@ -55,9 +55,9 @@ These are declared in `variables.tf` and may be overridden per environment:
 
 | Variable                | Default        | pve-test value  | Notes |
 |-------------------------|----------------|-----------------|-------|
-| `portainer_server_ip`   | `192.168.1.4`  | `10.57.1.20`    | Portainer server for app-tier endpoint registration |
-| `registry_host`         | `192.168.1.10` | `10.57.3.10`    | Harbor IP for Docker pulls |
-| `apt_cacher_host`       | `192.168.1.35` | `10.57.3.11`    | apt-cacher-ng proxy |
+| `registry_host`         | `192.168.1.10` | `192.168.40.10` | Harbor IP for Docker pulls |
+| `apt_cacher_host`       | `192.168.1.35` | `192.168.40.11` | apt-cacher-ng proxy |
+| `portainer_server_ip`   | `192.168.1.4`  | `${lab_ip_portainer}`    | Portainer server for app-tier endpoint registration |
 
 `registry_host` and `apt_cacher_host` now flow through `variables.tf` →
 `main.tf` → `templates/inventory.tpl` as generated host vars. Stacks can override
@@ -87,33 +87,41 @@ change to field names or semantics as a platform API change affecting all stacks
 | Field              | Type   | Notes |
 |--------------------|--------|-------|
 | `hostname`         | string | LXC hostname |
-| `ip_address`       | string | CIDR notation (e.g. `10.57.3.10/24`) |
+| `ip_address`       | string | CIDR notation (e.g. `192.168.40.10/24`) |
 | `deployment_tier`  | string | Explicit orchestration tier: `platform` or `apps` |
+| `dns_server`       | string | Guest resolver written into `/etc/resolv.conf`; set explicitly in every stack |
 
 ### Optional with platform defaults
 
 | Field                 | Type    | Default behavior |
 |-----------------------|---------|------------------|
 | `gateway`             | string  | Falls back to `default_gateway` from `variables.tf` |
+| `dns_server`          | string  | Explicit guest resolver; use the zone gateway for SDN-attached stacks |
 | `vmid`                | int     | Passed through if set; omitted otherwise |
 | `cores`               | int     | Defaults to `2` |
 | `memory`              | int     | Defaults to `2048` MiB |
 | `swap`                | int     | Defaults to `512` MiB |
 | `rootfs_size`         | int     | Defaults to `8` GiB |
-| `rootfs_storage`      | string  | Falls back to `default_storage` |
+| `storage_profile`     | string  | Falls back to `storage/<env>.yaml` defaults and maps to concrete runtime backends |
 | `docker_storage_size` | string  | Defaults to `"20G"` |
-| `ostemplate`          | string  | Defaults to the shared Debian Docker template |
+| `template_name`       | string  | Defaults to manifest template name and resolves into `<storage>:vztmpl/<name>` |
+| `template_profile`    | string  | Falls back to `storage/<env>.yaml` defaults and maps to template storage |
 | `tags`                | list    | Defaults to `[stack_name]` |
 | `network.zone`        | string  | Optional; when omitted, the stack uses bridge defaults rather than network intent |
+| `network.access_path` | string  | Optional; allowed values are `direct` and `proxyjump_compat`; defaults to `direct` for `sdn_vnet` attachments and `proxyjump_compat` for bridge/default path |
 | `ansible_playbook`    | string  | Playbook name consumed by `scripts/provision.sh` during the explicit Ansible phase |
 | `portainer_agent`     | bool    | Defaults to `false`; relevant for app-tier/legacy Portainer cleanup behavior only |
 | `keyctl`              | bool    | Defaults to `false` |
 | `app_stack_name`      | string  | Defaults to stack directory name |
 | `extra_mount_path`    | string  | No extra mount when omitted |
 | `extra_mount_size`    | string  | No extra mount when omitted |
-| `extra_mount_storage` | string  | Falls back to `rootfs_storage` when extra mount is used |
+| `extra_mount_profile` | string  | Falls back to `storage/<env>.yaml` defaults and maps to concrete extra mount storage |
 | `depends_on`          | list    | Orchestration metadata used to document and order stack application in the explicit provisioning path |
 | `provides`            | list    | Contract/validation metadata used by stack-boundary documentation tooling |
+
+Storage policy authority lives in `terraform/lxc/storage/<proxmox-node>.yaml`.
+The root module resolves storage/template intent from stack fields before
+invoking `modules/lxc-docker-host`.
 
 ## Orchestration boundary
 
@@ -179,8 +187,8 @@ apt_cacher_host = try(local.stack.apt_cacher_host, var.apt_cacher_host)
 
 `.env.pve-test` — add (if not already present):
 ```
-export TF_VAR_registry_host=10.57.3.10
-export TF_VAR_apt_cacher_host=10.57.3.11
+export TF_VAR_registry_host=192.168.40.10
+export TF_VAR_apt_cacher_host=192.168.40.11
 ```
 
 ### 2. Parameterize apt proxy in `lxc_base`
@@ -210,3 +218,40 @@ export TF_VAR_apt_cacher_host=10.57.3.11
 
 Implemented by reading `registry_host` from generated inventory and writing
 `REGISTRY_HOST` into the stack `.env` file for Docker Compose expansion.
+
+## Implementation cross-links
+
+For quick navigation between the contract and its implementation, reference the
+following files in this repository:
+
+- `terraform/lxc/main.tf` — the module entrypoint that binds `variables.tf` into
+  the template rendering call (see the `templatefile()` invocation where
+  inventory variables are composed).
+- `terraform/lxc/templates/inventory.tpl` — the rendered inventory template; any
+  field added/removed here is a breaking contract change for playbooks.
+- `terraform/lxc/modules/lxc-docker-host/` — module implementing the LXC host
+  provisioning primitives used by the platform layer.
+- `terraform/lxc/PLATFORM_CONTRACT.md` — this document (contract source).
+- `terraform/lxc/stacks/*/STACK_CONTRACT.md` — per-stack contracts the platform
+  consumes (examples: `stacks/portainer-stack/STACK_CONTRACT.md`).
+
+If you edit the contract semantics here, add or update the cross-link above to
+point readers at the representative implementation example(s).
+
+## Stage 4 Exemplar Scaffolding Hooks
+
+### Exemplar Pair
+
+- apt-cacher-stack
+- harbor-stack
+
+### Scaffolding Intent
+
+- define a shared, minimal hook surface for day-1/day-2 contract handoff
+- keep existing behavior stable while introducing explicit exemplar-owned hook points
+
+### Required Stage 4 Outputs
+
+- stack-level hook declarations for apt-cacher and harbor contracts
+- clear contract language for generated handoff artifacts used by Terraform and Ansible
+- a bounded checklist for Stage 5 validation evidence

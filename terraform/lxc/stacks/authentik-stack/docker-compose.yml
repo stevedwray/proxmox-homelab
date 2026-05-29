@@ -45,11 +45,21 @@ services:
       - redis
     ports:
       - "9000:9000"
-      - "9443:9443"
     volumes:
       - authentik-media:/media
       - authentik-custom-templates:/templates
       - authentik-certs:/certs
+
+  direct_tls:
+    image: docker.io/library/nginx:1.27-alpine
+    restart: unless-stopped
+    depends_on:
+      - server
+    ports:
+      - "9443:9443"
+    volumes:
+      - ./certs/direct:/certs/direct:ro
+      - ./nginx/direct-tls.conf:/etc/nginx/conf.d/default.conf:ro
 
   worker:
     image: ghcr.io/goauthentik/server:2024.12.3

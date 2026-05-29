@@ -19,10 +19,10 @@ adding a new segment.
          |
     MikroTik (router/firewall)
     ├── LAN: 192.168.1.1/24       (untagged)
-    ├── VLAN 10: 10.57.0.1/24    (build_seg)
-    ├── VLAN 20: 10.57.1.1/24    (mgmt_seg)
-    ├── VLAN 30: 10.57.2.1/24    (edge_seg)
-    └── VLAN 40: 10.57.3.1/24    (infra_seg)
+    ├── VLAN 10: 192.168.10.1/24  (build_seg)
+    ├── VLAN 20: 192.168.20.1/24  (mgmt_seg)
+    ├── VLAN 30: 192.168.30.1/24  (edge_seg)
+    └── VLAN 40: 192.168.40.1/24  (infra_seg)
          |
     pve-test (trunk port — all VLANs tagged)
     ├── vmbr0 (VLAN-aware bridge)
@@ -33,7 +33,7 @@ adding a new segment.
 ```
 
 Each container uses its zone's MikroTik interface as its default gateway
-(e.g. `10.57.3.1` for infra_seg). All routing — including inter-zone traffic,
+(for example `192.168.40.1` for infra_seg). All routing — including inter-zone traffic,
 LAN access, and internet egress — flows through the MikroTik. Proxmox does
 not have any gateway IPs and performs no routing or SNAT.
 
@@ -52,7 +52,7 @@ not have any gateway IPs and performs no routing or SNAT.
 
 With VLAN zones, **no static routes are needed on the MikroTik** — the VLAN
 interfaces are directly connected routes. Any host on 192.168.1.0/24 can reach
-any container at 10.57.x.x directly via the MikroTik.
+any container at `192.168.<vlan-id>.x` directly via the MikroTik.
 
 ---
 
@@ -60,10 +60,10 @@ any container at 10.57.x.x directly via the MikroTik.
 
 | Zone | VNet bridge | VLAN | Subnet | Gateway | Containers |
 |---|---|---|---|---|---|
-| `build_seg` | `tvnetc` | 10 | `10.57.0.0/24` | `10.57.0.1` | ci-runner-01 (10.57.0.63) |
-| `mgmt_seg` | `tvmgmt` | 20 | `10.57.1.0/24` | `10.57.1.1` | Authentik (10.57.1.10), step-ca (10.57.1.11), Monitoring (10.57.1.12) |
-| `edge_seg` | `tvedge` | 30 | `10.57.2.0/24` | `10.57.2.1` | Traefik (10.57.2.10) |
-| `infra_seg` | `tvinfra` | 40 | `10.57.3.0/24` | `10.57.3.1` | Harbor (10.57.3.10), apt-cacher (10.57.3.11), NetBox (10.57.3.12) |
+| `build_seg` | `tvnetc` | 10 | `192.168.10.0/24` | `192.168.10.1` | ci-runner-01 (192.168.10.63) |
+| `mgmt_seg` | `tvmgmt` | 20 | `192.168.20.0/24` | `192.168.20.1` | Authentik (192.168.20.10), step-ca (192.168.20.11), Monitoring (192.168.20.12) |
+| `edge_seg` | `tvedge` | 30 | `192.168.30.0/24` | `192.168.30.1` | Traefik (192.168.30.10) |
+| `infra_seg` | `tvinfra` | 40 | `192.168.40.0/24` | `192.168.40.1` | Harbor (192.168.40.10), apt-cacher (192.168.40.11), NetBox (192.168.40.12) |
 
 ---
 
@@ -74,10 +74,10 @@ zone:
 
 | Zone | Resolver target |
 |---|---|
-| `build_seg` | `10.57.0.1` |
-| `mgmt_seg` | `10.57.1.1` |
-| `edge_seg` | `10.57.2.1` |
-| `infra_seg` | `10.57.3.1` |
+| `build_seg` | `192.168.10.1` |
+| `mgmt_seg` | `192.168.20.1` |
+| `edge_seg` | `192.168.30.1` |
+| `infra_seg` | `192.168.40.1` |
 
 This is the intended platform contract. Public resolvers such as `1.1.1.1` are not the
 target architecture for normal LXC operation.
@@ -90,7 +90,7 @@ to a dedicated internal DNS server while clients continue querying MikroTik.
 ### 2026-04-16 runner recovery note
 
 During the greenfield `ci-runner-01` recovery, `build_seg` was missing its MikroTik VLAN
-interface initially, and router-local DNS on `10.57.0.1` did not answer during runner
+interface initially, and router-local DNS on `192.168.10.1` did not answer during runner
 bootstrap even after the VLAN and gateway were added. A temporary `dns_server: "1.1.1.1"`
 override was used to recover the runner.
 
@@ -155,11 +155,11 @@ RouterOS command baseline for this delegation model:
 Resolver-path validation baseline:
 
 ```bash
-dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short github.com
+dig @192.168.10.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.30.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.40.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short github.com
 ```
 
 ---
@@ -186,8 +186,8 @@ Choose a VLAN ID and subnet that does not conflict with existing zones. Update
       vnet: tvnew
       vlan_tag: 50          # ← new VLAN ID
       alias: pve-test new segment
-      subnet: "10.57.4.0/24"
-      gateway: "10.57.4.1"
+      subnet: "192.168.50.0/24"
+      gateway: "192.168.50.1"
       snat: false           # ← always false — MikroTik handles routing
 ```
 
@@ -202,21 +202,20 @@ In the MikroTik terminal:
 
 ```text
 /interface vlan add interface=<trunk-iface> name=vlan50-new vlan-id=50
-/ip address add address=10.57.4.1/24 interface=vlan50-new comment="pve-test new_seg gw"
+/ip address add address=192.168.50.1/24 interface=vlan50-new comment="pve-test new_seg gw"
 ```
 
 Verify the new VLAN interface is up and reachable:
 
 ```bash
 # From the workstation — should respond
-ping -c 3 10.57.4.1
+ping -c 3 192.168.50.1
 ```
 
-### Step 3 — Apply SDN zone manually (Terraform code gap)
+### Step 3 — Apply SDN zone through the current automation path
 
-The `configure-network-sdn-vnet.yml` playbook currently handles Simple zone
-creation only. Use `ansible/00-initial-setup/proxmox-sdn-setup.yml` for VLAN
-zones until Terraform-side support is updated for `zone_type: vlan`.
+The current `configure-network-sdn-vnet.yml` playbook handles `zone_type: vlan`
+for `pve-test`. The remaining out-of-band prerequisite is the MikroTik side.
 
 ```bash
 # Create the SDN zone
@@ -226,7 +225,7 @@ pvesh create /cluster/sdn/zones --type vlan --zone tvnew --bridge vmbr0 --nodes 
 pvesh create /cluster/sdn/vnets --vnet tvnew --zone tvnew --tag 50
 
 # Create the subnet
-pvesh create /cluster/sdn/vnets/tvnew/subnets --subnet 10.57.4.0/24 --gateway 10.57.4.1 --type subnet
+pvesh create /cluster/sdn/vnets/tvnew/subnets --subnet 192.168.50.0/24 --gateway 192.168.50.1 --type subnet
 
 # Apply SDN config
 pvesh set /cluster/sdn
@@ -245,19 +244,19 @@ Once the zone is created and a container is deployed:
 
 ```bash
 # From a workstation — container should be reachable
-ping -c 3 10.57.4.<host>
+ping -c 3 192.168.50.<host>
 
 # From pve-test — internet egress via MikroTik
 pct exec <vmid> -- ping -c 3 8.8.8.8
 
 # Inter-zone routing — e.g. from a container in build_seg to new_seg
-pct exec 141 -- ping -c 3 10.57.4.<host>
+pct exec 141 -- ping -c 3 192.168.50.<host>
 
 # Delegated internal zone check via zone resolver
-pct exec <vmid> -- dig @10.57.<zone>.1 +short traefik.lab.gibbsgreatly.xyz
+pct exec <vmid> -- dig @192.168.<vlan-id>.1 +short traefik.lab.gibbsgreatly.xyz
 
 # Public probe check via the same resolver path
-pct exec <vmid> -- dig @10.57.<zone>.1 +short github.com
+pct exec <vmid> -- dig @192.168.<vlan-id>.1 +short github.com
 ```
 
 ---

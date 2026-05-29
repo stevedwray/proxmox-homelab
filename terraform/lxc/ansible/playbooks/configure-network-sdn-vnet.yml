@@ -1,25 +1,27 @@
----
-- name: Ensure the pve-test SDN VNet attachment exists
+- name: Ensure the SDN VNet attachment exists on the target Proxmox environment
   hosts: localhost
   gather_facts: false
 
   vars:
-    expected_pve_test_host: "{{ lookup('env', 'PVE_TEST_FQDN') | default('pve-test.gibbsgreatly.xyz', true) }}"
+    configured_proxmox_node: "{{ lookup('env', 'TF_VAR_proxmox_node') | default('', true) }}"
+    configured_proxmox_host: "{{ lookup('env', 'TF_VAR_proxmox_host') | default('', true) }}"
     network_sdn_nodes_csv: "{{ network_sdn_nodes | join(',') }}"
 
   tasks:
-    - name: Assert pve-test-only execution
+    - name: Assert SDN execution is aligned with the active target environment
       ansible.builtin.assert:
         that:
           - network_sdn_enable | bool
-          - network_sdn_target == 'pve-test'
-          - network_sdn_pve_host == expected_pve_test_host
+          - network_sdn_expected_target is not defined or network_sdn_target == network_sdn_expected_target
+          - network_sdn_expected_pve_host is not defined or network_sdn_pve_host == network_sdn_expected_pve_host
+          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_target
+          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_pve_host
           - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_zone_type != 'vlan' or (network_sdn_bridge | default('', true)) | length > 0
           - network_sdn_zone_type != 'vlan' or (network_sdn_vlan_tag | string) | length > 0
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN attachment automation is restricted to pve-test SDN zones and requires the current bridge/tag metadata for VLAN zones."
-        success_msg: "SDN attachment automation is pinned to pve-test."
+        fail_msg: "SDN attachment automation target mismatch: verify Terraform target node/host, optional producer-side target hints, and VLAN metadata for this environment."
+        success_msg: "SDN attachment automation target matches the active environment."
 
     - name: Read current SDN zones
       ansible.builtin.command:
@@ -155,7 +157,7 @@
       when: (network_sdn_subnet | default('', true)) | length > 0 and network_sdn_existing_subnet | length == 0
       changed_when: true
 
-    - name: Apply pending SDN changes on pve-test
+    - name: Apply pending SDN changes on target Proxmox environment
       ansible.builtin.command:
         cmd: pvesh set /cluster/sdn
       delegate_to: "{{ network_sdn_pve_host }}"
@@ -189,7 +191,7 @@
           )
         )
 
-    - name: Validate proxmox-firewall compilation on pve-test
+    - name: Validate proxmox-firewall compilation on target Proxmox environment
       ansible.builtin.command:
         cmd: /usr/libexec/proxmox/proxmox-firewall compile
       delegate_to: "{{ network_sdn_pve_host }}"

@@ -10,8 +10,8 @@
     runner_user: runner
     runner_home: /opt/actions-runner
     runner_repo: "https://github.com/stevedwray/proxmox-homelab"
-    runner_labels: "self-hosted,pve-test,build,linux,x64"
-    runner_name: "ci-runner-pve-test"
+    runner_labels: "{{ lookup('env', 'RUNNER_LABELS') | default('self-hosted,pve-test,build,linux,x64', true) }}"
+    runner_name: "{{ lookup('env', 'RUNNER_NAME') | default('ci-runner-01', true) }}"
     runner_service_name: >-
       {{
         lookup('env', 'RUNNER_SERVICE_NAME')
@@ -136,6 +136,7 @@
         url: "https://github.com/actions/runner/releases/download/v{{ runner_version }}/actions-runner-linux-x64-{{ runner_version }}.tar.gz"
         dest: "/tmp/actions-runner.tar.gz"
         mode: '0644'
+      when: not ansible_check_mode
 
     - name: Extract runner
       ansible.builtin.unarchive:
@@ -143,13 +144,19 @@
         dest: "{{ runner_home }}"
         remote_src: true
         owner: "{{ runner_user }}"
+      when: not ansible_check_mode
 
     - name: Check if runner is already configured
       ansible.builtin.stat:
         path: "{{ runner_home }}/.runner"
       become: true
       become_user: "{{ runner_user }}"
-      register: runner_config_stat
+      register: runner_config_stat_actual
+      when: not ansible_check_mode
+
+    - name: Set effective runner configured state
+      ansible.builtin.set_fact:
+        runner_config_exists: "{{ runner_config_stat_actual.stat.exists | default(false) }}"
 
     - name: Generate removal token for clean deregistration
       ansible.builtin.command:
@@ -167,7 +174,7 @@
       changed_when: false
       when:
         - runner_force_reconfigure | bool
-        - runner_config_stat.stat.exists
+        - runner_config_exists | bool
       no_log: true
 
     - name: Deregister existing runner before reconfiguring
@@ -178,7 +185,7 @@
       become_user: "{{ runner_user }}"
       when:
         - runner_force_reconfigure | bool
-        - runner_config_stat.stat.exists
+        - runner_config_exists | bool
       failed_when: false
       no_log: true
 
@@ -196,7 +203,8 @@
       become: true
       become_user: "{{ runner_user }}"
       when:
-        - not runner_config_stat.stat.exists or runner_force_reconfigure | bool
+        - not ansible_check_mode
+        - not (runner_config_exists | bool) or runner_force_reconfigure | bool
       no_log: true
 
     - name: Find installed runner systemd service file
@@ -209,7 +217,9 @@
       ansible.builtin.command:
         cmd: ./svc.sh install {{ runner_user }}
         chdir: "{{ runner_home }}"
-      when: runner_service_files.matched == 0
+      when:
+        - not ansible_check_mode
+        - runner_service_files.matched == 0
 
     - name: Persist desired resolver content for runner reboot recovery
       ansible.builtin.copy:
@@ -266,11 +276,13 @@
       ansible.builtin.systemd_service:
         name: homelab-runner-resolver.service
         enabled: true
+      when: not ansible_check_mode
 
     - name: Run resolver restore service immediately
       ansible.builtin.systemd_service:
         name: homelab-runner-resolver.service
         state: started
+      when: not ansible_check_mode
 
     - name: Deploy .terraformrc for filesystem provider mirror
       ansible.builtin.template:
@@ -304,6 +316,7 @@
         name: "{{ runner_service_name }}"
         enabled: true
         state: started
+      when: not ansible_check_mode
 
     - name: Verify runner is registered and online via GitHub API
       ansible.builtin.command:
@@ -320,6 +333,7 @@
       retries: 18
       delay: 10
       changed_when: false
+      when: not ansible_check_mode
 
   handlers:
     - name: Restart Docker

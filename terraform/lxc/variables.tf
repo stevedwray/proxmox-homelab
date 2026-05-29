@@ -17,6 +17,12 @@ variable "network_intent_path" {
   default     = null
 }
 
+variable "storage_manifest_path" {
+  description = "Optional override path for the environment storage manifest YAML file"
+  type        = string
+  default     = null
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox connection
 # ---------------------------------------------------------------------------
@@ -48,7 +54,7 @@ variable "pm_tls_insecure" {
 variable "proxmox_node" {
   description = "Default Proxmox node name"
   type        = string
-  default     = "pve"
+  default     = "pve-test"
 }
 
 variable "stack_hostname" {
@@ -94,7 +100,7 @@ variable "default_gateway" {
 }
 
 variable "default_storage" {
-  description = "Default storage backend"
+  description = "DEPRECATED: legacy default storage backend; use storage manifests and storage_profile in stack.yaml"
   type        = string
   default     = "infrastructure-containers"
 }
@@ -126,7 +132,7 @@ variable "portainer_admin_password" {
 variable "proxmox_host" {
   description = "Proxmox host for SSH access (used by Ansible delegate_to for features that require root@pam)"
   type        = string
-  default     = "pve.gibbsgreatly.xyz"
+  default     = ""
 }
 
 # ---------------------------------------------------------------------------

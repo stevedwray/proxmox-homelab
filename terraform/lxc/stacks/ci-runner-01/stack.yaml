@@ -2,15 +2,22 @@
 hostname: ci-runner-01
 ip_address: "${lab_ip_ci_runner}/24"
 gateway: "${lab_gw_build}"
-proxmox_node: pve-test
-vmid: 141
+dns_server: "${lab_gw_build}"
+vmid: 10063
 cores: 2
 memory: 4096
 swap: 1024
 rootfs_size: 20
-rootfs_storage: infrastructure-containers
+storage_profile: platform-default
 docker_storage_size: "10G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "10G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - ci
   - runner
@@ -24,7 +31,7 @@ network:
   zone: build_seg
 
 # Phase 03c: apt-cacher-ng is deployed on infra_seg via LAB_IP_APT_CACHER.
-# pve-test service IPs (explicit — do not rely on variable defaults)
+# Environment-selected service IPs (explicit — do not rely on variable defaults)
 apt_cacher_host: "${lab_ip_apt_cacher}"
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"

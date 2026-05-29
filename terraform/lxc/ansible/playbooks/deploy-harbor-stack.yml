@@ -9,16 +9,42 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    harbor_docker_daemon_config:
+      dns:
+        - "{{ harbor_lab_ip_dns }}"
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+      storage-driver: overlay2
   roles:
     - lxc_base
     - docker_base
   tasks:
+    - name: Normalize Docker daemon DNS for Harbor runtime
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ harbor_docker_daemon_config | to_nice_json }}\n"
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before Harbor install
+      ansible.builtin.meta: flush_handlers
+
     - name: Mask portainer-agent service (platform tier — no agent on this host)
       ansible.builtin.systemd:
         name: portainer-agent.service
         masked: true
         enabled: false
       failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Install and start Harbor
   hosts: all
@@ -37,6 +63,7 @@
   vars:
     harbor_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     harbor_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ harbor_lab_domain, true) }}"
+    harbor_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ harbor_lab_domain, true) }}"
     harbor_postconfigure_host: "{{ ansible_host }}"
     harbor_postconfigure_oidc_enabled: "{{ lookup('env', 'HARBOR_OIDC_ENABLED') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_name: "{{ lookup('env', 'HARBOR_OIDC_PROVIDER_NAME') | default('authentik', true) }}"
@@ -44,9 +71,9 @@
     harbor_postconfigure_oidc_client_id: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_ID') | default('harbor', true) }}"
     harbor_postconfigure_oidc_client_secret: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_SECRET') | default('', true) }}"
     harbor_postconfigure_oidc_groups_claim: "{{ lookup('env', 'HARBOR_OIDC_GROUPS_CLAIM') | default('groups', true) }}"
-    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('harbor-admins', true) }}"
-    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('^harbor-(users|admins)$', true) }}"
-    harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access', true) }}"
+    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('homelab-admins', true) }}"
+    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('^homelab-.*|^harbor-.*', true) }}"
+    harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access,groups', true) }}"
     harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('preferred_username', true) }}"
     harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('false', true) | bool }}"
     harbor_postconfigure_oidc_auto_onboard: "{{ lookup('env', 'HARBOR_OIDC_AUTO_ONBOARD') | default('true', true) | bool }}"
@@ -68,12 +95,18 @@
 
     - name: Check Authentik health endpoint reachability for Harbor OIDC reconcile
       ansible.builtin.uri:
-        url: "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000/-/health/live/"
+        url: "https://{{ harbor_lab_fqdn_authentik_internal }}:9443/-/health/live/"
         method: GET
         status_code: 200
         validate_certs: false
       register: harbor_authentik_health
-      failed_when: false
+      # Retry briefly to allow Authentik to finish coming up during deploy.
+      # This reduces false deferral of Harbor OIDC configuration when Authentik
+      # is expected to be deployed earlier in the sequence but is still
+      # initializing at the moment the check runs.
+      retries: 18
+      delay: 10
+      until: harbor_authentik_health.status == 200
       changed_when: false
       when: harbor_postconfigure_oidc_enabled
       delegate_to: localhost
@@ -90,13 +123,13 @@
 
     - name: Reconcile Harbor Authentik OIDC client
       ansible.builtin.command:
-        # Keep API reconcile on direct endpoint, sourced from LAB_IP_AUTHENTIK.
+        # Keep API reconcile on internal direct-TLS endpoint for controller paths
         argv:
           - python3
           - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
           - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
           - --authentik-url
-          - "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000"
+          - "https://{{ harbor_lab_fqdn_authentik_internal }}:9443"
           - --no-verify-tls
           - --apply
           - --json
@@ -107,5 +140,34 @@
         - (harbor_authentik_health.status | default(0)) == 200
       delegate_to: localhost
       run_once: true
+
+    - name: Determine Harbor OIDC readiness for this run
+      ansible.builtin.set_fact:
+        harbor_postconfigure_oidc_ready: >-
+          {{
+            (harbor_postconfigure_oidc_enabled | bool)
+            and ((harbor_authentik_health.status | default(0)) == 200)
+            and (harbor_authentik_reconcile is defined)
+            and not (harbor_authentik_reconcile is skipped)
+            and ((harbor_authentik_reconcile.rc | default(0)) == 0)
+          }}
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
+    - name: Defer Harbor OIDC config until Authentik reconcile succeeds
+      ansible.builtin.debug:
+        msg: >-
+          Harbor OIDC was requested but Authentik client reconcile did not run
+          successfully in this pass, so Harbor OIDC config is deferred to keep
+          Harbor out of a partial OIDC state.
+      when:
+        - harbor_postconfigure_oidc_enabled
+        - not (harbor_postconfigure_oidc_ready | default(false) | bool)
+      delegate_to: localhost
+      run_once: true
   roles:
-    - harbor_postconfigure
+    - role: harbor_postconfigure
+      vars:
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+        harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"

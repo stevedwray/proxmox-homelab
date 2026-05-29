@@ -5,50 +5,53 @@ import sys
 
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+PLANNER_AGENT = REPO_ROOT / ".github/agents/planner.agent.md"
+EXECUTOR_AGENT = REPO_ROOT / ".github/agents/executor.agent.md"
 ARCHITECT_AGENT = REPO_ROOT / ".github/agents/architect.agent.md"
 
-REQUIRED_SNIPPETS = [
-    "overwrite any existing\nfile completely",
-    "Do not reuse, append to, or partially edit a prior session\nhandoff",
-    "scripts/teardown-deploy-test.sh",
-    "include both `--execute`\n  and `--approval-text \"<operator-approved text>\"`",
-    "Do not omit `deploy-edge`",
-    ".git/ai/sessions/evidence/<session-id>/<gate-id>.log",
-]
+CHECKS = {
+    "planner": [
+        ".git/ai/plan-state.yaml",
+        ".git/ai/current-step.spec.yaml",
+        "python3 scripts/render-current-step.py",
+        "python3 scripts/validate-current-step.py",
+        "python3 scripts/validate-plan-state.py",
+    ],
+    "executor": [
+        ".git/ai/current-step.yaml",
+        "python3 scripts/validate-current-step.py .git/ai/current-step.yaml",
+        "python3 scripts/update-plan-state.py .git/ai/plan-state.yaml <step-id> in_progress",
+        ".git/ai/blocker.yaml",
+        "python3 scripts/validate-blocker.py .git/ai/blocker.yaml",
+    ],
+    "architect": [
+        ".git/ai/blocker.yaml",
+        ".git/ai/current-step.spec.yaml",
+        "python3 scripts/render-current-step.py .git/ai/current-step.spec.yaml .git/ai/current-step.yaml",
+        "python3 scripts/validate-current-step.py .git/ai/current-step.yaml",
+        "Do not depend on `.git/ai/handoff-to-architect.yaml`.",
+    ],
+}
 
-PHASE_SEQUENCE = [
-    "`destroy`",
-    "`deploy-foundation`",
-    "`deploy-edge`",
-    "`activate-edge`",
-    "`deploy-platform`",
-    "`final-validation`",
-]
+
+def check_file(name: str, path: Path, snippets: list[str]) -> list[str]:
+    content = path.read_text(encoding="utf-8")
+    return [f"{name}:{snippet}" for snippet in snippets if snippet not in content]
 
 
 def main() -> int:
-    content = ARCHITECT_AGENT.read_text(encoding="utf-8")
-    missing = [snippet for snippet in REQUIRED_SNIPPETS if snippet not in content]
-
-    sequence_positions = []
-    search_start = 0
-    for phase in PHASE_SEQUENCE:
-        position = content.find(phase, search_start)
-        if position == -1:
-            missing.append(f"phase-sequence:{phase}")
-            continue
-        sequence_positions.append((phase, position))
-        search_start = position + len(phase)
+    missing = []
+    missing.extend(check_file("planner", PLANNER_AGENT, CHECKS["planner"]))
+    missing.extend(check_file("executor", EXECUTOR_AGENT, CHECKS["executor"]))
+    missing.extend(check_file("architect", ARCHITECT_AGENT, CHECKS["architect"]))
 
     if missing:
-        print("FAIL: architect handoff safeguards missing")
+        print("FAIL: autonomous workflow safeguards missing")
         for item in missing:
             print(f"- {item}")
         return 1
 
-    print("PASS: architect handoff safeguards present")
-    for phase, position in sequence_positions:
-        print(f"- {phase} @ {position}")
+    print("PASS: autonomous workflow safeguards present")
     return 0
 
 

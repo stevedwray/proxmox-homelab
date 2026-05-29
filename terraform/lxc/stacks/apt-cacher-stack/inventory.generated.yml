@@ -1,0 +1,14 @@
+all:
+  children:
+    apt_cacher_stack:
+      hosts:
+        apt-cacher-stack:
+          ansible_host: 192.168.40.11
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          ssh_access_mode: direct
+          network_zone: infra_seg
+          dns_server: 192.168.40.1
+          vmid: 40011
+          stack_name: apt-cacher-stack

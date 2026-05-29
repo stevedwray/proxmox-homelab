@@ -1,0 +1,24 @@
+[basic-sdn] validate playbook
+
+PLAY [Validate basic SDN smoke path] *******************************************
+
+TASK [Confirm untagged baseline path from pve-test to MikroTik management IP] ***
+ok: [localhost]
+
+TASK [Check build container status] ********************************************
+ok: [localhost]
+
+TASK [Probe build gateway reachability from build container] *******************
+ok: [localhost]
+
+TASK [Report gateway probe result] *********************************************
+ok: [localhost] => {
+    "msg": [
+        "build container status: status: running",
+        "build gateway probe rc=1",
+        "This probe is expected to fail while external VLAN carriage is unresolved."
+    ]
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0

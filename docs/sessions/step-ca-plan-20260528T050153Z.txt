@@ -1,0 +1,335 @@
+[0;90m17:01:54.398[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mnull_resource.ansible_provision[0]: Refreshing state... [id=5299483065136565693][0m[0m
+[0;90m17:01:54.405[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.proxmox_virtual_environment_container.docker_host: Refreshing state... [id=152][0m[0m
+[0;90m17:01:54.475[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.terraform_data.container_epoch: Refreshing state... [id=bdb37419-9e85-e2f8-6496-110e98782046][0m[0m
+[0;90m17:01:54.475[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Refreshing state... [id=06be250b9c2f37a4315e6825ceddbeaead2784e4][0m[0m
+[0;90m17:01:54.493[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m[36mNote:[0m[1m Objects have changed outside of OpenTofu[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mOpenTofu detected the following changes made outside of OpenTofu since the
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mlast "tofu apply" which may have affected this plan:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # module.lxc.proxmox_virtual_environment_container.docker_host[0m has been deleted[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [31m-[0m[0m resource "proxmox_virtual_environment_container" "docker_host" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m id                    = "152" [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m node_name             = "pve-test" [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        tags                  = [
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "infrastructure",
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "pki",
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "step-ca",
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        ]
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m vm_id                 = 152 [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        [90m# (14 unchanged attributes hidden)[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m initialization {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m hostname = "step-ca" [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m ip_config {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              [31m-[0m[0m ipv4 {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  [31m-[0m[0m address = "192.168.1.42/24" [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                    [90m# (1 unchanged attribute hidden)[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            [90m# (1 unchanged block hidden)[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        [90m# (7 unchanged blocks hidden)[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mUnless you have made equivalent changes to your configuration, or ignored the
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mrelevant attributes using ignore_changes, the following plan may include
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mactions to undo or respond to these changes.
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[90m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m─────────────────────────────────────────────────────────────────────────────[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mOpenTofu used the selected providers to generate the following execution
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mplan. Resource actions are indicated with the following symbols:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  [32m+[0m create[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  [31m-[0m destroy[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[31m-[0m/[32m+[0m destroy and then create replacement[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0mOpenTofu will perform the following actions:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # local_file.ansible_inventory[0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "local_file" "ansible_inventory" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content              = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            all:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              children:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                step_ca_stack:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  hosts:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                    step-ca:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ansible_host: 192.168.20.11
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ansible_user: root
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ssh_access_mode: direct
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      portainer_server_ip: 192.168.20.20
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      apt_cacher_host: 192.168.40.11
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      dns_server: 192.168.20.1
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      network_zone: mgmt_seg
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      contract_dns_server: 192.168.20.1
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      stack_name: step-ca-stack
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      ansible_playbook: deploy-step-ca
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      vmid: 20011
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      app_stack_name: step-ca-stack
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha256 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha512 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_md5          = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha1         = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha256       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha512       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m directory_permission = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m file_permission      = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m filename             = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/inventory.yml"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id                   = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # local_file.network_sdn_vars[0][0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "local_file" "network_sdn_vars" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content              = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_allow_destroy": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_bridge": "vmbr0"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_enable": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_expected_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_expected_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_gateway": "192.168.20.1"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_nodes":
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            - "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_snat": false
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_ssh_key": "/home/steve/.ssh/id_ed25519"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_subnet": "192.168.20.0/24"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_vlan_tag": 20
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_vmid": 20011
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_vnet": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_vnet_alias": "pve-test management segment"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_zone": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_sdn_zone_type": "vlan"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha256 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha512 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_md5          = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha1         = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha256       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha512       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m directory_permission = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m file_permission      = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m filename             = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/network-sdn-vars.yml"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id                   = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # local_file.network_vnet_firewall_vars[0][0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "local_file" "network_vnet_firewall_vars" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content              = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_enable": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_policy_forward": "DROP"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_rules": []
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_ssh_key": "/home/steve/.ssh/id_ed25519"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_vmid": 20011
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            "network_vnet_firewall_vnet": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha256 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_base64sha512 = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_md5          = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha1         = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha256       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m content_sha512       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m directory_permission = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m file_permission      = "0777"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m filename             = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/network-vnet-firewall-vars.yml"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id                   = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # null_resource.ansible_provision[0][0m will be [1m[31mdestroyed[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  # (because null_resource.ansible_provision is not in configuration)
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [31m-[0m[0m resource "null_resource" "ansible_provision" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m id       = "5299483065136565693" [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [31m-[0m[0m triggers = {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m "container_epoch_id" = "bdb37419-9e85-e2f8-6496-110e98782046"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m "container_id"       = "152"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m "inventory_content"  = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                all:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  children:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                    step_ca_stack:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                      hosts:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                        step-ca:
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          ansible_host: 192.168.1.42
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          ansible_user: root
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          ansible_ssh_common_args: '-F /dev/null -o ProxyJump=root@pve-test.gibbsgreatly.xyz -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          portainer_server_ip: 192.168.1.20
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          stack_name: step-ca-stack
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          vmid: 152
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          pve_host: pve-test.gibbsgreatly.xyz
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                          app_stack_name: step-ca-stack
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m "playbook"           = "deploy-step-ca"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        } [90m-> null[0m[0m[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # null_resource.configure_network_sdn_attachment[0][0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "null_resource" "configure_network_sdn_attachment" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m triggers = {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "ansible_cfg"        = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/ansible.cfg"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "ansible_dir"        = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "ansible_roles_path" = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/roles"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "sdn_vars"           = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_allow_destroy": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_bridge": "vmbr0"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_enable": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_expected_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_expected_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_gateway": "192.168.20.1"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_nodes":
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                - "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_snat": false
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_ssh_key": "/home/steve/.ssh/id_ed25519"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_subnet": "192.168.20.0/24"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_vlan_tag": 20
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_vmid": 20011
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_vnet": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_vnet_alias": "pve-test management segment"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_zone": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_sdn_zone_type": "vlan"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "sdn_vars_file"      = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/network-sdn-vars.yml"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "vmid"               = "20011"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # null_resource.configure_network_vnet_firewall[0][0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "null_resource" "configure_network_vnet_firewall" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id       = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m triggers = {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "container_id"       = "20011"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "vnet_firewall_vars" = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_enable": true
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_policy_forward": "DROP"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_pve_host": "pve-test.gibbsgreatly.xyz"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_rules": []
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_ssh_key": "/home/steve/.ssh/id_ed25519"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_target": "pve-test"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_vmid": 20011
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                "network_vnet_firewall_vnet": "tvmgmt"
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # module.lxc.proxmox_virtual_environment_container.docker_host[0m will be created[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m  [32m+[0m[0m resource "proxmox_virtual_environment_container" "docker_host" {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m description    = <<-EOT[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            Managed by Terraform
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        EOT
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m id             = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m ipv4           = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m ipv6           = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m node_name      = "pve-test"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m protection     = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m start_on_boot  = true[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m started        = true[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m tags           = [[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "step-ca",[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "pki",[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m "infrastructure",[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        ]
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m template       = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m timeout_clone  = 1800[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m timeout_create = 1800[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m timeout_delete = 60[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m timeout_start  = 300[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m timeout_update = 1800[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m unprivileged   = true[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m vm_id          = 20011[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m cpu {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m architecture = "amd64"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m cores        = 1[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m limit        = 0[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m units        = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m disk {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m acl               = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m datastore_id      = "local-lvm"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m path_in_datastore = (known after apply)[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m quota             = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m replicate         = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m size              = 8[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m features {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m fuse    = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m keyctl  = false[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m nesting = true[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m initialization {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m hostname = "step-ca"[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m dns {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              [32m+[0m[0m servers = [[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  [32m+[0m[0m "192.168.20.1",[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                ]
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            }
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m ip_config {[0m
+[0;90m17:01:54.494[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              [32m+[0m[0m ipv4 {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  [32m+[0m[0m address = "192.168.20.11/24"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  [32m+[0m[0m gateway = "192.168.20.1"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m user_account {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              [32m+[0m[0m keys     = [[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                  [32m+[0m[0m "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIL8preMWsOS9rbkx4maBOE9Q+yr5fChVcH+P+tX5Msh steve@garuda",[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m                ]
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m              [32m+[0m[0m password = (sensitive value)[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m memory {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m dedicated = 1024[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m swap      = 512[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m mount_point {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m acl               = false[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m backup            = true[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m path              = "/var/lib/docker"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m path_in_datastore = (known after apply)[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m quota             = false[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m read_only         = false[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m replicate         = true[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m shared            = false[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m size              = "20G"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m volume            = "local-lvm"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m network_interface {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m bridge      = "tvmgmt"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m enabled     = true[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m firewall    = true[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m mac_address = (known after apply)[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m mtu         = 0[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m name        = "eth0"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m rate_limit  = 0[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m vlan_id     = 0[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [32m+[0m[0m operating_system {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m template_file_id = "local:vztmpl/debian-13.1-2-docker-template.tar.gz"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m type             = "debian"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1m  # module.lxc.terraform_data.container_epoch[0m must be [1m[31mreplaced[0m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[31m-[0m/[32m+[0m[0m resource "terraform_data" "container_epoch" {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [33m~[0m[0m id               = "bdb37419-9e85-e2f8-6496-110e98782046" -> (known after apply)[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [33m~[0m[0m triggers_replace = [[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [31m-[0m[0m "152",[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [32m+[0m[0m (known after apply),[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        ]
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[1mPlan:[0m 7 to add, 0 to change, 2 to destroy.[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0mChanges to Outputs:
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  [33m~[0m[0m stack = {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [33m~[0m[0m container_id = 152 [33m->[0m[0m 20011[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [33m~[0m[0m ip_address   = "192.168.1.42/24" [33m->[0m[0m "192.168.20.11/24"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m      [33m~[0m[0m network      = {[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m attachment_name = [90mnull[0m[0m [33m->[0m[0m "mgmt_seg"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m attachment_type = "bridge" [33m->[0m[0m "sdn_vnet"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m bridge          = "vmbr0" [33m->[0m[0m "tvmgmt"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m firewall        = [90mnull[0m[0m [33m->[0m[0m true[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m intent          = [90mnull[0m[0m [33m->[0m[0m "/home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test.yaml"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m sdn_vnet        = [90mnull[0m[0m [33m->[0m[0m "tvmgmt"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m          [33m~[0m[0m zone            = [90mnull[0m[0m [33m->[0m[0m "mgmt_seg"[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m            [90m# (1 unchanged attribute hidden)[0m[0m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m        [90m# (3 unchanged attributes hidden)[0m[0m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    }
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[90m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m─────────────────────────────────────────────────────────────────────────────[0m[0m
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0mSaved the plan to: plan.tfplan
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0mTo perform exactly these actions, run the following command to apply:
+[0;90m17:01:54.495[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    tofu apply "plan.tfplan"

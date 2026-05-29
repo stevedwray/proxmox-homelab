@@ -3,6 +3,9 @@ kind: EdgeManifest
 metadata:
   name: monitoring-edge
   stack: monitoring-stack
+  annotations:
+    repo.auth.oidc.client_id_env: GRAFANA_OAUTH_CLIENT_ID
+    repo.auth.oidc.client_secret_env: GRAFANA_OAUTH_CLIENT_SECRET
 spec:
   routes:
     - name: grafana

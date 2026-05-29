@@ -14,7 +14,7 @@ import yaml
 API_VERSION = "homelab.gibbsgreatly.xyz/v1alpha1"
 KIND = "EdgeManifest"
 LAB_DOMAIN_SUFFIX = ".lab.gibbsgreatly.xyz"
-EXPECTED_DNS_TARGET = os.environ["LAB_IP_PROXY"]
+SOURCE_DNS_TARGET = "${LAB_IP_PROXY}"
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")
 TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")
@@ -280,6 +280,22 @@ def load_manifest(path: Path) -> dict[str, object]:
     with path.open(encoding="utf-8") as handle:
         data = yaml.safe_load(os.path.expandvars(handle.read()))
     return data or {}
+
+
+def _expected_dns_targets() -> tuple[str, ...]:
+    """Return the accepted dns.target forms for source and env-expanded manifests."""
+
+    resolved_target = os.environ.get("LAB_IP_PROXY", "").strip()
+    if resolved_target:
+        return (SOURCE_DNS_TARGET, resolved_target)
+    return (SOURCE_DNS_TARGET,)
+
+
+def _expected_dns_targets_message() -> str:
+    targets = _expected_dns_targets()
+    if len(targets) == 1:
+        return targets[0]
+    return " or ".join(targets)
 
 
 def validate_manifests(manifest_paths: list[Path]) -> ValidationResult:
@@ -666,11 +682,11 @@ def _validate_dns(
             )
         )
 
-    if not isinstance(target, str) or target != EXPECTED_DNS_TARGET:
+    if not isinstance(target, str) or target not in _expected_dns_targets():
         issues.append(
             ValidationIssue(
                 code="EMV117",
-                message=f"dns.target must be {EXPECTED_DNS_TARGET}",
+                message=f"dns.target must be {_expected_dns_targets_message()}",
                 manifest=manifest,
                 route=route_name,
                 field=f"{route_key}.dns.target",

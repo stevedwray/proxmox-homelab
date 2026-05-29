@@ -2,17 +2,25 @@
 hostname: netbox-stack
 ip_address: "${lab_ip_netbox}/24"
 gateway: "${lab_gw_infra}"
+dns_server: "${lab_gw_infra}"
 proxmox_node: pve-test
 network:
   zone: infra_seg
-vmid: 143
+vmid: 40012
 cores: 2
-memory: 1024
+memory: 2048
 swap: 4096
 rootfs_size: 8
-rootfs_storage: infrastructure-containers
-docker_storage_size: "32G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+storage_profile: platform-default
+docker_storage_size: "34G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "34G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - netbox
   - test

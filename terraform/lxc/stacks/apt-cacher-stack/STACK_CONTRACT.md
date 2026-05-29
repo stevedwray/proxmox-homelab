@@ -12,9 +12,9 @@ rather than the upstream Debian mirrors.
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `infra_seg` (VLAN 40)    |
-| IP           | `10.57.3.11/24`          |
-| Gateway      | `10.57.3.1` (MikroTik)  |
-| VMID         | 142                      |
+| IP           | `${lab_ip_apt_cacher}/24`|
+| Gateway      | `${lab_gw_infra}`        |
+| VMID         | 40011                    |
 
 ## Inputs
 
@@ -52,8 +52,11 @@ Every other stack (via `lxc_base` role apt proxy configuration).
 - The port (3142) is baked into every container's `/etc/apt/apt.conf.d/01proxy`.
   Changing it requires re-running `lxc_base` on all containers.
 - The `apt_cacher_host` variable used by `lxc_base` must match this container's IP.
-  On pve-test: `10.57.3.11`. On pve: `192.168.1.35`.
+  It should track `${lab_ip_apt_cacher}` for the active environment.
 
 ## Playbook
 
 `deploy-apt-cacher-stack`
+
+This stack is deployed as a direct systemd-managed host service (package install +
+service unit), not a Docker Compose workload.

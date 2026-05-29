@@ -19,6 +19,7 @@ SPEC = importlib.util.spec_from_file_location("discover_authentik_edge", MODULE_
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 AuthentikApiClient = MODULE.AuthentikApiClient
@@ -226,7 +227,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "pk": 21,
                         "name": "edge-harbor-stack-harbor-app",
                         "slug": "edge-harbor-stack-harbor",
-                        "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                        "meta_launch_url": "https://harbor.gibbsgreatly.xyz/",
                         "provider": 22,
                     }
                 ],
@@ -237,14 +238,19 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "name": "edge-harbor-stack-harbor-provider",
                         "client_id": "harbor",
                         "redirect_uris": [
-                            {"url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}
+                            {"url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
                         ],
                     }
                 ],
                 outposts=[],
             )
 
-            result = discover_authentik_drift([manifest], client)
+            with mock.patch.dict(
+                MODULE.os.environ,
+                {"HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz"},
+                clear=False,
+            ):
+                result = discover_authentik_drift([manifest], client)
 
         self.assertTrue(result.ok)
         self.assertEqual("matching", result.route_results[0].classification)

@@ -1,0 +1,19 @@
+default via 10.55.0.1 dev eth0 proto kernel onlink
+10.55.0.0/24 dev eth0 proto kernel scope link src 10.55.0.62
+172.17.0.0/16 dev docker0 proto kernel scope link src 172.17.0.1 linkdown
+PING 10.55.0.1 (10.55.0.1) 56(84) bytes of data.
+From 10.55.0.62 icmp_seq=1 Destination Host Unreachable
+From 10.55.0.62 icmp_seq=2 Destination Host Unreachable
+From 10.55.0.62 icmp_seq=3 Destination Host Unreachable
+
+--- 10.55.0.1 ping statistics ---
+3 packets transmitted, 0 received, +3 errors, 100% packet loss, time 2025ms
+pipe 3
+PING 192.168.1.40 (192.168.1.40) 56(84) bytes of data.
+From 10.55.0.62 icmp_seq=1 Destination Host Unreachable
+From 10.55.0.62 icmp_seq=2 Destination Host Unreachable
+From 10.55.0.62 icmp_seq=3 Destination Host Unreachable
+
+--- 192.168.1.40 ping statistics ---
+3 packets transmitted, 0 received, +3 errors, 100% packet loss, time 2081ms
+pipe 3

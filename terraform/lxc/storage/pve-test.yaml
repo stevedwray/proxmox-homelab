@@ -1,0 +1,91 @@
+version: 1
+
+defaults:
+  storage_profile: platform-default
+  extra_mount_profile: durable-default
+  template_profile: local-template
+
+templates:
+  default:
+    name: debian-13.1-2-docker-template.tar.gz
+
+storage_backends:
+  infrastructure-containers:
+    content_types: [rootdir]
+    backend_type: zfs
+  storage-containers:
+    content_types: [rootdir]
+    backend_type: dir
+  storage-template:
+    content_types: [vztmpl]
+    backend_type: dir
+  local-lvm:
+    content_types: [images, rootdir]
+    backend_type: lvm-thin
+  local:
+    content_types: [backup, iso, snippets, vztmpl]
+    backend_type: dir
+
+profiles:
+  platform-default:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-zfs:
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  validation-small:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  ssd-runtime:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
+extra_mount_profiles:
+  durable-default:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-zfs:
+    storage: infrastructure-containers
+    required_content_type: rootdir
+  durable-small:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-ssd:
+    storage: local-lvm
+    required_content_type: rootdir
+
+template_profiles:
+  usb-template:
+    storage: storage-template
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+  local-template:
+    storage: local
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+
+legacy_rootfs_storage_profiles:
+  infrastructure-containers: platform-default
+  storage-containers: validation-small
+
+legacy_extra_mount_storage_profiles:
+  infrastructure-containers: durable-default
+  storage-containers: durable-small
+
+legacy_template_storage_profiles:
+  storage-template: usb-template
+  local: local-template
+# Phase 1 contract (moved to pve-test.phase1.yaml)
+# The explicit `mount_contracts` block was intentionally removed from this
+# Phase 0 manifest to avoid mixing Phase 1 schema work into Phase 0 audits.
+# See terraform/lxc/storage/pve-test.phase1.yaml for the Phase 1 contract.

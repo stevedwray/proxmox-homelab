@@ -51,6 +51,8 @@
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
     traefik_image: "traefik:{{ traefik_version }}"
+    proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
     # Control-node source dir for generated per-stack Traefik files.
     # Defaults to terraform/lxc/.generated/traefik and can be overridden.
     # Files are published into /opt/proxy-stack/dynamic/ so the active file
@@ -147,7 +149,9 @@
             middlewares:
               authentik:
                 forwardAuth:
-                  address: "http://{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:9000/outpost.goauthentik.io/auth/traefik"
+                  address: "https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik"
+                  tls:
+                    insecureSkipVerify: true
                   trustForwardHeader: true
                   authResponseHeaders:
                     - X-authentik-username
@@ -178,6 +182,7 @@
       args:
         executable: /bin/bash
       changed_when: true
+      when: not ansible_check_mode
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -229,11 +234,35 @@
         path: "{{ proxy_compose_dir }}/dynamic/stacks"
         state: absent
 
-    - name: Publish generated Traefik files into active dynamic directory
+    - name: Discover generated Traefik files on control node
+      ansible.builtin.find:
+        paths: "{{ traefik_generated_source_dir }}"
+        file_type: file
+        patterns: "*.yml"
+      register: traefik_generated_files
+      delegate_to: localhost
+      become: false
+      when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Publish rendered Traefik files into active dynamic directory
       ansible.builtin.copy:
-        src: "{{ traefik_generated_source_dir }}/"
-        dest: "{{ proxy_compose_dir }}/dynamic/"
+        dest: "{{ proxy_compose_dir }}/dynamic/{{ item.path | basename }}"
         mode: "0640"
+        content: >-
+          {{
+            lookup('file', item.path)
+            | replace('${LAB_IP_AUTHENTIK}', lookup('env', 'LAB_IP_AUTHENTIK'))
+            | replace('${LAB_IP_STEP_CA}', lookup('env', 'LAB_IP_STEP_CA'))
+            | replace('${LAB_IP_MONITORING}', lookup('env', 'LAB_IP_MONITORING'))
+            | replace('${LAB_IP_DNS}', lookup('env', 'LAB_IP_DNS'))
+            | replace('${LAB_IP_PORTAINER}', lookup('env', 'LAB_IP_PORTAINER'))
+            | replace('${LAB_IP_PROXY}', lookup('env', 'LAB_IP_PROXY'))
+            | replace('${LAB_IP_HARBOR}', lookup('env', 'LAB_IP_HARBOR'))
+            | replace('${LAB_IP_NETBOX}', lookup('env', 'LAB_IP_NETBOX'))
+          }}
+      loop: "{{ traefik_generated_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
       when: traefik_generated_source_dir | trim | length > 0
 
     - name: Validate Traefik compose configuration
@@ -241,8 +270,10 @@
         cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Start Traefik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
+      when: not ansible_check_mode

@@ -12,12 +12,48 @@
     state: started
     enabled: true
 
+- name: Check whether Python Docker SDK is importable
+  ansible.builtin.command:
+    cmd: python3 -c "import docker"
+  register: python_docker_check
+  changed_when: false
+  failed_when: false
+
+- name: Stop apt timers before installing Docker Python SDK
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    state: stopped
+    enabled: false
+    masked: true
+  loop:
+    - apt-daily.service
+    - apt-daily.timer
+    - apt-daily-upgrade.service
+    - apt-daily-upgrade.timer
+  when: python_docker_check.rc != 0
+
+- name: Wait for apt/dpkg to be free (avoid racing apt helpers)
+  ansible.builtin.shell: |
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      if ! ps -eo comm= | grep -Eq '^(apt|apt-get|dpkg|aptitude|unattended-upgrade)$'; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "Timed out waiting for apt/dpkg lock holders to exit" >&2
+    exit 1
+  register: wait_apt
+  changed_when: false
+  failed_when: wait_apt.rc != 0
+  when: python_docker_check.rc != 0
+
 - name: Install Docker Python SDK via system packages
   ansible.builtin.apt:
     name: python3-docker
     state: present
     update_cache: true
     lock_timeout: 300
+  when: python_docker_check.rc != 0
 
 - name: Ensure docker group exists
   ansible.builtin.group:

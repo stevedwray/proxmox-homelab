@@ -10,10 +10,10 @@ This is a planning artifact only. It does not approve destructive execution.
 | Item | Value |
 |---|---|
 | Target environment | `pve-test` only |
-| Planning branch | `docs/teardown-test-execution-variables` |
+| Planning branch | REQUIRES_OPERATOR_INPUT |
 | Baseline source branch | `dev/pve-test` |
-| Baseline commit (from OP-00) | `d95324aeed1832fafa30af3354e75e044e3f08a3` |
-| Inventory freeze date | `2026-04-21` |
+| Baseline commit (from OP-00) | REQUIRES_OPERATOR_INPUT |
+| Inventory freeze date | REQUIRES_OPERATOR_INPUT |
 
 ## Scope Freeze
 
@@ -43,24 +43,24 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Stack | Stage | VMID | IP | Zone | depends_on | ansible_playbook |
 |---|---|---:|---|---|---|---|
-| `portainer-stack` | Stage 3b platform | 120 | `10.57.1.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
-| `apt-cacher-stack` | Stage 1/2 foundation | 142 | `10.57.3.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
-| `harbor-stack` | Stage 3b platform | 121 | `10.57.3.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
-| `ci-runner-01` | Stage 1/2 foundation | 141 | `10.57.0.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
-| `dns-stack` | Stage 3a edge foundation | 151 | `10.57.1.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
-| `proxy-stack` | Stage 3a edge foundation | 153 | `10.57.2.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
-| `step-ca-stack` | Stage 3a edge foundation | 152 | `10.57.1.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
-| `authentik-stack` | Stage 3a edge foundation | 150 | `10.57.1.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
-| `monitoring-stack` | Stage 3b platform | 154 | `10.57.1.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
-| `netbox-stack` | Stage 3b platform | 143 | `10.57.3.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
+| `portainer-stack` | Stage 3b platform | 20020 | `192.168.20.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
+| `apt-cacher-stack` | Stage 1/2 foundation | 40011 | `192.168.40.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
+| `harbor-stack` | Stage 3b platform | 40010 | `192.168.40.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
+| `ci-runner-01` | Stage 1/2 foundation | 10063 | `192.168.10.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
+| `dns-stack` | Stage 3a edge foundation | 20013 | `192.168.20.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
+| `proxy-stack` | Stage 3a edge foundation | 30010 | `192.168.30.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
+| `step-ca-stack` | Stage 3a edge foundation | 20011 | `192.168.20.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
+| `authentik-stack` | Stage 3a edge foundation | 20010 | `192.168.20.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
+| `monitoring-stack` | Stage 3b platform | 20012 | `192.168.20.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
+| `netbox-stack` | Stage 3b platform | 40012 | `192.168.40.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
 
 ## Resolver And Zone Contract
 
 | Component | Value |
 |---|---|
-| CoreDNS authoritative service | `dns-stack` (`10.57.1.13`) |
-| Delegated resolver | `10.57.1.1` |
-| Browser ingress target | `proxy-stack` (`10.57.2.10`) |
+| CoreDNS authoritative service | `dns-stack` (`${lab_ip_dns}`) |
+| Delegated resolver | `${lab_gw_mgmt}` |
+| Browser ingress target | `proxy-stack` (`${lab_ip_proxy}`) |
 | Seed zone owner | `dns-stack` for `lab.gibbsgreatly.xyz` |
 | Edge publication handoff | reconcile + publish after Stage 3a |
 

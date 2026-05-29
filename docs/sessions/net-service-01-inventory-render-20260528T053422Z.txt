@@ -1,0 +1,16 @@
+Wrote /home/steve/git/proxmox-homelab/terraform/lxc/stacks/net-service-01/inventory.generated.yml
+all:
+  children:
+    net_service_01:
+      hosts:
+        net-service-01:
+          ansible_host: 192.168.40.62
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: -F /dev/null -o ProxyJump=root@${proxmox_host}
+            -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          ssh_access_mode: proxyjump_compat
+          network_zone: infra_seg
+          dns_server: 192.168.40.1
+          vmid: 133
+          stack_name: net-service-01

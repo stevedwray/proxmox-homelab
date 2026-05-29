@@ -28,6 +28,16 @@ terraform {
     }
   }
 
+  # Pass -migrate-state -force-copy to every tofu init invocation so that
+  # Terragrunt's auto-init never blocks on an interactive workspace-migration
+  # prompt.  This is safe: when no migration is needed the flags are no-ops.
+  # Without this, stacks that have a terraform.tfstate.d/<workspace>/ directory
+  # cause auto-init to prompt before the before_hook below can run.
+  extra_arguments "init_non_interactive" {
+    commands  = ["init"]
+    arguments = ["-migrate-state", "-force-copy"]
+  }
+
   # Re-initialise the working directory before every destroy so that provider
   # schema loading never fails when the Terragrunt cache directory has been
   # re-created since the last explicit init (e.g. after a cache wipe or a

@@ -17,7 +17,6 @@ variable "vmid" {
 variable "ostemplate" {
   description = "OS template for the LXC container"
   type        = string
-  default     = "local:vztmpl/debian-docker-template.tar.gz"
 }
 
 variable "ostype" {
@@ -77,7 +76,11 @@ variable "nesting" {
 variable "rootfs_storage" {
   description = "Storage backend for the root filesystem"
   type        = string
-  default     = "infrastructure-containers"
+}
+
+variable "docker_storage" {
+  description = "Storage backend for the /var/lib/docker mount"
+  type        = string
 }
 
 variable "rootfs_size" {
@@ -90,6 +93,12 @@ variable "docker_storage_size" {
   description = "Size of the /var/lib/docker mountpoint"
   type        = string
   default     = "20G"
+}
+
+variable "docker_mount_backup_enabled" {
+  description = "Whether the /var/lib/docker mountpoint is included in container backups"
+  type        = bool
+  default     = true
 }
 
 variable "network_bridge" {
@@ -145,7 +154,13 @@ variable "extra_mount_size" {
 }
 
 variable "extra_mount_storage" {
-  description = "Storage backend for the optional extra data mount point; defaults to rootfs_storage if null"
+  description = "Storage backend for the optional extra data mount point"
   type        = string
   default     = null
+}
+
+variable "extra_mount_backup_enabled" {
+  description = "Whether the optional extra data mount point is included in container backups"
+  type        = bool
+  default     = true
 }

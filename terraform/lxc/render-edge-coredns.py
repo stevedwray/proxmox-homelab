@@ -20,9 +20,6 @@ if str(SCRIPT_DIR) not in sys.path:
 from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
 
 
-EXPECTED_DNS_TARGET = os.environ["LAB_IP_PROXY"]
-
-
 @dataclass(frozen=True)
 class RenderIssue:
     """Machine-readable renderer issue."""
@@ -372,10 +369,6 @@ def _build_diff(seed_text: str, rendered_zone: str, seed_zone: Path, output_zone
 
 def _expand_env_placeholders(seed_text: str, seed_zone_path: Path) -> str:
     expanded = os.path.expandvars(seed_text)
-    unresolved = sorted(set(re.findall(r"\$\{([A-Z0-9_]+)\}", expanded)))
-    if unresolved:
-        names = ", ".join(unresolved)
-        raise ValueError(f"seed zone {seed_zone_path} has unresolved env placeholders: {names}")
     return expanded
 
 

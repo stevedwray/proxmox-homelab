@@ -2,17 +2,24 @@
 hostname: apt-cacher-stack
 ip_address: "${lab_ip_apt_cacher}/24"
 gateway: "${lab_gw_infra}"
-proxmox_node: pve-test
+dns_server: "${lab_gw_infra}"
 network:
   zone: infra_seg
-vmid: 142
+vmid: 40011
 cores: 1
-memory: 256
-swap: 128
+memory: 1024
+swap: 512
 rootfs_size: 8
-rootfs_storage: infrastructure-containers
+storage_profile: platform-default
 docker_storage_size: "20G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "20G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - apt-cache
   - infrastructure
@@ -26,7 +33,7 @@ ansible_playbook: "deploy-apt-cacher-stack"
 deployment_tier: platform
 portainer_agent: false
 
-# pve-test service IPs (explicit — do not rely on variable defaults)
+# Environment-selected service IPs (explicit — do not rely on variable defaults)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: ""  # This container IS the apt-cacher; no self-proxy

@@ -52,9 +52,107 @@ locals {
 
   # Optional declarative network intent. Existing stacks continue to use the
   # current bridge defaults unless they opt in with stack.network.zone.
-  stack_network               = try(local.stack.network, null)
-  stack_network_zone          = try(local.stack.network.zone, null)
-  effective_proxmox_node      = try(local.stack.proxmox_node, var.proxmox_node)
+  stack_network                 = try(local.stack.network, null)
+  stack_network_zone            = try(local.stack.network.zone, null)
+  requested_network_access_path = try(local.stack.network.access_path, null)
+  effective_proxmox_node        = try(local.stack.proxmox_node, var.proxmox_node)
+  storage_manifest_default_path = "${local.lxc_root}/storage/${local.effective_proxmox_node}.yaml"
+  effective_storage_manifest_path = coalesce(
+    var.storage_manifest_path,
+    local.storage_manifest_default_path
+  )
+  storage_manifest_exists = fileexists(local.effective_storage_manifest_path)
+  storage_manifest        = try(yamldecode(file(local.effective_storage_manifest_path)), {})
+
+  # Transitional compatibility: consume legacy stack fields only as selectors
+  # into manifest mappings. Root resolves concrete backends before module call.
+  legacy_rootfs_storage      = try(local.stack.rootfs_storage, null)
+  legacy_extra_mount_storage = try(local.stack.extra_mount_storage, null)
+  legacy_ostemplate          = try(local.stack.ostemplate, null)
+  legacy_ostemplate_parts    = local.legacy_ostemplate != null ? split(":", local.legacy_ostemplate) : []
+  legacy_template_storage    = length(local.legacy_ostemplate_parts) == 2 ? local.legacy_ostemplate_parts[0] : null
+  legacy_template_name       = length(local.legacy_ostemplate_parts) == 2 ? trimprefix(local.legacy_ostemplate_parts[1], "vztmpl/") : null
+
+  resolved_storage_profile = coalesce(
+    try(local.stack.storage_profile, null),
+    try(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage], null),
+    try(local.storage_manifest.defaults.storage_profile, null)
+  )
+  resolved_storage_profile_mapping    = try(local.storage_manifest.profiles[local.resolved_storage_profile], null)
+  resolved_rootfs_storage             = try(local.resolved_storage_profile_mapping.rootfs_storage, null)
+  resolved_docker_storage             = coalesce(try(local.resolved_storage_profile_mapping.docker_storage, null), local.resolved_rootfs_storage)
+  docker_mount_declared_size          = try(local.stack.docker_mount.size, null)
+  docker_mount_declared_backup_policy = try(local.stack.docker_mount.backup_policy, null)
+  legacy_docker_storage_size          = try(local.stack.docker_storage_size, null)
+  resolved_docker_storage_size = coalesce(
+    local.docker_mount_declared_size,
+    local.legacy_docker_storage_size,
+    "20G"
+  )
+  resolved_docker_mount_backup_policy  = coalesce(local.docker_mount_declared_backup_policy, "include")
+  resolved_docker_mount_backup_enabled = local.resolved_docker_mount_backup_policy == "include"
+  docker_storage_size_mismatch = (
+    local.docker_mount_declared_size != null &&
+    local.legacy_docker_storage_size != null &&
+    tostring(local.docker_mount_declared_size) != tostring(local.legacy_docker_storage_size)
+  )
+
+  # Canonical extra_mount block support (while keeping legacy fields compatible)
+  extra_mount_declared                      = try(local.stack.extra_mount, null)
+  extra_mount_declared_path                 = try(local.extra_mount_declared.path, null)
+  extra_mount_declared_size                 = try(local.extra_mount_declared.size, null)
+  extra_mount_declared_profile              = try(local.extra_mount_declared.profile, null)
+  extra_mount_declared_backup_policy        = try(local.extra_mount_declared.backup_policy, null)
+  extra_mount_declared_resize_control_plane = try(local.extra_mount_declared.resize_control_plane, null)
+  extra_mount_declared_mutation_policy      = try(local.extra_mount_declared.mutation_policy, null)
+  resolved_extra_mount_path                 = local.extra_mount_declared_path != null ? local.extra_mount_declared_path : try(local.stack.extra_mount_path, null)
+  resolved_extra_mount_size                 = local.extra_mount_declared_size != null ? local.extra_mount_declared_size : try(local.stack.extra_mount_size, null)
+  resolved_extra_mount_backup_policy        = coalesce(local.extra_mount_declared_backup_policy, "include")
+  resolved_extra_mount_backup_enabled       = local.resolved_extra_mount_backup_policy == "include"
+
+  resolved_extra_mount_profile = coalesce(
+    local.extra_mount_declared_profile,
+    try(local.stack.extra_mount_profile, null),
+    try(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage], null),
+    try(local.storage_manifest.defaults.extra_mount_profile, null),
+    local.resolved_storage_profile
+  )
+  resolved_extra_mount_profile_mapping = try(local.storage_manifest.extra_mount_profiles[local.resolved_extra_mount_profile], null)
+  # Resolve extra mount storage only when either canonical or legacy path/size is present
+  resolved_extra_mount_storage = local.resolved_extra_mount_path != null ? coalesce(
+    try(local.resolved_extra_mount_profile_mapping.storage, null),
+    local.resolved_rootfs_storage
+  ) : null
+  resolved_extra_mount_backend_type = try(local.storage_manifest.storage_backends[local.resolved_extra_mount_storage].backend_type, null)
+
+  extra_mount_size_mismatch = (
+    local.extra_mount_declared_size != null &&
+    try(local.stack.extra_mount_size, null) != null &&
+    tostring(local.extra_mount_declared_size) != tostring(try(local.stack.extra_mount_size, null))
+  )
+
+  resolved_template_profile = coalesce(
+    try(local.stack.template_profile, null),
+    try(local.storage_manifest.legacy_template_storage_profiles[local.legacy_template_storage], null),
+    try(local.storage_manifest.defaults.template_profile, null)
+  )
+  resolved_template_profile_mapping = try(local.storage_manifest.template_profiles[local.resolved_template_profile], null)
+  resolved_template_storage         = try(local.resolved_template_profile_mapping.storage, null)
+  resolved_template_name = coalesce(
+    try(local.stack.template_name, null),
+    local.legacy_template_name,
+    try(local.storage_manifest.templates.default.name, null)
+  )
+  resolved_ostemplate = "${local.resolved_template_storage}:vztmpl/${local.resolved_template_name}"
+
+  storage_backend_catalog = try(local.storage_manifest.storage_backends, {})
+  resolved_storage_backends = toset(compact([
+    local.resolved_rootfs_storage,
+    local.resolved_docker_storage,
+    local.resolved_extra_mount_storage,
+    local.resolved_template_storage,
+  ]))
+
   network_intent_default_path = "${local.lxc_root}/network/${local.effective_proxmox_node}.yaml"
   effective_network_intent_path = coalesce(
     var.network_intent_path,
@@ -73,8 +171,15 @@ locals {
   resolved_sdn_snat             = local.resolved_sdn_attachment != null ? try(local.resolved_sdn_attachment.snat, null) : null
   effective_dns_server          = coalesce(try(local.stack.dns_server, null), local.resolved_sdn_gateway, try(local.stack.gateway, null), var.default_gateway)
 
+  normalized_network_access_path = local.requested_network_access_path == null ? null : try(lower(trimspace(local.requested_network_access_path)), null)
+  # Session 4 migration contract:
+  # - sdn_vnet defaults to direct SSH
+  # - bridge/default path preserves ProxyJump compatibility behavior
+  effective_network_access_path = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? coalesce(local.normalized_network_access_path, "direct") : coalesce(local.normalized_network_access_path, "proxyjump_compat")
+
   effective_target_node = local.stack_network_zone != null ? local.network_intent.proxmox.target_node : try(local.stack.target_node, local.effective_proxmox_node)
   effective_pve_host    = local.stack_network_zone != null ? local.network_intent.proxmox.pve_host : try(local.stack.proxmox_host, var.proxmox_host)
+  use_proxyjump         = local.effective_network_access_path == "proxyjump_compat" && local.effective_pve_host != ""
 
   effective_network_bridge = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.bridge, "vmbr0") : try(local.stack.network_bridge, "vmbr0")
   effective_vlan_tag       = local.resolved_zone_attachment != null ? try(local.resolved_zone_attachment.vlan_tag, null) : null
@@ -113,7 +218,7 @@ locals {
       )
     ]
   }) : tomap({})
-  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(file(local.effective_zone_members_index_path)) : null
+  generated_zone_members_index = local.stack_network_zone != null && fileexists(local.effective_zone_members_index_path) ? yamldecode(templatefile(local.effective_zone_members_index_path, local.stack_template_vars)) : null
   zone_members                 = local.generated_zone_members_index != null ? try(tomap(local.generated_zone_members_index.zones), tomap({})) : local.inferred_zone_members
 
   inbound_zone_policies = try([
@@ -187,6 +292,20 @@ check "network_layer_attachment_type_is_supported" {
   }
 }
 
+check "network_access_path_is_supported" {
+  assert {
+    condition     = local.normalized_network_access_path == null || contains(["direct", "proxyjump_compat"], local.normalized_network_access_path)
+    error_message = "stack.network.access_path must be either 'direct' or 'proxyjump_compat' when set."
+  }
+}
+
+check "network_access_path_proxyjump_requires_pve_host" {
+  assert {
+    condition     = local.effective_network_access_path != "proxyjump_compat" || local.effective_pve_host != ""
+    error_message = "stack.network.access_path is 'proxyjump_compat' but no pve_host is available for ProxyJump."
+  }
+}
+
 check "network_layer_sdn_attachment_is_complete" {
   assert {
     condition = local.stack_network_zone == null || local.resolved_attachment_type != "sdn_vnet" || (
@@ -217,6 +336,167 @@ check "network_layer_sdn_attachment_egress_is_complete" {
   }
 }
 
+check "storage_manifest_exists" {
+  assert {
+    condition     = local.storage_manifest_exists
+    error_message = "Storage manifest is missing at '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_rootfs_storage_mapping_exists" {
+  assert {
+    condition     = local.legacy_rootfs_storage == null || can(local.storage_manifest.legacy_rootfs_storage_profiles[local.legacy_rootfs_storage])
+    error_message = "Legacy rootfs_storage '${coalesce(local.legacy_rootfs_storage, "<unset>")}' is not mapped in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_extra_mount_storage_mapping_exists" {
+  assert {
+    condition     = local.legacy_extra_mount_storage == null || can(local.storage_manifest.legacy_extra_mount_storage_profiles[local.legacy_extra_mount_storage])
+    error_message = "Legacy extra_mount_storage '${coalesce(local.legacy_extra_mount_storage, "<unset>")}' is not mapped in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "legacy_ostemplate_mapping_exists" {
+  assert {
+    condition = local.legacy_ostemplate == null || (
+      length(local.legacy_ostemplate_parts) == 2 &&
+      startswith(local.legacy_ostemplate_parts[1], "vztmpl/") &&
+      can(local.storage_manifest.legacy_template_storage_profiles[local.legacy_template_storage])
+    )
+    error_message = "Legacy ostemplate must match '<storage>:vztmpl/<name>' and map storage via legacy_template_storage_profiles in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "storage_profile_resolves" {
+  assert {
+    condition = (
+      local.resolved_storage_profile != null &&
+      local.resolved_storage_profile_mapping != null &&
+      local.resolved_rootfs_storage != null &&
+      local.resolved_docker_storage != null
+    )
+    error_message = "Unable to resolve storage_profile for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_profile_resolves" {
+  assert {
+    condition = local.resolved_extra_mount_path == null || (
+      local.resolved_extra_mount_profile != null &&
+      local.resolved_extra_mount_profile_mapping != null &&
+      local.resolved_extra_mount_storage != null
+    )
+    error_message = "Stack '${local.stack_name}' defines extra_mount_path but no resolvable extra mount storage profile."
+  }
+}
+
+check "template_profile_resolves" {
+  assert {
+    condition = (
+      local.resolved_template_profile != null &&
+      local.resolved_template_profile_mapping != null &&
+      local.resolved_template_storage != null &&
+      local.resolved_template_name != null
+    )
+    error_message = "Unable to resolve template profile/name for stack '${local.stack_name}'."
+  }
+}
+
+check "resolved_backends_declared" {
+  assert {
+    condition     = alltrue([for backend in local.resolved_storage_backends : contains(keys(local.storage_backend_catalog), backend)])
+    error_message = "Resolved storage backend(s) for stack '${local.stack_name}' are missing from storage_backends in '${local.effective_storage_manifest_path}'."
+  }
+}
+
+check "rootfs_backend_supports_required_content" {
+  assert {
+    condition     = contains(try(local.storage_backend_catalog[local.resolved_rootfs_storage].content_types, []), coalesce(try(local.resolved_storage_profile_mapping.rootfs_required_content_type, null), "rootdir"))
+    error_message = "Resolved rootfs backend '${local.resolved_rootfs_storage}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "docker_backend_supports_required_content" {
+  assert {
+    condition     = contains(try(local.storage_backend_catalog[local.resolved_docker_storage].content_types, []), coalesce(try(local.resolved_storage_profile_mapping.docker_required_content_type, null), "rootdir"))
+    error_message = "Resolved docker backend '${local.resolved_docker_storage}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_canonical_legacy_mismatch" {
+  assert {
+    condition = !(
+      (local.extra_mount_declared_path != null && try(local.stack.extra_mount_path, null) != null && tostring(local.extra_mount_declared_path) != tostring(try(local.stack.extra_mount_path, null))) ||
+      (local.extra_mount_declared_size != null && try(local.stack.extra_mount_size, null) != null && tostring(local.extra_mount_declared_size) != tostring(try(local.stack.extra_mount_size, null))) ||
+      (local.extra_mount_declared_profile != null && try(local.stack.extra_mount_profile, null) != null && tostring(local.extra_mount_declared_profile) != tostring(try(local.stack.extra_mount_profile, null)))
+    )
+    error_message = "Canonical extra_mount fields (extra_mount.*) must match legacy extra_mount_path/size/profile while both are present"
+  }
+}
+
+check "docker_mount_size_contract_is_consistent" {
+  assert {
+    condition     = !local.docker_storage_size_mismatch
+    error_message = "Stack '${local.stack_name}' declares mismatched docker mount sizes: docker_mount.size must match legacy docker_storage_size while both are present."
+  }
+}
+
+check "docker_mount_backup_policy_is_supported" {
+  assert {
+    condition     = contains(["include", "exclude"], local.resolved_docker_mount_backup_policy)
+    error_message = "Stack '${local.stack_name}' must set docker_mount.backup_policy to 'include' or 'exclude'."
+  }
+}
+
+check "extra_mount_backend_supports_required_content" {
+  assert {
+    condition = local.resolved_extra_mount_path == null || contains(
+      try(local.storage_backend_catalog[local.resolved_extra_mount_storage].content_types, []),
+      coalesce(try(local.resolved_extra_mount_profile_mapping.required_content_type, null), "rootdir")
+    )
+    error_message = "Resolved extra mount backend '${coalesce(local.resolved_extra_mount_storage, "<unset>")}' does not advertise required content type for stack '${local.stack_name}'."
+  }
+}
+
+check "extra_mount_backup_policy_is_supported" {
+  assert {
+    condition     = local.resolved_extra_mount_path == null || contains(["include", "exclude"], local.resolved_extra_mount_backup_policy)
+    error_message = "Stack '${local.stack_name}' must set extra_mount.backup_policy to 'include' or 'exclude' when an extra mount is declared."
+  }
+}
+
+check "extra_mount_operational_contract_is_supported" {
+  assert {
+    condition = local.extra_mount_declared == null || (
+      contains(["provider", "operational"], coalesce(local.extra_mount_declared_resize_control_plane, "provider")) &&
+      coalesce(local.extra_mount_declared_mutation_policy, "grow-only") == "grow-only" &&
+      (
+        coalesce(local.extra_mount_declared_resize_control_plane, "provider") != "operational" ||
+        local.resolved_extra_mount_backend_type == "zfs"
+      )
+    )
+    error_message = "Stack '${local.stack_name}' may declare extra_mount.resize_control_plane='operational' only for grow-only extra mounts resolved to a zfs-backed extra-mount storage profile."
+  }
+}
+
+check "template_backend_supports_required_content" {
+  assert {
+    condition = contains(
+      try(local.storage_backend_catalog[local.resolved_template_storage].content_types, []),
+      coalesce(try(local.resolved_template_profile_mapping.required_content_type, null), "vztmpl")
+    )
+    error_message = "Resolved template backend '${local.resolved_template_storage}' does not advertise vztmpl support for stack '${local.stack_name}'."
+  }
+}
+
+check "template_name_allowed_by_profile" {
+  assert {
+    condition     = length(try(local.resolved_template_profile_mapping.allowed_templates, [])) == 0 || contains(local.resolved_template_profile_mapping.allowed_templates, local.resolved_template_name)
+    error_message = "Template '${local.resolved_template_name}' is not allowed by template profile '${local.resolved_template_profile}' for stack '${local.stack_name}'."
+  }
+}
+
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
 # Ensures the attachment exists on pve-test before the LXC is created.
@@ -226,21 +506,24 @@ resource "local_file" "network_sdn_vars" {
 
   filename = "${local.stack_dir}/network-sdn-vars.yml"
   content = yamlencode({
-    network_sdn_enable     = true
-    network_sdn_target     = local.effective_target_node
-    network_sdn_pve_host   = local.effective_pve_host
-    network_sdn_vmid       = try(local.stack.vmid, null)
-    network_sdn_zone       = try(local.resolved_sdn_attachment.zone, null)
-    network_sdn_zone_type  = try(local.resolved_sdn_attachment.zone_type, null)
-    network_sdn_bridge     = try(local.resolved_sdn_attachment.bridge, null)
-    network_sdn_nodes      = try(local.resolved_sdn_attachment.nodes, [])
-    network_sdn_vnet       = try(local.resolved_sdn_attachment.vnet, null)
-    network_sdn_vlan_tag   = try(local.resolved_sdn_attachment.vlan_tag, null)
-    network_sdn_vnet_alias = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
-    network_sdn_subnet     = local.resolved_sdn_subnet
-    network_sdn_gateway    = local.resolved_sdn_gateway
-    network_sdn_snat       = local.resolved_sdn_snat
-    network_sdn_ssh_key    = pathexpand(var.ssh_private_key_path)
+    network_sdn_enable            = true
+    network_sdn_target            = local.effective_target_node
+    network_sdn_pve_host          = local.effective_pve_host
+    network_sdn_expected_target   = local.effective_target_node
+    network_sdn_expected_pve_host = local.effective_pve_host
+    network_sdn_allow_destroy     = local.effective_target_node == "pve-test"
+    network_sdn_vmid              = try(local.stack.vmid, null)
+    network_sdn_zone              = try(local.resolved_sdn_attachment.zone, null)
+    network_sdn_zone_type         = try(local.resolved_sdn_attachment.zone_type, null)
+    network_sdn_bridge            = try(local.resolved_sdn_attachment.bridge, null)
+    network_sdn_nodes             = try(local.resolved_sdn_attachment.nodes, [])
+    network_sdn_vnet              = try(local.resolved_sdn_attachment.vnet, null)
+    network_sdn_vlan_tag          = try(local.resolved_sdn_attachment.vlan_tag, null)
+    network_sdn_vnet_alias        = try(local.resolved_sdn_attachment.alias, try(local.resolved_zone_attachment.description, local.resolved_sdn_attachment.vnet))
+    network_sdn_subnet            = local.resolved_sdn_subnet
+    network_sdn_gateway           = local.resolved_sdn_gateway
+    network_sdn_snat              = local.resolved_sdn_snat
+    network_sdn_ssh_key           = pathexpand(var.ssh_private_key_path)
   })
 }
 
@@ -283,6 +566,15 @@ resource "null_resource" "configure_network_sdn_attachment" {
       cat >"$tmp_vars_file" <<'EOF'
 ${self.triggers.sdn_vars}
 EOF
+      if [ "$${NETWORK_SDN_ALLOW_DESTROY_OVERRIDE:-}" = "true" ]; then
+        printf '%s\n' '"network_sdn_allow_destroy": true' >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_TARGET:-}" ]; then
+        printf '%s\n' '"network_sdn_expected_target": '"'"'"$${NETWORK_SDN_EXPECTED_TARGET}"'"'"'' >>"$tmp_vars_file"
+      fi
+      if [ -n "$${NETWORK_SDN_EXPECTED_PVE_HOST:-}" ]; then
+        printf '%s\n' '"network_sdn_expected_pve_host": '"'"'"$${NETWORK_SDN_EXPECTED_PVE_HOST}"'"'"'' >>"$tmp_vars_file"
+      fi
       ansible-playbook \
         -i localhost, \
         playbooks/destroy-network-sdn-vnet.yml \
@@ -314,23 +606,26 @@ module "lxc" {
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
 
-  cores               = try(local.stack.cores, 2)
-  memory              = try(local.stack.memory, 2048)
-  swap                = try(local.stack.swap, 512)
-  rootfs_size         = try(local.stack.rootfs_size, 8)
-  rootfs_storage      = try(local.stack.rootfs_storage, var.default_storage)
-  docker_storage_size = try(local.stack.docker_storage_size, "20G")
+  cores                       = try(local.stack.cores, 2)
+  memory                      = try(local.stack.memory, 2048)
+  swap                        = try(local.stack.swap, 512)
+  rootfs_size                 = try(local.stack.rootfs_size, 8)
+  rootfs_storage              = local.resolved_rootfs_storage
+  docker_storage              = local.resolved_docker_storage
+  docker_storage_size         = local.resolved_docker_storage_size
+  docker_mount_backup_enabled = local.resolved_docker_mount_backup_enabled
 
-  ostemplate       = try(local.stack.ostemplate, "local:vztmpl/debian-docker-template.tar.gz")
+  ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))
   tags             = try(local.stack.tags, [local.stack_name])
   network_bridge   = local.effective_network_bridge
   network_firewall = local.effective_firewall == true
   dns_servers      = local.effective_dns_server != null ? [local.effective_dns_server] : null
 
-  extra_mount_path    = try(local.stack.extra_mount_path, null)
-  extra_mount_size    = try(local.stack.extra_mount_size, null)
-  extra_mount_storage = try(local.stack.extra_mount_storage, null)
+  extra_mount_path           = local.resolved_extra_mount_path
+  extra_mount_size           = local.resolved_extra_mount_size
+  extra_mount_storage        = local.resolved_extra_mount_storage
+  extra_mount_backup_enabled = local.resolved_extra_mount_backup_enabled
 
   depends_on = [null_resource.configure_network_sdn_attachment]
 }
@@ -351,10 +646,12 @@ resource "local_file" "ansible_inventory" {
     apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
     dns_server          = local.effective_dns_server
     network_zone        = local.stack_network_zone != null ? local.stack_network_zone : ""
-    contract_dns_server = local.resolved_sdn_gateway != null ? local.resolved_sdn_gateway : ""
+    contract_dns_server = local.effective_dns_server != null ? local.effective_dns_server : ""
     app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
     vmid                = module.lxc.container_id
     pve_host            = local.effective_pve_host
+    ssh_access_mode     = local.effective_network_access_path
+    use_proxyjump       = local.use_proxyjump
   })
 }
 
@@ -405,37 +702,6 @@ resource "local_file" "network_firewall_vars" {
     network_firewall_target     = local.effective_target_node
     network_firewall_pve_host   = local.effective_pve_host
   })
-
-  depends_on = [module.lxc]
-}
-
-# ---------------------------------------------------------------------------
-# Ensure the Proxmox host can reach SDN-attached guests for Ansible
-# provisioning. Without a direct route, ProxyJump sessions to VNet-backed
-# containers follow the LAN default route and fail with "No route to host".
-# ---------------------------------------------------------------------------
-resource "null_resource" "prime_sdn_host_route" {
-  count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && try(local.stack.ansible_playbook, "") != "" && local.effective_pve_host != "" ? 1 : 0
-
-  triggers = {
-    container_id = module.lxc.container_id
-    guest_ip     = replace(module.lxc.ip_address, "/24", "")
-    pve_host     = local.effective_pve_host
-    subnet       = local.resolved_sdn_subnet
-    bridge       = local.effective_network_bridge
-    host_ip      = cidrhost(local.resolved_sdn_subnet, 254)
-  }
-
-  provisioner "local-exec" {
-    command = <<-EOT
-      ssh -F /dev/null \
-        -o BatchMode=yes \
-        -o StrictHostKeyChecking=no \
-        -o UserKnownHostsFile=/dev/null \
-        'root@${local.effective_pve_host}' \
-        'ip addr replace ${cidrhost(local.resolved_sdn_subnet, 254)}/${split("/", local.resolved_sdn_subnet)[1]} dev ${local.effective_network_bridge} && ip route replace ${local.resolved_sdn_subnet} dev ${local.effective_network_bridge} src ${cidrhost(local.resolved_sdn_subnet, 254)} && ip route get ${replace(module.lxc.ip_address, "/24", "")}'
-    EOT
-  }
 
   depends_on = [module.lxc]
 }

@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import os
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 FIXTURES_DIR = REPO_ROOT / "docs" / "provisioning-refactor" / "fixtures"
@@ -17,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("edge_manifest", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 discover_edge_manifests = MODULE.discover_edge_manifests
 extract_legacy_routes = MODULE.extract_legacy_routes
@@ -45,6 +47,44 @@ class TestValidateEdgeManifests(unittest.TestCase):
     def test_valid_fixtures_pass(self):
         manifest_paths = sorted(VALID_DIR.glob("*.yaml"))
         result = validate_manifests(manifest_paths)
+        self.assertTrue(result.ok)
+        self.assertEqual(0, len(result.issues))
+
+    def test_source_placeholder_target_passes_without_lab_ip_proxy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "edge.yaml"
+            manifest.write_text(
+                """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: placeholder-edge
+  stack: placeholder-stack
+spec:
+  routes:
+    - name: placeholder
+      host: placeholder.lab.gibbsgreatly.xyz
+      backend:
+        type: url
+        url: http://10.57.1.50:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+""",
+                encoding="utf-8",
+            )
+
+            previous_value = os.environ.pop("LAB_IP_PROXY", None)
+            try:
+                result = validate_manifests([manifest])
+            finally:
+                if previous_value is not None:
+                    os.environ["LAB_IP_PROXY"] = previous_value
+
         self.assertTrue(result.ok)
         self.assertEqual(0, len(result.issues))
 

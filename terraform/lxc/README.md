@@ -92,6 +92,7 @@ orchestration intent.
 ```yaml
 hostname: my-app
 ip_address: "10.57.4.20/24"
+dns_server: "10.57.4.1"
 deployment_tier: apps
 
 # Optional (shown with common defaults)
@@ -100,10 +101,12 @@ cores: 2
 memory: 2048
 swap: 512
 rootfs_size: 8
+storage_profile: platform-default
 docker_storage_size: "20G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+template_name: "debian-13.1-2-docker-template.tar.gz"
 target_node: pve-test
 gateway: "10.57.4.1"
+dns_server: "10.57.4.1"
 ansible_playbook: "deploy-stack"
 portainer_agent: true
 app_stack_name: "my-app"
@@ -133,13 +136,16 @@ stack's LXC configuration playbook automatically.
 | `hostname` | Yes | — | Container hostname and stack identity |
 | `ip_address` | Yes | — | Static IP in CIDR notation (for example `10.57.3.10/24`) |
 | `deployment_tier` | Yes | — | Explicit orchestration tier: `platform` or `apps` |
+| `dns_server` | Yes | — | Resolver written into the guest; use the zone gateway or bridge gateway explicitly |
 | `vmid` | No | Auto | Proxmox VM ID |
 | `cores` | No | `2` | CPU cores |
 | `memory` | No | `2048` | Memory in MB |
 | `swap` | No | `512` | Swap in MB |
 | `rootfs_size` | No | `8` | Root filesystem size in GB |
+| `storage_profile` | No | Environment manifest default | Logical runtime storage intent resolved via `storage/<env>.yaml` |
 | `docker_storage_size` | No | `20G` | Docker data mount size |
-| `ostemplate` | No | `local:vztmpl/debian-docker-template.tar.gz` | LXC template |
+| `template_name` | No | Manifest default template | Template artifact name; storage location is resolved by manifest |
+| `template_profile` | No | Environment manifest default | Logical template storage intent resolved via `storage/<env>.yaml` |
 | `target_node` | No | `pve` | Proxmox node |
 | `gateway` | No | `192.168.1.1` | Network gateway |
 | `ansible_playbook` | No | — | Playbook name run explicitly by `scripts/provision.sh` |
@@ -148,9 +154,14 @@ stack's LXC configuration playbook automatically.
 | `portainer_server_ip` | No | Variable default (`192.168.1.4`) | Central Portainer server IP for app-tier roles |
 | `tags` | No | `[<stack_name>]` | Proxmox tags |
 | `keyctl` | No | `false` | Enable keyctl feature flag on the LXC (requires root@pam on PVE) |
-| `rootfs_storage` | No | Variable default | Proxmox storage pool for root filesystem |
+| `extra_mount_profile` | No | Environment manifest default | Logical storage intent for `extra_mount_path` |
 | `depends_on` | No | `[]` | Explicit ordering metadata for the orchestration path |
 | `provides` | No | `[]` | Contract metadata used by validation/documentation tooling |
+
+Storage backends are resolved centrally in `storage/<proxmox-node>.yaml`
+(for example `storage/pve-test.yaml`). Legacy fields such as
+`rootfs_storage`, `extra_mount_storage`, and `ostemplate` are treated as
+transitional compatibility inputs and mapped through the same manifest.
 
 ## Ansible Roles
 

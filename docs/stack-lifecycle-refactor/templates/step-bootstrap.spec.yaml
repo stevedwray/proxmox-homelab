@@ -1,0 +1,51 @@
+step:
+  id: "example-bootstrap-01"
+  stage: "1"
+  type: "bootstrap"
+  title: "Bootstrap working branch"
+  branch: "task/example-branch"
+
+goal:
+  summary: "Create or check out the working branch from the declared base branch."
+
+scope:
+  allowed_paths:
+    - ".git/"
+  forbidden_actions:
+    - "Terraform, Ansible, or scripts/ execution"
+    - "Source file edits beyond branch setup"
+    - "Commits, pushes, or merges"
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  starting_sha: "0123456789abcdef0123456789abcdef01234567"
+
+env:
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-branch"
+  approvals_required: false
+  disposable: false
+  scan_gate: "pr"
+
+gates:
+  - id: "verify-base-branch-exists"
+    cmd: "git rev-parse --verify refactor/stack-lifecycle"
+    expect: "exit 0"
+    critical: true
+  - id: "create-or-checkout-branch"
+    cmd: "git show-ref --verify --quiet refs/heads/task/example-branch && git checkout task/example-branch || git checkout -b task/example-branch refactor/stack-lifecycle"
+    expect: "exit 0"
+    critical: true
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-branch"
+    critical: true
+
+report:
+  path: ".git/ai/reports/example-bootstrap-01.md"
+
+plan_state:
+  path: ".git/ai/plan-state.yaml"
+
+model_hint: "lightweight"

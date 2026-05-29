@@ -39,6 +39,18 @@ is_truthy() {
   esac
 }
 
+resolve_secrets_file_hint() {
+  local pve_env="${PVE_ENV:-}"
+  local proxmox_node="${TF_VAR_proxmox_node:-}"
+
+  if [[ "$pve_env" == "pve" || "$proxmox_node" == "pve" ]]; then
+    printf 'terraform/secrets.pve.enc.yaml'
+    return 0
+  fi
+
+  printf 'terraform/secrets.enc.yaml'
+}
+
 ensure_portainer_oauth_secret() {
   local stack="$1"
   local oauth_enabled="${PORTAINER_OAUTH_ENABLED:-true}"
@@ -62,14 +74,17 @@ ensure_portainer_oauth_secret() {
   PORTAINER_OAUTH_CLIENT_SECRET="$(openssl rand -hex 32)"
   export PORTAINER_OAUTH_CLIENT_SECRET
   log "Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)"
-  log "Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility"
+  log "Persist this secret to $(resolve_secrets_file_hint) after this run for reproducibility"
+
+  [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
 
   log "Reconciling Authentik OIDC provider for Portainer with generated secret"
   python3 "${REPO_ROOT}/terraform/lxc/reconcile-authentik-edge.py" \
     "$edge_manifest" \
+    --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+    --no-verify-tls \
     --apply \
-    --json \
-    --no-verify-tls
+    --json
 }
 
 ensure_portainer_edge_publish() {
@@ -86,19 +101,23 @@ ensure_portainer_edge_publish() {
   [[ -f "$proxy_inventory" ]] || fail "expected proxy inventory not found: ${proxy_inventory}"
   [[ -f "$proxy_playbook" ]] || fail "expected proxy playbook not found: ${proxy_playbook}"
 
+  [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
+
   if [[ "$check_mode" == "true" ]]; then
     log "Reconcile edge dry-run for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
-      --json \
-      --no-verify-tls
+      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+      --no-verify-tls \
+      --json
   else
     log "Reconcile edge apply for Portainer route publication"
     python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
       "$edge_manifest" \
+      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
+      --no-verify-tls \
       --apply \
-      --json \
-      --no-verify-tls
+      --json
 
     log "Publish generated Traefik files for Portainer route"
     ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \

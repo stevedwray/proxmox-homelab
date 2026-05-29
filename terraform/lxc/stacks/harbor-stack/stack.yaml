@@ -2,17 +2,24 @@
 hostname: harbor-stack
 ip_address: "${lab_ip_harbor}/24"
 gateway: "${lab_gw_infra}"
-proxmox_node: pve-test
+dns_server: "${lab_gw_infra}"
 network:
   zone: infra_seg
-vmid: 121
+vmid: 40010
 cores: 4
 memory: 2048
 swap: 2048
 rootfs_size: 16
-rootfs_storage: infrastructure-containers
-docker_storage_size: "20G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+storage_profile: platform-zfs
+docker_storage_size: "22G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "22G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - harbor
   - registry
@@ -30,10 +37,18 @@ provides:
 
 # Dedicated data volume for Harbor registry blobs, PostgreSQL, Redis, and Trivy cache
 extra_mount_path: "/var/lib/harbor"
-extra_mount_size: "100G"
-extra_mount_storage: infrastructure-containers
+extra_mount_size: "120G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: harbor-data
+  path: /var/lib/harbor
+  size: "120G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 
-# pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: ""  # No apt proxy on first Harbor deploy — pulls from Docker Hub directly

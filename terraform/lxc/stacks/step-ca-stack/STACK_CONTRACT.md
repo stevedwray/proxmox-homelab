@@ -12,9 +12,9 @@ homelab root CA rather than self-signed or public certificates.
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `mgmt_seg` (VLAN 20)     |
-| IP           | `10.57.1.11/24`          |
-| Gateway      | `10.57.1.1` (MikroTik)  |
-| VMID         | 152                      |
+| IP           | `${lab_ip_step_ca}/24`   |
+| Gateway      | `${lab_gw_mgmt}`         |
+| VMID         | 20011                    |
 
 ## Inputs
 
@@ -71,8 +71,8 @@ distribute and is committed to the repo under `certs/`.
 - `ca.json` is generated once by `step ca init`. Do not overwrite it — regenerating
   it creates a new root CA and invalidates all issued certificates.
 - The step-ca version must remain pinned. Updates require careful migration.
-- Managed as a systemd service, not Docker. The `portainer_agent: false` absence in
-  `stack.yaml` is correct — there are no containers to manage.
+- Managed as a systemd service, not Docker. `portainer_agent: false` is explicitly set in
+  `stack.yaml` — there are no containers to manage.
 
 ## Playbook
 

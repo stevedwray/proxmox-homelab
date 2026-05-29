@@ -3,6 +3,10 @@
 # Creates: Docker Hub proxy cache endpoint, dockerhub project, CI robot account.
 # All tasks delegate to localhost (Ansible controller calls Harbor API directly).
 
+- name: Skip Harbor post-configuration in check mode (requires live Harbor API)
+  ansible.builtin.meta: end_play
+  when: ansible_check_mode
+
 - name: Authenticate with Harbor API
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/current"
@@ -14,6 +18,35 @@
   register: harbor_postconfigure_auth_check
   delegate_to: localhost
   no_log: true
+
+- name: Get Harbor current auth mode
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_current_config
+  delegate_to: localhost
+  no_log: true
+
+- name: Record Harbor current auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_current_auth_mode: >-
+      {{
+        (
+          harbor_postconfigure_current_config.json.auth_mode.value
+          if (harbor_postconfigure_current_config.json.auth_mode is mapping)
+          else harbor_postconfigure_current_config.json.auth_mode
+        ) | default('db_auth', true)
+      }}
+  delegate_to: localhost
+
+- name: Start with Harbor current auth mode as the effective auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "{{ harbor_postconfigure_current_auth_mode }}"
+  delegate_to: localhost
 
 # -----------------------------------------------------------------------
 # Browser SSO (OIDC)
@@ -72,6 +105,12 @@
   when: harbor_postconfigure_oidc_enabled
   delegate_to: localhost
 
+- name: Record Harbor effective auth mode after OIDC configuration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "oidc_auth"
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
 - name: Look up Harbor breakglass user
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
@@ -83,6 +122,15 @@
   register: harbor_postconfigure_breakglass_lookup
   delegate_to: localhost
   no_log: true
+
+- name: Determine whether Harbor must preserve OIDC auth migration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_preserve_oidc_migration: >-
+      {{
+        (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
+        and harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+      }}
+  delegate_to: localhost
 
 - name: Create Harbor breakglass user when missing
   ansible.builtin.uri:
@@ -101,18 +149,20 @@
     status_code: [201, 409]
   when:
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
-    - not harbor_postconfigure_oidc_enabled
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+    - not (harbor_postconfigure_preserve_oidc_migration | default(false) | bool)
   delegate_to: localhost
   no_log: true
 
-- name: Skip Harbor breakglass local-user creation in OIDC mode
+- name: Skip Harbor breakglass local-user creation while Harbor is OIDC-managed
   ansible.builtin.debug:
     msg: >-
-      Skipping Harbor breakglass local-user creation because Harbor forbids creating
-      new local users after auth_mode is switched to oidc_auth. The built-in admin
-      account remains the local recovery path.
+      Skipping Harbor breakglass local-user creation because Harbor OIDC is
+      managed for this deployment and creating local users before auth_mode is
+      switched would block the later OIDC migration. The built-in admin account
+      remains the local recovery path.
   when:
-    - harbor_postconfigure_oidc_enabled
+    - (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
     - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
   delegate_to: localhost
 
@@ -126,13 +176,18 @@
     status_code: 200
   register: harbor_postconfigure_breakglass_lookup_after
   when:
-    - not harbor_postconfigure_oidc_enabled or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth' or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
   delegate_to: localhost
   no_log: true
 
 - name: Ensure Harbor breakglass user has sysadmin role
   ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/{{ harbor_postconfigure_breakglass_lookup_after.json[0].user_id }}/sysadmin"
+    url: >-
+      {{
+        'http://' ~ harbor_postconfigure_host ~ ':' ~ harbor_postconfigure_port
+        ~ '/api/v2.0/users/' ~ harbor_postconfigure_breakglass_lookup_after.json[0].user_id
+        ~ '/sysadmin'
+      }}
     method: PUT
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
@@ -160,26 +215,46 @@
   delegate_to: localhost
   no_log: true
 
+- name: Collect Harbor OIDC steve username matches
+  ansible.builtin.set_fact:
+    harbor_postconfigure_steve_candidates: >-
+      {{
+        harbor_postconfigure_steve_lookup.json | default([])
+        | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+        | list
+      }}
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
 - name: Resolve Harbor OIDC steve user
   ansible.builtin.set_fact:
     harbor_postconfigure_steve_user: >-
       {{
         (
-          harbor_postconfigure_steve_lookup.json | default([])
-          | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
-          | selectattr(
-              'email',
-              'equalto',
-              harbor_postconfigure_steve_email
-            )
-            if (harbor_postconfigure_steve_email | length) > 0
-            else (
-              harbor_postconfigure_steve_lookup.json | default([])
-              | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
-            )
+          harbor_postconfigure_steve_candidates | default([])
+          | selectattr('email', 'defined')
+          | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
           | list
           | first
-        ) | default({})
+        )
+        if (
+          (harbor_postconfigure_steve_email | length) > 0
+          and (
+            (
+              harbor_postconfigure_steve_candidates | default([])
+              | selectattr('email', 'defined')
+              | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
+              | list
+              | length
+            ) > 0
+          )
+        )
+        else (
+          harbor_postconfigure_steve_candidates | default([])
+          | list
+          | first
+        )
+        | default({})
       }}
   when: harbor_postconfigure_oidc_enabled
   delegate_to: localhost
@@ -221,7 +296,7 @@
 - name: Check if Docker Hub endpoint already exists
   ansible.builtin.set_fact:
     harbor_postconfigure_dockerhub_endpoint_id: "{{ item.id }}"
-  loop: "{{ harbor_postconfigure_registries.json }}"
+  loop: "{{ harbor_postconfigure_registries.json | default([]) }}"
   when: item.name == harbor_postconfigure_dockerhub_endpoint_name
   delegate_to: localhost
 
@@ -279,6 +354,7 @@
         if harbor_postconfigure_endpoint_result is not skipped
         else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
       }}
+  when: harbor_postconfigure_dockerhub_endpoint_id is defined
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
@@ -458,65 +534,26 @@
   delegate_to: localhost
   no_log: true
 
-- name: Check Bitwarden CLI is available and vault is unlocked
-  ansible.builtin.shell: |
-    command -v bw >/dev/null 2>&1 && bw status 2>/dev/null | grep -q '"status":"unlocked"'
-  register: harbor_postconfigure_bw_check
-  failed_when: false
-  changed_when: false
-  delegate_to: localhost
-  when: harbor_postconfigure_robot_exists is not defined
-
-- name: Save robot credentials to Bitwarden
-  ansible.builtin.shell: |
-    json=$(jq -n \
-      --arg name "{{ harbor_postconfigure_bw_item_name }}" \
-      --arg org  "{{ harbor_postconfigure_bw_org_id }}" \
-      --arg coll "{{ harbor_postconfigure_bw_collection_id }}" \
-      --arg user "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}" \
-      --arg pw   "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}" \
-      '{type:1, name:$name, organizationId:$org, collectionIds:[$coll],
-        login:{username:$user, password:$pw}}')
-    existing_id=$(bw list items \
-      --search "{{ harbor_postconfigure_bw_item_name }}" \
-      --organizationid "{{ harbor_postconfigure_bw_org_id }}" 2>/dev/null \
-      | jq -r '.[] | select(.name == "{{ harbor_postconfigure_bw_item_name }}") | .id' \
-      | head -1)
-    if [ -n "$existing_id" ]; then
-      echo "$json" | bw encode | bw edit item "$existing_id" --quiet
-    else
-      echo "$json" | bw encode | bw create item --quiet
-    fi
-  delegate_to: localhost
-  no_log: true
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc == 0
-
-- name: Confirm robot credentials saved to Bitwarden
-  ansible.builtin.debug:
-    msg: "CI robot credentials saved to Bitwarden item '{{ harbor_postconfigure_bw_item_name }}'"
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc == 0
-  delegate_to: localhost
-
-- name: Warn if Bitwarden unavailable — save robot credentials manually
+- name: Display new robot credentials — operator must capture and store in SOPS
   ansible.builtin.debug:
     msg:
       - "================================================================"
-      - "Bitwarden CLI unavailable or vault locked — save manually!"
-      - "Name:   {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}"
-      - "Secret: {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}"
+      - "ACTION REQUIRED: Harbor CI robot account created."
+      - "Copy these credentials and store them in terraform/secrets.enc.yaml"
+      - "(and terraform/secrets.pve.enc.yaml for production) under the keys:"
+      - "  HARBOR_ROBOT_USER  = {{ harbor_postconfigure_robot_result.json.name }}"
+      - "  HARBOR_ROBOT_PASSWORD = <secret shown below>"
+      - "Secret: {{ harbor_postconfigure_robot_result.json.secret }}"
+      - "This is the only time the secret is shown. It cannot be retrieved later."
       - "================================================================"
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc != 0
+  when: harbor_postconfigure_robot_exists is not defined
   delegate_to: localhost
 
 - name: Display robot already exists notice
   ansible.builtin.debug:
-    msg: "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists — credentials are in Bitwarden"
+    msg:
+      - "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists."
+      - "Credentials were captured at initial creation and stored in SOPS."
   when: harbor_postconfigure_robot_exists is defined
   delegate_to: localhost
 
