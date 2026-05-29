@@ -1,0 +1,230 @@
+09:51:03.522 WARN   Using `terragrunt.hcl` as the root of Terragrunt configurations is an anti-pattern, and no longer recommended. In a future version of Terragrunt, this will result in an error. You are advised to use a differently named file like `root.hcl` instead. For more information, see https://docs.terragrunt.com/migrate/migrating-from-root-terragrunt-hcl
+09:51:03.744 STDOUT tofu: OpenTofu used the selected providers to generate the following execution
+09:51:03.744 STDOUT tofu: plan. Resource actions are indicated with the following symbols:
+09:51:03.744 STDOUT tofu:   + create
+09:51:03.744 STDOUT tofu: OpenTofu will perform the following actions:
+09:51:03.744 STDOUT tofu:   # local_file.ansible_inventory will be created
+09:51:03.744 STDOUT tofu:   + resource "local_file" "ansible_inventory" {
+09:51:03.744 STDOUT tofu:       + content              = <<-EOT
+09:51:03.744 STDOUT tofu:             all:
+09:51:03.744 STDOUT tofu:               children:
+09:51:03.744 STDOUT tofu:                 step_ca_stack:
+09:51:03.744 STDOUT tofu:                   hosts:
+09:51:03.744 STDOUT tofu:                     step-ca:
+09:51:03.744 STDOUT tofu:                       ansible_host: 192.168.20.11
+09:51:03.744 STDOUT tofu:                       ansible_user: root
+09:51:03.744 STDOUT tofu:                       ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+09:51:03.744 STDOUT tofu:                       ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+09:51:03.744 STDOUT tofu:                       ssh_access_mode: direct
+09:51:03.744 STDOUT tofu:                       portainer_server_ip: 192.168.20.20
+09:51:03.744 STDOUT tofu:                       registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+09:51:03.744 STDOUT tofu:                       apt_cacher_host: 192.168.40.11
+09:51:03.744 STDOUT tofu:                       dns_server: 192.168.20.1
+09:51:03.744 STDOUT tofu:                       network_zone: mgmt_seg
+09:51:03.744 STDOUT tofu:                       contract_dns_server: 192.168.20.1
+09:51:03.744 STDOUT tofu:                       stack_name: step-ca-stack
+09:51:03.744 STDOUT tofu:                       ansible_playbook: deploy-step-ca
+09:51:03.744 STDOUT tofu:                       vmid: 20011
+09:51:03.744 STDOUT tofu:                       app_stack_name: step-ca-stack
+09:51:03.744 STDOUT tofu:         EOT
+09:51:03.744 STDOUT tofu:       + content_base64sha256 = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_base64sha512 = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_md5          = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha1         = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha256       = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha512       = (known after apply)
+09:51:03.744 STDOUT tofu:       + directory_permission = "0777"
+09:51:03.744 STDOUT tofu:       + file_permission      = "0777"
+09:51:03.744 STDOUT tofu:       + filename             = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/inventory.yml"
+09:51:03.744 STDOUT tofu:       + id                   = (known after apply)
+09:51:03.744 STDOUT tofu:     }
+09:51:03.744 STDOUT tofu:   # local_file.network_sdn_vars[0] will be created
+09:51:03.744 STDOUT tofu:   + resource "local_file" "network_sdn_vars" {
+09:51:03.744 STDOUT tofu:       + content              = <<-EOT
+09:51:03.744 STDOUT tofu:             "network_sdn_allow_destroy": false
+09:51:03.744 STDOUT tofu:             "network_sdn_bridge": "vmbr0"
+09:51:03.744 STDOUT tofu:             "network_sdn_enable": true
+09:51:03.744 STDOUT tofu:             "network_sdn_expected_pve_host": "pve.gibbsgreatly.xyz"
+09:51:03.744 STDOUT tofu:             "network_sdn_expected_target": "pve"
+09:51:03.744 STDOUT tofu:             "network_sdn_gateway": "192.168.20.1"
+09:51:03.744 STDOUT tofu:             "network_sdn_nodes":
+09:51:03.744 STDOUT tofu:             - "pve"
+09:51:03.744 STDOUT tofu:             "network_sdn_pve_host": "pve.gibbsgreatly.xyz"
+09:51:03.744 STDOUT tofu:             "network_sdn_snat": false
+09:51:03.744 STDOUT tofu:             "network_sdn_ssh_key": "/home/steve/.ssh/id_ed25519"
+09:51:03.744 STDOUT tofu:             "network_sdn_subnet": "192.168.20.0/24"
+09:51:03.744 STDOUT tofu:             "network_sdn_target": "pve"
+09:51:03.744 STDOUT tofu:             "network_sdn_vlan_tag": 20
+09:51:03.744 STDOUT tofu:             "network_sdn_vmid": 20011
+09:51:03.744 STDOUT tofu:             "network_sdn_vnet": "tvmgmt"
+09:51:03.744 STDOUT tofu:             "network_sdn_vnet_alias": "pve management segment"
+09:51:03.744 STDOUT tofu:             "network_sdn_zone": "tvmgmt"
+09:51:03.744 STDOUT tofu:             "network_sdn_zone_type": "vlan"
+09:51:03.744 STDOUT tofu:         EOT
+09:51:03.744 STDOUT tofu:       + content_base64sha256 = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_base64sha512 = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_md5          = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha1         = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha256       = (known after apply)
+09:51:03.744 STDOUT tofu:       + content_sha512       = (known after apply)
+09:51:03.744 STDOUT tofu:       + directory_permission = "0777"
+09:51:03.744 STDOUT tofu:       + file_permission      = "0777"
+09:51:03.744 STDOUT tofu:       + filename             = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/network-sdn-vars.yml"
+09:51:03.744 STDOUT tofu:       + id                   = (known after apply)
+09:51:03.744 STDOUT tofu:     }
+09:51:03.744 STDOUT tofu:   # null_resource.configure_network_sdn_attachment[0] will be created
+09:51:03.744 STDOUT tofu:   + resource "null_resource" "configure_network_sdn_attachment" {
+09:51:03.744 STDOUT tofu:       + id       = (known after apply)
+09:51:03.744 STDOUT tofu:       + triggers = {
+09:51:03.744 STDOUT tofu:           + "ansible_cfg"        = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/ansible.cfg"
+09:51:03.744 STDOUT tofu:           + "ansible_dir"        = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible"
+09:51:03.744 STDOUT tofu:           + "ansible_roles_path" = "/home/steve/git/proxmox-homelab/terraform/lxc/ansible/roles"
+09:51:03.744 STDOUT tofu:           + "sdn_vars"           = <<-EOT
+09:51:03.744 STDOUT tofu:                 "network_sdn_allow_destroy": false
+09:51:03.744 STDOUT tofu:                 "network_sdn_bridge": "vmbr0"
+09:51:03.744 STDOUT tofu:                 "network_sdn_enable": true
+09:51:03.744 STDOUT tofu:                 "network_sdn_expected_pve_host": "pve.gibbsgreatly.xyz"
+09:51:03.744 STDOUT tofu:                 "network_sdn_expected_target": "pve"
+09:51:03.744 STDOUT tofu:                 "network_sdn_gateway": "192.168.20.1"
+09:51:03.744 STDOUT tofu:                 "network_sdn_nodes":
+09:51:03.744 STDOUT tofu:                 - "pve"
+09:51:03.744 STDOUT tofu:                 "network_sdn_pve_host": "pve.gibbsgreatly.xyz"
+09:51:03.744 STDOUT tofu:                 "network_sdn_snat": false
+09:51:03.744 STDOUT tofu:                 "network_sdn_ssh_key": "/home/steve/.ssh/id_ed25519"
+09:51:03.744 STDOUT tofu:                 "network_sdn_subnet": "192.168.20.0/24"
+09:51:03.744 STDOUT tofu:                 "network_sdn_target": "pve"
+09:51:03.744 STDOUT tofu:                 "network_sdn_vlan_tag": 20
+09:51:03.744 STDOUT tofu:                 "network_sdn_vmid": 20011
+09:51:03.744 STDOUT tofu:                 "network_sdn_vnet": "tvmgmt"
+09:51:03.744 STDOUT tofu:                 "network_sdn_vnet_alias": "pve management segment"
+09:51:03.744 STDOUT tofu:                 "network_sdn_zone": "tvmgmt"
+09:51:03.744 STDOUT tofu:                 "network_sdn_zone_type": "vlan"
+09:51:03.744 STDOUT tofu:             EOT
+09:51:03.744 STDOUT tofu:           + "sdn_vars_file"      = "/home/steve/git/proxmox-homelab/terraform/lxc/stacks/step-ca-stack/network-sdn-vars.yml"
+09:51:03.744 STDOUT tofu:           + "vmid"               = "20011"
+09:51:03.744 STDOUT tofu:         }
+09:51:03.744 STDOUT tofu:     }
+09:51:03.744 STDOUT tofu:   # module.lxc.proxmox_virtual_environment_container.docker_host will be created
+09:51:03.744 STDOUT tofu:   + resource "proxmox_virtual_environment_container" "docker_host" {
+09:51:03.744 STDOUT tofu:       + description    = <<-EOT
+09:51:03.744 STDOUT tofu:             Managed by Terraform
+09:51:03.744 STDOUT tofu:         EOT
+09:51:03.744 STDOUT tofu:       + id             = (known after apply)
+09:51:03.744 STDOUT tofu:       + ipv4           = (known after apply)
+09:51:03.744 STDOUT tofu:       + ipv6           = (known after apply)
+09:51:03.744 STDOUT tofu:       + node_name      = "pve"
+09:51:03.744 STDOUT tofu:       + protection     = false
+09:51:03.744 STDOUT tofu:       + start_on_boot  = true
+09:51:03.744 STDOUT tofu:       + started        = true
+09:51:03.744 STDOUT tofu:       + tags           = [
+09:51:03.744 STDOUT tofu:           + "step-ca",
+09:51:03.744 STDOUT tofu:           + "pki",
+09:51:03.744 STDOUT tofu:           + "infrastructure",
+09:51:03.744 STDOUT tofu:         ]
+09:51:03.744 STDOUT tofu:       + template       = false
+09:51:03.744 STDOUT tofu:       + timeout_clone  = 1800
+09:51:03.744 STDOUT tofu:       + timeout_create = 1800
+09:51:03.744 STDOUT tofu:       + timeout_delete = 60
+09:51:03.744 STDOUT tofu:       + timeout_start  = 300
+09:51:03.744 STDOUT tofu:       + timeout_update = 1800
+09:51:03.744 STDOUT tofu:       + unprivileged   = true
+09:51:03.744 STDOUT tofu:       + vm_id          = 20011
+09:51:03.744 STDOUT tofu:       + cpu {
+09:51:03.744 STDOUT tofu:           + architecture = "amd64"
+09:51:03.744 STDOUT tofu:           + cores        = 1
+09:51:03.744 STDOUT tofu:           + limit        = 0
+09:51:03.744 STDOUT tofu:           + units        = (known after apply)
+09:51:03.744 STDOUT tofu:         }
+09:51:03.744 STDOUT tofu:       + disk {
+09:51:03.744 STDOUT tofu:           + acl               = false
+09:51:03.744 STDOUT tofu:           + datastore_id      = "infrastructure-containers"
+09:51:03.745 STDOUT tofu:           + path_in_datastore = (known after apply)
+09:51:03.745 STDOUT tofu:           + quota             = false
+09:51:03.745 STDOUT tofu:           + replicate         = false
+09:51:03.745 STDOUT tofu:           + size              = 8
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + features {
+09:51:03.745 STDOUT tofu:           + fuse    = false
+09:51:03.745 STDOUT tofu:           + keyctl  = false
+09:51:03.745 STDOUT tofu:           + nesting = true
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + initialization {
+09:51:03.745 STDOUT tofu:           + hostname = "step-ca"
+09:51:03.745 STDOUT tofu:           + dns {
+09:51:03.745 STDOUT tofu:               + servers = [
+09:51:03.745 STDOUT tofu:                   + "192.168.20.1",
+09:51:03.745 STDOUT tofu:                 ]
+09:51:03.745 STDOUT tofu:             }
+09:51:03.745 STDOUT tofu:           + ip_config {
+09:51:03.745 STDOUT tofu:               + ipv4 {
+09:51:03.745 STDOUT tofu:                   + address = "192.168.20.11/24"
+09:51:03.745 STDOUT tofu:                   + gateway = "192.168.20.1"
+09:51:03.745 STDOUT tofu:                 }
+09:51:03.745 STDOUT tofu:             }
+09:51:03.745 STDOUT tofu:           + user_account {
+09:51:03.745 STDOUT tofu:               + keys     = [
+09:51:03.745 STDOUT tofu:                   + "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIIL8preMWsOS9rbkx4maBOE9Q+yr5fChVcH+P+tX5Msh steve@garuda",
+09:51:03.745 STDOUT tofu:                 ]
+09:51:03.745 STDOUT tofu:               + password = (sensitive value)
+09:51:03.745 STDOUT tofu:             }
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + memory {
+09:51:03.745 STDOUT tofu:           + dedicated = 512
+09:51:03.745 STDOUT tofu:           + swap      = 256
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + mount_point {
+09:51:03.745 STDOUT tofu:           + acl               = false
+09:51:03.745 STDOUT tofu:           + backup            = false
+09:51:03.745 STDOUT tofu:           + path              = "/var/lib/docker"
+09:51:03.745 STDOUT tofu:           + path_in_datastore = (known after apply)
+09:51:03.745 STDOUT tofu:           + quota             = false
+09:51:03.745 STDOUT tofu:           + read_only         = false
+09:51:03.745 STDOUT tofu:           + replicate         = true
+09:51:03.745 STDOUT tofu:           + shared            = false
+09:51:03.745 STDOUT tofu:           + size              = "20G"
+09:51:03.745 STDOUT tofu:           + volume            = "infrastructure-containers"
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + network_interface {
+09:51:03.745 STDOUT tofu:           + bridge      = "tvmgmt"
+09:51:03.745 STDOUT tofu:           + enabled     = true
+09:51:03.745 STDOUT tofu:           + firewall    = false
+09:51:03.745 STDOUT tofu:           + mac_address = (known after apply)
+09:51:03.745 STDOUT tofu:           + mtu         = 0
+09:51:03.745 STDOUT tofu:           + name        = "eth0"
+09:51:03.745 STDOUT tofu:           + rate_limit  = 0
+09:51:03.745 STDOUT tofu:           + vlan_id     = 0
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + operating_system {
+09:51:03.745 STDOUT tofu:           + template_file_id = "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+09:51:03.745 STDOUT tofu:           + type             = "debian"
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:     }
+09:51:03.745 STDOUT tofu:   # module.lxc.terraform_data.container_epoch will be created
+09:51:03.745 STDOUT tofu:   + resource "terraform_data" "container_epoch" {
+09:51:03.745 STDOUT tofu:       + id               = (known after apply)
+09:51:03.745 STDOUT tofu:       + triggers_replace = [
+09:51:03.745 STDOUT tofu:           + (known after apply),
+09:51:03.745 STDOUT tofu:         ]
+09:51:03.745 STDOUT tofu:     }
+09:51:03.745 STDOUT tofu: Plan: 5 to add, 0 to change, 0 to destroy.
+09:51:03.745 STDOUT tofu: Changes to Outputs:
+09:51:03.745 STDOUT tofu:   + stack = {
+09:51:03.745 STDOUT tofu:       + container_id = 20011
+09:51:03.745 STDOUT tofu:       + hostname     = "step-ca"
+09:51:03.745 STDOUT tofu:       + ip_address   = "192.168.20.11/24"
+09:51:03.745 STDOUT tofu:       + network      = {
+09:51:03.745 STDOUT tofu:           + attachment_name = "mgmt_seg"
+09:51:03.745 STDOUT tofu:           + attachment_type = "sdn_vnet"
+09:51:03.745 STDOUT tofu:           + bridge          = "tvmgmt"
+09:51:03.745 STDOUT tofu:           + firewall        = false
+09:51:03.745 STDOUT tofu:           + intent          = "/home/steve/git/proxmox-homelab/terraform/lxc/network/pve.yaml"
+09:51:03.745 STDOUT tofu:           + sdn_vnet        = "tvmgmt"
+09:51:03.745 STDOUT tofu:           + vlan_tag        = null
+09:51:03.745 STDOUT tofu:           + zone            = "mgmt_seg"
+09:51:03.745 STDOUT tofu:         }
+09:51:03.745 STDOUT tofu:       + pve_host     = "pve.gibbsgreatly.xyz"
+09:51:03.745 STDOUT tofu:       + target_node  = "pve"
+09:51:03.745 STDOUT tofu:     }
+09:51:03.745 STDOUT tofu: ─────────────────────────────────────────────────────────────────────────────
+09:51:03.745 STDOUT tofu: Note: You didn't use the -out option to save this plan, so OpenTofu can't
+09:51:03.745 STDOUT tofu: guarantee to take exactly these actions if you run "tofu apply" now.

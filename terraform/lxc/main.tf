@@ -499,7 +499,9 @@ check "template_name_allowed_by_profile" {
 
 # ---------------------------------------------------------------------------
 # Proxmox SDN vars (only if network intent selects an SDN VNet attachment)
-# Ensures the attachment exists on pve-test before the LXC is created.
+# Ensures the attachment exists on the selected target environment before the
+# LXC is created, while keeping destroy-time SDN teardown on the default-safe
+# environment unless explicitly widened later.
 # ---------------------------------------------------------------------------
 resource "local_file" "network_sdn_vars" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0

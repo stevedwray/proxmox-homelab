@@ -18,12 +18,12 @@ reach `10.57.x.x`; those that need network access are tagged for this runner.
 
 ## Inputs
 
-| Input                       | Source      | Notes |
-|-----------------------------|-------------|-------|
-| `GITHUB_RUNNER_TOKEN`       | env var     | Registration token from GitHub Actions |
-| `GITHUB_RUNNER_REPO`        | env var     | Repository the runner registers with |
-| Harbor registry             | `registry_host` | Runtime job container pulls via proxy cache |
-| apt-cacher                  | `apt_cacher_host:3142` | apt proxy during provisioning |
+| Input | Source | Notes |
+|-------|--------|-------|
+| GitHub CLI auth | operator workstation | Required unless an explicit `runner_registration_token` variable is supplied; the playbook generates an ephemeral registration token via `gh api` |
+| Runner repository | playbook default | Defaults to `https://github.com/stevedwray/proxmox-homelab`; only override if the runner should register somewhere else |
+| Harbor registry | `registry_host` | Runtime job container pulls via proxy cache |
+| apt-cacher | `apt_cacher_host:3142` | apt proxy during provisioning |
 
 **Current implementation:** `lxc_base` consumes `apt_cacher_host` from generated
 inventory host vars during provisioning. Harbor remains a declared platform
@@ -65,8 +65,9 @@ not a provider.
 
 ## What Must Not Be Edited Casually
 
-- The runner registration token is single-use and time-limited. Re-registration
-  requires a new token from the GitHub repository settings.
+- The runner registration token is single-use and time-limited. When no
+  explicit token is supplied, the playbook generates one just-in-time through
+  the GitHub API using the operator's authenticated `gh` session.
 - The runner label/tag must match the `runs-on:` value in workflow YAML.
 
 ## Playbook

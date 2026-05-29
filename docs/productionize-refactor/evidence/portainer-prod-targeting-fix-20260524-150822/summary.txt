@@ -1,0 +1,4 @@
+date=2026-05-24T15:08:22+12:00
+branch=work/productionize-06-canary-validation
+head=860df0a
+task_approval=portainer-prod-targeting-fix-20260524

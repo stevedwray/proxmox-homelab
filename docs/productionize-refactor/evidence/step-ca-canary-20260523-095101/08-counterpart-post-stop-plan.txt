@@ -1,0 +1,9 @@
+Preflight passed: TF_VAR_proxmox_node=pve-test
+Counterpart target:
+  stack: step-ca-stack
+  vmid: 20011
+  ip:   "${lab_ip_step_ca}/24"
+  host: pve-test.gibbsgreatly.xyz
+  state: absent
+Planned action: destroy
+Would stop the counterpart if running, then Terragrunt destroy step-ca-stack on pve-test.

@@ -1,0 +1,20 @@
+ERROR: Mutating command requires explicit operator approval
+
+This command would alter production state:
+  bash -lc echo TF_VAR_proxmox_node=$TF_VAR_proxmox_node
+
+To proceed, you must:
+  1. Review the preflight summary in the chat session
+  2. Explicitly approve in chat (e.g., 'proceed with task XYZ')
+  3. Set the approval environment variable to acknowledge that approved task:
+     export TASK_APPROVAL="<task-name-from-docs>"
+  4. Run the command again
+
+Note: this wrapper cannot verify chat history on its own; it relies on
+the operator to set TASK_APPROVAL only after chat approval.
+
+Example:
+  export TASK_APPROVAL="01-credential-controls"
+  /home/steve/git/proxmox-homelab/with-secrets-prod bash -lc echo TF_VAR_proxmox_node=$TF_VAR_proxmox_node
+command=./with-secrets-prod bash -lc echo TF_VAR_proxmox_node=$TF_VAR_proxmox_node
+rc=1

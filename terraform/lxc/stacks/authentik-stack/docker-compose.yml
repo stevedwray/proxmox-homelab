@@ -1,7 +1,7 @@
 # Authentik identity provider stack
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is written to .env by deploy-authentik-stack.yml.
-# pve-test: 10.57.3.10  pve: 192.168.1.10
+# Service addressing is environment-driven via stack.yaml and the selected LAB_IP_* overlay.
 
 services:
   postgresql:

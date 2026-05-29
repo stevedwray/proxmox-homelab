@@ -1,0 +1,24 @@
+12:01:38.256 WARN   Using `terragrunt.hcl` as the root of Terragrunt configurations is an anti-pattern, and no longer recommended. In a future version of Terragrunt, this will result in an error. You are advised to use a differently named file like `root.hcl` instead. For more information, see https://docs.terragrunt.com/migrate/migrating-from-root-terragrunt-hcl
+12:01:38.260 INFO   Downloading Terraform configurations from ../.. into ./.terragrunt-cache/L5Vaf7331goBSZSA-fmLQAif2G8/DyU58UorCelPfUMsFKODZrvGuQY
+
+Error: Output name required
+
+You must give the name of a single output value when using the -raw option.
+
+For more help on using this command, run:
+  tofu output -help
+12:01:38.289 INFO   TIP (debugging-docs): For help troubleshooting errors, visit https://docs.terragrunt.com/troubleshooting/debugging
+12:01:38.289 ERROR  error occurred:
+
+* Failed to execute "tofu output -raw -no-color" in ./.terragrunt-cache/L5Vaf7331goBSZSA-fmLQAif2G8/DyU58UorCelPfUMsFKODZrvGuQY
+
+  Error: Output name required
+
+  You must give the name of a single output value when using the -raw option.
+
+  For more help on using this command, run:
+    tofu output -help
+
+  exit status 1
+
+exit status 1

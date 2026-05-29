@@ -1,14 +1,13 @@
-# NetBox IPAM/DCIM stack — pve-test instance in infra_seg
+# NetBox IPAM/DCIM stack — infra_seg zone
 hostname: netbox-stack
 ip_address: "${lab_ip_netbox}/24"
 gateway: "${lab_gw_infra}"
 dns_server: "${lab_gw_infra}"
-proxmox_node: pve-test
 network:
   zone: infra_seg
 vmid: 40012
 cores: 2
-memory: 2048
+memory: 4096
 swap: 4096
 rootfs_size: 8
 storage_profile: platform-default
@@ -39,7 +38,7 @@ deployment_tier: platform
 portainer_agent: false
 app_stack_name: "netbox"
 
-# pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "harbor.lab.gibbsgreatly.xyz"
 apt_cacher_host: "${lab_ip_apt_cacher}"

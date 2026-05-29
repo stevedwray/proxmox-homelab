@@ -2,7 +2,7 @@
 
 ## Purpose
 
-NetBox IPAM/DCIM application stack for the pve-test environment.
+NetBox IPAM/DCIM application stack for the segmented lab environment.
 This stack provides the inventory and source-of-truth UI/API for lab hosts,
 services, IPs, and related infrastructure metadata.
 

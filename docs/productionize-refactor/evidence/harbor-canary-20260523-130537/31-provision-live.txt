@@ -1,0 +1,330 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: canary-harbor-stack-pve-20260523
+Command: scripts/provision.sh --stack harbor-stack
+
+[provision] RUN harbor-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/harbor-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'harbor-stack' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.20/reference_appendices/interpreter_discovery.html for more information.
+ok: [harbor-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+changed: [harbor-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+skipping: [harbor-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+ok: [harbor-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [harbor-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+changed: [harbor-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+changed: [harbor-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+ok: [harbor-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [harbor-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+ok: [harbor-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+changed: [harbor-stack] => (item=apt-daily.service)
+changed: [harbor-stack] => (item=apt-daily.timer)
+changed: [harbor-stack] => (item=apt-daily-upgrade.service)
+changed: [harbor-stack] => (item=apt-daily-upgrade.timer)
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+ok: [harbor-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+changed: [harbor-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [harbor-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+changed: [harbor-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [harbor-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [harbor-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [harbor-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [harbor-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [harbor-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [harbor-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [harbor-stack]
+
+TASK [Normalize Docker daemon DNS for Harbor runtime] **************************
+changed: [harbor-stack]
+
+TASK [Flush handlers to apply Docker daemon config before Harbor install] ******
+
+RUNNING HANDLER [Restart Docker] ***********************************************
+changed: [harbor-stack]
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+ok: [harbor-stack]
+
+PLAY [Install and start Harbor] ************************************************
+
+TASK [harbor_installer : Validate required variable harbor_installer_hostname is set] ***
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Create Harbor install directory] **********************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Create Harbor data directory] *************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Check if Harbor installer has already been extracted] ***
+ok: [harbor-stack]
+
+TASK [harbor_installer : Download Harbor md5sum file] **************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Read Harbor md5sum file] ******************************
+ok: [harbor-stack]
+
+TASK [harbor_installer : Extract online installer MD5 checksum] ****************
+ok: [harbor-stack]
+
+TASK [harbor_installer : Download Harbor online installer] *********************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Unpack Harbor installer] ******************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Template harbor.yml configuration] ********************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Check if Harbor docker-compose.yml exists (first run detection)] ***
+ok: [harbor-stack]
+
+TASK [harbor_installer : Run Harbor prepare script] ****************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Install Harbor systemd service unit] ******************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Reload systemd daemon] ********************************
+ok: [harbor-stack]
+
+TASK [harbor_installer : Enable Harbor service] ********************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Start Harbor service (first run)] *********************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Restart Harbor service (config changed)] **************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Wait for Harbor API to be healthy] ********************
+FAILED - RETRYING: [harbor-stack]: Wait for Harbor API to be healthy (30 retries left).
+FAILED - RETRYING: [harbor-stack]: Wait for Harbor API to be healthy (29 retries left).
+ok: [harbor-stack]
+
+TASK [harbor_installer : Display Harbor status] ********************************
+ok: [harbor-stack] => {
+    "msg": "Harbor v2.14.3 is healthy at http://harbor.lab.gibbsgreatly.xyz:80"
+}
+
+PLAY [Configure Harbor (proxy cache, robot account, OIDC)] *********************
+
+TASK [Enforce readable Harbor OIDC username claim] *****************************
+ok: [harbor-stack -> localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Check Authentik health endpoint reachability for Harbor OIDC reconcile] ***
+ok: [harbor-stack -> localhost]
+
+TASK [Skip Harbor Authentik OIDC reconcile when Authentik is unavailable] ******
+ok: [harbor-stack -> localhost] => {
+    "msg": "Skipping Harbor Authentik OIDC reconcile because Authentik is not reachable yet; reconcile will run in a later phase."
+}
+
+TASK [Reconcile Harbor Authentik OIDC client] **********************************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Skip Harbor post-configuration in check mode (requires live Harbor API)] ***
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Authenticate with Harbor API] *********************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Validate Harbor OIDC inputs] **********************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Configure Harbor OIDC auth mode] ******************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Display Harbor OIDC status] ***********************
+ok: [harbor-stack -> localhost] => {
+    "msg": [
+        "Harbor browser sign-in is configured for OIDC provider 'authentik'.",
+        "Docker and Helm CLI users still need Harbor CLI secrets after first browser SSO login."
+    ]
+}
+
+TASK [harbor_postconfigure : Look up Harbor breakglass user] *******************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Create Harbor breakglass user when missing] *******
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Skip Harbor breakglass local-user creation in OIDC mode] ***
+ok: [harbor-stack -> localhost] => {
+    "msg": "Skipping Harbor breakglass local-user creation because Harbor forbids creating new local users after auth_mode is switched to oidc_auth. The built-in admin account remains the local recovery path."
+}
+
+TASK [harbor_postconfigure : Re-fetch Harbor breakglass user] ******************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Ensure Harbor breakglass user has sysadmin role] ***
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Look up Harbor OIDC steve user] *******************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Resolve Harbor OIDC steve user] *******************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Ensure OIDC steve user has sysadmin role] *********
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Get existing registry endpoints] ******************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Check if Docker Hub endpoint already exists] ******
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Create Docker Hub proxy cache endpoint] ***********
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Re-fetch registry list after create to resolve Docker Hub endpoint ID] ***
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Set endpoint ID from registry list] ***************
+ok: [harbor-stack -> localhost] => (item={'creation_time': '2026-05-23T01:15:19.630Z', 'credential': {}, 'id': 1, 'name': 'docker-hub', 'status': 'healthy', 'type': 'docker-hub', 'update_time': '2026-05-23T01:15:19.630Z', 'url': 'https://hub.docker.com'})
+
+TASK [harbor_postconfigure : Display Docker Hub endpoint status] ***************
+ok: [harbor-stack -> localhost] => {
+    "msg": "Docker Hub proxy endpoint 'docker-hub' created (ID: 1)"
+}
+
+TASK [harbor_postconfigure : Get existing projects] ****************************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Check if proxy project already exists] ************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Create dockerhub proxy cache project] *************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Display proxy project status] *********************
+ok: [harbor-stack -> localhost] => {
+    "msg": "Proxy cache project 'dockerhub' created (pulls from Docker Hub via docker-hub)"
+}
+
+TASK [harbor_postconfigure : Get existing registry endpoints (for idempotency check)] ***
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Create additional proxy cache endpoint] ***********
+ok: [harbor-stack -> localhost] => (item={'name': 'ghcr', 'url': 'https://ghcr.io'})
+ok: [harbor-stack -> localhost] => (item={'name': 'quay', 'url': 'https://quay.io'})
+ok: [harbor-stack -> localhost] => (item={'name': 'lscr', 'url': 'https://lscr.io'})
+
+TASK [harbor_postconfigure : Get registry endpoints (to resolve IDs for project creation)] ***
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Get existing projects (for idempotency check)] ****
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Create additional proxy cache project] ************
+ok: [harbor-stack -> localhost] => (item={'name': 'ghcr', 'url': 'https://ghcr.io'})
+ok: [harbor-stack -> localhost] => (item={'name': 'quay', 'url': 'https://quay.io'})
+ok: [harbor-stack -> localhost] => (item={'name': 'lscr', 'url': 'https://lscr.io'})
+
+TASK [harbor_postconfigure : Display additional proxy registry status] *********
+ok: [harbor-stack -> localhost] => (item={'name': 'ghcr', 'url': 'https://ghcr.io'}) => {
+    "msg": "Proxy cache registry 'ghcr' (https://ghcr.io) configured"
+}
+ok: [harbor-stack -> localhost] => (item={'name': 'quay', 'url': 'https://quay.io'}) => {
+    "msg": "Proxy cache registry 'quay' (https://quay.io) configured"
+}
+ok: [harbor-stack -> localhost] => (item={'name': 'lscr', 'url': 'https://lscr.io'}) => {
+    "msg": "Proxy cache registry 'lscr' (https://lscr.io) configured"
+}
+
+TASK [harbor_postconfigure : Get existing robot accounts] **********************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Check if CI robot already exists] *****************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Create CI robot account] **************************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Check Bitwarden CLI is available and vault is unlocked] ***
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Save robot credentials to Bitwarden] **************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Confirm robot credentials saved to Bitwarden] *****
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Warn if Bitwarden unavailable — save robot credentials manually] ***
+ok: [harbor-stack -> localhost] => {
+    "msg": [
+        "================================================================",
+        "Bitwarden CLI unavailable or vault locked — save manually!",
+        "Name:   robot$ci-runner",
+        "Secret: 2CyRmOVzGPrdM2bn3s2HaqYlgBawNNby",
+        "================================================================"
+    ]
+}
+
+TASK [harbor_postconfigure : Display robot already exists notice] **************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Enable scan on push] ******************************
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Trigger immediate full scan of all cached artifacts] ***
+ok: [harbor-stack -> localhost]
+
+TASK [harbor_postconfigure : Display scan status] ******************************
+ok: [harbor-stack -> localhost] => {
+    "msg": "Vulnerability scan triggered (scan-on-push enabled, nightly schedule: 0 2 * * *). Full scan started."
+}
+
+PLAY RECAP *********************************************************************
+harbor-stack               : ok=68   changed=18   unreachable=0    failed=0    skipped=19   rescued=0    ignored=0
+
+[provision] Completed provision orchestration

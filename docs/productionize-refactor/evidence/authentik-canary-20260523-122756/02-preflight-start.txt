@@ -1,0 +1,4 @@
+
+=== PREFLIGHT VALIDATION ===
+
+Check 1: Target node is pve (production)

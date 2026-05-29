@@ -1,0 +1,21 @@
+Warning: Permanently added '192.168.20.11' (ED25519) to the list of known hosts.
+Linux step-ca 6.14.11-4-pve #1 SMP PREEMPT_DYNAMIC PMX 6.14.11-4 (2025-10-10T08:04Z) x86_64 GNU/Linux
+---
+total 20
+drwxr-x---  6 root root   8 May 23 09:59 .
+drwxr-xr-x 82 root root 165 May 23 09:59 ..
+drwx------  2 root root   2 May 23 09:59 certs
+drwx------  2 root root   2 May 23 09:59 config
+-rw-------  1 root root   1 May 23 09:59 password.txt
+-rw-------  1 root root   1 May 23 09:59 provisioner-password.txt
+drwx------  2 root root   2 May 23 09:59 secrets
+drwx------  2 root root   2 May 23 09:59 templates
+---
+total 9
+drwx------ 2 root root 2 May 23 09:59 .
+drwxr-x--- 6 root root 8 May 23 09:59 ..
+---
+Smallstep CLI/0.30.2 (linux/amd64)
+Release Date: 2026-03-22T23:21:34Z
+Smallstep CA/0.30.2 (linux/amd64)
+Release Date: 2026-03-23T00:18:00Z
