@@ -50,6 +50,44 @@ class TestValidateEdgeManifests(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertEqual(0, len(result.issues))
 
+    def test_source_placeholder_target_passes_without_lab_ip_proxy(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "edge.yaml"
+            manifest.write_text(
+                """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: placeholder-edge
+  stack: placeholder-stack
+spec:
+  routes:
+    - name: placeholder
+      host: placeholder.lab.gibbsgreatly.xyz
+      backend:
+        type: url
+        url: http://10.57.1.50:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: forwardAuth
+""",
+                encoding="utf-8",
+            )
+
+            previous_value = os.environ.pop("LAB_IP_PROXY", None)
+            try:
+                result = validate_manifests([manifest])
+            finally:
+                if previous_value is not None:
+                    os.environ["LAB_IP_PROXY"] = previous_value
+
+        self.assertTrue(result.ok)
+        self.assertEqual(0, len(result.issues))
+
     def test_duplicate_host_fixtures_fail_with_emv001(self):
         manifest_paths = [
             INVALID_DIR / "duplicate-host-a.yaml",

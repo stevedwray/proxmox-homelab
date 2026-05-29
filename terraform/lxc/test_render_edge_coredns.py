@@ -25,6 +25,60 @@ render_coredns_dry_run = MODULE.render_coredns_dry_run
 
 
 class TestRenderEdgeCoreDNS(unittest.TestCase):
+  def test_import_tolerates_missing_lab_ip_proxy(self):
+    spec = importlib.util.spec_from_file_location("render_edge_coredns_missing_proxy", RENDER_MODULE_PATH)
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+
+    previous_proxy = os.environ.pop("LAB_IP_PROXY", None)
+    try:
+      sys.modules[spec.name] = module
+      spec.loader.exec_module(module)
+    finally:
+      if previous_proxy is not None:
+        os.environ["LAB_IP_PROXY"] = previous_proxy
+      sys.modules.pop(spec.name, None)
+
+    result = module.render_coredns_dry_run(
+      manifest_paths=[VALID_DIR / "grafana.yaml"],
+      seed_zone_path=REPO_ROOT / "terraform" / "lxc" / "ansible" / "files" / "coredns-lab.zone",
+      output_zone_path=REPO_ROOT / "terraform" / "lxc" / ".generated" / "coredns" / "coredns-lab.zone",
+    )
+    self.assertTrue(result.ok)
+
+  def test_preserves_unresolved_seed_placeholders_in_source_mode(self):
+    with tempfile.TemporaryDirectory() as tmpdir:
+      tmp = Path(tmpdir)
+      seed = tmp / "seed.zone"
+      output_zone = tmp / "rendered.zone"
+      seed.write_text(
+        """$ORIGIN lab.gibbsgreatly.xyz.
+$TTL 5m
+@ IN NS ns1.lab.gibbsgreatly.xyz.
+ns1 IN A ${LAB_IP_DNS}
+grafana A ${LAB_IP_MONITORING}
+""",
+        encoding="utf-8",
+      )
+
+      previous_dns = os.environ.pop("LAB_IP_DNS", None)
+      previous_monitoring = os.environ.pop("LAB_IP_MONITORING", None)
+      try:
+        result = render_coredns_dry_run(
+          manifest_paths=[VALID_DIR / "grafana.yaml"],
+          seed_zone_path=seed,
+          output_zone_path=output_zone,
+        )
+      finally:
+        if previous_dns is not None:
+          os.environ["LAB_IP_DNS"] = previous_dns
+        if previous_monitoring is not None:
+          os.environ["LAB_IP_MONITORING"] = previous_monitoring
+
+    self.assertTrue(result.ok)
+    self.assertIn("${LAB_IP_DNS}", result.rendered_zone)
+    self.assertIn("grafana         5m   IN  A   10.57.2.10", result.rendered_zone)
+
     def test_renders_generated_browser_record_and_preserves_non_browser_seed(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             tmp = Path(tmpdir)

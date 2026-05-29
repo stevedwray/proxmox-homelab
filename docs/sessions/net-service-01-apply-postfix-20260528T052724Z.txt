@@ -1,0 +1,29 @@
+[0;90m17:27:24.296[0m [0;33mWARN  [0m Using `terragrunt.hcl` as the root of Terragrunt configurations is an anti-pattern, and no longer recommended. In a future version of Terragrunt, this will result in an error. You are advised to use a differently named file like `root.hcl` instead. For more information, see https://docs.terragrunt.com/migrate/migrating-from-root-terragrunt-hcl
+[0;90m17:27:24.454[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Destroying... [id=19ff04d582cfe5f80466c3103aaa440fdd7ceae9][0m[0m[0m
+[0;90m17:27:24.455[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Destruction complete after 0s[0m[0m
+[0;90m17:27:24.461[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.proxmox_virtual_environment_container.docker_host: Modifying... [id=133][0m[0m[0m
+[0;90m17:27:32.792[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.proxmox_virtual_environment_container.docker_host: Modifications complete after 9s [id=133][0m[0m
+[0;90m17:27:32.795[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Creating...[0m[0m[0m
+[0;90m17:27:32.797[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Creation complete after 0s [id=623afe6f08449aa46ea6c4bf899814f0ce6bf60f][0m[0m
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1m[32m[0m
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0mApply complete! Resources: 1 added, 1 changed, 1 destroyed.
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[0m[1m[32m[0m
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0mOutputs:
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[0m
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0mstack = {
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "container_id" = 133
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "hostname" = "net-service-01"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "ip_address" = "192.168.40.62/24"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "network" = {
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "attachment_name" = "infra_seg"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "attachment_type" = "sdn_vnet"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "bridge" = "tvinfra"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "firewall" = false
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "intent" = "/home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test.yaml"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "sdn_vnet" = "tvinfra"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "vlan_tag" = null
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m    "zone" = "infra_seg"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  }
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "pve_host" = "pve-test.gibbsgreatly.xyz"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m  "target_node" = "pve-test"
+[0;90m17:27:32.804[0m [0;37mSTDOUT[0m [0;36mtofu: [0m}

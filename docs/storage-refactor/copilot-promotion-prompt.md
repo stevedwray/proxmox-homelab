@@ -1,69 +1,63 @@
-# Copilot Promotion Prompt
+# Copilot Storage Refactor Promotion Prompt
 
-Continue from the current validated SSD cutover branch in
+Continue from the current validated storage-refactor branch in
 `/home/steve/git/proxmox-homelab`.
 
 Start by reading:
 
 - `docs/storage-refactor/README.md`
 - `docs/storage-refactor/plan.md`
-- `docs/teardown-test/reports/20260517-033905-storage-refactor-gate.md`
-- the latest SSD cutover gate evidence under
-  `docs/teardown-test/evidence/20260517-044924/`
+- the latest gate evidence and validation notes produced by this refactor
 
-Current state
+Use this prompt only after the branch has:
 
-- Branch: `work/storage-ssd-cutover`
-- Latest validated commit: `bc6a9a3` (`config: cut pve-test storage policy over to SSD-backed pools`)
-- The full teardown + redeploy cycle for the SSD cutover passed on stamp
-  `20260517-044924`.
-- The working tree should remain respectful of unrelated local edits such as
-  `next-session.md`.
+- passed the required final validations
+- passed required scans or explicitly accepted findings
+- passed the repo's infrastructure promotion gate
 
-Your job for this pass
+Your job for this pass:
 
 1. Capture promotion-ready closure.
-   - Create or update a tracked closeout report for the SSD cutover gate.
-   - Summarize:
-     - branch and commit used for the gate
-     - evidence stamp and path
-     - the fact that platform stacks now validated on SSD-backed storage policy
-     - any prerequisite discovered during the run, such as template placement on
-       `local`
-     - whether any regressions were found and fixed during the cycle
+   - create or update a tracked closeout note if needed
+   - summarize the branch, commit, evidence stamp, and scope of validated
+     storage safety changes
+
+Working rules:
+
+- do not create sibling worktrees under `..`
+- work in the current checkout unless a clean worktree is strictly required for
+  a gate or proof flow
+- if a clean worktree is strictly required, place it under
+  `/tmp/proxmox-homelab-worktrees/` and remove it when finished
+- do not create tracked temporary documents, evidence files, handoff notes, or
+  handback notes unless they are durable artifacts that truly need to survive
+  across branches or sessions
+- prefer inline promotion hand-back in the response and ignored/temp
+  locations for transient notes or evidence
 
 2. Prepare the branch for promotion.
-   - Ensure the branch is clean except for intentionally excluded unrelated
-     local edits.
-   - Commit the cutover closeout documentation if needed.
-   - Do not include `next-session.md` or ad hoc local scratch files unless they
-     are explicitly part of the promotion artifact.
+   - keep the working tree clean except for intentionally excluded unrelated
+     local edits
+   - ensure the promotion artifact does not include scratch files
 
 3. Promote to `baseline/teardown-validated`.
-   - Follow the repo branching model exactly.
-   - Merge the validated `work/storage-ssd-cutover` branch into
-     `baseline/teardown-validated`.
-   - Preserve the gate evidence and report references so future sessions can see
-     why this promotion is valid.
+   - follow the repo branch model exactly
+   - preserve evidence references so future sessions can see why the promotion
+     is valid
+   - note explicitly that this promotion proves the `pve-test`-validated
+     storage safety contract, while later `pve` rollout remains separate
+     follow-on work
 
 4. Leave the repo in a clear post-promotion state.
-   - Summarize what was merged.
-   - Confirm the exact baseline branch commit after promotion.
-   - Note any follow-up work that should happen on a fresh short-lived branch
-     rather than on baseline.
+   - summarize what was merged
+   - confirm the resulting baseline commit
+   - note follow-up work that belongs on a fresh short-lived branch
 
-Working rules
+Definition of done for this pass:
 
-- Do not rerun the full destructive gate unless you find a concrete reason the
-  completed result is invalid.
-- Do not redesign the storage model.
-- Do not touch unrelated local edits.
-- Optimize for a clean, auditable promotion from validated work branch to
-  `baseline/teardown-validated`.
+- the validated storage-refactor branch is merged to
+  `baseline/teardown-validated`, or
+- the exact promotion blocker is documented clearly
 
-Definition of done for this pass
-
-- The SSD cutover gate result is captured in tracked documentation.
-- The validated branch is merged to `baseline/teardown-validated`, or an exact
-  blocker is documented.
-- The resulting branch/commit state is summarized clearly for the next session.
+The hand-back must be review-ready in the response itself, not only written to
+files.

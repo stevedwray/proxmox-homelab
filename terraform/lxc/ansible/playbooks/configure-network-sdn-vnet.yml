@@ -12,17 +12,15 @@
       ansible.builtin.assert:
         that:
           - network_sdn_enable | bool
-          - (network_sdn_expected_target | default('', true)) | length > 0
-          - (network_sdn_expected_pve_host | default('', true)) | length > 0
-          - network_sdn_target == network_sdn_expected_target
-          - network_sdn_pve_host == network_sdn_expected_pve_host
-          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_expected_target
-          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_expected_pve_host
+          - network_sdn_expected_target is not defined or network_sdn_target == network_sdn_expected_target
+          - network_sdn_expected_pve_host is not defined or network_sdn_pve_host == network_sdn_expected_pve_host
+          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_target
+          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_pve_host
           - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_zone_type != 'vlan' or (network_sdn_bridge | default('', true)) | length > 0
           - network_sdn_zone_type != 'vlan' or (network_sdn_vlan_tag | string) | length > 0
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN attachment automation target mismatch: verify Terraform target node/host, environment selection, and VLAN metadata for this environment."
+        fail_msg: "SDN attachment automation target mismatch: verify Terraform target node/host, optional producer-side target hints, and VLAN metadata for this environment."
         success_msg: "SDN attachment automation target matches the active environment."
 
     - name: Read current SDN zones

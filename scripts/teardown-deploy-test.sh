@@ -26,14 +26,18 @@ if [[ "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
   DEFAULT_WITH_SECRETS_WRAPPER="with-secrets-prod"
   DEFAULT_TARGET_PVE_HOST="${PVE_PROD_FQDN:-pve.gibbsgreatly.xyz}"
   DEFAULT_ENV_HINT=".env.pve"
-else
+elif [[ "${TARGET_NODE_EXPECTED}" == "pve-test" ]]; then
   DEFAULT_WITH_SECRETS_WRAPPER="with-secrets"
   DEFAULT_TARGET_PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
   DEFAULT_ENV_HINT=".env.pve-test"
+else
+  DEFAULT_WITH_SECRETS_WRAPPER="with-secrets"
+  DEFAULT_TARGET_PVE_HOST="${PVE_PROD_FQDN:-${TARGET_NODE_EXPECTED}.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.${TARGET_NODE_EXPECTED}"
 fi
 WITH_SECRETS="${TEARDOWN_WITH_SECRETS:-${REPO_ROOT}/${DEFAULT_WITH_SECRETS_WRAPPER}}"
 TARGET_PVE_HOST="${TEARDOWN_PVE_HOST:-${DEFAULT_TARGET_PVE_HOST}}"
-TARGET_ENV_FILE="${REPO_ROOT}/${DEFAULT_ENV_HINT}"
+TARGET_ENV_FILE="${TEARDOWN_ENV_FILE:-${REPO_ROOT}/${DEFAULT_ENV_HINT}}"
 REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
@@ -119,7 +123,6 @@ LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
 LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
 LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
 LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
-BROWSER_DNS_TARGET_IP="${LAB_IP_PROXY:-}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
 EXPECTED_RUNTIME_DIRTY_PATHS=(
@@ -230,6 +233,13 @@ set_phase_failure_context() {
   CURRENT_PHASE_FAILURE_COMMAND="${command}"
   CURRENT_PHASE_FAILURE_LOG="${log_path}"
   CURRENT_PHASE_FAILURE_MESSAGE="${message}"
+}
+
+clear_phase_failure_context() {
+  CURRENT_PHASE_FAILURE_STEP=""
+  CURRENT_PHASE_FAILURE_COMMAND=""
+  CURRENT_PHASE_FAILURE_LOG=""
+  CURRENT_PHASE_FAILURE_MESSAGE=""
 }
 
 init_state_file() {
@@ -435,6 +445,7 @@ run_phase_handler() {
 
     trap - ERR
     CURRENT_PHASE_END_TIME="$(now_utc)"
+    clear_phase_failure_context
     write_current_phase_state "passed" "0"
   )
 }
@@ -758,6 +769,22 @@ def normalize_ip(value: str) -> str:
     return clean_cell(value).split("/", 1)[0]
 
 
+PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def expand_stack_placeholders(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        candidates = (name, name.upper(), f"TF_VAR_{name}")
+        for candidate in candidates:
+            value = os.environ.get(candidate)
+            if value:
+                return value
+        return match.group(0)
+
+    return PLACEHOLDER_PATTERN.sub(replace, text)
+
+
 def parse_stack_table(text: str) -> None:
     in_table = False
     for line in text.splitlines():
@@ -799,16 +826,16 @@ def parse_order_section(text: str, header: str) -> list[str]:
 
 
 def read_stack_yaml(stack: str) -> tuple[str, str]:
-    stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
-    if not stack_yaml.is_file():
-        raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
+  stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
+  if not stack_yaml.is_file():
+    raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
 
-    text = os.path.expandvars(stack_yaml.read_text(encoding="utf-8"))
-    vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
-    ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
-    if not vmid_match or not ip_match:
-        raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
-    return vmid_match.group(1), normalize_ip(ip_match.group(1))
+  text = expand_stack_placeholders(stack_yaml.read_text(encoding="utf-8"))
+  vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
+  ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
+  if not vmid_match or not ip_match:
+    raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
+  return vmid_match.group(1), normalize_ip(ip_match.group(1))
 
 
 parse_stack_table(inventory_text)
@@ -876,6 +903,63 @@ log_stack_plan() {
   printf '%s\n' "$@" | tee -a "${RUN_LOG}"
 }
 
+stack_uses_explicit_storage_contract() {
+  local stack="$1"
+  local stack_yaml="${REPO_ROOT}/terraform/lxc/stacks/${stack}/stack.yaml"
+
+  [[ -f "${stack_yaml}" ]] || return 1
+  grep -Eq '^(docker_mount|extra_mount):' "${stack_yaml}"
+}
+
+review_storage_plan_safety() {
+  local spec="$1"
+  local stack planfile planjson classified
+
+  stack="$(stack_name "${spec}")"
+  if ! stack_uses_explicit_storage_contract "${stack}"; then
+    log "skip storage-plan-review-${stack}: stack does not declare explicit storage contract"
+    return 0
+  fi
+
+  planfile="${LOG_DIR}/${stack}-storage.tfplan"
+  planjson="${LOG_DIR}/${stack}-storage.plan.json"
+  classified="${LOG_DIR}/${stack}-storage.classified.json"
+
+  run_logged "storage-plan-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
+  run_logged "storage-plan-json-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt show -json '${planfile}' >'${planjson}'"
+  run_logged "storage-plan-classify-${stack}" \
+    python3 "${TERRAFORM_LXC}/classify-storage-plan.py" --plan-json "${planjson}" --stack-name "${stack}" --out "${classified}"
+  run_logged "storage-plan-safety-${stack}" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${planjson}"
+}
+
+run_storage_classifier_regression_checks() {
+  local nonstorage_plan="${LOG_DIR}/storage-plan-nonstorage-fixture.json"
+  local unsafe_log="${LOG_DIR}/storage-plan-known-unsafe.log"
+
+  cat >"${nonstorage_plan}" <<'EOF'
+{
+  "resource_changes": [
+    {
+      "address": "module.lxc.proxmox_virtual_environment_container.docker_host",
+      "change": {
+        "actions": ["update"],
+        "before": {"memory": {"dedicated": 1024}},
+        "after": {"memory": {"dedicated": 2048}}
+      }
+    }
+  ]
+}
+EOF
+
+  run_logged "storage-plan-safety-nonstorage-fixture" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${nonstorage_plan}"
+  run_logged "storage-plan-safety-known-unsafe" \
+    bash -lc "if python3 '${TERRAFORM_LXC}/check-plan-safety.py' --plan-json '${REPO_ROOT}/docs/storage-refactor/fixtures/fixture-docker-grow-plan.json' >'${unsafe_log}' 2>&1; then echo 'expected unsafe storage fixture to fail' >&2; exit 1; else status=\$?; cat '${unsafe_log}'; [[ \"\${status}\" -eq 2 ]]; fi"
+}
+
 load_stack_specs() {
   local group="$1"
   local target_name="$2"
@@ -912,6 +996,30 @@ get_authentik_url() {
   return 0
 }
 
+hydrate_live_env_contract() {
+  local key value
+  local vars=(
+    LAB_IP_AUTHENTIK
+    LAB_IP_STEP_CA
+    LAB_IP_DNS
+    LAB_IP_PORTAINER
+    LAB_IP_PROXY
+    LAB_GW_MGMT
+  )
+
+  for key in "${vars[@]}"; do
+    if [[ -n "${!key:-}" ]]; then
+      continue
+    fi
+
+    value="$("${WITH_SECRETS}" bash -lc "printf '%s' \"\${${key}:-}\"")"
+    if [[ -n "${value}" ]]; then
+      printf -v "${key}" '%s' "${value}"
+      export "${key}=${value}"
+    fi
+  done
+}
+
 require_live_env_contract() {
   local missing=()
   local vars=(
@@ -922,6 +1030,8 @@ require_live_env_contract() {
     LAB_IP_PROXY
     LAB_GW_MGMT
   )
+
+  hydrate_live_env_contract
 
   for key in "${vars[@]}"; do
     if [[ -z "${!key:-}" ]]; then
@@ -1283,7 +1393,7 @@ stack_apply() {
 
   guard_target
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt apply -auto-approve"
   guard_target
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
@@ -1297,8 +1407,13 @@ stack_destroy() {
   vmid="$(stack_vmid "${spec}")"
 
   guard_target
-  run_logged "destroy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}' && '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
+  else
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
+  fi
   run_logged "verify-destroy-${stack}" \
     ssh -F /dev/null "root@${TARGET_PVE_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
@@ -1309,6 +1424,8 @@ validate_stack_smoke() {
   stack="$(stack_name "${spec}")"
   vmid="$(stack_vmid "${spec}")"
   ip="$(stack_ip "${spec}")"
+
+  hydrate_live_env_contract
 
   run_logged "pct-status-${stack}" \
     ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
@@ -1652,6 +1769,7 @@ run_source_preflight_checks() {
     --stacks-dir "${TERRAFORM_LXC}/stacks" \
     --proxmox-node "${TARGET_NODE_EXPECTED}" \
     --offline
+  run_storage_classifier_regression_checks
   run_logged "validate-edge-manifests" \
     python3 "${TERRAFORM_LXC}/validate-edge-manifests.py" "${TERRAFORM_LXC}"/stacks/*/edge.yaml
   run_logged "edge-unit-tests" \
@@ -1719,6 +1837,7 @@ run_live_preflight_checks() {
     curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -1762,9 +1881,12 @@ phase_preflight() {
 phase_plan() {
   local -a foundation_specs edge_specs platform_specs destroy_specs
   local -a state_specs
+  local spec
 
   create_evidence_dirs
   log "evidence_dir=${EVIDENCE_DIR}"
+  record_working_tree_state
+  record_branch_and_commit
   load_stack_specs foundation foundation_specs
   load_stack_specs edge edge_specs
   load_stack_specs platform platform_specs
@@ -1788,6 +1910,18 @@ phase_plan() {
   log_stack_plan "edge" "${edge_specs[@]}"
   log_stack_plan "platform" "${platform_specs[@]}"
   log_stack_plan "destroy" "${destroy_specs[@]}"
+
+  require_live_env_contract
+  guard_target
+  for spec in "${foundation_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${edge_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${platform_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
 }
 
 phase_platform_status() {
@@ -1861,6 +1995,7 @@ phase_activate_edge() {
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
 
@@ -1873,6 +2008,7 @@ phase_activate_edge() {
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -1892,17 +2028,27 @@ phase_deploy_platform() {
 }
 
 phase_final_validation() {
-  local host fqdn authentik_url bg_host bg_fqdn
+  local host fqdn authentik_url bg_host bg_fqdn browser_dns_target_ip
   create_evidence_dirs
   record_working_tree_state
   require_live_env_contract
   guard_target
   authentik_url="$(get_authentik_url)" || return 1
+  browser_dns_target_ip="${LAB_IP_PROXY:-}"
+
+  if [[ -z "${browser_dns_target_ip}" ]]; then
+    set_phase_failure_context \
+      "resolve-browser-dns-target" \
+      "LAB_IP_PROXY" \
+      "${RUN_LOG}" \
+      "LAB_IP_PROXY is required for final browser DNS validation"
+    return 1
+  fi
 
   for host in "${BROWSER_HOSTS[@]}"; do
     fqdn="${host}.${LAB_DOMAIN}"
-    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
+    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${browser_dns_target_ip}"
+    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${browser_dns_target_ip}"
     run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
@@ -1916,6 +2062,7 @@ phase_final_validation() {
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
   run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }

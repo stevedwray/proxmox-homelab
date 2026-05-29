@@ -5,11 +5,18 @@ gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
 vmid: 20010
 cores: 2
-memory: 2048
+memory: 3072
 swap: 1024
 rootfs_size: 8
 storage_profile: platform-default
-docker_storage_size: "20G"
+docker_storage_size: "22G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "22G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - authentik

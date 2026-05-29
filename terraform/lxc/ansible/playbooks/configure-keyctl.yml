@@ -12,6 +12,9 @@
   vars:
     proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
 
+  vars:
+    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
+
   tasks:
     - name: Set keyctl feature flag via pct
       ansible.builtin.command:

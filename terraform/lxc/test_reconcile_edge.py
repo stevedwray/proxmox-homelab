@@ -25,6 +25,23 @@ SPEC.loader.exec_module(MODULE)
 
 
 class TestReconcileEdge(unittest.TestCase):
+    def test_import_tolerates_missing_lab_ip_dns(self):
+        spec = importlib.util.spec_from_file_location("reconcile_edge_missing_dns", MODULE_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+
+        previous_dns = os.environ.pop("LAB_IP_DNS", None)
+        try:
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+        finally:
+            if previous_dns is not None:
+                os.environ["LAB_IP_DNS"] = previous_dns
+            sys.modules.pop(spec.name, None)
+
+        args = module.parse_args([])
+        self.assertEqual("", args.coredns_probe_server)
+
     def test_parse_args_defaults_to_dry_run(self):
         args = MODULE.parse_args([])
         self.assertFalse(args.apply)

@@ -7,14 +7,29 @@ network:
   zone: edge_seg
 vmid: 30010
 cores: 1
-memory: 512
-swap: 256
+memory: 1024
+swap: 512
 rootfs_size: 8
-storage_profile: platform-default
-docker_storage_size: "5G"
+storage_profile: platform-zfs
+docker_storage_size: "7G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "7G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 extra_mount_path: "/opt/proxy-stack/certs"
-extra_mount_size: "5G"
-extra_mount_profile: durable-default
+extra_mount_size: "10G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: proxy-certs
+  path: /opt/proxy-stack/certs
+  size: "10G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - traefik

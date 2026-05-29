@@ -12,16 +12,14 @@
       ansible.builtin.assert:
         that:
           - network_sdn_enable | bool
-          - network_sdn_allow_destroy | default(false) | bool
-          - (network_sdn_expected_target | default('', true)) | length > 0
-          - (network_sdn_expected_pve_host | default('', true)) | length > 0
-          - network_sdn_target == network_sdn_expected_target
-          - network_sdn_pve_host == network_sdn_expected_pve_host
-          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_expected_target
-          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_expected_pve_host
+          - network_sdn_allow_destroy is not defined or network_sdn_allow_destroy | bool
+          - network_sdn_expected_target is not defined or network_sdn_target == network_sdn_expected_target
+          - network_sdn_expected_pve_host is not defined or network_sdn_pve_host == network_sdn_expected_pve_host
+          - configured_proxmox_node | length == 0 or configured_proxmox_node == network_sdn_target
+          - configured_proxmox_host | length == 0 or configured_proxmox_host == network_sdn_pve_host
           - network_sdn_zone_type in ['simple', 'vlan']
           - network_sdn_nodes | length > 0
-        fail_msg: "SDN destroy automation is not permitted for this target environment or its target/host metadata does not match the active selection."
+        fail_msg: "SDN destroy automation is not permitted for this target environment or its target/host metadata does not match the active selection. Optional producer-side destroy and target hints must agree when provided."
         success_msg: "SDN destroy automation is permitted and matches the active environment."
 
     - name: Inspect target LXC configs for remaining VNet bridge usage

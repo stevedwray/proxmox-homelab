@@ -23,7 +23,9 @@ Destroy the approved pve-test stack set in a controlled order and verify absence
 
 1. Re-run target guard.
 2. Announce stack list and rollback deadline.
-3. Destroy stacks in reverse approved dependency order.
+3. Destroy stacks in reverse approved dependency order via the harness helper so
+  already-stopped CTs and missing local state ownership are repaired before
+  `terragrunt destroy` runs.
 4. Verify selected VMIDs are absent.
 5. Preserve destroy output in evidence.
 

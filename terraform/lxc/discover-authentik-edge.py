@@ -420,8 +420,23 @@ def _oidc_client_secret_env(intent: RouteIntent) -> str | None:
     return OIDC_ROUTE_CLIENT_SECRETS.get(_oidc_route_key(intent))
 
 
+def _oidc_base_url(intent: RouteIntent) -> str:
+    if _oidc_route_key(intent) == ("harbor-stack", "harbor"):
+        external_url = os.environ.get("HARBOR_EXTERNAL_URL", "").strip()
+        if external_url:
+            parsed = urlparse(external_url if "://" in external_url else f"https://{external_url}")
+            if parsed.scheme and parsed.netloc:
+                return f"{parsed.scheme}://{parsed.netloc}"
+
+        hostname = os.environ.get("HARBOR_HOSTNAME", "").strip()
+        if hostname:
+            return f"https://{hostname}"
+
+    return f"https://{intent.host}"
+
+
 def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
-    base_url = f"https://{intent.host}"
+    base_url = _oidc_base_url(intent)
     if _oidc_route_key(intent) == ("harbor-stack", "harbor"):
         return (f"{base_url}/c/oidc/callback",)
     if _oidc_route_key(intent) == ("monitoring-stack", "grafana"):
@@ -773,7 +788,7 @@ def _resolve_oidc_candidates(
     intent: RouteIntent,
     inventory: AuthentikInventory,
 ) -> tuple[dict[str, Any] | None, dict[str, Any] | None, bool, list[str]]:
-    host = intent.host.lower()
+    host = _normalize_url_host(_oidc_base_url(intent)) or intent.host.lower()
     expected_client_id = _oidc_client_id(intent)
     app_candidates = _pick_candidates(
         inventory.applications,
@@ -840,7 +855,13 @@ def _classify_oidc_route(
     if prov_differing:
         differing = True
 
-    app_reasons, app_ids, app_differing = _check_app_match(intent, app, intent.host.lower(), provider_id_for_links)
+    expected_launch_host = _normalize_url_host(_oidc_base_url(intent)) or intent.host.lower()
+    app_reasons, app_ids, app_differing = _check_app_match(
+        intent,
+        app,
+        expected_launch_host,
+        provider_id_for_links,
+    )
     reasons.extend(app_reasons)
     identifiers.extend(app_ids)
     if app_differing:

@@ -39,6 +39,18 @@ is_truthy() {
   esac
 }
 
+resolve_secrets_file_hint() {
+  local pve_env="${PVE_ENV:-}"
+  local proxmox_node="${TF_VAR_proxmox_node:-}"
+
+  if [[ "$pve_env" == "pve" || "$proxmox_node" == "pve" ]]; then
+    printf 'terraform/secrets.pve.enc.yaml'
+    return 0
+  fi
+
+  printf 'terraform/secrets.enc.yaml'
+}
+
 ensure_portainer_oauth_secret() {
   local stack="$1"
   local oauth_enabled="${PORTAINER_OAUTH_ENABLED:-true}"
@@ -62,7 +74,7 @@ ensure_portainer_oauth_secret() {
   PORTAINER_OAUTH_CLIENT_SECRET="$(openssl rand -hex 32)"
   export PORTAINER_OAUTH_CLIENT_SECRET
   log "Generated PORTAINER_OAUTH_CLIENT_SECRET for this deploy run (in-memory only)"
-  log "Persist this secret to terraform/secrets.enc.yaml after this run for reproducibility"
+  log "Persist this secret to $(resolve_secrets_file_hint) after this run for reproducibility"
 
   [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
 

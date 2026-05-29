@@ -1,0 +1,20 @@
+[basic-sdn] validate playbook
+
+PLAY [Validate basic SDN smoke path] *******************************************
+
+TASK [Confirm untagged baseline path from pve-test to MikroTik management IP] ***
+ok: [localhost]
+
+TASK [Check build container status] ********************************************
+[ERROR]: Task failed: Module failed: The command exited with a non-zero return code.
+Origin: /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/validate-sdn-basic.yml:20:7
+
+18       changed_when: false
+19
+20     - name: Check build container status
+         ^ column 7
+
+fatal: [localhost]: FAILED! => {"changed": false, "changed_when_result": false, "cmd": ["ssh", "-F", "/dev/null", "root@pve-test.gibbsgreatly.xyz", "pct status 139"], "delta": "0:00:01.485840", "end": "2026-05-28 17:08:41.489494", "msg": "The command exited with a non-zero return code.", "rc": 2, "start": "2026-05-28 17:08:40.003654", "stderr": "Configuration file 'nodes/pve-test/lxc/139.conf' does not exist", "stderr_lines": ["Configuration file 'nodes/pve-test/lxc/139.conf' does not exist"], "stdout": "", "stdout_lines": []}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0

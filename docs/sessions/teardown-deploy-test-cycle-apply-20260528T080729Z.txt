@@ -1,0 +1,8 @@
+[2026-05-28T08:07:29Z] disposable mode enabled; skipping approval packet validation
+[2026-05-28T08:07:29Z] disposable mode enabled; skipping approval packet validation
+[2026-05-28T08:07:29Z] disposable mode enabled; skipping backup artifact validation
+[2026-05-28T08:07:29Z] ERROR working tree is dirty
+ M docs/sessions/net-service-01-ansible-ping-20260528T080550Z.txt
+ M docs/sessions/net-service-01-plan-after-revert-20260528T080410Z.txt
+?? docs/sessions/teardown-deploy-test-cycle-apply-20260528T080729Z.txt
+exit status 1

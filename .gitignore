@@ -1,9 +1,11 @@
 # Operational cutover evidence snapshots (local only)
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
+docs/**/handoffs/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
+docs/productionize-refactor/handoffs/*handoff*.md
 # Environment files
 storage-audit
 .env.local
@@ -90,3 +92,6 @@ certs/homelab-root.crt
 # BMAD GenAI tooling (not committed — sourced from bmad-core)
 # .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
+
+# Local CI artifacts (logs, scan outputs)
+artifacts/

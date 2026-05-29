@@ -41,9 +41,9 @@ harbor_postconfigure_oidc_endpoint: ""
 harbor_postconfigure_oidc_client_id: ""
 harbor_postconfigure_oidc_client_secret: ""
 harbor_postconfigure_oidc_groups_claim: "groups"
-harbor_postconfigure_oidc_admin_group: ""
-harbor_postconfigure_oidc_group_filter: ""
-harbor_postconfigure_oidc_scope: "openid,profile,email,offline_access"
+harbor_postconfigure_oidc_admin_group: "homelab-admins"
+harbor_postconfigure_oidc_group_filter: "^homelab-.*|^harbor-.*"
+harbor_postconfigure_oidc_scope: "openid,profile,email,offline_access,groups"
 harbor_postconfigure_oidc_user_claim: "preferred_username"
 harbor_postconfigure_oidc_verify_cert: true
 harbor_postconfigure_oidc_auto_onboard: true
