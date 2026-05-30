@@ -369,12 +369,18 @@ for stack in "${ordered_stacks[@]}"; do
 
   cmd=(ansible-playbook -i "$inventory_file" "$playbook_file")
 
-  # Pass generated zone file for dns-stack if it exists
+  # Always regenerate zone from EdgeManifests before deploying dns-stack so the
+  # live zone is never stale with respect to declared routes.
   if [[ "$stack" == "dns-stack" ]]; then
     generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
-    if [[ -f "$generated_zone" ]]; then
-      cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
-    fi
+    generated_zone_dir="$(dirname "$generated_zone")"
+    mkdir -p "$generated_zone_dir"
+    log "Regenerating CoreDNS zone from EdgeManifests"
+    python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
+      --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
+      --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
+      --output-zone "$generated_zone"
+    cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
   fi
 
   if [[ "$check_mode" == "true" ]]; then
