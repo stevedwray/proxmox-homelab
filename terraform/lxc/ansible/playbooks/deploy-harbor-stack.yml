@@ -212,3 +212,14 @@
       community.docker.docker_compose_v2:
         project_src: "{{ harbor_cadvisor_compose_dir }}"
         state: present
+
+- name: Install and configure Promtail on Harbor host
+  hosts: all
+  gather_facts: false
+  vars:
+    lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+  roles:
+    - role: promtail
+      vars:
+        promtail_loki_url: "{{ lab_ip_monitoring }}:3100"
+        promtail_stack_name: harbor-stack

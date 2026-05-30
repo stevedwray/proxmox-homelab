@@ -300,6 +300,13 @@
         - "/tmp/coredns_{{ coredns_version }}_linux_amd64.tgz"
         - "{{ coredns_install_dir }}"
 
+    - name: Install and configure Promtail
+      ansible.builtin.include_role:
+        name: promtail
+      vars:
+        promtail_loki_url: "{{ lab_ip_monitoring }}:3100"
+        promtail_stack_name: dns-stack
+
   handlers:
     - name: Restart CoreDNS service
       ansible.builtin.systemd:
