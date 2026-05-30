@@ -111,6 +111,8 @@
                     scheme: https
             websecure:
               address: ":443"
+            metrics:
+              address: ":8082"
 
           certificatesResolvers:
             letsencrypt:
@@ -142,6 +144,10 @@
 
           log:
             level: INFO
+
+          metrics:
+            prometheus:
+              entryPoint: metrics
 
     - name: Write shared Authentik middleware config
       ansible.builtin.copy:
@@ -246,6 +252,7 @@
               ports:
                 - "80:80"
                 - "443:443"
+                - "8082:8082"
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./traefik.yml:/etc/traefik/traefik.yml:ro

@@ -1,9 +1,17 @@
 {
   "__inputs": [
-    { "name": "VAR_INSTANCE", "label": "Instance", "description": "", "type": "datasource", "pluginId": "prometheus" }
+    {
+      "name": "VAR_INSTANCE",
+      "label": "Instance",
+      "description": "",
+      "type": "datasource",
+      "pluginId": "prometheus"
+    }
   ],
   "__requires": [],
-  "annotations": { "list": [] },
+  "annotations": {
+    "list": []
+  },
   "description": "Detailed node_exporter metrics for a selected host",
   "editable": true,
   "fiscalYearStartMonth": 0,
@@ -13,29 +21,59 @@
   "panels": [
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 0
+      },
       "id": 1,
       "title": "CPU",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "percentunit",
           "min": 0,
           "max": 1
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 1
+      },
       "id": 2,
-      "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "max"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "avg by (mode) (rate(node_cpu_seconds_total{instance=~\"$instance\"}[5m]))",
+          "expr": "avg by (mode) (rate(node_cpu_seconds_total{stack=~\"$stack\"}[5m]))",
           "legendFormat": "{{mode}}",
           "refId": "A"
         }
@@ -44,31 +82,55 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 1 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 1
+      },
       "id": 3,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "node_load1{instance=~\"$instance\"}",
+          "expr": "node_load1{stack=~\"$stack\"}",
           "legendFormat": "1m",
           "refId": "A"
         },
         {
-          "expr": "node_load5{instance=~\"$instance\"}",
+          "expr": "node_load5{stack=~\"$stack\"}",
           "legendFormat": "5m",
           "refId": "B"
         },
         {
-          "expr": "node_load15{instance=~\"$instance\"}",
+          "expr": "node_load15{stack=~\"$stack\"}",
           "legendFormat": "15m",
           "refId": "C"
         }
@@ -78,37 +140,67 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 9
+      },
       "id": 4,
       "title": "Memory",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "bytes"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 10 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 10
+      },
       "id": 5,
-      "options": { "legend": { "calcs": ["mean", "last"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "node_memory_MemTotal_bytes{instance=~\"$instance\"}",
+          "expr": "node_memory_MemTotal_bytes{stack=~\"$stack\"}",
           "legendFormat": "Total",
           "refId": "A"
         },
         {
-          "expr": "node_memory_MemAvailable_bytes{instance=~\"$instance\"}",
+          "expr": "node_memory_MemAvailable_bytes{stack=~\"$stack\"}",
           "legendFormat": "Available",
           "refId": "B"
         },
         {
-          "expr": "node_memory_Cached_bytes{instance=~\"$instance\"} + node_memory_Buffers_bytes{instance=~\"$instance\"}",
+          "expr": "node_memory_Cached_bytes{stack=~\"$stack\"} + node_memory_Buffers_bytes{stack=~\"$stack\"}",
           "legendFormat": "Cache+Buffers",
           "refId": "C"
         }
@@ -117,26 +209,51 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "bytes"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 10 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 10
+      },
       "id": 6,
-      "options": { "legend": { "calcs": ["mean", "last"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean",
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "node_memory_SwapTotal_bytes{instance=~\"$instance\"}",
+          "expr": "node_memory_SwapTotal_bytes{stack=~\"$stack\"}",
           "legendFormat": "Swap Total",
           "refId": "A"
         },
         {
-          "expr": "node_memory_SwapFree_bytes{instance=~\"$instance\"}",
+          "expr": "node_memory_SwapFree_bytes{stack=~\"$stack\"}",
           "legendFormat": "Swap Free",
           "refId": "B"
         }
@@ -146,32 +263,61 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 18 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 18
+      },
       "id": 7,
       "title": "Disk",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "Bps"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 19 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 19
+      },
       "id": 8,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "rate(node_disk_read_bytes_total{instance=~\"$instance\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(node_disk_read_bytes_total{stack=~\"$stack\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Read {{device}}",
           "refId": "A"
         },
         {
-          "expr": "rate(node_disk_written_bytes_total{instance=~\"$instance\",device!~\"loop.*\"}[5m])",
+          "expr": "rate(node_disk_written_bytes_total{stack=~\"$stack\",device!~\"loop.*\"}[5m])",
           "legendFormat": "Write {{device}}",
           "refId": "B"
         }
@@ -180,23 +326,47 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "percentunit",
           "min": 0,
           "max": 1
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 19 },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 19
+      },
       "id": 9,
-      "options": { "legend": { "calcs": ["last"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "last"
+          ],
+          "displayMode": "table",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "1 - (node_filesystem_avail_bytes{instance=~\"$instance\",fstype!=\"tmpfs\",fstype!=\"overlay\"} / node_filesystem_size_bytes{instance=~\"$instance\",fstype!=\"tmpfs\",fstype!=\"overlay\"})",
+          "expr": "1 - (node_filesystem_avail_bytes{stack=~\"$stack\",fstype!=\"tmpfs\",fstype!=\"overlay\"} / node_filesystem_size_bytes{stack=~\"$stack\",fstype!=\"tmpfs\",fstype!=\"overlay\"})",
           "legendFormat": "{{mountpoint}}",
           "refId": "A"
         }
@@ -206,32 +376,61 @@
     },
     {
       "collapsed": false,
-      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 27 },
+      "gridPos": {
+        "h": 1,
+        "w": 24,
+        "x": 0,
+        "y": 27
+      },
       "id": 10,
       "title": "Network",
       "type": "row"
     },
     {
-      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "datasource": {
+        "type": "prometheus",
+        "uid": "VictoriaMetrics"
+      },
       "fieldConfig": {
         "defaults": {
-          "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "color": {
+            "mode": "palette-classic"
+          },
+          "custom": {
+            "lineWidth": 1,
+            "fillOpacity": 10
+          },
           "unit": "Bps"
         },
         "overrides": []
       },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 28 },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 28
+      },
       "id": 11,
-      "options": { "legend": { "calcs": ["mean"], "displayMode": "list", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "legend": {
+          "calcs": [
+            "mean"
+          ],
+          "displayMode": "list",
+          "placement": "bottom"
+        },
+        "tooltip": {
+          "mode": "multi"
+        }
+      },
       "targets": [
         {
-          "expr": "rate(node_network_receive_bytes_total{instance=~\"$instance\",device!~\"lo|veth.*|br-.*|docker.*\"}[5m])",
+          "expr": "rate(node_network_receive_bytes_total{stack=~\"$stack\",device!~\"lo|veth.*|br-.*|docker.*\"}[5m])",
           "legendFormat": "RX {{device}}",
           "refId": "A"
         },
         {
-          "expr": "rate(node_network_transmit_bytes_total{instance=~\"$instance\",device!~\"lo|veth.*|br-.*|docker.*\"}[5m])",
+          "expr": "rate(node_network_transmit_bytes_total{stack=~\"$stack\",device!~\"lo|veth.*|br-.*|docker.*\"}[5m])",
           "legendFormat": "TX {{device}}",
           "refId": "B"
         }
@@ -242,27 +441,40 @@
   ],
   "refresh": "1m",
   "schemaVersion": 38,
-  "tags": ["lab", "node"],
+  "tags": [
+    "lab",
+    "node"
+  ],
   "templating": {
     "list": [
       {
         "current": {},
-        "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
-        "definition": "label_values(node_cpu_seconds_total, instance)",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "VictoriaMetrics"
+        },
+        "definition": "label_values(node_cpu_seconds_total{job=\"node_exporter\"}, stack)",
         "hide": 0,
         "includeAll": false,
         "multi": false,
-        "name": "instance",
+        "name": "stack",
         "options": [],
-        "query": { "query": "label_values(node_cpu_seconds_total, instance)", "refId": "A" },
+        "query": {
+          "query": "label_values(node_cpu_seconds_total{job=\"node_exporter\"}, stack)",
+          "refId": "A"
+        },
         "refresh": 2,
         "regex": "",
         "sort": 1,
-        "type": "query"
+        "type": "query",
+        "label": "Stack"
       }
     ]
   },
-  "time": { "from": "now-3h", "to": "now" },
+  "time": {
+    "from": "now-3h",
+    "to": "now"
+  },
   "timepicker": {},
   "timezone": "browser",
   "title": "Node Detail",
