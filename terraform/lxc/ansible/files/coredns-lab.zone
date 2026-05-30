@@ -16,7 +16,7 @@ ns1             IN  A   ${LAB_IP_DNS}
 authentik       A   ${LAB_IP_PROXY}     ; identity provider (via Traefik)
 step-ca         A   ${LAB_IP_STEP_CA}   ; internal CA
 monitoring      A   ${LAB_IP_MONITORING}; observability stack
-grafana         A   ${LAB_IP_MONITORING}; Grafana (alias for monitoring stack)
+grafana         A   ${LAB_IP_PROXY}     ; Grafana (via Traefik)
 
 ; Phase 04 edge services (edge_seg)
 traefik         A   ${LAB_IP_PROXY}     ; reverse proxy
