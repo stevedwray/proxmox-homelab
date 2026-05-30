@@ -76,6 +76,17 @@ services:
       - authentik-custom-templates:/templates
       - authentik-certs:/certs
 
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
 volumes:
   authentik-certs:
   authentik-custom-templates:

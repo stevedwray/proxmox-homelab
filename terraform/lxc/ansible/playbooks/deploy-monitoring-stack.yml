@@ -74,6 +74,8 @@
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
     loki_image: "{{ monitoring_registry_host }}/dockerhub/grafana/loki:{{ loki_version }}"
     promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
+    cadvisor_version: "v0.49.1"
+    cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -294,6 +296,18 @@
                 - ./promtail-config.yml:/etc/promtail/config.yml:ro
               depends_on:
                 - loki
+
+            cadvisor:
+              image: {{ cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
 
           volumes:
             vm-data: {}

@@ -173,3 +173,42 @@
       vars:
         harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
         harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"
+
+- name: Deploy cAdvisor for container metrics on Harbor host
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    harbor_cadvisor_compose_dir: /opt/harbor-cadvisor
+    harbor_cadvisor_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host or LAB_IP_HARBOR is required') }}"
+
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ harbor_cadvisor_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ harbor_cadvisor_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cadvisor:
+              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+
+    - name: Deploy cAdvisor via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ harbor_cadvisor_compose_dir }}"
+        state: present
