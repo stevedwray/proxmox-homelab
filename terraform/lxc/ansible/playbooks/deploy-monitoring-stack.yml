@@ -144,10 +144,6 @@
         dest: "{{ monitoring_compose_dir }}/victoria-metrics/scrape.yml"
         mode: "0644"
         content: |
-      notify: Restart VictoriaMetrics
-      # Temporarily remove the notify from the copy task because notify must be
-      # at the same level, not inside content.
-      # See the corrected version below.
           global:
             scrape_interval: 30s
 
@@ -179,13 +175,18 @@
 
             - job_name: cadvisor
               static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:8080"
-                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8080"
-                    - "{{ lookup('env', 'LAB_IP_PORTAINER') }}:8080"
-                    - "{{ lookup('env', 'LAB_IP_PROXY') }}:8080"
-                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:8080"
-                    - "{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"
+                - targets: ["{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:8080"]
+                  labels: {stack: authentik-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_MONITORING') }}:8080"]
+                  labels: {stack: monitoring-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PORTAINER') }}:8080"]
+                  labels: {stack: portainer-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PROXY') }}:8080"]
+                  labels: {stack: proxy-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_HARBOR') }}:8080"]
+                  labels: {stack: harbor-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"]
+                  labels: {stack: netbox-stack}
 
             - job_name: coredns
               scrape_interval: 15s
