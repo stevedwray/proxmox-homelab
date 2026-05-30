@@ -2,7 +2,7 @@ $ORIGIN lab.gibbsgreatly.xyz.
 $TTL 5m
 
 @               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
-						2026053001 ; serial
+						2026053002 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -13,7 +13,7 @@ $TTL 5m
 ns1             IN  A   ${LAB_IP_DNS}
 
 ; Phase 04 core services (mgmt_seg)
-authentik       A   ${LAB_IP_AUTHENTIK} ; identity provider
+authentik       A   ${LAB_IP_PROXY}     ; identity provider (via Traefik)
 step-ca         A   ${LAB_IP_STEP_CA}   ; internal CA
 monitoring      A   ${LAB_IP_MONITORING}; observability stack
 grafana         A   ${LAB_IP_MONITORING}; Grafana (alias for monitoring stack)
