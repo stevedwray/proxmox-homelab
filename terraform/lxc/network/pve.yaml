@@ -1,6 +1,18 @@
 # Proxmox-only network intent for the pve production environment.
-# Mirrors the zone structure of pve-test.yaml; SDN zones/vnets are
-# created on pve by the same Terraform/Ansible pipeline used on pve-test.
+# Mirrors the zone structure of pve-test.yaml; SDN zones/vnets already exist
+# on pve with the same VNet names (tvmgmt, tvedge, tvinfra, tvnetc/tvsegc).
+#
+# Network model: Proxmox SDN VLAN zones — the MikroTik is the L3 gateway
+# for all zones. No routing or NAT is performed on the Proxmox host.
+# Inter-zone traffic flows through the MikroTik, which enforces firewall
+# policy at the router.
+#
+# Physical setup:
+#   pve NIC → MikroTik trunk port
+#     Tagged VLAN 10: build_seg — 192.168.10.0/24, gw 192.168.10.1
+#     Tagged VLAN 20: mgmt_seg  — 192.168.20.0/24, gw 192.168.20.1
+#     Tagged VLAN 30: edge_seg  — 192.168.30.0/24, gw 192.168.30.1
+#     Tagged VLAN 40: infra_seg — 192.168.40.0/24, gw 192.168.40.1
 
 proxmox:
   target_node: pve
@@ -8,95 +20,130 @@ proxmox:
 
 attachments:
   lan:
-    description: Default LAN bridge on pve
+    description: Default LAN bridge — used only by legacy/test stacks.
     type: bridge
     bridge: vmbr0
     vlan_tag: null
-    firewall: true
-  seg_a:
-    description: First SDN VNet for microsegmentation on pve
+    firewall: false
+
+  # infra_seg — Infrastructure artifact services (VLAN 40, 192.168.40.0/24)
+  infra_seg:
+    description: Infrastructure services — registry, artifact cache, IPAM
     type: sdn_vnet
-    bridge: pvneta
-    firewall: true
+    bridge: tvinfra
+    firewall: false
     sdn:
-      zone: pvsega
-      zone_type: simple
+      zone: tvinfra
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvneta
-      alias: pve network layer
-  seg_b:
-    description: Second SDN VNet for independent microsegmentation on pve
+      vnet: tvinfra
+      vlan_tag: 40
+      alias: pve infrastructure segment
+      subnet: "${lab_subnet_infra_cidr}"
+      gateway: "${lab_gw_infra}"
+      snat: false
+
+  # mgmt_seg — Management plane (VLAN 20, 192.168.20.0/24)
+  mgmt_seg:
+    description: Management plane — identity, PKI, monitoring
     type: sdn_vnet
-    bridge: pvnetb
-    firewall: true
+    bridge: tvmgmt
+    firewall: false
     sdn:
-      zone: pvsegb
-      zone_type: simple
+      zone: tvmgmt
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvnetb
-      alias: pve network layer 2
+      vnet: tvmgmt
+      vlan_tag: 20
+      alias: pve management segment
+      subnet: "${lab_subnet_mgmt_cidr}"
+      gateway: "${lab_gw_mgmt}"
+      snat: false
+
+  # edge_seg — Public ingress (VLAN 30, 192.168.30.0/24)
+  edge_seg:
+    description: Edge ingress — reverse proxy only
+    type: sdn_vnet
+    bridge: tvedge
+    firewall: false
+    sdn:
+      zone: tvedge
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvedge
+      vlan_tag: 30
+      alias: pve edge segment
+      subnet: "${lab_subnet_edge_cidr}"
+      gateway: "${lab_gw_edge}"
+      snat: false
+
+  # seg_c — CI build workloads (VLAN 10, 192.168.10.0/24)
   seg_c:
-    description: Third SDN VNet for artifact flow on pve
+    description: CI build workload zone
     type: sdn_vnet
-    bridge: pvnetc
-    firewall: true
+    bridge: tvnetc
+    firewall: false
     sdn:
-      zone: pvsegc
-      zone_type: simple
+      zone: tvsegc
+      zone_type: vlan
+      bridge: vmbr0
       nodes:
         - pve
-      vnet: pvnetc
-      alias: pve network layer 3
+      vnet: tvnetc
+      vlan_tag: 10
+      alias: pve build segment
+      subnet: "${lab_subnet_build_cidr}"
+      gateway: "${lab_gw_build}"
+      snat: false
 
 zones:
-  apps:
-    description: Application workload zone on the default LAN bridge
-    attachment: lan
-  infra:
-    description: Service endpoint zone on the default LAN bridge
-    attachment: lan
-  isolated:
-    description: Bridge-attached isolated zone with no inbound policy overrides
-    attachment: lan
-  apps_seg:
-    description: Application workload zone on the first SDN VNet
-    attachment: seg_a
   infra_seg:
-    description: Service endpoint zone on the first SDN VNet
-    attachment: seg_a
-  media_seg:
-    description: Application workload zone on the second SDN VNet
-    attachment: seg_b
-  observe_seg:
-    description: Service endpoint zone on the second SDN VNet
-    attachment: seg_b
+    description: Infrastructure services — Harbor, apt-cacher, NetBox
+    attachment: infra_seg
+    containers:
+      - "Harbor (VMID 40010)    — ${lab_ip_harbor}"
+      - "apt-cacher (VMID 40011) — ${lab_ip_apt_cacher}"
+      - "NetBox (VMID 40012)    — ${lab_ip_netbox}"
+  mgmt_seg:
+    description: Management plane — Portainer, Authentik, step-ca, Monitoring, dns
+    attachment: mgmt_seg
+    containers:
+      - "Portainer (VMID 20020)  — ${lab_ip_portainer}"
+      - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
+      - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
+      - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
+      - "dns-stack (VMID 20013)  — ${lab_ip_dns}"
+  edge_seg:
+    description: Edge ingress — Traefik reverse proxy
+    attachment: edge_seg
+    containers:
+      - "Traefik (VMID 30010) — ${lab_ip_proxy}"
   build_seg:
-    description: Build workload zone on the third SDN VNet
+    description: CI build workload zone
     attachment: seg_c
-  artifacts_seg:
-    description: Artifact service zone on the third SDN VNet
-    attachment: seg_c
+    containers:
+      - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
 
 policies:
-  - from: apps
-    to: infra
+  - from: edge_seg
+    to: mgmt_seg
     protocol: tcp
-    ports: [8080, 9000]
-    description: apps can reach infra on tcp/8080 and tcp/9000
-  - from: apps_seg
-    to: infra_seg
+    ports: [9000, 9443]
+  - from: mgmt_seg
+    to: edge_seg
     protocol: tcp
-    ports: [8080]
-    description: apps_seg can reach infra_seg on tcp/8080
-  - from: media_seg
-    to: observe_seg
-    protocol: tcp
-    ports: [8080]
-    description: media_seg can reach observe_seg on tcp/8080
+    ports: [80]
   - from: build_seg
-    to: artifacts_seg
+    to: mgmt_seg
     protocol: tcp
-    ports: [5000, 8081]
-    description: build_seg can reach artifacts_seg on tcp/5000 and tcp/8081
+    ports: [9000, 8428, 3100]
+  - from: infra_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9000, 9443]

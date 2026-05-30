@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WITH_SECRETS="${REPO_ROOT}/with-secrets"
+WITH_SECRETS="${REBUILD_GATE_WITH_SECRETS:-${REPO_ROOT}/with-secrets}"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 TARGET_NODE_EXPECTED="${REBUILD_GATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
@@ -370,7 +370,7 @@ print_dry_run_actions() {
   log "Terragrunt destroy commands that would run:"
   for i in "${!STACK_NAMES[@]}"; do
     stack="${STACK_NAMES[$i]}"
-    log "  - ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+    log "  - ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
   done
 }
 
@@ -383,8 +383,8 @@ run_destroy() {
       stack="${STACK_NAMES[$i]}"
       vmid="${STACK_VMIDS[$i]}"
       ensure_destroy_state_ownership "${stack}" "${vmid}"
-      log "Terragrunt destroy command: ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
-      "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
+      log "Terragrunt destroy command: ${WITH_SECRETS} env TF_WORKSPACE=${TF_WORKSPACE} NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true terragrunt destroy --working-dir terraform/lxc/stacks/${stack} -auto-approve"
+      "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true terragrunt destroy --working-dir "terraform/lxc/stacks/${stack}" -auto-approve
     done
   else
     print_dry_run_actions

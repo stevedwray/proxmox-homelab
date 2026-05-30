@@ -10,10 +10,7 @@
   hosts: all
   gather_facts: false
   vars:
-    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
-
-  vars:
-    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
+    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PROXMOX_HOST'), true) | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
 
   tasks:
     - name: Set keyctl feature flag via pct
