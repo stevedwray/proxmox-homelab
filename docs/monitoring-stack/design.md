@@ -8,18 +8,70 @@ Currently none of the other stacks ship metrics or logs. This document defines w
 
 ---
 
-## Current State
+## Current State (as of 2026-05-31)
 
-The monitoring-stack LXC is **already provisioned and deployed** via `deploy-monitoring-stack.yml`. The following are running:
+**All five implementation phases are complete.** The monitoring stack is fully deployed and collecting metrics and logs from all lab stacks.
+
+### Running services
 
 | Service | Status | Notes |
 |---------|--------|-------|
-| VictoriaMetrics | Running, `:8428` | `--retentionPeriod=90d` set; **no `--promscrape.config` flag** — not scraping anything |
-| Loki | Running, `:3100` | Filesystem storage, schema v13; **no retention period configured** |
-| Grafana | Running, `:3000` | OAuth via Authentik wired; datasources provisioned (VM + Loki) |
-| Promtail (self) | Running | Collecting `/var/log/**/*.log` from monitoring-stack host only; no Docker discovery |
+| VictoriaMetrics | Running, `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` mounted into container |
+| Loki | Running, `:3100` | Filesystem storage, schema v13; **no retention period configured** (see Remaining Work) |
+| Grafana | Running, `:3000` | OAuth via Authentik; accessible at `https://grafana.lab.gibbsgreatly.xyz` via Traefik |
+| Promtail (self) | Running | Docker discovery + `/var/log` on monitoring-stack |
 
-**Nothing is being scraped or collected from other stacks yet.** Phase 1–4 below is the remaining work.
+### Active scrape targets
+
+All targets below are `up` unless noted:
+
+| Job | Instance | Status |
+|-----|----------|--------|
+| node_exporter | all 10 managed LXCs | ✅ up |
+| node_exporter | 192.168.1.2 (Proxmox host) | ❌ down — node_exporter not installed on bare-metal host |
+| cadvisor | authentik, monitoring, portainer, proxy, harbor, netbox stacks | ✅ up |
+| coredns | 192.168.20.13:9153 | ✅ up |
+| traefik | 192.168.30.10:8082 | ✅ up |
+| authentik | 192.168.20.10:9300 | ✅ up |
+| harbor | 192.168.40.10:9090 | ✅ up |
+| netbox | 192.168.40.12:8080 | ✅ up |
+| victoriametrics | 192.168.20.12:8428 | ✅ up |
+| loki | 192.168.20.12:3100 | ✅ up |
+| grafana | 192.168.20.12:3000 | ✅ up |
+| step-ca | — | ❌ absent — step-ca scrape job was not deployed (see Remaining Work) |
+
+### Deployed dashboards
+
+| Dashboard | Variable | Notes |
+|-----------|----------|-------|
+| Lab Overview | — | Per-host CPU/mem/disk across all stacks |
+| Node Detail | `stack` (node_exporter stack label) | Full node_exporter breakdown for selected stack |
+| Docker Containers | `stack` (cadvisor stack label) | Per-container CPU/mem/net/disk |
+| Traefik Ingress | — | Request rate, latency, error rate |
+| CoreDNS | — | Query rate, NXDOMAIN rate, cache hit % |
+| Lab Logs | — | Full-stack log explorer |
+| Auth Logs | — | SSH/sudo/auth.log across all hosts |
+
+> Authentik and Harbor dashboards from the original plan were not built.
+
+### Deviations from the original plan
+
+- **Stack labels on scrape targets**: Both `node_exporter` and `cadvisor` scrape jobs use per-target `static_configs` with `labels: {stack: <name>}` rather than flat IP lists. Dashboard variables use the `stack` label for host selection (not the raw `instance` label).
+- **Traefik metrics endpoint**: Added `metrics: prometheus` block in Traefik static config on `:8082`. The playbook was not originally planned to include this — it was added post-deploy when the Traefik Ingress dashboard showed no data.
+- **step-ca scrape job**: Not deployed. The TLS complexity (homelab CA mount into VictoriaMetrics container) was deferred.
+- **Scrape config written inline** (not a `.j2` template file): The `deploy-monitoring-stack.yml` playbook writes the scrape config via `ansible.builtin.copy` with an inline `content:` block, using Jinja2 `lookup('env', ...)` — not a separate `.j2` template file as originally planned. Both approaches work; the inline approach keeps all monitoring config in one playbook.
+
+### Post-deploy fixes applied
+
+| Fix | Commit | Issue |
+|-----|--------|-------|
+| `grafana` DNS record pointed to monitoring IP instead of proxy | d7c8a8d | `ERR_CONNECTION_REFUSED` in browser |
+| `portainer` and `netbox` DNS A records missing from seed zone | 14003fa | `DNS_PROBE_POSSIBLE` in browser |
+| `provision.sh` now regenerates CoreDNS zone from EdgeManifests before every dns-stack deploy | 90f9ead | Seed zone and generated zone could diverge |
+| Traefik metrics endpoint not configured | d884991 | Traefik Ingress dashboard showed no data |
+| node_exporter and cadvisor scrape jobs had no stack labels | d884991, 9cc83dc | Dashboards showed raw IP addresses instead of stack names |
+| `notify: Restart VictoriaMetrics` placed between `content: \|` and block content | 9cc83dc | YAML parse error; scrape config was never written |
+| `docker-containers.json` and `node-detail.json` used `instance` variable | d884991, 9cc83dc | Variable queries returned IPs, not stack names |
 
 ---
 
@@ -120,7 +172,7 @@ Where Prometheus scrape endpoints exist (or will be enabled), they will be scrap
 
 ## Implementation Phases
 
-### Phase 1 — node_exporter on all LXCs
+### Phase 1 — node_exporter on all LXCs ✅
 
 **Goal**: Every managed LXC exposes OS metrics on :9100.
 
@@ -136,7 +188,7 @@ Role behaviour:
 - Expose metrics on all interfaces, port 9100
 - No authentication needed — mgmt_seg firewall restricts access
 
-### Phase 2 — cAdvisor on Docker stacks
+### Phase 2 — cAdvisor on Docker stacks ✅
 
 **Goal**: Each Docker-based LXC exposes container-level CPU/memory/net/disk metrics on :8080.
 
@@ -148,7 +200,7 @@ Tasks:
 - Restart policy: `unless-stopped`
 - Harbor mirror must have the image available before stacks redeploy
 
-### Phase 2a — Enable application metrics endpoints
+### Phase 2a — Enable application metrics endpoints ✅
 
 **Goal**: Enable the Prometheus endpoints on Authentik, Harbor, and NetBox so that Phase 3 can scrape them.
 
@@ -170,7 +222,7 @@ Tasks:
 - Add `METRICS_ENABLED: "True"` to the `netbox` service environment block
 - Note: `netbox-docker` v4.x includes `django-prometheus` and respects `METRICS_ENABLED`. Verify against the upstream `netbox-docker` changelog for the exact variable name.
 
-### Phase 3 — VictoriaMetrics scrape config
+### Phase 3 — VictoriaMetrics scrape config ✅
 
 **Goal**: VictoriaMetrics pulls metrics from all targets on a schedule.
 
@@ -272,7 +324,7 @@ All `LAB_IP_*` env vars are already present in `.env` except `LAB_IP_PROXMOX_HOS
 - Add volume mount: `/usr/local/share/ca-certificates/homelab-root.crt:/etc/ssl/certs/homelab-root.crt:ro`
 - Add directory creation task for `{{ monitoring_compose_dir }}/victoria-metrics`
 
-### Phase 4 — Promtail on all stacks
+### Phase 4 — Promtail on all stacks ✅
 
 **Goal**: Every LXC ships its logs to Loki.
 
@@ -297,7 +349,7 @@ All `LAB_IP_*` env vars are already present in `.env` except `LAB_IP_PROXMOX_HOS
 - Extend config to add Docker discovery for the compose stack containers
 - Requires adding `/var/run/docker.sock:/var/run/docker.sock:ro` volume to the `promtail` service in the monitoring compose definition
 
-### Phase 5 — Grafana dashboards
+### Phase 5 — Grafana dashboards ✅
 
 **Goal**: Pre-provisioned dashboards in Grafana so the data is immediately useful after a fresh deploy.
 
@@ -385,6 +437,20 @@ curl -fsS 'http://${ip}:3000/login' \
 ```
 
 The final check verifies at least one scrape target is healthy — confirming the scrape config is loaded and working, not just that VictoriaMetrics started.
+
+---
+
+## Remaining Work
+
+| Item | Notes |
+|------|-------|
+| Proxmox host node_exporter | node_exporter needs to be installed directly on 192.168.1.2 (manual bootstrap — not managed by LXC provisioning pipeline) |
+| step-ca scrape job | Needs homelab CA mounted into VictoriaMetrics container at `/etc/ssl/certs/homelab-root.crt:ro`; scrape job uses `scheme: https` + `tls_config.ca_file` |
+| Loki retention | Add `compactor` block and `retention_period: 30d` to Loki config in `deploy-monitoring-stack.yml` (see Loki Retention section below) |
+| Authentik dashboard | Not built; Authentik metrics are being scraped but no dashboard exists |
+| Harbor dashboard | Not built; Harbor metrics are being scraped but no dashboard exists |
+| Teardown health gate | Update monitoring-stack health check in `teardown-deploy-test.sh` to assert `> 0` active targets via `/api/v1/targets` |
+| `APPROVED_PLATFORM_ORDER` in `provision.sh` | `test-storage` and `test-storage-extra` stacks exist in `terraform/lxc/stacks/` with `deployment_tier: platform` but are absent from the approved order list — `--tier platform` currently fails |
 
 ---
 
