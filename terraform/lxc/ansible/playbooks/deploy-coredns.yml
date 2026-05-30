@@ -180,7 +180,7 @@
       ansible.builtin.assert:
         that:
           - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+SOA\\s+')
-          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+NS\\s+ns1\\.' ~ (lab_domain | replace('.', '\\\\.')) ~ '\\.')
+          - (coredns_zone_stage.content | b64decode) is search('(?m)^@\\s+IN\\s+NS\\s+ns1\\.' ~ (lab_domain | replace('.', '\\.')) ~ '\\.')
           - (coredns_zone_stage.content | b64decode) is search('(?m)^ns1\\s+IN\\s+A\\s+')
         fail_msg: >-
           Staged CoreDNS zone is missing required bootstrap authority records.
