@@ -36,6 +36,7 @@ else
   DEFAULT_ENV_HINT=".env.${TARGET_NODE_EXPECTED}"
 fi
 WITH_SECRETS="${TEARDOWN_WITH_SECRETS:-${REPO_ROOT}/${DEFAULT_WITH_SECRETS_WRAPPER}}"
+TERRAGRUNT_WORKSPACE="${TEARDOWN_TERRAGRUNT_WORKSPACE:-${TARGET_NODE_EXPECTED}}"
 TARGET_PVE_HOST="${TEARDOWN_PVE_HOST:-${DEFAULT_TARGET_PVE_HOST}}"
 TARGET_ENV_FILE="${TEARDOWN_ENV_FILE:-${REPO_ROOT}/${DEFAULT_ENV_HINT}}"
 REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
@@ -926,9 +927,9 @@ review_storage_plan_safety() {
   classified="${LOG_DIR}/${stack}-storage.classified.json"
 
   run_logged "storage-plan-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
   run_logged "storage-plan-json-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt show -json '${planfile}' >'${planjson}'"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt show -json '${planfile}' >'${planjson}'"
   run_logged "storage-plan-classify-${stack}" \
     python3 "${TERRAFORM_LXC}/classify-storage-plan.py" --plan-json "${planjson}" --stack-name "${stack}" --out "${classified}"
   run_logged "storage-plan-safety-${stack}" \
@@ -1393,7 +1394,7 @@ stack_apply() {
 
   guard_target
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
   guard_target
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
@@ -1409,7 +1410,7 @@ stack_destroy() {
   guard_target
   if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
-      bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
+      bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
