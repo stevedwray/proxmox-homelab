@@ -4,7 +4,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WITH_SECRETS="${REPO_ROOT}/with-secrets"
+WITH_SECRETS="${REBUILD_GATE_WITH_SECRETS:-${REPO_ROOT}/with-secrets}"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 TARGET_NODE_EXPECTED="${REBUILD_GATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
