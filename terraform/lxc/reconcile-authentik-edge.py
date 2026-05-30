@@ -24,7 +24,6 @@ AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
 INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"
 OIDC_SIGNING_KEY_NAME_ENV = "AUTHENTIK_OIDC_SIGNING_KEY_NAME"
 DEFAULT_OIDC_SIGNING_KEY_NAME = "authentik Self-signed Certificate"
-COOKIE_DOMAIN = ".lab.gibbsgreatly.xyz"
 SHARED_OUTPOST_TYPE = "proxy"
 DEFAULT_AUTHORIZATION_FLOW_SLUGS = (
     "default-provider-authorization-implicit-consent",
@@ -388,8 +387,7 @@ def _provider_payload(
     return {
         "name": intent.provider_name,
         "external_host": f"https://{intent.host}",
-        "cookie_domain": COOKIE_DOMAIN,
-        "mode": "forward_domain",
+        "mode": "forward_single",
         "intercept_header_auth": True,
         "authorization_flow": authorization_flow_pk,
         "invalidation_flow": invalidation_flow_pk,
