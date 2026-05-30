@@ -547,12 +547,12 @@ run_dns_nonempty_check() {
 guard_target() {
   local output
   # shellcheck disable=SC2016
-  output="$("${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node')"
+  output="$("${WITH_SECRETS}" printenv TF_VAR_proxmox_node)"
   if [[ "${output}" != "${TARGET_NODE_EXPECTED}" ]]; then
     log "ERROR target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     set_phase_failure_context \
       "target-guard" \
-      "${WITH_SECRETS} bash -c 'echo \$TF_VAR_proxmox_node'" \
+      "${WITH_SECRETS} printenv TF_VAR_proxmox_node" \
       "${RUN_LOG}" \
       "target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     return 1
@@ -1012,7 +1012,7 @@ hydrate_live_env_contract() {
       continue
     fi
 
-    value="$("${WITH_SECRETS}" bash -lc "printf '%s' \"\${${key}:-}\"")"
+    value="$("${WITH_SECRETS}" printenv "${key}" || true)"
     if [[ -n "${value}" ]]; then
       printf -v "${key}" '%s' "${value}"
       export "${key}=${value}"
