@@ -58,6 +58,9 @@
     # Files are published into /opt/proxy-stack/dynamic/ so the active file
     # provider always loads router definitions.
     traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
+    promtail_version: "3.0.0"
+    proxy_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+    promtail_image: "grafana/promtail:{{ promtail_version }}"
 
   tasks:
     - name: Create Traefik directory structure
@@ -184,6 +187,46 @@
       changed_when: true
       when: not ansible_check_mode
 
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://{{ proxy_lab_ip_monitoring }}:3100/loki/api/v1/push
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: "{{ inventory_hostname }}"
+                    stack: proxy-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: "{{ inventory_hostname }}"
+                - target_label: stack
+                  replacement: proxy-stack
+
     - name: Write Traefik compose definition
       ansible.builtin.copy:
         dest: "{{ proxy_compose_dir }}/docker-compose.yml"
@@ -222,6 +265,16 @@
                 - /var/run:/var/run:ro
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
+
+            promtail:
+              image: {{ promtail_image }}
+              container_name: promtail
+              restart: unless-stopped
+              command: -config.file=/etc/promtail/config.yml
+              volumes:
+                - /var/log:/var/log:ro
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:

@@ -92,6 +92,54 @@
         value: "{{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') | mandatory('NETBOX_API_TOKEN_PEPPER env var is not set') }}"
       - name: REGISTRY_HOST
         value: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    netbox_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+
+  pre_tasks:
+    - name: Ensure NetBox compose directory exists before Promtail config
+      ansible.builtin.file:
+        path: "{{ direct_stack_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ direct_stack_compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://{{ netbox_lab_ip_monitoring }}:3100/loki/api/v1/push
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: "{{ inventory_hostname }}"
+                    stack: netbox-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: "{{ inventory_hostname }}"
+                - target_label: stack
+                  replacement: netbox-stack
 
   roles:
     - direct_stack
