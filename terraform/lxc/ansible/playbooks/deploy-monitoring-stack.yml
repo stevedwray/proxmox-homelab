@@ -135,6 +135,77 @@
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/datasources", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/loki", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
+
+    - name: Write VictoriaMetrics scrape config
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/victoria-metrics/scrape.yml"
+        mode: "0644"
+        content: |
+          global:
+            scrape_interval: 30s
+
+          scrape_configs:
+            - job_name: node_exporter
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_STEP_CA') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_DNS') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_PORTAINER') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_PROXY') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_APT_CACHER') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_NETBOX') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_CI_RUNNER') }}:9100"
+                    - "{{ lookup('env', 'LAB_IP_PROXMOX_HOST') }}:9100"
+
+            - job_name: cadvisor
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:8080"
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8080"
+                    - "{{ lookup('env', 'LAB_IP_PORTAINER') }}:8080"
+                    - "{{ lookup('env', 'LAB_IP_PROXY') }}:8080"
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:8080"
+                    - "{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"
+
+            - job_name: coredns
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_DNS') }}:9153"
+
+            - job_name: authentik
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:9300"
+
+            - job_name: harbor
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9090"
+
+            - job_name: netbox
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_NETBOX') }}:8080"
+
+            - job_name: victoriametrics
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8428"
+
+            - job_name: loki
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:3100"
+
+            - job_name: grafana
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:3000"
 
     - name: Write Loki configuration
       ansible.builtin.copy:
@@ -235,9 +306,12 @@
                 - "8428:8428"
               volumes:
                 - vm-data:/storage
+                - ./victoria-metrics/scrape.yml:/etc/vm/scrape.yml:ro
+                - /usr/local/share/ca-certificates/homelab-root.crt:/etc/ssl/certs/homelab-root.crt:ro
               command:
                 - "--storageDataPath=/storage"
                 - "--retentionPeriod=90d"
+                - "--promscrape.config=/etc/vm/scrape.yml"
 
             grafana:
               image: {{ grafana_image }}
