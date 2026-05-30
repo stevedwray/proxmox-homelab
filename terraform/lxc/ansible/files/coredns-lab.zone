@@ -2,7 +2,7 @@ $ORIGIN lab.gibbsgreatly.xyz.
 $TTL 5m
 
 @               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
-						2026053002 ; serial
+						2026053003 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -21,6 +21,8 @@ grafana         A   ${LAB_IP_PROXY}     ; Grafana (via Traefik)
 ; Phase 04 edge services (edge_seg)
 traefik         A   ${LAB_IP_PROXY}     ; reverse proxy
 harbor          A   ${LAB_IP_PROXY}     ; harbor registry (via Traefik)
+portainer       A   ${LAB_IP_PROXY}     ; portainer (via Traefik)
+netbox          A   ${LAB_IP_PROXY}     ; netbox (via Traefik)
 
 ; Breakglass direct-access records (bypass Traefik — point to service container IP)
 authentik-int   IN  A   ${LAB_IP_AUTHENTIK} ; authentik internal machine endpoint
