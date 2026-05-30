@@ -48,7 +48,7 @@ services:
       # Application
       CORS_ORIGIN_ALLOW_ALL: "True"
       GRAPHQL_ENABLED: "true"
-      METRICS_ENABLED: "false"
+      METRICS_ENABLED: "true"
       WEBHOOKS_ENABLED: "true"
       SKIP_SUPERUSER: "true"
       LOGIN_REQUIRED: "true"
