@@ -261,7 +261,22 @@
                   labels:
                     job: varlogs
                     host: monitoring-stack
+                    stack: monitoring-stack
                     __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: monitoring-stack
+                - target_label: stack
+                  replacement: monitoring-stack
 
     - name: Write Grafana datasource provisioning
       ansible.builtin.copy:
@@ -367,6 +382,7 @@
               command: -config.file=/etc/promtail/config.yml
               volumes:
                 - /var/log:/var/log:ro
+                - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./promtail-config.yml:/etc/promtail/config.yml:ro
               depends_on:
                 - loki

@@ -1,0 +1,46 @@
+---
+- name: Install Grafana apt repo signing key
+  ansible.builtin.get_url:
+    url: https://apt.grafana.com/gpg.key
+    dest: /etc/apt/keyrings/grafana.gpg
+    mode: "0644"
+
+- name: Add Grafana apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/etc/apt/keyrings/grafana.gpg] https://apt.grafana.com stable main"
+    state: present
+    filename: grafana
+
+- name: Install promtail
+  ansible.builtin.apt:
+    name: promtail
+    state: present
+    update_cache: true
+
+- name: Create promtail config directory
+  ansible.builtin.file:
+    path: /etc/promtail
+    state: directory
+    mode: "0755"
+
+- name: Write promtail config
+  ansible.builtin.template:
+    src: config.yml.j2
+    dest: /etc/promtail/config.yml
+    mode: "0644"
+  notify: Restart promtail
+
+- name: Add promtail user to systemd-journal group (required for journal scrape)
+  ansible.builtin.user:
+    name: promtail
+    groups: systemd-journal
+    append: true
+  when: promtail_scrape_journal | bool
+  notify: Restart promtail
+
+- name: Enable and start promtail service
+  ansible.builtin.systemd:
+    name: promtail
+    enabled: true
+    state: started
+    daemon_reload: true
