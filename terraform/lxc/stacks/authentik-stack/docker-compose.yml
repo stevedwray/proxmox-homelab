@@ -40,11 +40,13 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: "${AUTHENTIK_POSTGRES_PASSWORD}"
       AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_LISTEN__METRICS: "0.0.0.0:9300"
     depends_on:
       - postgresql
       - redis
     ports:
       - "9000:9000"
+      - "9300:9300"
     volumes:
       - authentik-media:/media
       - authentik-custom-templates:/templates
