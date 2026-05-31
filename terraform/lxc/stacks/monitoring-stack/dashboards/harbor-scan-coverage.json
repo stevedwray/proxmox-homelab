@@ -1,0 +1,528 @@
+{
+  "__inputs": [],
+  "__requires": [],
+  "annotations": { "list": [] },
+  "description": "Harbor scan coverage and vulnerability findings for proxy-cache repositories",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
+      "title": "Exporter Health",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            {
+              "options": {
+                "0": { "text": "Down" },
+                "1": { "text": "Up" }
+              },
+              "type": "value"
+            }
+          ],
+          "max": 1,
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "unit": "none"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 0, "y": 1 },
+      "id": 2,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "harbor_findings_exporter_up",
+          "refId": "A"
+        }
+      ],
+      "title": "Findings Exporter",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 600 },
+              { "color": "red", "value": 1800 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 8, "y": 1 },
+      "id": 3,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "time() - harbor_findings_exporter_last_refresh_success_timestamp_seconds",
+          "refId": "A"
+        }
+      ],
+      "title": "Refresh Age",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 8, "x": 16, "y": 1 },
+      "id": 4,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "harbor_findings_exporter_refresh_errors_total",
+          "refId": "A"
+        }
+      ],
+      "title": "Refresh Errors",
+      "type": "stat"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 9 },
+      "id": 5,
+      "title": "Coverage Summary",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 0, "y": 10 },
+      "id": 6,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(harbor_findings_repositories_total{project=~\"$project\",state=\"scanned\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Scanned Repositories",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 6, "y": 10 },
+      "id": 7,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(harbor_findings_repositories_total{project=~\"$project\",state=\"unscanned\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Unscanned Repositories",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 10 },
+      "id": 8,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(harbor_findings_repositories_total{project=~\"$project\",state=\"stale\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Stale Repositories",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "red", "value": 1 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 10 },
+      "id": 9,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(harbor_findings_repositories_total{project=~\"$project\",state=\"error\"})",
+          "refId": "A"
+        }
+      ],
+      "title": "Error Repositories",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 20, "lineWidth": 1 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 18 },
+      "id": 10,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (state) (harbor_findings_repositories_total{project=~\"$project\"})",
+          "legendFormat": "{{state}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Repository State Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 26 },
+      "id": 11,
+      "title": "Vulnerability Totals",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 5 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 27 },
+      "id": 12,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum by (severity) (harbor_findings_vulnerabilities_total{project=~\"$project\"})",
+          "legendFormat": "{{severity}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Findings by Severity",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 20, "lineWidth": 1 },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 27 },
+      "id": 13,
+      "options": {
+        "legend": { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (severity) (harbor_findings_vulnerabilities_total{project=~\"$project\"})",
+          "legendFormat": "{{severity}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Findings by Severity Over Time",
+      "type": "timeseries"
+    },
+    {
+      "collapsed": false,
+      "gridPos": { "h": 1, "w": 24, "x": 0, "y": 35 },
+      "id": 14,
+      "title": "Repository Hotspots",
+      "type": "row"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 1 },
+              { "color": "red", "value": 10 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 36 },
+      "id": 15,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, harbor_findings_vulnerabilities_total{project=~\"$project\",severity=\"Critical\"})",
+          "legendFormat": "{{repository}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Critical Findings by Repository",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 20 },
+              { "color": "red", "value": 50 }
+            ]
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 36 },
+      "id": 16,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, sum by (repository) (harbor_findings_vulnerabilities_total{project=~\"$project\"}))",
+          "legendFormat": "{{repository}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Top Total Findings by Repository",
+      "type": "stat"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "yellow", "value": 86400 },
+              { "color": "red", "value": 172800 }
+            ]
+          },
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 44 },
+      "id": 17,
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "orientation": "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "topk(10, time() - harbor_findings_repository_last_scan_timestamp_seconds{project=~\"$project\"})",
+          "legendFormat": "{{repository}}",
+          "refId": "A"
+        }
+      ],
+      "title": "Oldest Scan Age by Repository",
+      "type": "stat"
+    }
+  ],
+  "refresh": "1m",
+  "schemaVersion": 38,
+  "tags": ["harbor", "security", "trivy", "scan-coverage"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "All",
+          "value": "$__all"
+        },
+        "datasource": {
+          "type": "prometheus",
+          "uid": "VictoriaMetrics"
+        },
+        "definition": "label_values(harbor_findings_repositories_total{job=\"harbor-findings-exporter\"}, project)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "project",
+        "options": [],
+        "query": {
+          "query": "label_values(harbor_findings_repositories_total{job=\"harbor-findings-exporter\"}, project)",
+          "refId": "A"
+        },
+        "refresh": 2,
+        "regex": "",
+        "sort": 1,
+        "type": "query",
+        "label": "Project"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Harbor Scan Coverage",
+  "uid": "harbor-scan-coverage",
+  "version": 1
+}
