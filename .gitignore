@@ -92,5 +92,6 @@ certs/homelab-root.crt
 
 # Local CI artifacts (logs, scan outputs)
 artifacts/
+.tmp/
 docs/harbor-stack/artifacts/*
 !docs/harbor-stack/artifacts/.gitkeep
