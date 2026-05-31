@@ -4,7 +4,8 @@
 
 The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Loki, Grafana, and Promtail via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and Loki are internal-only data stores — they receive data from agents and are queried by Grafana.
 
-Currently none of the other stacks ship metrics or logs. This document defines what will be collected, how, and in what order.
+This document started as the implementation plan and now also records the live
+state, remaining gaps, and post-deploy fixes.
 
 ---
 
@@ -33,7 +34,11 @@ All targets below are `up` unless noted:
 | coredns | 192.168.20.13:9153 | ✅ up |
 | traefik | 192.168.30.10:8082 | ✅ up |
 | authentik | 192.168.20.10:9300 | ✅ up |
-| harbor | 192.168.40.10:9090 | ✅ up |
+| harbor-exporter | 192.168.40.10:9090 | ✅ implemented in code |
+| harbor-core | 192.168.40.10:9090?comp=core | ✅ implemented in code |
+| harbor-registry | 192.168.40.10:9090?comp=registry | ✅ implemented in code |
+| harbor-jobservice | 192.168.40.10:9090?comp=jobservice | ✅ implemented in code |
+| harbor-findings-exporter | monitoring-stack internal service | ✅ implemented in code |
 | netbox | 192.168.40.12:8080 | ✅ up |
 | victoriametrics | 192.168.20.12:8428 | ✅ up |
 | loki | 192.168.20.12:3100 | ✅ up |
@@ -49,10 +54,15 @@ All targets below are `up` unless noted:
 | Docker Containers | `stack` (cadvisor stack label) | Per-container CPU/mem/net/disk |
 | Traefik Ingress | — | Request rate, latency, error rate |
 | CoreDNS | — | Query rate, NXDOMAIN rate, cache hit % |
+| Harbor Operations | — | Component health, queue state, proxy-cache activity, registry/API traffic |
+| Harbor Scan Coverage | `project` | Findings exporter health, scan coverage, stale scans, severity totals |
+| Harbor CVE Inventory | — | Detailed CVE rows from the live Harbor findings feed |
 | Lab Logs | — | Full-stack log explorer |
 | Auth Logs | — | SSH/sudo/auth.log across all hosts |
 
-> Authentik and Harbor dashboards from the original plan were not built.
+> Harbor now has operations, scan-coverage, and CVE inventory dashboards.
+> The remaining Harbor monitoring gaps are alerting and dashboard refinement,
+> not basic Harbor visibility or datasource wiring.
 
 ### Deviations from the original plan
 
@@ -118,7 +128,7 @@ VictoriaMetrics and Loki need to reach all segments. Inter-VLAN routing is handl
 | 8081 | cAdvisor (netbox-stack only) | netbox-stack exposes app metrics on :8080, so cAdvisor uses host port 8081 |
 | 9153 | CoreDNS metrics | dns-stack |
 | 8082 | Traefik metrics | proxy-stack |
-| 9090 | Harbor metrics | harbor-stack — metrics disabled by default; must be enabled in `harbor.yml` |
+| 9090 | Harbor metrics | harbor-stack — enabled and scrapeable today |
 | 9300 | Authentik metrics | authentik-stack — port not published in compose; must be added |
 | 9443 | step-ca metrics (HTTPS) | step-ca-stack — TLS, needs CA or skip-verify in scrape config |
 | 3100 | Loki ingest (from Promtail) | monitoring-stack receives only |
@@ -127,7 +137,13 @@ VictoriaMetrics and Loki need to reach all segments. Inter-VLAN routing is handl
 
 **Authentik metrics not yet published**: The `server` container in `authentik-stack/docker-compose.yml` only publishes port `9000`. Port `9300` needs to be added and `AUTHENTIK_LISTEN__METRICS: "0.0.0.0:9300"` must be set in the Authentik server environment.
 
-**Harbor metrics disabled**: The `harbor_installer` role's `harbor.yml.j2` template has no `metric:` block. Harbor metrics are off by default. The template needs a `metric: enabled: true, port: 9090` block added before Harbor exposes anything scrapeable.
+**Harbor metrics enabled**: The `harbor_installer` role's `harbor.yml.j2`
+template now includes a `metric:` block and Harbor metrics are currently being
+scraped successfully. The monitoring playbook now splits Harbor into
+`harbor-exporter`, `harbor-core`, `harbor-registry`, and
+`harbor-jobservice` scrape jobs. The remaining Harbor gap is no longer basic
+operations visibility; it is artifact-level scan coverage beyond native Harbor
+metrics.
 
 **NetBox has no native Prometheus metrics**: NetBox does not expose `:8080/metrics` out of the box. The `django-prometheus` middleware must be added to the NetBox configuration (via `METRICS_ENABLED: true` in the netbox-docker stack) before VictoriaMetrics can scrape it. This is a prerequisite for that scrape job; see Phase 3 notes.
 
@@ -161,7 +177,10 @@ Where Prometheus scrape endpoints exist (or will be enabled), they will be scrap
 | CoreDNS | `:9153/metrics` | ✓ | Enabled by default in CoreDNS config |
 | Traefik | `:8082/metrics` | ✓ | Enabled via `--metrics.prometheus` flag |
 | Authentik | `:9300/metrics` | ✗ | Port not published; needs `AUTHENTIK_LISTEN__METRICS` env var + port 9300 added to compose |
-| Harbor | `:9090/metrics` | ✗ | Metrics disabled by default; needs `metric.enabled: true` in `harbor.yml.j2` |
+| Harbor exporter | `:9090/metrics` | ✓ | Project totals, queue state, Harbor component health |
+| Harbor core | `:9090/metrics?comp=core` | ✓ | Core API request rate and latency |
+| Harbor registry | `:9090/metrics?comp=registry` | ✓ | Registry request/storage metrics |
+| Harbor jobservice | `:9090/metrics?comp=jobservice` | ✓ | Scan/job throughput and processing time |
 | NetBox | `:8080/metrics` | ✗ | Requires `django-prometheus`; needs `METRICS_ENABLED: true` in netbox-docker env |
 | step-ca | `:9443/metrics` | ✓ | HTTPS; scrape requires homelab CA in VictoriaMetrics container |
 | VictoriaMetrics (self) | `:8428/metrics` | ✓ | Always available |
@@ -448,7 +467,7 @@ The final check verifies at least one scrape target is healthy — confirming th
 | step-ca scrape job | Needs homelab CA mounted into VictoriaMetrics container at `/etc/ssl/certs/homelab-root.crt:ro`; scrape job uses `scheme: https` + `tls_config.ca_file` |
 | Loki retention | Add `compactor` block and `retention_period: 30d` to Loki config in `deploy-monitoring-stack.yml` (see Loki Retention section below) |
 | Authentik dashboard | Not built; Authentik metrics are being scraped but no dashboard exists |
-| Harbor dashboard | Not built; Harbor metrics are being scraped but no dashboard exists |
+| Harbor alerting and dashboard refinement | Harbor dashboards and findings exporter are live, including the `Harbor CVE Inventory` dashboard backed by the live `/findings.json` feed; alert rules are still missing, and the CVE dashboard still needs optional filtering/polish |
 | Teardown health gate | Update monitoring-stack health check in `teardown-deploy-test.sh` to assert `> 0` active targets via `/api/v1/targets` |
 | `APPROVED_PLATFORM_ORDER` in `provision.sh` | `test-storage` and `test-storage-extra` stacks exist in `terraform/lxc/stacks/` with `deployment_tier: platform` but are absent from the approved order list — `--tier platform` currently fails |
 
