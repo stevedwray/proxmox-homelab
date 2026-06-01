@@ -6,7 +6,7 @@
 - Model: GitHub Copilot GPT-5 mini
 - Branch: task/monitoring-stack-phase1
 - Commit at session start: fe847f6c37d4202cf4510c934fca09c319c60a1e
-- Commit at session end: de3a6b8f78d60de3b598d2a4d908347fbc638cdd
+- Commit at session end: 3657b955abe9962e814a051e9831d6e768d7159b
 - Session goal: Create dedicated NetBox automation credential and dedicated Proxmox read-only credential for `pve-test`, store secrets in SOPS, validate credentials, and produce this handback.
 
 ## Scope Boundary
