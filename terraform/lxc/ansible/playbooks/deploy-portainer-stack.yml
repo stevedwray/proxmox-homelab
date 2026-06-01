@@ -203,8 +203,22 @@
         | default('', true)
       }}
     portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
-    portainer_oauth_token_url: "{{ lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default('https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/token/', true) }}"
-    portainer_oauth_resource_url: "{{ lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default('https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/userinfo/', true) }}"
+    portainer_oauth_token_url: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default(
+          ((lookup('env', 'LAB_IP_AUTHENTIK') | default('') | trim) != '')
+            | ternary('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000/application/o/token/', 'https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/token/'),
+          true
+        )
+      }}
+    portainer_oauth_resource_url: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default(
+          ((lookup('env', 'LAB_IP_AUTHENTIK') | default('') | trim) != '')
+            | ternary('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000/application/o/userinfo/', 'https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/userinfo/'),
+          true
+        )
+      }}
     portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
     portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
     portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
