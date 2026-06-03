@@ -1,8 +1,10 @@
-"""Discover homelab topology from Proxmox, Portainer, and Mikrotik."""
+"""Discover homelab topology from Proxmox and Mikrotik."""
 
 import glob
 import json
 import os
+import re
+import subprocess
 import urllib.request
 import urllib.error
 
@@ -45,21 +47,34 @@ def _get_declared_portainer_ip(stack_yamls: dict) -> str | None:
     return ip_raw.split("/", 1)[0]
 
 
-def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str, str]:
-    """Resolve Portainer endpoint config from env vars, then declared metadata."""
+def _resolved_env_value(name: str) -> str | None:
+    """Return env value unless it is empty or still an unresolved ${...} template."""
+    raw = os.environ.get(name)
+    if not raw:
+        return None
+    value = raw.strip()
+    if not value or (value.startswith("${") and value.endswith("}")):
+        return None
+    return value
+
+
+def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str | None, str | None]:
+    """Resolve Portainer endpoint config from env vars, then declared metadata.
+
+    Returns (ip, url) or (None, None) when no Portainer endpoint is configured.
+    """
     portainer_ip = (
-        os.environ.get("PORTAINER_SERVER_IP")
-        or os.environ.get("LAB_IP_PORTAINER")
+        _resolved_env_value("PORTAINER_SERVER_IP")
+        or _resolved_env_value("LAB_IP_PORTAINER")
         or _get_declared_portainer_ip(stack_yamls)
     )
 
     if not portainer_ip:
-        raise ValueError(
-            "Portainer endpoint is unresolved; set PORTAINER_SERVER_IP or LAB_IP_PORTAINER, "
-            "or declare portainer-stack.ip_address in stack metadata"
-        )
+        # Portainer is optional; return a null result instead of raising so callers
+        # can decide whether to use Portainer enrichment or not.
+        return None, None
 
-    portainer_url = os.environ.get("PORTAINER_URL", f"https://{portainer_ip}:9443")
+    portainer_url = _resolved_env_value("PORTAINER_URL") or f"https://{portainer_ip}:9443"
     return portainer_ip, portainer_url
 
 
@@ -71,9 +86,9 @@ class PortainerClient:
     """Minimal Portainer API client."""
 
     def __init__(self, url=None, password=None):
-        resolved_url = url or os.environ.get("PORTAINER_URL")
+        resolved_url = url or _resolved_env_value("PORTAINER_URL")
         if not resolved_url:
-            resolved_ip = os.environ.get("PORTAINER_SERVER_IP") or os.environ.get("LAB_IP_PORTAINER")
+            resolved_ip = _resolved_env_value("PORTAINER_SERVER_IP") or _resolved_env_value("LAB_IP_PORTAINER")
             if not resolved_ip:
                 raise ValueError(
                     "Portainer URL is unresolved; set PORTAINER_URL, PORTAINER_SERVER_IP, or LAB_IP_PORTAINER"
@@ -134,6 +149,96 @@ class PortainerClient:
 SKIP_CONTAINERS = {"portainer-agent"}
 
 
+def _detect_topology_environment() -> str | None:
+    """Return the selected topology environment from current env vars."""
+    for name in ("NETBOX_NETWORK_ENV", "PVE_ENV", "TF_VAR_proxmox_node"):
+        raw = os.environ.get(name)
+        if raw and raw.strip():
+            return raw.strip()
+    return None
+
+
+def _preferred_proxmox_host_interface() -> str:
+    """Return the preferred hypervisor interface name for host IP selection."""
+    raw = os.environ.get("NETBOX_PROXMOX_HOST_INTERFACE")
+    return raw.strip() if raw and raw.strip() else "vmbr0"
+
+
+def _network_entry_cidr(entry: dict) -> str | None:
+    """Return one CIDR string from a Proxmox node-network entry, if present."""
+    cidr = entry.get("cidr")
+    if isinstance(cidr, str) and cidr.strip():
+        return cidr.strip()
+
+    address = entry.get("address")
+    netmask = entry.get("netmask")
+    if isinstance(address, str) and address.strip() and netmask not in (None, ""):
+        return f"{address.strip()}/{netmask}"
+    return None
+
+
+def _select_proxmox_host_address(
+    proxmox_data: dict,
+    target_node: str | None = None,
+    preferred_iface: str | None = None,
+) -> tuple[str | None, str | None]:
+    """Select the inspected Proxmox host address from discovered node networks."""
+    preferred_iface = preferred_iface or _preferred_proxmox_host_interface()
+    networks_by_node = proxmox_data.get("networks", {}) if isinstance(proxmox_data, dict) else {}
+    nodes = list(networks_by_node)
+    if not target_node:
+        if len(nodes) == 1:
+            target_node = nodes[0]
+        else:
+            target_node = _detect_topology_environment()
+
+    if not target_node:
+        return None, preferred_iface
+
+    node_networks = networks_by_node.get(target_node, [])
+    if not isinstance(node_networks, list):
+        return None, preferred_iface
+
+    preferred = None
+    fallback = None
+    for entry in node_networks:
+        if not isinstance(entry, dict):
+            continue
+        cidr = _network_entry_cidr(entry)
+        if not cidr:
+            continue
+        iface = entry.get("iface")
+        if iface == preferred_iface:
+            preferred = (cidr, iface)
+            break
+        if fallback is None:
+            fallback = (cidr, iface)
+
+    if preferred:
+        return preferred
+    if fallback:
+        return fallback
+    return None, preferred_iface
+
+
+def build_proxmox_context(proxmox_data=None):
+    """Build source-node metadata for the currently inspected Proxmox environment."""
+    if proxmox_data is None:
+        proxmox_data = discover_from_proxmox()
+
+    target_node = _detect_topology_environment()
+    host_address, host_interface = _select_proxmox_host_address(
+        proxmox_data,
+        target_node=target_node,
+    )
+
+    return {
+        "target_node": target_node,
+        "host_address": host_address,
+        "host_interface": host_interface,
+    }
+
+
 def _extract_ip_from_net0(net0_str: str) -> str | None:
     """Parse Proxmox net0 config string and return the IP with prefix."""
     for part in net0_str.split(","):
@@ -142,29 +247,40 @@ def _extract_ip_from_net0(net0_str: str) -> str | None:
     return None
 
 
-def _get_container_ip(container: dict, yml: dict) -> str | None:
-    """Return the container's IP (with prefix), using Proxmox first."""
+def _get_container_ip(container: dict) -> str | None:
+    """Return the container's IP (with prefix) from Proxmox config only."""
     config = container.get("config", {})
     net0 = config.get("net0")
     if net0:
         ip = _extract_ip_from_net0(net0)
         if ip:
             return ip
-
-    ip_raw = yml.get("ip_address", "")
-    if ip_raw:
-        return ip_raw if "/" in ip_raw else f"{ip_raw}/24"
     return None
 
 
-def _get_container_disk(container: dict, yml: dict) -> int:
-    """Return disk size in GB from mounts or stack.yaml."""
-    disk = yml.get("rootfs_size", 8)
+def _get_container_disk(container: dict) -> int:
+    """Return disk size in GB from live mount metadata only."""
     for mount in container.get("mounts", []):
         if mount.get("type") == "rootfs" and "size" in mount:
             # Parse "8G" to 8.
             return int(mount["size"].rstrip("GT"))
-    return disk
+    return 0
+
+
+def _get_container_tags(container: dict) -> list[str]:
+    """Return tags from Proxmox config only."""
+    raw = container.get("config", {}).get("tags")
+    if not isinstance(raw, str) or not raw.strip():
+        return []
+    return [tag for tag in re.split(r"[;,]", raw) if tag]
+
+
+def _int_config_value(config: dict, key: str) -> int:
+    """Return an integer config value or 0 when absent."""
+    raw = config.get(key)
+    if raw in (None, ""):
+        return 0
+    return int(raw)
 
 
 def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
@@ -201,11 +317,350 @@ def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
     return deduped
 
 
-def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
-    """Merge Proxmox (primary), stack.yaml, and Portainer (services) data.
+def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: bool = False) -> list[dict]:
+    """Query a docker-socket-proxy HTTP API and return services for a guest.
+
+    Implementation:
+    - call `GET /containers/json?all=1` to list containers
+    - for each container summary, call `GET /containers/{id}/json` to obtain
+      `NetworkSettings` and `Ports` details
+    - treat a container as belonging to `container` when either:
+      - one of the container's network `IPAddress` values equals the guest IP
+      - OR one of the container `Names` contains the Proxmox guest name (fallback)
+    - convert published port mappings into the same service dict shape used by
+      other inspectors: `{name, port, protocol}`.
+    """
+    if not proxy_url:
+        return []
+
+    guest_ip = _get_container_ip(container)
+    if guest_ip and "/" in guest_ip:
+        guest_ip = guest_ip.split("/", 1)[0]
+
+    base = proxy_url.rstrip("/")
+    services = []
+    seen = set()
+
+    try:
+        import ssl
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+
+        # List containers
+        list_req = urllib.request.Request(f"{base}/containers/json?all=1")
+        with urllib.request.urlopen(list_req, context=ctx) as resp:
+            summaries = json.loads(resp.read().decode())
+    except Exception:
+        return []
+
+    if not isinstance(summaries, list):
+        return []
+
+    for summary in summaries:
+        cid = summary.get("Id") or summary.get("ID") or summary.get("Id")
+        if not cid:
+            continue
+
+        try:
+            req = urllib.request.Request(f"{base}/containers/{cid}/json")
+            with urllib.request.urlopen(req, context=ctx) as resp:
+                data = json.loads(resp.read().decode())
+        except Exception:
+            # skip containers we can't inspect
+            continue
+
+        # Determine canonical container name
+        cname = (data.get("Name") or "").lstrip("/")
+        if not cname:
+            # try the Names list from summary or inspect
+            names = data.get("Names") or summary.get("Names") or []
+            if names:
+                cname = names[0].lstrip("/")
+            else:
+                cname = cid
+
+        # Determine whether this container maps to the Proxmox guest. When the
+        # proxy endpoint is guest-scoped (resolved from a per-guest template),
+        # treat all returned containers as belonging to the guest and skip
+        # any name/IP matching. For single-endpoint proxies, fall back to the
+        # Docker-inspect IP match and a conservative name substring fallback.
+        matches = False
+        if guest_scoped:
+            matches = True
+        else:
+            if guest_ip:
+                network_settings = data.get("NetworkSettings") or {}
+                networks = network_settings.get("Networks") or {}
+                if isinstance(networks, dict):
+                    for net in networks.values():
+                        if not isinstance(net, dict):
+                            continue
+                        c_ip = net.get("IPAddress")
+                        if c_ip == guest_ip:
+                            matches = True
+                            break
+
+            # Fallback: check whether the Proxmox guest name appears in container names
+            if not matches:
+                pve_name = container.get("name")
+                if pve_name:
+                    names = data.get("Names") or summary.get("Names") or []
+                    for nn in names:
+                        if pve_name and pve_name in nn:
+                            matches = True
+                            break
+
+        if not matches:
+            continue
+
+        # Extract Ports mapping from inspect response
+        network = data.get("NetworkSettings") or {}
+        ports_map = network.get("Ports") or {}
+
+        for port_key, mappings in (ports_map or {}).items():
+            m = re.match(r"(?P<port>\d+)/(tcp|udp)$", port_key)
+            if not m:
+                continue
+            proto = port_key.split("/", 1)[1]
+            if not mappings:
+                # Not published to the host
+                continue
+            for mapping in mappings:
+                host_port_raw = mapping.get("HostPort")
+                if not host_port_raw:
+                    continue
+                try:
+                    host_port = int(host_port_raw)
+                except Exception:
+                    continue
+                key = (cname, host_port, proto)
+                if key in seen:
+                    continue
+                seen.add(key)
+                svc_name = f"{cname}-{host_port}" if host_port != 9001 else cname
+                services.append({"name": svc_name, "port": host_port, "protocol": proto})
+
+    return services
+
+
+def _resolve_guest_ssh_user() -> str:
+    """Return the SSH user used for direct guest inspection."""
+    return _resolved_env_value("NETBOX_GUEST_SSH_USER") or "automation"
+
+
+def _resolve_guest_ssh_identity_file() -> str:
+    """Return the SSH identity file used for direct guest inspection."""
+    return (
+        _resolved_env_value("NETBOX_GUEST_SSH_IDENTITY_FILE")
+        or _resolved_env_value("ANSIBLE_PRIVATE_KEY_FILE")
+        or os.path.expanduser("~/.ssh/id_ed25519")
+    )
+
+
+def _runtime_probe_timeout_seconds() -> int:
+    """Return timeout for one runtime probe command."""
+    raw = _resolved_env_value("NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS") or "20"
+    return int(raw)
+
+
+def _run_lxc_guest_command(container: dict, shell_command: str) -> str:
+    """Run a shell command inside a running LXC guest over direct SSH."""
+    guest_ip = _get_container_ip(container)
+    guest_user = _resolve_guest_ssh_user()
+    identity_file = _resolve_guest_ssh_identity_file()
+    if not guest_ip:
+        raise RuntimeError(
+            f"runtime inspection requires a guest IP for {container.get('name', 'unknown')}"
+        )
+
+    ssh_cmd = [
+        "ssh",
+        "-F",
+        "/dev/null",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=no",
+        "-o",
+        "UserKnownHostsFile=/dev/null",
+        "-o",
+        "ConnectTimeout=5",
+        "-i",
+        identity_file,
+    ]
+    ssh_cmd.append(f"{guest_user}@{guest_ip}")
+    ssh_cmd.extend(["sh", "-lc", shell_command])
+    result = subprocess.run(
+        ssh_cmd,
+        capture_output=True,
+        text=True,
+        check=False,
+        timeout=_runtime_probe_timeout_seconds(),
+    )
+    if result.returncode != 0:
+        detail = result.stderr.strip() or result.stdout.strip() or "guest ssh failed"
+        raise RuntimeError(
+            f"runtime inspection failed for {container.get('name', 'unknown')}: {detail}"
+        )
+    return result.stdout
+
+
+def _parse_docker_services(output: str) -> list[dict]:
+    """Parse docker ps formatted output into service entries."""
+    services = []
+    seen = set()
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line == "docker-unavailable" or "|" not in line:
+            continue
+        cname, ports = line.split("|", 1)
+        for match in re.finditer(r":(?P<port>\d+)->\d+/(?P<proto>tcp|udp)", ports):
+            port = int(match.group("port"))
+            protocol = match.group("proto")
+            key = (cname, port, protocol)
+            if key in seen:
+                continue
+            seen.add(key)
+            services.append({
+                "name": f"{cname}-{port}" if port != 9001 else cname,
+                "port": port,
+                "protocol": protocol,
+            })
+    return services
+
+
+def _parse_listener_services(output: str, known_ports: set[tuple[int, str]]) -> list[dict]:
+    """Parse ss output into generic service entries for uncovered listeners."""
+    services = []
+    for raw_line in output.splitlines():
+        line = raw_line.strip()
+        if not line or line == "ss-unavailable":
+            continue
+        parts = line.split()
+        if len(parts) < 5:
+            continue
+        protocol = parts[0].lower()
+        if protocol not in {"tcp", "udp"}:
+            continue
+        local = parts[4]
+        if local.startswith("127.") or local.startswith("[::1]") or local.startswith("::1"):
+            continue
+        match = re.search(r":(?P<port>\d+)$", local)
+        if not match:
+            continue
+        port = int(match.group("port"))
+        key = (port, protocol)
+        if key in known_ports:
+            continue
+        known_ports.add(key)
+        services.append({
+            "name": f"port-{port}-{protocol}",
+            "port": port,
+            "protocol": protocol,
+        })
+    return services
+
+
+def _build_runtime_services(container: dict) -> list[dict]:
+    """Inspect a running LXC guest directly for published and listening services."""
+    if container.get("type") != "lxc" or container.get("status") != "running":
+        return []
+
+    docker_output = _run_lxc_guest_command(
+        container,
+        "if command -v docker >/dev/null 2>&1; then sudo docker ps --format '{{.Names}}|{{.Ports}}'; else echo docker-unavailable; fi",
+    )
+    services = _parse_docker_services(docker_output)
+    known_ports = {(svc["port"], svc["protocol"]) for svc in services}
+
+    listeners_output = _run_lxc_guest_command(
+        container,
+        "if command -v ss >/dev/null 2>&1; then ss -H -ltnu; else echo ss-unavailable; fi",
+    )
+    services.extend(_parse_listener_services(listeners_output, known_ports))
+    return services
+
+
+class RuntimeInspector:
+    """Seam for runtime service inspection transport.
+
+    The runtime inspector provides a single interface used by the VM-list
+    builder to obtain observed services for a given guest.  It prefers
+    Portainer-based discovery when a Portainer client and matching endpoint
+    are available; otherwise it falls back to direct guest inspection via
+    the configured runtime probe (defaults to `_build_runtime_services`).
+
+    Backwards compatibility: callers may still pass a simple callable that
+    accepts a single `container` argument; `build_vm_list` will detect
+    that form and continue to call it directly.
+    """
+
+    def __init__(self, portainer=None, runtime_probe=None, socket_proxy_url=None, socket_proxy_url_template=None):
+        self.portainer = portainer
+        self.runtime_probe = runtime_probe or _build_runtime_services
+        # allow explicit construction or env-driven configuration
+        # single-endpoint fallback (legacy)
+        self.socket_proxy_url = socket_proxy_url or _resolved_env_value("DOCKER_SOCKET_PROXY_URL")
+        # preferred per-guest template: e.g. http://{guest_ip}:2375
+        self.socket_proxy_url_template = socket_proxy_url_template or _resolved_env_value(
+            "DOCKER_SOCKET_PROXY_URL_TEMPLATE"
+        )
+
+    def inspect(self, container: dict, portainer_ep: dict | None = None) -> list[dict]:
+        """Return a list of observed services for `container`.
+
+        If a Portainer client was provided and `portainer_ep` is a truthy
+        endpoint mapping, Portainer will be used. Otherwise the configured
+        runtime probe callable is invoked.
+        """
+        if self.portainer and portainer_ep:
+            return _build_portainer_services(self.portainer, portainer_ep)
+
+        # Next preference: docker socket proxy (read-only Docker API).
+        # Preferred: per-guest URL template with `{guest_ip}` placeholder.
+        template = self.socket_proxy_url_template or _resolved_env_value(
+            "DOCKER_SOCKET_PROXY_URL_TEMPLATE"
+        )
+        if template:
+            guest_ip = _get_container_ip(container)
+            if guest_ip and "/" in guest_ip:
+                guest_ip = guest_ip.split("/", 1)[0]
+            if guest_ip:
+                try:
+                    proxy_url = template.format(guest_ip=guest_ip)
+                except Exception:
+                    proxy_url = None
+                if proxy_url:
+                    try:
+                        services = _build_socket_proxy_services(proxy_url, container, guest_scoped=True)
+                        if services:
+                            return services
+                    except Exception as exc:
+                        print(
+                            f"  warn: socket-proxy inspection failed for {container.get('name', 'unknown')} via template {template}: {exc}"
+                        )
+
+        # Fallback: single configured proxy endpoint (legacy)
+        proxy_url = self.socket_proxy_url or _resolved_env_value("DOCKER_SOCKET_PROXY_URL")
+        if proxy_url:
+            try:
+                services = _build_socket_proxy_services(proxy_url, container, guest_scoped=False)
+                if services:
+                    return services
+            except Exception as exc:
+                print(f"  warn: socket-proxy inspection failed for {container.get('name', 'unknown')}: {exc}")
+
+        # Final fallback: configured runtime probe (usually guest SSH probe)
+        return self.runtime_probe(container)
+
+
+def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None):
+    """Merge Proxmox inventory with runtime-discovered service data.
 
     Proxmox is the authoritative source for container/VM existence and config.
-    stack.yaml and Portainer enrich with metadata and services.
+    Services come from runtime inspection through Portainer or direct guest checks.
 
     Returns list of VM dicts with: name, ip, status, vcpus, memory, disk,
     description, tags, services, mounts.
@@ -213,7 +668,11 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
     if proxmox_data is None:
         proxmox_data = {"containers": [], "storage": []}
 
-    yamls = stack_yamls or {}
+    # Normalize the runtime inspection seam. If the caller passed a simple
+    # callable (legacy tests/code), keep it as-is. Otherwise instantiate the
+    # explicit `RuntimeInspector` which encapsulates transport-specific
+    # behavior (Portainer vs guest SSH probe).
+    runtime_inspector = runtime_inspector or RuntimeInspector(portainer=portainer)
 
     # Index Portainer endpoints by name for service discovery
     portainer_endpoints = {}
@@ -231,18 +690,17 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
     # Process all containers/VMs from Proxmox (authoritative source)
     for container in proxmox_data.get("containers", []):
         pve_name = container["name"]
-        yml = yamls.get(pve_name, {})
         portainer_ep = portainer_endpoints.get(pve_name, {})
 
         config = container.get("config", {})
-        ip = _get_container_ip(container, yml)
+        ip = _get_container_ip(container)
         if not ip:
             # Skip containers without IPs
             continue
 
-        vcpus = int(config.get("cores", yml.get("cores", 2)))
-        memory = int(config.get("memory", yml.get("memory", 2048)))
-        disk = _get_container_disk(container, yml)
+        vcpus = _int_config_value(config, "cores")
+        memory = _int_config_value(config, "memory")
+        disk = _get_container_disk(container)
 
         vm = {
             "name": pve_name,
@@ -251,8 +709,8 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
             "vcpus": vcpus,
             "memory": memory,
             "disk": disk,
-            "description": yml.get("#", f"Proxmox {container['type'].upper()} VMID {container['vmid']}"),
-            "tags": yml.get("tags", [pve_name.replace("-stack", ""), container["type"]]),
+            "description": config.get("description", f"Proxmox {container['type'].upper()} VMID {container['vmid']}"),
+            "tags": _get_container_tags(container),
             "services": [],
             "mounts": container.get("mounts", []),
             "vmid": container["vmid"],
@@ -260,57 +718,39 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None):
             "node": container["node"],
         }
 
-        # Discover services from Portainer containers (if this stack has an agent endpoint)
-        if portainer and portainer_ep:
-            vm["services"] = _build_portainer_services(portainer, portainer_ep)
+        # Use the runtime inspection seam to obtain observed services. Two
+        # cases are supported for backwards compatibility:
+        #  - a modern inspector object exposing `inspect(container, portainer_ep=None)`
+        #  - a legacy callable that accepts a single `container` argument
+        try:
+            if hasattr(runtime_inspector, "inspect") and callable(getattr(runtime_inspector, "inspect")):
+                # Modern inspector: let it decide between Portainer and guest probe
+                vm["services"] = runtime_inspector.inspect(container, portainer_ep=portainer_ep)
+            else:
+                # Legacy callable: preserve previous behavior where Portainer is
+                # preferred when available, otherwise call the provided callable.
+                if portainer and portainer_ep:
+                    vm["services"] = _build_portainer_services(portainer, portainer_ep)
+                else:
+                    vm["services"] = runtime_inspector(container)
+        except Exception as exc:
+            print(f"  warn: runtime service inspection skipped for {pve_name}: {exc}")
+            vm["services"] = []
 
         vms.append(vm)
 
     return vms
 
 
-def build_topology():
+def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portainer_ip=None):
     """Build the full topology dict from all available data sources.
 
-    Priority: Proxmox (authoritative) → stack.yaml (metadata) → Portainer (services).
+    Priority: Proxmox (authoritative) → runtime service inspection.
     """
-    stacks_dir = os.path.join(os.path.dirname(__file__), "..", "..")
-    stack_yamls = load_stack_yamls(stacks_dir)
-    portainer_ip, portainer_url = _resolve_portainer_endpoint(stack_yamls)
+    if proxmox_data is None:
+        proxmox_data = discover_from_proxmox()
 
-    portainer = None
-    if os.environ.get("PORTAINER_ADMIN_PASSWORD"):
-        portainer = PortainerClient(url=portainer_url)
-
-    # Query Proxmox for authoritative container/VM list
-    proxmox_data = discover_from_proxmox()
-
-    vms = build_vm_list(proxmox_data, stack_yamls, portainer)
-
-    # The Portainer server itself isn't a Proxmox container (it runs on management-stack).
-    # We already have management-stack from Proxmox, but ensure Portainer services are listed.
-    portainer_vms = [v for v in vms if v["ip"].startswith(portainer_ip)]
-    if not portainer_vms:
-        # Only add if not already discovered from Proxmox
-        vms.append({
-            "name": "portainer-api",
-            "ip": f"{portainer_ip}/24",
-            "status": "active",
-            "vcpus": 2,
-            "memory": 3072,
-            "disk": 8,
-            "description": "Portainer API endpoint (external)",
-            "tags": ["management", "external"],
-            "services": [
-                {"name": "portainer", "port": 9443, "protocol": "tcp"},
-            ],
-            "mounts": [],
-            "vmid": None,
-            "vm_type": "external",
-            "node": "external",
-        })
-
-    return vms
+    return build_vm_list(proxmox_data, stack_yamls, portainer=portainer)
 
 
 def build_network_topology():
@@ -319,7 +759,10 @@ def build_network_topology():
     Returns a dict with router metadata, interfaces, VLANs, and IP addresses.
     If Mikrotik credentials are not configured, returns an empty topology.
     """
-    if not (os.environ.get("MIKROTIK_USER") and os.environ.get("MIKROTIK_PASSWORD")):
+    if not (
+        (os.environ.get("MIKROTIK_READONLY_USER") and os.environ.get("MIKROTIK_READONLY_PASSWORD"))
+        or (os.environ.get("MIKROTIK_USER") and os.environ.get("MIKROTIK_PASSWORD"))
+    ):
         return {
             "router": None,
             "interfaces": [],
@@ -345,9 +788,16 @@ def build_full_topology():
         "network": {...}
     }
     """
+    proxmox_data = discover_from_proxmox()
+
     return {
-        "vms": build_topology(),
+        "vms": build_topology(
+            proxmox_data=proxmox_data,
+            stack_yamls=None,
+            portainer=None,
+        ),
         "network": build_network_topology(),
+        "proxmox": build_proxmox_context(proxmox_data),
     }
 
 

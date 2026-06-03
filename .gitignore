@@ -18,6 +18,8 @@ storage-audit
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
 *.dec.env
+secrets.dec.*
+terraform/secrets.dec.*
 
 # Terraform
 *.tfstate
