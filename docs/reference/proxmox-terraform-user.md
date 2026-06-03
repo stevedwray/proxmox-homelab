@@ -12,6 +12,12 @@ The active automation path uses:
 - Terraform stacks under `terraform/lxc/`
 - Token values loaded from local environment files such as `.env` or `.env.pve-test`
 
+Note: the `automation@pve!terraform` token shown above is the full-scope
+Terraform provisioning token used during bootstrap and apply flows. For
+day-2 discovery and monitoring/read-only automation (NetBox population,
+topology discovery), prefer a dedicated read-only token such as
+`automation@pve!terraform-readonly` exposed via `PROXMOX_READONLY_TOKEN_ID`.
+
 In the current bootstrap flow, the user and token are normally created by:
 
 - `ansible/00-initial-setup/proxmox-initial-setup.yml`

@@ -7,7 +7,10 @@ It assumes the active project model:
 
 - `pve-test` is a bare-metal Proxmox host
 - Terraform entry point is `terraform/lxc/`
-- Proxmox API access uses the `automation@pve!terraform` token
+- Proxmox API access for discovery should use a dedicated read-only token
+  (example: `automation@pve!terraform-readonly`). Terraform provisioning may
+  still use the full-scope `automation@pve!terraform` token where write access
+  is required.
 - host bootstrap is handled through the planned bootstrap Ansible playbooks
 
 ## What you need first
@@ -79,10 +82,17 @@ cp .env.template .env
 ```
 
 Fill in the values required by the current repo workflow. For Terraform auth, the active
-pattern is token-based, for example:
+pattern is token-based. Prefer a read-only identifier for discovery and map it
+into `TF_VAR_pm_api_token_id` for Terraform compatibility when appropriate.
+
+Example (preferred discovery identifier + compatibility mapping):
 
 ```bash
-TF_VAR_pm_api_token_id=automation@pve!terraform
+# Preferred non-secret identifier (set in .env.pve-test):
+PROXMOX_READONLY_TOKEN_ID=automation@pve!terraform-readonly
+
+# Terraform compatibility mapping (example):
+TF_VAR_pm_api_token_id=${PROXMOX_READONLY_TOKEN_ID:-automation@pve!terraform}
 TF_VAR_pm_api_token_secret=<TOKEN_SECRET>
 ```
 
@@ -93,7 +103,7 @@ Depending on the task, you may also need `.env.pve-test`.
 Before running Terraform, confirm the token works:
 
 ```bash
-curl -ks -H "Authorization: PVEAPIToken=automation@pve!terraform=<TOKEN_SECRET>" \
+curl -ks -H "Authorization: PVEAPIToken=${PROXMOX_READONLY_TOKEN_ID}=${PROXMOX_READONLY_TOKEN_SECRET}" \
   "https://pve-test.gibbsgreatly.xyz:8006/api2/json/version"
 ```
 
@@ -125,7 +135,10 @@ You are ready to work when:
 - local Terraform and Ansible tooling is installed
 - `pve-test.gibbsgreatly.xyz` is reachable by SSH and HTTPS
 - the Proxmox bootstrap baseline has been applied if needed
-- `automation@pve!terraform` is available and working
+- a suitable Proxmox token is available and working; prefer a
+  read-only discovery token (`automation@pve!terraform-readonly`) for day-2
+  discovery and use `automation@pve!terraform` only where Terraform requires
+  write privileges.
 - `terragrunt plan` or `tofu validate` succeeds from `terraform/lxc/`
 
 ## Common issues
