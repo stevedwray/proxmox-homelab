@@ -1,0 +1,51 @@
+name: NetBox Populate
+
+on:
+  schedule:
+    - cron: '17 2 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: netbox-populate
+  cancel-in-progress: false
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
+
+jobs:
+  populate:
+    name: Run NetBox populate
+    runs-on: [self-hosted, pve-test, build]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install SOPS
+        run: |
+          if ! command -v sops >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y sops
+          fi
+
+      - name: Configure SOPS age key
+        env:
+          SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
+        run: |
+          install -d -m 700 "$HOME/.config/sops/age"
+          printf '%s\n' "$SOPS_AGE_KEY" > "$HOME/.config/sops/age/keys.txt"
+          chmod 600 "$HOME/.config/sops/age/keys.txt"
+
+      - name: Build populate container
+        run: |
+          docker build \
+            -t netbox-populate:daily \
+            -f terraform/lxc/stacks/netbox-stack/integrations/Dockerfile \
+            terraform/lxc/stacks/netbox-stack/integrations
+
+      - name: Run populate container (supported wrapper)
+        env:
+          DOCKER_SOCKET_PROXY_URL_TEMPLATE: ${{ secrets.DOCKER_SOCKET_PROXY_URL_TEMPLATE }}
+          DOCKER_SOCKET_PROXY_URL: ${{ secrets.DOCKER_SOCKET_PROXY_URL }}
+        run: |
+          sops exec-env terraform/secrets.pve.enc.yaml -- \
+            bash ./scripts/netbox-populate.sh apply
