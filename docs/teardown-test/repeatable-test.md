@@ -103,6 +103,33 @@ evidence stamp:
 This phase is read-only. A degraded or missing stack is reported in the table;
 the phase itself is an observation pass, not a repair action.
 
+Socket-proxy disposable test: opt-in and proof expectations
+
+The `docker-socket-proxy-test` disposable target is excluded by default. To run the proxy proof as part of a repeatable teardown-test cycle follow the opt-in steps described in `variables.md` (create a temporary inventory and run the harness via `TEARDOWN_INVENTORY_FILE`). The expected, repeatable proof covers the following checks and evidence capture:
+
+- Target creation/deploy path: the harness deploy phase will run `terragrunt apply` for the test stack; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/deploy-docker-socket-proxy-test.log` (contains terragrunt/apply output).
+- Workload containers present: verify via Ansible raw/curl against the test LXC inventory. Example (ip resolved from stack.yaml):
+
+```bash
+IP=$(grep -E 'ip_address:' terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml | sed -E 's/.*ip_address: ?"?([^" ]+)"?.*/\1/' | cut -d'/' -f1)
+ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a "curl -sS 'http://$IP:2375/containers/json?all=1'" | tee docs/teardown-test/evidence/<stamp>/logs/proxy-probe.log
+```
+
+- Proxy reachable: the `proxy-probe.log` above should contain JSON output listing deployed containers (nginx/whoami/redis/docker-socket-proxy, etc.).
+- `GET /containers/json?all=1` succeeds: the probe should return HTTP 200 and valid JSON; record `proxy-probe.log` under the evidence stamp.
+- Mutating request is blocked: example check (expect HTTP 403):
+
+```bash
+ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a \
+  "curl -sS -o /dev/null -w '%{http_code}' -XPOST -H 'Content-Type: application/json' -d '{\"Image\":\"alpine\"}' 'http://$IP:2375/containers/create'" \
+  | tee docs/teardown-test/evidence/<stamp>/logs/proxy-mutating-test.log
+# Expected result: 403
+```
+
+- Optional cleanup/removal: when running `cycle` (with `--disposable`) the destroy phase should remove the test LXC; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/destroy-docker-socket-proxy-test.log` and the harness VMID verification logs.
+
+Keep raw evidence under the standard evidence stamp (`docs/teardown-test/evidence/<stamp>/logs/`) and avoid committing raw evidence files. The temporary inventory remains local and reversible.
+
 If `platform-status` cannot collect `pct status` because the operator host
 cannot reach or resolve the Proxmox SSH host, that stack is reported as
 `overall=blocked` with an explicit `status collection blocked` detail. This

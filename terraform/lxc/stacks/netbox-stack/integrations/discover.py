@@ -305,6 +305,7 @@ def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
                 "name": svc_name,
                 "port": pub,
                 "protocol": proto,
+                "source": "portainer",
             })
 
     seen = set()
@@ -440,7 +441,12 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
                     continue
                 seen.add(key)
                 svc_name = f"{cname}-{host_port}" if host_port != 9001 else cname
-                services.append({"name": svc_name, "port": host_port, "protocol": proto})
+                services.append({
+                    "name": svc_name,
+                    "port": host_port,
+                    "protocol": proto,
+                    "source": "socket-proxy",
+                })
 
     return services
 
@@ -527,6 +533,7 @@ def _parse_docker_services(output: str) -> list[dict]:
                 "name": f"{cname}-{port}" if port != 9001 else cname,
                 "port": port,
                 "protocol": protocol,
+                "source": "guest-ssh-docker",
             })
     return services
 
@@ -559,6 +566,7 @@ def _parse_listener_services(output: str, known_ports: set[tuple[int, str]]) -> 
             "name": f"port-{port}-{protocol}",
             "port": port,
             "protocol": protocol,
+            "source": "guest-ssh-listener",
         })
     return services
 
@@ -620,6 +628,11 @@ class RuntimeInspector:
 
         # Next preference: docker socket proxy (read-only Docker API).
         # Preferred: per-guest URL template with `{guest_ip}` placeholder.
+        # Note: this template is expected to be provided via environment by
+        # the populate job (e.g. /etc/netbox-populate/env when provisioned) or
+        # by CI via GitHub Actions secrets. It is intentionally optional and
+        # should remain unset on real stacks until the disposable proof and
+        # rollout gates have been satisfied.
         template = self.socket_proxy_url_template or _resolved_env_value(
             "DOCKER_SOCKET_PROXY_URL_TEMPLATE"
         )
@@ -790,11 +803,28 @@ def build_full_topology():
     """
     proxmox_data = discover_from_proxmox()
 
+    # Attempt to instantiate a Portainer client when environment values
+    # indicate a Portainer endpoint and admin password are available.
+    # This enables Portainer-backed service discovery for VMs that have
+    # Portainer endpoints configured.
+    portainer_client = None
+    try:
+        has_admin_pw = bool(os.environ.get("PORTAINER_ADMIN_PASSWORD"))
+        has_url = bool(_resolved_env_value("PORTAINER_URL") or _resolved_env_value("PORTAINER_SERVER_IP") or _resolved_env_value("LAB_IP_PORTAINER"))
+        if has_admin_pw and has_url:
+            try:
+                portainer_client = PortainerClient()
+            except Exception:
+                # If Portainer client construction fails, quietly disable it
+                portainer_client = None
+    except Exception:
+        portainer_client = None
+
     return {
         "vms": build_topology(
             proxmox_data=proxmox_data,
             stack_yamls=None,
-            portainer=None,
+            portainer=portainer_client,
         ),
         "network": build_network_topology(),
         "proxmox": build_proxmox_context(proxmox_data),
