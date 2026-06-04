@@ -23,6 +23,7 @@ working tree, a known commit, and explicit operator approval.
 
 - For direct Ansible validation against inline inventories, always pass
   `-u root`.
+ - Opt-in disposable test stacks (for example `docker-socket-proxy-test`) can be included in a run by creating a temporary inventory and running the harness with the `TEARDOWN_INVENTORY_FILE` environment variable; the default inventory remains unchanged.
 - Generated edge artifacts under `terraform/lxc/.generated/` are runtime output,
   not source. Regenerate them immediately before publish.
 - Reconciler dry-run and apply commands should use the direct Authentik URL

@@ -37,6 +37,45 @@ default expectation but still require confirmation during preflight.
 | `.hold/` stacks | no | Out of scope unless explicitly moved active |
 | `headscale-stack` inventory without active `stack.yaml` | no | Orphaned inventory/state only; out of scope until active `stack.yaml` or cleanup plan exists |
 
+## Opt-in disposable stacks
+
+By design, disposable `test-*` validation stacks (including `docker-socket-proxy-test`) are excluded from the default teardown/deploy rehearsal scope. To run a repeatable teardown-test cycle that includes `docker-socket-proxy-test`, create a temporary inventory file that includes the test stack and point the harness at that inventory. The harness will use the default inventory at `docs/teardown-test/inventory.md` unless overridden via the `TEARDOWN_INVENTORY_FILE` environment variable.
+
+Recommended operator steps to opt in (explicit, reversible):
+
+```bash
+# Extract the vmid and ip_address values from the test stack metadata so the
+# temporary inventory row matches `terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml`.
+VMID=$(grep -E '^vmid:' terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml | awk '{print $2}')
+IP=$(grep -E 'ip_address:' terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml \
+	| sed -E 's/.*ip_address: ?"?([^" ]+)"?.*/\1/' | cut -d'/' -f1)
+
+# Make a temporary copy of the approved inventory and edit it manually to add
+# the test stack row and include the stack name in the "Approved Deploy Order".
+cp docs/teardown-test/inventory.md docs/teardown-test/inventory.with-docker-socket-proxy.md
+
+# Example table row to add to the stacks table (operator must ensure VMID/IP match):
+# | `docker-socket-proxy-test` | Stage 3a edge foundation | ${VMID} | ${IP}/24 | infra_seg | [] | deploy-docker-socket-proxy-test |
+
+# Example: add the stack name into the Approved Deploy Order numbered list
+# (insert at the appropriate position for your rehearsal plan):
+# 12. `docker-socket-proxy-test`
+
+# Run the harness against the temporary inventory (read-only check):
+TEARDOWN_INVENTORY_FILE=docs/teardown-test/inventory.with-docker-socket-proxy.md \
+	./scripts/teardown-deploy-test.sh platform-status
+
+# Run a disposable destroy/deploy cycle (disposable mode skips approval-packet
+# validation so it is suitable for repeatable test runs). The operator still must
+# pass --execute and the approval phrase:
+TEARDOWN_INVENTORY_FILE=docs/teardown-test/inventory.with-docker-socket-proxy.md \
+	./scripts/teardown-deploy-test.sh cycle --disposable --execute --approval-text "approve" --stamp <stamp>
+```
+
+Notes:
+- Do not commit the temporary inventory file; remove it or keep it in local-only branches.
+- The temporary inventory approach keeps the default scope unchanged and makes the opt-in explicit and reversible.
+
 ## Persistent Data Policy
 
 OP-03 state: APPROVED FOR LATER DESTRUCTIVE APPROVAL PACKET. See

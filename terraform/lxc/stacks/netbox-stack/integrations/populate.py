@@ -23,7 +23,7 @@ import ipaddress
 import yaml
 
 from client import NetBoxClient
-from discover import build_full_topology
+from discover import build_full_topology, load_stack_yamls
 
 # ---------------------------------------------------------------------------
 # Static definitions (things not discovered automatically)
@@ -823,9 +823,14 @@ def populate_virtual(nb, vms, inventory):
 
     for vm_def in vms:
         extra_tags = vm_def.get("tags", [])
+        # Determine environment for this VM: prefer the VM's source node,
+        # otherwise fall back to the population inventory environment.
+        vm_env = vm_def.get("node")
+        if not vm_env or vm_env == "external":
+            vm_env = inventory["environment"]
         vm_name = _virtual_machine_name(vm_def, inventory)
-        _ensure_tags(nb, [MANAGED_TAG_NAME, inventory["environment_tag"], *extra_tags])
-        tag_refs = _managed_tag_refs(extra_tags, environment=inventory["environment"])
+        _ensure_tags(nb, [MANAGED_TAG_NAME, _environment_tag_name(vm_env), *extra_tags])
+        tag_refs = _managed_tag_refs(extra_tags, environment=vm_env)
 
         # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
         vm = nb.ensure(NB_VIRT_VIRTUAL_MACHINES, {"name": vm_name}, {
@@ -844,7 +849,7 @@ def populate_virtual(nb, vms, inventory):
         }, {
             "virtual_machine": vm["id"],
             "name": "eth0",
-            "tags": _managed_tag_refs(environment=inventory["environment"]),
+            "tags": _managed_tag_refs(environment=vm_env),
         })
 
 
@@ -929,6 +934,11 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
     for vm_def in vms:
         if not vm_def.get("ip"):
             continue
+        # Determine VM-specific environment for IP/service tagging.
+        vm_env = vm_def.get("node")
+        if not vm_env or vm_env == "external":
+            vm_env = inventory["environment"]
+        vm_env_managed_tags = _managed_tag_refs(environment=vm_env)
         vm = nb.get(
             NB_VIRT_VIRTUAL_MACHINES,
             name=_virtual_machine_name(vm_def, inventory),
@@ -941,7 +951,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             "assigned_object_id": iface["id"],
             "status": "active",
             "description": vm_def["name"],
-            "tags": env_managed_tags,
+            "tags": vm_env_managed_tags,
         })
         if _primary_ip_id(vm) != ip["id"]:
             vm = nb.patch_object(
@@ -951,6 +961,16 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             )
 
         for svc_def in vm_def.get("services", []):
+            # Compose tags: keep existing managed/environment tags, and
+            # optionally add a single runtime-source tag when discovery source
+            # metadata is available on the observed service.
+            service_tags = list(vm_env_managed_tags)
+            svc_source = svc_def.get("source")
+            if svc_source:
+                source_tag_name = f"runtime-source-{svc_source}"
+                _ensure_tags(nb, [source_tag_name])
+                service_tags.append(_tag_ref(source_tag_name))
+
             nb.ensure(NB_IPAM_SERVICES, {
                 "name": svc_def["name"],
                 "parent_object_type": "virtualization.virtualmachine",
@@ -963,30 +983,60 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                 "ports": [svc_def["port"]],
                 "protocol": svc_def["protocol"],
                 "description": _service_last_seen_description(vm_def["name"], service_observed_at),
-                "tags": env_managed_tags,
+                "tags": service_tags,
             })
 
         desired_service_keys = {
             (svc["name"], svc["protocol"], svc["port"])
             for svc in vm_def.get("services", [])
         }
-        desired_tags = {MANAGED_TAG_SLUG, inventory["environment_tag"]}
+        # Only consider services that are managed and carry the VM's
+        # environment tag (derived from the VM's source node). Previously
+        # this used the inventory-level environment tag which caused
+        # cross-node VMs to be reconciled against the wrong environment
+        # during cleanup. Use the per-VM environment here.
+        desired_tags = {MANAGED_TAG_SLUG, _environment_tag_name(vm_env)}
         existing_services = nb.get(
             NB_IPAM_SERVICES,
             parent_object_type="virtualization.virtualmachine",
             parent_object_id=vm["id"],
         )["results"]
         for existing_service in existing_services:
-            if not desired_tags.issubset(_tag_slugs(existing_service)):
+            existing_slugs = _tag_slugs(existing_service)
+            # Only consider automation-managed services.
+            if MANAGED_TAG_SLUG not in existing_slugs:
                 continue
+
+            # Detect any environment tag currently present on the service.
+            existing_env_tags = [s for s in existing_slugs if s.startswith(ENV_TAG_PREFIX)]
+            existing_env_tag = existing_env_tags[0] if existing_env_tags else None
+            desired_env_tag = _environment_tag_name(vm_env)
+
             existing_key = (
                 existing_service.get("name"),
                 _service_protocol_value(existing_service),
                 _service_first_port(existing_service),
             )
-            if existing_key in desired_service_keys:
+
+            if existing_env_tag == desired_env_tag:
+                # Service already carries the VM's environment tag; apply
+                # standard reconciliation (delete if not desired).
+                if existing_key in desired_service_keys:
+                    continue
+                nb.delete_object(NB_IPAM_SERVICES, existing_service)
                 continue
-            nb.delete_object(NB_IPAM_SERVICES, existing_service)
+
+            # Service is managed but either missing an environment tag or
+            # tagged for a different environment (cross-node). If it matches
+            # a desired service, retag it to the current VM environment while
+            # preserving any runtime-source tags. Otherwise delete it so it
+            # will be recreated correctly.
+            if existing_key in desired_service_keys:
+                runtime_slugs = [s for s in existing_slugs if s.startswith("runtime-source-")]
+                new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=vm_env)
+                nb.patch_object(NB_IPAM_SERVICES, existing_service, {"tags": new_tags})
+            else:
+                nb.delete_object(NB_IPAM_SERVICES, existing_service)
 
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1141,46 @@ def report_stale_managed_objects(nb, inventory):
     return total
 
 
+def reconcile_service_env_tags(nb):
+    """Ensure managed services carry the same environment tag as their parent VM.
+
+    This is a narrowly scoped reconciliation that patches service objects which
+    are owned by the automation but carry an environment tag different from
+    their VM parent. Runtime-source tags are preserved where present.
+    """
+    vms = nb.get(NB_VIRT_VIRTUAL_MACHINES, tag=MANAGED_TAG_SLUG).get("results", [])
+    for vm in vms:
+        vm_id = vm.get("id")
+        if not vm_id:
+            continue
+        vm_slugs = _tag_slugs(vm)
+        vm_env_tags = [s for s in vm_slugs if s.startswith(ENV_TAG_PREFIX)]
+        if not vm_env_tags:
+            continue
+        vm_env_tag = vm_env_tags[0]
+        # Derive environment token to pass to _managed_tag_refs
+        env_value = vm_env_tag[len(ENV_TAG_PREFIX):]
+
+        services = nb.get(
+            NB_IPAM_SERVICES,
+            parent_object_type="virtualization.virtualmachine",
+            parent_object_id=vm_id,
+        ).get("results", [])
+
+        for svc in services:
+            svc_slugs = _tag_slugs(svc)
+            if MANAGED_TAG_SLUG not in svc_slugs:
+                continue
+            svc_env_tags = [s for s in svc_slugs if s.startswith(ENV_TAG_PREFIX)]
+            if svc_env_tags and svc_env_tags[0] == vm_env_tag:
+                continue
+
+            # Preserve runtime-source tags while enforcing managed + VM env tag.
+            runtime_slugs = [s for s in svc_slugs if s.startswith("runtime-source-")]
+            new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=env_value)
+            nb.patch_object(NB_IPAM_SERVICES, svc, {"tags": new_tags})
+
+
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
@@ -1124,6 +1214,104 @@ def main():
     population_intent = _apply_discovered_proxmox_host_context(population_intent, topology)
     vms = topology["vms"]
     network = topology["network"]
+
+    # Augment discovered VMs with declared stack YAMLs when a per-guest
+    # socket-proxy template is provided but the Proxmox discovery did not
+    # return the expected stack VM (common when the populate job targets the
+    # local test Proxmox instance but the stack record lives under another
+    # inventory node such as `pve`). This allows the standard populate path
+    # to probe a declared VM IP via the `{guest_ip}` socket-proxy template
+    # and ingest runtime services without relying on an ad hoc injection.
+    try:
+        template = os.environ.get("DOCKER_SOCKET_PROXY_URL_TEMPLATE") or os.environ.get("DOCKER_SOCKET_PROXY_URL")
+        if template:
+            # Load known stack declarations from stacks/*/stack.yaml and
+            # ensure any declared host IPs that are not already present in
+            # the discovered VM list are appended so they will be probed.
+            stacks = load_stack_yamls()
+            existing_ips = {vm.get("ip") for vm in vms if vm.get("ip")}
+            for name, stack in stacks.items():
+                ip_raw = stack.get("ip_address")
+                if not ip_raw:
+                    continue
+                ip = str(_resolve_env_token(ip_raw)) if isinstance(ip_raw, str) else None
+                if not ip:
+                    continue
+                # Normalize to address/prefix if template expects guest_ip without prefix
+                ip_addr = ip.split("/", 1)[0]
+                if any(vm.get("name") == name for vm in vms):
+                    continue
+                if ip in existing_ips or ip_addr in existing_ips:
+                    continue
+                # Try to map the declared IP to an existing NetBox VM; if an
+                # existing VM is found by IP, append a vm_def that points to
+                # that VM so the runtime inspection will attach services to
+                # the existing inventory object. Do NOT create new VMs here.
+                try:
+                    ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
+                    ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
+                except Exception:
+                    ip_results = []
+
+                mapped = False
+                for ip_obj in ip_results:
+                    if ip_obj.get("assigned_object_type") != "virtualization.vminterface":
+                        continue
+                    assigned_id = ip_obj.get("assigned_object_id")
+                    if not assigned_id:
+                        continue
+                    try:
+                        iface_q = nb.get(NB_VIRT_INTERFACES, id=assigned_id)
+                        iface_res = iface_q.get("results", []) if isinstance(iface_q, dict) else []
+                    except Exception:
+                        iface_res = []
+                    if not iface_res:
+                        continue
+                    iface = iface_res[0]
+                    vm_ref = iface.get("virtual_machine")
+                    vm_id = vm_ref.get("id") if isinstance(vm_ref, dict) else vm_ref
+                    if not vm_id:
+                        continue
+                    try:
+                        vm_q = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_id)
+                        vm_res = vm_q.get("results", []) if isinstance(vm_q, dict) else []
+                    except Exception:
+                        vm_res = []
+                    if not vm_res:
+                        continue
+                    nb_vm = vm_res[0]
+                    nb_name = nb_vm.get("name") or name
+                    # Split NetBox name `foo@node` into base and node when present
+                    if isinstance(nb_name, str) and "@" in nb_name:
+                        base, nodepart = nb_name.split("@", 1)
+                    else:
+                        base = nb_name
+                        nodepart = stack.get("proxmox", {}).get("target_node") or "external"
+
+                    vms.append({
+                        "name": base,
+                        "ip": ip if "/" in ip else f"{ip}/24",
+                        "status": "unknown",
+                        "vcpus": stack.get("cores", 1) or 1,
+                        "memory": stack.get("memory", 0) or 0,
+                        "disk": stack.get("rootfs_size", 0) or 0,
+                        "description": stack.get("description", "declared in stack.yaml"),
+                        "tags": stack.get("tags", []),
+                        "services": [],
+                        "mounts": [],
+                        "vmid": stack.get("vmid") or 0,
+                        "vm_type": "declared",
+                        "node": nodepart,
+                    })
+                    mapped = True
+                    break
+                # If mapping failed, do not create a new VM record here.
+                if not mapped:
+                    continue
+    except Exception:
+        # Non-fatal augmentation; discovery should continue even if stack
+        # YAML parsing or env token resolution fails.
+        pass
     print(f"Discovered {len(vms)} VMs from Proxmox + Portainer")
     if network.get("router"):
         print(
@@ -1137,6 +1325,8 @@ def main():
     populate_network(nb, site, network)
     populate_virtual(nb, vms, inventory)
     populate_ipam(nb, site, vms, population_intent, inventory)
+    # Service-level reconciliation: ensure managed services' env tags match their VM
+    reconcile_service_env_tags(nb)
     stale_total = report_stale_managed_objects(nb, inventory)
 
     print("\n=== Done ===")
