@@ -57,6 +57,16 @@ This ensures:
 - CI/scheduled runs receive the proxy config from GitHub Actions secrets.
 - Local/operator runs receive the proxy config from production SOPS or `.env.pve`.
 
+Note on current status:
+
+- The preferred integration point remains `DOCKER_SOCKET_PROXY_URL_TEMPLATE` (a per-guest URL template).
+- A disposable proof-of-concept (`docker-socket-proxy-test`) has been validated; see
+	`docs/docker-refactor/handoffs/05-session-deploy-and-prove-test-stack-handback.md`
+	and `docs/docker-refactor/handoffs/06-session-teardown-optin-handback.md` for details.
+- These proxy variables are intentionally unset on `netbox-stack` by default to avoid
+	accidental rollout; operator or CI secrets must explicitly provide them for any
+	production enablement.
+
 
 ## Provides
 

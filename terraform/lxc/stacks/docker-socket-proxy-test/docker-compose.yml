@@ -1,0 +1,17 @@
+version: "3.8"
+
+services:
+  nginx:
+    image: nginx:stable-alpine
+    container_name: docker-socket-proxy-test-nginx
+    restart: unless-stopped
+
+  whoami:
+    image: traefik/whoami:latest
+    container_name: docker-socket-proxy-test-whoami
+    restart: unless-stopped
+
+  redis:
+    image: redis:alpine
+    container_name: docker-socket-proxy-test-redis
+    restart: unless-stopped

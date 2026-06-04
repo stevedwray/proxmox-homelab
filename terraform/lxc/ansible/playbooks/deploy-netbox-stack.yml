@@ -118,6 +118,8 @@
   roles:
     - lxc_base
     - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -408,6 +410,16 @@
           PROXMOX_READONLY_TOKEN_SECRET={{ proxmox_token_secret }}
           PORTAINER_ADMIN_PASSWORD={{ portainer_password }}
           LAB_IP_PORTAINER={{ portainer_ip }}
+          # Preferred per-guest socket proxy template (leave unset to disable):
+          # DOCKER_SOCKET_PROXY_URL_TEMPLATE=    # e.g. http://{guest_ip}:2375
+          # Legacy single-endpoint fallback (leave unset to disable):
+          # DOCKER_SOCKET_PROXY_URL=             # e.g. http://10.57.3.12:2375
+          # Note: both are intentionally unset by default to avoid enabling
+          # runtime discovery on real stacks until the disposable proof,
+          # teardown-test opt-in, and manager review are complete. See
+          # docs/docker-refactor/handoffs/05-session-deploy-and-prove-test-stack-handback.md
+          # and docs/docker-refactor/handoffs/06-session-teardown-optin-handback.md
+          # for the disposable proof and opt-in guidance.
           NETBOX_PCT_SSH_IDENTITY_FILE={{ populate_ssh_key }}
           NETBOX_NETWORK_ENV=pve-test
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8

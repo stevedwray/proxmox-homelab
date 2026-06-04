@@ -52,6 +52,7 @@ provides:
 ansible_playbook: "deploy-proxy-stack"
 deployment_tier: platform
 portainer_agent: false
+enable_docker_socket_proxy: false
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
