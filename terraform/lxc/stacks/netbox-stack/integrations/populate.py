@@ -23,7 +23,7 @@ import ipaddress
 import yaml
 
 from client import NetBoxClient
-from discover import build_full_topology, load_stack_yamls
+from discover import build_full_topology, load_stack_yamls, _build_socket_proxy_services
 
 # ---------------------------------------------------------------------------
 # Static definitions (things not discovered automatically)
@@ -545,6 +545,57 @@ def _vm_description(vm_def: dict) -> str:
     return description[:200]
 
 
+def _try_reparent_runtime_service(nb, vm, svc_def, vm_env) -> bool:
+    """Conservatively reparent an existing runtime-sourced service to `vm`.
+
+    Returns True when a single, unambiguous existing managed service matching
+    `(name, protocol, port)` and carrying a `runtime-source-*` tag is found
+    and successfully patched to reference the provided `vm`.
+    """
+    # Only perform for socket-proxy discovered services and when the
+    # feature flag is explicitly enabled in the environment.
+    if svc_def.get("source") != "socket-proxy":
+        return False
+    if os.environ.get("REPARENT_RUNTIME_SOCKET_PROXY", "").lower() not in ("1", "true", "yes", "on"):
+        return False
+
+    try:
+        results = nb.get(NB_IPAM_SERVICES, name=svc_def.get("name"), protocol=svc_def.get("protocol"))
+    except Exception:
+        return False
+    candidates = results.get("results", []) if isinstance(results, dict) else []
+
+    matches = []
+    for cand in candidates:
+        slugs = _tag_slugs(cand)
+        if MANAGED_TAG_SLUG not in slugs:
+            continue
+        if not any(s.startswith("runtime-source-") for s in slugs):
+            continue
+        if _service_first_port(cand) != svc_def.get("port"):
+            continue
+        if cand.get("parent_object_type") != "virtualization.virtualmachine":
+            continue
+        parent_id = cand.get("parent_object_id")
+        if not parent_id or parent_id == vm.get("id"):
+            continue
+        matches.append(cand)
+
+    if len(matches) != 1:
+        # Ambiguous or none — do not reparent in these cases
+        return False
+
+    candidate = matches[0]
+    runtime_slugs = [s for s in _tag_slugs(candidate) if s.startswith("runtime-source-")]
+    new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=vm_env)
+    nb.patch_object(NB_IPAM_SERVICES, candidate, {
+        "parent_object_id": vm.get("id"),
+        "parent_object_type": "virtualization.virtualmachine",
+        "tags": new_tags,
+    })
+    return True
+
+
 def _legacy_cluster_lookups(inventory: dict) -> list[dict]:
     """Return legacy cluster lookups used during the shared-inventory migration."""
     if not inventory.get("legacy_name_migration_enabled"):
@@ -971,6 +1022,19 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                 _ensure_tags(nb, [source_tag_name])
                 service_tags.append(_tag_ref(source_tag_name))
 
+            # Conservative reparent: if an existing runtime-sourced service
+            # already exists elsewhere in NetBox that matches this observed
+            # service, reparent it to the current VM instead of creating a
+            # duplicate. This is gated behind the REPARENT_RUNTIME_SOCKET_PROXY
+            # environment flag and only applies to unambiguous matches.
+            try:
+                if _try_reparent_runtime_service(nb, vm, svc_def, vm_env):
+                    # Reparent performed; skip creation step for this service.
+                    continue
+            except Exception:
+                # Non-fatal: fall back to standard ensure behavior.
+                pass
+
             nb.ensure(NB_IPAM_SERVICES, {
                 "name": svc_def["name"],
                 "parent_object_type": "virtualization.virtualmachine",
@@ -1298,6 +1362,31 @@ def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
                 # Avoid duplicate appends for the same VM/ip
                 if not any(v.get("ip") == vm_def["ip"] and v.get("name") == vm_def["name"] for v in vms):
                     vms.append(vm_def)
+                # After appending a declared VM mapping, attempt a conservative
+                # re-probe via the configured socket-proxy template so that
+                # runtime services are available on the vm_def for later
+                # ensure/reconciliation steps. This avoids re-running the
+                # entire discovery pipeline.
+                template = os.environ.get("DOCKER_SOCKET_PROXY_URL_TEMPLATE") or os.environ.get("DOCKER_SOCKET_PROXY_URL")
+                if template:
+                    try:
+                        guest_ip = ip_addr
+                        try:
+                            proxy_url = template.format(guest_ip=guest_ip)
+                        except Exception:
+                            proxy_url = None
+                        if proxy_url:
+                            # Construct a minimal container-like object that
+                            # provides enough context for the socket-proxy
+                            # probe helper. Use guest_scoped=True to treat
+                            # returned containers as belonging to the guest.
+                            probe_container = {"name": base, "config": {"net0": f"ip={vm_def['ip']}"}}
+                            services = _build_socket_proxy_services(proxy_url, probe_container, guest_scoped=True)
+                            if services:
+                                vm_def["services"].extend(services)
+                    except Exception:
+                        # Non-fatal: do not fail augmentation for probe errors
+                        pass
                 # Candidate mapped; mark ip as seen and continue
                 existing_ips.add(ip)
 
