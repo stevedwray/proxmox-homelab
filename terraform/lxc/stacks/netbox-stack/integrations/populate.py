@@ -570,7 +570,10 @@ def _try_reparent_runtime_service(nb, vm, svc_def, vm_env) -> bool:
         slugs = _tag_slugs(cand)
         if MANAGED_TAG_SLUG not in slugs:
             continue
-        if not any(s.startswith("runtime-source-") for s in slugs):
+        # Only consider services that were discovered by the socket-proxy
+        # runtime. This avoids accidentally reparenting services created by
+        # other runtime sources.
+        if "runtime-source-socket-proxy" not in slugs:
             continue
         if _service_first_port(cand) != svc_def.get("port"):
             continue
