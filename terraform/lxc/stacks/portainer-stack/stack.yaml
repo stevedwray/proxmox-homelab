@@ -41,7 +41,6 @@ ansible_playbook: "deploy-portainer-stack"
 deployment_tier: platform
 apt_cacher_host: ""
 dns_server: "${lab_ip_dns}"
-enable_docker_socket_proxy: false
 portainer_agent: false
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
