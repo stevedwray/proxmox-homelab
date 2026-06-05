@@ -95,6 +95,8 @@ pause state:
 
 This means the Docker socket proxy methodology is functionally proven.
 
+- Portainer socket-proxy canary: accepted closed on 2026-06-06; see `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` and `docs/netbox-stack/artifacts/SESSION-47-PORTAINER-CANARY-CLOSURE-HANDBACK.md` for details.
+
 Important deployment boundary:
 
 - this proof does not mean socket proxy is enabled across production
