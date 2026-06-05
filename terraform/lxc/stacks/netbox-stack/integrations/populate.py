@@ -1238,7 +1238,9 @@ def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
             # VM so the runtime inspection will attach services to the
             # existing inventory object. Do NOT create new VMs here.
             try:
-                ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
+                # Use live_get to avoid client-side lookup coercion filtering
+                # when address tokens are provided without CIDR suffixes.
+                ip_objs = nb.live_get(NB_IPAM_IP_ADDRESSES, address=ip)
                 ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
             except Exception:
                 ip_results = []
