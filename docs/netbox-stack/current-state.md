@@ -16,6 +16,12 @@ the full artifacts history first.
 
 The NetBox stack itself is in workable shape.
 
+### Portainer Canary Closure (2026-06-06)
+
+- Status: Portainer socket-proxy canary accepted closed.
+- Summary: Portainer socket-proxy listener is live on the declared Portainer target. NetBox service ownership cleanup for Portainer-related services has been verified; `populate.py --plan` reports only non-destructive description/tag/format updates for the affected services. See `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` and `docs/netbox-stack/artifacts/SESSION-47-PORTAINER-CANARY-CLOSURE-HANDBACK.md` for details.
+
+
 What is already true:
 
 - NetBox deployment is real and running.
