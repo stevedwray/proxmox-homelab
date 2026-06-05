@@ -43,3 +43,5 @@ apt_cacher_host: ""
 dns_server: "${lab_ip_dns}"
 enable_docker_socket_proxy: false
 portainer_agent: false
+docker_socket_proxy_targets:
+  - "${lab_ip_portainer}"
