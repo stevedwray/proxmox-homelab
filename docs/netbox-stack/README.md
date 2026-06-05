@@ -14,6 +14,9 @@ It is intentionally grounded in the code that already exists under
 `terraform/lxc/stacks/netbox-stack/integrations/`, the current stack contract,
 and the current segmented network model under `terraform/lxc/network/pve.yaml`.
 
+For the short resume point to use in a fresh session, see
+`docs/netbox-stack/current-state.md`.
+
 ## Implemented Operating Model
 
 As of 2026-06-01, the NetBox refresh job is no longer intended to run as a
@@ -78,6 +81,105 @@ Practical meaning:
   socket-proxy support
 - the NetBox plan should now move on to idempotency and drift proof for the
   working source systems instead of continuing proxy endpoint investigation
+
+## Docker Runtime Follow-Up State
+
+As of 2026-06-05, the Docker runtime path has moved forward beyond the earlier
+pause state:
+
+- a managed read-only `docker-socket-proxy` path now exists
+- the proxy was proven on a disposable `pve-test` Docker LXC
+- a live canary was completed on `monitoring-stack`
+- NetBox successfully ingested socket-proxy-derived runtime services tagged
+  with `runtime-source-socket-proxy`
+
+This means the Docker socket proxy methodology is functionally proven.
+
+Important deployment boundary:
+
+- this proof does not mean socket proxy is enabled across production
+  infrastructure containers
+- the managed role exists and the Docker stack playbooks are wired for opt-in
+  deployment
+- normal platform stack metadata currently keeps
+  `enable_docker_socket_proxy: false`
+- the disposable `docker-socket-proxy-test` playbook is the only repo-declared
+  deployment path that enables the proxy by default
+- treat live production socket-proxy state as unknown until verified directly
+
+For the best short resume path after this proof work, see
+`docs/netbox-stack/current-state.md` and
+`docs/netbox-stack/artifacts/HANDOFF.md`.
+
+See also: `docs/netbox-stack/portainer-socket-proxy-canary.md` for the
+Portainer socket-proxy canary runbook and operator steps.
+
+## Open Design Note: Discovery Coverage
+
+One design question remains on the NetBox side.
+
+The current standard populate flow expects to discover candidate guests from
+live sources such as Proxmox before probing socket-proxy endpoints. During the
+monitoring canary, the `pve-test` discovery context did not naturally return
+the monitoring VM, even though the proxy endpoint itself was reachable and the
+runtime inspection worked.
+
+The current code contains a narrow augmentation in `populate.py` to bridge that
+gap by mapping declared stack IPs to existing NetBox VMs when
+`DOCKER_SOCKET_PROXY_URL_TEMPLATE` is set.
+
+That works, but it is not yet the final architectural answer. The remaining
+decision is whether to:
+
+- keep the current augmentation
+- replace it with a cleaner explicit target-selection mechanism
+- or repair discovery coverage so the augmentation is unnecessary
+
+The next design pass must keep two questions separate:
+
+- which Docker hosts are intended NetBox runtime-discovery targets
+- which of those hosts actually have a managed, reachable socket-proxy listener
+
+## Requirement: Support Non-Proxmox Docker Hosts
+
+Future NetBox runtime discovery must not assume that every Docker host will be
+managed by Proxmox.
+
+Most inspectable Docker LXCs/VMs will probably come from Proxmox discovery, but
+some Docker hosts will exist outside Proxmox. The NetBox population process
+therefore needs an explicit way to learn about additional inspectable hosts
+that should be probed through `docker-socket-proxy`.
+
+That explicit host-targeting mechanism should be:
+
+- deliberate and visible
+- bounded to intended hosts only
+- compatible with inspection-derived runtime data
+- not dependent on Portainer as a workaround
+
+This should be treated as a NetBox runtime-discovery design task, not as part
+of Portainer migration work.
+
+### Declared socket-proxy probe targets
+
+Stacks may optionally declare explicit Docker host probe candidates using the
+`docker_socket_proxy_targets` metadata key in their `stack.yaml`. This can be
+either a single string or a list of addresses (optionally using `${TOKEN}`
+env-style placeholders). When `DOCKER_SOCKET_PROXY_URL_TEMPLATE` (or
+`DOCKER_SOCKET_PROXY_URL`) is set, the populate augmentation will resolve
+those candidates and attempt to map them to existing NetBox VM/interface
+records by IP so runtime inspection can attach services to the existing
+inventory object. Important: this augmentation will not create new NetBox VMs
+— the declared address must already be present in NetBox for services to be
+attached.
+
+Example `stack.yaml` snippet:
+
+```yaml
+docker_socket_proxy_targets:
+  - "${MONITORING_VM_IP}"
+  - "10.57.99.10"
+```
 
 ## Closeout Summary (Session 27)
 
@@ -1068,27 +1170,30 @@ This work is complete when all of the following are true:
 
 ## Immediate Next Actions
 
-The shortest useful path from the current paused state is:
+The shortest useful path from the current state is:
 
-1. park Docker socket-proxy runtime scraping until the Docker-host LXC
-   provisioning refactor can deploy the proxy listeners as part of the normal
-   build path
-2. continue NetBox closeout with Step 7 idempotency and drift proof using the
-   source systems that are already validated:
-   - NetBox service token
-   - Proxmox readonly token
-   - MikroTik readonly credentials
-   - current Portainer enrichment where available
-3. keep Docker runtime service evidence explicitly marked as deferred, not
-   accepted
+1. audit socket-proxy rollout state before assuming production coverage:
+   - repo-declared opt-in state in stack metadata
+   - generated inventories, if relevant
+   - live listener/container state only through an explicitly approved
+     production-check command
+2. define the explicit Docker host-targeting model for NetBox runtime
+   discovery:
+   - Proxmox-discovered Docker guests
+   - explicitly declared non-Proxmox Docker hosts
+   - hosts intentionally excluded from probing
+3. decide whether the current `populate.py` augmentation should be kept,
+   narrowed, or replaced by that host-targeting model
+4. only after the target model is clear, plan any opt-in enablement on selected
+   production infrastructure containers
 
 Important note:
 
-- do not continue local-only socket-proxy probing until the proxy listener
-  deployment exists
-- do not use SSH as a workaround for Docker scraping; if a future deployment
-  step needs host access, it must be justified as part of the provisioning
-  refactor
+- do not treat the disposable test stack or the monitoring canary as proof of
+  broad production rollout
+- do not use SSH as a workaround for Docker scraping; if a future deployment or
+  verification step needs host access, it must be justified as part of the
+  rollout audit or provisioning path
 
 ## Copilot Execution Contract
 

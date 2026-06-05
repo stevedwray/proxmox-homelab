@@ -1182,6 +1182,125 @@ def reconcile_service_env_tags(nb):
 
 
 # ---------------------------------------------------------------------------
+# Augmentation helpers
+# ---------------------------------------------------------------------------
+
+
+def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
+    """Augment discovered `vms` with declared socket-proxy candidate targets.
+
+    For each stack declaration, collect candidate probe addresses from
+    `ip_address` and the optional `docker_socket_proxy_targets` key. Each
+    candidate is resolved for `${TOKEN}` environment placeholders, skipped if
+    it matches an already-discovered VM name or IP, and then attempted to be
+    mapped to an existing NetBox VM/interface by IP. When a mapping is
+    found, append a `vm_def` that references the existing VM so runtime
+    inspection can attach services to the existing inventory object.
+
+    This function will not create new NetBox VM objects.
+    """
+    existing_ips = {vm.get("ip") for vm in vms if vm.get("ip")}
+
+    for name, stack in stacks.items():
+        # Collect declared candidate probe addresses from common stack fields
+        candidates = []
+        ip_raw = stack.get("ip_address")
+        if ip_raw:
+            candidates.append(ip_raw)
+
+        extra_targets = stack.get("docker_socket_proxy_targets")
+        if isinstance(extra_targets, list):
+            candidates.extend(extra_targets)
+        elif isinstance(extra_targets, str):
+            candidates.append(extra_targets)
+
+        if not candidates:
+            continue
+
+        # Preserve original behavior: if the stack name is already present in
+        # discovered VMs, skip the stack entirely (do not attempt augmentation).
+        if any(vm.get("name") == name for vm in vms):
+            continue
+
+        for ip_candidate in candidates:
+            ip = str(_resolve_env_token(ip_candidate)) if isinstance(ip_candidate, str) else None
+            if not ip:
+                continue
+
+            # Normalize to address/prefix if template expects guest_ip without prefix
+            ip_addr = ip.split("/", 1)[0]
+            if ip in existing_ips or ip_addr in existing_ips:
+                # Skip candidates whose address is already present in discovered VMs
+                continue
+
+            # Try to map the declared IP to an existing NetBox VM; if an
+            # existing VM is found by IP, append a vm_def that points to that
+            # VM so the runtime inspection will attach services to the
+            # existing inventory object. Do NOT create new VMs here.
+            try:
+                ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
+                ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
+            except Exception:
+                ip_results = []
+
+            for ip_obj in ip_results:
+                if ip_obj.get("assigned_object_type") != "virtualization.vminterface":
+                    continue
+                assigned_id = ip_obj.get("assigned_object_id")
+                if not assigned_id:
+                    continue
+                try:
+                    iface_q = nb.get(NB_VIRT_INTERFACES, id=assigned_id)
+                    iface_res = iface_q.get("results", []) if isinstance(iface_q, dict) else []
+                except Exception:
+                    iface_res = []
+                if not iface_res:
+                    continue
+                iface = iface_res[0]
+                vm_ref = iface.get("virtual_machine")
+                vm_id = vm_ref.get("id") if isinstance(vm_ref, dict) else vm_ref
+                if not vm_id:
+                    continue
+                try:
+                    vm_q = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_id)
+                    vm_res = vm_q.get("results", []) if isinstance(vm_q, dict) else []
+                except Exception:
+                    vm_res = []
+                if not vm_res:
+                    continue
+                nb_vm = vm_res[0]
+                nb_name = nb_vm.get("name") or name
+                # Split NetBox name `foo@node` into base and node when present
+                if isinstance(nb_name, str) and "@" in nb_name:
+                    base, nodepart = nb_name.split("@", 1)
+                else:
+                    base = nb_name
+                    nodepart = stack.get("proxmox", {}).get("target_node") or "external"
+
+                vm_def = {
+                    "name": base,
+                    "ip": ip if "/" in ip else f"{ip}/24",
+                    "status": "unknown",
+                    "vcpus": stack.get("cores", 1) or 1,
+                    "memory": stack.get("memory", 0) or 0,
+                    "disk": stack.get("rootfs_size", 0) or 0,
+                    "description": stack.get("description", "declared in stack.yaml"),
+                    "tags": stack.get("tags", []),
+                    "services": [],
+                    "mounts": [],
+                    "vmid": stack.get("vmid") or 0,
+                    "vm_type": "declared",
+                    "node": nodepart,
+                }
+
+                # Avoid duplicate appends for the same VM/ip
+                if not any(v.get("ip") == vm_def["ip"] and v.get("name") == vm_def["name"] for v in vms):
+                    vms.append(vm_def)
+                # Candidate mapped; mark ip as seen and continue
+                existing_ips.add(ip)
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -1225,89 +1344,8 @@ def main():
     try:
         template = os.environ.get("DOCKER_SOCKET_PROXY_URL_TEMPLATE") or os.environ.get("DOCKER_SOCKET_PROXY_URL")
         if template:
-            # Load known stack declarations from stacks/*/stack.yaml and
-            # ensure any declared host IPs that are not already present in
-            # the discovered VM list are appended so they will be probed.
             stacks = load_stack_yamls()
-            existing_ips = {vm.get("ip") for vm in vms if vm.get("ip")}
-            for name, stack in stacks.items():
-                ip_raw = stack.get("ip_address")
-                if not ip_raw:
-                    continue
-                ip = str(_resolve_env_token(ip_raw)) if isinstance(ip_raw, str) else None
-                if not ip:
-                    continue
-                # Normalize to address/prefix if template expects guest_ip without prefix
-                ip_addr = ip.split("/", 1)[0]
-                if any(vm.get("name") == name for vm in vms):
-                    continue
-                if ip in existing_ips or ip_addr in existing_ips:
-                    continue
-                # Try to map the declared IP to an existing NetBox VM; if an
-                # existing VM is found by IP, append a vm_def that points to
-                # that VM so the runtime inspection will attach services to
-                # the existing inventory object. Do NOT create new VMs here.
-                try:
-                    ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
-                    ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
-                except Exception:
-                    ip_results = []
-
-                mapped = False
-                for ip_obj in ip_results:
-                    if ip_obj.get("assigned_object_type") != "virtualization.vminterface":
-                        continue
-                    assigned_id = ip_obj.get("assigned_object_id")
-                    if not assigned_id:
-                        continue
-                    try:
-                        iface_q = nb.get(NB_VIRT_INTERFACES, id=assigned_id)
-                        iface_res = iface_q.get("results", []) if isinstance(iface_q, dict) else []
-                    except Exception:
-                        iface_res = []
-                    if not iface_res:
-                        continue
-                    iface = iface_res[0]
-                    vm_ref = iface.get("virtual_machine")
-                    vm_id = vm_ref.get("id") if isinstance(vm_ref, dict) else vm_ref
-                    if not vm_id:
-                        continue
-                    try:
-                        vm_q = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_id)
-                        vm_res = vm_q.get("results", []) if isinstance(vm_q, dict) else []
-                    except Exception:
-                        vm_res = []
-                    if not vm_res:
-                        continue
-                    nb_vm = vm_res[0]
-                    nb_name = nb_vm.get("name") or name
-                    # Split NetBox name `foo@node` into base and node when present
-                    if isinstance(nb_name, str) and "@" in nb_name:
-                        base, nodepart = nb_name.split("@", 1)
-                    else:
-                        base = nb_name
-                        nodepart = stack.get("proxmox", {}).get("target_node") or "external"
-
-                    vms.append({
-                        "name": base,
-                        "ip": ip if "/" in ip else f"{ip}/24",
-                        "status": "unknown",
-                        "vcpus": stack.get("cores", 1) or 1,
-                        "memory": stack.get("memory", 0) or 0,
-                        "disk": stack.get("rootfs_size", 0) or 0,
-                        "description": stack.get("description", "declared in stack.yaml"),
-                        "tags": stack.get("tags", []),
-                        "services": [],
-                        "mounts": [],
-                        "vmid": stack.get("vmid") or 0,
-                        "vm_type": "declared",
-                        "node": nodepart,
-                    })
-                    mapped = True
-                    break
-                # If mapping failed, do not create a new VM record here.
-                if not mapped:
-                    continue
+            _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks)
     except Exception:
         # Non-fatal augmentation; discovery should continue even if stack
         # YAML parsing or env token resolution fails.
