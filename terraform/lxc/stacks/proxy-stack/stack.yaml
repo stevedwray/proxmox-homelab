@@ -52,7 +52,11 @@ provides:
 ansible_playbook: "deploy-proxy-stack"
 deployment_tier: platform
 portainer_agent: false
-enable_docker_socket_proxy: false
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_proxy}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_proxy}"
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
 enable_docker_socket_proxy: true
