@@ -113,6 +113,13 @@ Notes and rationale
 - The environment tag pattern `netbox-env-<env>` keeps separate population
   environments from interfering with each other in shared NetBox deployments.
 
+Field-level rules
+-----------------
+
+- For per-field guidance (allowed create fields, allowed patch/update fields,
+  fields that must never be changed automatically, delete/removal policy, and
+  source of truth) see `docs/netbox-stack/ownership-field-rules.md`.
+
 Exit criteria
 -------------
 
