@@ -7,7 +7,10 @@ work can pause cleanly and resume later without re-reading every handback.
 
 ## Goal Status
 
-The core goal is functionally achieved:
+The proof goal is functionally achieved, but the operational goal is not yet
+complete.
+
+Completed proof work:
 
 - a managed, read-only `docker_socket_proxy` role exists
 - the proxy was proven on a disposable Docker LXC on `pve-test`
@@ -22,6 +25,11 @@ The core goal is functionally achieved:
 
 If the question is "can we use docker-socket-proxy to inspect Docker-enabled
 LXCs and get that runtime data into NetBox?", the answer is yes.
+
+If the question is "can newly rebuilt managed infrastructure Docker containers
+be depended on to have docker-socket-proxy ready after normal deploy?", the
+answer is no. That deploy-time guarantee still needs implementation and a
+`pve` teardown/rebuild validation.
 
 ## What Was Built
 
@@ -71,6 +79,15 @@ enable_docker_socket_proxy: false
 
 No broad real-stack rollout has been performed.
 
+Also not complete:
+
+- stack metadata currently keeps `enable_docker_socket_proxy: false`
+- static inventories do not carry socket-proxy enablement or bind variables
+- `scripts/provision.sh` does not propagate stack socket-proxy metadata into
+  Ansible extra-vars
+- normal deploys therefore do not enable socket-proxy just because an LXC has
+  Docker
+
 ## Live Rollout Status
 
 ### Completed canary
@@ -112,30 +129,35 @@ the VM's source node rather than the current run environment.
 
 ## Important Open Caveat
 
-The last monitoring NetBox proof required a narrow augmentation in
-`populate.py` because the standard `pve-test` Proxmox discovery did not return
-the monitoring VM. The current patch maps declared stack IPs to existing NetBox
-VMs when `DOCKER_SOCKET_PROXY_URL_TEMPLATE` is set, allowing the standard
-populate flow to probe those hosts and attach runtime services.
+Session 56 in the NetBox workstream corrected an earlier diagnosis: Proxmox and
+NetBox do have LXC IPs. Missing broad Docker application services are caused by
+runtime inspection not being deployed/reachable on most managed Docker hosts.
 
-This works, but it is the main remaining design question in the work:
+The remaining work belongs here, not in NetBox:
 
-- keep the current augmentation
-- replace it with a cleaner explicit target-selection mechanism
-- or fix Proxmox/discovery coverage so the augmentation is unnecessary
+- define the infrastructure Docker container set that must receive
+  socket-proxy on deploy
+- propagate `enable_docker_socket_proxy` and bind/listen vars from stack
+  metadata or inventory into Ansible consistently
+- enable the proxy only for the managed infrastructure Docker containers in
+  scope
+- validate on `pve` by rebuilding the infrastructure container set and proving
+  each expected socket-proxy endpoint is reachable after rebuild
 
-So the work is functionally complete enough to move on, but there is still one
-architectural decision to make before treating the implementation as fully
-polished.
+## Revised Completion Gate
 
-## Recommended Pause Point
+This refactor is not finished until a `pve` teardown/rebuild validation of the
+managed infrastructure Docker containers passes.
 
-This is a good place to pause and move to other work.
+The gate must prove:
 
-If this refactor is resumed later, the next decision should be:
+- only the managed infrastructure container set is touched
+- no legacy/manual/non-infrastructure Docker LXCs are changed
+- rebuilt Docker-enabled infrastructure containers have socket-proxy deployed
+  and listening on the expected host IP and port
+- read-only Docker endpoints such as `/containers/json?all=1` work
+- mutating Docker API access remains blocked
+- NetBox `populate.py --plan` can see the expected `/ipam/services/` changes
 
-1. accept the current `populate.py` augmentation as the intended design, or
-2. replace it with a cleaner discovery/targeting model before broader rollout
-
-After that, the next operational step would be choosing whether to enable the
-proxy on the next real stack in the prepared set.
+Until that gate passes, NetBox should not assume broad Docker application
+service ingestion is available.

@@ -19,73 +19,30 @@ style here:
 
 ## Current Recommended Next Session
 
-- Current context: active development is on `task/netbox-infra-knowledge-progress`.
-  The Portainer socket-proxy canary is accepted closed (2026-06-06). Do not
-  target `dev/pve-test` or `baseline/teardown-validated` for future sessions
-  in this workflow — they are archival/promotion branches only.
+- Current context: active development is on
+  `task/netbox-infra-knowledge-progress`. NetBox is frozen at the Session 56
+  state.
 
-- Recommended next session (Light): `Session 51 - Lock Data Model and Ownership Boundary`.
+- Do not start another NetBox implementation session as the next step. The
+  missing broad Docker application services are blocked upstream: most managed
+  infrastructure Docker containers do not have a reachable
+  `docker-socket-proxy` listener after normal deploy/rebuild.
 
-  Objective:
-
-  - Document the ownership marker and object-class ownership matrix so the
-    reconciler has explicit create/patch/delete rules.
-  - Produce a short, reviewable `ownership` doc under `docs/netbox-stack/`
-    (or update `current-state.md`) describing the decisions and exit criteria.
-
-  In scope:
-
-  - Analysis and documentation edits only.
-  - No remote actions, no NetBox mutations, no playbook applies.
-
-  Out of scope:
-
-  - Portainer canary or any host-contacting validation runs (these are closed).
-  - Pushing commits or opening PRs as part of this session (commit locally only).
-
-  Required handback file for that session (create during the session):
-
-  - `docs/netbox-stack/artifacts/SESSION-51-OWNERSHIP-LOCK-HANDBACK.md`
-
-  Why this is next:
-
-  - It removes ambiguity in object ownership and prevents repeated canary loops.
-  - It is a small, document-driven Light session that reduces risk for later
-    scoped apply work.
+- Resume in `docs/docker-refactor/` instead. That work must make
+  socket-proxy deployment part of the normal managed infrastructure Docker
+  container deploy path and prove it through a `pve` teardown/rebuild test for
+  infrastructure containers only.
 
 ## Current Objective Boundary
 
-Treat the next session (Session 51 - Lock Data Model and Ownership Boundary)
-as a documentation and design-only session. The objective is to author and
-review ownership decisions and the object-class ownership matrix; there must
-be no live validation, deployment, or mutation activity as part of this
-boundary.
+NetBox is paused. Do not mutate NetBox, do not run populate apply, and do not
+keep adding NetBox-side planning docs to compensate for missing Docker runtime
+inspection.
 
-In-scope (strict):
-
-- Documentation and design work only (analysis, writing, and internal review)
-  in `docs/netbox-stack/` such as creating an `ownership` doc or updating
-  `current-state.md` with a clear ownership matrix and exit criteria.
-- Producing an explicit ownership marker and object-class ownership matrix for
-  the reconciler's create/patch/delete rules.
-
-Out-of-scope (explicitly prohibited):
-
-- No host-contacting validation or any check-mode runs that contact hosts.
-- No Portainer canary or check-mode work.
-- No NetBox mutations (no create/patch/delete operations against NetBox).
-- No deploys, no PRs, and no pushes — changes should remain local and
-  reviewable until the ownership session completes.
-
-Acceptance criteria:
-
-- A short, reviewable `ownership` document is produced under
-  `docs/netbox-stack/` or `current-state.md` is updated to capture the
-  ownership decisions and exit criteria.
-- A handback file is created at
-  `docs/netbox-stack/artifacts/SESSION-51-OWNERSHIP-LOCK-HANDBACK.md` that
-  documents files reviewed, decisions made, validation performed (design-only),
-  blockers, and the recommended next single session.
+Resume NetBox only after Docker refactor validation proves that rebuilt
+managed infrastructure Docker containers on `pve` have reachable
+`docker-socket-proxy` listeners and `populate.py --plan` can see the expected
+runtime services.
 
 ## Handoff Rules
 
