@@ -95,7 +95,7 @@ pause state:
 
 This means the Docker socket proxy methodology is functionally proven.
 
-- Portainer socket-proxy canary: accepted closed on 2026-06-06; see `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` and `docs/netbox-stack/artifacts/SESSION-47-PORTAINER-CANARY-CLOSURE-HANDBACK.md` for details.
+- Portainer socket-proxy canary: accepted closed on 2026-06-06.
 
 Important deployment boundary:
 
@@ -110,8 +110,7 @@ Important deployment boundary:
 - treat live production socket-proxy state as unknown until verified directly
 
 For the best short resume path after this proof work, see
-`docs/netbox-stack/current-state.md` and
-`docs/netbox-stack/artifacts/HANDOFF.md`.
+`docs/netbox-stack/current-state.md`.
 
 See also: `docs/netbox-stack/portainer-socket-proxy-canary.md` for the
 Portainer socket-proxy canary runbook and operator steps.
@@ -195,9 +194,7 @@ docker_socket_proxy_targets:
 - No SSH workaround was used during reconciliation; runtime SSH probes emitted warnings but were not acted on.
 - No further live NetBox apply is required in this closeout session.
 
-See `docs/netbox-stack/artifacts/HANDOFF.md` and
-`docs/netbox-stack/artifacts/SESSION-27-NETBOX-STACK-CLOSEOUT-AND-COMMIT-HANDBACK.md`
-for the session handoff and closeout details.
+See `docs/netbox-stack/current-state.md` for the current durable resume point.
 
 ## Review Summary
 
@@ -1235,9 +1232,13 @@ Use this rule of thumb for `GPT-5 mini` handoff sizing:
     auth redesign
   - mix `pve-test` and `pve` production behavior changes with refactors
 
-## Artifact Discipline
+## Local Artifact Discipline
 
-Every Copilot session for `netbox-stack` must leave a durable handback under:
+Session handbacks, prompts, and handoffs for `netbox-stack` are local work
+artifacts. They may be useful during active work, but they are not durable
+project documentation and must remain ignored by Git.
+
+Use this ignored path for local session artifacts:
 
 - `docs/netbox-stack/artifacts/`
 
@@ -1248,14 +1249,14 @@ Rules:
 - use a stable name such as:
   - `SESSION-01-<short-topic>-HANDBACK.md`
   - `SESSION-02-<short-topic>-HANDBACK.md`
-- if a new session prompt is prepared, update
-  `docs/netbox-stack/artifacts/HANDOFF.md`
-- use `docs/netbox-stack/artifacts/HANDBACK-TEMPLATE.md` as the minimum
-  required structure
+- if a new session handoff is needed, place it under
+  `docs/netbox-stack/artifacts/`
+- any durable state learned from a session must be summarized in tracked docs
+  such as `docs/netbox-stack/current-state.md`
 - if a session prompt is prepared for operator use, store it on disk and also
   present the exact prompt text in chat as a copy/pasteable fenced code block
 
-Each handback must be detailed enough for:
+Each local handback should be detailed enough for:
 
 - post-mortem analysis
 - deciding the next Copilot chunk

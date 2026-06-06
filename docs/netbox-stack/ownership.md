@@ -128,5 +128,5 @@ Exit criteria
   includes create rules, patch/update rules, and delete/removal rules.
 - Reviewers are able to answer: "If this object drifts, which source wins?"
 
-If this doc needs refinement, iterate here and produce the session handback
-`docs/netbox-stack/artifacts/SESSION-51-OWNERSHIP-LOCK-HANDBACK.md`.
+If this doc needs refinement, iterate here and keep any session handback under
+the ignored `docs/netbox-stack/artifacts/` path.

@@ -2,9 +2,9 @@
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
 docs/**/handoffs/
+docs/**/artifacts/*
 docs/docker-refactor/evidence/
 docs/docker-refactor/reports/
-docs/docker-refactor/artifacts/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
@@ -96,7 +96,5 @@ certs/homelab-root.crt
 .genai/
 
 # Local CI artifacts (logs, scan outputs)
-artifacts/
+/artifacts/
 .tmp/
-docs/harbor-stack/artifacts/*
-!docs/harbor-stack/artifacts/.gitkeep
