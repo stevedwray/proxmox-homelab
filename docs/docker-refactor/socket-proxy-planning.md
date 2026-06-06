@@ -25,11 +25,10 @@ design caveat, see `docs/docker-refactor/current-state.md`.
 - Prove the role on a disposable/test Docker LXC before enabling any real stack.
 - Integrate the proof into teardown-test before stack rollout.
 - Do not use Portainer or SSH as a workaround for runtime discovery.
- - The disposable test target `docker-socket-proxy-test` has been proven on
-    `pve-test` via Sessions 5 and 6 (see handbacks under
-    `docs/docker-refactor/handoffs/`). Until the rollout gates are satisfied,
-    keep proxy enablement disabled on real stacks and use the teardown-test
-    opt-in workflow to exercise the proof path.
+- The disposable test target `docker-socket-proxy-test` has been proven on
+  `pve-test` via Sessions 5 and 6. Until the rollout gates are satisfied, keep
+  proxy enablement disabled on real stacks and use the teardown-test opt-in
+  workflow to exercise the proof path.
 
 ## Working Rules For Copilot Sessions
 
@@ -39,7 +38,8 @@ design caveat, see `docs/docker-refactor/current-state.md`.
 - Start every session by reading:
   - `AGENTS.md`
   - this plan
-  - the latest handback under `docs/docker-refactor/handoffs/`, if one exists
+  - the latest local handback under `docs/docker-refactor/artifacts/`, if one
+    exists
 - Do not develop directly on `baseline/teardown-validated` or `dev/pve-test`.
 - Before disposable proof validation, confirm the target is `pve-test`.
 - Before the final infrastructure-container teardown/rebuild gate, confirm the
@@ -47,12 +47,12 @@ design caveat, see `docs/docker-refactor/current-state.md`.
   infrastructure set.
 - Use `./with-secrets <command>` for credentialed commands.
 - Do not create tracked temporary reports, handoffs, or evidence.
-- Put session handbacks under `docs/docker-refactor/handoffs/`; this path is
-  already ignored by `.gitignore` through `docs/**/handoffs/`.
-- Put any local evidence, reports, or scratch artifacts under:
+- Put session handbacks, handoffs, and prompts under the ignored local artifact
+  path:
+  - `docs/docker-refactor/artifacts/`
+- Put any local evidence or scratch reports under:
   - `docs/docker-refactor/evidence/`
   - `docs/docker-refactor/reports/`
-  - `docs/docker-refactor/artifacts/`
 - Avoid bookkeeping churn. A session must produce material source changes,
   validation evidence, or a precise blocker. Handback wording changes alone do
   not count as progress.
@@ -60,8 +60,9 @@ design caveat, see `docs/docker-refactor/current-state.md`.
   it should do the work and finish with the required handback.
 - Never stop without writing a handback document. If the session is complete,
   partial, blocked, or out of time, write the handback under
-  `docs/docker-refactor/handoffs/` before the final response. A session without
-  a handback document is incomplete and must be rejected by manager review.
+  `docs/docker-refactor/artifacts/` before the final response. A session
+  without a handback document is incomplete and must be rejected by manager
+  review.
 
 ## Handback Format
 
@@ -69,11 +70,11 @@ Each Copilot session must write a handback document before it stops work. This
 is required even when no files changed, validation could not run, or the session
 is blocked.
 
-Write the handback under `docs/docker-refactor/handoffs/`, using a filename such
+Write the handback under `docs/docker-refactor/artifacts/`, using a filename such
 as:
 
 ```text
-docs/docker-refactor/handoffs/01-role-audit-handback.md
+docs/docker-refactor/artifacts/01-role-audit-handback.md
 ```
 
 The final chat response should only point to the handback file and briefly state
@@ -115,7 +116,7 @@ Do not stop after planning, reading files, updating todos, or asking whether to
 proceed. Complete the requested session as far as possible.
 
 Before stopping for any reason, write a handback document under:
-docs/docker-refactor/handoffs/
+docs/docker-refactor/artifacts/
 
 The handback document must include the required Docker Refactor Handback
 sections: Status, Achieved, Changed Files, Verification, Blockers, and Next
@@ -143,7 +144,7 @@ forward:
   write a handback document with the exact missing input or failing command.
 - Manager review should reject handbacks that only restate previous context.
 - Manager review should reject any Copilot session that stops work without a
-  handback document under `docs/docker-refactor/handoffs/`.
+  handback document under `docs/docker-refactor/artifacts/`.
 
 ## Step-By-Step Sessions
 

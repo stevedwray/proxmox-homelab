@@ -7,10 +7,12 @@ This note is the short resume point for the `netbox-stack` workstream.
 Use it together with:
 
 - `docs/netbox-stack/README.md`
-- `docs/netbox-stack/artifacts/HANDOFF.md`
+- `docs/netbox-stack/docker-runtime-host-matrix.md`
+- `docs/netbox-stack/ownership.md`
 
-The goal is to let a fresh Copilot session resume cleanly without re-reading
-the full artifacts history first.
+The goal is to let a fresh session resume cleanly without depending on local
+session artifacts. Files under `docs/netbox-stack/artifacts/` are ignored
+work-session evidence, not durable project documentation.
 
 ## Current Position
 
@@ -45,7 +47,10 @@ managed infrastructure Docker containers install and validate
 ### Portainer Canary Closure (2026-06-06)
 
 - Status: Portainer socket-proxy canary accepted closed.
-- Summary: Portainer socket-proxy listener is live on the declared Portainer target. NetBox service ownership cleanup for Portainer-related services has been verified; `populate.py --plan` reports only non-destructive description/tag/format updates for the affected services. See `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` and `docs/netbox-stack/artifacts/SESSION-47-PORTAINER-CANARY-CLOSURE-HANDBACK.md` for details.
+- Summary: Portainer socket-proxy listener is live on the declared Portainer
+  target. NetBox service ownership cleanup for Portainer-related services has
+  been verified; `populate.py --plan` reports only non-destructive
+  description/tag/format updates for the affected services.
 
 
 What is already true:
