@@ -51,6 +51,91 @@ class TestNetBoxClientEnsure(unittest.TestCase):
             data={"status": "active"},
         )
 
+    def test_skips_patch_for_unmanaged_existing_object_when_guarded(self):
+        existing = {
+            "id": 5,
+            "name": "vm-1",
+            "status": "offline",
+            "tags": [{"slug": "operator-owned"}],
+        }
+        with patch.object(NetBoxClient, "_request") as request:
+            request.return_value = {"count": 1, "results": [existing]}
+            nb = NetBoxClient(url="http://netbox.test", token="token")
+            obj = nb.ensure(
+                "/virtualization/virtual-machines/",
+                {"name": "vm-1"},
+                {"status": "active", "tags": [{"slug": "managed-by-proxmox-homelab"}]},
+                managed_tag_slug="managed-by-proxmox-homelab",
+                allow_unmanaged_patch=False,
+            )
+
+        self.assertEqual(obj["status"], "offline")
+        self.assertEqual(request.call_count, 1)
+        request.assert_called_once_with("GET", "/virtualization/virtual-machines/", params={"name": "vm-1"})
+
+    def test_patches_managed_existing_object_when_guarded(self):
+        with patch.object(NetBoxClient, "_request") as request:
+            request.side_effect = [
+                {
+                    "count": 1,
+                    "results": [{
+                        "id": 5,
+                        "name": "vm-1",
+                        "status": "offline",
+                        "tags": [{"slug": "managed-by-proxmox-homelab"}],
+                    }],
+                },
+                {"id": 5},
+            ]
+            nb = NetBoxClient(url="http://netbox.test", token="token")
+            obj = nb.ensure(
+                "/virtualization/virtual-machines/",
+                {"name": "vm-1"},
+                {"status": "active"},
+                managed_tag_slug="managed-by-proxmox-homelab",
+                allow_unmanaged_patch=False,
+            )
+
+        self.assertEqual(obj["status"], "active")
+        request.assert_any_call(
+            "PATCH",
+            "/virtualization/virtual-machines/5/",
+            data={"status": "active"},
+        )
+
+    def test_allowed_patch_fields_filters_changes(self):
+        with patch.object(NetBoxClient, "_request") as request:
+            request.side_effect = [
+                {
+                    "count": 1,
+                    "results": [{
+                        "id": 5,
+                        "name": "vm-1",
+                        "status": "offline",
+                        "description": "old",
+                        "tags": [{"slug": "managed-by-proxmox-homelab"}],
+                    }],
+                },
+                {"id": 5},
+            ]
+            nb = NetBoxClient(url="http://netbox.test", token="token")
+            obj = nb.ensure(
+                "/virtualization/virtual-machines/",
+                {"name": "vm-1"},
+                {"status": "active", "description": "new"},
+                allowed_patch_fields={"description"},
+                managed_tag_slug="managed-by-proxmox-homelab",
+                allow_unmanaged_patch=False,
+            )
+
+        self.assertEqual(obj["status"], "offline")
+        self.assertEqual(obj["description"], "new")
+        request.assert_any_call(
+            "PATCH",
+            "/virtualization/virtual-machines/5/",
+            data={"description": "new"},
+        )
+
     def test_dry_run_create_returns_synthetic_object(self):
         with patch.object(NetBoxClient, "_request", return_value={"count": 0, "results": []}):
             nb = NetBoxClient(url="http://netbox.test", token="token", dry_run=True)

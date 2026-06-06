@@ -510,6 +510,25 @@ def _tag_slugs(obj: dict) -> set[str]:
     return slugs
 
 
+def _managed_patch_guard() -> dict:
+    """Return NetBoxClient.ensure kwargs that avoid taking over unmanaged objects."""
+    return {
+        "managed_tag_slug": MANAGED_TAG_SLUG,
+        "allow_unmanaged_patch": False,
+    }
+
+
+def _patch_managed_object(nb, path: str, obj: dict, changes: dict) -> dict:
+    """Patch only objects already carrying the reconciler ownership tag."""
+    if "tags" in obj and MANAGED_TAG_SLUG not in _tag_slugs(obj):
+        print(
+            f"  skip unmanaged: {path} → {obj.get('name') or obj.get('display') or obj.get('id')} "
+            f"(id={obj.get('id')}) fields={sorted(changes)}"
+        )
+        return obj
+    return nb.patch_object(path, obj, changes)
+
+
 def _service_protocol_value(service: dict) -> str | None:
     """Return the normalized protocol value from one NetBox service object."""
     protocol = service.get("protocol")
@@ -695,6 +714,7 @@ def populate_physical(nb, site, inventory):
             "tags": managed_tags,
         },
         legacy_lookups=_legacy_hypervisor_lookups(inventory),
+        **_managed_patch_guard(),
     )
 
     for iface_def in dev_def.get("interfaces", []):
@@ -705,7 +725,7 @@ def populate_physical(nb, site, inventory):
             "type": iface_def["type"],
             "description": iface_def.get("description", ""),
             "tags": managed_tags,
-        })
+        }, **_managed_patch_guard())
 
     cl_def = {**CLUSTERS[0], "name": inventory["cluster_name"]}
     ctype = nb.get(NB_VIRT_CLUSTER_TYPES, name=cl_def["type"])["results"][0]
@@ -719,6 +739,7 @@ def populate_physical(nb, site, inventory):
             "tags": managed_tags,
         },
         legacy_lookups=_legacy_cluster_lookups(inventory),
+        **_managed_patch_guard(),
     )
 
 
@@ -743,7 +764,7 @@ def populate_network(nb, site, network):
         "status": "active",
         "description": f"Discovered via Mikrotik API ({router.get('host', '')})",
         "tags": managed_tags,
-    })
+    }, **_managed_patch_guard())
 
     # Create router interfaces.
     for iface_def in network.get("interfaces", []):
@@ -759,7 +780,7 @@ def populate_network(nb, site, network):
             "enabled": not iface_def.get("disabled", False),
             "description": iface_def.get("type", "") or "",
             "tags": managed_tags,
-        })
+        }, **_managed_patch_guard())
 
     # Create VLAN group for router and VLANs discovered on it.
     vlan_group = nb.ensure("/ipam/vlan-groups/", {"name": f"{router_name}-vlans"}, {
@@ -767,7 +788,7 @@ def populate_network(nb, site, network):
         "scope_type": "dcim.site",
         "scope_id": site["id"],
         "tags": managed_tags,
-    })
+    }, **_managed_patch_guard())
 
     # Aggregate discovered VLAN names by VID so we can choose a single
     # deterministic canonical name per VID and avoid patching the same
@@ -800,7 +821,7 @@ def populate_network(nb, site, network):
             "vid": vid,
             "status": "active",
             "tags": managed_tags,
-        })
+        }, **_managed_patch_guard())
 
     # Assign router interface IPs. Collect internal candidates first and then
     # select a single deterministic primary IP to patch the device at most
@@ -821,7 +842,7 @@ def populate_network(nb, site, network):
             "status": "active",
             "description": f"{router_name}:{iface_name}",
             "tags": managed_tags,
-        })
+        }, **_managed_patch_guard())
         if _is_internal_ip(address):
             internal_candidates.append({"ip": ip_obj, "address": address, "iface": iface})
 
@@ -861,7 +882,8 @@ def populate_network(nb, site, network):
         selected_ip_obj = chosen["ip"]
 
     if selected_ip_obj and _primary_ip_id(router_device) != selected_ip_obj.get("id"):
-        router_device = nb.patch_object(
+        router_device = _patch_managed_object(
+            nb,
             NB_DCIM_DEVICES,
             router_device,
             {"primary_ip4": selected_ip_obj.get("id")},
@@ -896,7 +918,7 @@ def populate_virtual(nb, vms, inventory):
             "disk": vm_def.get("disk"),
             "description": _vm_description(vm_def),
             "tags": tag_refs,
-        }, legacy_lookups=_legacy_virtual_machine_lookups(vm_def, inventory))
+        }, legacy_lookups=_legacy_virtual_machine_lookups(vm_def, inventory), **_managed_patch_guard())
 
         nb.ensure(NB_VIRT_INTERFACES, {
             "virtual_machine_id": vm["id"], "name": "eth0",
@@ -904,7 +926,7 @@ def populate_virtual(nb, vms, inventory):
             "virtual_machine": vm["id"],
             "name": "eth0",
             "tags": _managed_tag_refs(environment=vm_env),
-        })
+        }, **_managed_patch_guard())
 
 
 def populate_ipam(nb, site, vms, population_intent, inventory):
@@ -920,7 +942,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             "description": prefix["description"],
             "status": "active",
             "tags": shared_managed_tags,
-        })
+        }, **_managed_patch_guard())
 
     # Proxmox host IP from environment/repo-driven population intent.
     proxmox_host = population_intent.get("proxmox_host", {})
@@ -959,13 +981,14 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                         "status": "active",
                         "description": device["name"],
                         "tags": env_managed_tags,
-                    })
+                    }, **_managed_patch_guard())
                 if (
                     _primary_ip_id(device) != ip["id"]
                     and ip.get("assigned_object_type") == "dcim.interface"
                     and ip.get("assigned_object_id") == iface["id"]
                 ):
-                    device = nb.patch_object(
+                    device = _patch_managed_object(
+                        nb,
                         NB_DCIM_DEVICES,
                         device,
                         {"primary_ip4": ip["id"]},
@@ -1006,9 +1029,10 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             "status": "active",
             "description": vm_def["name"],
             "tags": vm_env_managed_tags,
-        })
+        }, **_managed_patch_guard())
         if _primary_ip_id(vm) != ip["id"]:
-            vm = nb.patch_object(
+            vm = _patch_managed_object(
+                nb,
                 NB_VIRT_VIRTUAL_MACHINES,
                 vm,
                 {"primary_ip4": ip["id"]},
@@ -1051,7 +1075,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                 "protocol": svc_def["protocol"],
                 "description": _service_last_seen_description(vm_def["name"], service_observed_at),
                 "tags": service_tags,
-            })
+            }, **_managed_patch_guard())
 
         desired_service_keys = {
             (svc["name"], svc["protocol"], svc["port"])
@@ -1308,6 +1332,8 @@ def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
                 # Use live_get to avoid client-side lookup coercion filtering
                 # when address tokens are provided without CIDR suffixes.
                 ip_objs = nb.live_get(NB_IPAM_IP_ADDRESSES, address=ip)
+                if not isinstance(ip_objs, dict):
+                    ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
                 ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
             except Exception:
                 ip_results = []
