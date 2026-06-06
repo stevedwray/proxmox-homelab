@@ -16,6 +16,32 @@ the full artifacts history first.
 
 The NetBox stack itself is in workable shape.
 
+### Frozen Resume State (2026-06-06)
+
+NetBox work is paused here. Do not continue trying to solve missing Docker
+application services inside the NetBox workstream first.
+
+What NetBox has proved:
+
+- Proxmox and MikroTik inventory are visible in NetBox.
+- VM/LXC inventory and IPs are present.
+- Docker runtime service ingestion works when a Docker host has a reachable
+  runtime inspection path.
+- The reconciler now has ownership guardrails so populate does not retag or
+  patch unmanaged NetBox objects by accident.
+
+What NetBox exposed:
+
+- Most Docker-capable infrastructure containers do not currently have a
+  reachable `docker-socket-proxy` listener on port `2375`.
+- Therefore broad Docker application service ingestion is blocked upstream by
+  Docker runtime inspection deployment, not by NetBox modeling.
+
+Next work belongs in `docs/docker-refactor/`: make normal rebuild/deploy of the
+managed infrastructure Docker containers install and validate
+`docker-socket-proxy`, then prove that through a teardown/rebuild test on
+`pve`.
+
 ### Portainer Canary Closure (2026-06-06)
 
 - Status: Portainer socket-proxy canary accepted closed.
@@ -67,27 +93,17 @@ decision.
 
 ## Recommended Next Work
 
-- Portainer socket-proxy canary: accepted closed (2026-06-06). No further
-  Portainer canary/check-mode sessions are recommended; the closure is
-  recorded in [docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md](docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md).
+Do not start another NetBox session as the next step. Resume the Docker
+socket-proxy refactor instead:
 
-- Active branch: `task/netbox-infra-knowledge-progress`.
-
-- Next practical task (Light): Lock the Data Model and Ownership Boundary.
-
-  What to do in this Light session:
-
-  1. Decide and document the ownership marker (NetBox tag) and the exact
-    set of NetBox object classes the reconciler will manage (DCIM,
-    virtualization, IPAM, services, tags).
-  2. Create a short ownership matrix in `docs/netbox-stack/` that maps object
-    classes to owning source(s) and explicit deletion rules.
-  3. Add concise guidance for `docker_socket_proxy_targets` semantics:
-    declared targets must map to existing NetBox VM/interface records;
-    the reconciler must not create VM objects implicitly.
-  4. Define exit criteria: ownership matrix documented, create/patch/delete
-    rules explicit, and reviewers agree on boundaries. No live NetBox
-    mutations during this session.
+1. Review `docs/docker-refactor/current-state.md`.
+2. Implement deploy-time socket-proxy enablement for the managed
+   infrastructure Docker container set only.
+3. Validate on `pve` through the infrastructure-container teardown/rebuild test
+   gate.
+4. Return to NetBox only after rebuilt infrastructure Docker containers have
+   reachable socket-proxy listeners and `populate.py --plan` shows the expected
+   `/ipam/services/` changes.
 
 ## What Not To Reopen First
 
@@ -128,3 +144,6 @@ When this work is eventually committed, useful message material:
 - record Portainer canary prep: declared target, runbook, pve-test
   `populate.py --plan`, and enabled check-mode result
   `ok=29 changed=3 unreachable=0 failed=0 skipped=49 rescued=0 ignored=0`
+- freeze NetBox after Session 56: Docker runtime service ingestion is blocked
+  upstream until Docker refactor deploys socket-proxy during normal
+  infrastructure-container rebuilds and validates it on `pve`
