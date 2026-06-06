@@ -67,21 +67,27 @@ decision.
 
 ## Recommended Next Work
 
-The next fresh session should be an explicitly approved live Portainer canary
-gate.
+- Portainer socket-proxy canary: accepted closed (2026-06-06). No further
+  Portainer canary/check-mode sessions are recommended; the closure is
+  recorded in [docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md](docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md).
 
-Recommended session title:
+- Active branch: `task/netbox-infra-knowledge-progress`.
 
-- `Session 37 - Run approved Portainer socket-proxy live canary`
+- Next practical task (Light): Lock the Data Model and Ownership Boundary.
 
-That session should:
+  What to do in this Light session:
 
-1. confirm `with-secrets` targets `pve-test`
-2. use the Portainer canary runbook
-3. deploy only the Portainer `docker-socket-proxy` listener with explicit
-   canary extra-vars
-4. verify the listener and `populate.py --plan`
-5. hand back the live canary result and rollback/removal status
+  1. Decide and document the ownership marker (NetBox tag) and the exact
+    set of NetBox object classes the reconciler will manage (DCIM,
+    virtualization, IPAM, services, tags).
+  2. Create a short ownership matrix in `docs/netbox-stack/` that maps object
+    classes to owning source(s) and explicit deletion rules.
+  3. Add concise guidance for `docker_socket_proxy_targets` semantics:
+    declared targets must map to existing NetBox VM/interface records;
+    the reconciler must not create VM objects implicitly.
+  4. Define exit criteria: ownership matrix documented, create/patch/delete
+    rules explicit, and reviewers agree on boundaries. No live NetBox
+    mutations during this session.
 
 ## What Not To Reopen First
 
