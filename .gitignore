@@ -46,6 +46,7 @@ override.tf.json
 
 # Generated Terraform outputs in stack dirs
 **/stacks/*/inventory.yml
+**/stacks/*/inventory.generated.yml
 **/stacks/*/network-*-vars.yml
 terraform/lxc/.generated/
 

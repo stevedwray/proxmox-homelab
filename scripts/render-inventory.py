@@ -14,6 +14,13 @@ import re
 import yaml
 from pathlib import Path
 
+SOCKET_PROXY_KEYS = (
+    'enable_docker_socket_proxy',
+    'docker_socket_proxy_bind_addr',
+    'docker_socket_proxy_listen_port',
+    'docker_socket_proxy_targets',
+)
+
 
 def load_env_template(path):
     env = {}
@@ -48,7 +55,23 @@ def resolve_placeholder(s, env):
             return env[tf]
         return m.group(0)
 
-    return re.sub(r"\$\{([^}]+)\}", repl, s)
+    resolved = s
+    for _ in range(5):
+        next_value = re.sub(r"\$\{([^}]+)\}", repl, resolved)
+        if next_value == resolved:
+            break
+        resolved = next_value
+    return resolved
+
+
+def resolve_metadata_value(value, env):
+    if isinstance(value, str):
+        return resolve_placeholder(value, env)
+    if isinstance(value, list):
+        return [resolve_metadata_value(item, env) for item in value]
+    if isinstance(value, dict):
+        return {key: resolve_metadata_value(item, env) for key, item in value.items()}
+    return value
 
 
 def main():
@@ -98,22 +121,28 @@ def main():
     else:
         ssh_args = "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
 
+    host_vars = {
+        'ansible_host': ip,
+        'ansible_user': 'root',
+        'ansible_ssh_private_key_file': ssh_key,
+        'ansible_ssh_common_args': ssh_args,
+        'ssh_access_mode': ssh_access_mode,
+        'network_zone': zone,
+        'dns_server': dns,
+        'vmid': stack.get('vmid'),
+        'stack_name': stack_yaml_path.parent.name,
+    }
+
+    for key in SOCKET_PROXY_KEYS:
+        if key in stack and stack[key] is not None:
+            host_vars[key] = resolve_metadata_value(stack[key], env)
+
     inventory = {
         'all': {
             'children': {
                 stack_yaml_path.parent.name.replace('-', '_'): {
                     'hosts': {
-                        stack.get('hostname', stack_yaml_path.parent.name): {
-                            'ansible_host': ip,
-                            'ansible_user': 'root',
-                            'ansible_ssh_private_key_file': ssh_key,
-                            'ansible_ssh_common_args': ssh_args,
-                            'ssh_access_mode': ssh_access_mode,
-                            'network_zone': zone,
-                            'dns_server': dns,
-                            'vmid': stack.get('vmid'),
-                            'stack_name': stack_yaml_path.parent.name,
-                        }
+                        stack.get('hostname', stack_yaml_path.parent.name): host_vars
                     }
                 }
             }

@@ -38,8 +38,12 @@ deployment_tier: platform
 portainer_agent: false
 app_stack_name: "netbox"
 
-# Opt-in flag for read-only Docker socket proxy. Keep disabled by default.
-enable_docker_socket_proxy: false
+# Managed read-only Docker socket proxy for runtime service discovery.
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_netbox}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_netbox}"
 
 # pve-test service IPs (sourced from .env via TF_VAR_lab_ip_*)
 portainer_server_ip: "${lab_ip_portainer}"

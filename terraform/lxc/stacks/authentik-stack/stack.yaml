@@ -40,8 +40,12 @@ ansible_playbook: "deploy-authentik-stack"
 deployment_tier: platform
 portainer_agent: false
 
-# Opt-in: enable Docker socket proxy on this host. Keep false by default.
-enable_docker_socket_proxy: false
+# Managed read-only Docker socket proxy for runtime service discovery.
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_authentik}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_authentik}"
 
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"

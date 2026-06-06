@@ -41,7 +41,9 @@ ansible_playbook: "deploy-portainer-stack"
 deployment_tier: platform
 apt_cacher_host: ""
 dns_server: "${lab_ip_dns}"
-enable_docker_socket_proxy: false
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_portainer}"
+docker_socket_proxy_listen_port: 2375
 portainer_agent: false
 docker_socket_proxy_targets:
   - "${lab_ip_portainer}"

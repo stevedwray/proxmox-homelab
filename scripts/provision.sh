@@ -119,8 +119,14 @@ ensure_portainer_edge_publish() {
       --apply \
       --json
 
+    local proxy_extra_vars_file
+    proxy_extra_vars_file="$(mktemp "/tmp/proxy-stack.ansible-extra-vars.XXXXXX.yml")"
+    stack_extra_vars_files+=("$proxy_extra_vars_file")
+    render_stack_ansible_extra_vars "proxy-stack" "$proxy_extra_vars_file"
+
     log "Publish generated Traefik files for Portainer route"
     ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \
+      -e "@${proxy_extra_vars_file}" \
       -e "traefik_generated_source_dir=${generated_traefik_dir}"
   fi
 }
@@ -129,6 +135,79 @@ extract_ansible_playbook() {
   local inventory_file="$1"
 
   python3 -c "import yaml,sys; inv=yaml.safe_load(sys.stdin); grp=next(iter(inv['all']['children'].values())); host=next(iter(grp['hosts'].values())); print(host.get('ansible_playbook',''))" <"${inventory_file}"
+}
+
+render_stack_ansible_extra_vars() {
+  local stack="$1"
+  local output_file="$2"
+  local stack_file="${STACKS_DIR}/${stack}/stack.yaml"
+
+  python3 - "$stack_file" "$output_file" <<'PY'
+import os
+import re
+import sys
+import yaml
+
+stack_file = sys.argv[1]
+output_file = sys.argv[2]
+
+SOCKET_PROXY_KEYS = (
+    "enable_docker_socket_proxy",
+    "docker_socket_proxy_bind_addr",
+    "docker_socket_proxy_listen_port",
+    "docker_socket_proxy_targets",
+)
+
+
+def resolve_placeholders(value):
+    if isinstance(value, str):
+        def repl(match):
+            name = match.group(1)
+            for candidate in (name, name.upper(), f"TF_VAR_{name}"):
+                if candidate in os.environ:
+                    return os.environ[candidate]
+            return match.group(0)
+
+        resolved = value
+        for _ in range(5):
+            next_value = re.sub(r"\$\{([^}]+)\}", repl, resolved)
+            if next_value == resolved:
+                break
+            resolved = next_value
+        return resolved
+
+    if isinstance(value, list):
+        return [resolve_placeholders(item) for item in value]
+
+    if isinstance(value, dict):
+        return {key: resolve_placeholders(item) for key, item in value.items()}
+
+    return value
+
+
+def die(message):
+    print(f"[provision] ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
+with open(stack_file, "r", encoding="utf-8") as handle:
+    stack = yaml.safe_load(handle) or {}
+
+extra_vars = {}
+for key in SOCKET_PROXY_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+if extra_vars.get("enable_docker_socket_proxy") is True:
+    bind_addr = str(extra_vars.get("docker_socket_proxy_bind_addr", ""))
+    if not bind_addr:
+        die(f"{stack_file}: enabled docker socket proxy requires docker_socket_proxy_bind_addr")
+    if "${" in bind_addr:
+        die(f"{stack_file}: unresolved docker_socket_proxy_bind_addr placeholder: {bind_addr}")
+
+with open(output_file, "w", encoding="utf-8") as handle:
+    yaml.safe_dump(extra_vars, handle, sort_keys=False)
+PY
 }
 
 resolve_stack_order() {
@@ -349,6 +428,15 @@ export ANSIBLE_ROLES_PATH="${ANSIBLE_DIR}/roles"
 export ANSIBLE_LOCAL_TEMP="/tmp/.ansible/tmp"
 export ANSIBLE_SSH_CONTROL_PATH_DIR="/tmp/.ansible/cp"
 
+declare -a stack_extra_vars_files=()
+cleanup_stack_extra_vars_files() {
+  local file
+  for file in "${stack_extra_vars_files[@]:-}"; do
+    [[ -n "$file" && -f "$file" ]] && rm -f "$file"
+  done
+}
+trap cleanup_stack_extra_vars_files EXIT
+
 for stack in "${ordered_stacks[@]}"; do
   inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
 
@@ -377,6 +465,11 @@ for stack in "${ordered_stacks[@]}"; do
   fi
 
   cmd=(ansible-playbook -i "$inventory_file" "$playbook_file")
+
+  stack_extra_vars_file="$(mktemp "/tmp/${stack}.ansible-extra-vars.XXXXXX.yml")"
+  stack_extra_vars_files+=("$stack_extra_vars_file")
+  render_stack_ansible_extra_vars "$stack" "$stack_extra_vars_file"
+  cmd+=(-e "@${stack_extra_vars_file}")
 
   # Always regenerate zone from EdgeManifests before deploying dns-stack so the
   # live zone is never stale with respect to declared routes.
