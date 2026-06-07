@@ -385,6 +385,10 @@ for stack in "${ordered_stacks[@]}"; do
   "${cmd[@]}"
 done
 
-reconcile_all_edge "$check_mode"
+if [[ -z "$explicit_csv" ]]; then
+  reconcile_all_edge "$check_mode"
+else
+  log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
+fi
 
 log "Completed provision orchestration"
