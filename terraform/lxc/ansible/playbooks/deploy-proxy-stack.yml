@@ -8,6 +8,8 @@
   roles:
     - lxc_base
     - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon

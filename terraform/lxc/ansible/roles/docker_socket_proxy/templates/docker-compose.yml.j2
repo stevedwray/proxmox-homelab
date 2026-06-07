@@ -1,0 +1,20 @@
+version: '3.8'
+services:
+  docker-socket-proxy:
+    image: "{{ docker_socket_proxy_image }}"
+    container_name: docker-socket-proxy
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "{{ docker_socket_proxy_bind_addr | default('127.0.0.1') }}:{{ docker_socket_proxy_listen_port }}:{{ docker_socket_proxy_listen_port }}"
+    environment:
+      POST: "{{ '1' if docker_socket_proxy_post | bool else '0' }}"
+      CONTAINERS: "{{ '1' if docker_socket_proxy_containers | bool else '0' }}"
+      INFO: "{{ '1' if docker_socket_proxy_info | bool else '0' }}"
+      IMAGES: "{{ '1' if docker_socket_proxy_images | bool else '0' }}"
+{% if docker_socket_proxy_env_extra %}
+{% for key, val in docker_socket_proxy_env_extra.items() %}
+      {{ key }}: "{{ val }}"
+{% endfor %}
+{% endif %}
+    restart: unless-stopped

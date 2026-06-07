@@ -1,0 +1,16 @@
+---
+# Defaults for docker_socket_proxy role
+enable_docker_socket_proxy: false
+docker_socket_proxy_image: tecnativa/docker-socket-proxy:latest
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_bind_addr: "{{ ansible_default_ipv4.address | default('127.0.0.1') }}"
+docker_socket_proxy_project_dir: /opt/docker-socket-proxy
+# Socket-proxy environment model (match Tecnativa/docker-socket-proxy)
+# Control mutating methods and explicit endpoint groups via env flags.
+# Defaults keep POST disabled and enable only the minimal discovery endpoints.
+docker_socket_proxy_post: false
+docker_socket_proxy_containers: true
+docker_socket_proxy_info: true
+docker_socket_proxy_images: false
+# Extra environment entries (dict) to render into the compose template if needed
+docker_socket_proxy_env_extra: {}

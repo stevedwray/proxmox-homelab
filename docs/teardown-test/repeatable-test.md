@@ -18,13 +18,13 @@ scripts/teardown-deploy-test.sh <phase> [options]
 Evidence is written under:
 
 ```text
-docs/teardown-test/evidence/<stamp>/logs/
+docs/teardown-test/artifacts/evidence/<stamp>/logs/
 ```
 
 Machine-readable checkpoint state is written to:
 
 ```text
-docs/teardown-test/evidence/<stamp>/state.json
+docs/teardown-test/artifacts/evidence/<stamp>/state.json
 ```
 
 The script reuses the current workspace patterns:
@@ -171,7 +171,7 @@ is intentionally simple; the approval packet is the detailed safety record:
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
   --approval-text "approve" \
-  --approval-packet docs/teardown-test/packets/20260423-010203.md \
+  --approval-packet docs/teardown-test/artifacts/packets/20260423-010203.md \
   --stamp 20260423-010203
 ```
 

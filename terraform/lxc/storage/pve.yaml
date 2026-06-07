@@ -12,8 +12,10 @@ templates:
 storage_backends:
   infrastructure-containers:
     content_types: [rootdir]
+    backend_type: zfs
   storage-containers:
     content_types: [rootdir]
+    backend_type: zfs
   local-zfs:
     content_types: [images, rootdir]
   storage-template:
@@ -49,6 +51,11 @@ profiles:
     docker_storage: infrastructure-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
+  platform-zfs:
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
 
 extra_mount_profiles:
   durable-default:
@@ -58,6 +65,9 @@ extra_mount_profiles:
     storage: storage-containers
     required_content_type: rootdir
   durable-ssd:
+    storage: storage-containers
+    required_content_type: rootdir
+  durable-zfs:
     storage: storage-containers
     required_content_type: rootdir
 

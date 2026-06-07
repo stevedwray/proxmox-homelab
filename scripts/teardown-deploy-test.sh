@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
-EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
+EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
 HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
@@ -36,6 +36,7 @@ else
   DEFAULT_ENV_HINT=".env.${TARGET_NODE_EXPECTED}"
 fi
 WITH_SECRETS="${TEARDOWN_WITH_SECRETS:-${REPO_ROOT}/${DEFAULT_WITH_SECRETS_WRAPPER}}"
+TERRAGRUNT_WORKSPACE="${TEARDOWN_TERRAGRUNT_WORKSPACE:-${TARGET_NODE_EXPECTED}}"
 TARGET_PVE_HOST="${TEARDOWN_PVE_HOST:-${DEFAULT_TARGET_PVE_HOST}}"
 TARGET_ENV_FILE="${TEARDOWN_ENV_FILE:-${REPO_ROOT}/${DEFAULT_ENV_HINT}}"
 REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
@@ -160,7 +161,8 @@ Options:
     Must reference stamp/commit/backup approvals.
     --disposable
       Disposable environment mode for destroy/cycle.
-      Skips approval-packet metadata validation and backup-artifact evidence checks.
+      Skips approval-packet metadata validation, backup-artifact evidence checks,
+      and the --approval-text gate. Use for pve-test dev iteration cycles.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -547,12 +549,12 @@ run_dns_nonempty_check() {
 guard_target() {
   local output
   # shellcheck disable=SC2016
-  output="$("${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node')"
+  output="$("${WITH_SECRETS}" printenv TF_VAR_proxmox_node)"
   if [[ "${output}" != "${TARGET_NODE_EXPECTED}" ]]; then
     log "ERROR target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     set_phase_failure_context \
       "target-guard" \
-      "${WITH_SECRETS} bash -c 'echo \$TF_VAR_proxmox_node'" \
+      "${WITH_SECRETS} printenv TF_VAR_proxmox_node" \
       "${RUN_LOG}" \
       "target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     return 1
@@ -926,9 +928,9 @@ review_storage_plan_safety() {
   classified="${LOG_DIR}/${stack}-storage.classified.json"
 
   run_logged "storage-plan-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
   run_logged "storage-plan-json-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt show -json '${planfile}' >'${planjson}'"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt show -json '${planfile}' >'${planjson}'"
   run_logged "storage-plan-classify-${stack}" \
     python3 "${TERRAFORM_LXC}/classify-storage-plan.py" --plan-json "${planjson}" --stack-name "${stack}" --out "${classified}"
   run_logged "storage-plan-safety-${stack}" \
@@ -1012,7 +1014,7 @@ hydrate_live_env_contract() {
       continue
     fi
 
-    value="$("${WITH_SECRETS}" bash -lc "printf '%s' \"\${${key}:-}\"")"
+    value="$("${WITH_SECRETS}" printenv "${key}" || true)"
     if [[ -n "${value}" ]]; then
       printf -v "${key}" '%s' "${value}"
       export "${key}=${value}"
@@ -1106,6 +1108,11 @@ require_execute_approval() {
       "${RUN_LOG}" \
       "${PHASE} requires --execute"
     return 1
+  fi
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; approval-text gate satisfied by --disposable"
+    return 0
   fi
 
   if [[ "${approval_lc}" != *"${REQUIRED_APPROVAL_PHRASE,,}"* ]]; then
@@ -1393,7 +1400,7 @@ stack_apply() {
 
   guard_target
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE=default terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
   guard_target
   run_logged "provision-${stack}" \
     "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
@@ -1409,7 +1416,7 @@ stack_destroy() {
   guard_target
   if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
-      bash -lc "cd '${REPO_ROOT}' && '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
+      bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' REBUILD_GATE_TARGET_HOST='${TARGET_PVE_HOST}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"

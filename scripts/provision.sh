@@ -87,39 +87,31 @@ ensure_portainer_oauth_secret() {
     --json
 }
 
-ensure_portainer_edge_publish() {
-  local stack="$1"
-  local check_mode="$2"
-  local edge_manifest="${STACKS_DIR}/portainer-stack/edge.yaml"
-  local proxy_inventory="${STACKS_DIR}/proxy-stack/inventory.yml"
+reconcile_all_edge() {
+  local check_mode="$1"
+  local stacks_dir="$STACKS_DIR"
+  local proxy_inventory="${stacks_dir}/proxy-stack/inventory.yml"
   local proxy_playbook="${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml"
   local generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
 
-  [[ "$stack" == "portainer-stack" ]] || return 0
+  [[ -f "$proxy_inventory" ]] || { log "SKIP edge reconcile: proxy-stack inventory not found"; return 0; }
 
-  [[ -f "$edge_manifest" ]] || fail "expected edge manifest not found: ${edge_manifest}"
-  [[ -f "$proxy_inventory" ]] || fail "expected proxy inventory not found: ${proxy_inventory}"
-  [[ -f "$proxy_playbook" ]] || fail "expected proxy playbook not found: ${proxy_playbook}"
-
-  [[ -n "${LAB_IP_AUTHENTIK:-}" ]] || fail "LAB_IP_AUTHENTIK is required for Authentik reconcile (inject via with-secrets)"
+  local reconcile_args=(
+    python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py"
+    --stacks-dir "$stacks_dir"
+    --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443"
+    --no-verify-tls
+    --json
+  )
 
   if [[ "$check_mode" == "true" ]]; then
-    log "Reconcile edge dry-run for Portainer route publication"
-    python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
-      "$edge_manifest" \
-      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
-      --no-verify-tls \
-      --json
+    log "Edge reconcile dry-run (all stacks)"
+    "${reconcile_args[@]}"
   else
-    log "Reconcile edge apply for Portainer route publication"
-    python3 "${REPO_ROOT}/terraform/lxc/reconcile-edge.py" \
-      "$edge_manifest" \
-      --authentik-url "https://authentik-int.${LAB_DOMAIN:-lab.gibbsgreatly.xyz}:9443" \
-      --no-verify-tls \
-      --apply \
-      --json
+    log "Edge reconcile apply (all stacks)"
+    "${reconcile_args[@]}" --apply
 
-    log "Publish generated Traefik files for Portainer route"
+    log "Push generated Traefik config to proxy-stack"
     ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \
       -e "traefik_generated_source_dir=${generated_traefik_dir}"
   fi
@@ -353,7 +345,6 @@ for stack in "${ordered_stacks[@]}"; do
   inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
 
   ensure_portainer_oauth_secret "$stack"
-  ensure_portainer_edge_publish "$stack" "$check_mode"
 
   if [[ ! -f "$inventory_file" ]]; then
     log "SKIP ${stack}: inventory file not found (${inventory_file})"
@@ -393,5 +384,11 @@ for stack in "${ordered_stacks[@]}"; do
   log "RUN ${stack}: ${cmd[*]}"
   "${cmd[@]}"
 done
+
+if [[ -z "$explicit_csv" ]]; then
+  reconcile_all_edge "$check_mode"
+else
+  log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
+fi
 
 log "Completed provision orchestration"

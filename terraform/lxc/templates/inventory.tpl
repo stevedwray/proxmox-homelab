@@ -33,3 +33,18 @@ all:
 %{ if app_stack_name != "" ~}
           app_stack_name: ${app_stack_name}
 %{ endif ~}
+%{ if docker_socket_proxy_metadata_declared ~}
+          enable_docker_socket_proxy: ${enable_docker_socket_proxy}
+%{ endif ~}
+%{ if docker_socket_proxy_bind_addr != "" ~}
+          docker_socket_proxy_bind_addr: "${docker_socket_proxy_bind_addr}"
+%{ endif ~}
+%{ if docker_socket_proxy_listen_port != null ~}
+          docker_socket_proxy_listen_port: ${docker_socket_proxy_listen_port}
+%{ endif ~}
+%{ if length(docker_socket_proxy_targets) > 0 ~}
+          docker_socket_proxy_targets:
+%{ for target in docker_socket_proxy_targets ~}
+            - "${target}"
+%{ endfor ~}
+%{ endif ~}
