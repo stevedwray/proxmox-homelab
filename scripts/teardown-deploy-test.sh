@@ -18,7 +18,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
-EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
+EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
 HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
@@ -161,7 +161,8 @@ Options:
     Must reference stamp/commit/backup approvals.
     --disposable
       Disposable environment mode for destroy/cycle.
-      Skips approval-packet metadata validation and backup-artifact evidence checks.
+      Skips approval-packet metadata validation, backup-artifact evidence checks,
+      and the --approval-text gate. Use for pve-test dev iteration cycles.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -1107,6 +1108,11 @@ require_execute_approval() {
       "${RUN_LOG}" \
       "${PHASE} requires --execute"
     return 1
+  fi
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; approval-text gate satisfied by --disposable"
+    return 0
   fi
 
   if [[ "${approval_lc}" != *"${REQUIRED_APPROVAL_PHRASE,,}"* ]]; then

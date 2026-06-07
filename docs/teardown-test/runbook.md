@@ -102,7 +102,7 @@ Capture the evidence directory and log naming base:
 
 ```bash
 STAMP="$(date -u +%Y%m%d-%H%M%S)"
-EVIDENCE_DIR="docs/teardown-test/evidence/${STAMP}"
+EVIDENCE_DIR="docs/teardown-test/artifacts/evidence/${STAMP}"
 LOG_DIR="$EVIDENCE_DIR/logs"
 
 mkdir -p "$EVIDENCE_DIR"
@@ -165,7 +165,7 @@ addition to `--execute` and `--approval-text`:
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
 	--approval-text "approve" \
-	--approval-packet docs/teardown-test/packets/<stamp>.md \
+	--approval-packet docs/teardown-test/artifacts/packets/<stamp>.md \
 	--stamp <stamp>
 ```
 

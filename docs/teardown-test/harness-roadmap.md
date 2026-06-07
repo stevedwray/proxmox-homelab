@@ -131,7 +131,7 @@ Next step:
 
 - Generate `summary.md` under the evidence stamp.
 - Generate an optional tracked report skeleton under
-  `docs/teardown-test/reports/<stamp>.md`.
+  `docs/teardown-test/artifacts/reports/<stamp>.md`.
 - Include:
   - branch and commit
   - phase results

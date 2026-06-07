@@ -16,7 +16,7 @@ operator has explicitly approved the destructive window.
 ## Current Status
 
 The first full teardown/rebuild rehearsal completed successfully and is
-summarized in [reports/20260422-044416.md](reports/20260422-044416.md).
+summarized in [artifacts/reports/20260422-044416.md](artifacts/reports/20260422-044416.md).
 Durable operational takeaways from rehearsal work are captured in
 [lessons-learned.md](lessons-learned.md).
 The repeatable harness is documented in
