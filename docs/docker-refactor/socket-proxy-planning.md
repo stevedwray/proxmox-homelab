@@ -9,22 +9,26 @@ The first implementation target is a disposable test container and teardown-test
 workflow. Existing infrastructure stacks must not be changed until the test path
 is proven.
 
+The refactor is not complete until normal rebuild/deploy of the managed
+infrastructure Docker container set installs and verifies docker-socket-proxy,
+and that behavior is proven by a teardown/rebuild validation on `pve`.
+
 For the current implementation checkpoint, rollout status, and known remaining
 design caveat, see `docs/docker-refactor/current-state.md`.
 
 ## Decisions To Preserve
 
 - Manage the proxy with Ansible, not the LXC template.
-- Keep it opt-in per Docker host.
+- Keep it scoped to the managed infrastructure Docker container set. Do not
+  expand to every Docker-capable LXC in the lab.
 - Run it after `docker_base` has installed and started Docker.
 - Prove the role on a disposable/test Docker LXC before enabling any real stack.
 - Integrate the proof into teardown-test before stack rollout.
 - Do not use Portainer or SSH as a workaround for runtime discovery.
- - The disposable test target `docker-socket-proxy-test` has been proven on
-    `pve-test` via Sessions 5 and 6 (see handbacks under
-    `docs/docker-refactor/handoffs/`). Until the rollout gates are satisfied,
-    keep proxy enablement disabled on real stacks and use the teardown-test
-    opt-in workflow to exercise the proof path.
+- The disposable test target `docker-socket-proxy-test` has been proven on
+  `pve-test` via Sessions 5 and 6. Until the rollout gates are satisfied, keep
+  proxy enablement disabled on real stacks and use the teardown-test opt-in
+  workflow to exercise the proof path.
 
 ## Working Rules For Copilot Sessions
 
@@ -34,17 +38,21 @@ design caveat, see `docs/docker-refactor/current-state.md`.
 - Start every session by reading:
   - `AGENTS.md`
   - this plan
-  - the latest handback under `docs/docker-refactor/handoffs/`, if one exists
+  - the latest local handback under `docs/docker-refactor/artifacts/`, if one
+    exists
 - Do not develop directly on `baseline/teardown-validated` or `dev/pve-test`.
-- Before any deploy/apply validation, confirm the target is `pve-test`.
+- Before disposable proof validation, confirm the target is `pve-test`.
+- Before the final infrastructure-container teardown/rebuild gate, confirm the
+  target is `pve`. That gate must not touch containers outside the managed
+  infrastructure set.
 - Use `./with-secrets <command>` for credentialed commands.
 - Do not create tracked temporary reports, handoffs, or evidence.
-- Put session handbacks under `docs/docker-refactor/handoffs/`; this path is
-  already ignored by `.gitignore` through `docs/**/handoffs/`.
-- Put any local evidence, reports, or scratch artifacts under:
+- Put session handbacks, handoffs, and prompts under the ignored local artifact
+  path:
+  - `docs/docker-refactor/artifacts/`
+- Put any local evidence or scratch reports under:
   - `docs/docker-refactor/evidence/`
   - `docs/docker-refactor/reports/`
-  - `docs/docker-refactor/artifacts/`
 - Avoid bookkeeping churn. A session must produce material source changes,
   validation evidence, or a precise blocker. Handback wording changes alone do
   not count as progress.
@@ -52,8 +60,9 @@ design caveat, see `docs/docker-refactor/current-state.md`.
   it should do the work and finish with the required handback.
 - Never stop without writing a handback document. If the session is complete,
   partial, blocked, or out of time, write the handback under
-  `docs/docker-refactor/handoffs/` before the final response. A session without
-  a handback document is incomplete and must be rejected by manager review.
+  `docs/docker-refactor/artifacts/` before the final response. A session
+  without a handback document is incomplete and must be rejected by manager
+  review.
 
 ## Handback Format
 
@@ -61,11 +70,11 @@ Each Copilot session must write a handback document before it stops work. This
 is required even when no files changed, validation could not run, or the session
 is blocked.
 
-Write the handback under `docs/docker-refactor/handoffs/`, using a filename such
+Write the handback under `docs/docker-refactor/artifacts/`, using a filename such
 as:
 
 ```text
-docs/docker-refactor/handoffs/01-role-audit-handback.md
+docs/docker-refactor/artifacts/01-role-audit-handback.md
 ```
 
 The final chat response should only point to the handback file and briefly state
@@ -107,7 +116,7 @@ Do not stop after planning, reading files, updating todos, or asking whether to
 proceed. Complete the requested session as far as possible.
 
 Before stopping for any reason, write a handback document under:
-docs/docker-refactor/handoffs/
+docs/docker-refactor/artifacts/
 
 The handback document must include the required Docker Refactor Handback
 sections: Status, Achieved, Changed Files, Verification, Blockers, and Next
@@ -135,7 +144,7 @@ forward:
   write a handback document with the exact missing input or failing command.
 - Manager review should reject handbacks that only restate previous context.
 - Manager review should reject any Copilot session that stops work without a
-  handback document under `docs/docker-refactor/handoffs/`.
+  handback document under `docs/docker-refactor/artifacts/`.
 
 ## Step-By-Step Sessions
 
@@ -344,15 +353,28 @@ Exit criteria:
 - Durable docs match the implemented state.
 - Required scans pass, or new findings are handed back for decision.
 
-## Later Rollout Gate
+## Infrastructure Rollout Gate
 
-Do not enable this on `netbox-stack`, `authentik-stack`, `monitoring-stack`,
-`proxy-stack`, `harbor-stack`, or `portainer-stack` until all are true:
+The disposable `pve-test` proof is necessary but not sufficient. This refactor
+is complete only when socket-proxy enablement is proven through a teardown and
+rebuild of the managed infrastructure Docker containers on `pve`.
+
+Do not call the Docker refactor finished until all are true:
 
 1. The disposable test LXC proof passes.
 2. The teardown-test opt-in path passes.
 3. The manager review accepts the handbacks.
-4. A separate rollout plan is written for real stacks.
+4. Deploy-time socket-proxy enablement is implemented for the managed
+   infrastructure Docker container set.
+5. A `pve` infrastructure-container teardown/rebuild validation passes.
+6. The validation proves socket-proxy endpoints are reachable on each expected
+   rebuilt infrastructure Docker container.
+7. The validation proves mutating Docker API access remains blocked.
+8. NetBox `populate.py --plan` can see the expected runtime service changes
+   after rebuild.
+
+The `pve` gate must not touch containers outside the managed infrastructure
+container set.
 
 ## Real-Stack Rollout Scope
 
@@ -389,6 +411,33 @@ Explicitly out of rollout scope for this plan:
 - `step-ca-stack`
 - legacy or manually managed Docker LXCs outside the managed infrastructure
   stack set
+
+## Required Remaining Implementation
+
+The current repository state wires the `docker_socket_proxy` role into several
+Docker stack playbooks, but normal deploy does not automatically enable it.
+Tracked stack metadata still commonly contains:
+
+```yaml
+enable_docker_socket_proxy: false
+```
+
+and static inventories do not carry socket-proxy bind/listen variables.
+
+The remaining implementation sessions should do practical source work:
+
+1. Decide the exact infrastructure Docker stack set that must be rebuilt and
+   validated on `pve`.
+2. Add or repair metadata propagation so deploy-time Ansible receives:
+   - `enable_docker_socket_proxy`
+   - `docker_socket_proxy_bind_addr`
+   - `docker_socket_proxy_listen_port`
+3. Enable socket-proxy only for the managed infrastructure Docker stacks in
+   scope.
+4. Add a validation command/script that checks each expected endpoint:
+   - `GET /containers/json?all=1` succeeds
+   - mutating Docker API access is blocked
+5. Run the final gate on `pve` only for infrastructure containers.
 
 ## Manager Review Loop
 

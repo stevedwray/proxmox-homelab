@@ -207,13 +207,24 @@ class NetBoxClient:
 
         return merged
 
-    def _build_patch(self, existing, desired):
+    def _build_patch(self, existing, desired, allowed_patch_fields=None):
         changes = {}
         for field, value in desired.items():
+            if allowed_patch_fields is not None and field not in allowed_patch_fields:
+                continue
             existing_value = self._extract_existing_field(existing, field)
             if not self._field_matches(existing_value, value):
                 changes[field] = value
         return changes
+
+    def _tag_slugs(self, obj):
+        slugs = set()
+        for tag in obj.get("tags") or []:
+            if isinstance(tag, dict) and tag.get("slug"):
+                slugs.add(tag["slug"])
+            elif isinstance(tag, str):
+                slugs.add(tag)
+        return slugs
 
     def _record_desired_lookup(self, path, lookup):
         self._desired_lookups[path].append(copy.deepcopy(lookup))
@@ -262,7 +273,16 @@ class NetBoxClient:
             combined = [obj for obj in combined if self._object_matches_lookup(obj, params)]
         return {"count": len(combined), "results": combined}
 
-    def ensure(self, path, lookup, defaults=None, legacy_lookups=None):
+    def ensure(
+        self,
+        path,
+        lookup,
+        defaults=None,
+        legacy_lookups=None,
+        allowed_patch_fields=None,
+        managed_tag_slug=None,
+        allow_unmanaged_patch=True,
+    ):
         """Create or reconcile an object and log the resulting action."""
         self._record_desired_lookup(path, lookup)
         desired = {**lookup, **(defaults or {})}
@@ -285,7 +305,13 @@ class NetBoxClient:
             return obj
 
         obj = results["results"][0]
-        changes = self._build_patch(obj, desired)
+        changes = self._build_patch(obj, desired, allowed_patch_fields=allowed_patch_fields)
+        if changes and managed_tag_slug and not allow_unmanaged_patch and managed_tag_slug not in self._tag_slugs(obj):
+            print(
+                f"  skip unmanaged: {path} → {self._label(obj)} "
+                f"(id={obj['id']}) fields={sorted(changes)}"
+            )
+            return obj
         if changes:
             if self.dry_run:
                 obj = {**copy.deepcopy(obj), **changes}

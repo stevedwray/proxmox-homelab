@@ -289,7 +289,10 @@ class TestBuildVmListRuntimeState(unittest.TestCase):
             runtime_inspector=lambda container: [{"name": "should-not-be-used", "port": 1, "protocol": "tcp"}],
         )
 
-        self.assertEqual(vms[0]["services"], [{"name": "netbox-stack-8080", "port": 8080, "protocol": "tcp"}])
+        self.assertEqual(
+            vms[0]["services"],
+            [{"name": "netbox-stack-8080", "port": 8080, "protocol": "tcp", "source": "portainer"}],
+        )
 
     def test_uses_socket_proxy_when_env_set(self):
         proxmox_data = {
@@ -364,8 +367,8 @@ class TestBuildVmListRuntimeState(unittest.TestCase):
         self.assertEqual(
             vms[0]["services"],
             [
-                {"name": "netbox-netbox-1-8080", "port": 8080, "protocol": "tcp"},
-                {"name": "netbox-netbox-1-53", "port": 53, "protocol": "udp"},
+                {"name": "netbox-netbox-1-8080", "port": 8080, "protocol": "tcp", "source": "socket-proxy"},
+                {"name": "netbox-netbox-1-53", "port": 53, "protocol": "udp", "source": "socket-proxy"},
             ],
         )
 
@@ -401,13 +404,13 @@ class TestRuntimeServiceParsing(unittest.TestCase):
 
         self.assertEqual(
             services,
-            [{"name": "netbox-netbox-1-8080", "port": 8080, "protocol": "tcp"}],
+            [{"name": "netbox-netbox-1-8080", "port": 8080, "protocol": "tcp", "source": "guest-ssh-docker"}],
         )
         self.assertEqual(
             listeners,
             [
-                {"name": "port-22-tcp", "port": 22, "protocol": "tcp"},
-                {"name": "port-53-udp", "port": 53, "protocol": "udp"},
+                {"name": "port-22-tcp", "port": 22, "protocol": "tcp", "source": "guest-ssh-listener"},
+                {"name": "port-53-udp", "port": 53, "protocol": "udp", "source": "guest-ssh-listener"},
             ],
         )
 if __name__ == "__main__":

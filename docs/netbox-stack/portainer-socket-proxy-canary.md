@@ -6,7 +6,8 @@ Purpose and scope
   safely for verification without enabling broad production rollout.
 - Scope: repo-side PR + operator-run deploy in `pve-test` or controlled host;
   no automatic production enablement.
-Status (2026-06-06): Canary accepted closed — Portainer socket-proxy listener verified live and NetBox service ownership cleanup accepted. See `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` for details.
+Status (2026-06-06): Canary accepted closed. Portainer socket-proxy listener is
+verified live and NetBox service ownership cleanup is accepted.
 
 Safety note
 - IMPORTANT: The commands shown under "Exact deploy command shapes" are live

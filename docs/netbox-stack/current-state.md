@@ -7,19 +7,50 @@ This note is the short resume point for the `netbox-stack` workstream.
 Use it together with:
 
 - `docs/netbox-stack/README.md`
-- `docs/netbox-stack/artifacts/HANDOFF.md`
+- `docs/netbox-stack/docker-runtime-host-matrix.md`
+- `docs/netbox-stack/ownership.md`
 
-The goal is to let a fresh Copilot session resume cleanly without re-reading
-the full artifacts history first.
+The goal is to let a fresh session resume cleanly without depending on local
+session artifacts. Files under `docs/netbox-stack/artifacts/` are ignored
+work-session evidence, not durable project documentation.
 
 ## Current Position
 
 The NetBox stack itself is in workable shape.
 
+### Frozen Resume State (2026-06-06)
+
+NetBox work is paused here. Do not continue trying to solve missing Docker
+application services inside the NetBox workstream first.
+
+What NetBox has proved:
+
+- Proxmox and MikroTik inventory are visible in NetBox.
+- VM/LXC inventory and IPs are present.
+- Docker runtime service ingestion works when a Docker host has a reachable
+  runtime inspection path.
+- The reconciler now has ownership guardrails so populate does not retag or
+  patch unmanaged NetBox objects by accident.
+
+What NetBox exposed:
+
+- Most Docker-capable infrastructure containers do not currently have a
+  reachable `docker-socket-proxy` listener on port `2375`.
+- Therefore broad Docker application service ingestion is blocked upstream by
+  Docker runtime inspection deployment, not by NetBox modeling.
+
+Next work belongs in `docs/docker-refactor/`: make normal rebuild/deploy of the
+managed infrastructure Docker containers install and validate
+`docker-socket-proxy`, then prove that through a teardown/rebuild test on
+`pve`.
+
 ### Portainer Canary Closure (2026-06-06)
 
 - Status: Portainer socket-proxy canary accepted closed.
-- Summary: Portainer socket-proxy listener is live on the declared Portainer target. NetBox service ownership cleanup for Portainer-related services has been verified; `populate.py --plan` reports only non-destructive description/tag/format updates for the affected services. See `docs/netbox-stack/artifacts/SESSION-46-PORTAINER-FINAL-VERIFY-HANDBACK.md` and `docs/netbox-stack/artifacts/SESSION-47-PORTAINER-CANARY-CLOSURE-HANDBACK.md` for details.
+- Summary: Portainer socket-proxy listener is live on the declared Portainer
+  target. NetBox service ownership cleanup for Portainer-related services has
+  been verified; `populate.py --plan` reports only non-destructive
+  description/tag/format updates for the affected services.
 
 
 What is already true:
@@ -67,21 +98,17 @@ decision.
 
 ## Recommended Next Work
 
-The next fresh session should be an explicitly approved live Portainer canary
-gate.
+Do not start another NetBox session as the next step. Resume the Docker
+socket-proxy refactor instead:
 
-Recommended session title:
-
-- `Session 37 - Run approved Portainer socket-proxy live canary`
-
-That session should:
-
-1. confirm `with-secrets` targets `pve-test`
-2. use the Portainer canary runbook
-3. deploy only the Portainer `docker-socket-proxy` listener with explicit
-   canary extra-vars
-4. verify the listener and `populate.py --plan`
-5. hand back the live canary result and rollback/removal status
+1. Review `docs/docker-refactor/current-state.md`.
+2. Implement deploy-time socket-proxy enablement for the managed
+   infrastructure Docker container set only.
+3. Validate on `pve` through the infrastructure-container teardown/rebuild test
+   gate.
+4. Return to NetBox only after rebuilt infrastructure Docker containers have
+   reachable socket-proxy listeners and `populate.py --plan` shows the expected
+   `/ipam/services/` changes.
 
 ## What Not To Reopen First
 
@@ -122,3 +149,6 @@ When this work is eventually committed, useful message material:
 - record Portainer canary prep: declared target, runbook, pve-test
   `populate.py --plan`, and enabled check-mode result
   `ok=29 changed=3 unreachable=0 failed=0 skipped=49 rescued=0 ignored=0`
+- freeze NetBox after Session 56: Docker runtime service ingestion is blocked
+  upstream until Docker refactor deploys socket-proxy during normal
+  infrastructure-container rebuilds and validates it on `pve`
