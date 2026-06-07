@@ -22,6 +22,8 @@
   roles:
     - lxc_base
     - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
   tasks:
     - name: Normalize Docker daemon DNS for Harbor runtime
       ansible.builtin.copy:
