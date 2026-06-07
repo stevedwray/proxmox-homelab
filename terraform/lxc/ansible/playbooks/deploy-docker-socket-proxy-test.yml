@@ -1,0 +1,47 @@
+---
+- name: Deploy docker-socket-proxy-test stack
+  hosts: all
+  become: true
+  vars:
+    compose_src: "{{ playbook_dir }}/../../stacks/docker-socket-proxy-test/docker-compose.yml"
+    # Target-scoped enablement: this playbook is the disposable test path only.
+    enable_docker_socket_proxy: true
+    # Bind to the test VM's service IP (explicit, not 0.0.0.0)
+    docker_socket_proxy_bind_addr: "192.168.1.53"
+    docker_socket_proxy_listen_port: 2375
+    docker_socket_proxy_project_dir: /opt/docker-socket-proxy
+
+  pre_tasks:
+    - name: "Inform: this playbook deploys the proxy to the disposable test target"
+      ansible.builtin.debug:
+        msg: "This playbook deploys `docker_socket_proxy` and the harmless workload compose on the disposable test target when run. Verify target is pve-test before running."
+
+  roles:
+    - role: docker_base
+    - role: docker_socket_proxy
+
+  tasks:
+    - name: Ensure temporary compose directory exists
+      ansible.builtin.file:
+        path: /tmp/docker-socket-proxy-test
+        state: directory
+        mode: '0755'
+
+    - name: Copy harmless workload docker-compose to temporary dir
+      ansible.builtin.copy:
+        src: "{{ compose_src }}"
+        dest: /tmp/docker-socket-proxy-test/docker-compose.yml
+        owner: root
+        group: root
+        mode: '0644'
+
+    - name: "Note: socket proxy role wired for test target"
+      ansible.builtin.debug:
+        msg: "The `docker_socket_proxy` role is wired into this playbook and `enable_docker_socket_proxy` is set to true for this disposable test target only."
+
+    - name: Deploy harmless workload compose project (idempotent)
+      community.docker.docker_compose_v2:
+        project_src: /tmp/docker-socket-proxy-test
+        state: present
+        remove_orphans: true
+      when: not ansible_check_mode

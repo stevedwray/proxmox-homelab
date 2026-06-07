@@ -1,0 +1,17 @@
+hostname: docker-socket-proxy-test
+vmid: 160
+ip_address: "192.168.1.53/24"
+gateway: "192.168.1.1"
+dns_server: "192.168.1.1"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+cores: 1
+memory: 512
+rootfs_size: 8
+storage_profile: platform-default
+ansible_playbook: deploy-docker-socket-proxy-test
+portainer_agent: false
+deployment_tier: test
+tags:
+  - docker
+  - disposable
+  - socket-proxy

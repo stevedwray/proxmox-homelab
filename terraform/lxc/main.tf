@@ -636,22 +636,27 @@ module "lxc" {
 resource "local_file" "ansible_inventory" {
   filename = "${local.stack_dir}/inventory.yml"
   content = templatefile("${local.lxc_root}/templates/inventory.tpl", {
-    stack_name          = local.stack_name
-    hostname            = module.lxc.hostname
-    ip_address          = replace(module.lxc.ip_address, "/24", "")
-    ssh_key             = var.ssh_private_key_path
-    ansible_playbook    = try(local.stack.ansible_playbook, "")
-    portainer_server_ip = try(local.stack.portainer_server_ip, var.portainer_server_ip)
-    registry_host       = try(local.stack.registry_host, var.registry_host)
-    apt_cacher_host     = try(local.stack.apt_cacher_host, var.apt_cacher_host)
-    dns_server          = local.effective_dns_server
-    network_zone        = local.stack_network_zone != null ? local.stack_network_zone : ""
-    contract_dns_server = local.effective_dns_server != null ? local.effective_dns_server : ""
-    app_stack_name      = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
-    vmid                = module.lxc.container_id
-    pve_host            = local.effective_pve_host
-    ssh_access_mode     = local.effective_network_access_path
-    use_proxyjump       = local.use_proxyjump
+    stack_name                            = local.stack_name
+    hostname                              = module.lxc.hostname
+    ip_address                            = replace(module.lxc.ip_address, "/24", "")
+    ssh_key                               = var.ssh_private_key_path
+    ansible_playbook                      = try(local.stack.ansible_playbook, "")
+    portainer_server_ip                   = try(local.stack.portainer_server_ip, var.portainer_server_ip)
+    registry_host                         = try(local.stack.registry_host, var.registry_host)
+    apt_cacher_host                       = try(local.stack.apt_cacher_host, var.apt_cacher_host)
+    dns_server                            = local.effective_dns_server
+    network_zone                          = local.stack_network_zone != null ? local.stack_network_zone : ""
+    contract_dns_server                   = local.effective_dns_server != null ? local.effective_dns_server : ""
+    app_stack_name                        = coalesce(var.stack_app_name, try(local.stack.app_stack_name, null), local.stack_name)
+    vmid                                  = module.lxc.container_id
+    pve_host                              = local.effective_pve_host
+    ssh_access_mode                       = local.effective_network_access_path
+    use_proxyjump                         = local.use_proxyjump
+    docker_socket_proxy_metadata_declared = try(local.stack.enable_docker_socket_proxy, null) != null
+    enable_docker_socket_proxy            = try(local.stack.enable_docker_socket_proxy, false)
+    docker_socket_proxy_bind_addr         = try(local.stack.docker_socket_proxy_bind_addr, "")
+    docker_socket_proxy_listen_port       = try(local.stack.docker_socket_proxy_listen_port, null)
+    docker_socket_proxy_targets           = try(local.stack.docker_socket_proxy_targets, [])
   })
 }
 
