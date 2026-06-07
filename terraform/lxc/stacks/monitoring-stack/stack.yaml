@@ -51,3 +51,6 @@ portainer_agent: false
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Opt-in flag for read-only Docker socket proxy. Keep disabled by default.
+enable_docker_socket_proxy: false

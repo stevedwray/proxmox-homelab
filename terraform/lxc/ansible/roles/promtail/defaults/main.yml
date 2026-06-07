@@ -1,0 +1,5 @@
+---
+promtail_loki_url: "127.0.0.1:3100"
+promtail_stack_name: "{{ inventory_hostname }}"
+promtail_scrape_varlogs: true
+promtail_scrape_journal: false

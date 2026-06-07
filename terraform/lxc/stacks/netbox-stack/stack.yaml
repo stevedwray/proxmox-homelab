@@ -38,6 +38,9 @@ deployment_tier: platform
 portainer_agent: false
 app_stack_name: "netbox"
 
+# Opt-in flag for read-only Docker socket proxy. Keep disabled by default.
+enable_docker_socket_proxy: false
+
 # Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "harbor.lab.gibbsgreatly.xyz"

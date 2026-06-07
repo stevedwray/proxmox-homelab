@@ -2,6 +2,9 @@
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
 docs/**/handoffs/
+docs/docker-refactor/evidence/
+docs/docker-refactor/reports/
+docs/docker-refactor/artifacts/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
@@ -21,6 +24,8 @@ storage-audit
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
 *.dec.env
+secrets.dec.*
+terraform/secrets.dec.*
 
 # Terraform
 *.tfstate
@@ -95,3 +100,6 @@ certs/homelab-root.crt
 
 # Local CI artifacts (logs, scan outputs)
 artifacts/
+.tmp/
+docs/harbor-stack/artifacts/*
+!docs/harbor-stack/artifacts/.gitkeep

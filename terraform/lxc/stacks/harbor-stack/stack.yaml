@@ -64,3 +64,6 @@ docker_socket_proxy_targets:
 ansible_playbook: "deploy-harbor-stack"
 deployment_tier: platform
 portainer_agent: false
+
+# Opt-in flag for read-only Docker socket proxy. Keep disabled by default.
+enable_docker_socket_proxy: false

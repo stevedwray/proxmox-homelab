@@ -50,6 +50,7 @@
     authentik_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     authentik_steve_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is not set') }}"
     authentik_internal_tls_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
+    authentik_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
 
   tasks:
     - name: Create Authentik compose directory
@@ -63,6 +64,46 @@
         dest: "{{ authentik_compose_path }}"
         mode: "0640"
         content: "{{ authentik_compose_content }}"
+
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://{{ authentik_lab_ip_monitoring }}:3100/loki/api/v1/push
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: "{{ inventory_hostname }}"
+                    stack: authentik-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: "{{ inventory_hostname }}"
+                - target_label: stack
+                  replacement: authentik-stack
 
     - name: Create direct TLS asset directories
       ansible.builtin.file:

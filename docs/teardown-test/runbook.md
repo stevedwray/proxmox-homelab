@@ -52,6 +52,30 @@ Expected:
 - the generated `platform-status.tsv` and `platform-status.json` files are kept
   under the command's evidence stamp
 
+Opt-in disposable stacks
+
+To include a disposable test stack such as `docker-socket-proxy-test` in a
+teardown-test run without changing the default approved inventory, create a
+temporary inventory file (a copy of `docs/teardown-test/inventory.md`) and add
+the test stack row and its name in the "Approved Deploy Order" list. Run the
+harness pointing at the temporary inventory via `TEARDOWN_INVENTORY_FILE`.
+
+Example (read-only check):
+
+```bash
+TEARDOWN_INVENTORY_FILE=docs/teardown-test/inventory.with-docker-socket-proxy.md \
+	./scripts/teardown-deploy-test.sh platform-status
+```
+
+Example (disposable cycle):
+
+```bash
+TEARDOWN_INVENTORY_FILE=docs/teardown-test/inventory.with-docker-socket-proxy.md \
+	./scripts/teardown-deploy-test.sh cycle --disposable --execute --approval-text "approve" --stamp <stamp>
+```
+
+Do not commit the temporary inventory file; keep it local and remove it after use.
+
 ## 1. Source Validation
 
 Working directory: repository root (`/home/steve/git/proxmox-homelab`).

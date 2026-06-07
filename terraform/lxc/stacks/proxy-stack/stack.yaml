@@ -52,6 +52,7 @@ provides:
 ansible_playbook: "deploy-proxy-stack"
 deployment_tier: platform
 portainer_agent: false
+enable_docker_socket_proxy: false
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
 enable_docker_socket_proxy: true

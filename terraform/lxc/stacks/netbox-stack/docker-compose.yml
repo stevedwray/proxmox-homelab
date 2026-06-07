@@ -48,7 +48,7 @@ services:
       # Application
       CORS_ORIGIN_ALLOW_ALL: "True"
       GRAPHQL_ENABLED: "true"
-      METRICS_ENABLED: "false"
+      METRICS_ENABLED: "true"
       WEBHOOKS_ENABLED: "true"
       SKIP_SUPERUSER: "true"
       LOGIN_REQUIRED: "true"
@@ -162,6 +162,26 @@ services:
     volumes:
       - netbox-redis-cache-data:/data
     restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
 volumes:
   netbox-media-files:

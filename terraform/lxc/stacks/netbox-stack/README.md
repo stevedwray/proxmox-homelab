@@ -1,6 +1,6 @@
 # NetBox Stack
 
-NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service Docker Compose stack, managed via Portainer.
+NetBox IPAM/DCIM deployed as an unprivileged LXC container running a six-service Docker Compose stack, deployed under /srv/docker/netbox. Portainer is optional and is not required for base infrastructure discovery or deployment.
 
 > **Environment note:** This stack keeps a stable service identity (VMID 40012,
 > `infra_seg`) while its concrete IP and backend selection come from the chosen
@@ -39,7 +39,7 @@ Based on [netbox-docker](https://github.com/netbox-community/netbox-docker) rele
 ```
 netbox-stack/
 ├── stack.yaml              # LXC definition and deployment config
-├── docker-compose.yml      # Six-service compose (env var placeholders resolved by Portainer Env array)
+├── docker-compose.yml      # Six-service compose (env var placeholders; Portainer may provide env arrays if used)
 ├── configuration/          # NetBox config files bind-mounted to /etc/netbox/config
 │   ├── configuration.py    # Core settings (DB, Redis, auth — reads env vars)
 │   ├── extra.py            # Custom overrides
@@ -56,13 +56,12 @@ Terraform orchestrates the full lifecycle:
 1. **LXC creation** — Terraform creates VMID 40012 on Proxmox via the `lxc-docker-host` module
 2. **keyctl feature flag** — Set via Ansible `configure-keyctl.yml` playbook (delegates `pct set` to the PVE host) because the API token cannot set feature flags beyond nesting
 3. **Ansible provisioning** — Runs `deploy-netbox-stack.yml` which:
-   - Installs Docker and configures registry mirror (`docker_base` role)
-   - Deploys Portainer Agent (`portainer_agent` role)
-   - Creates `/srv/docker/netbox/configuration/` (mode 0750) and copies config files (mode 0640)
-   - Registers the LXC as a Portainer endpoint (`portainer_api` role)
-   - Deploys the compose stack via Portainer API (`app_stack` role)
-   - Waits for NetBox to be healthy, then creates the superuser and API token
-4. **Destroy cleanup** — Removes the Portainer stack and endpoint before deleting the LXC
+  - Installs Docker and configures registry mirror (`docker_base` role)
+  - Prepares `/srv/docker/netbox/` as the compose project and copies compose and configuration files (modes set by provisioning)
+  - Deploys the compose stack on the host (preferred repo-driven path). Operators may optionally register the host as a Portainer endpoint and deploy via Portainer if they choose to manage stacks there, but Portainer is not required for base discovery.
+  - Waits for NetBox to be healthy, then creates the admin user and bootstrap API token (see token guidance below)
+4. **Scheduled population** — The live topology population job runs outside the NetBox LXC in a dedicated Docker container; the scheduled runner is defined in `.github/workflows/netbox-populate.yml`.
+5. **Destroy cleanup** — Removes the Portainer stack and endpoint before deleting the LXC (if Portainer was used)
 
 ## Deploy / Redeploy
 
@@ -96,19 +95,23 @@ terraform apply -auto-approve
 
 ## Configuration
 
-Secrets (DB password, Redis passwords, SECRET_KEY, API_TOKEN_PEPPER, superuser password, API token) are stored in the top-level `.env` file (gitignored) and passed to the stack via Portainer's Env array or used by Ansible at deploy time. The `docker-compose.yml` uses `${VAR}` placeholders — no secrets are committed to Git. See `.env.template` for the required variables.
+Secrets (DB password, Redis passwords, SECRET_KEY, API_TOKEN_PEPPER, superuser password, API token) are stored in the top-level `.env` file (gitignored) and passed to the stack via provisioning or Portainer where applicable. The `docker-compose.yml` uses `${VAR}` placeholders — no secrets are committed to Git. See `.env.template` for the required variables.
+
+The live NetBox population job is containerized separately and runs external to the NetBox LXC (see `.github/workflows/netbox-populate.yml`). Runtime inspection should prefer read-only Docker API access provided by a `docker-socket-proxy` on Docker hosts/LXCs. Direct guest SSH (`NETBOX_GUEST_SSH_USER`, `NETBOX_GUEST_SSH_IDENTITY_FILE`) is supported as an interim fallback for environments where proxy-based access is not yet available. MikroTik discovery continues to use dedicated read-only credentials (`MIKROTIK_READONLY_USER` / `MIKROTIK_READONLY_PASSWORD`).
 
 The configuration files under `configuration/` are stock upstream from netbox-docker — they read values from environment variables set in the compose.
 
 To customise NetBox behaviour, edit `configuration/extra.py` on the host at `/srv/docker/netbox/configuration/extra.py` and restart the stack, or update the file in this repo and re-run the Ansible provisioning.
 
-## Superuser & API Token
+## Admin User & API Token (bootstrap guidance)
 
-Both are created automatically during deployment by the `deploy-netbox-stack.yml` playbook:
+An admin user and a bootstrap API token are created automatically during deployment by the `deploy-netbox-stack.yml` playbook for initial setup.
 
-- **Superuser** — `admin` / `admin@gibbsgreatly.xyz`, password from `NETBOX_SUPERUSER_PASSWORD` in `.env`
-- **API Token** — v1 token with description `automation`, value from `NETBOX_SUPERUSER_API_TOKEN` in `.env`
+- **Admin user (bootstrap)** — `admin` / `admin@gibbsgreatly.xyz`, password from `NETBOX_SUPERUSER_PASSWORD` in `.env` (used only for initial bootstrap)
+- **Bootstrap API token** — created during bootstrap; legacy deployments expose this as `NETBOX_SUPERUSER_API_TOKEN` for compatibility
 
-The API token is used with: `Authorization: Token <NETBOX_SUPERUSER_API_TOKEN>`
+Recommended practice for day-2 automation: create and use a dedicated least-privilege automation token (for example `NETBOX_API_TOKEN`) bound to a service account with only the object permissions required by the reconciler. Do not rely on a NetBox superuser token for routine reconciliation or discovery operations.
 
-Both tasks are idempotent — they skip creation if the user/token already exists.
+When present, use API tokens via the Authorization header (for example `Authorization: Token <NETBOX_API_TOKEN>`). Bootstrap compatibility notes: some legacy tooling may still reference `NETBOX_SUPERUSER_API_TOKEN`; those uses should be migrated to a least-privilege token as follow-up work.
+
+Both bootstrap tasks are idempotent — they skip creation if the user/token already exists.
