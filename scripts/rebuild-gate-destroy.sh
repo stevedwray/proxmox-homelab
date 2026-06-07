@@ -225,9 +225,20 @@ stop_running_targets() {
   done
 }
 
+ensure_workspace_exists() {
+  local stack="$1"
+  local ws_dir="terraform/lxc/stacks/${stack}/terraform.tfstate.d/${TF_WORKSPACE}"
+  if [[ ! -d "${ws_dir}" ]]; then
+    log "State repair: creating missing ${TF_WORKSPACE} workspace for ${stack}"
+    "${WITH_SECRETS}" env TF_WORKSPACE=default terragrunt workspace new "${TF_WORKSPACE}" \
+      --working-dir "terraform/lxc/stacks/${stack}" >/dev/null 2>&1 || true
+  fi
+}
+
 state_list_for_stack() {
   local stack="$1"
 
+  ensure_workspace_exists "${stack}"
   "${WITH_SECRETS}" env TF_WORKSPACE="${TF_WORKSPACE}" terragrunt state list --working-dir "terraform/lxc/stacks/${stack}" 2>/dev/null || true
 }
 
