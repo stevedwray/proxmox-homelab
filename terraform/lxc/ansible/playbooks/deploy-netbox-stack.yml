@@ -248,8 +248,6 @@
         cmd: >-
           docker compose -f {{ compose_file }} pull &&
           docker compose -f {{ compose_file }} up -d
-      args:
-        warn: false
 
     - name: Wait for NetBox container to report healthy (best-effort)
       ansible.builtin.shell:
