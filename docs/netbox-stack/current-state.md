@@ -16,67 +16,89 @@ work-session evidence, not durable project documentation.
 
 ## Current Position
 
-The NetBox stack itself is in workable shape.
+### State as of 2026-06-08
+
+The following changes landed in `fix/playbook-syntax-fixes` during a
+teardown-validation pass. The teardown test (stamp `20260608-013141`) passed
+with all platform services healthy in browser. The branch needs merging to
+`baseline/teardown-validated` once the operator confirms readiness.
+
+#### Changes in this pass
+
+**Playbook fixes (`deploy-netbox-stack.yml`):**
+- Removed invalid play-level `when: not ansible_check_mode` (Ansible 2.21 rejects it)
+- Removed invalid `recurse: yes` from the copy task (not a valid param)
+- Removed `args: warn: false` from the shell task (removed in Ansible 2.14)
+- Added "Write NetBox secrets env file" task so Docker Compose gets all required vars
+- Added `netbox_api_token` to the persistent `set_fact` in Play 1 (was play-local only)
+- Removed SSH keypair generation and Proxmox host `authorized_key` tasks entirely
+
+**SSH discovery removed (`discover.py`):**
+- `_resolve_guest_ssh_user`, `_resolve_guest_ssh_identity_file`,
+  `_run_lxc_guest_command`, `_parse_docker_services`, `_parse_listener_services`,
+  and `_build_runtime_services` all removed.
+- `RuntimeInspector` no longer has an SSH fallback. Discovery priority is now:
+  1. Portainer API
+  2. Per-guest docker-socket-proxy (`DOCKER_SOCKET_PROXY_URL_TEMPLATE`)
+  3. Single-endpoint socket proxy (`DOCKER_SOCKET_PROXY_URL`, legacy)
+- Tests for deleted SSH parsing functions removed.
+- `PortainerClient` SSL context consolidated into `_ssl_ctx()` with a TODO for
+  verified TLS once step-ca or LE cert is in place.
+
+**Socket proxy enabled in deployed credential env:**
+- `DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375` is now written to
+  `/etc/netbox-populate/env` on the NetBox LXC during provision.
+- Every LXC already has `docker-socket-proxy` deployed on port 2375.
+
+**Other fixes:**
+- Loki `delete_request_store: filesystem` added to monitoring playbook.
+- Harbor scan smoke check timeout raised from 180s to 600s (cold-start Trivy).
+
+#### Immediate blocker: `populate.py` path crash
+
+The `netbox-populate.service` fails immediately on start:
+
+```
+File "/opt/netbox-populate/populate.py", line 80, in <module>
+    NETWORK_INTENT_ROOT = Path(__file__).resolve().parents[3] / "network"
+IndexError: 3
+```
+
+`populate.py` assumes it is running inside the git repo tree and navigates up
+four parent levels to reach `terraform/lxc/network/`. When deployed to
+`/opt/netbox-populate/` the path only has three parent levels and crashes.
+
+Root cause: the script was designed to run from a git checkout (or a Docker
+container with the repo mounted). It is now deployed as a standalone systemd
+service and has no access to the repo network intent files.
+
+Fix options (in order of preference):
+1. Copy the relevant network intent file (`terraform/lxc/network/pve-test.yaml`)
+   to the LXC during provision and set `NETBOX_NETWORK_INTENT_PATH` in the
+   credential env file to point to it.
+2. Derive network prefix data from Proxmox/MikroTik discovery at runtime
+   instead of reading the repo file.
+3. Keep the file-based approach but make `populate.py` accept an explicit path
+   env var and fail with a clear error if neither the path nor the repo structure
+   is available.
+
+Option 1 is the smallest change and unblocks the service immediately.
+
+This is the first blocking issue for the netbox-populate workstream.
 
 ### Frozen Resume State (2026-06-06)
 
-NetBox work is paused here. Do not continue trying to solve missing Docker
-application services inside the NetBox workstream first.
+The following was the state before the 2026-06-08 pass. Preserved for context.
 
-What NetBox has proved:
+What NetBox had proved at that point:
 
 - Proxmox and MikroTik inventory are visible in NetBox.
 - VM/LXC inventory and IPs are present.
 - Docker runtime service ingestion works when a Docker host has a reachable
   runtime inspection path.
-- The reconciler now has ownership guardrails so populate does not retag or
+- The reconciler has ownership guardrails so populate does not retag or
   patch unmanaged NetBox objects by accident.
-
-What NetBox exposed:
-
-- Most Docker-capable infrastructure containers do not currently have a
-  reachable `docker-socket-proxy` listener on port `2375`.
-- Therefore broad Docker application service ingestion is blocked upstream by
-  Docker runtime inspection deployment, not by NetBox modeling.
-
-Next work belongs in `docs/docker-refactor/`: make normal rebuild/deploy of the
-managed infrastructure Docker containers install and validate
-`docker-socket-proxy`, then prove that through a teardown/rebuild test on
-`pve`.
-
-### Portainer Canary Closure (2026-06-06)
-
-- Status: Portainer socket-proxy canary accepted closed.
-- Summary: Portainer socket-proxy listener is live on the declared Portainer
-  target. NetBox service ownership cleanup for Portainer-related services has
-  been verified; `populate.py --plan` reports only non-destructive
-  description/tag/format updates for the affected services.
-
-
-What is already true:
-
-- NetBox deployment is real and running.
-- The external populate workflow exists and is usable.
-- Proxmox and MikroTik discovery are established parts of the runtime model.
-- Docker runtime scraping through `docker-socket-proxy` is now functionally
-  proven.
-- A disposable socket-proxy proof path exists.
-- A real-stack canary was completed on `monitoring-stack`.
-- NetBox successfully ingested socket-proxy-derived runtime services tagged
-  with `runtime-source-socket-proxy`.
-
-Important deployment boundary:
-
-- The repo has a managed `docker_socket_proxy` Ansible role and Docker stack
-  playbooks can opt into it.
-- Normal platform stack metadata currently keeps that opt-in disabled
-  (`enable_docker_socket_proxy: false`).
-- The disposable `docker-socket-proxy-test` playbook is the only repo-declared
-  deployment path that enables the proxy by default.
-- `pve-test` verification has proven the disposable listener and NetBox
-  declared-target mapping path.
-- Treat production rollout state as unknown until it is verified live. The
-  monitoring canary proves the method, not broad production deployment.
+- Portainer socket-proxy canary accepted closed.
 
 ## The Main Open Question
 
@@ -98,17 +120,13 @@ decision.
 
 ## Recommended Next Work
 
-Do not start another NetBox session as the next step. Resume the Docker
-socket-proxy refactor instead:
-
-1. Review `docs/docker-refactor/current-state.md`.
-2. Implement deploy-time socket-proxy enablement for the managed
-   infrastructure Docker container set only.
-3. Validate on `pve` through the infrastructure-container teardown/rebuild test
-   gate.
-4. Return to NetBox only after rebuilt infrastructure Docker containers have
-   reachable socket-proxy listeners and `populate.py --plan` shows the expected
-   `/ipam/services/` changes.
+1. Fix the `populate.py` `parents[3]` crash (see "Immediate blocker" above).
+   This is a netbox-stack task, not a docker-refactor task.
+2. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
+3. Once populate runs without crashing, verify it can reach the socket-proxy
+   endpoints on the deployed LXCs and record what services it discovers.
+4. If Docker-socket-proxy discovery coverage is sufficient, the docker-refactor
+   workstream may not need a separate pass for pve-test.
 
 ## What Not To Reopen First
 
@@ -116,7 +134,6 @@ Do not start by reopening:
 
 - Portainer migration/export-import work
 - broad NetBox auth/token redesign
-- Docker socket-proxy transport proof
 - disposable test-path setup
 
 Those areas are either already proven or belong to separate workstreams.

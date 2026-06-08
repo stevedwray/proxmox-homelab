@@ -19,29 +19,40 @@ For the short resume point to use in a fresh session, see
 
 ## Implemented Operating Model
 
-As of 2026-06-01, the NetBox refresh job is no longer intended to run as a
-timer inside the NetBox LXC.
+### As of 2026-06-08
 
-Current shape:
+SSH-based guest inspection has been **completely removed** from `discover.py`.
+The `RuntimeInspector` priority is now:
 
-- the scheduled runner is a dedicated Docker container launched by
-  `.github/workflows/netbox-populate.yml`
-- the current implementation still uses direct SSH to each guest LXC for some
-  runtime inspection, but this is now considered an interim mechanism rather
-  than the preferred long-term service discovery path
-- the preferred long-term runtime inspection path is read-only Docker API
-  access via a tightly scoped `docker-socket-proxy` on Docker hosts/LXCs
+1. Portainer API (token-authenticated)
+2. Per-guest docker-socket-proxy (`DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375`)
+3. Single-endpoint socket proxy fallback (`DOCKER_SOCKET_PROXY_URL`, legacy)
+
+The `DOCKER_SOCKET_PROXY_URL_TEMPLATE` is now written to `/etc/netbox-populate/env`
+on the NetBox LXC during provision, so the socket-proxy path is active when the
+service runs.
+
+The population job runs as a **systemd timer** (`netbox-populate.service`) inside
+the NetBox LXC, not as an external Docker container. The external
+`scripts/run-netbox-populate-container.sh` / `.github/workflows/netbox-populate.yml`
+CI path still exists for out-of-band use, but the on-host deployed path is the
+systemd service.
+
+### As of 2026-06-01
+
+The NetBox refresh job was re-modeled as a dedicated Docker container launched
+by `.github/workflows/netbox-populate.yml`. The on-host systemd timer was the
+delivered deployment in the playbook but the external container path was
+documented as the intended operator entrypoint for day-2 use.
+
+Common to both periods:
+
 - MikroTik discovery prefers `MIKROTIK_READONLY_USER` and
-  `MIKROTIK_READONLY_PASSWORD`, with the older names still supported as
-  fallbacks
+  `MIKROTIK_READONLY_PASSWORD`, with the older names still supported as fallbacks
 - infrastructure service discovery is intended to come from observed
   Proxmox/MikroTik/LXC/Docker runtime state; Portainer is reserved for later
   application stacks once those stacks are actually managed there
-- the NetBox LXC remains focused on NetBox itself; the population job and its
-  source-system credentials live outside that container
-
-This is the preferred operating model for day-2 refreshes and daily drift
-correction.
+- the NetBox LXC remains focused on NetBox itself
 
 ## Current Pause State
 
@@ -114,6 +125,48 @@ For the best short resume path after this proof work, see
 
 See also: `docs/netbox-stack/portainer-socket-proxy-canary.md` for the
 Portainer socket-proxy canary runbook and operator steps.
+
+## Playbook And Discovery Fixes State (2026-06-08)
+
+During teardown validation (`scripts/teardown-deploy-test.sh cycle --execute --disposable`),
+a series of Ansible playbook bugs in `deploy-netbox-stack.yml` were found and
+fixed on `fix/playbook-syntax-fixes`. The teardown test now passes with all
+services healthy.
+
+Key changes in this pass:
+
+- SSH discovery fully removed from `discover.py` — API and socket-proxy only
+- `DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375` now written to the
+  deployed credential env on the NetBox LXC
+- Ansible 2.21 compatibility fixes: removed invalid play-level `when`,
+  `recurse: yes`, and `args: warn: false`
+- Added "Write NetBox secrets env file" task; added `netbox_api_token` to the
+  persistent `set_fact` in Play 1
+- Harbor smoke check timeout increased from 180s to 600s (cold Trivy DB load)
+- Loki `delete_request_store: filesystem` added to monitoring stack
+
+### Immediate Blocker: `populate.py` `parents[3]` Crash
+
+The `netbox-populate.service` fails on start with:
+
+```
+File "/opt/netbox-populate/populate.py", line 80, in <module>
+    NETWORK_INTENT_ROOT = Path(__file__).resolve().parents[3] / "network"
+IndexError: 3
+```
+
+The script navigates four parent levels to find the repo's `network/` directory.
+When deployed to `/opt/netbox-populate/` there are only three parent levels.
+
+Root cause: `populate.py` was written to run from inside a git checkout or a
+Docker container with the repo mounted. It is now deployed as a standalone
+systemd service with no access to the repo tree.
+
+Preferred fix: copy `terraform/lxc/network/pve-test.yaml` to the LXC during
+provision and set `NETBOX_NETWORK_INTENT_PATH` in the credential env to point to
+it. This is the minimum change to unblock the service.
+
+This is the first concrete task for the next netbox-stack session.
 
 ## Open Design Note: Discovery Coverage
 
