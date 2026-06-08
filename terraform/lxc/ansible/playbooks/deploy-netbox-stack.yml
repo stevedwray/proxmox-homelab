@@ -339,8 +339,6 @@
   hosts: all
   become: true
   gather_facts: false
-  when: not ansible_check_mode
-
   vars:
     populate_dir: /opt/netbox-populate
     populate_env_file: /etc/netbox-populate/env
