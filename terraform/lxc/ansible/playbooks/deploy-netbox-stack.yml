@@ -243,6 +243,21 @@
   gather_facts: false
 
   tasks:
+    - name: Write NetBox secrets env file
+      ansible.builtin.copy:
+        dest: "{{ compose_dir }}/.env"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          REGISTRY_HOST={{ registry_host }}
+          NETBOX_SECRET_KEY={{ lookup('env', 'NETBOX_SECRET_KEY') }}
+          NETBOX_API_TOKEN_PEPPER={{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') }}
+          NETBOX_DB_PASSWORD={{ lookup('env', 'NETBOX_DB_PASSWORD') }}
+          NETBOX_REDIS_PASSWORD={{ lookup('env', 'NETBOX_REDIS_PASSWORD') }}
+          NETBOX_REDIS_CACHE_PASSWORD={{ lookup('env', 'NETBOX_REDIS_CACHE_PASSWORD') }}
+      no_log: true
+
     - name: Pull and start NetBox compose stack
       ansible.builtin.shell:
         cmd: >-
