@@ -45,7 +45,6 @@
         owner: root
         group: root
         mode: "0644"
-        recurse: yes
 
     - name: Write Promtail configuration
       ansible.builtin.copy:
