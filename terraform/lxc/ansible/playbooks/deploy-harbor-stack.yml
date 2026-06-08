@@ -83,6 +83,9 @@
     harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('false', true) | bool }}"
     harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
     harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
+    # Fresh installs need longer: Trivy DB loads cold, proxy pull is first-time.
+    # 180s default is too tight; 600s covers the worst-case cold start.
+    harbor_postconfigure_verify_scan_smoke_timeout_seconds: 600
   pre_tasks:
     - name: Enforce readable Harbor OIDC username claim
       ansible.builtin.assert:
