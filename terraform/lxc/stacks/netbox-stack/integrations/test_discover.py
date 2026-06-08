@@ -389,29 +389,5 @@ class TestBuildTopology(unittest.TestCase):
         build_vm_list.assert_called_once_with(fake_proxmox, {}, portainer=fake_portainer)
 
 
-class TestRuntimeServiceParsing(unittest.TestCase):
-    def test_parses_docker_and_listener_services(self):
-        docker_output = "netbox-netbox-1|0.0.0.0:8080->8080/tcp, [::]:8080->8080/tcp\n"
-        services = discover._parse_docker_services(docker_output)
-        known_ports = {(svc["port"], svc["protocol"]) for svc in services}
-
-        listeners = discover._parse_listener_services(
-            "tcp LISTEN 0 4096 0.0.0.0:22 0.0.0.0:*\n"
-            "tcp LISTEN 0 4096 0.0.0.0:8080 0.0.0.0:*\n"
-            "udp UNCONN 0 0 0.0.0.0:53 0.0.0.0:*\n",
-            known_ports,
-        )
-
-        self.assertEqual(
-            services,
-            [{"name": "netbox-netbox-1-8080", "port": 8080, "protocol": "tcp", "source": "guest-ssh-docker"}],
-        )
-        self.assertEqual(
-            listeners,
-            [
-                {"name": "port-22-tcp", "port": 22, "protocol": "tcp", "source": "guest-ssh-listener"},
-                {"name": "port-53-udp", "port": 53, "protocol": "udp", "source": "guest-ssh-listener"},
-            ],
-        )
 if __name__ == "__main__":
     unittest.main()

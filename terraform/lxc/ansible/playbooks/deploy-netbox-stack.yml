@@ -355,7 +355,6 @@
   vars:
     populate_dir: /opt/netbox-populate
     populate_env_file: /etc/netbox-populate/env
-    populate_ssh_key: /root/.ssh/id_netbox_populate
     proxmox_host: "{{ lookup('env', 'PROXMOX_HOST') | default('pve.gibbsgreatly.xyz', true) }}"
     proxmox_token_id: "{{ lookup('env', 'PROXMOX_READONLY_TOKEN_ID') | default(lookup('env', 'PROXMOX_TOKEN_ID') | default(lookup('env', 'TF_VAR_pm_api_token_id'), true), true) | mandatory('PROXMOX_READONLY_TOKEN_ID, PROXMOX_TOKEN_ID, or TF_VAR_pm_api_token_id env var is not set') }}"
     proxmox_token_secret: "{{ lookup('env', 'PROXMOX_READONLY_TOKEN_SECRET') | default(lookup('env', 'PROXMOX_TOKEN_SECRET') | default(lookup('env', 'TF_VAR_pm_api_token_secret'), true), true) | mandatory('PROXMOX_READONLY_TOKEN_SECRET, PROXMOX_TOKEN_SECRET, or TF_VAR_pm_api_token_secret env var is not set') }}"
@@ -421,17 +420,12 @@
           PROXMOX_READONLY_TOKEN_SECRET={{ proxmox_token_secret }}
           PORTAINER_ADMIN_PASSWORD={{ portainer_password }}
           LAB_IP_PORTAINER={{ portainer_ip }}
-          # Preferred per-guest socket proxy template (leave unset to disable):
-          # DOCKER_SOCKET_PROXY_URL_TEMPLATE=    # e.g. http://{guest_ip}:2375
-          # Legacy single-endpoint fallback (leave unset to disable):
-          # DOCKER_SOCKET_PROXY_URL=             # e.g. http://10.57.3.12:2375
-          # Note: both are intentionally unset by default to avoid enabling
-          # runtime discovery on real stacks until the disposable proof,
-          # teardown-test opt-in, and manager review are complete. See
-          # docs/docker-refactor/handoffs/05-session-deploy-and-prove-test-stack-handback.md
-          # and docs/docker-refactor/handoffs/06-session-teardown-optin-handback.md
-          # for the disposable proof and opt-in guidance.
-          NETBOX_PCT_SSH_IDENTITY_FILE={{ populate_ssh_key }}
+          # Per-guest docker-socket-proxy (unauthenticated HTTP, internal network only).
+          # TODO: upgrade to authenticated HTTPS once docker-socket-proxy is fronted
+          # by a step-ca or LE cert. See discover.py _ssl_ctx() and _build_socket_proxy_services().
+          DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375
+          # Legacy single-endpoint fallback (leave unset unless needed):
+          # DOCKER_SOCKET_PROXY_URL=
           NETBOX_NETWORK_ENV=pve-test
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
@@ -441,28 +435,6 @@
           {% if mikrotik_host %}MIKROTIK_HOST={{ mikrotik_host }}{% endif %}
 
       no_log: true
-
-    - name: Generate SSH keypair for pct exec access
-      community.crypto.openssh_keypair:
-        path: "{{ populate_ssh_key }}"
-        type: ed25519
-        comment: "netbox-populate@netbox-stack"
-        owner: root
-        group: root
-        mode: "0600"
-      register: populate_ssh_keypair
-
-    - name: Authorize populate SSH key on Proxmox host
-      ansible.posix.authorized_key:
-        user: root
-        key: "{{ populate_ssh_keypair.public_key }}"
-        comment: "netbox-populate@netbox-stack"
-        state: present
-      delegate_to: "{{ proxmox_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: ~/.ssh/id_ed25519
-      when: populate_ssh_keypair.public_key is defined
 
     - name: Write netbox-populate systemd service
       ansible.builtin.copy:

@@ -99,13 +99,19 @@ class PortainerClient:
         self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
         self._token = None
 
-    def _auth(self):
-        if self._token:
-            return
+    def _ssl_ctx(self):
         import ssl
+        # TODO: replace with verified TLS once Portainer is fronted by a
+        # step-ca or LE cert. Until then, cert verification is disabled because
+        # the Portainer endpoint uses a self-signed cert on the internal network.
         ctx = ssl.create_default_context()
         ctx.check_hostname = False
         ctx.verify_mode = ssl.CERT_NONE
+        return ctx
+
+    def _auth(self):
+        if self._token:
+            return
         data = json.dumps({"username": "admin", "password": self._password}).encode()
         req = urllib.request.Request(
             f"{self.url}/api/auth",
@@ -113,20 +119,16 @@ class PortainerClient:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, context=ctx) as resp:
+        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
             self._token = json.loads(resp.read().decode())["jwt"]
 
     def _get(self, path):
-        import ssl
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
         self._auth()
         req = urllib.request.Request(
             f"{self.url}{path}",
             headers={"Authorization": f"Bearer {self._token}"},
         )
-        with urllib.request.urlopen(req, context=ctx) as resp:
+        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
             return json.loads(resp.read().decode())
 
     def get_endpoints(self):
@@ -343,15 +345,11 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
     seen = set()
 
     try:
-        import ssl
-
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
-
-        # List containers
+        # TODO: when DOCKER_SOCKET_PROXY_URL_TEMPLATE is upgraded to https://,
+        # pass an ssl context here that verifies against the step-ca or LE cert.
+        # Currently HTTP only; context= omitted so urllib uses no TLS at all.
         list_req = urllib.request.Request(f"{base}/containers/json?all=1")
-        with urllib.request.urlopen(list_req, context=ctx) as resp:
+        with urllib.request.urlopen(list_req) as resp:
             summaries = json.loads(resp.read().decode())
     except Exception:
         return []
@@ -366,7 +364,7 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
 
         try:
             req = urllib.request.Request(f"{base}/containers/{cid}/json")
-            with urllib.request.urlopen(req, context=ctx) as resp:
+            with urllib.request.urlopen(req) as resp:
                 data = json.loads(resp.read().decode())
         except Exception:
             # skip containers we can't inspect
@@ -451,163 +449,20 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
     return services
 
 
-def _resolve_guest_ssh_user() -> str:
-    """Return the SSH user used for direct guest inspection."""
-    return _resolved_env_value("NETBOX_GUEST_SSH_USER") or "automation"
-
-
-def _resolve_guest_ssh_identity_file() -> str:
-    """Return the SSH identity file used for direct guest inspection."""
-    return (
-        _resolved_env_value("NETBOX_GUEST_SSH_IDENTITY_FILE")
-        or _resolved_env_value("ANSIBLE_PRIVATE_KEY_FILE")
-        or os.path.expanduser("~/.ssh/id_ed25519")
-    )
-
-
-def _runtime_probe_timeout_seconds() -> int:
-    """Return timeout for one runtime probe command."""
-    raw = _resolved_env_value("NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS") or "20"
-    return int(raw)
-
-
-def _run_lxc_guest_command(container: dict, shell_command: str) -> str:
-    """Run a shell command inside a running LXC guest over direct SSH."""
-    guest_ip = _get_container_ip(container)
-    guest_user = _resolve_guest_ssh_user()
-    identity_file = _resolve_guest_ssh_identity_file()
-    if not guest_ip:
-        raise RuntimeError(
-            f"runtime inspection requires a guest IP for {container.get('name', 'unknown')}"
-        )
-
-    ssh_cmd = [
-        "ssh",
-        "-F",
-        "/dev/null",
-        "-o",
-        "BatchMode=yes",
-        "-o",
-        "StrictHostKeyChecking=no",
-        "-o",
-        "UserKnownHostsFile=/dev/null",
-        "-o",
-        "ConnectTimeout=5",
-        "-i",
-        identity_file,
-    ]
-    ssh_cmd.append(f"{guest_user}@{guest_ip}")
-    ssh_cmd.extend(["sh", "-lc", shell_command])
-    result = subprocess.run(
-        ssh_cmd,
-        capture_output=True,
-        text=True,
-        check=False,
-        timeout=_runtime_probe_timeout_seconds(),
-    )
-    if result.returncode != 0:
-        detail = result.stderr.strip() or result.stdout.strip() or "guest ssh failed"
-        raise RuntimeError(
-            f"runtime inspection failed for {container.get('name', 'unknown')}: {detail}"
-        )
-    return result.stdout
-
-
-def _parse_docker_services(output: str) -> list[dict]:
-    """Parse docker ps formatted output into service entries."""
-    services = []
-    seen = set()
-    for raw_line in output.splitlines():
-        line = raw_line.strip()
-        if not line or line == "docker-unavailable" or "|" not in line:
-            continue
-        cname, ports = line.split("|", 1)
-        for match in re.finditer(r":(?P<port>\d+)->\d+/(?P<proto>tcp|udp)", ports):
-            port = int(match.group("port"))
-            protocol = match.group("proto")
-            key = (cname, port, protocol)
-            if key in seen:
-                continue
-            seen.add(key)
-            services.append({
-                "name": f"{cname}-{port}" if port != 9001 else cname,
-                "port": port,
-                "protocol": protocol,
-                "source": "guest-ssh-docker",
-            })
-    return services
-
-
-def _parse_listener_services(output: str, known_ports: set[tuple[int, str]]) -> list[dict]:
-    """Parse ss output into generic service entries for uncovered listeners."""
-    services = []
-    for raw_line in output.splitlines():
-        line = raw_line.strip()
-        if not line or line == "ss-unavailable":
-            continue
-        parts = line.split()
-        if len(parts) < 5:
-            continue
-        protocol = parts[0].lower()
-        if protocol not in {"tcp", "udp"}:
-            continue
-        local = parts[4]
-        if local.startswith("127.") or local.startswith("[::1]") or local.startswith("::1"):
-            continue
-        match = re.search(r":(?P<port>\d+)$", local)
-        if not match:
-            continue
-        port = int(match.group("port"))
-        key = (port, protocol)
-        if key in known_ports:
-            continue
-        known_ports.add(key)
-        services.append({
-            "name": f"port-{port}-{protocol}",
-            "port": port,
-            "protocol": protocol,
-            "source": "guest-ssh-listener",
-        })
-    return services
-
-
-def _build_runtime_services(container: dict) -> list[dict]:
-    """Inspect a running LXC guest directly for published and listening services."""
-    if container.get("type") != "lxc" or container.get("status") != "running":
-        return []
-
-    docker_output = _run_lxc_guest_command(
-        container,
-        "if command -v docker >/dev/null 2>&1; then sudo docker ps --format '{{.Names}}|{{.Ports}}'; else echo docker-unavailable; fi",
-    )
-    services = _parse_docker_services(docker_output)
-    known_ports = {(svc["port"], svc["protocol"]) for svc in services}
-
-    listeners_output = _run_lxc_guest_command(
-        container,
-        "if command -v ss >/dev/null 2>&1; then ss -H -ltnu; else echo ss-unavailable; fi",
-    )
-    services.extend(_parse_listener_services(listeners_output, known_ports))
-    return services
-
-
 class RuntimeInspector:
     """Seam for runtime service inspection transport.
 
-    The runtime inspector provides a single interface used by the VM-list
-    builder to obtain observed services for a given guest.  It prefers
-    Portainer-based discovery when a Portainer client and matching endpoint
-    are available; otherwise it falls back to direct guest inspection via
-    the configured runtime probe (defaults to `_build_runtime_services`).
+    Priority order:
+    1. Portainer API (token-authenticated)
+    2. Per-guest docker-socket-proxy template (DOCKER_SOCKET_PROXY_URL_TEMPLATE)
+    3. Single-endpoint socket proxy fallback (DOCKER_SOCKET_PROXY_URL, legacy)
 
-    Backwards compatibility: callers may still pass a simple callable that
-    accepts a single `container` argument; `build_vm_list` will detect
-    that form and continue to call it directly.
+    SSH-based guest inspection has been removed. All discovery goes through
+    authenticated or network-scoped API endpoints only.
     """
 
-    def __init__(self, portainer=None, runtime_probe=None, socket_proxy_url=None, socket_proxy_url_template=None):
+    def __init__(self, portainer=None, socket_proxy_url=None, socket_proxy_url_template=None):
         self.portainer = portainer
-        self.runtime_probe = runtime_probe or _build_runtime_services
         # allow explicit construction or env-driven configuration
         # single-endpoint fallback (legacy)
         self.socket_proxy_url = socket_proxy_url or _resolved_env_value("DOCKER_SOCKET_PROXY_URL")
@@ -665,8 +520,7 @@ class RuntimeInspector:
             except Exception as exc:
                 print(f"  warn: socket-proxy inspection failed for {container.get('name', 'unknown')}: {exc}")
 
-        # Final fallback: configured runtime probe (usually guest SSH probe)
-        return self.runtime_probe(container)
+        return []
 
 
 def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None):
