@@ -105,6 +105,7 @@
         netbox_breakglass_username: "{{ lookup('env','NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
         netbox_breakglass_email: "{{ lookup('env','NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
         netbox_breakglass_password: "{{ lookup('env','NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+        netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) }}"
 
 - name: Configure Docker base
   hosts: all
