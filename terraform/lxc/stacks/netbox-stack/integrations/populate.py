@@ -77,7 +77,12 @@ NETWORK_INTENT_FILES = {
     "pve-test": "pve-test.yaml",
 }
 
-NETWORK_INTENT_ROOT = Path(__file__).resolve().parents[3] / "network"
+try:
+    NETWORK_INTENT_ROOT = Path(__file__).resolve().parents[3] / "network"
+except IndexError:
+    # Script is deployed outside a git checkout (e.g. /opt/netbox-populate/).
+    # Set NETBOX_NETWORK_INTENT_PATH in the service env file to specify the path directly.
+    NETWORK_INTENT_ROOT = None
 
 _ENV_TOKEN_RE = re.compile(r"^\$\{([A-Za-z_]\w*)\}$")
 
@@ -220,6 +225,11 @@ def _select_network_intent_path(
             f"'{selected_environment}'. Supported values: {supported}"
         )
 
+    if NETWORK_INTENT_ROOT is None:
+        raise ValueError(
+            "Cannot derive network intent path from script location. "
+            "Set NETBOX_NETWORK_INTENT_PATH to the network intent YAML file path."
+        )
     return (NETWORK_INTENT_ROOT / mapped_file).resolve()
 
 

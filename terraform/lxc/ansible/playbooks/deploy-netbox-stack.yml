@@ -404,6 +404,14 @@
         group: root
         mode: "0700"
 
+    - name: Copy network intent file for deployed service
+      ansible.builtin.copy:
+        src: "../../network/pve-test.yaml"
+        dest: /etc/netbox-populate/network.yaml
+        owner: root
+        group: root
+        mode: "0640"
+
     - name: Write credential env file
       ansible.builtin.copy:
         dest: "{{ populate_env_file }}"
@@ -427,6 +435,7 @@
           # Legacy single-endpoint fallback (leave unset unless needed):
           # DOCKER_SOCKET_PROXY_URL=
           NETBOX_NETWORK_ENV=pve-test
+          NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
 
