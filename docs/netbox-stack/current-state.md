@@ -65,31 +65,66 @@ Fixed in commit `e92d608` (2026-06-09):
   the service credential env file
 - Verified: service starts without IndexError on the deployed LXC
 
-#### Current blocker: Proxmox credential 401
+#### Current blocker: Harbor IO starvation preventing image pull
 
-The `netbox-populate.service` starts but fails with a 401 when querying the
-Proxmox API using `PROXMOX_READONLY_TOKEN_ID` / `PROXMOX_READONLY_TOKEN_SECRET`.
+The `netbox-populate.service` path fix works (service starts). The netbox
+provision itself fails because Docker cannot pull images from
+`harbor.lab.gibbsgreatly.xyz` — Harbor LXC (VMID 40010) was at 99.45% IO
+pressure for ~2.8 days after the previous teardown test.
 
-Diagnosis needed:
-```bash
-./with-secrets env | grep PROXMOX
+Symptom:
+```
+redis Error Get "http://harbor.lab.gibbsgreatly.xyz/v2/": net/http: request
+canceled (Client.Timeout exceeded while awaiting headers)
 ```
 
-This will show whether `PROXMOX_READONLY_TOKEN_SECRET` is present in
-`terraform/secrets.enc.yaml` and what value it resolves to. If the key is
-missing or the value doesn't match an actual Proxmox token, the fix is to:
+Root cause: Harbor's Trivy scanner likely runs continuous background scans
+on freshly pulled images, thrashing disk IO. The LXC accepts TCP connections
+on ports 80 and 443 but never responds to HTTP requests.
 
-1. Verify (or create) a read-only API token on Proxmox named to match
-   `PROXMOX_READONLY_TOKEN_ID` from `.env.pve-test`
-2. Add the token secret to `secrets.enc.yaml` via interactive SOPS edit:
+**pve-test was rebooted** (2026-06-11, separate issue with the host). All
+LXCs including Harbor should auto-start on host boot.
+
+**Next steps when pve-test is back online:**
+
+1. Verify Harbor is healthy:
    ```bash
-   sops terraform/secrets.enc.yaml
+   ssh root@pve-test.gibbsgreatly.xyz \
+     "curl -sk --max-time 10 https://192.168.30.10/api/v2.0/health"
    ```
-3. Re-provision the netbox-stack (`scripts/provision.sh --stack netbox-stack`)
-   so the updated secret is written to the LXC credential env
+   Expected: `{"status":"healthy","components":[...]}`
 
-**Important:** Do not use `sops --set` for this — only interactive `sops` editing
-is safe here. Agents cannot verify credential values before writing them.
+2. Check Harbor IO pressure — if it's back above 90% quickly, Trivy is the
+   culprit and may need its scan schedule adjusted or scanning disabled for
+   the proxy cache project:
+   ```bash
+   ssh root@pve-test.gibbsgreatly.xyz \
+     "pvesh get /nodes/pve-test/lxc/40010/status/current --output-format json" \
+     | python3 -c 'import json,sys; d=json.load(sys.stdin); print("iosome:", d.get("pressureiosome","?"))'
+   ```
+
+3. If Harbor is healthy, retry netbox provision — always with `./with-secrets`:
+   ```bash
+   ./with-secrets scripts/provision.sh --stack netbox-stack
+   ```
+   Note: running `scripts/provision.sh` bare fails with "unresolved placeholder"
+   because `LAB_IP_NETBOX` is only injected by `./with-secrets`.
+
+4. Once provision succeeds, check populate service:
+   ```bash
+   ssh root@pve-test.gibbsgreatly.xyz \
+     "pct exec 40012 -- journalctl -u netbox-populate.service --no-pager -n 50"
+   ```
+
+#### Credential note
+
+`./with-secrets env | grep PROXMOX` shows:
+- `PROXMOX_TOKEN_ID=automation@pve!terraform` (admin token, present)
+- `PROXMOX_READONLY_TOKEN_SECRET` (present, has a value)
+
+`PROXMOX_READONLY_TOKEN_ID` was not seen in the output — verify it is set in
+`.env.pve-test`. If missing, the populate service will fall back to the admin
+token or fail with 401.
 
 ### Frozen Resume State (2026-06-06)
 
@@ -125,16 +160,14 @@ decision.
 
 ## Recommended Next Work
 
-1. Diagnose and fix the Proxmox 401 (see "Current blocker" above). This requires
-   operator-controlled SOPS editing — not an agent task.
-2. Once `netbox-populate.service` runs without error, check journal output to
-   confirm Proxmox guest discovery returns results:
-   ```bash
-   journalctl -u netbox-populate.service --no-pager -n 100
-   ```
-3. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
-4. Once populate runs cleanly, verify socket-proxy discovery reaches the deployed
-   LXCs and record what services are discovered.
+1. Wait for pve-test to come back online, then verify Harbor health (see
+   "Current blocker" above).
+2. Retry `./with-secrets scripts/provision.sh --stack netbox-stack`.
+3. Check `netbox-populate.service` journal — if a 401 appears, verify
+   `PROXMOX_READONLY_TOKEN_ID` is set in `.env.pve-test`.
+4. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
+5. Once populate runs cleanly, verify socket-proxy discovery reaches the
+   deployed LXCs and record what services are discovered.
 
 ## What Not To Reopen First
 
