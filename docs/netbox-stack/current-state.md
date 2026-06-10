@@ -54,37 +54,42 @@ with all platform services healthy in browser. The branch needs merging to
 - Loki `delete_request_store: filesystem` added to monitoring playbook.
 - Harbor scan smoke check timeout raised from 180s to 600s (cold-start Trivy).
 
-#### Immediate blocker: `populate.py` path crash
+#### Resolved: `populate.py` path crash
 
-The `netbox-populate.service` fails immediately on start:
+Fixed in commit `e92d608` (2026-06-09):
+- `populate.py` now wraps the `parents[3]` navigation in `try/except IndexError`
+  and raises a clear error pointing to `NETBOX_NETWORK_INTENT_PATH`
+- `deploy-netbox-stack.yml` now copies `terraform/lxc/network/pve-test.yaml`
+  to `/etc/netbox-populate/network.yaml` during provision
+- `NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml` is written to
+  the service credential env file
+- Verified: service starts without IndexError on the deployed LXC
 
+#### Current blocker: Proxmox credential 401
+
+The `netbox-populate.service` starts but fails with a 401 when querying the
+Proxmox API using `PROXMOX_READONLY_TOKEN_ID` / `PROXMOX_READONLY_TOKEN_SECRET`.
+
+Diagnosis needed:
+```bash
+./with-secrets env | grep PROXMOX
 ```
-File "/opt/netbox-populate/populate.py", line 80, in <module>
-    NETWORK_INTENT_ROOT = Path(__file__).resolve().parents[3] / "network"
-IndexError: 3
-```
 
-`populate.py` assumes it is running inside the git repo tree and navigates up
-four parent levels to reach `terraform/lxc/network/`. When deployed to
-`/opt/netbox-populate/` the path only has three parent levels and crashes.
+This will show whether `PROXMOX_READONLY_TOKEN_SECRET` is present in
+`terraform/secrets.enc.yaml` and what value it resolves to. If the key is
+missing or the value doesn't match an actual Proxmox token, the fix is to:
 
-Root cause: the script was designed to run from a git checkout (or a Docker
-container with the repo mounted). It is now deployed as a standalone systemd
-service and has no access to the repo network intent files.
+1. Verify (or create) a read-only API token on Proxmox named to match
+   `PROXMOX_READONLY_TOKEN_ID` from `.env.pve-test`
+2. Add the token secret to `secrets.enc.yaml` via interactive SOPS edit:
+   ```bash
+   sops terraform/secrets.enc.yaml
+   ```
+3. Re-provision the netbox-stack (`scripts/provision.sh --stack netbox-stack`)
+   so the updated secret is written to the LXC credential env
 
-Fix options (in order of preference):
-1. Copy the relevant network intent file (`terraform/lxc/network/pve-test.yaml`)
-   to the LXC during provision and set `NETBOX_NETWORK_INTENT_PATH` in the
-   credential env file to point to it.
-2. Derive network prefix data from Proxmox/MikroTik discovery at runtime
-   instead of reading the repo file.
-3. Keep the file-based approach but make `populate.py` accept an explicit path
-   env var and fail with a clear error if neither the path nor the repo structure
-   is available.
-
-Option 1 is the smallest change and unblocks the service immediately.
-
-This is the first blocking issue for the netbox-populate workstream.
+**Important:** Do not use `sops --set` for this — only interactive `sops` editing
+is safe here. Agents cannot verify credential values before writing them.
 
 ### Frozen Resume State (2026-06-06)
 
@@ -120,13 +125,16 @@ decision.
 
 ## Recommended Next Work
 
-1. Fix the `populate.py` `parents[3]` crash (see "Immediate blocker" above).
-   This is a netbox-stack task, not a docker-refactor task.
-2. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
-3. Once populate runs without crashing, verify it can reach the socket-proxy
-   endpoints on the deployed LXCs and record what services it discovers.
-4. If Docker-socket-proxy discovery coverage is sufficient, the docker-refactor
-   workstream may not need a separate pass for pve-test.
+1. Diagnose and fix the Proxmox 401 (see "Current blocker" above). This requires
+   operator-controlled SOPS editing — not an agent task.
+2. Once `netbox-populate.service` runs without error, check journal output to
+   confirm Proxmox guest discovery returns results:
+   ```bash
+   journalctl -u netbox-populate.service --no-pager -n 100
+   ```
+3. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
+4. Once populate runs cleanly, verify socket-proxy discovery reaches the deployed
+   LXCs and record what services are discovered.
 
 ## What Not To Reopen First
 
