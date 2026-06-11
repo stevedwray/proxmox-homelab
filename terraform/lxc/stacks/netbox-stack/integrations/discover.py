@@ -544,22 +544,33 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
     runtime_inspector = runtime_inspector or RuntimeInspector(portainer=portainer)
 
     # Index Portainer endpoints by name for service discovery
-    portainer_endpoints = {}
+    portainer_endpoints_by_name = {}
+    portainer_endpoints_by_ip = {}
     if portainer:
         for ep in portainer.get_endpoints():
-            ip = ep["URL"].replace("tcp://", "").split(":")[0]
-            portainer_endpoints[ep["Name"]] = {
+            ep_url = ep.get("URL", "")
+            ip = ep_url.replace("tcp://", "").split(":")[0]
+            ep_entry = {
                 "id": ep["Id"],
                 "ip": ip,
                 "status": "active" if ep["Status"] == 1 else "offline",
             }
+            portainer_endpoints_by_name[ep["Name"]] = ep_entry
+            if ip:
+                portainer_endpoints_by_ip[ip] = ep_entry
 
     vms = []
 
     # Process all containers/VMs from Proxmox (authoritative source)
     for container in proxmox_data.get("containers", []):
         pve_name = container["name"]
-        portainer_ep = portainer_endpoints.get(pve_name, {})
+        container_ip = _get_container_ip(container)
+        container_ip_addr = container_ip.split("/")[0] if container_ip else None
+        portainer_ep = (
+            portainer_endpoints_by_name.get(pve_name)
+            or (portainer_endpoints_by_ip.get(container_ip_addr) if container_ip_addr else None)
+            or {}
+        )
 
         config = container.get("config", {})
         ip = _get_container_ip(container)

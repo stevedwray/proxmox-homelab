@@ -1067,8 +1067,8 @@ def populate_virtual(nb, vms, inventory):
     """Create VMs, their interfaces, and tags from discovered data."""
     print("\n=== Virtual Infrastructure ===")
 
-    cluster = nb.get(NB_VIRT_CLUSTERS, name=inventory["cluster_name"])["results"][0]
     platform = nb.get(NB_DCIM_PLATFORMS, name="Debian 13")["results"][0]
+    cluster_cache = {}
 
     for vm_def in vms:
         extra_tags = vm_def.get("tags", [])
@@ -1080,6 +1080,19 @@ def populate_virtual(nb, vms, inventory):
         vm_name = _virtual_machine_name(vm_def, inventory)
         _ensure_tags(nb, [MANAGED_TAG_NAME, _environment_tag_name(vm_env), *extra_tags])
         tag_refs = _managed_tag_refs(extra_tags, environment=vm_env)
+
+        # Resolve the cluster for this VM's source node.
+        vm_node = vm_def.get("node") if (vm_def.get("node") and vm_def.get("node") != "external") else inventory["target_node"]
+        node_cluster_name = _cluster_name_for_target_node(vm_node)
+        if node_cluster_name not in cluster_cache:
+            results = nb.get(NB_VIRT_CLUSTERS, name=node_cluster_name)["results"]
+            if results:
+                cluster_cache[node_cluster_name] = results[0]
+            else:
+                if inventory["cluster_name"] not in cluster_cache:
+                    cluster_cache[inventory["cluster_name"]] = nb.get(NB_VIRT_CLUSTERS, name=inventory["cluster_name"])["results"][0]
+                cluster_cache[node_cluster_name] = cluster_cache[inventory["cluster_name"]]
+        cluster = cluster_cache[node_cluster_name]
 
         # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
         vm = nb.ensure(NB_VIRT_VIRTUAL_MACHINES, {"name": vm_name}, {
