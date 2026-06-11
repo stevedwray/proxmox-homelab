@@ -364,6 +364,11 @@
     mikrotik_user: "{{ lookup('env', 'MIKROTIK_READONLY_USER') | default(lookup('env', 'MIKROTIK_USER') | default('', true), true) }}"
     mikrotik_password: "{{ lookup('env', 'MIKROTIK_READONLY_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD') | default('', true), true) }}"
     mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('', true) }}"
+    mikrotik_port: "{{ lookup('env', 'MIKROTIK_PORT') | default('', true) }}"
+    lab_subnet_infra_cidr: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') | default('', true) }}"
+    lab_subnet_mgmt_cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | default('', true) }}"
+    lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | default('', true) }}"
+    lab_subnet_build_cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | default('', true) }}"
 
   tasks:
     - name: Install python3 and pyyaml
@@ -442,6 +447,16 @@
           {% if mikrotik_password %}MIKROTIK_READONLY_PASSWORD={{ mikrotik_password }}{% endif %}
 
           {% if mikrotik_host %}MIKROTIK_HOST={{ mikrotik_host }}{% endif %}
+
+          {% if mikrotik_port %}MIKROTIK_PORT={{ mikrotik_port }}{% endif %}
+
+          {% if lab_subnet_infra_cidr %}LAB_SUBNET_INFRA_CIDR={{ lab_subnet_infra_cidr }}{% endif %}
+
+          {% if lab_subnet_mgmt_cidr %}LAB_SUBNET_MGMT_CIDR={{ lab_subnet_mgmt_cidr }}{% endif %}
+
+          {% if lab_subnet_edge_cidr %}LAB_SUBNET_EDGE_CIDR={{ lab_subnet_edge_cidr }}{% endif %}
+
+          {% if lab_subnet_build_cidr %}LAB_SUBNET_BUILD_CIDR={{ lab_subnet_build_cidr }}{% endif %}
 
       no_log: true
 
