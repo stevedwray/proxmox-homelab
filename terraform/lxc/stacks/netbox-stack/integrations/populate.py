@@ -30,6 +30,7 @@ from discover import (
     build_proxmox_context,
     load_stack_yamls,
     _build_socket_proxy_services,
+    PortainerClient,
 )
 from proxmox_client import discover_from_proxmox
 
@@ -490,9 +491,20 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         if node_name:
             discovered_node_names.append(node_name)
 
+        portainer = None
+        portainer_url = node_def.get("portainer_url")
+        portainer_api_key_env = node_def.get("portainer_api_key_env")
+        if portainer_url and portainer_api_key_env:
+            api_key = os.environ.get(portainer_api_key_env)
+            if api_key:
+                try:
+                    portainer = PortainerClient(url=portainer_url, api_key=api_key)
+                except Exception as exc:
+                    print(f"  warning: Portainer client for {portainer_url} failed: {exc}")
+
         if primary_proxmox_data is None:
             primary_proxmox_data = proxmox_data
-        all_vms.extend(build_topology(proxmox_data=proxmox_data))
+        all_vms.extend(build_topology(proxmox_data=proxmox_data, portainer=portainer))
 
     return {
         "vms": all_vms,

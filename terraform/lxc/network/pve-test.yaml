@@ -222,6 +222,8 @@ inventory:
     - host: "pve.gibbsgreatly.xyz"
       token_id_env: PVE_READONLY_TOKEN_ID
       token_secret_env: PVE_READONLY_TOKEN_SECRET
+      portainer_url: "https://management-stack.gibbsgreatly.xyz:9443"
+      portainer_api_key_env: PORTAINER_TOKEN
   static_hosts: []
 
 policies:

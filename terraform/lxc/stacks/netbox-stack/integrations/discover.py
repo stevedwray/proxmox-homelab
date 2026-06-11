@@ -85,7 +85,7 @@ def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str | None, str | No
 class PortainerClient:
     """Minimal Portainer API client."""
 
-    def __init__(self, url=None, password=None):
+    def __init__(self, url=None, password=None, api_key=None):
         resolved_url = url or _resolved_env_value("PORTAINER_URL")
         if not resolved_url:
             resolved_ip = _resolved_env_value("PORTAINER_SERVER_IP") or _resolved_env_value("LAB_IP_PORTAINER")
@@ -96,7 +96,8 @@ class PortainerClient:
             resolved_url = f"https://{resolved_ip}:9443"
 
         self.url = resolved_url.rstrip("/")
-        self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
+        self._api_key = api_key
+        self._password = password or (None if api_key else os.environ["PORTAINER_ADMIN_PASSWORD"])
         self._token = None
 
     def _ssl_ctx(self):
@@ -123,11 +124,12 @@ class PortainerClient:
             self._token = json.loads(resp.read().decode())["jwt"]
 
     def _get(self, path):
-        self._auth()
-        req = urllib.request.Request(
-            f"{self.url}{path}",
-            headers={"Authorization": f"Bearer {self._token}"},
-        )
+        if self._api_key:
+            headers = {"X-API-Key": self._api_key}
+        else:
+            self._auth()
+            headers = {"Authorization": f"Bearer {self._token}"}
+        req = urllib.request.Request(f"{self.url}{path}", headers=headers)
         with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
             return json.loads(resp.read().decode())
 
