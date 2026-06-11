@@ -16,14 +16,70 @@ work-session evidence, not durable project documentation.
 
 ## Current Position
 
-### State as of 2026-06-08
+### State as of 2026-06-11 — netbox-populate fully operational
 
-The following changes landed in `fix/playbook-syntax-fixes` during a
-teardown-validation pass. The teardown test (stamp `20260608-013141`) passed
-with all platform services healthy in browser. The branch needs merging to
-`baseline/teardown-validated` once the operator confirms readiness.
+Branch `fix/playbook-syntax-fixes` is the current working branch.
+All blocking issues are resolved. The branch is ready for the teardown gate
+before merging to `baseline/teardown-validated`.
 
-#### Changes in this pass
+**Confirmed in browser (2026-06-11):** All 5 platform services healthy.
+NetBox is fully populated:
+- Proxmox (pve-test) node and all LXCs visible
+- MikroTik topology present
+- Docker containers showing as application services on their respective LXCs
+
+Last populate run result: `VMs: 11, IPs: 19, Services: 37, Stale managed objects: 0`
+
+#### Changes in this session (2026-06-11)
+
+**Playbook fixes (`deploy-netbox-stack.yml`):**
+- Added `mikrotik_port` var + `MIKROTIK_PORT` line to LXC env template
+  (mikrotik_client.py defaulted to 8729/binary-API when the var was absent)
+- Added `lab_subnet_{infra,mgmt,edge,build}_cidr` vars + `LAB_SUBNET_*_CIDR`
+  lines to LXC env template (populate.py `_resolve_env_token()` was returning
+  unresolved `${lab_subnet_*_cidr}` strings, causing NetBox 500 on prefix POST)
+
+**SOPS secrets (`terraform/secrets.enc.yaml`):**
+- Added `PROXMOX_READONLY_TOKEN_ID=automation@pve!terraform`
+- Updated `PROXMOX_READONLY_TOKEN_SECRET` to current value matching
+  `TF_VAR_pm_api_token_secret` (stale value `84421308-...` from before last
+  teardown was causing 401; correct value is `a78966a2-...`)
+
+**New Ansible playbook (`ansible/00-initial-setup/`):**
+- `mikrotik-firewall-infra-to-router-https.yml` — idempotent rule allowing
+  infra_seg (192.168.40.0/24) TCP 443 inbound to MikroTik router.
+  Mirrors pattern of `mikrotik-firewall-build-to-infra-apt-cacher.yml`.
+  Required because MikroTik input chain was blocking REST API calls from
+  the NetBox LXC (infra_seg only had ICMP and DNS).
+
+**Copilot prompt cleanup:**
+- `.github/copilot-prompts/diagnose-proxmox-401.md` — redacted hardcoded
+  stale token secret that gitleaks flagged (`84421308-...` → `<redacted>`)
+- `.github/copilot-prompts/fix-proxmox-401.md` — trailing whitespace removed
+
+#### Resolved root causes (all four)
+
+1. **`MIKROTIK_PORT` missing from LXC env** — mikrotik_client.py defaulted
+   to port 8729 (binary API); REST API is on 443. Symptom: connection timeout.
+
+2. **Stale Proxmox token secret** — `PROXMOX_READONLY_TOKEN_SECRET` was added
+   in this branch but held a pre-teardown value. After teardown, Terraform
+   creates a new token and stores it as `TF_VAR_pm_api_token_secret`. The
+   correct fix is to keep `PROXMOX_READONLY_TOKEN_SECRET` in sync with
+   `TF_VAR_pm_api_token_secret` after every teardown/redeploy cycle.
+
+3. **MikroTik firewall blocking HTTPS from infra_seg** — TCP connect succeeded
+   but all HTTP requests timed out. Input chain rule only allowed broad
+   `192.168.1.0/24`; infra_seg needed an explicit accept for TCP 443.
+
+4. **`LAB_SUBNET_*_CIDR` vars missing from LXC env** — `_resolve_env_token()`
+   in populate.py returned unresolved placeholder strings as literal prefix
+   values, causing NetBox 500 `KeyError: 'data'` on every prefix POST.
+
+#### State as of 2026-06-08
+
+The following changes landed during that teardown-validation pass.
+Teardown stamp: `20260608-013141`.
 
 **Playbook fixes (`deploy-netbox-stack.yml`):**
 - Removed invalid play-level `when: not ansible_check_mode` (Ansible 2.21 rejects it)
@@ -42,89 +98,15 @@ with all platform services healthy in browser. The branch needs merging to
   2. Per-guest docker-socket-proxy (`DOCKER_SOCKET_PROXY_URL_TEMPLATE`)
   3. Single-endpoint socket proxy (`DOCKER_SOCKET_PROXY_URL`, legacy)
 - Tests for deleted SSH parsing functions removed.
-- `PortainerClient` SSL context consolidated into `_ssl_ctx()` with a TODO for
-  verified TLS once step-ca or LE cert is in place.
 
 **Socket proxy enabled in deployed credential env:**
 - `DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375` is now written to
   `/etc/netbox-populate/env` on the NetBox LXC during provision.
-- Every LXC already has `docker-socket-proxy` deployed on port 2375.
 
 **Other fixes:**
 - Loki `delete_request_store: filesystem` added to monitoring playbook.
 - Harbor scan smoke check timeout raised from 180s to 600s (cold-start Trivy).
-
-#### Resolved: `populate.py` path crash
-
-Fixed in commit `e92d608` (2026-06-09):
-- `populate.py` now wraps the `parents[3]` navigation in `try/except IndexError`
-  and raises a clear error pointing to `NETBOX_NETWORK_INTENT_PATH`
-- `deploy-netbox-stack.yml` now copies `terraform/lxc/network/pve-test.yaml`
-  to `/etc/netbox-populate/network.yaml` during provision
-- `NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml` is written to
-  the service credential env file
-- Verified: service starts without IndexError on the deployed LXC
-
-#### Current blocker: Harbor IO starvation preventing image pull
-
-The `netbox-populate.service` path fix works (service starts). The netbox
-provision itself fails because Docker cannot pull images from
-`harbor.lab.gibbsgreatly.xyz` — Harbor LXC (VMID 40010) was at 99.45% IO
-pressure for ~2.8 days after the previous teardown test.
-
-Symptom:
-```
-redis Error Get "http://harbor.lab.gibbsgreatly.xyz/v2/": net/http: request
-canceled (Client.Timeout exceeded while awaiting headers)
-```
-
-Root cause: Harbor's Trivy scanner likely runs continuous background scans
-on freshly pulled images, thrashing disk IO. The LXC accepts TCP connections
-on ports 80 and 443 but never responds to HTTP requests.
-
-**pve-test was rebooted** (2026-06-11, separate issue with the host). All
-LXCs including Harbor should auto-start on host boot.
-
-**Next steps when pve-test is back online:**
-
-1. Verify Harbor is healthy:
-   ```bash
-   ssh root@pve-test.gibbsgreatly.xyz \
-     "curl -sk --max-time 10 https://192.168.30.10/api/v2.0/health"
-   ```
-   Expected: `{"status":"healthy","components":[...]}`
-
-2. Check Harbor IO pressure — if it's back above 90% quickly, Trivy is the
-   culprit and may need its scan schedule adjusted or scanning disabled for
-   the proxy cache project:
-   ```bash
-   ssh root@pve-test.gibbsgreatly.xyz \
-     "pvesh get /nodes/pve-test/lxc/40010/status/current --output-format json" \
-     | python3 -c 'import json,sys; d=json.load(sys.stdin); print("iosome:", d.get("pressureiosome","?"))'
-   ```
-
-3. If Harbor is healthy, retry netbox provision — always with `./with-secrets`:
-   ```bash
-   ./with-secrets scripts/provision.sh --stack netbox-stack
-   ```
-   Note: running `scripts/provision.sh` bare fails with "unresolved placeholder"
-   because `LAB_IP_NETBOX` is only injected by `./with-secrets`.
-
-4. Once provision succeeds, check populate service:
-   ```bash
-   ssh root@pve-test.gibbsgreatly.xyz \
-     "pct exec 40012 -- journalctl -u netbox-populate.service --no-pager -n 50"
-   ```
-
-#### Credential note
-
-`./with-secrets env | grep PROXMOX` shows:
-- `PROXMOX_TOKEN_ID=automation@pve!terraform` (admin token, present)
-- `PROXMOX_READONLY_TOKEN_SECRET` (present, has a value)
-
-`PROXMOX_READONLY_TOKEN_ID` was not seen in the output — verify it is set in
-`.env.pve-test`. If missing, the populate service will fall back to the admin
-token or fail with 401.
+- `populate.py` network intent path crash fixed (commit `e92d608`, 2026-06-09).
 
 ### Frozen Resume State (2026-06-06)
 
@@ -160,14 +142,17 @@ decision.
 
 ## Recommended Next Work
 
-1. Wait for pve-test to come back online, then verify Harbor health (see
-   "Current blocker" above).
-2. Retry `./with-secrets scripts/provision.sh --stack netbox-stack`.
-3. Check `netbox-populate.service` journal — if a 401 appears, verify
-   `PROXMOX_READONLY_TOKEN_ID` is set in `.env.pve-test`.
-4. Merge `fix/playbook-syntax-fixes` → `baseline/teardown-validated`.
-5. Once populate runs cleanly, verify socket-proxy discovery reaches the
-   deployed LXCs and record what services are discovered.
+1. **Run the teardown gate** — full infrastructure teardown + redeploy cycle
+   on pve-test is the required promotion gate for `baseline/teardown-validated`.
+   After teardown completes, update `PROXMOX_READONLY_TOKEN_SECRET` in
+   `terraform/secrets.enc.yaml` to match the freshly-generated
+   `TF_VAR_pm_api_token_secret` (the token is regenerated each teardown).
+
+2. **Merge** `fix/playbook-syntax-fixes` → `baseline/teardown-validated` once
+   the teardown gate passes.
+
+3. After merge, run `./with-secrets scripts/provision.sh --stack netbox-stack`
+   and verify populate service runs cleanly on the fresh deployment.
 
 ## What Not To Reopen First
 
