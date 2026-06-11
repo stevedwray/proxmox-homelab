@@ -457,9 +457,18 @@ def _load_inventory_sources(network_intent: dict) -> dict:
     }
 
 
+def _node_name_from_proxmox_data(proxmox_data: dict) -> str | None:
+    """Return the Proxmox node name from a discover_from_proxmox result."""
+    nodes = proxmox_data.get("nodes", [])
+    if nodes and isinstance(nodes[0], dict):
+        return nodes[0].get("node")
+    return None
+
+
 def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
     """Build topology by querying each declared Proxmox node and merging results."""
     all_vms = []
+    discovered_node_names = []
     primary_proxmox_data = None
 
     for node_def in proxmox_nodes:
@@ -477,6 +486,10 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
             print(f"  warning: Proxmox {host} discovery failed: {exc}")
             continue
 
+        node_name = _node_name_from_proxmox_data(proxmox_data)
+        if node_name:
+            discovered_node_names.append(node_name)
+
         if primary_proxmox_data is None:
             primary_proxmox_data = proxmox_data
         all_vms.extend(build_topology(proxmox_data=proxmox_data))
@@ -485,6 +498,7 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         "vms": all_vms,
         "network": build_network_topology(),
         "proxmox": build_proxmox_context(primary_proxmox_data) if primary_proxmox_data else {},
+        "discovered_node_names": discovered_node_names,
     }
 
 
@@ -852,6 +866,42 @@ def populate_physical(nb, site, inventory):
         legacy_lookups=_legacy_cluster_lookups(inventory),
         **_managed_patch_guard(),
     )
+
+
+def _ensure_proxmox_hypervisor(nb, site, node_name: str) -> None:
+    """Ensure a Proxmox hypervisor device and cluster exist for the given node name."""
+    managed_tags = _managed_tag_refs()
+    _ensure_tags(nb, [MANAGED_TAG_NAME])
+
+    role = nb.get(NB_DCIM_DEVICE_ROLES, name="Hypervisor")["results"][0]
+    dtype = nb.get(NB_DCIM_DEVICE_TYPES, model="Proxmox Server")["results"][0]
+    platform = nb.get(NB_DCIM_PLATFORMS, name="Proxmox VE")["results"][0]
+
+    device = nb.ensure(NB_DCIM_DEVICES, {"name": node_name}, {
+        "role": role["id"],
+        "device_type": dtype["id"],
+        "platform": platform["id"],
+        "site": site["id"],
+        "status": "active",
+        "description": f"Proxmox VE hypervisor — {node_name}",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
+
+    nb.ensure(NB_DCIM_INTERFACES, {"device_id": device["id"], "name": "vmbr0"}, {
+        "device": device["id"],
+        "name": "vmbr0",
+        "type": "bridge",
+        "description": "Primary bridge",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
+
+    ctype = nb.get(NB_VIRT_CLUSTER_TYPES, name="Proxmox VE")["results"][0]
+    nb.ensure(NB_VIRT_CLUSTERS, {"name": _cluster_name_for_target_node(node_name)}, {
+        "type": ctype["id"],
+        "site": site["id"],
+        "description": f"Single-node Proxmox cluster — {node_name}",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
 
 
 def populate_network(nb, site, network):
@@ -1595,6 +1645,9 @@ def main():
 
     site = populate_foundation(nb)
     populate_physical(nb, site, inventory)
+    for node_name in topology.get("discovered_node_names", []):
+        if node_name != inventory["target_node"]:
+            _ensure_proxmox_hypervisor(nb, site, node_name)
     populate_network(nb, site, network)
     populate_virtual(nb, vms, inventory)
     populate_ipam(nb, site, vms, population_intent, inventory)
