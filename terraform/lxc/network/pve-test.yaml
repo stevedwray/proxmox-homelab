@@ -219,6 +219,9 @@ inventory:
     - host: "${proxmox_host}"
       token_id_env: PROXMOX_READONLY_TOKEN_ID
       token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
+    - host: "pve.gibbsgreatly.xyz"
+      token_id_env: PVE_READONLY_TOKEN_ID
+      token_secret_env: PVE_READONLY_TOKEN_SECRET
   static_hosts: []
 
 policies:

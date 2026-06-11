@@ -369,6 +369,8 @@
     lab_subnet_mgmt_cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | default('', true) }}"
     lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | default('', true) }}"
     lab_subnet_build_cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | default('', true) }}"
+    pve_readonly_token_id: "{{ lookup('env', 'PVE_READONLY_TOKEN_ID') | default('', true) }}"
+    pve_readonly_token_secret: "{{ lookup('env', 'PVE_READONLY_TOKEN_SECRET') | default('', true) }}"
 
   tasks:
     - name: Install python3 and pyyaml
@@ -457,6 +459,10 @@
           {% if lab_subnet_edge_cidr %}LAB_SUBNET_EDGE_CIDR={{ lab_subnet_edge_cidr }}{% endif %}
 
           {% if lab_subnet_build_cidr %}LAB_SUBNET_BUILD_CIDR={{ lab_subnet_build_cidr }}{% endif %}
+
+          {% if pve_readonly_token_id %}PVE_READONLY_TOKEN_ID={{ pve_readonly_token_id }}{% endif %}
+
+          {% if pve_readonly_token_secret %}PVE_READONLY_TOKEN_SECRET={{ pve_readonly_token_secret }}{% endif %}
 
       no_log: true
 
