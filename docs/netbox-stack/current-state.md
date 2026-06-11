@@ -68,9 +68,9 @@ Stale managed object: one stale IP (`192.168.1.40/24`) — minor, not blocking.
 
 ## Recommended Next Work
 
-1. **PR `feat/netbox-populate-multi-source-inventory` → `dev/pve-test`** — this is
-   application stack work; no teardown gate required. Validation has been done live
-   on pve-test with both nodes populating correctly.
+1. **Run the teardown gate, then PR `feat/netbox-populate-multi-source-inventory` →
+   `baseline/teardown-validated`** — validation has been done live on pve-test with
+   both nodes populating correctly; the teardown gate is the remaining promotion gate.
 
 2. **Teardown gate for `baseline/teardown-validated`** — `fix/playbook-syntax-fixes`
    was merged but the teardown gate has not been run since that merge. Run a full
