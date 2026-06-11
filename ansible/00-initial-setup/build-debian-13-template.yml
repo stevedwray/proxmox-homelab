@@ -367,7 +367,7 @@
         - apt-daily-upgrade.timer
 
     - name: Wait for apt/dpkg to be free before package operations
-      ansible.builtin.shell: "{{ apt_lock_wait_command }}"
+      ansible.builtin.shell: "{{ apt_lock_wait_command }}" # noqa: command-instead-of-shell
       register: wait_apt_runtime
       changed_when: false
       failed_when: wait_apt_runtime.rc != 0

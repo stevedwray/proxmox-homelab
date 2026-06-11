@@ -195,6 +195,7 @@ get_system_info() {
             echo "  System user 'automation': ✗ Missing"
         fi
 
+        # shellcheck disable=SC2029  # $PVE_AUTOMATION_USER intentionally expands on the client side before SSH
         if ssh "${SSH_OPTS[@]}" root@"$PROXMOX_HOST" "pveum user list 2>/dev/null | grep -q '$PVE_AUTOMATION_USER'"; then
             echo "  PVE user '$PVE_AUTOMATION_USER': ✓ Exists"
         else

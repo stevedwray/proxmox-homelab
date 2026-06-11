@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Read-only planner for infra-only teardown analysis on production pve.
+# shellcheck disable=SC2016  # printf format strings use single quotes intentionally; no expansion wanted
+# shellcheck disable=SC2034  # depends_on/playbook read from TSV but used by framework, not this script
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -3,7 +3,7 @@ name: Supply Chain Signing Proof
 on:
   push:
     branches:
-      - dev/pve-test
+      - baseline/teardown-validated
     paths:
       - .github/workflows/supply-chain-signing-proof.yml
   workflow_dispatch:

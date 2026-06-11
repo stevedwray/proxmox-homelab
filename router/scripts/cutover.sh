@@ -22,6 +22,7 @@ LAN_GW_CIDR="${MIKROTIK_LAN_GW_CIDR:?MIKROTIK_LAN_GW_CIDR not set}"
 LAN_GW_IP="${LAN_GW_CIDR%/*}"
 MGMT_CIDR="${MIKROTIK_MGMT_CIDR:?MIKROTIK_MGMT_CIDR not set}"
 AUTH_USER="${MIKROTIK_USER}"
+# shellcheck disable=SC2154  # hAPax3_ADMIN is set in the environment by the caller
 AUTH_PASS="${hAPax3_ADMIN}"
 
 _curl() { curl -sf -k -u "${AUTH_USER}:${AUTH_PASS}" "$@"; }
@@ -83,6 +84,7 @@ fi
 # ---------------------------------------------------------------------------
 log ""
 log "Step 3: Verifying internet connectivity ..."
+# shellcheck disable=SC2034  # LOSS captures command exit status as a connectivity probe; value not used
 LOSS=$(get /ip/firewall/connection | jq 'length' 2>/dev/null || echo "skip")  # just a connectivity probe
 PING=$(curl -sf -k -u "${AUTH_USER}:${AUTH_PASS}" -X POST \
   -H 'Content-Type: application/json' \

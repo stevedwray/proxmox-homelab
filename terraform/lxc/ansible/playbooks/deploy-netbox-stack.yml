@@ -12,14 +12,14 @@
     compose_file: "{{ compose_dir }}/docker-compose.yml"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
     netbox_bootstrap_timeout: 120
-    netbox_superuser_username: "{{ lookup('env','NETBOX_SUPERUSER_USER') | default('admin', true) }}"
-    netbox_superuser_email: "{{ lookup('env','NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env','TF_VAR_domain') | default('localhost')), true) }}"
-    netbox_superuser_password: "{{ lookup('env','NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
-    netbox_steve_username: "{{ lookup('env','NETBOX_STEVE_USERNAME') | default('steve', true) }}"
-    netbox_steve_email: "{{ lookup('env','NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
-    netbox_breakglass_username: "{{ lookup('env','NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-    netbox_breakglass_email: "{{ lookup('env','NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
-    netbox_breakglass_password: "{{ lookup('env','NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+    netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+    netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+    netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+    netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+    netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+    netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+    netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
 
   tasks:
     - name: Ensure NetBox compose directory exists
@@ -97,14 +97,14 @@
         compose_file: "/srv/docker/netbox/docker-compose.yml"
         netbox_manage: "/opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py"
         netbox_bootstrap_timeout: 120
-        netbox_superuser_username: "{{ lookup('env','NETBOX_SUPERUSER_USER') | default('admin', true) }}"
-        netbox_superuser_email: "{{ lookup('env','NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env','TF_VAR_domain') | default('localhost')), true) }}"
-        netbox_superuser_password: "{{ lookup('env','NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
-        netbox_steve_username: "{{ lookup('env','NETBOX_STEVE_USERNAME') | default('steve', true) }}"
-        netbox_steve_email: "{{ lookup('env','NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
-        netbox_breakglass_username: "{{ lookup('env','NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-        netbox_breakglass_email: "{{ lookup('env','NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
-        netbox_breakglass_password: "{{ lookup('env','NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+        netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+        netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+        netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+        netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+        netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+        netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+        netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+        netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
         netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) }}"
 
 - name: Configure Docker base

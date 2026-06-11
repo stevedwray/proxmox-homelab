@@ -85,6 +85,7 @@ require_pve_test_preflight() {
   if [[ "${node}" != "${TARGET_NODE_EXPECTED}" ]]; then
     fail "preflight failed: expected TF_VAR_proxmox_node=${TARGET_NODE_EXPECTED}, got '${node}'"
   fi
+  # shellcheck disable=SC2016  # single quotes intentional — expand inside the remote bash -c, not the calling shell
   TARGET_HOST="$("${WITH_SECRETS}" bash -c 'echo "${REBUILD_GATE_TARGET_HOST:-${PVE_TEST_FQDN:-${PROXMOX_HOST:-${TF_VAR_proxmox_node:-pve-test}.local}}}"' | tr -d '[:space:]')"
   if [[ -z "${TARGET_HOST}" ]]; then
     fail "preflight failed: unable to resolve target host from with-secrets environment"

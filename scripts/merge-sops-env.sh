@@ -26,10 +26,12 @@ if [[ $# -ge 1 && "$1" == "--" ]]; then
 fi
 
 if [[ -f "$BASE_FILE" ]]; then
+    # shellcheck disable=SC1090  # source from process substitution; path not statically known
     source <(sops --decrypt --output-type json "$BASE_FILE" | jq -r 'to_entries|map("export \(.key)=\(.value|@sh)")|.[]')
 fi
 
 if [[ -n "$PROD_FILE" && -f "$PROD_FILE" ]]; then
+    # shellcheck disable=SC1090  # source from process substitution; path not statically known
     source <(sops --decrypt --output-type json "$PROD_FILE" | jq -r 'to_entries|map("export \(.key)=\(.value|@sh)")|.[]')
 fi
 

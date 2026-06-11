@@ -17,6 +17,7 @@ trap 'rm -f "${ENV_FILE}"' EXIT
 USE_SOCKET_PROXY=false
 # Only consider the proxy configured when the env var is both non-empty
 # and does not look like an unresolved template placeholder (contains '${').
+# shellcheck disable=SC2016  # single quotes intentional — matching literal '${' substring, not expanding
 if [ -n "${DOCKER_SOCKET_PROXY_URL_TEMPLATE:-}" ] && [[ "${DOCKER_SOCKET_PROXY_URL_TEMPLATE}" != *'${'* ]]; then
   USE_SOCKET_PROXY=true
 elif [ -n "${DOCKER_SOCKET_PROXY_URL:-}" ] && [[ "${DOCKER_SOCKET_PROXY_URL}" != *'${'* ]]; then
