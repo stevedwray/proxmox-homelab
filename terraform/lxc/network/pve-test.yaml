@@ -214,6 +214,13 @@ zones:
     containers:
       - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
 
+inventory:
+  proxmox_nodes:
+    - host: "${proxmox_host}"
+      token_id_env: PROXMOX_READONLY_TOKEN_ID
+      token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
+  static_hosts: []
+
 policies:
   # Cross-zone policies. Enforced at the MikroTik firewall.
   #
