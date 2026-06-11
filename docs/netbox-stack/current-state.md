@@ -144,9 +144,8 @@ decision.
 
 1. **Run the teardown gate** — full infrastructure teardown + redeploy cycle
    on pve-test is the required promotion gate for `baseline/teardown-validated`.
-   After teardown completes, update `PROXMOX_READONLY_TOKEN_SECRET` in
-   `terraform/secrets.enc.yaml` to match the freshly-generated
-   `TF_VAR_pm_api_token_secret` (the token is regenerated each teardown).
+   The Proxmox host itself is not torn down, so the API token on the node
+   is unchanged — no SOPS update needed after teardown.
 
 2. **Merge** `fix/playbook-syntax-fixes` → `baseline/teardown-validated` once
    the teardown gate passes.
