@@ -16,6 +16,8 @@
   roles:
     - lxc_base
     - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -66,14 +68,18 @@
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
-    grafana_version: "11.1.4"
+    grafana_version: "11.6.0"
     loki_version: "3.0.0"
     promtail_version: "3.0.0"
+    python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
     loki_image: "{{ monitoring_registry_host }}/dockerhub/grafana/loki:{{ loki_version }}"
     promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
+    harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
+    cadvisor_version: "v0.49.1"
+    cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -98,6 +104,13 @@
     grafana_oauth_email_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
     grafana_oauth_email_attribute_name: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_NAME') | default('preferred_username', true) }}"
     grafana_oauth_use_id_token: "{{ lookup('env', 'GRAFANA_OAUTH_USE_ID_TOKEN') | default('true', true) | bool }}"
+    harbor_findings_api_url: "http://{{ lookup('env', 'LAB_IP_HARBOR') }}:80"
+    harbor_findings_projects: "dockerhub,ghcr,quay,lscr"
+    harbor_findings_refresh_interval_seconds: "300"
+    harbor_findings_scan_stale_after_seconds: "86400"
+    harbor_findings_listen_port: "9414"
+    harbor_api_username: "admin"
+    harbor_api_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var is not set') }}"
 
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
@@ -132,7 +145,143 @@
         - { path: "{{ monitoring_compose_dir }}/grafana", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/datasources", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/dashboards", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/grafana/dashboards", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/harbor-findings-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/loki", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
+
+    - name: Write VictoriaMetrics scrape config
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/victoria-metrics/scrape.yml"
+        mode: "0644"
+        content: |
+          global:
+            scrape_interval: 30s
+
+          scrape_configs:
+            - job_name: node_exporter
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:9100"]
+                  labels: {stack: authentik-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_STEP_CA') }}:9100"]
+                  labels: {stack: step-ca-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_MONITORING') }}:9100"]
+                  labels: {stack: monitoring-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_DNS') }}:9100"]
+                  labels: {stack: dns-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PORTAINER') }}:9100"]
+                  labels: {stack: portainer-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PROXY') }}:9100"]
+                  labels: {stack: proxy-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_HARBOR') }}:9100"]
+                  labels: {stack: harbor-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_APT_CACHER') }}:9100"]
+                  labels: {stack: apt-cacher-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_NETBOX') }}:9100"]
+                  labels: {stack: netbox-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_CI_RUNNER') }}:9100"]
+                  labels: {stack: ci-runner-01}
+                - targets: ["{{ lookup('env', 'LAB_IP_PROXMOX_HOST') }}:9100"]
+                  labels: {stack: pve-test}
+
+            - job_name: cadvisor
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:8080"]
+                  labels: {stack: authentik-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_MONITORING') }}:8080"]
+                  labels: {stack: monitoring-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PORTAINER') }}:8080"]
+                  labels: {stack: portainer-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_PROXY') }}:8080"]
+                  labels: {stack: proxy-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_HARBOR') }}:8080"]
+                  labels: {stack: harbor-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"]
+                  labels: {stack: netbox-stack}
+
+            - job_name: coredns
+              scrape_interval: 15s
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_DNS') }}:9153"
+
+            - job_name: authentik
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:9300"
+
+            - job_name: harbor-exporter
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9090"
+                  labels:
+                    stack: harbor-stack
+                    component: exporter
+
+            - job_name: harbor-core
+              params:
+                comp: ["core"]
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9090"
+                  labels:
+                    stack: harbor-stack
+                    component: core
+
+            - job_name: harbor-registry
+              params:
+                comp: ["registry"]
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9090"
+                  labels:
+                    stack: harbor-stack
+                    component: registry
+
+            - job_name: harbor-jobservice
+              params:
+                comp: ["jobservice"]
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_HARBOR') }}:9090"
+                  labels:
+                    stack: harbor-stack
+                    component: jobservice
+
+            - job_name: harbor-findings-exporter
+              static_configs:
+                - targets:
+                    - "harbor-findings-exporter:{{ harbor_findings_listen_port }}"
+                  labels:
+                    stack: harbor-stack
+                    component: findings-exporter
+
+            - job_name: netbox
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_NETBOX') }}:8080"
+
+            - job_name: victoriametrics
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8428"
+
+            - job_name: loki
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:3100"
+
+            - job_name: grafana
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:3000"
+
+            - job_name: traefik
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_PROXY') }}:8082"
+      notify: Restart VictoriaMetrics
 
     - name: Write Loki configuration
       ansible.builtin.copy:
@@ -164,6 +313,14 @@
           limits_config:
             allow_structured_metadata: false
             volume_enabled: true
+            retention_period: 30d
+          compactor:
+            working_directory: /loki/compactor
+            compaction_interval: 10m
+            retention_enabled: true
+            delete_request_store: filesystem
+            retention_delete_delay: 2h
+            retention_delete_worker_count: 150
 
     - name: Write Promtail configuration
       ansible.builtin.copy:
@@ -188,7 +345,22 @@
                   labels:
                     job: varlogs
                     host: monitoring-stack
+                    stack: monitoring-stack
                     __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: monitoring-stack
+                - target_label: stack
+                  replacement: monitoring-stack
 
     - name: Write Grafana datasource provisioning
       ansible.builtin.copy:
@@ -208,6 +380,43 @@
               access: proxy
               url: http://loki:3100
               editable: true
+            - name: Harbor Findings
+              type: yesoreyeram-infinity-datasource
+              access: proxy
+              url: http://harbor-findings-exporter:{{ harbor_findings_listen_port }}
+              jsonData:
+                dataType: json
+                useBackend: false
+              editable: true
+
+    - name: Write Grafana dashboard provider config
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/grafana/provisioning/dashboards/providers.yml"
+        mode: "0640"
+        content: |
+          apiVersion: 1
+          providers:
+            - name: homelab
+              type: file
+              disableDeletion: false
+              updateIntervalSeconds: 30
+              options:
+                path: /etc/grafana/dashboards
+
+    - name: Copy Grafana dashboard JSON files
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: "{{ monitoring_compose_dir }}/grafana/dashboards/"
+        mode: "0640"
+      with_fileglob:
+        - "{{ playbook_dir }}/../../stacks/monitoring-stack/dashboards/*.json"
+
+    - name: Copy Harbor findings exporter script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/harbor_findings_exporter.py"
+        dest: "{{ monitoring_compose_dir }}/harbor-findings-exporter/harbor_findings_exporter.py"
+        mode: "0750"
+      register: harbor_findings_exporter_script
 
     - name: Write monitoring secrets env file
       ansible.builtin.copy:
@@ -217,6 +426,7 @@
           GF_SECURITY_ADMIN_PASSWORD={{ grafana_admin_password }}
           GF_AUTH_GENERIC_OAUTH_CLIENT_ID={{ grafana_oauth_client_id }}
           GF_AUTH_GENERIC_OAUTH_CLIENT_SECRET={{ grafana_oauth_client_secret }}
+          HARBOR_API_PASSWORD={{ harbor_api_password }}
       no_log: true
 
     - name: Write monitoring compose definition
@@ -233,9 +443,12 @@
                 - "8428:8428"
               volumes:
                 - vm-data:/storage
+                - ./victoria-metrics/scrape.yml:/etc/vm/scrape.yml:ro
+                - /usr/local/share/ca-certificates/homelab-root.crt:/etc/ssl/certs/homelab-root.crt:ro
               command:
                 - "--storageDataPath=/storage"
                 - "--retentionPeriod=90d"
+                - "--promscrape.config=/etc/vm/scrape.yml"
 
             grafana:
               image: {{ grafana_image }}
@@ -250,6 +463,7 @@
               environment:
                 GF_SERVER_ROOT_URL: "{{ grafana_public_url }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "{{ 'true' if grafana_oauth_enabled else 'false' }}"
+                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
                 GF_AUTH_GENERIC_OAUTH_NAME: "{{ grafana_oauth_name }}"
                 GF_AUTH_GENERIC_OAUTH_SCOPES: "{{ grafana_oauth_scopes }}"
                 GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ grafana_oauth_auth_url }}"
@@ -268,6 +482,7 @@
               volumes:
                 - grafana-data:/var/lib/grafana
                 - ./grafana/provisioning:/etc/grafana/provisioning:ro
+                - ./grafana/dashboards:/etc/grafana/dashboards:ro
                 - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
@@ -291,15 +506,52 @@
               command: -config.file=/etc/promtail/config.yml
               volumes:
                 - /var/log:/var/log:ro
+                - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./promtail-config.yml:/etc/promtail/config.yml:ro
               depends_on:
                 - loki
+
+            harbor-findings-exporter:
+              image: {{ harbor_findings_exporter_image }}
+              container_name: harbor-findings-exporter
+              restart: unless-stopped
+              env_file:
+                - .env
+              ports:
+                - "{{ harbor_findings_listen_port }}:{{ harbor_findings_listen_port }}"
+              environment:
+                HARBOR_API_URL: "{{ harbor_findings_api_url }}"
+                HARBOR_API_USERNAME: "{{ harbor_api_username }}"
+                HARBOR_API_PASSWORD: "${HARBOR_API_PASSWORD}"
+                HARBOR_FINDINGS_PROJECTS: "{{ harbor_findings_projects }}"
+                HARBOR_FINDINGS_REFRESH_INTERVAL_SECONDS: "{{ harbor_findings_refresh_interval_seconds }}"
+                HARBOR_FINDINGS_SCAN_STALE_AFTER_SECONDS: "{{ harbor_findings_scan_stale_after_seconds }}"
+                HARBOR_FINDINGS_LISTEN_ADDRESS: "0.0.0.0"
+                HARBOR_FINDINGS_LISTEN_PORT: "{{ harbor_findings_listen_port }}"
+              command:
+                - python3
+                - /app/harbor_findings_exporter.py
+              volumes:
+                - ./harbor-findings-exporter/harbor_findings_exporter.py:/app/harbor_findings_exporter.py:ro
+
+            cadvisor:
+              image: {{ cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
 
           volumes:
             vm-data: {}
             grafana-data: {}
             loki-data: {}
       no_log: true
+      register: monitoring_compose_definition
 
     - name: Test DNS resolution for Harbor
       ansible.builtin.shell: |
@@ -388,6 +640,14 @@
         state: present
       when: not ansible_check_mode
 
+    - name: Restart Harbor findings exporter after script updates
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart harbor-findings-exporter
+      when:
+        - not ansible_check_mode
+        - harbor_findings_exporter_script.changed or monitoring_compose_definition.changed
+      changed_when: true
+
     - name: Wait for Grafana health endpoint
       ansible.builtin.uri:
         url: "http://{{ ansible_host }}:3000/api/health"
@@ -419,6 +679,17 @@
       retries: 30
       delay: 10
       until: loki_health.status == 200
+      when: not ansible_check_mode
+
+    - name: Wait for Harbor findings exporter metrics endpoint
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:{{ harbor_findings_listen_port }}/metrics"
+        method: GET
+        status_code: 200
+      register: harbor_findings_exporter_health
+      retries: 30
+      delay: 10
+      until: harbor_findings_exporter_health.status == 200
       when: not ansible_check_mode
 
     - name: Restore resolv.conf from backup if we modified it
@@ -508,4 +779,13 @@
           isGrafanaAdmin: true
         status_code: 200
       no_log: true
+      when: not ansible_check_mode
+
+  handlers:
+    - name: Restart VictoriaMetrics
+      community.docker.docker_compose_v2:
+        project_src: "{{ monitoring_compose_dir }}"
+        services:
+          - victoriametrics
+        state: restarted
       when: not ansible_check_mode

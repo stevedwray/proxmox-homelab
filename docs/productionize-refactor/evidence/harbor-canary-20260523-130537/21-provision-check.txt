@@ -1,0 +1,196 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: canary-harbor-stack-pve-20260523
+Command: scripts/provision.sh --stack harbor-stack --check
+
+[provision] RUN harbor-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/harbor-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml --check
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'harbor-stack' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.20/reference_appendices/interpreter_discovery.html for more information.
+ok: [harbor-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+changed: [harbor-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+skipping: [harbor-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+ok: [harbor-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [harbor-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+changed: [harbor-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+skipping: [harbor-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+skipping: [harbor-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [harbor-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+skipping: [harbor-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+skipping: [harbor-stack] => (item=apt-daily.service)
+skipping: [harbor-stack] => (item=apt-daily.timer)
+skipping: [harbor-stack] => (item=apt-daily-upgrade.service)
+skipping: [harbor-stack] => (item=apt-daily-upgrade.timer)
+skipping: [harbor-stack]
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+skipping: [harbor-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+skipping: [harbor-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [harbor-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+changed: [harbor-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [harbor-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [harbor-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [harbor-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [harbor-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [harbor-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [harbor-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [harbor-stack]
+
+TASK [Normalize Docker daemon DNS for Harbor runtime] **************************
+changed: [harbor-stack]
+
+TASK [Flush handlers to apply Docker daemon config before Harbor install] ******
+
+RUNNING HANDLER [Restart Docker] ***********************************************
+changed: [harbor-stack]
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+changed: [harbor-stack]
+
+PLAY [Install and start Harbor] ************************************************
+
+TASK [harbor_installer : Validate required variable harbor_installer_hostname is set] ***
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Create Harbor install directory] **********************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Create Harbor data directory] *************************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Check if Harbor installer has already been extracted] ***
+ok: [harbor-stack]
+
+TASK [harbor_installer : Download Harbor md5sum file] **************************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Read Harbor md5sum file] ******************************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Extract online installer MD5 checksum] ****************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Download Harbor online installer] *********************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Unpack Harbor installer] ******************************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Template harbor.yml configuration] ********************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Check if Harbor docker-compose.yml exists (first run detection)] ***
+ok: [harbor-stack]
+
+TASK [harbor_installer : Run Harbor prepare script] ****************************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Install Harbor systemd service unit] ******************
+changed: [harbor-stack]
+
+TASK [harbor_installer : Reload systemd daemon] ********************************
+ok: [harbor-stack]
+
+TASK [harbor_installer : Enable Harbor service] ********************************
+[ERROR]: Task failed: Module failed: Could not find the requested service harbor: host
+Origin: /home/steve/git/proxmox-homelab/terraform/lxc/ansible/roles/harbor_installer/tasks/main.yml:98:3
+
+96   when: harbor_installer_service_file_result.changed
+97
+98 - name: Enable Harbor service
+     ^ column 3
+
+fatal: [harbor-stack]: FAILED! => {"changed": false, "msg": "Could not find the requested service harbor: host"}
+...ignoring
+
+TASK [harbor_installer : Start Harbor service (first run)] *********************
+[ERROR]: Task failed: Module failed: Could not find the requested service harbor: host
+Origin: /home/steve/git/proxmox-homelab/terraform/lxc/ansible/roles/harbor_installer/tasks/main.yml:104:3
+
+102   ignore_errors: "{{ ansible_check_mode }}"
+103
+104 - name: Start Harbor service (first run)
+      ^ column 3
+
+fatal: [harbor-stack]: FAILED! => {"changed": false, "msg": "Could not find the requested service harbor: host"}
+...ignoring
+
+TASK [harbor_installer : Restart Harbor service (config changed)] **************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Wait for Harbor API to be healthy] ********************
+skipping: [harbor-stack]
+
+TASK [harbor_installer : Display Harbor status] ********************************
+ok: [harbor-stack] => {
+    "msg": "Harbor v2.14.3 is healthy at http://harbor.lab.gibbsgreatly.xyz:80"
+}
+
+PLAY [Configure Harbor (proxy cache, robot account, OIDC)] *********************
+
+TASK [Enforce readable Harbor OIDC username claim] *****************************
+ok: [harbor-stack -> localhost] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Check Authentik health endpoint reachability for Harbor OIDC reconcile] ***
+skipping: [harbor-stack]
+
+TASK [Skip Harbor Authentik OIDC reconcile when Authentik is unavailable] ******
+ok: [harbor-stack -> localhost] => {
+    "msg": "Skipping Harbor Authentik OIDC reconcile because Authentik is not reachable yet; reconcile will run in a later phase."
+}
+
+TASK [Reconcile Harbor Authentik OIDC client] **********************************
+skipping: [harbor-stack]
+
+TASK [harbor_postconfigure : Skip Harbor post-configuration in check mode (requires live Harbor API)] ***
+
+PLAY RECAP *********************************************************************
+harbor-stack               : ok=25   changed=10   unreachable=0    failed=0    skipped=23   rescued=0    ignored=2
+
+[provision] Completed provision orchestration

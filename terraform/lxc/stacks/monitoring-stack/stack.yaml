@@ -51,3 +51,10 @@ portainer_agent: false
 portainer_server_ip: "${lab_ip_portainer}"
 registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
 apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Docker socket proxy — read-only Docker API endpoint for NetBox discovery
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_monitoring}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_monitoring}"

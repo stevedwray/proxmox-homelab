@@ -1,7 +1,7 @@
 # Authentik identity provider stack
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is written to .env by deploy-authentik-stack.yml.
-# pve-test: 10.57.3.10  pve: 192.168.1.10
+# Service addressing is environment-driven via stack.yaml and the selected LAB_IP_* overlay.
 
 services:
   postgresql:
@@ -40,11 +40,13 @@ services:
       AUTHENTIK_POSTGRESQL__PASSWORD: "${AUTHENTIK_POSTGRES_PASSWORD}"
       AUTHENTIK_SECRET_KEY: "${AUTHENTIK_SECRET_KEY}"
       AUTHENTIK_DISABLE_UPDATE_CHECK: "true"
+      AUTHENTIK_LISTEN__METRICS: "0.0.0.0:9300"
     depends_on:
       - postgresql
       - redis
     ports:
       - "9000:9000"
+      - "9300:9300"
     volumes:
       - authentik-media:/media
       - authentik-custom-templates:/templates
@@ -75,6 +77,26 @@ services:
       - authentik-media:/media
       - authentik-custom-templates:/templates
       - authentik-certs:/certs
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
 volumes:
   authentik-certs:

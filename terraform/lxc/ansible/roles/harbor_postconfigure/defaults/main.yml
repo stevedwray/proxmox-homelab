@@ -51,6 +51,28 @@ harbor_postconfigure_oidc_logout: true
 harbor_postconfigure_oidc_primary_auth_mode: true
 
 # Vulnerability scanning
+# Harbor no longer exposes a reliable global "scan on push" toggle through the
+# configuration API in the way older docs implied. For proxy-cache projects, the
+# effective control is project metadata.auto_scan.
 harbor_postconfigure_scan_on_push: true
-# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
-harbor_postconfigure_scan_schedule: "0 2 * * *"
+harbor_postconfigure_proxy_project_auto_scan: "{{ harbor_postconfigure_scan_on_push }}"
+# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly).
+# Harbor's scan-all schedule API expects a 6-field cron with seconds first.
+harbor_postconfigure_scan_schedule: "0 0 2 * * *"
+harbor_postconfigure_verify_scan_smoke: true
+harbor_postconfigure_verify_scan_smoke_project: "dockerhub"
+harbor_postconfigure_verify_scan_smoke_repository: "library/alpine"
+harbor_postconfigure_verify_scan_smoke_tag: "3.20.6"
+harbor_postconfigure_verify_scan_smoke_timeout_seconds: 180
+harbor_postconfigure_verify_scan_smoke_poll_interval_seconds: 5
+# Use Harbor's external registry URL for proxy-cache pulls so auth/token flow
+# matches what real OCI clients see. Fall back to the internal API endpoint if
+# no external URL is available in the environment.
+harbor_postconfigure_verify_scan_smoke_registry_url: >-
+  {{
+    lookup('env', 'HARBOR_EXTERNAL_URL')
+    | default('http://' ~ harbor_postconfigure_host ~ ':' ~ (harbor_postconfigure_port | string), true)
+  }}
+# The controller used for live verification may not trust Harbor's external
+# certificate chain yet. Keep smoke verification tolerant by default.
+harbor_postconfigure_verify_scan_smoke_registry_insecure: true

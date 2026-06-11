@@ -1,0 +1,9 @@
+Preflight passed: TF_VAR_proxmox_node=pve-test
+Counterpart target:
+  stack: proxy-stack
+  vmid: 30010
+  ip:   "${lab_ip_proxy}/24"
+  host: pve-test.gibbsgreatly.xyz
+  state: running
+Planned action: destroy
+Would stop the counterpart if running, then Terragrunt destroy proxy-stack on pve-test.

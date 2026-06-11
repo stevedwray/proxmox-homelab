@@ -1,0 +1,20 @@
+*   Trying 192.168.30.10:80...
+* Established connection to 192.168.30.10 (192.168.30.10 port 80) from 192.168.1.104 port 46570
+  % Total    % Received % Xferd  Average Speed  Time    Time    Time   Current
+                                 Dload  Upload  Total   Spent   Left   Speed
+  0      0   0      0   0      0      0      0                              0* using HTTP/1.x
+> GET / HTTP/1.1
+> Host: 192.168.30.10
+> User-Agent: curl/8.20.0
+> Accept: */*
+>
+* Request completely sent off
+< HTTP/1.1 301 Moved Permanently
+< Location: https://192.168.30.10/
+< Date: Sat, 23 May 2026 00:02:43 GMT
+< Content-Length: 17
+<
+{ [17 bytes data]
+100     17 100     17   0      0  17051      0                              0100     17 100     17   0      0  16715      0                              0100     17 100     17   0      0  16520      0                              0
+* Connection #0 to host 192.168.30.10:80 left intact
+Moved Permanently

@@ -7,6 +7,23 @@ import urllib.request
 import urllib.error
 
 
+def _first_env(*names):
+    """Return the first non-empty environment value from the given names."""
+    for name in names:
+        value = os.environ.get(name)
+        if value:
+            return value
+    return None
+
+
+def _normalize_api_base(url: str) -> str:
+    """Normalize a Proxmox API base URL to the host root without /api2/json."""
+    normalized = url.rstrip("/")
+    if normalized.endswith("/api2/json"):
+        normalized = normalized[: -len("/api2/json")]
+    return normalized
+
+
 class ProxmoxClient:
     """Thin wrapper around the Proxmox REST API.
 
@@ -15,13 +32,35 @@ class ProxmoxClient:
     """
 
     def __init__(self, url=None, token_id=None, token_secret=None):
-        self.url = (url or os.environ.get("PROXMOX_URL") or f"https://{os.environ.get('PROXMOX_HOST')}:8006").rstrip("/")
-        self.token_id = token_id or os.environ.get("PROXMOX_TOKEN_ID")
-        self.token_secret = token_secret or os.environ.get("PROXMOX_TOKEN_SECRET")
+        proxmox_host = _first_env("PROXMOX_HOST", "TF_VAR_proxmox_host")
+        resolved_url = (
+            url
+            or _first_env("PROXMOX_URL", "TF_VAR_proxmox_api_url")
+            or f"https://{proxmox_host}:8006"
+        )
+
+        self.url = _normalize_api_base(resolved_url)
+
+        # Credential resolution precedence (most explicit → fallback):
+        # 1) PROXMOX_READONLY_TOKEN_ID / PROXMOX_READONLY_TOKEN_SECRET
+        # 2) PROXMOX_TOKEN_ID / PROXMOX_TOKEN_SECRET (legacy)
+        # 3) TF_VAR_pm_api_token_id / TF_VAR_pm_api_token_secret (Terraform-injected)
+        self.token_id = token_id or _first_env(
+            "PROXMOX_READONLY_TOKEN_ID",
+            "PROXMOX_TOKEN_ID",
+            "TF_VAR_pm_api_token_id",
+        )
+        self.token_secret = token_secret or _first_env(
+            "PROXMOX_READONLY_TOKEN_SECRET",
+            "PROXMOX_TOKEN_SECRET",
+            "TF_VAR_pm_api_token_secret",
+        )
 
         if not self.token_id or not self.token_secret:
             raise ValueError(
-                "Proxmox auth requires PROXMOX_TOKEN_ID and PROXMOX_TOKEN_SECRET env vars"
+                "Proxmox auth requires a token id and secret. Set "
+                "PROXMOX_READONLY_TOKEN_ID/PROXMOX_READONLY_TOKEN_SECRET, "
+                "or fall back to PROXMOX_TOKEN_ID/PROXMOX_TOKEN_SECRET or TF_VAR_pm_api_token_*."
             )
 
     def _request(self, method, path, data=None):
@@ -243,7 +282,10 @@ if __name__ == "__main__":
 
     try:
         print(f"Proxmox Host: {os.environ.get('PROXMOX_HOST')}")
-        print(f"Proxmox Token ID: {os.environ.get('PROXMOX_TOKEN_ID')}")
+        # Show the preferred readonly token id if set, otherwise fall back
+        print(
+            f"Proxmox Readonly Token ID: {os.environ.get('PROXMOX_READONLY_TOKEN_ID') or os.environ.get('PROXMOX_TOKEN_ID')}"
+        )
 
         data = discover_from_proxmox()
 

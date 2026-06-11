@@ -1,0 +1,19 @@
+Warning: Permanently added '192.168.30.10' (ED25519) to the list of known hosts.
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Traefik version 3.1.6 built on 2024-10-09T13:57:41Z [36mversion=[0m3.1.6
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m
+[2Ktraefik  | Stats collection is disabled.
+[2Ktraefik  | Help us improve Traefik by turning this feature on :)
+[2Ktraefik  | More details on: https://doc.traefik.io/traefik/contributing/data-collection/
+[2Ktraefik  |
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider aggregator aggregator.ProviderAggregator
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *file.Provider
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *traefik.Provider
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *docker.Provider
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *acme.ChallengeTLSALPN
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *acme.Provider
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Testing certificate renew... [36macmeCA=[0mhttps://acme-staging-v02.api.letsencrypt.org/directory [36mproviderName=[0mletsencrypt.acme
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Starting provider *acme.Provider
+[2Ktraefik  | [90m2026-05-23T00:02:33Z[0m [32mINF[0m Testing certificate renew... [36macmeCA=[0mhttps://192.168.20.11/acme/acme/directory [36mproviderName=[0mstep-ca.acme
+[2Ktraefik  | [90m2026-05-23T00:02:35Z[0m [32mINF[0m Register... [36mproviderName=[0mletsencrypt.acme
+
+Gate 3: Port reachability from control node (80, 443)

@@ -1,0 +1,13 @@
+Warning: Permanently added '192.168.40.10' (ED25519) to the list of known hosts.
+NAMES               STATUS
+nginx               Up 52 seconds (healthy)
+harbor-jobservice   Up 48 seconds (healthy)
+trivy-adapter       Up 52 seconds (healthy)
+harbor-core         Up 52 seconds (healthy)
+harbor-portal       Up 53 seconds (healthy)
+registryctl         Up 53 seconds (healthy)
+harbor-db           Up 53 seconds (healthy)
+redis               Up 53 seconds (healthy)
+registry            Up 53 seconds (healthy)
+harbor-log          Up 53 seconds (healthy)
+portainer-agent     Up About a minute

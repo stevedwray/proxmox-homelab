@@ -64,3 +64,10 @@ docker_socket_proxy_targets:
 ansible_playbook: "deploy-harbor-stack"
 deployment_tier: platform
 portainer_agent: false
+
+# Docker socket proxy — read-only Docker API endpoint for NetBox discovery
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_harbor}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_harbor}"

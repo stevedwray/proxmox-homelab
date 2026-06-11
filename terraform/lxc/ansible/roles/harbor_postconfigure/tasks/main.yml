@@ -389,8 +389,11 @@
     body:
       project_name: "{{ harbor_postconfigure_proxy_project_name }}"
       public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_proxy_project_auto_scan else 'false' }}"
       registry_id: "{{ harbor_postconfigure_dockerhub_endpoint_id | int }}"
     status_code: 201
+  register: harbor_postconfigure_proxy_project_create_result
   when: harbor_postconfigure_proxy_project_exists is not defined
   delegate_to: localhost
 
@@ -470,10 +473,13 @@
     body:
       project_name: "{{ item.name }}"
       public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_proxy_project_auto_scan else 'false' }}"
       registry_id: >-
         {{ (harbor_postconfigure_all_registries_updated.json
             | selectattr('name', 'equalto', item.name) | list | first).id | int }}
     status_code: 201
+  register: harbor_postconfigure_additional_proxy_project_create_result
   loop: "{{ harbor_postconfigure_proxy_registries }}"
   when: >
     harbor_postconfigure_all_projects.json
@@ -484,6 +490,131 @@
   ansible.builtin.debug:
     msg: "Proxy cache registry '{{ item.name }}' ({{ item.url }}) configured"
   loop: "{{ harbor_postconfigure_proxy_registries }}"
+  delegate_to: localhost
+
+- name: Record expected proxy cache project names
+  ansible.builtin.set_fact:
+    harbor_postconfigure_expected_proxy_projects: >-
+      {{
+        [harbor_postconfigure_proxy_project_name]
+        + (harbor_postconfigure_proxy_registries | map(attribute='name') | list)
+      }}
+  delegate_to: localhost
+
+- name: Record proxy cache projects created in this run
+  ansible.builtin.set_fact:
+    harbor_postconfigure_proxy_projects_created: >-
+      {{
+        (
+          [harbor_postconfigure_proxy_project_name]
+          if (
+            harbor_postconfigure_proxy_project_create_result is defined
+            and not (harbor_postconfigure_proxy_project_create_result is skipped)
+          )
+          else []
+        )
+        + (
+          harbor_postconfigure_additional_proxy_project_create_result.results | default([])
+          | selectattr('status', 'defined')
+          | map(attribute='item.name')
+          | list
+        )
+      }}
+  delegate_to: localhost
+
+- name: Read back proxy cache project metadata
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ harbor_postconfigure_expected_proxy_projects }}"
+  register: harbor_postconfigure_proxy_project_details
+  delegate_to: localhost
+
+- name: Record existing proxy cache projects missing auto_scan metadata
+  ansible.builtin.set_fact:
+    harbor_postconfigure_proxy_projects_missing_auto_scan: >-
+      {{
+        harbor_postconfigure_proxy_project_details.results
+        | rejectattr('json.metadata.auto_scan', 'equalto', 'true')
+        | map(attribute='item')
+        | list
+      }}
+  delegate_to: localhost
+
+- name: Warn when existing proxy cache projects are missing auto_scan metadata
+  ansible.builtin.debug:
+    msg: >-
+      Existing Harbor proxy cache projects are missing auto_scan metadata:
+      {{ harbor_postconfigure_proxy_projects_missing_auto_scan | join(', ') }}.
+      Fresh rebuilds will create them correctly, but this existing Harbor instance
+      still needs drift remediation before scan coverage can be trusted.
+  when:
+    - (harbor_postconfigure_proxy_projects_missing_auto_scan | default([]) | length) > 0
+    - (
+        harbor_postconfigure_proxy_projects_missing_auto_scan
+        | difference(harbor_postconfigure_proxy_projects_created | default([]))
+        | length
+      ) > 0
+  delegate_to: localhost
+
+- name: Attempt to reconcile existing proxy cache projects to enable auto_scan
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item.json.project_id }}"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_id: "{{ item.json.project_id }}"
+      project_name: "{{ item.json.name }}"
+      public: true
+      metadata:
+        auto_scan: "true"
+    status_code: 200
+  loop: "{{ harbor_postconfigure_proxy_project_details.results }}"
+  when: >-
+    (item.json.metadata is not defined) or (item.json.metadata.auto_scan is not defined) or (item.json.metadata.auto_scan != 'true')
+  register: harbor_postconfigure_proxy_project_reconcile_results
+  delegate_to: localhost
+
+- name: Re-read proxy cache project metadata after reconciliation
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ harbor_postconfigure_expected_proxy_projects }}"
+  register: harbor_postconfigure_proxy_project_details_after_reconcile
+  delegate_to: localhost
+
+- name: Assert all proxy cache projects expose auto_scan=true after reconcile
+  ansible.builtin.assert:
+    that:
+      - item.json.metadata.auto_scan | default('false') == 'true'
+    fail_msg: >-
+      Harbor proxy cache project '{{ item.item }}' does not expose
+      metadata.auto_scan=true after reconciliation. Manual remediation is
+      required to ensure scan policies are applied consistently.
+  loop: "{{ harbor_postconfigure_proxy_project_details_after_reconcile.results }}"
+  delegate_to: localhost
+
+- name: Assert newly created proxy cache projects enable auto_scan
+  ansible.builtin.assert:
+    that:
+      - item.json.metadata.auto_scan | default('false') == 'true'
+    fail_msg: >-
+      Harbor proxy cache project '{{ item.item }}' was created but does not expose
+      metadata.auto_scan=true on read-back. Fresh rebuild scan coverage will not be
+      reliable until this project metadata converges.
+  loop: "{{ harbor_postconfigure_proxy_project_details.results }}"
+  when: item.item in (harbor_postconfigure_proxy_projects_created | default([]))
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
@@ -561,43 +692,110 @@
 # Vulnerability scanning (Trivy)
 # -----------------------------------------------------------------------
 
-- name: Enable scan on push
+- name: Configure Harbor nightly full scan schedule
   ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/system/scanAll/schedule"
     method: PUT
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
     force_basic_auth: true
     body_format: json
     body:
-      scan_all_policy:
-        type: "schedule"
-        parameter:
-          schedule:
-            type: "Custom"
-            cron: "{{ harbor_postconfigure_scan_schedule }}"
-      scan_on_push_enabled: "{{ harbor_postconfigure_scan_on_push }}"
-    status_code: 200
+      schedule:
+        type: "Custom"
+        cron: "{{ harbor_postconfigure_scan_schedule }}"
+    status_code: [200, 201]
+  register: harbor_postconfigure_scan_schedule_write
   delegate_to: localhost
 
-- name: Trigger immediate full scan of all cached artifacts
+- name: Read back Harbor nightly full scan schedule
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/system/scanAll/schedule"
-    method: POST
+    method: GET
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
     force_basic_auth: true
-    body_format: json
-    body:
-      schedule:
-        type: "Manual"
-    status_code: [200, 201, 409]
-  register: harbor_postconfigure_scan_result
+    return_content: true
+    status_code: 200
+  register: harbor_postconfigure_scan_schedule_readback
   delegate_to: localhost
 
-- name: Display scan status
+- name: Assert Harbor nightly full scan schedule persisted
+  ansible.builtin.assert:
+    that:
+      - harbor_postconfigure_scan_schedule_readback.content | trim | length > 0
+      - harbor_postconfigure_scan_schedule_readback.content is search(harbor_postconfigure_scan_schedule)
+    fail_msg: >-
+      Harbor accepted the scan schedule write but did not read back the expected
+      cron '{{ harbor_postconfigure_scan_schedule }}'. Do not trust rebuild scan
+      policy convergence until this is fixed.
+  delegate_to: localhost
+
+- name: Run Harbor cached-artifact scan smoke check
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'python3',
+          role_path ~ '/files/harbor_scan_smoke.py',
+          '--base-url',
+          'http://' ~ harbor_postconfigure_host ~ ':' ~ (harbor_postconfigure_port | string),
+          '--registry-url',
+          harbor_postconfigure_verify_scan_smoke_registry_url,
+        ]
+        + (
+          ['--registry-insecure']
+          if harbor_postconfigure_verify_scan_smoke_registry_insecure
+          else []
+        )
+        + [
+          '--username',
+          harbor_postconfigure_admin_user,
+          '--password',
+          harbor_postconfigure_admin_password,
+          '--project',
+          harbor_postconfigure_verify_scan_smoke_project,
+          '--repository',
+          harbor_postconfigure_verify_scan_smoke_repository,
+          '--tag',
+          harbor_postconfigure_verify_scan_smoke_tag,
+          '--timeout-seconds',
+          harbor_postconfigure_verify_scan_smoke_timeout_seconds | string,
+          '--poll-interval-seconds',
+          harbor_postconfigure_verify_scan_smoke_poll_interval_seconds | string,
+        ]
+      }}
+  register: harbor_postconfigure_scan_smoke_result
+  changed_when: false
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+  no_log: true
+
+- name: Record Harbor cached-artifact scan smoke summary
+  ansible.builtin.set_fact:
+    harbor_postconfigure_scan_smoke_summary: "{{ harbor_postconfigure_scan_smoke_result.stdout | from_json }}"
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+  no_log: true
+
+- name: Display Harbor scan status
   ansible.builtin.debug:
-    msg: >-
-      Vulnerability scan triggered (scan-on-push enabled, nightly schedule: {{ harbor_postconfigure_scan_schedule }}).
-      {{ 'Scan already running.' if harbor_postconfigure_scan_result.status == 409 else 'Full scan started.' }}
+    msg:
+      - "Harbor nightly full scan schedule verified at '{{ harbor_postconfigure_scan_schedule }}'."
+      - >-
+        Harbor scan smoke check passed for
+        {{ harbor_postconfigure_scan_smoke_summary.repository }}
+        :{{ harbor_postconfigure_scan_smoke_summary.tag }}
+        after {{ harbor_postconfigure_scan_smoke_summary.elapsed_seconds }}s.
+      - >-
+        Cached manifest {{ harbor_postconfigure_scan_smoke_summary.parent_digest }}
+        produced scan data via {{ harbor_postconfigure_scan_smoke_summary.scan_source }}
+        on digest {{ harbor_postconfigure_scan_smoke_summary.scanned_digest }}.
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+
+- name: Display Harbor scan schedule status when smoke verification is disabled
+  ansible.builtin.debug:
+    msg: "Harbor nightly full scan schedule verified at '{{ harbor_postconfigure_scan_schedule }}'."
+  when: not harbor_postconfigure_verify_scan_smoke
   delegate_to: localhost

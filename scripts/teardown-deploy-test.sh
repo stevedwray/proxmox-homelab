@@ -20,7 +20,7 @@ TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
 HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
-INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
+INVENTORY_FILE="${TEARDOWN_INVENTORY_FILE:-${REPO_ROOT}/docs/teardown-test/inventory.md}"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
 if [[ "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
   DEFAULT_WITH_SECRETS_WRAPPER="with-secrets-prod"

@@ -1,0 +1,29 @@
+=== PREFLIGHT: Target node verification ===
+
+Check: Authentik plan targets pve (read-only validation)
+12:28:16.263 STDOUT tofu:             "network_sdn_expected_pve_host": "pve.gibbsgreatly.xyz"
+12:28:16.263 STDOUT tofu:             "network_sdn_expected_target": "pve"
+12:28:16.263 STDOUT tofu:             - "pve"
+12:28:16.263 STDOUT tofu:             "network_sdn_pve_host": "pve.gibbsgreatly.xyz"
+12:28:16.263 STDOUT tofu:             "network_sdn_target": "pve"
+12:28:16.263 STDOUT tofu:             "network_sdn_vnet_alias": "pve management segment"
+12:28:16.263 STDOUT tofu:                 "network_sdn_expected_pve_host": "pve.gibbsgreatly.xyz"
+12:28:16.263 STDOUT tofu:                 "network_sdn_expected_target": "pve"
+12:28:16.263 STDOUT tofu:                 - "pve"
+12:28:16.263 STDOUT tofu:                 "network_sdn_pve_host": "pve.gibbsgreatly.xyz"
+12:28:16.263 STDOUT tofu:                 "network_sdn_target": "pve"
+12:28:16.263 STDOUT tofu:                 "network_sdn_vnet_alias": "pve management segment"
+12:28:16.263 STDOUT tofu:       + node_name      = "pve"
+12:28:16.264 STDOUT tofu: Plan: 5 to add, 0 to change, 0 to destroy.
+12:28:16.264 STDOUT tofu:           + intent          = "/home/steve/git/proxmox-homelab/terraform/lxc/network/pve.yaml"
+12:28:16.264 STDOUT tofu:       + pve_host     = "pve.gibbsgreatly.xyz"
+12:28:16.264 STDOUT tofu:       + target_node  = "pve"
+=== PREFLIGHT: Required inputs available ===
+
+Check: Environment variables sourced
+✓ .env.pve sourced
+LAB_IP_AUTHENTIK=192.168.20.10
+LAB_GW_MGMT=192.168.20.1
+LAB_IP_HARBOR=192.168.40.10
+LAB_IP_STEP_CA=192.168.20.11
+=== PREFLIGHT: Counterpart status (pve-test) ===

@@ -1,0 +1,8 @@
+=== PRODUCTION MUTATION APPROVED ===
+Task: canary-portainer-pve-20260523
+Command: bash -lc for v in PORTAINER_ADMIN_PASSWORD TF_VAR_portainer_admin_password PORTAINER_OAUTH_CLIENT_SECRET AUTHENTIK_SUPERUSER_API_TOKEN; do if [ -n "${!v:-}" ]; then printf "PASS %s set\n" "$v"; else printf "FAIL %s missing\n" "$v"; fi; done
+
+PASS PORTAINER_ADMIN_PASSWORD set
+PASS TF_VAR_portainer_admin_password set
+PASS PORTAINER_OAUTH_CLIENT_SECRET set
+PASS AUTHENTIK_SUPERUSER_API_TOKEN set

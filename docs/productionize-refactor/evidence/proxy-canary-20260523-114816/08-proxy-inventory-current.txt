@@ -1,0 +1,8 @@
+6:          ansible_host: 192.168.30.10
+10:          ssh_access_mode: direct
+14:          dns_server: 192.168.30.1
+15:          network_zone: edge_seg
+16:          contract_dns_server: 192.168.30.1
+17:          stack_name: proxy-stack
+18:          ansible_playbook: deploy-proxy-stack
+20:          app_stack_name: proxy-stack

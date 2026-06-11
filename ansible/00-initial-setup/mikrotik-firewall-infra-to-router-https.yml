@@ -1,0 +1,146 @@
+---
+- name: Ensure infra_seg can reach router HTTPS (REST API on port 443)
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    infra_router_https_rule:
+      comment: "homelab-infra-seg-router-https-443"
+      chain: "input"
+      action: "accept"
+      protocol: "tcp"
+      src-address: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') | mandatory('LAB_SUBNET_INFRA_CIDR env var is required') }}"
+      dst-port: "443"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find existing infra-to-router HTTPS rule by comment
+      ansible.builtin.set_fact:
+        infra_router_https_rule_existing: >-
+          {{
+            (firewall_filters.json
+              | selectattr('comment', 'defined')
+              | selectattr('comment', 'equalto', infra_router_https_rule.comment)
+              | list)
+            | first | default({})
+          }}
+
+    - name: Find first input drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        input_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'input')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add allow rule before first input drop/reject
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ infra_router_https_rule | combine({'place-before': input_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - infra_router_https_rule_existing == {}
+        - input_drop_anchor != {}
+      no_log: true
+
+    - name: Add allow rule when no input drop/reject anchor exists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        body_format: json
+        body: "{{ infra_router_https_rule }}"
+        status_code: [200, 201]
+      when:
+        - infra_router_https_rule_existing == {}
+        - input_drop_anchor == {}
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert infra-to-router HTTPS rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', infra_router_https_rule.comment)
+            | selectattr('chain', 'equalto', infra_router_https_rule.chain)
+            | selectattr('action', 'equalto', infra_router_https_rule.action)
+            | selectattr('protocol', 'equalto', infra_router_https_rule.protocol)
+            | selectattr('src-address', 'equalto', infra_router_https_rule['src-address'])
+            | selectattr('dst-port', 'equalto', infra_router_https_rule['dst-port'])
+            | list | length > 0
+        fail_msg: >-
+          Expected MikroTik input allow rule for infra_seg -> router tcp/443
+          was not found after apply.
+        success_msg: >-
+          MikroTik input allow rule for infra_seg -> router tcp/443 is present.

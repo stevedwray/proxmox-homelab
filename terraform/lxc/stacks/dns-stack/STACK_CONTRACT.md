@@ -2,7 +2,7 @@
 
 ## Purpose
 
-Internal authoritative nameserver and recursive resolver for the pve-test lab environment.
+Internal authoritative nameserver and recursive resolver for the mgmt_seg platform network.
 CoreDNS serves as the authoritative authority for `lab.gibbsgreatly.xyz` (mgmt_seg zone)
 and provides recursive resolution for external names. All platform and application stacks
 resolve lab FQDNs through this service.

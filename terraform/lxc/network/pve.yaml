@@ -16,7 +16,7 @@
 
 proxmox:
   target_node: pve
-  pve_host: pve.gibbsgreatly.xyz
+  pve_host: ${proxmox_host}
 
 attachments:
   lan:
@@ -135,15 +135,24 @@ policies:
     to: mgmt_seg
     protocol: tcp
     ports: [9000, 9443]
+    description: Traefik forward-auth to Authentik
   - from: mgmt_seg
     to: edge_seg
     protocol: tcp
     ports: [80]
+    description: step-ca ACME httpChallenge callback to Traefik
   - from: build_seg
     to: mgmt_seg
     protocol: tcp
     ports: [9000, 8428, 3100]
+    description: CI runner to Authentik and monitoring APIs
+  - from: all_zones
+    to: infra_seg
+    protocol: tcp
+    ports: [80, 443, 3142]
+    description: All zones and LAN to Harbor and apt-cacher
   - from: infra_seg
     to: mgmt_seg
     protocol: tcp
     ports: [9000, 9443]
+    description: NetBox to Portainer socket proxy and Authentik

@@ -2,22 +2,30 @@
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
 docs/**/handoffs/
+docs/**/artifacts/*
+docs/docker-refactor/evidence/
+docs/docker-refactor/reports/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
 docs/productionize-refactor/handoffs/*handoff*.md
 # Environment files
 storage-audit
-.env
 .env.local
 *.env
 .env.*
+!.env
+!.env.pve
+!.env.pve-test
 !.env.template
 !.env.pve-test.template
+!.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
 *.dec.env
+secrets.dec.*
+terraform/secrets.dec.*
 
 # Terraform
 *.tfstate
@@ -41,6 +49,7 @@ override.tf.json
 
 # Generated Terraform outputs in stack dirs
 **/stacks/*/inventory.yml
+**/stacks/*/inventory.generated.yml
 **/stacks/*/network-*-vars.yml
 terraform/lxc/.generated/
 
@@ -91,4 +100,7 @@ certs/homelab-root.crt
 .genai/
 
 # Local CI artifacts (logs, scan outputs)
-artifacts/
+/artifacts/
+.tmp/
+docs/harbor-stack/artifacts
+!docs/harbor-stack/artifacts/.gitkeep

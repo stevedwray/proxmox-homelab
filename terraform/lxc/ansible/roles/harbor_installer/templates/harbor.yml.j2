@@ -62,6 +62,11 @@ log:
 
 _version: {{ harbor_installer_version }}
 
+metric:
+  enabled: true
+  port: 9090
+  path: /metrics
+
 proxy:
   http_proxy:
   https_proxy:
