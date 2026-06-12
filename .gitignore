@@ -17,8 +17,10 @@ storage-audit
 !.env
 !.env.pve
 !.env.pve-test
+!.env.pve-test-vm
 !.env.template
 !.env.pve-test.template
+!.env.pve-test-vm.template
 !.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions

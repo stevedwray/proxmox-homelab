@@ -20,6 +20,7 @@
     netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
     netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
     netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
 
   tasks:
     - name: Ensure NetBox compose directory exists
@@ -414,7 +415,7 @@
 
     - name: Copy network intent file for deployed service
       ansible.builtin.copy:
-        src: "../../network/pve-test.yaml"
+        src: "../../network/{{ netbox_network_env }}.yaml"
         dest: /etc/netbox-populate/network.yaml
         owner: root
         group: root
@@ -442,7 +443,7 @@
           DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375
           # Legacy single-endpoint fallback (leave unset unless needed):
           # DOCKER_SOCKET_PROXY_URL=
-          NETBOX_NETWORK_ENV=pve-test
+          NETBOX_NETWORK_ENV={{ netbox_network_env }}
           NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}

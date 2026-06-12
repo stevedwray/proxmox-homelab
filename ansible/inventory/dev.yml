@@ -9,6 +9,10 @@ all:
               ansible_host: "{{ lookup('env', 'PROXMOX_TESTBED_HOST_IP') | default('pve-test.gibbsgreatly.xyz', true) }}"
               ansible_user: root
               pmx_enable_nftables_firewall: true
+            pve-test-vm.gibbsgreatly.xyz:
+              ansible_host: "{{ lookup('env', 'PROXMOX_TESTBED_VM_HOST_IP') | default('pve-test-vm.gibbsgreatly.xyz', true) }}"
+              ansible_user: root
+              pmx_enable_nftables_firewall: true
 
       vars:
         ansible_python_interpreter: /usr/bin/python3

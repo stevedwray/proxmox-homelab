@@ -1,0 +1,206 @@
+# Proxmox-only network intent for the pve-test-vm environment.
+# This file is declarative; Terraform reads it to drive SDN VNet creation
+# (configure-network-sdn-vnet.yml) and to attach LXC containers to the
+# correct bridge and VLAN.
+#
+# Network model: Proxmox SDN VLAN zones — the MikroTik is the L3 gateway
+# for all zones. No routing or NAT is performed on the Proxmox host.
+# Inter-zone traffic flows through the MikroTik, which enforces firewall
+# policy at the router.
+#
+# Physical setup:
+#   pve-test-vm (VM on pve, 192.168.1.41) NIC → MikroTik trunk port
+#     Untagged (native): LAN — 192.168.1.0/24
+#     Tagged VLAN 10: build_seg — 192.168.10.0/24, gw 192.168.10.1
+#     Tagged VLAN 20: mgmt_seg  — 192.168.20.0/24, gw 192.168.20.1
+#     Tagged VLAN 30: edge_seg  — 192.168.30.0/24, gw 192.168.30.1
+#     Tagged VLAN 40: infra_seg — 192.168.40.0/24, gw 192.168.40.1
+#
+# Automation note: `configure-network-sdn-vnet.yml` now handles
+# `zone_type: vlan` for `pve-test-vm` SDN attachment creation. The remaining
+# out-of-band dependency is the MikroTik side: VLAN interfaces, gateway IPs,
+# DNS behavior, and firewall policy must already exist before stack
+# provisioning relies on direct routed access.
+
+proxmox:
+  target_node: pve-test-vm
+  pve_host: ${proxmox_host}
+
+attachments:
+  # -------------------------------------------------------------------------
+  # vmbr0 — Legacy bridge attachment
+  #
+  # This attachment remains only for legacy/test stacks that still use the
+  # default bridge path.
+  # -------------------------------------------------------------------------
+  lan:
+    description: Default LAN bridge — used only by legacy/test stacks (test-lxc, test-docker).
+      All active platform stacks use named SDN zones.
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: true
+
+  # -------------------------------------------------------------------------
+  # infra_seg — Infrastructure artifact services (VLAN 40, 192.168.40.0/24)
+  #
+  # Purpose: Registry, artifact cache, and IPAM. Deployed early in the build
+  #   sequence (second, after Portainer) because all other zones depend on
+  #   Harbor for image pulls and apt-cacher for apt proxy.
+  # Gateway: MikroTik VLAN 40 interface (192.168.40.1)
+  # Containers: Harbor (192.168.40.10), apt-cacher (192.168.40.11), NetBox (192.168.40.12)
+  # -------------------------------------------------------------------------
+  infra_seg:
+    description: Infrastructure services — registry, artifact cache, IPAM
+    type: sdn_vnet
+    bridge: tvinfra
+    firewall: false
+    sdn:
+      zone: tvinfra
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvinfra
+      vlan_tag: 40
+      alias: pve-test-vm infrastructure segment
+      subnet: "${lab_subnet_infra_cidr}"
+      gateway: "${lab_gw_infra}"
+      snat: false
+
+  # -------------------------------------------------------------------------
+  # mgmt_seg — Management plane (VLAN 20, 192.168.20.0/24)
+  #
+  # Purpose: Identity, PKI, and observability.
+  # Gateway: MikroTik VLAN 20 interface (192.168.20.1)
+  # Containers: Authentik (192.168.20.10), step-ca (192.168.20.11),
+  #             Monitoring (192.168.20.12)
+  # -------------------------------------------------------------------------
+  mgmt_seg:
+    description: Management plane — identity, PKI, monitoring
+    type: sdn_vnet
+    bridge: tvmgmt
+    firewall: true
+    sdn:
+      zone: tvmgmt
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvmgmt
+      vlan_tag: 20
+      alias: pve-test-vm management segment
+      subnet: "${lab_subnet_mgmt_cidr}"
+      gateway: "${lab_gw_mgmt}"
+      snat: false
+
+  # -------------------------------------------------------------------------
+  # edge_seg — Public ingress (VLAN 30, 192.168.30.0/24)
+  #
+  # Purpose: The only ingress path from the LAN into internal services.
+  # Gateway: MikroTik VLAN 30 interface (192.168.30.1)
+  # Containers: Traefik (192.168.30.10)
+  # -------------------------------------------------------------------------
+  edge_seg:
+    description: Edge ingress — reverse proxy only
+    type: sdn_vnet
+    bridge: tvedge
+    firewall: true
+    sdn:
+      zone: tvedge
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvedge
+      vlan_tag: 30
+      alias: pve-test-vm edge segment
+      subnet: "${lab_subnet_edge_cidr}"
+      gateway: "${lab_gw_edge}"
+      snat: false
+
+  # -------------------------------------------------------------------------
+  # build_seg — CI build workloads (VLAN 10, 192.168.10.0/24)
+  #
+  # Purpose: Self-hosted CI runner execution environment.
+  # Gateway: MikroTik VLAN 10 interface (192.168.10.1)
+  # Containers: ci-runner-01 (192.168.10.63, VMID 10063)
+  # -------------------------------------------------------------------------
+  seg_c:
+    description: CI build workload zone
+    type: sdn_vnet
+    bridge: tvnetc
+    firewall: false
+    sdn:
+      zone: tvsegc
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvnetc
+      vlan_tag: 10
+      alias: pve-test-vm build segment
+      subnet: "${lab_subnet_build_cidr}"
+      gateway: "${lab_gw_build}"
+      snat: false
+
+zones:
+  infra_seg:
+    description: Infrastructure services — Harbor, apt-cacher, NetBox
+    attachment: infra_seg
+    containers:
+      - "Harbor (VMID 40010)    — ${lab_ip_harbor}"
+      - "apt-cacher (VMID 40011) — ${lab_ip_apt_cacher}"
+      - "NetBox (VMID 40012)    — ${lab_ip_netbox}"
+  mgmt_seg:
+    description: Management plane — Portainer, Authentik, step-ca, Monitoring
+    attachment: mgmt_seg
+    containers:
+      - "Portainer (VMID 20020)  — ${lab_ip_portainer}"
+      - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
+      - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
+      - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
+  edge_seg:
+    description: Edge ingress — Traefik reverse proxy
+    attachment: edge_seg
+    containers:
+      - "Traefik (VMID 30010) — ${lab_ip_proxy}"
+  build_seg:
+    description: CI build workload zone
+    attachment: seg_c
+    containers:
+      - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
+
+inventory:
+  proxmox_nodes:
+    - host: "${proxmox_host}"
+      token_id_env: PROXMOX_READONLY_TOKEN_ID
+      token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
+    - host: "pve.gibbsgreatly.xyz"
+      token_id_env: PVE_READONLY_TOKEN_ID
+      token_secret_env: PVE_READONLY_TOKEN_SECRET
+      portainer_url: "https://management-stack.gibbsgreatly.xyz:9443"
+      portainer_api_key_env: PORTAINER_TOKEN
+  static_hosts: []
+
+policies:
+  - from: edge_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9000, 9443]
+    description: Traefik forward-auth to Authentik (9000 HTTP, 9443 HTTPS)
+  - from: mgmt_seg
+    to: edge_seg
+    protocol: tcp
+    ports: [80]
+    description: step-ca ACME httpChallenge callback to Traefik
+  - from: build_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9000, 8428, 3100]
+    description: ci-runner to Authentik (9000), VictoriaMetrics (8428), Loki (3100)
+  - from: all_zones
+    to: infra_seg
+    protocol: tcp
+    ports: [80, 443, 3142]
+    description: All zones and LAN → Harbor (80/443) and apt-cacher (3142)
