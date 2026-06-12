@@ -17,6 +17,23 @@
       }}
 
   tasks:
+    - name: Resolve Terraform template variables in SDN attachment subnet/gateway
+      ansible.builtin.set_fact:
+        proxmox_sdn_attachments: >-
+          {%- set ns = namespace(resolved=[]) -%}
+          {%- for item in proxmox_sdn_attachments -%}
+            {%- set sdn = item.value.sdn -%}
+            {%- set subnet_raw = sdn.subnet | default('') -%}
+            {%- set gateway_raw = sdn.gateway | default('') -%}
+            {%- set subnet_var = subnet_raw | regex_replace('^\$\{(\w+)\}$', '\1') -%}
+            {%- set gateway_var = gateway_raw | regex_replace('^\$\{(\w+)\}$', '\1') -%}
+            {%- set resolved_subnet = (lookup('env', subnet_var) if subnet_raw.startswith('${') else subnet_raw) -%}
+            {%- set resolved_gateway = (lookup('env', gateway_var) if gateway_raw.startswith('${') else gateway_raw) -%}
+            {%- set new_item = item | combine({'value': item.value | combine({'sdn': sdn | combine({'subnet': resolved_subnet, 'gateway': resolved_gateway})})}, recursive=True) -%}
+            {%- set _ = ns.resolved.append(new_item) -%}
+          {%- endfor -%}
+          {{ ns.resolved }}
+
     - name: Assert pve-test VLAN SDN source of truth
       ansible.builtin.assert:
         that:

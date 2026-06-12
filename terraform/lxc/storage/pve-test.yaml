@@ -3,7 +3,7 @@ version: 1
 defaults:
   storage_profile: platform-default
   extra_mount_profile: durable-default
-  template_profile: local-template
+  template_profile: usb-template
 
 templates:
   default:
