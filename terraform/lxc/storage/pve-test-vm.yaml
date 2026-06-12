@@ -1,8 +1,8 @@
 version: 1
 
 defaults:
-  storage_profile: platform-default
-  extra_mount_profile: durable-default
+  storage_profile: platform-zfs
+  extra_mount_profile: durable-zfs
   template_profile: usb-template
 
 templates:
