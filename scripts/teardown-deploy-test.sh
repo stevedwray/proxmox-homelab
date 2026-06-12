@@ -112,18 +112,18 @@ BREAKGLASS_DNS_HOSTS=(
   "proxy-bg"
 )
 
-LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-}"
-LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
-LAB_IP_DNS="${LAB_IP_DNS:-}"
-LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
-LAB_IP_PROXY="${LAB_IP_PROXY:-}"
-LAB_GW_MGMT="${LAB_GW_MGMT:-}"
-LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+export LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-}"
+export LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
+export LAB_IP_DNS="${LAB_IP_DNS:-}"
+export LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
+export LAB_IP_PROXY="${LAB_IP_PROXY:-}"
+export LAB_GW_MGMT="${LAB_GW_MGMT:-}"
+export LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
 export LAB_BASE_DOMAIN="${LAB_BASE_DOMAIN:-${LAB_DOMAIN}}"
-LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
-LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
-LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
-LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
+export LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
+export LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
+export LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
+export LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
 
 # Runtime-generated deltas that can legitimately appear mid-cycle.
 EXPECTED_RUNTIME_DIRTY_PATHS=(
@@ -656,8 +656,9 @@ record_branch_and_commit() {
 
 assert_traefik_render_output() {
   local logfile="$1"
+  local status=0
 
-  if python3 - "${logfile}" <<'PY'
+  python3 - "${logfile}" <<'PY' || status=$?
 import json
 import os
 import sys
@@ -689,23 +690,22 @@ if missing:
 if empty:
     raise SystemExit("Empty rendered Traefik files: " + ", ".join(empty))
 PY
-  then
-    return 0
-  fi
 
-  local status=$?
-  set_phase_failure_context \
-    "assert-traefik-render-output" \
-    "python3 <traefik-render-output-assertion> ${logfile}" \
-    "${logfile}" \
-    "Traefik render output assertion failed"
-  return "${status}"
+  if [[ "${status}" -ne 0 ]]; then
+    set_phase_failure_context \
+      "assert-traefik-render-output" \
+      "python3 <traefik-render-output-assertion> ${logfile}" \
+      "${logfile}" \
+      "Traefik render output assertion failed"
+    return "${status}"
+  fi
 }
 
 assert_coredns_render_output() {
   local logfile="$1"
+  local status=0
 
-  if python3 - "${logfile}" <<'PY'
+  python3 - "${logfile}" <<'PY' || status=$?
 import json
 import os
 import sys
@@ -724,21 +724,21 @@ if not output_zone.is_file():
 rendered_zone = output_zone.read_text(encoding="utf-8")
 if "Generated browser edge records" not in rendered_zone:
     raise SystemExit("Rendered CoreDNS zone is missing generated browser record section")
-expected_target = os.environ["LAB_IP_PROXY"]
+expected_target = os.environ.get("LAB_IP_PROXY", "")
+if not expected_target:
+    raise SystemExit("LAB_IP_PROXY is not set — source your environment file before running")
 if expected_target not in rendered_zone:
     raise SystemExit(f"Rendered CoreDNS zone is missing the expected {expected_target} target")
 PY
-  then
-    return 0
-  fi
 
-  local status=$?
-  set_phase_failure_context \
-    "assert-coredns-render-output" \
-    "python3 <coredns-render-output-assertion> ${logfile}" \
-    "${logfile}" \
-    "CoreDNS render output assertion failed"
-  return "${status}"
+  if [[ "${status}" -ne 0 ]]; then
+    set_phase_failure_context \
+      "assert-coredns-render-output" \
+      "python3 <coredns-render-output-assertion> ${logfile}" \
+      "${logfile}" \
+      "CoreDNS render output assertion failed"
+    return "${status}"
+  fi
 }
 
 resolve_stack_specs() {
