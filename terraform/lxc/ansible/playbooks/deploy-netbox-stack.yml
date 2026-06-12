@@ -373,6 +373,7 @@
     pve_readonly_token_id: "{{ lookup('env', 'PVE_READONLY_TOKEN_ID') | default('', true) }}"
     pve_readonly_token_secret: "{{ lookup('env', 'PVE_READONLY_TOKEN_SECRET') | default('', true) }}"
     portainer_token: "{{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
 
   tasks:
     - name: Install python3 and pyyaml
