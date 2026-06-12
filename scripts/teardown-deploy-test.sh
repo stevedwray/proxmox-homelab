@@ -1393,11 +1393,22 @@ stack_ip() {
   printf '%s\n' "${1##*:}"
 }
 
+ensure_workspace_dir() {
+  local stack="$1"
+  local workspace="${2:-${TERRAGRUNT_WORKSPACE}}"
+  local dir="${REPO_ROOT}/terraform/lxc/stacks/${stack}/terraform.tfstate.d/${workspace}"
+  if [[ ! -d "${dir}" ]]; then
+    mkdir -p "${dir}"
+    log "created workspace dir: ${dir}"
+  fi
+}
+
 stack_apply() {
   local spec="$1"
   local stack
   stack="$(stack_name "${spec}")"
 
+  ensure_workspace_dir "${stack}"
   guard_target
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
@@ -1413,6 +1424,7 @@ stack_destroy() {
   stack="$(stack_name "${spec}")"
   vmid="$(stack_vmid "${spec}")"
 
+  ensure_workspace_dir "${stack}"
   guard_target
   if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
