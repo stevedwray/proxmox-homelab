@@ -40,6 +40,9 @@
     authentik_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
     authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
     authentik_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    # Keep in sync with image tags in stacks/authentik-stack/docker-compose.yml
+    authentik_image_version: "2024.12.3"
+    authentik_nginx_version: "1.27-alpine"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
@@ -340,10 +343,56 @@
       become: true
       when: not ansible_check_mode
 
+    - name: Check if Harbor registry is reachable
+      ansible.builtin.command:
+        cmd: "nc -z -w 5 {{ authentik_registry_host }} 80"
+      register: authentik_harbor_reachable
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Pre-pull Authentik images from public registries (Harbor not yet available)
+      when:
+        - not ansible_check_mode
+        - authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0
+      block:
+        - name: Pull goauthentik server image from ghcr.io
+          ansible.builtin.command:
+            cmd: "docker pull ghcr.io/goauthentik/server:{{ authentik_image_version }}"
+
+        - name: Tag goauthentik server with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag ghcr.io/goauthentik/server:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
+
+        - name: Pull nginx image from Docker Hub
+          ansible.builtin.command:
+            cmd: "docker pull nginx:{{ authentik_nginx_version }}"
+
+        - name: Tag nginx with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag nginx:{{ authentik_nginx_version }} {{ authentik_registry_host }}/dockerhub/library/nginx:{{ authentik_nginx_version }}"
+
+        - name: Pull postgres image from Docker Hub
+          ansible.builtin.command:
+            cmd: "docker pull postgres:16-alpine"
+
+        - name: Pull redis image from Docker Hub
+          ansible.builtin.command:
+            cmd: "docker pull redis:alpine"
+
+        - name: Pull cadvisor image from gcr.io
+          ansible.builtin.command:
+            cmd: "docker pull gcr.io/cadvisor/cadvisor:v0.49.1"
+
+        - name: Pull promtail image from Docker Hub
+          ansible.builtin.command:
+            cmd: "docker pull grafana/promtail:3.0.0"
+
     - name: Start Authentik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ authentik_compose_dir }}"
         state: present
+        pull: "{{ 'never' if (authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0) else 'policy' }}"
       when: not ansible_check_mode
 
     - name: Restore host resolver to internal DNS after bootstrap fallback
