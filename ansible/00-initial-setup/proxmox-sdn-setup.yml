@@ -8,6 +8,15 @@
     - ../../terraform/lxc/network/pve-test.yaml
 
   vars:
+    # Subnet/gateway per VNet, resolved from env at task time (avoids ${} legacy var issue)
+    sdn_subnet_tvinfra: "{{ lookup('env', 'lab_subnet_infra_cidr') }}"
+    sdn_gw_tvinfra: "{{ lookup('env', 'lab_gw_infra') }}"
+    sdn_subnet_tvmgmt: "{{ lookup('env', 'lab_subnet_mgmt_cidr') }}"
+    sdn_gw_tvmgmt: "{{ lookup('env', 'lab_gw_mgmt') }}"
+    sdn_subnet_tvedge: "{{ lookup('env', 'lab_subnet_edge_cidr') }}"
+    sdn_gw_tvedge: "{{ lookup('env', 'lab_gw_edge') }}"
+    sdn_subnet_tvnetc: "{{ lookup('env', 'lab_subnet_build_cidr') }}"
+    sdn_gw_tvnetc: "{{ lookup('env', 'lab_gw_build') }}"
     proxmox_sdn_attachments: >-
       {{
         attachments
@@ -17,22 +26,18 @@
       }}
 
   tasks:
-    - name: Resolve Terraform template variables in SDN attachment subnet/gateway
+    - name: Inject resolved subnet and gateway into SDN attachments
       ansible.builtin.set_fact:
         proxmox_sdn_attachments: >-
-          {%- set ns = namespace(resolved=[]) -%}
+          {%- set ns = namespace(result=[]) -%}
           {%- for item in proxmox_sdn_attachments -%}
-            {%- set sdn = item.value.sdn -%}
-            {%- set subnet_raw = sdn.subnet | default('') -%}
-            {%- set gateway_raw = sdn.gateway | default('') -%}
-            {%- set subnet_var = subnet_raw | regex_replace('^\$\{(\w+)\}$', '\1') -%}
-            {%- set gateway_var = gateway_raw | regex_replace('^\$\{(\w+)\}$', '\1') -%}
-            {%- set resolved_subnet = (lookup('env', subnet_var) if subnet_raw.startswith('${') else subnet_raw) -%}
-            {%- set resolved_gateway = (lookup('env', gateway_var) if gateway_raw.startswith('${') else gateway_raw) -%}
-            {%- set new_item = item | combine({'value': item.value | combine({'sdn': sdn | combine({'subnet': resolved_subnet, 'gateway': resolved_gateway})})}, recursive=True) -%}
-            {%- set _ = ns.resolved.append(new_item) -%}
+            {%- set vnet = item.value.sdn.vnet -%}
+            {%- set subnet = lookup('vars', 'sdn_subnet_' + vnet) -%}
+            {%- set gateway = lookup('vars', 'sdn_gw_' + vnet) -%}
+            {%- set new_item = item | combine({'value': item.value | combine({'sdn': item.value.sdn | combine({'subnet': subnet, 'gateway': gateway})})}, recursive=True) -%}
+            {%- set _ = ns.result.append(new_item) -%}
           {%- endfor -%}
-          {{ ns.resolved }}
+          {{ ns.result }}
 
     - name: Assert pve-test VLAN SDN source of truth
       ansible.builtin.assert:
@@ -149,6 +154,15 @@
         loop_var: sdn_attachment
         label: "{{ sdn_attachment.value.sdn.vnet }}"
 
+    - name: Disable Proxmox cluster firewall (pve-test runs without guest bridge firewall)
+      ansible.builtin.copy:
+        dest: /etc/pve/firewall/cluster.fw
+        content: |
+          [OPTIONS]
+          enable: 0
+        mode: "0640"
+      notify: Restart pve-firewall
+
     - name: Apply pending SDN changes
       ansible.builtin.command:
         cmd: pvesh set /cluster/sdn
@@ -201,3 +215,9 @@
       vars:
         expected_bridges: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.vnet') | list }}"
         current_bridges: "{{ proxmox_sdn_link_result.stdout_lines | map('regex_replace', '\\s+.*$', '') | list }}"
+
+  handlers:
+    - name: Restart pve-firewall
+      ansible.builtin.systemd:
+        name: pve-firewall
+        state: restarted
