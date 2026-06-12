@@ -28,8 +28,8 @@ storage_backends:
 
 profiles:
   platform-default:
-    rootfs_storage: local-lvm
-    docker_storage: local-lvm
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   platform-zfs:
@@ -38,28 +38,28 @@ profiles:
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   validation-small:
-    rootfs_storage: local-lvm
-    docker_storage: local-lvm
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
   ssd-runtime:
-    rootfs_storage: local-lvm
-    docker_storage: local-lvm
+    rootfs_storage: infrastructure-containers
+    docker_storage: infrastructure-containers
     rootfs_required_content_type: rootdir
     docker_required_content_type: rootdir
 
 extra_mount_profiles:
   durable-default:
-    storage: local-lvm
+    storage: infrastructure-containers
     required_content_type: rootdir
   durable-zfs:
     storage: infrastructure-containers
     required_content_type: rootdir
   durable-small:
-    storage: local-lvm
+    storage: infrastructure-containers
     required_content_type: rootdir
   durable-ssd:
-    storage: local-lvm
+    storage: infrastructure-containers
     required_content_type: rootdir
 
 template_profiles:
@@ -75,11 +75,11 @@ template_profiles:
       - debian-13.1-2-docker-template.tar.gz
 
 legacy_rootfs_storage_profiles:
-  infrastructure-containers: platform-default
+  infrastructure-containers: platform-zfs
   storage-containers: validation-small
 
 legacy_extra_mount_storage_profiles:
-  infrastructure-containers: durable-default
+  infrastructure-containers: durable-zfs
   storage-containers: durable-small
 
 legacy_template_storage_profiles:
