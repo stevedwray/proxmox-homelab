@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
+from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests  # noqa: E402
 
 
 def _load_module(name: str, path: Path) -> Any:

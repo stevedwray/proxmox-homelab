@@ -85,7 +85,7 @@ class ProxmoxClient:
         ctx.verify_mode = ssl.CERT_NONE  # NOSONAR: intentional - homelab self-signed cert
 
         try:
-            with urllib.request.urlopen(req, context=ctx) as resp:
+            with urllib.request.urlopen(req, context=ctx) as resp:  # nosec B310 — internal Proxmox API on private SDN
                 if resp.status == 200:
                     return json.loads(resp.read().decode())
                 return None
@@ -278,7 +278,6 @@ def discover_from_proxmox(url=None, token_id=None, token_secret=None):
 
 if __name__ == "__main__":
     """Test connectivity and output discovered topology."""
-    import pprint
 
     try:
         print(f"Proxmox Host: {os.environ.get('PROXMOX_HOST')}")

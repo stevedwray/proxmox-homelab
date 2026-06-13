@@ -3,7 +3,7 @@
 import os
 import sys
 import unittest
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 discover_stub = MagicMock()
 discover_stub.build_full_topology.return_value = {"vms": [], "network": {}, "proxmox": {}}

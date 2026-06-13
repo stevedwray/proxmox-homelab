@@ -79,7 +79,7 @@ class MikrotikClient:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
         try:
-            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:  # nosec B310 — internal MikroTik API on private SDN
                 if resp.status == 200:
                     return json.loads(resp.read().decode())
                 return None
@@ -240,7 +240,6 @@ def discover_from_mikrotik(host=None, port=None, user=None, password=None):
 
 if __name__ == "__main__":
     """Test connectivity and output network topology."""
-    import pprint
 
     try:
         print(f"Mikrotik: {os.environ.get('MIKROTIK_HOST')}:{os.environ.get('MIKROTIK_PORT')}")

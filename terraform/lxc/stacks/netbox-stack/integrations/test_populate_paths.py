@@ -14,7 +14,7 @@ Run from this directory:
 """
 import sys
 import unittest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 
 # ---------------------------------------------------------------------------
@@ -93,7 +93,7 @@ SAMPLE_NETWORK = {
 
 SAMPLE_POPULATION_INTENT = {
     "environment": "pve-test",
-    "network_intent_path": "/tmp/pve-test.yaml",
+    "network_intent_path": "/tmp/pve-test.yaml",  # nosec B108 — test fixture path
     "proxmox": {
         "target_node": "pve-test",
         "cluster_name": "pve-test-cluster",

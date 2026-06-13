@@ -18,7 +18,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
+from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests  # noqa: E402
 
 
 DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
@@ -230,7 +230,7 @@ class AuthentikApiClient:
                 context = ssl.create_default_context()
                 context.load_verify_locations(cafile=extra_ca)
 
-        with urllib.request.urlopen(request, context=context) as response:
+        with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
             return json.loads(response.read().decode("utf-8"))
 
 
