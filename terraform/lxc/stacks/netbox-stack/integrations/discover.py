@@ -633,24 +633,32 @@ def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portaine
     return build_vm_list(proxmox_data, stack_yamls, portainer=portainer)
 
 
+_EMPTY_NETWORK_TOPOLOGY: dict = {
+    "router": None,
+    "interfaces": [],
+    "vlans": [],
+    "ip_addresses": [],
+}
+
+
 def build_network_topology():
     """Build router and network topology from Mikrotik.
 
     Returns a dict with router metadata, interfaces, VLANs, and IP addresses.
-    If Mikrotik credentials are not configured, returns an empty topology.
+    If Mikrotik credentials are not configured, or auth fails, returns an empty topology.
     """
     if not (
         (os.environ.get("MIKROTIK_READONLY_USER") and os.environ.get("MIKROTIK_READONLY_PASSWORD"))
         or (os.environ.get("MIKROTIK_USER") and os.environ.get("MIKROTIK_PASSWORD"))
     ):
-        return {
-            "router": None,
-            "interfaces": [],
-            "vlans": [],
-            "ip_addresses": [],
-        }
+        return dict(_EMPTY_NETWORK_TOPOLOGY)
 
-    data = discover_from_mikrotik()
+    try:
+        data = discover_from_mikrotik()
+    except RuntimeError as exc:
+        print(f"warn: MikroTik discovery failed; skipping network topology: {exc}")
+        return dict(_EMPTY_NETWORK_TOPOLOGY)
+
     return {
         "router": data.get("router"),
         "interfaces": data.get("interfaces", []),
