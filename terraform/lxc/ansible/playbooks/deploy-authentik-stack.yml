@@ -81,7 +81,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://{{ authentik_lab_ip_monitoring }}:3100/loki/api/v1/push
+            - url: http://{{ authentik_lab_ip_monitoring }}:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
 
           scrape_configs:
             - job_name: varlogs
@@ -270,7 +270,7 @@
             ssl_certificate_key /certs/direct/tls.key;
 
             location / {
-              proxy_pass http://server:9000;
+              proxy_pass http://server:9000;  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               proxy_http_version 1.1;
               proxy_set_header Host $host;
               proxy_set_header X-Real-IP $remote_addr;

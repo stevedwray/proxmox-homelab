@@ -16,7 +16,7 @@ class NetBoxClient:
         resolved_url = (
             url
             or os.environ.get("NETBOX_URL")
-            or (f"http://{os.environ.get('LAB_IP_NETBOX')}:8080" if os.environ.get("LAB_IP_NETBOX") else None)
+            or (f"http://{os.environ.get('LAB_IP_NETBOX')}:8080" if os.environ.get("LAB_IP_NETBOX") else None)  # nosonar: python:S5332 — NetBox HTTP-only on private SDN; accepted risk per findings.md FP6
         )
         if not resolved_url:
             raise ValueError("NetBox client requires NETBOX_URL or LAB_IP_NETBOX")

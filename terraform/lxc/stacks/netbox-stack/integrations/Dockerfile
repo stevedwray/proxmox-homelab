@@ -13,4 +13,8 @@ COPY client.py discover.py mikrotik_client.py proxmox_client.py populate.py /app
 
 RUN pip install --no-cache-dir pyyaml
 
+RUN useradd --system --no-create-home appuser
+
+USER appuser
+
 ENTRYPOINT ["python3", "/app/populate.py"]

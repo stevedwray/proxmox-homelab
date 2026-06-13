@@ -132,19 +132,19 @@ run_stack_health_check() {
         curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"
         ;;
       authentik-stack)
-        curl -fsS "http://${ip}:9000/-/health/live/"
+        curl -fsS "http://${ip}:9000/-/health/live/"  # NOSONAR — unauthenticated health check on private SDN
         ;;
       harbor-stack)
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"  # NOSONAR — unauthenticated health check on private SDN
         ;;
       monitoring-stack)
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"  # NOSONAR — unauthenticated health check on private SDN
         ;;
       netbox-stack)
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"  # NOSONAR — unauthenticated health check on private SDN
         ;;
       portainer-stack)
-        curl -fsS "http://${ip}:9000/api/system/status"
+        curl -fsS "http://${ip}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
         ;;
       *)
         fail "unsupported stack health check: ${stack}"

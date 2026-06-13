@@ -1451,15 +1451,15 @@ validate_stack_smoke() {
 
   case "${stack}" in
     portainer-stack)
-      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"
+      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     apt-cacher-stack)
       run_logged "health-${stack}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     harbor-stack)
       run_logged "health-${stack}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
@@ -1476,7 +1476,7 @@ validate_stack_smoke() {
       run_logged "health-${stack}" curl -sk "https://${ip}/acme/acme/directory"
       ;;
     authentik-stack)
-      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"
+      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     monitoring-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_GRAFANA}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_GRAFANA}/"
@@ -1532,7 +1532,7 @@ probe_stack_health() {
   case "${stack}" in
     portainer-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/api/system/status"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/api/system/status"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="portainer api ok"
       else
@@ -1543,7 +1543,7 @@ probe_stack_health() {
     apt-cacher-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
       else
@@ -1554,7 +1554,7 @@ probe_stack_health() {
     harbor-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" == '401' ]]"; then
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" == '401' ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="registry v2 challenge ok"
       else
@@ -1607,7 +1607,7 @@ probe_stack_health() {
       ;;
     authentik-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/-/health/live/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/-/health/live/"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="authentik health ok"
       else
@@ -1618,7 +1618,7 @@ probe_stack_health() {
     monitoring-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="grafana and victoriametrics ok"
       else
@@ -1629,7 +1629,7 @@ probe_stack_health() {
     netbox-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"; then
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="netbox http ok"
       else
@@ -2078,7 +2078,7 @@ phase_final_validation() {
   done
 
   run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
-  run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"
+  run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
   run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
     env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \

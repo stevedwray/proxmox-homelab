@@ -494,7 +494,7 @@ def main() -> int:
     initial_thread = threading.Thread(target=exporter.refresh_forever, daemon=True)
     initial_thread.start()
 
-    listen_address = _env("HARBOR_FINDINGS_LISTEN_ADDRESS", "0.0.0.0")  # nosec B104 — Prometheus exporter; configurable via env
+    listen_address = _env("HARBOR_FINDINGS_LISTEN_ADDRESS", "0.0.0.0")  # nosec B104 — nosonar: python:S5332 — Prometheus metrics listener; HTTP is standard for scraping
     listen_port = int(_env("HARBOR_FINDINGS_LISTEN_PORT", "9414"))
     server = ThreadingHTTPServer((listen_address, listen_port), MetricsHandler)
     server.serve_forever()

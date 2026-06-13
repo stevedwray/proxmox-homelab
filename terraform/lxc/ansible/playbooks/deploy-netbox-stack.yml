@@ -60,7 +60,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://loki:3100/loki/api/v1/push
+            - url: http://loki:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
 
           scrape_configs:
             - job_name: varlogs
