@@ -88,6 +88,8 @@ def _json_api(
 def _parse_bearer_challenge(www_authenticate: str) -> dict[str, str]:
     if not www_authenticate.startswith("Bearer "):
         raise RuntimeError(f"Unsupported registry auth challenge: {www_authenticate}")
+    if len(www_authenticate) > 4096:
+        raise RuntimeError("WWW-Authenticate header exceeds safe length limit")
     pairs = dict(re.findall(r'([a-zA-Z_]+)="([^"]+)"', www_authenticate))
     missing = {"realm", "service", "scope"} - pairs.keys()
     if missing:

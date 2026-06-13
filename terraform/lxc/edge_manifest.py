@@ -23,7 +23,7 @@ TRAEFIK_SERVICE_REF_PATTERN = re.compile(
 )
 LEGACY_HOST_RULE_PATTERN = re.compile(r"Host\(`([^`]+)`\)")
 JINJA_DEFAULT_HOST_PATTERN = re.compile(
-    r"^\{\{\s*[^}]*\|\s*default\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}$"
+    r"^\{\{\s*\S[^}]*\|\s*default\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}$"
 )
 
 
