@@ -55,7 +55,7 @@ class NetBoxClient:
             },
         )
         try:
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req) as resp:  # nosec B310 — internal NetBox API on private SDN
                 if resp.status == 204:
                     return None
                 return json.loads(resp.read().decode())

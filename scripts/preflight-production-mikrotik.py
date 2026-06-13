@@ -17,7 +17,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 MIKROTIK_CLIENT_DIR = REPO_ROOT / "terraform" / "lxc" / "stacks" / "netbox-stack" / "integrations"
 sys.path.insert(0, str(MIKROTIK_CLIENT_DIR))
 
-from mikrotik_client import MikrotikClient  # type: ignore
+from mikrotik_client import MikrotikClient  # type: ignore  # noqa: E402
 
 
 @dataclass

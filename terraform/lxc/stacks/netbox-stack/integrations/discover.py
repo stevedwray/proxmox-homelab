@@ -5,7 +5,6 @@ import json
 import os
 import re
 import socket
-import subprocess
 import urllib.parse
 import urllib.request
 import urllib.error
@@ -122,7 +121,7 @@ class PortainerClient:
             method="POST",
             headers={"Content-Type": "application/json"},
         )
-        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
+        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:  # nosec B310 — internal Portainer API on private SDN
             self._token = json.loads(resp.read().decode())["jwt"]
 
     def _get(self, path):
@@ -132,7 +131,7 @@ class PortainerClient:
             self._auth()
             headers = {"Authorization": f"Bearer {self._token}"}
         req = urllib.request.Request(f"{self.url}{path}", headers=headers)
-        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
+        with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:  # nosec B310 — internal Portainer API on private SDN
             return json.loads(resp.read().decode())
 
     def get_endpoints(self):
@@ -352,7 +351,7 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
         # pass an ssl context here that verifies against the step-ca or LE cert.
         # Currently HTTP only; context= omitted so urllib uses no TLS at all.
         list_req = urllib.request.Request(f"{base}/containers/json?all=1")
-        with urllib.request.urlopen(list_req) as resp:
+        with urllib.request.urlopen(list_req) as resp:  # nosec B310 — Docker socket proxy on private SDN
             summaries = json.loads(resp.read().decode())
     except Exception:
         return []
@@ -367,7 +366,7 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
 
         try:
             req = urllib.request.Request(f"{base}/containers/{cid}/json")
-            with urllib.request.urlopen(req) as resp:
+            with urllib.request.urlopen(req) as resp:  # nosec B310 — Docker socket proxy on private SDN
                 data = json.loads(resp.read().decode())
         except Exception:
             # skip containers we can't inspect

@@ -61,7 +61,7 @@ jobs:
             --include='*.yaml' \
             '^[[:space:]]*image:[[:space:]]*.*(docker\.io|ghcr\.io|quay\.io|registry\.k8s\.io)' \
             terraform/lxc/stacks/; then
-            echo "ERROR: Direct upstream registry references found. Use 10.57.3.10/... instead."
+            echo "ERROR: Direct upstream registry references found. Use harbor.lab.gibbsgreatly.xyz/... (proxy cache) instead."
             exit 1
           fi
           echo "OK — all image references use Harbor proxy."
@@ -140,6 +140,34 @@ jobs:
         # hosts. Run from ansible/ so ansible/ansible.cfg is discovered automatically.
         working-directory: ansible
         run: ../.venv/bin/ansible-lint 00-initial-setup/*.yml 01-base-system/*.yml
+
+  python-lint:
+    name: Python lint + security
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@8e8c483db84b4bee98b60c0593521ed34d9990e8 # v6.0.1
+
+      - name: Install ruff and bandit
+        run: |
+          pip install --only-binary ':all:' ruff==0.15.17 bandit==1.9.4
+
+      - name: Run ruff (lint)
+        run: |
+          find . -name '*.py' \
+            -not -path './.git/*' \
+            -not -path './_legacy/*' \
+            -not -path '*/.terragrunt-cache/*' \
+            -not -path './.venv/*' \
+            | xargs ruff check --output-format=github
+
+      - name: Run bandit (security)
+        run: |
+          find . -name '*.py' \
+            -not -path './.git/*' \
+            -not -path './_legacy/*' \
+            -not -path '*/.terragrunt-cache/*' \
+            -not -path './.venv/*' \
+            | xargs bandit -ll -q
 
   sops-decrypt-check:
     name: SOPS decrypt verification

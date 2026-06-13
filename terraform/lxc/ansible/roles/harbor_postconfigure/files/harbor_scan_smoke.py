@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import base64
 import json
+import os
 import re
 import ssl
 import sys
@@ -46,9 +47,13 @@ def _request(
     insecure: bool = False,
 ) -> tuple[int, dict[str, str], str]:
     request = urllib.request.Request(url, method=method, data=body, headers=headers or {})
-    context = ssl._create_unverified_context() if insecure else None
+    _CA_PATH = "/usr/local/share/ca-certificates/homelab-root.crt"
+    if insecure:
+        context = ssl._create_unverified_context()  # nosec B323 — explicit insecure flag from caller
+    else:
+        context = ssl.create_default_context(cafile=_CA_PATH) if os.path.exists(_CA_PATH) else ssl.create_default_context()
     try:
-        with urllib.request.urlopen(request, timeout=15, context=context) as response:
+        with urllib.request.urlopen(request, timeout=15, context=context) as response:  # nosec B310 — internal Harbor API on private SDN
             response_headers = {k: v for k, v in response.info().items()}
             return response.status, response_headers, response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
@@ -158,7 +163,7 @@ def _attempt_oci_pull_via_client(
 
     # Prefer skopeo because it does not depend on docker daemon registry config.
     if shutil.which("skopeo"):
-        out_tar = f"/tmp/harbor_smoke_{project}_{tag}.tar"
+        out_tar = f"/tmp/harbor_smoke_{project}_{tag}.tar"  # nosec B108 — smoke test artifact, ephemeral
         try:
             cmd = [
                 "skopeo",
@@ -175,7 +180,7 @@ def _attempt_oci_pull_via_client(
             return False
 
     if shutil.which("crane"):
-        out_tar = f"/tmp/harbor_smoke_{tag}.tar"
+        out_tar = f"/tmp/harbor_smoke_{tag}.tar"  # nosec B108 — smoke test artifact, ephemeral
         try:
             cmd = ["crane", "pull"]
             if registry_insecure:
@@ -391,7 +396,6 @@ def main() -> int:
         except Exception:
             mjson = None
 
-        manifests = []
         if isinstance(mjson, dict) and mjson.get("manifests"):
             # manifest list: fetch each child manifest by digest
             for child in mjson.get("manifests", []):

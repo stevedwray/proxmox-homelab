@@ -327,8 +327,8 @@ class TestBuildVmListRuntimeState(unittest.TestCase):
                 "Names": ["/netbox-netbox-1"],
                 "NetworkSettings": {
                     "Ports": {
-                        "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}],
-                        "53/udp": [{"HostIp": "0.0.0.0", "HostPort": "53"}],
+                        "8080/tcp": [{"HostIp": "0.0.0.0", "HostPort": "8080"}],  # nosec B104 — test fixture data
+                        "53/udp": [{"HostIp": "0.0.0.0", "HostPort": "53"}],  # nosec B104 — test fixture data
                     },
                     "Networks": {"bridge": {"IPAddress": "10.57.3.12"}},
                 },

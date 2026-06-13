@@ -6,13 +6,14 @@ from __future__ import annotations
 import base64
 import json
 import os
+import ssl
 import threading
 import time
 import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter, defaultdict
-from datetime import datetime, timezone
+from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
 
@@ -65,11 +66,12 @@ class HarborClient:
         self.base_url = base_url.rstrip("/")
         token = base64.b64encode(f"{username}:{password}".encode("utf-8")).decode("ascii")
         self._auth_header = f"Basic {token}"
-        self._ssl_context = None
-        if insecure and self.base_url.startswith("https://"):
-            import ssl
-
-            self._ssl_context = ssl._create_unverified_context()
+        _CA_PATH = "/usr/local/share/ca-certificates/homelab-root.crt"
+        self._ssl_context = (
+            ssl.create_default_context(cafile=_CA_PATH)
+            if os.path.exists(_CA_PATH)
+            else ssl.create_default_context()
+        )
 
     def _request_json(self, path: str) -> Any:
         request = urllib.request.Request(
@@ -77,7 +79,7 @@ class HarborClient:
             headers={"Authorization": self._auth_header},
         )
         try:
-            with urllib.request.urlopen(request, timeout=20, context=self._ssl_context) as response:
+            with urllib.request.urlopen(request, timeout=20, context=self._ssl_context) as response:  # nosec B310 — internal Harbor API on private SDN
                 content = response.read().decode("utf-8")
         except urllib.error.HTTPError as exc:
             if exc.code == 404:
@@ -492,7 +494,7 @@ def main() -> int:
     initial_thread = threading.Thread(target=exporter.refresh_forever, daemon=True)
     initial_thread.start()
 
-    listen_address = _env("HARBOR_FINDINGS_LISTEN_ADDRESS", "0.0.0.0")
+    listen_address = _env("HARBOR_FINDINGS_LISTEN_ADDRESS", "0.0.0.0")  # nosec B104 — Prometheus exporter; configurable via env
     listen_port = int(_env("HARBOR_FINDINGS_LISTEN_PORT", "9414"))
     server = ThreadingHTTPServer((listen_address, listen_port), MetricsHandler)
     server.serve_forever()

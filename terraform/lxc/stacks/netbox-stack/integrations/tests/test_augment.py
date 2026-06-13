@@ -1,4 +1,3 @@
-import os
 
 from populate import _augment_vms_with_declared_socket_proxy_targets
 from populate import NB_IPAM_IP_ADDRESSES, NB_VIRT_INTERFACES, NB_VIRT_VIRTUAL_MACHINES

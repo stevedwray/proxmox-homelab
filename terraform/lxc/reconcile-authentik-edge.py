@@ -243,7 +243,7 @@ class AuthentikApiClient:
             if extra_ca:
                 context = ssl.create_default_context()
                 context.load_verify_locations(cafile=extra_ca)
-        with urllib.request.urlopen(request, context=context) as response:
+        with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
             raw = response.read().decode("utf-8")
             if not raw:
                 return {}
