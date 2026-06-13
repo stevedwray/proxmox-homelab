@@ -104,7 +104,7 @@
     grafana_oauth_email_attribute_path: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_PATH') | default('preferred_username', true) }}"
     grafana_oauth_email_attribute_name: "{{ lookup('env', 'GRAFANA_OAUTH_EMAIL_ATTRIBUTE_NAME') | default('preferred_username', true) }}"
     grafana_oauth_use_id_token: "{{ lookup('env', 'GRAFANA_OAUTH_USE_ID_TOKEN') | default('true', true) | bool }}"
-    harbor_findings_api_url: "http://{{ lookup('env', 'LAB_IP_HARBOR') }}:80"
+    harbor_findings_api_url: "http://{{ lookup('env', 'LAB_IP_HARBOR') }}:80"  # nosonar: ansible:S5332 — Harbor HTTP-only in this deployment; private SDN
     harbor_findings_projects: "dockerhub,ghcr,quay,lscr"
     harbor_findings_refresh_interval_seconds: "300"
     harbor_findings_scan_stale_after_seconds: "86400"
@@ -345,7 +345,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://loki:3100/loki/api/v1/push
+            - url: http://loki:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
 
           scrape_configs:
             - job_name: varlogs
@@ -382,18 +382,18 @@
             - name: VictoriaMetrics
               type: prometheus
               access: proxy
-              url: http://victoriametrics:8428
+              url: http://victoriametrics:8428  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               isDefault: true
               editable: true
             - name: Loki
               type: loki
               access: proxy
-              url: http://loki:3100
+              url: http://loki:3100  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               editable: true
             - name: Harbor Findings
               type: yesoreyeram-infinity-datasource
               access: proxy
-              url: http://harbor-findings-exporter:{{ harbor_findings_listen_port }}
+              url: http://harbor-findings-exporter:{{ harbor_findings_listen_port }}  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               jsonData:
                 dataType: json
                 useBackend: false
@@ -660,7 +660,7 @@
 
     - name: Wait for Grafana health endpoint
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/health"
+        url: "http://{{ ansible_host }}:3000/api/health"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: GET
         status_code: 200
       register: grafana_health
@@ -671,7 +671,7 @@
 
     - name: Wait for VictoriaMetrics endpoint
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:8428/metrics"
+        url: "http://{{ ansible_host }}:8428/metrics"  # nosonar: ansible:S5332 — VictoriaMetrics health check on private SDN
         method: GET
         status_code: 200
       register: vm_health
@@ -682,7 +682,7 @@
 
     - name: Wait for Loki readiness endpoint
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3100/ready"
+        url: "http://{{ ansible_host }}:3100/ready"  # nosonar: ansible:S5332 — Loki health check on private SDN
         method: GET
         status_code: 200
       register: loki_health
@@ -693,7 +693,7 @@
 
     - name: Wait for Harbor findings exporter metrics endpoint
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:{{ harbor_findings_listen_port }}/metrics"
+        url: "http://{{ ansible_host }}:{{ harbor_findings_listen_port }}/metrics"  # nosonar: ansible:S5332 — Harbor findings exporter health check on private SDN
         method: GET
         status_code: 200
       register: harbor_findings_exporter_health
@@ -721,7 +721,7 @@
     - name: Look up Grafana breakglass local user
       check_mode: false
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
+        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: GET
         url_username: "{{ grafana_admin_user }}"
         url_password: "{{ grafana_admin_password }}"
@@ -733,7 +733,7 @@
 
     - name: Create Grafana breakglass local user when missing
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/admin/users"
+        url: "http://{{ ansible_host }}:3000/api/admin/users"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: POST
         url_username: "{{ grafana_admin_user }}"
         url_password: "{{ grafana_admin_password }}"
@@ -753,7 +753,7 @@
     - name: Refresh Grafana breakglass user lookup
       check_mode: false
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"
+        url: "http://{{ ansible_host }}:3000/api/users/lookup?loginOrEmail={{ grafana_breakglass_username }}"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: GET
         url_username: "{{ grafana_admin_user }}"
         url_password: "{{ grafana_admin_password }}"
@@ -765,7 +765,7 @@
 
     - name: Sync Grafana breakglass user password
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/password"
+        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/password"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: PUT
         url_username: "{{ grafana_admin_user }}"
         url_password: "{{ grafana_admin_password }}"
@@ -779,7 +779,7 @@
 
     - name: Ensure Grafana breakglass user is Grafana admin
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/permissions"
+        url: "http://{{ ansible_host }}:3000/api/admin/users/{{ grafana_breakglass_lookup_after.json.id }}/permissions"  # nosonar: ansible:S5332 — Grafana HTTP on private SDN; accepted risk per findings.md FP2
         method: PUT
         url_username: "{{ grafana_admin_user }}"
         url_password: "{{ grafana_admin_password }}"

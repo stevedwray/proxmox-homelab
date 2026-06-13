@@ -101,7 +101,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://{{ portainer_lab_ip_monitoring }}:3100/loki/api/v1/push
+            - url: http://{{ portainer_lab_ip_monitoring }}:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Loki push on private SDN; HTTP-only endpoint
 
           scrape_configs:
             - job_name: varlogs
@@ -246,7 +246,7 @@
 
     - name: Wait for Portainer API to become available
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/system/status"
+        url: "http://{{ ansible_host }}:9000/api/system/status"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         status_code: 200
       register: portainer_status
       until: portainer_status.status == 200
@@ -256,7 +256,7 @@
 
     - name: Initialise admin credentials
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users/admin/init"
+        url: "http://{{ ansible_host }}:9000/api/users/admin/init"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         body_format: json
         body:
@@ -269,7 +269,7 @@
 
     - name: Get Portainer auth token
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/auth"
+        url: "http://{{ ansible_host }}:9000/api/auth"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         body_format: json
         body:
@@ -282,7 +282,7 @@
 
     - name: Get existing Portainer endpoints
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        url: "http://{{ ansible_host }}:9000/api/endpoints"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -300,7 +300,7 @@
 
     - name: Create local Docker endpoint when missing
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        url: "http://{{ ansible_host }}:9000/api/endpoints"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -349,7 +349,7 @@
 
     - name: Read current Portainer settings
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/settings"
+        url: "http://{{ ansible_host }}:9000/api/settings"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -360,7 +360,7 @@
 
     - name: Read current Portainer teams
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/teams"
+        url: "http://{{ ansible_host }}:9000/api/teams"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -378,7 +378,7 @@
 
     - name: Create OAuth default team when missing
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/teams"
+        url: "http://{{ ansible_host }}:9000/api/teams"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -412,7 +412,7 @@
 
     - name: Read local endpoint group access policy
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -451,7 +451,7 @@
       when: not ansible_check_mode
     - name: Update local endpoint group policy for OAuth default team
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: PUT
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -519,7 +519,7 @@
 
     - name: Update Portainer authentication settings
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/settings"
+        url: "http://{{ ansible_host }}:9000/api/settings"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: PUT
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -538,7 +538,7 @@
 
     - name: Read current Portainer users
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users"
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -575,7 +575,7 @@
 
     - name: Pre-create missing OAuth users for deterministic admin promotion
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users"
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -594,7 +594,7 @@
 
     - name: Refresh Portainer users after OAuth user pre-creation
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users"
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -609,7 +609,7 @@
 
     - name: Re-read Portainer users for admin role promotion
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users"
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -622,7 +622,7 @@
 
     - name: Promote configured OAuth usernames to Portainer admin role
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"
+        url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: PUT
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
