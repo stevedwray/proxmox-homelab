@@ -16,20 +16,65 @@ work-session evidence, not durable project documentation.
 
 ## Current Position
 
-### State as of 2026-06-11 (second pass) — multi-source inventory operational
+### State as of 2026-06-13 — pve-test-vm teardown validated; merged to baseline
 
-Branch `feat/netbox-populate-multi-source-inventory` is the current working branch.
-`fix/playbook-syntax-fixes` was merged to `baseline/teardown-validated` via PR.
+`feat/netbox-populate-multi-source-inventory` merged to `baseline/teardown-validated`
+(commit `1df3324`, PR #354). Branch deleted.
 
-**Current populate result:** `VMs: 25, IPs: 33, Services: 50, Stale managed objects: 1`
+**Current populate result (pve-test-vm):** `VMs: 26, IPs: 34, Services: 56, Stale managed objects: 1`
 
-NetBox now discovers from both Proxmox nodes:
-- pve-test: all LXCs visible in `pve-test-cluster`; services via socket-proxy
-- pve: all LXCs visible in `pve-cluster`; services via Portainer API token (`PORTAINER_TOKEN`)
-- MikroTik topology present
-- pve-test and pve each have their own hypervisor device and cluster in NetBox
+Sources:
+- **pve-test-vm** (`192.168.1.41`): 12 LXCs in `pve-test-vm-cluster`; services via docker-socket-proxy per guest
+- **pve** (`pve.gibbsgreatly.xyz`): 14 LXCs in `pve-cluster`; services via Portainer API at `management-stack.gibbsgreatly.xyz:9443`
+- **MikroTik hAP**: router, 14 interfaces, 5 VLANs
 
-Stale managed object: one stale IP (`192.168.1.40/24`) — minor, not blocking.
+Stale managed object: one stale IP (`192.168.1.41/24`) — the pve-test-vm hypervisor host IP; minor, not blocking.
+
+The **teardown gate** was run on pve-test-vm (VM-hosted Proxmox, ZFS pool `infrastructure-containers`).
+This replaces the retired bare-metal laptop `pve-test`. All cold-start failures discovered during
+the cycle were fixed in the same branch. See cold-start fixes section below.
+
+#### Changes in this session (2026-06-12–13, pve-test-vm teardown validation)
+
+**Cold-start fix — authentik: Harbor not yet available during Stage 3a deploy**
+- Added `nc -z` Harbor reachability check before `docker_compose_v2` in `deploy-authentik-stack.yml`
+- When Harbor is unreachable, all 6 compose images are pre-pulled from public registries
+  (ghcr.io, docker.io, gcr.io) and tagged with Harbor proxy-cache paths
+- `docker_compose_v2 pull:` set to `"never"` in this case (images already local)
+- Commit: `81f9fe1`
+
+**Cold-start fix — netbox: `netbox_network_env` undefined in populate timer play**
+- Variable was declared in play 1 vars but referenced in play 5 ("Install NetBox populate daily timer")
+- Ansible play vars are scoped per-play; added `netbox_network_env` to play 5's `vars:` block
+- Commit: `5df61f0`
+
+**Cold-start fix — netbox-populate: MikroTik 401 crash**
+- `discover_from_mikrotik()` raised `RuntimeError` on 401, crashing the entire populate
+- Wrapped the call in `build_network_topology()` with graceful `RuntimeError` catch
+- Added `MIKROTIK_ADMIN`/`MIKROTIK_ADMIN_PASSWORD` as credential fallback in playbook
+- Commit: `aaa4f95`
+
+**Fix — Portainer "local" endpoint not matching management-stack LXC**
+- The Portainer server registers its own Docker daemon as a unix-socket endpoint named "local"
+- `get_endpoints()` previously filtered it out; the IP index had no entry for the host
+- Fix: resolve the `portainer_url` hostname to an IP; map unix-socket endpoints to that IP;
+  thread `portainer_url` through `build_topology()` → `build_vm_list()`
+- Result: management-stack@pve now gets its Portainer services (nginx-proxy-manager, central-registry,
+  registry-ui, trivy-scanner, portainer); Services count +8
+- Commits: `9459630`
+
+**Secrets — pve-test-vm SOPS file**
+- Added `MIKROTIK_READONLY_PASSWORD`, `PVE_READONLY_TOKEN_ID`, `PVE_READONLY_TOKEN_SECRET`,
+  `PORTAINER_TOKEN` to `terraform/secrets.pve-test-vm.enc.yaml`
+- `PVE_READONLY_TOKEN_SECRET` regenerated on pve host after discovering the token existed
+  but the secret was unknown (original creation predated this SOPS file)
+- Commit: `a9db94c`
+
+**Fix — teardown script: PVE_ENV not propagating to target guard**
+- `TARGET_NODE_EXPECTED` defaulted to `pve-test` instead of reading `PVE_ENV`
+- Added `PVE_ENV` to the fallback chain with higher precedence than `TF_VAR_proxmox_node`
+  (which may be stale in the shell from a previous session)
+- Commits: `fe9868d`, `a8bab1d`
 
 #### Changes in this session (2026-06-11, second pass)
 
@@ -68,18 +113,18 @@ Stale managed object: one stale IP (`192.168.1.40/24`) — minor, not blocking.
 
 ## Recommended Next Work
 
-1. **PR `feat/netbox-populate-multi-source-inventory` → `baseline/teardown-validated`**
-   — teardown gate satisfied (2026-06-12). Validation confirmed live on pve-test
-   with both nodes populating correctly. PR is ready to create.
+1. **Static hosts** — `pve-test-vm.yaml` has `static_hosts: []`. Add entries for
+   the Linux desktop, Raspberry Pi, and any other non-Proxmox hosts when their IPs
+   are known.
 
-2. **Teardown gate for `baseline/teardown-validated`** — `fix/playbook-syntax-fixes`
-   was merged but the teardown gate has not been run since that merge. Run a full
-   teardown + redeploy cycle to validate the baseline still holds.
+2. **Stale IP `192.168.1.41/24`** — the pve-test-vm hypervisor host IP appears as a
+   stale managed object. Investigate whether it should be registered as a device IP
+   rather than a VM IP, or simply suppressed.
 
-3. **Static hosts** — `pve-test.yaml` has `static_hosts: []`. Add entries for the
-   Linux desktop and Raspberry Pi when their IPs are known.
-
-4. **Stale IP `192.168.1.40/24`** — investigate and clean up this orphan.
+3. **Harbor image policy in CI** — the authentik-stack `docker-compose.yml` still
+   references `ghcr.io` and `docker.io` directly (used only as fallback during cold-start;
+   the Harbor proxy-cache paths are set after pre-pull). CI `harbor-image-policy` job
+   will flag these. Tracked in `docs/plan/current-state.md` Branch 1 (fix/ci-pipeline-cleanup).
 
 #### Changes in this session (2026-06-11, first pass)
 

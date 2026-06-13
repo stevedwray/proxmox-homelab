@@ -80,6 +80,46 @@ evidence directories.
 - Record the decision path explicitly before any follow-on mutation so a later
   session does not have to infer operator intent from incomplete evidence.
 
+### 8. Cold-start: Harbor is unavailable when Stage 3a stacks deploy
+
+- Stage 3a (edge) deploys before Stage 3b (platform), which includes Harbor.
+- Stacks that declare Harbor proxy-cache image paths in `docker-compose.yml`
+  will fail `docker compose up` on a cold deploy because Harbor does not exist yet.
+- Fix: add a reachability check (`nc -z`) before compose up. If Harbor is
+  unreachable, pre-pull images from their public origin registries and tag them
+  with the Harbor proxy-cache paths, then use `pull: "never"` in the compose task.
+- This pattern was applied to `deploy-authentik-stack.yml`. Apply the same pattern
+  to any future stack that references Harbor registry paths in its compose file.
+
+### 9. Portainer "local" endpoint does not match by name
+
+- Portainer registers its own Docker daemon as an endpoint named "local" with
+  URL `unix:///var/run/docker.sock`.
+- The NetBox populate script matched Portainer endpoints to LXC containers by
+  name or IP. "local" never matches any container name, and the unix socket
+  URL yields no IP for the IP index.
+- Fix: resolve the `portainer_url` hostname at populate time and assign that IP
+  to any unix-socket endpoint. The LXC hosting Portainer is then matched by IP.
+- Do not filter out unix-socket endpoints from `get_endpoints()` — they carry
+  the local Docker daemon's service data.
+
+### 10. PVE_ENV must take precedence over TF_VAR_proxmox_node in the teardown script
+
+- `TARGET_NODE_EXPECTED` was derived from `TF_VAR_proxmox_node` before `PVE_ENV`.
+- `TF_VAR_proxmox_node` may be set to a stale value in the shell from a prior
+  session (e.g. `pve-test` when running against `pve-test-vm`).
+- `PVE_ENV` is the explicit user intent. It should win over the ambient env var.
+- Fixed in `scripts/teardown-deploy-test.sh` line 24 (commits `fe9868d`, `a8bab1d`).
+
+### 11. Ansible play vars are scoped per-play
+
+- A `vars:` block defined in one play is not visible in other plays in the same
+  playbook — even in the same file. Ansible play vars do not cross play boundaries.
+- If a variable is needed in multiple plays, declare it in each play's `vars:` block
+  or use `set_fact` with a persistent scope.
+- This caused `netbox_network_env` to be undefined in the timer-install play despite
+  being declared in the provision play (fixed in `5df61f0`).
+
 ## Suggested Use
 
 - Read this document before planning the next teardown/redeploy rehearsal.

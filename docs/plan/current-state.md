@@ -6,14 +6,17 @@ This is the master resume point for the current sprint. Use it together with
 the workstream docs listed below. Files under `docs/*/artifacts/` are ignored
 session evidence, not durable documentation.
 
-## Current Position (as of 2026-06-12)
+## Current Position (as of 2026-06-13)
 
-Branch `feat/netbox-populate-multi-source-inventory` is the current working
-branch. A full teardown + redeploy cycle on pve-test has been completed
-successfully — the teardown gate is satisfied. The branch is ready to PR.
+On `baseline/teardown-validated` (merge commit `1df3324`).
 
-**Immediate next action:** PR `feat/netbox-populate-multi-source-inventory` →
-`baseline/teardown-validated`.
+`feat/netbox-populate-multi-source-inventory` was merged and the branch
+deleted. The teardown gate was satisfied via a full cycle on **pve-test-vm**
+(`192.168.1.41` — the bare-metal-hosted VM, not the retired laptop
+`pve-test`). Validated in browser.
+
+**Immediate next action:** cut `fix/ci-pipeline-cleanup` from
+`baseline/teardown-validated` and work through items 1a–1d below.
 
 ## Planned Branches
 
@@ -208,7 +211,7 @@ Status → Targets → job=step-ca shows state=UP.
 
 | Branch | Gate | Promotion target |
 |---|---|---|
-| `feat/netbox-populate-multi-source-inventory` | Teardown done ✓ | `baseline/teardown-validated` (PR ready) |
+| `feat/netbox-populate-multi-source-inventory` | Teardown done ✓ | `baseline/teardown-validated` ✓ merged 2026-06-13 |
 | `fix/ci-pipeline-cleanup` | CI passes on branch | `baseline/teardown-validated` |
 | `fix/tls-hardening` | Live Authentik SSO test on Harbor + one other service | `baseline/teardown-validated` |
 | `feat/step-ca-metrics` | step-ca target `UP` in Grafana | `baseline/teardown-validated` |
