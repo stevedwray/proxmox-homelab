@@ -8,15 +8,22 @@ session evidence, not durable documentation.
 
 ## Current Position (as of 2026-06-13)
 
-On `baseline/teardown-validated` (merge commit `1df3324`).
+On `baseline/teardown-validated` (commit `b7e20ba`).
 
 `feat/netbox-populate-multi-source-inventory` was merged and the branch
 deleted. The teardown gate was satisfied via a full cycle on **pve-test-vm**
 (`192.168.1.41` — the bare-metal-hosted VM, not the retired laptop
 `pve-test`). Validated in browser.
 
+Documentation consistency pass completed (`38508f1`, `b7e20ba`): teardown-test
+docs updated to reflect pve-test-vm, `dev/pve-test` replaced with
+`baseline/teardown-validated` across all active planning and task docs.
+
 **Immediate next action:** cut `fix/ci-pipeline-cleanup` from
 `baseline/teardown-validated` and work through items 1a–1d below.
+
+**Sprint plan:** see [sprint-plan.md](sprint-plan.md) for the full five-session
+breakdown with handoffs, gates, and dependency order.
 
 ## Planned Branches
 
