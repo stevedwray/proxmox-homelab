@@ -504,7 +504,7 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
 
         if primary_proxmox_data is None:
             primary_proxmox_data = proxmox_data
-        all_vms.extend(build_topology(proxmox_data=proxmox_data, portainer=portainer))
+        all_vms.extend(build_topology(proxmox_data=proxmox_data, portainer=portainer, portainer_url=portainer_url))
 
     return {
         "vms": all_vms,

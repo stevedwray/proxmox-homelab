@@ -4,7 +4,9 @@ import glob
 import json
 import os
 import re
+import socket
 import subprocess
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -134,9 +136,8 @@ class PortainerClient:
             return json.loads(resp.read().decode())
 
     def get_endpoints(self):
-        """Return list of endpoint dicts (excluding 'local')."""
-        endpoints = self._get("/api/endpoints")
-        return [e for e in endpoints if e["URL"] != "unix:///var/run/docker.sock"]
+        """Return list of all Portainer endpoint dicts."""
+        return self._get("/api/endpoints")
 
     def get_containers(self, endpoint_id):
         """Return list of container dicts for an endpoint."""
@@ -525,7 +526,16 @@ class RuntimeInspector:
         return []
 
 
-def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None):
+def _resolve_portainer_server_ip(portainer_url: str) -> str:
+    """Resolve the IP of the Portainer server from its URL."""
+    try:
+        hostname = urllib.parse.urlparse(portainer_url).hostname
+        return socket.gethostbyname(hostname) if hostname else ""
+    except Exception:
+        return ""
+
+
+def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None, portainer_url=None):
     """Merge Proxmox inventory with runtime-discovered service data.
 
     Proxmox is the authoritative source for container/VM existence and config.
@@ -547,9 +557,19 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
     portainer_endpoints_by_name = {}
     portainer_endpoints_by_ip = {}
     if portainer:
+        # Resolve the Portainer server's own IP once so we can map the
+        # "local" (unix-socket) endpoint to the host container by IP.
+        portainer_server_ip = _resolve_portainer_server_ip(portainer_url) if portainer_url else ""
         for ep in portainer.get_endpoints():
             ep_url = ep.get("URL", "")
-            ip = ep_url.replace("tcp://", "").split(":")[0]
+            raw_ip = ep_url.replace("tcp://", "").split(":")[0]
+            # Unix-socket endpoints yield "unix" or empty — not a routable IP.
+            # Map them to the Portainer server's resolved IP instead so they
+            # match the host LXC container (e.g. management-stack).
+            if not raw_ip or raw_ip.startswith("unix") or raw_ip.startswith("/"):
+                ip = portainer_server_ip
+            else:
+                ip = raw_ip
             ep_entry = {
                 "id": ep["Id"],
                 "ip": ip,
@@ -622,7 +642,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
     return vms
 
 
-def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portainer_ip=None):
+def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portainer_ip=None, portainer_url=None):
     """Build the full topology dict from all available data sources.
 
     Priority: Proxmox (authoritative) → runtime service inspection.
@@ -630,7 +650,7 @@ def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portaine
     if proxmox_data is None:
         proxmox_data = discover_from_proxmox()
 
-    return build_vm_list(proxmox_data, stack_yamls, portainer=portainer)
+    return build_vm_list(proxmox_data, stack_yamls, portainer=portainer, portainer_url=portainer_url)
 
 
 _EMPTY_NETWORK_TOPOLOGY: dict = {
