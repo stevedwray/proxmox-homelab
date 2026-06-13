@@ -65,7 +65,7 @@ A `trivy-image-scan` CI job exists in the relevant workflow, runs on the self-ho
 - [x] Docker login to `10.57.3.10` present (uses `HARBOR_ROBOT_USER`/`HARBOR_ROBOT_PASSWORD` secrets)
 - [x] `exit-code: "1"` set for CRITICAL/HIGH
 - [x] SARIF uploaded to GitHub Security tab (`upload-sarif` step)
-- [x] Commit pushed to `dev/pve-test`
+- [x] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -109,7 +109,7 @@ STEP 2 — Add trivy-image-scan job.
   so it can be tested without a real image.
 
 STEP 3 — Commit:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/trivy-image-scan
   git add .github/workflows/
   git commit -m "feat(ci): add Trivy image scan job with SARIF upload"
@@ -118,8 +118,8 @@ STEP 3 — Commit:
 SECURITY SCAN (run before merging — stop and present options if new issues are found):
   cd /home/steve/git/proxmox-homelab && source .env && sonar-scanner
 
-  git checkout dev/pve-test && git merge feat/trivy-image-scan
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/trivy-image-scan
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Job present in workflow file, HARBOR_ROBOT_* secret usage confirmed, scan clean, commit merged.
 ```

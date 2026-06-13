@@ -16,7 +16,7 @@ Refactor stack lifecycle management so that:
 - Repeat until the refactor branch is ready for a full teardown/redeploy validation cycle
 - Final promotion target: `baseline/teardown-validated`
 
-`dev/pve-test` is not part of this workflow.
+`baseline/teardown-validated` is not part of this workflow.
 
 ## Scope
 

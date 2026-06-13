@@ -281,7 +281,7 @@ is available first.
 
 ```bash
 cd /home/steve/git/proxmox-homelab
-git checkout -b feat/harbor-config dev/pve-test
+git checkout -b feat/harbor-config baseline/teardown-validated
 
 # Stage .env.template changes:
 git add .env.template
@@ -294,9 +294,9 @@ git commit -m "chore(harbor): project namespaces, robot credentials, GC schedule
 - Phase 04 images pre-pulled and scanned via Harbor proxy"
 
 git push origin feat/harbor-config
-git checkout dev/pve-test
+git checkout baseline/teardown-validated
 git merge feat/harbor-config
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 ```
 
 ---

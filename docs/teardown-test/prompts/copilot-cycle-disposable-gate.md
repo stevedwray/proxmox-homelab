@@ -167,7 +167,7 @@ Evidence directory: docs/teardown-test/artifacts/evidence/<stamp>/
 
 ## Recommended next action for Claude Code
 
-<one sentence: what should happen next — e.g., "Promote to dev/pve-test and validate application stacks" or "Investigate failure at phase X; log at ...">
+<one sentence: what should happen next — e.g., "Promote to baseline/teardown-validated and validate application stacks" or "Investigate failure at phase X; log at ...">
 ```
 
 ## Working rules

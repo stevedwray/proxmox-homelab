@@ -67,7 +67,7 @@ control that `with-secrets` makes unnecessary by eliminating the file entirely.
 - `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml`
   succeeds without error
 - `./with-secrets echo OK` exits 0
-- Phase 03d (Secrets Delivery Hardening) is merged into `dev/pve-test`
+- Phase 03d (Secrets Delivery Hardening) is merged into the active development branch
 
 ### Where it fits in the plan
 

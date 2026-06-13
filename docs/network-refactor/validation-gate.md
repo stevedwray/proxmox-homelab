@@ -48,7 +48,7 @@ Before any apply or teardown/redeploy validation:
 1. Run `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` and confirm it
    returns `pve-test`. The preflight script performs this check automatically.
 2. Confirm the intended branch is a short-lived work branch, not
-   `baseline/teardown-validated` or `dev/pve-test`.
+   `baseline/teardown-validated` or `baseline/teardown-validated`.
 3. Confirm the manual MikroTik prerequisites for the SDN zones are present
    (VLAN interfaces, gateway IPs, DNS rules). The preflight script tests the
    observable outcomes; it does not configure the router.

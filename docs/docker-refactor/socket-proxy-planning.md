@@ -40,7 +40,7 @@ design caveat, see `docs/docker-refactor/current-state.md`.
   - this plan
   - the latest local handback under `docs/docker-refactor/artifacts/`, if one
     exists
-- Do not develop directly on `baseline/teardown-validated` or `dev/pve-test`.
+- Do not develop directly on `baseline/teardown-validated` or `baseline/teardown-validated`.
 - Before disposable proof validation, confirm the target is `pve-test`.
 - Before the final infrastructure-container teardown/rebuild gate, confirm the
   target is `pve`. That gate must not touch containers outside the managed

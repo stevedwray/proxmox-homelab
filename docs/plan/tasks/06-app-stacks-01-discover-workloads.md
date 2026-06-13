@@ -58,7 +58,7 @@ The migration table in `docs/plan/phase-06-app-stacks.md` is fully populated wit
 - [ ] Migration table in `docs/plan/phase-06-app-stacks.md` has VMID, IP, hostname, services, config paths, and NFS mounts for each workload
 - [ ] GPU/device passthrough noted where applicable
 - [ ] NetBox updated with current workloads
-- [ ] Commit pushed to `dev/pve-test`
+- [ ] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -102,9 +102,9 @@ STEP 5 — Commit the updated discovery document:
   git checkout -b feat/workload-discovery
   git add docs/plan/phase-06-app-stacks.md
   git commit -m "docs(phase-06): document existing application workloads from discovery"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/workload-discovery
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Migration table fully populated, NetBox updated, commit pushed.
 ```

@@ -42,7 +42,7 @@ git push --mirror origin
 ```bash
 git fetch --prune
 git branch -f main origin/main
-git reset --hard origin/dev/pve-test
+git reset --hard origin/baseline/teardown-validated
 git gc --prune=now
 ```
 

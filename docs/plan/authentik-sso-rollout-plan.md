@@ -7,7 +7,7 @@ Roll browser-facing services onto Authentik-backed SSO in controlled waves while
 ## Branch
 
 - Working branch: `feat/harbor-authentik-oidc-01`
-- Base branch: `dev/pve-test`
+- Base branch: `baseline/teardown-validated`
 - Session issue: `#166`
 
 ## Design Constraints
@@ -36,7 +36,8 @@ Harbor is the first wave because the edge validator already models Harbor as `na
 
 - Validate edge manifests with `python3 terraform/lxc/validate-edge-manifests.py terraform/lxc/stacks/*/edge.yaml`.
 - Validate Harbor playbook syntax with `ANSIBLE_ROLES_PATH='terraform/lxc/ansible/roles' ANSIBLE_CONFIG='terraform/lxc/ansible/ansible.cfg' ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml`.
-- Validate Authentik discovery still succeeds with `./with-secrets python3 terraform/lxc/discover-authentik-edge.py --json --no-verify-tls`.
+- Validate Authentik discovery still succeeds with the internal HTTPS endpoint:
+  `AUTHENTIK_EXTRA_CA=certs/homelab-root.crt ./with-secrets python3 terraform/lxc/reconcile-edge.py --authentik-url "https://authentik-int.${LAB_DOMAIN}:9443" --json`.
 - Defer any live Harbor OIDC apply until Authentik client details are populated and browser smoke testing is scheduled.
 
 ## Rollback

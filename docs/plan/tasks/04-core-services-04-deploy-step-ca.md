@@ -146,7 +146,7 @@ never passed as an `--extra-vars` argument.
 - [ ] No existing Let's Encrypt route changed or reassigned
 - [ ] `/opt/proxy-stack/certs/step-ca/acme.json` — still 0 bytes (no internal certs issued yet;
       the internal TLS path is untested end-to-end until a lab route uses `certresolver=step-ca`)
-- [ ] Branch `feat/step-ca` merged to `dev/pve-test`
+- [ ] Branch `feat/step-ca` merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -207,7 +207,7 @@ STEP 0e — Bring up proxy-stack (Traefik):
   # Must return 301 or 302 before continuing
 
 STEP 1 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/step-ca
 
 STEP 2 — Check IP availability:
@@ -281,8 +281,8 @@ STEP 10 — Commit and merge:
           terraform/lxc/ansible/roles/base-lxc/ \
           certs/homelab-root.crt
   git commit -m "feat(step-ca): deploy internal CA in mgmt_seg, distribute root cert (VMID 152)"
-  git checkout dev/pve-test && git merge feat/step-ca
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/step-ca
+  git push origin baseline/teardown-validated
 
 DONE WHEN: step-ca healthy, ACME directory reachable from inside Traefik container,
 root CA trusted on Traefik and Proxmox host, certs/homelab-root.crt committed to repo,

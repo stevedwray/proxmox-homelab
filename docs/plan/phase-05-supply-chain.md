@@ -237,7 +237,7 @@ Add these to the repository (Settings → Secrets → Actions):
 ## Commit and push
 
 ```bash
-git checkout -b feat/supply-chain-pipeline dev/pve-test
+git checkout -b feat/supply-chain-pipeline baseline/teardown-validated
 
 # After all changes:
 git add .github/workflows/ \
@@ -246,7 +246,7 @@ git add .github/workflows/ \
 
 git commit -m "feat(ci): add supply chain pipeline — Trivy image scan, Syft SBOM, Cosign signing"
 git push origin feat/supply-chain-pipeline
-# Merge to dev/pve-test via PR
+# Merge to baseline/teardown-validated via PR
 ```
 
 ---

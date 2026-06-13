@@ -59,7 +59,7 @@ directly on the promotion target.
 Once this baseline is promoted:
 
 - `task/monitoring-stack-phase1` rebases onto the new baseline and merges to
-  `dev/pve-test`. The monitoring `edge.yaml` already exists; provision.sh will
+  `baseline/teardown-validated`. The monitoring `edge.yaml` already exists; provision.sh will
   include it in the holistic reconciliation pass automatically.
 - `task/netbox-infra-knowledge-progress` similarly: the NetBox `edge.yaml`
   already exists; socket proxy enablement for netbox-stack is added in that

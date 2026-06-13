@@ -96,13 +96,13 @@ later phases.
 ## Session Prompt
 
 ```text
-You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+You are working in /home/steve/git/proxmox-homelab on branch baseline/teardown-validated.
 
 Issue: #127 — feat(template): build and register Debian Docker LXC template on pve-test (Phase 00a, task 3)
 
 Context:
 - Task 00a-01 should already be complete or verified enough that pve-test has the expected host baseline and Terraform API access.
-- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into baseline/teardown-validated.
 - `terraform/lxc` stacks expect the template name `debian-13.1-2-docker-template.tar.gz`.
 - Do not rename the template or drift from the current pve-test storage assumptions unless the repo’s active consumers are updated too.
 

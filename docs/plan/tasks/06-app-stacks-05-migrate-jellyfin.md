@@ -69,7 +69,7 @@ Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, t
 - [ ] Hardware transcoding working (if applicable — verify via Jellyfin → Dashboard → Devices)
 - [ ] `https://jellyfin.lab.gibbsgreatly.xyz` accessible via Traefik with valid TLS cert
 - [ ] Old Jellyfin container snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -148,9 +148,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/jellyfin-stack/ \
           terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml
   git commit -m "feat(jellyfin): migrate Jellyfin to new LXC stack (VMID 162, 10.60.0.21)"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/jellyfin-stack
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Jellyfin accessible internally and at jellyfin.gibbsgreatly.xyz, hardware transcoding
 confirmed, media library loaded, old container destroyed.

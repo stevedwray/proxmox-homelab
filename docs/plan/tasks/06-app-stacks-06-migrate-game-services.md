@@ -67,7 +67,7 @@ Game servers (Minecraft and others from discovery) are running in a new LXC (`ga
 - [ ] World data migrated and verified (size comparison, game client test connection)
 - [ ] Game server ports accessible from outside via Proxmox port-forwarding rules
 - [ ] Old game server containers snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -131,9 +131,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/game-stack/ \
           terraform/lxc/ansible/playbooks/deploy-game-stack.yml
   git commit -m "feat(game-stack): migrate game services to new LXC stack (VMID 163, 10.61.0.10)"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/game-stack
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Game servers running, world data verified, port access confirmed, old containers destroyed.
 ```

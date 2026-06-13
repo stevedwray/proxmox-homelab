@@ -41,7 +41,7 @@ These are fast, low-risk fixes to `scripts/check-proxmox-status.sh`, `scripts/se
 ### Branch
 
 ```bash
-git checkout -b fix/shell-maintainability dev/pve-test
+git checkout -b fix/shell-maintainability baseline/teardown-validated
 ```
 
 ### Issue #23 — Add explicit `return 0` to shell functions
@@ -99,9 +99,9 @@ git commit -m "refactor(scripts): shell maintainability fixes
 - Extract repeated SSH opts and separator to variables (shelldre:S1192) (Closes #31)"
 
 git push origin fix/shell-maintainability
-# Merge to dev/pve-test via PR or direct merge
-git checkout dev/pve-test && git merge fix/shell-maintainability
-git push origin dev/pve-test
+# Merge to baseline/teardown-validated via PR
+git checkout baseline/teardown-validated && git merge fix/shell-maintainability
+git push origin baseline/teardown-validated
 
 gh issue close 23 --comment "Fixed in fix/shell-maintainability — explicit return 0 added to all shell functions."
 gh issue close 26 --comment "Fixed in fix/shell-maintainability — positional params assigned to local variables."
@@ -137,7 +137,7 @@ git commit -m "fix(netbox): acknowledge intentional SSL disable in proxmox_clien
 
 Self-signed cert in homelab — certificate verification disabled intentionally.
 Suppression comments added; acknowledged in SonarCloud."
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 gh issue close 35 --comment "Acknowledged as intentional — homelab self-signed cert. Suppression comment added."
 ```
 
@@ -186,7 +186,7 @@ git commit -m "fix(netbox): set MikroTik primary_ip4 to LAN IP not WAN IP (Close
 
 Only set primary_ip4 for the first RFC 1918 address found.
 Previously the last interface processed (WAN) won the assignment."
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 gh issue close 48 --comment "Fixed — primary_ip4 now set to first RFC 1918 IP found (192.168.1.1)."
 ```
 
@@ -230,7 +230,7 @@ git commit -m "fix(netbox): deduplicate services before NetBox population (Close
 
 gluetun-6881 was being registered twice due to merged Proxmox+Portainer
 discovery results. Added dedup on (vm_id, name, port, protocol)."
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 gh issue close 49 --comment "Fixed — services deduplicated on (vm_id, name, port, protocol) before population."
 ```
 
@@ -287,7 +287,7 @@ proxmox_client.py: extract nested conditionals to helpers (53 → <15)
 populate.py: extract complex sub-section (20 → <15)
 
 Idempotency verified: clean wipe → populate → re-run yields 0 new objects."
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 gh issue close 28 --comment "Refactored. discover.py complexity 70→<15, proxmox_client.py 53→<15, populate.py 20→<15."
 ```
 

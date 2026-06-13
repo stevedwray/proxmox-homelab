@@ -70,7 +70,7 @@ Pi-hole is running in a new LXC (`pihole-stack`, VMID 160) at `10.60.0.10`, all 
 - [ ] At least one client DNS resolver updated to `10.60.0.10` and browsing works
 - [ ] Old Pi-hole container snapshotted then destroyed
 - [ ] NetBox updated: old IP retired, `10.60.0.10` registered
-- [ ] Branch `feat/pihole-stack` merged to `dev/pve-test`
+- [ ] Branch `feat/pihole-stack` merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -151,9 +151,9 @@ STEP 12 — Update NetBox, commit, merge:
           terraform/lxc/ansible/playbooks/deploy-pihole-stack.yml \
           .env.template
   git commit -m "feat(pihole): migrate Pi-hole DNS to new LXC stack (VMID 160, 10.60.0.10)"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/pihole-stack
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: All clients using 10.60.0.10, blocklists loaded, old Pi-hole destroyed.
 ```

@@ -61,7 +61,7 @@ Two new SDN zones (`app_seg` at `10.60.0.0/24` and `game_seg` at `10.61.0.0/24`)
 - [ ] `game_seg` zone visible in Proxmox SDN UI (or Terraform state)
 - [ ] `10.60.0.0/24` and `10.61.0.0/24` registered as subnets in NetBox
 - [ ] An LXC can be assigned to each new zone without error (verified by test or deploy)
-- [ ] Commit (if code changes) pushed to `dev/pve-test`
+- [ ] Commit (if code changes) pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -108,9 +108,9 @@ STEP 6 — Commit if code was changed:
   git checkout -b feat/app-seg-zones
   git add terraform/lxc/network/
   git commit -m "feat(network): add app_seg (10.60.0.0/24) and game_seg (10.61.0.0/24) SDN zones"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/app-seg-zones
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Both zones exist in Proxmox, subnets in NetBox, routing confirmed.
 Tasks 06-03 to 06-06 are now unblocked.

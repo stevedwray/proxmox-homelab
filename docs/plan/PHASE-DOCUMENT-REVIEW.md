@@ -200,7 +200,7 @@ The phase documents provide a structured deployment roadmap for the greenfield r
 **Action:**
 - Keep as reference for understanding the current secret delivery model
 - Link from operator onboarding docs
-- Confirm this is merged into dev/pve-test and main
+- Phase 03d is merged and active on `baseline/teardown-validated`
 
 ---
 

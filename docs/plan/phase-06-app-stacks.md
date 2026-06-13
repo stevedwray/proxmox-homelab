@@ -19,7 +19,7 @@ This phase still follows the platform foundation, but the target is no longer a 
 - NetBox updated with current IP allocations
 - Current branch workflow from `AGENTS.md` applies: start from the current
   active development HEAD, use a short-lived `feat/`/`task/` branch, validate,
-  then merge to `dev/pve-test`
+  then merge to `baseline/teardown-validated`
 
 ## Current state of application workloads
 
@@ -480,7 +480,7 @@ Follow the repository branch model in `AGENTS.md`:
 1. Start each slice from `baseline/teardown-validated`.
 2. Work on a short-lived `feat/` or `task/` branch.
 3. Validate on that branch before promoting.
-4. Merge to `dev/pve-test` only after the slice is validated and the old instance is retired.
+4. Merge to `baseline/teardown-validated` only after the slice is validated and the old instance is retired.
 
 ---
 

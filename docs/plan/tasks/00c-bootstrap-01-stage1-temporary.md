@@ -234,7 +234,7 @@ STEP 4 — Deploy CI runner (VMID 141, build_seg, 10.57.0.63):
   # GitHub → Repository → Settings → Actions → Runners → ci-runner-01 → status: Idle
 
   # Trigger a self-hosted workflow run
-  gh workflow run validate.yml --ref dev/pve-test
+  gh workflow run validate.yml --ref baseline/teardown-validated
   # Wait approximately 2 minutes, then check:
   gh run list --workflow=validate.yml --limit 3
   # Expect: at least one completed run with status "success" or "completed"

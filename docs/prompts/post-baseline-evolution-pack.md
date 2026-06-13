@@ -38,9 +38,9 @@ Branch workflow:
 2. Create a fresh short-lived branch for this work from the current working
    HEAD:
    - git checkout -b task/platform-status-hardening-01
-3. Do not use baseline/teardown-validated or dev/pve-test as the base for this
+3. Do not use baseline/teardown-validated or baseline/teardown-validated as the base for this
    branch. They are promotion targets only.
-4. If your current checkout is baseline/teardown-validated or dev/pve-test,
+4. If your current checkout is baseline/teardown-validated or baseline/teardown-validated,
    stop and report a branch-base blocker instead of branching from it.
 5. Do not work directly on a promotion target branch.
 6. Do not merge anything at the end. Stop only after implementation,

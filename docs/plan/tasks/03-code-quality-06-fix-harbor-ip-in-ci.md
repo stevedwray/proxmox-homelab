@@ -26,7 +26,7 @@ when the policy check fires.
 ## Scope
 
 - `..github/workflows/validate.yml` — update the error message in the `harbor-image-policy` job
-- Branch: `fix/ci-harbor-ip` off `dev/pve-test`
+- Branch: `fix/ci-harbor-ip` off `baseline/teardown-validated`
 
 ## Out of Scope
 
@@ -46,7 +46,7 @@ when the policy check fires.
 - [ ] `grep "192.168.1.10" .github/workflows/validate.yml` returns no results
 - [ ] The `harbor-image-policy` job error message references `10.57.3.10`
 - [ ] `terraform fmt -check -recursive terraform/` still passes
-- [ ] Commit merged to `dev/pve-test`
+- [ ] Commit merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -56,7 +56,7 @@ You are working in the proxmox-homelab repository at /home/steve/git/proxmox-hom
 TASK: Fix the stale Harbor IP in the CI harbor-image-policy job.
 
 STEP 1 — Create a short-lived branch:
-  git checkout -b fix/ci-harbor-ip dev/pve-test
+  git checkout -b fix/ci-harbor-ip baseline/teardown-validated
 
 STEP 2 — Read the workflow file:
   Read .github/workflows/validate.yml
@@ -73,8 +73,8 @@ STEP 4 — Verify no other references to 192.168.1.10 remain in CI config:
 STEP 5 — Commit and merge:
   git add .github/workflows/validate.yml
   git commit -m "fix(ci): update Harbor IP in harbor-image-policy error message"
-  git checkout dev/pve-test && git merge fix/ci-harbor-ip
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge fix/ci-harbor-ip
+  git push origin baseline/teardown-validated
 
 DONE WHEN: The harbor-image-policy error message references 10.57.3.10 and no other
 192.168.1.10 references remain in the CI config.

@@ -58,7 +58,7 @@ A `harbor-image-policy` CI job fails whenever any compose file in the repo refer
 - [ ] Job runs on `ubuntu-latest`
 - [ ] Job fails on any `image:` line with direct upstream registry reference
 - [ ] All existing compose files in `terraform/lxc/stacks/` pass the check clean
-- [ ] Commit pushed to `dev/pve-test`
+- [ ] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -99,13 +99,13 @@ STEP 4 — Test the check locally (it should pass clean):
     terraform/lxc/stacks/ --include="*.yml" --include="*.yaml"; then echo FAIL; exit 1; fi; echo PASS'
 
 STEP 5 — Commit:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/harbor-image-policy
   git add .github/workflows/validate.yml
   # Include any fixed compose files if violations were found in step 2
   git commit -m "feat(ci): add harbor-only image policy lint check to validate workflow"
-  git checkout dev/pve-test && git merge feat/harbor-image-policy
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/harbor-image-policy
+  git push origin baseline/teardown-validated
 
 DONE WHEN: harbor-image-policy job in validate.yml, local grep check passes clean, commit pushed.
 Phase 05 is complete. Phase 06 app stack migration is now unblocked.

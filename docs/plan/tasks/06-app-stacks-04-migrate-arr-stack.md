@@ -72,7 +72,7 @@ Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in 
 - [ ] Download client configured and connected to arr services
 - [ ] All images sourced from `10.57.3.10/...` (harbor-image-policy CI check passes)
 - [ ] Old containers snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -143,9 +143,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/arr-stack/ \
           terraform/lxc/ansible/playbooks/deploy-arr-stack.yml
   git commit -m "feat(arr-stack): migrate arr media stack to new LXC (VMID 161, 10.60.0.20)"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/arr-stack
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: All arr services running, media library accessible, Traefik routing with Authentik gate,
 old containers destroyed, harbor-image-policy CI check passes.

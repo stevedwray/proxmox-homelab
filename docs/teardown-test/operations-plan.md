@@ -11,7 +11,7 @@ working tree, a known commit, and explicit operator approval.
 ## Operating Model
 
 - One source-changing planning package should run in one short-lived branch from
-  `dev/pve-test`.
+  `baseline/teardown-validated`.
 - Live execution packages normally do not modify tracked source files. They write
   runtime evidence under ignored paths such as `docs/teardown-test/artifacts/evidence/`.
 - Every apply, destroy, or deployment validation command must first prove the
@@ -32,7 +32,7 @@ working tree, a known commit, and explicit operator approval.
 - Certificate drift in `certs/homelab-root.crt` after step-ca rebuild is an
   explicit closeout decision, not background noise.
 - If any atomic component exposes a source bug, stop the rehearsal. Fix that bug
-  in a separate short-lived branch, merge it back to `dev/pve-test`, then restart
+  in a separate short-lived branch, merge it back to `baseline/teardown-validated`, then restart
   from the most recent non-destructive preflight.
 
 ## Candidate Stack Order
@@ -70,7 +70,7 @@ ci-runner-01 -> apt-cacher-stack
 
 | ID | Component | Preconditions | Operations | Postconditions | Files modified or added |
 |---|---|---|---|---|---|
-| OP-00 | Source baseline and branch setup | Current branch is clean. | Merge the current completed branch into `dev/pve-test`; cut the next short-lived branch from `dev/pve-test`; record branch and base commit. | New work starts from the integration branch. | None unless recording the base commit in `variables.md`. |
+| OP-00 | Source baseline and branch setup | Current branch is clean. | Merge the current completed branch into `baseline/teardown-validated`; cut the next short-lived branch from `baseline/teardown-validated`; record branch and base commit. | New work starts from the integration branch. | None unless recording the base commit in `variables.md`. |
 | OP-01 | Resolve execution variables | OP-00 complete. | Fill operator, window, target, branch, commit, scope, resolver, and approval fields. | `variables.md` has no unresolved destructive-gate values. | `docs/teardown-test/variables.md`; `docs/teardown-test/decisions.md` only if a governing decision changes. |
 | OP-02 | Freeze inventory and dependency order | OP-01 complete. | Extract selected stack VMIDs, IPs, zones, dependencies, and playbooks; verify the candidate order; write the approved deploy and destroy order. | Every later operation has a single approved stack order. | Add `docs/teardown-test/inventory.md`; update `docs/teardown-test/variables.md`; update `docs/teardown-test/runbook.md` only for command/order corrections. |
 | OP-03 | Approve persistent-data policy | OP-02 complete. | Record backup source, restore confidence, or explicit data-loss approval for every persistent service. | Destruction is blocked unless each selected persistent service has an approved policy. | Add `docs/teardown-test/backup-plan.md`; update `docs/teardown-test/variables.md`. |
@@ -127,5 +127,5 @@ If an atomic component fails because the source is wrong, do not patch during
 the destructive sequence. Record the failure, stop, and create a focused fix
 branch. The fix branch should list its own smallest file set, such as one
 `stack.yaml`, one Ansible playbook, one test file, and the relevant teardown task
-doc. After the fix is validated and merged back to `dev/pve-test`, rerun the
+doc. After the fix is validated and merged back to `baseline/teardown-validated`, rerun the
 non-destructive preflight before resuming any live operation.

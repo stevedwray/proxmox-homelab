@@ -45,33 +45,38 @@ For the full SDN zone definitions and MikroTik setup commands, see
 
 ## Environment summary
 
-pve-test is a **laptop running bare-metal Proxmox VE** at `192.168.1.40`
-(`pve-test.gibbsgreatly.xyz`), connected via a trunk port to the MikroTik router.
-It is treated as ephemeral — all services are rebuilt from code on each development pass.
-No state from a previous pass is assumed to persist.
+The active test target is **pve-test-vm** (`192.168.1.41`,
+`pve-test-vm.gibbsgreatly.xyz`), a VM-hosted Proxmox instance on the homelab
+bare-metal host. It replaced the retired bare-metal `pve-test` laptop.
+Use `PVE_ENV=pve-test-vm` when running harness or deploy commands.
 
 pve (production) is not touched during development passes. All services, including Harbor,
-apt-cacher, and NetBox, are deployed locally on pve-test.
+apt-cacher, and NetBox, are deployed locally on pve-test-vm.
 
 **Network model:** Proxmox SDN VLAN zones. The MikroTik is the L3 gateway for all zones.
 No NAT or routing is performed on the Proxmox host.
 
 ## Container inventory
 
-| Service | Zone | IP | VMID | Phase |
-| --- | --- | --- | --- | --- |
-| Portainer | `mgmt_seg` | `10.57.1.20` | 120 | 00b |
-| Authentik | `mgmt_seg` | `10.57.1.10` | 150 | 04 |
-| step-ca | `mgmt_seg` | `10.57.1.11` | 152 | 04 |
-| Monitoring (Grafana + VictoriaMetrics + Loki) | `mgmt_seg` | `10.57.1.12` | 154 | 04 |
-| CoreDNS | `mgmt_seg` | `10.57.1.13` | 151 | 04b |
-| Traefik | `edge_seg` | `10.57.2.10` | 153 | 04 |
-| Harbor | `infra_seg` | `10.57.3.10` | 121 | 03b |
-| apt-cacher-ng | `infra_seg` | `10.57.3.11` | 142 | 03c |
-| NetBox | `infra_seg` | `10.57.3.12` | 143 | 03b |
-| ci-runner-01 | `build_seg` | `10.57.0.63` | 141 | 01 |
+The authoritative stack inventory (VMIDs, IPs, deploy/destroy order) is in
+[docs/teardown-test/inventory.md](../teardown-test/inventory.md).
 
-Storage pool: `infrastructure-containers` on pve-test.
+Current stack zones and IP segments (IPs resolved from `.env.pve-test-vm`):
+
+| Service | Zone | IP range | VMID |
+| --- | --- | --- | --- |
+| portainer-stack | `mgmt_seg` | 192.168.20.x | 20020 |
+| authentik-stack | `mgmt_seg` | 192.168.20.x | 20010 |
+| step-ca-stack | `mgmt_seg` | 192.168.20.x | 20011 |
+| monitoring-stack | `mgmt_seg` | 192.168.20.x | 20012 |
+| dns-stack | `mgmt_seg` | 192.168.20.x | 20013 |
+| proxy-stack | `edge_seg` | 192.168.30.x | 30010 |
+| harbor-stack | `infra_seg` | 192.168.40.x | 40010 |
+| apt-cacher-stack | `infra_seg` | 192.168.40.x | 40011 |
+| netbox-stack | `infra_seg` | 192.168.40.x | 40012 |
+| ci-runner-01 | `build_seg` | 192.168.10.x | 10063 |
+
+Storage pool: `infrastructure-containers` on pve-test-vm (ZFS).
 
 **Harbor bootstrap:** On the first pass, Harbor pulls its own images from Docker Hub
 directly. Once Harbor is running, all subsequent containers in all zones pull from
@@ -112,12 +117,14 @@ service is currently running.
 
 ## Repository conventions
 
-- Branch from `dev/pve-test` for each phase or fix
-- Short-lived branches: `feat/<name>`, `fix/<name>`, `docs/<name>`, `chore/<name>`
-- Validate in the short-lived branch before merging — if issues are found, stop and present options
-- Merge to `dev/pve-test`, never directly to `main`
-- PR `dev/pve-test` → `main` only when stable and tested on pve-test
-- After merging to `main`: `git checkout dev/pve-test && git merge main && git push origin dev/pve-test`
+See `CLAUDE.md` for the authoritative branch model. Summary:
+
+- Cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD
+- Short-lived branches: `feat/<name>`, `fix/<name>`, `task/<name>`, `work/<name>`
+- Validate on the short-lived branch (live runs, tests, populate checks)
+- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms known-good
+- PR `baseline/teardown-validated` → `main` only when stable and tested
+- `dev/pve-test` is **retired** (archival only) — do not branch from it or merge to it
 - Close GitHub issues with `Closes #N` in the commit message
 - Run `gh issue close N --comment "Fixed in commit <sha>"` after committing
 

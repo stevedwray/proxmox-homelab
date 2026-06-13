@@ -60,7 +60,7 @@ https://github.com/stevedwray/proxmox-homelab/issues/119
 - [ ] Trivy installed and functional on all Phase 06 LXCs
 - [ ] SARIF upload to GitHub Security tab confirmed (workflow_dispatch test run)
 - [ ] No CRITICAL findings on any LXC after initial run
-- [ ] Branch merged to `dev/pve-test`
+- [ ] Branch merged to `baseline/teardown-validated`
 
 
 TASK: Add a scheduled Trivy rootfs scan CI workflow that SSHes into all LXCs weekly.
@@ -102,9 +102,9 @@ STEP 6 — Commit and merge:
   git add .github/workflows/rootfs-scan.yml \
           terraform/lxc/ansible/roles/base-lxc/tasks/main.yml
   git commit -m "feat(ci): add weekly Trivy rootfs scan for all LXCs"
-  git checkout dev/pve-test && git pull --ff-only origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git merge feat/rootfs-scan
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Workflow runs successfully via dispatch, SARIF uploaded to Security tab,
 no CRITICAL findings, base role updated. Phase 06 is complete.

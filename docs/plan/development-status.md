@@ -1,12 +1,22 @@
 # Development Status
 
-This document tracks **rebuild confidence** — not whether a container is currently running,
-but whether the IaC (Terraform + Ansible) is complete enough that destroying and redeploying
-a component from code produces a correct, fully integrated result with no manual steps.
+> **Historical snapshot — pre-SDN-refactor era.**
+> VMIDs and IPs in this document reflect the original pve-test layout (10.57.x.x addresses,
+> VMIDs 120–154) and are no longer current. Current VMIDs and IPs are in
+> [docs/teardown-test/inventory.md](../teardown-test/inventory.md).
+> The gaps analysis below was written before the first full teardown/redeploy gate passed
+> (2026-04-22). Many items marked "broken for rebuild" have since been resolved. Preserved
+> for historical context on the original gap landscape.
 
-The running containers on pve-test are ephemeral. They exist for development validation,
-not as a measure of completion. A component is only considered development-complete when
-its playbook can be run against a freshly provisioned LXC and produce a working, integrated
+---
+
+This document tracked **rebuild confidence** — not whether a container was currently running,
+but whether the IaC (Terraform + Ansible) was complete enough that destroying and redeploying
+a component from code would produce a correct, fully integrated result with no manual steps.
+
+The running containers on pve-test were ephemeral. They existed for development validation,
+not as a measure of completion. A component was considered development-complete only when
+its playbook could be run against a freshly provisioned LXC and produce a working, integrated
 system automatically.
 
 ## How to read this table
