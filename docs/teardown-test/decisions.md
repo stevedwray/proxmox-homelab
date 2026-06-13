@@ -1,9 +1,14 @@
 # Teardown/Deploy Test Decisions
 
-## Decision 1: pve-test Only
+## Decision 1: Non-Production Target Only
 
-The teardown/deploy rehearsal targets `pve-test` only. Any command that targets
-production `pve` or returns a target other than `pve-test` must stop.
+The teardown/deploy rehearsal targets a non-production Proxmox node only.
+The current active test target is `pve-test-vm` (`192.168.1.41`), which
+replaced the retired bare-metal `pve-test` laptop. Any command that targets
+production `pve`, or returns an unexpected node, must stop.
+
+`PVE_ENV` is the canonical override and takes precedence over `TF_VAR_proxmox_node`
+in the teardown harness. Always set it explicitly before running destructive phases.
 
 ## Decision 2: Destructive Work Requires Explicit Approval
 
@@ -67,19 +72,20 @@ If data loss is acceptable for any service, that must be written explicitly in
 
 After multiple forward-auth services exist, single-manifest Authentik discovery
 can report owned objects from other stacks as unmanaged. Full baseline runs with
-no manifest arguments are the authoritative post-apply convergence check:
+no manifest arguments are the authoritative post-apply convergence check.
+
+The harness calls the reconciler with the internal HTTPS endpoint and the
+homelab root CA for TLS verification:
 
 ```bash
+AUTHENTIK_EXTRA_CA=certs/homelab-root.crt \
 ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-  --authentik-url http://${lab_ip_authentik}:9000 \
-  --no-verify-tls --json
+  --authentik-url "https://authentik-int.${LAB_DOMAIN}:9443" --json
 ```
 
-`--no-verify-tls` remains acceptable for this rehearsal until the lab CA bundle
-follow-up is complete.
-
-The direct Authentik URL is required for current rehearsal flows. Do not assume
-the reconciler default target is safe for teardown-test validation.
+This is the same endpoint used by `live-preflight`, `activate-edge`, and
+`final-validation` in the harness. Do not assume the reconciler default
+target is safe for teardown-test validation.
 
 ## Decision 7: Orphaned Stack State Is Out Of Scope By Default
 

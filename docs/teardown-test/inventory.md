@@ -11,7 +11,7 @@ This is a planning artifact only. It does not approve destructive execution.
 |---|---|
 | Target environment | `pve-test` only |
 | Planning branch | REQUIRES_OPERATOR_INPUT |
-| Baseline source branch | `dev/pve-test` |
+| Baseline source branch | `baseline/teardown-validated` |
 | Baseline commit (from OP-00) | REQUIRES_OPERATOR_INPUT |
 | Inventory freeze date | REQUIRES_OPERATOR_INPUT |
 

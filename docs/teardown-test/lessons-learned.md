@@ -15,20 +15,23 @@ evidence directories.
 - Any change to destroy-hook behavior should be treated as high risk and
   revalidated with a full teardown/redeploy cycle before promotion.
 
-### 2. Use the direct Authentik URL for reconciler workflows
+### 2. Use the explicit Authentik URL for reconciler workflows
 
 - The reconciler's default Authentik target produced discovery HTTP 404 during
-  rehearsal flows.
-- The stable working path during OP-25 and later validation was:
+  early rehearsal flows (OP-25). Do not rely on the default.
+- The harness now uses the internal HTTPS endpoint with the homelab root CA:
 
   ```bash
+  AUTHENTIK_EXTRA_CA=certs/homelab-root.crt \
   ./with-secrets python3 terraform/lxc/reconcile-edge.py \
-    --authentik-url http://${lab_ip_authentik}:9000 \
-    --no-verify-tls
+    --authentik-url "https://authentik-int.${LAB_DOMAIN}:9443" --json
   ```
 
-- Rehearsal and runbook commands should either use this direct URL explicitly
-  or make the safe default unambiguous.
+  This is used by `live-preflight`, `activate-edge`, and `final-validation`.
+- The earlier `http://${lab_ip_authentik}:9000 --no-verify-tls` form worked
+  when step-ca was not yet integrated; it is superseded by the HTTPS form above.
+- Rehearsal and runbook commands must specify the URL explicitly — do not
+  assume the reconciler default is safe.
 
 ### 3. Validate Portainer directly on port 9000
 

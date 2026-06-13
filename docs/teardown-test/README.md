@@ -15,21 +15,26 @@ operator has explicitly approved the destructive window.
 
 ## Current Status
 
-The first full teardown/rebuild rehearsal completed successfully and is
-summarized in [artifacts/reports/20260422-044416.md](artifacts/reports/20260422-044416.md).
-Durable operational takeaways from rehearsal work are captured in
-[lessons-learned.md](lessons-learned.md).
-The repeatable harness is documented in
-[repeatable-test.md](repeatable-test.md) and implemented at
-`scripts/teardown-deploy-test.sh`.
+On `baseline/teardown-validated` (commit `f4d1f25`).
 
-The current storage-refactor branch has already proved the non-destructive gate
-path for the updated storage contract: `source-preflight` and `plan` now run
-the storage contract validator, storage classifier regression checks, and
-targeted plan-safety review for explicit-contract stacks. The next rehearsal on
-this branch should be a fresh `approval-preflight`, a freshly stamped approval
-packet, and then a full `cycle --execute` run to capture destructive proof for
-the storage-refactor changes.
+Two full teardown/rebuild cycles have completed successfully:
+
+- Initial rehearsal (2026-04-22): [artifacts/reports/20260422-044416.md](artifacts/reports/20260422-044416.md)
+- Storage-refactor gate (2026-05-17): [artifacts/reports/20260517-033905-storage-refactor-gate.md](artifacts/reports/20260517-033905-storage-refactor-gate.md)
+- Multi-source inventory gate (2026-06-13): [artifacts/reports/20260613-pve-test-vm-teardown.md](artifacts/reports/20260613-pve-test-vm-teardown.md)
+
+The June 2026 cycle was run against **pve-test-vm** (`192.168.1.41`), a
+VM-hosted Proxmox instance that replaced the retired bare-metal `pve-test`
+laptop. All cold-start failures discovered during that cycle were fixed in the
+same branch and merged. Durable takeaways are in [lessons-learned.md](lessons-learned.md).
+
+The repeatable harness is documented in [repeatable-test.md](repeatable-test.md)
+and implemented at `scripts/teardown-deploy-test.sh`.
+
+**Next action:** cut `fix/ci-pipeline-cleanup` from `baseline/teardown-validated`
+and work through CI pipeline items (workflow trigger cleanup, ShellCheck
+directives, Harbor image policy, Ansible lint). No teardown gate required for
+that branch.
 
 The harness is safe by default: non-destructive validation phases can run during
 development, while destroy/apply/publish phases require explicit execution
@@ -77,12 +82,15 @@ Production `pve` is out of scope.
 
 ## Safety Rules
 
-- The target guard must return exactly `pve-test` before any apply, destroy, or
-  deployment validation command:
+- The target guard must confirm the expected non-production node before any
+  apply, destroy, or deployment validation command. The active test target is
+  `pve-test-vm`; set `PVE_ENV=pve-test-vm` and confirm with:
 
   ```bash
-  ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+  PVE_ENV=pve-test-vm ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
   ```
+
+  Any result other than the intended non-production node must stop execution.
 
 - Teardown requires explicit human approval after backups are verified.
 - Run from a clean working tree and a known commit.

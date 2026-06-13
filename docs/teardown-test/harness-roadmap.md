@@ -46,7 +46,8 @@ The operator-facing description lives at:
 docs/teardown-test/repeatable-test.md
 ```
 
-Known good checks from the current harness baseline:
+Known good checks from the current harness baseline (last verified 2026-06-13,
+`pve-test-vm`, commit `f4d1f25`):
 
 - `bash -n scripts/teardown-deploy-test.sh`
 - `shellcheck scripts/teardown-deploy-test.sh`
@@ -54,25 +55,26 @@ Known good checks from the current harness baseline:
 - `scripts/teardown-deploy-test.sh plan`
 - `scripts/teardown-deploy-test.sh status --stamp <stamp>`
 - mutating phase refusal without `--execute`
-- `source-preflight` passed without network access to `pve-test`
-- `live-preflight` passed with network access to `pve-test`
-- `final-validation` passed against the current rebuilt platform
+- `source-preflight` passed without network access to `pve-test-vm`
+- `live-preflight` passed with network access to `pve-test-vm`
+- `approval-preflight` passed (clean tree, branch/commit capture, source + live)
+- `platform-status` passed (read-only inventory + container state snapshot)
+- `final-validation` passed against the rebuilt platform
+- full `cycle --execute` passed end-to-end on `pve-test-vm`
 
-The first sandboxed live dry-run failed at Authentik discovery with
-`Operation not permitted`; rerunning with network access passed. That means the
-split design is fine, but future agents should remember that live dry-runs need
-network permission in this execution environment.
+Live dry-runs need network access to resolve `authentik-int.${LAB_DOMAIN}:9443`.
+Sandboxed environments that block outbound network access will fail at the
+`authentik-direct-health` and `reconcile-edge-dry-run` steps.
 
 ## Work Needed
 
-### 1. In Progress: Encode Backup And Approval Gates
+### 1. Implemented: Backup And Approval Gates (schema formalization pending)
 
-The script currently checks for an approval phrase, but it does not verify backup
-evidence or operator window metadata.
+Approval packet gates are implemented and proved in the 2026-05-17 cycle.
 
 Current implementation:
 
-- `scripts/teardown-deploy-test.sh` now requires `--approval-packet PATH` for
+- `scripts/teardown-deploy-test.sh` requires `--approval-packet PATH` for
   `destroy` and `cycle`.
 - The harness validates structured approval packet fields before any Terragrunt
   destroy: `stamp`, `target`, `approved commit SHA`, outage/rollback fields,
@@ -80,22 +82,13 @@ Current implementation:
   non-loss services (plus recreatable-service evidence or explicit approval).
 - The harness records approval packet SHA256 under the evidence stamp.
 
-Remaining next step:
+Remaining open item:
 
 - Consider promoting the packet format to a tracked template or machine-readable
-  schema once operators agree on long-term field names.
-- Validate that the packet contains:
-  - evidence stamp
-  - approved commit SHA
-  - target guard result
-  - stack scope
-  - outage window
-  - rollback deadline
-  - backup evidence paths for non-loss services
-  - explicit data-loss approval for recreatable services
-- Refuse destructive phases if the packet is missing or stale.
+  schema once operators agree on long-term field names. Until then, packet
+  structure is validated by heuristic field checks in the harness.
 
-Acceptance:
+Acceptance criteria (already met):
 
 - Destructive runs cannot start from an ad hoc command alone.
 - The approval packet and harness evidence share the same stamp.
