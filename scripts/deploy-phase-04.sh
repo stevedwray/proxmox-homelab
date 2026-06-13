@@ -75,7 +75,7 @@ check_env() {
   # shellcheck disable=SC1091
   source .env
   if [ -f "$ENV_OVERRIDE_FILE" ]; then
-    # shellcheck disable=SC1091
+    # shellcheck disable=SC1090,SC1091  # non-constant source path; file checked before sourcing
     source "$ENV_OVERRIDE_FILE"
   fi
 

@@ -77,9 +77,11 @@ def classify_change(change: dict[str, Any]) -> list[dict[str, str]]:
     )
 
     # If provider reports replacement via actions, only treat it as storage
-    # risk when the diff surface is storage-related.
+    # risk when the diff surface is storage-related AND there is prior state
+    # (before is not None).  A pure create (before=null, actions=["create"])
+    # in a fresh workspace is safe and should not be flagged.
     if any(a in ("delete", "create", "replace") for a in actions):
-        if storage_related:
+        if storage_related and before is not None:
             results.append({"field_transition": "provider_replacement", "class": "replacement-sensitive"})
         return results
 

@@ -77,7 +77,7 @@
     harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('^homelab-.*|^harbor-.*', true) }}"
     harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access,groups', true) }}"
     harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('preferred_username', true) }}"
-    harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('false', true) | bool }}"
+    harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_auto_onboard: "{{ lookup('env', 'HARBOR_OIDC_AUTO_ONBOARD') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_logout: "{{ lookup('env', 'HARBOR_OIDC_LOGOUT') | default('true', true) | bool }}"
     harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('false', true) | bool }}"

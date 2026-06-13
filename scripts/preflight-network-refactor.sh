@@ -41,6 +41,7 @@ set -euo pipefail
 _COLOUR=true
 if [[ ! -t 1 ]]; then _COLOUR=false; fi
 
+# shellcheck disable=SC2015  # || true intentional: always succeed whether colour is on or off
 colour_on()  { [[ "$_COLOUR" == true ]] && printf '%b' "$1" || true; }
 RED=$(    colour_on '\033[0;31m')
 GREEN=$(  colour_on '\033[0;32m')

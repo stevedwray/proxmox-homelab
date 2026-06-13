@@ -168,7 +168,7 @@
 
     # ── Step 4: Add FWD delegation entry ──────────────────────────────────────
 
-    - name: Add FWD delegation entry for {{ lab_domain }} → CoreDNS
+    - name: Add FWD delegation entry for {{ lab_domain }} → CoreDNS # noqa: name[template]
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
         method: POST

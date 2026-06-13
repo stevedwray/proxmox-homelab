@@ -124,7 +124,7 @@ check_prerequisites() {
   # Source environment
   # shellcheck disable=SC1091
   source .env 2>/dev/null || { log_error "Failed to source .env"; prereqs_ok=false; }
-  # shellcheck disable=SC1091
+  # shellcheck disable=SC1090,SC1091  # non-constant source path; file checked before sourcing
   [ -f "$ENV_OVERRIDE_FILE" ] && source "$ENV_OVERRIDE_FILE" 2>/dev/null
 
   : "${TF_VAR_proxmox_node:=}"

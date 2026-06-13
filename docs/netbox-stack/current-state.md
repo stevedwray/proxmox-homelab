@@ -16,21 +16,72 @@ work-session evidence, not durable project documentation.
 
 ## Current Position
 
-### State as of 2026-06-11 — netbox-populate fully operational
+### State as of 2026-06-11 (second pass) — multi-source inventory operational
 
-Branch `fix/playbook-syntax-fixes` is the current working branch.
-All blocking issues are resolved. The branch is ready for the teardown gate
-before merging to `baseline/teardown-validated`.
+Branch `feat/netbox-populate-multi-source-inventory` is the current working branch.
+`fix/playbook-syntax-fixes` was merged to `baseline/teardown-validated` via PR.
 
-**Confirmed in browser (2026-06-11):** All 5 platform services healthy.
-NetBox is fully populated:
-- Proxmox (pve-test) node and all LXCs visible
+**Current populate result:** `VMs: 25, IPs: 33, Services: 50, Stale managed objects: 1`
+
+NetBox now discovers from both Proxmox nodes:
+- pve-test: all LXCs visible in `pve-test-cluster`; services via socket-proxy
+- pve: all LXCs visible in `pve-cluster`; services via Portainer API token (`PORTAINER_TOKEN`)
 - MikroTik topology present
-- Docker containers showing as application services on their respective LXCs
+- pve-test and pve each have their own hypervisor device and cluster in NetBox
 
-Last populate run result: `VMs: 11, IPs: 19, Services: 37, Stale managed objects: 0`
+Stale managed object: one stale IP (`192.168.1.40/24`) — minor, not blocking.
 
-#### Changes in this session (2026-06-11)
+#### Changes in this session (2026-06-11, second pass)
+
+**Multi-source inventory (`pve-test.yaml`):**
+- Added `inventory:` block with two `proxmox_nodes` entries:
+  - pve-test: existing credentials (`PROXMOX_READONLY_TOKEN_ID/SECRET`)
+  - pve: new credentials (`PVE_READONLY_TOKEN_ID/SECRET`) + Portainer token
+- `pve.gibbsgreatly.xyz` added with `portainer_url` and `portainer_api_key_env: PORTAINER_TOKEN`
+
+**New SOPS entries (`terraform/secrets.enc.yaml`):**
+- `PVE_READONLY_TOKEN_ID=automation@pve!terraform-readonly`
+- `PVE_READONLY_TOKEN_SECRET` — regenerated on pve (pre-existing token, secret was lost)
+- `PORTAINER_TOKEN` — Portainer API access token for `management-stack.gibbsgreatly.xyz:9443`
+
+**populate.py additions:**
+- `_load_inventory_sources()` — reads `inventory:` block from network intent YAML
+- `_build_topology_from_nodes()` — discovers each node with explicit credentials,
+  builds per-node PortainerClient when `portainer_url`/`portainer_api_key_env` declared
+- `_node_name_from_proxmox_data()` — extracts node name from Proxmox API response
+- `_ensure_proxmox_hypervisor()` — creates device + cluster in NetBox for non-primary nodes
+- `populate_static_hosts()` — upserts statically declared hosts (workstations, Pis, etc.)
+- `populate_virtual()` — now resolves cluster per-VM from `vm_def["node"]`; pve VMs go
+  into `pve-cluster`, pve-test VMs stay in `pve-test-cluster`
+
+**discover.py additions:**
+- `PortainerClient.__init__` gains `api_key=None` — uses `X-API-Key` header, skips JWT auth
+- `build_vm_list()` — Portainer endpoint matching now tries name first, then agent IP fallback
+
+**deploy-netbox-stack.yml:**
+- Added `pve_readonly_token_id`, `pve_readonly_token_secret`, `portainer_token` vars
+- Added env template lines: `PVE_READONLY_TOKEN_ID`, `PVE_READONLY_TOKEN_SECRET`, `PORTAINER_TOKEN`
+
+**Tests (`test_populate_multi_source.py`):**
+- 14 tests covering `_load_inventory_sources`, `_build_topology_from_nodes`,
+  `populate_static_hosts`
+
+## Recommended Next Work
+
+1. **PR `feat/netbox-populate-multi-source-inventory` → `baseline/teardown-validated`**
+   — teardown gate satisfied (2026-06-12). Validation confirmed live on pve-test
+   with both nodes populating correctly. PR is ready to create.
+
+2. **Teardown gate for `baseline/teardown-validated`** — `fix/playbook-syntax-fixes`
+   was merged but the teardown gate has not been run since that merge. Run a full
+   teardown + redeploy cycle to validate the baseline still holds.
+
+3. **Static hosts** — `pve-test.yaml` has `static_hosts: []`. Add entries for the
+   Linux desktop and Raspberry Pi when their IPs are known.
+
+4. **Stale IP `192.168.1.40/24`** — investigate and clean up this orphan.
+
+#### Changes in this session (2026-06-11, first pass)
 
 **Playbook fixes (`deploy-netbox-stack.yml`):**
 - Added `mikrotik_port` var + `MIKROTIK_PORT` line to LXC env template

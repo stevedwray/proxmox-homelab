@@ -4,7 +4,9 @@ import glob
 import json
 import os
 import re
+import socket
 import subprocess
+import urllib.parse
 import urllib.request
 import urllib.error
 
@@ -85,7 +87,7 @@ def _resolve_portainer_endpoint(stack_yamls: dict) -> tuple[str | None, str | No
 class PortainerClient:
     """Minimal Portainer API client."""
 
-    def __init__(self, url=None, password=None):
+    def __init__(self, url=None, password=None, api_key=None):
         resolved_url = url or _resolved_env_value("PORTAINER_URL")
         if not resolved_url:
             resolved_ip = _resolved_env_value("PORTAINER_SERVER_IP") or _resolved_env_value("LAB_IP_PORTAINER")
@@ -96,7 +98,8 @@ class PortainerClient:
             resolved_url = f"https://{resolved_ip}:9443"
 
         self.url = resolved_url.rstrip("/")
-        self._password = password or os.environ["PORTAINER_ADMIN_PASSWORD"]
+        self._api_key = api_key
+        self._password = password or (None if api_key else os.environ["PORTAINER_ADMIN_PASSWORD"])
         self._token = None
 
     def _ssl_ctx(self):
@@ -123,18 +126,18 @@ class PortainerClient:
             self._token = json.loads(resp.read().decode())["jwt"]
 
     def _get(self, path):
-        self._auth()
-        req = urllib.request.Request(
-            f"{self.url}{path}",
-            headers={"Authorization": f"Bearer {self._token}"},
-        )
+        if self._api_key:
+            headers = {"X-API-Key": self._api_key}
+        else:
+            self._auth()
+            headers = {"Authorization": f"Bearer {self._token}"}
+        req = urllib.request.Request(f"{self.url}{path}", headers=headers)
         with urllib.request.urlopen(req, context=self._ssl_ctx()) as resp:
             return json.loads(resp.read().decode())
 
     def get_endpoints(self):
-        """Return list of endpoint dicts (excluding 'local')."""
-        endpoints = self._get("/api/endpoints")
-        return [e for e in endpoints if e["URL"] != "unix:///var/run/docker.sock"]
+        """Return list of all Portainer endpoint dicts."""
+        return self._get("/api/endpoints")
 
     def get_containers(self, endpoint_id):
         """Return list of container dicts for an endpoint."""
@@ -523,7 +526,16 @@ class RuntimeInspector:
         return []
 
 
-def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None):
+def _resolve_portainer_server_ip(portainer_url: str) -> str:
+    """Resolve the IP of the Portainer server from its URL."""
+    try:
+        hostname = urllib.parse.urlparse(portainer_url).hostname
+        return socket.gethostbyname(hostname) if hostname else ""
+    except Exception:
+        return ""
+
+
+def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_inspector=None, portainer_url=None):
     """Merge Proxmox inventory with runtime-discovered service data.
 
     Proxmox is the authoritative source for container/VM existence and config.
@@ -542,22 +554,43 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
     runtime_inspector = runtime_inspector or RuntimeInspector(portainer=portainer)
 
     # Index Portainer endpoints by name for service discovery
-    portainer_endpoints = {}
+    portainer_endpoints_by_name = {}
+    portainer_endpoints_by_ip = {}
     if portainer:
+        # Resolve the Portainer server's own IP once so we can map the
+        # "local" (unix-socket) endpoint to the host container by IP.
+        portainer_server_ip = _resolve_portainer_server_ip(portainer_url) if portainer_url else ""
         for ep in portainer.get_endpoints():
-            ip = ep["URL"].replace("tcp://", "").split(":")[0]
-            portainer_endpoints[ep["Name"]] = {
+            ep_url = ep.get("URL", "")
+            raw_ip = ep_url.replace("tcp://", "").split(":")[0]
+            # Unix-socket endpoints yield "unix" or empty — not a routable IP.
+            # Map them to the Portainer server's resolved IP instead so they
+            # match the host LXC container (e.g. management-stack).
+            if not raw_ip or raw_ip.startswith("unix") or raw_ip.startswith("/"):
+                ip = portainer_server_ip
+            else:
+                ip = raw_ip
+            ep_entry = {
                 "id": ep["Id"],
                 "ip": ip,
                 "status": "active" if ep["Status"] == 1 else "offline",
             }
+            portainer_endpoints_by_name[ep["Name"]] = ep_entry
+            if ip:
+                portainer_endpoints_by_ip[ip] = ep_entry
 
     vms = []
 
     # Process all containers/VMs from Proxmox (authoritative source)
     for container in proxmox_data.get("containers", []):
         pve_name = container["name"]
-        portainer_ep = portainer_endpoints.get(pve_name, {})
+        container_ip = _get_container_ip(container)
+        container_ip_addr = container_ip.split("/")[0] if container_ip else None
+        portainer_ep = (
+            portainer_endpoints_by_name.get(pve_name)
+            or (portainer_endpoints_by_ip.get(container_ip_addr) if container_ip_addr else None)
+            or {}
+        )
 
         config = container.get("config", {})
         ip = _get_container_ip(container)
@@ -609,7 +642,7 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
     return vms
 
 
-def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portainer_ip=None):
+def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portainer_ip=None, portainer_url=None):
     """Build the full topology dict from all available data sources.
 
     Priority: Proxmox (authoritative) → runtime service inspection.
@@ -617,27 +650,35 @@ def build_topology(proxmox_data=None, stack_yamls=None, portainer=None, portaine
     if proxmox_data is None:
         proxmox_data = discover_from_proxmox()
 
-    return build_vm_list(proxmox_data, stack_yamls, portainer=portainer)
+    return build_vm_list(proxmox_data, stack_yamls, portainer=portainer, portainer_url=portainer_url)
+
+
+_EMPTY_NETWORK_TOPOLOGY: dict = {
+    "router": None,
+    "interfaces": [],
+    "vlans": [],
+    "ip_addresses": [],
+}
 
 
 def build_network_topology():
     """Build router and network topology from Mikrotik.
 
     Returns a dict with router metadata, interfaces, VLANs, and IP addresses.
-    If Mikrotik credentials are not configured, returns an empty topology.
+    If Mikrotik credentials are not configured, or auth fails, returns an empty topology.
     """
     if not (
         (os.environ.get("MIKROTIK_READONLY_USER") and os.environ.get("MIKROTIK_READONLY_PASSWORD"))
         or (os.environ.get("MIKROTIK_USER") and os.environ.get("MIKROTIK_PASSWORD"))
     ):
-        return {
-            "router": None,
-            "interfaces": [],
-            "vlans": [],
-            "ip_addresses": [],
-        }
+        return dict(_EMPTY_NETWORK_TOPOLOGY)
 
-    data = discover_from_mikrotik()
+    try:
+        data = discover_from_mikrotik()
+    except RuntimeError as exc:
+        print(f"warn: MikroTik discovery failed; skipping network topology: {exc}")
+        return dict(_EMPTY_NETWORK_TOPOLOGY)
+
     return {
         "router": data.get("router"),
         "interfaces": data.get("interfaces", []),

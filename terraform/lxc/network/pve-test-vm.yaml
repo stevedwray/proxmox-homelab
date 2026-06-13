@@ -1,4 +1,4 @@
-# Proxmox-only network intent for the pve-test environment.
+# Proxmox-only network intent for the pve-test-vm environment.
 # This file is declarative; Terraform reads it to drive SDN VNet creation
 # (configure-network-sdn-vnet.yml) and to attach LXC containers to the
 # correct bridge and VLAN.
@@ -9,57 +9,21 @@
 # policy at the router.
 #
 # Physical setup:
-#   pve-test (laptop) NIC → MikroTik trunk port
+#   pve-test-vm (VM on pve, 192.168.1.41) NIC → MikroTik trunk port
 #     Untagged (native): LAN — 192.168.1.0/24
 #     Tagged VLAN 10: build_seg — 192.168.10.0/24, gw 192.168.10.1
 #     Tagged VLAN 20: mgmt_seg  — 192.168.20.0/24, gw 192.168.20.1
 #     Tagged VLAN 30: edge_seg  — 192.168.30.0/24, gw 192.168.30.1
 #     Tagged VLAN 40: infra_seg — 192.168.40.0/24, gw 192.168.40.1
 #
-# MikroTik one-time setup (run once before the first SDN stack is deployed):
-#   # Replace <trunk-iface> with the interface facing pve-test (active baseline: ether5)
-#   /interface vlan add interface=<trunk-iface> name=vlan10-build vlan-id=10
-#   /interface vlan add interface=<trunk-iface> name=vlan20-mgmt  vlan-id=20
-#   /interface vlan add interface=<trunk-iface> name=vlan30-edge  vlan-id=30
-#   /interface vlan add interface=<trunk-iface> name=vlan40-infra vlan-id=40
-#   /ip address add address=192.168.10.1/24 interface=vlan10-build comment="pve-test build_seg gw"
-#   /ip address add address=192.168.20.1/24 interface=vlan20-mgmt  comment="pve-test mgmt_seg gw"
-#   /ip address add address=192.168.30.1/24 interface=vlan30-edge  comment="pve-test edge_seg gw"
-#   /ip address add address=192.168.40.1/24 interface=vlan40-infra comment="pve-test infra_seg gw"
-#   # Delegate lab.gibbsgreatly.xyz — baseline: static A records on MikroTik.
-#   # Apply with admin credentials (api-user is read-only by design).
-#   # For each internal platform name, add a static A record:
-#   /ip dns static add name=traefik.lab.gibbsgreatly.xyz type=A address=192.168.30.10 ttl=5m comment=lab-zone-baseline
-#   # Or via the REST API using environment variables for credentials:
-#   #   curl -sk --user "$MIKROTIK_ADMIN:$MIKROTIK_ADMIN_PASSWORD" \
-#   #     -X POST https://192.168.1.251/rest/ip/dns/static/add \
-#   #     -H "Content-Type: application/json" \
-#   #     -d '{"name":"traefik.lab.gibbsgreatly.xyz","type":"A","address":"192.168.30.10","ttl":"5m","comment":"lab-zone-baseline"}'
-#   # When an internal authoritative DNS server is available, replace with FWD type:
-#   #   /ip dns static add regexp="(^|\\.)lab\\.gibbsgreatly\\.xyz$" type=FWD forward-to=<internal-auth-dns-ip> comment="delegate-lab-zone"
-#   # Verify delegation and resolver behavior from each SDN gateway path:
-#   # dig @192.168.10.1 +short traefik.lab.gibbsgreatly.xyz
-#   # dig @192.168.20.1 +short traefik.lab.gibbsgreatly.xyz
-#   # dig @192.168.30.1 +short traefik.lab.gibbsgreatly.xyz
-#   # dig @192.168.40.1 +short traefik.lab.gibbsgreatly.xyz
-#   # dig @192.168.20.1 +short github.com
-#   # Inter-VLAN routing uses the MikroTik routing table (routes added automatically
-#   # for directly-connected VLAN interfaces). Enforce zone policies in the MikroTik
-#   # firewall — see policies section at the bottom of this file.
-#
-# Proxmox one-time setup (after installing Proxmox on pve-test laptop):
-#   In Proxmox UI: Network → vmbr0 → Edit → check "VLAN aware" → Apply
-#   Then on the host: ifreload -a
-#   Verify: bridge vlan show
-#
 # Automation note: `configure-network-sdn-vnet.yml` now handles
-# `zone_type: vlan` for `pve-test` SDN attachment creation. The remaining
+# `zone_type: vlan` for `pve-test-vm` SDN attachment creation. The remaining
 # out-of-band dependency is the MikroTik side: VLAN interfaces, gateway IPs,
 # DNS behavior, and firewall policy must already exist before stack
 # provisioning relies on direct routed access.
 
 proxmox:
-  target_node: pve-test
+  target_node: pve-test-vm
   pve_host: ${proxmox_host}
 
 attachments:
@@ -67,12 +31,11 @@ attachments:
   # vmbr0 — Legacy bridge attachment
   #
   # This attachment remains only for legacy/test stacks that still use the
-  # default bridge path. Portainer now runs on `mgmt_seg`; it is no longer an
-  # active exception to the SDN zone model.
+  # default bridge path.
   # -------------------------------------------------------------------------
   lan:
     description: Default LAN bridge — used only by legacy/test stacks (test-lxc, test-docker).
-      All active platform stacks use named SDN zones. Portainer moved to mgmt_seg in stack.yaml.
+      All active platform stacks use named SDN zones.
     type: bridge
     bridge: vmbr0
     vlan_tag: null
@@ -86,8 +49,6 @@ attachments:
   #   Harbor for image pulls and apt-cacher for apt proxy.
   # Gateway: MikroTik VLAN 40 interface (192.168.40.1)
   # Containers: Harbor (192.168.40.10), apt-cacher (192.168.40.11), NetBox (192.168.40.12)
-  # Bootstrap note: Harbor's first deployment on a fresh pass pulls from
-  #   Docker Hub directly. All subsequent containers pull from Harbor.
   # -------------------------------------------------------------------------
   infra_seg:
     description: Infrastructure services — registry, artifact cache, IPAM
@@ -99,10 +60,10 @@ attachments:
       zone_type: vlan
       bridge: vmbr0
       nodes:
-        - pve-test
+        - pve-test-vm
       vnet: tvinfra
       vlan_tag: 40
-      alias: pve-test infrastructure segment
+      alias: pve-test-vm infrastructure segment
       subnet: "${lab_subnet_infra_cidr}"
       gateway: "${lab_gw_infra}"
       snat: false
@@ -114,8 +75,6 @@ attachments:
   # Gateway: MikroTik VLAN 20 interface (192.168.20.1)
   # Containers: Authentik (192.168.20.10), step-ca (192.168.20.11),
   #             Monitoring (192.168.20.12)
-  # Cross-zone: Reachable from edge_seg (Traefik forward-auth) and build_seg
-  #   (metrics/log push). step-ca httpChallenge requires outbound to edge_seg:80.
   # -------------------------------------------------------------------------
   mgmt_seg:
     description: Management plane — identity, PKI, monitoring
@@ -127,10 +86,10 @@ attachments:
       zone_type: vlan
       bridge: vmbr0
       nodes:
-        - pve-test
+        - pve-test-vm
       vnet: tvmgmt
       vlan_tag: 20
-      alias: pve-test management segment
+      alias: pve-test-vm management segment
       subnet: "${lab_subnet_mgmt_cidr}"
       gateway: "${lab_gw_mgmt}"
       snat: false
@@ -141,8 +100,6 @@ attachments:
   # Purpose: The only ingress path from the LAN into internal services.
   # Gateway: MikroTik VLAN 30 interface (192.168.30.1)
   # Containers: Traefik (192.168.30.10)
-  # LAN access: Workstation reaches Traefik at 192.168.30.10:80/443 via
-  #   MikroTik VLAN routing — no additional static routes required.
   # -------------------------------------------------------------------------
   edge_seg:
     description: Edge ingress — reverse proxy only
@@ -154,10 +111,10 @@ attachments:
       zone_type: vlan
       bridge: vmbr0
       nodes:
-        - pve-test
+        - pve-test-vm
       vnet: tvedge
       vlan_tag: 30
-      alias: pve-test edge segment
+      alias: pve-test-vm edge segment
       subnet: "${lab_subnet_edge_cidr}"
       gateway: "${lab_gw_edge}"
       snat: false
@@ -179,10 +136,10 @@ attachments:
       zone_type: vlan
       bridge: vmbr0
       nodes:
-        - pve-test
+        - pve-test-vm
       vnet: tvnetc
       vlan_tag: 10
-      alias: pve-test build segment
+      alias: pve-test-vm build segment
       subnet: "${lab_subnet_build_cidr}"
       gateway: "${lab_gw_build}"
       snat: false
@@ -227,15 +184,6 @@ inventory:
   static_hosts: []
 
 policies:
-  # Cross-zone policies. Enforced at the MikroTik firewall.
-  #
-  # Important: The Proxmox VNet firewall (firewall: true on mgmt_seg and
-  # edge_seg) controls inbound traffic to individual containers within a zone
-  # but does NOT enforce cross-zone policies — those are a MikroTik concern.
-  # The VNet firewall in main.tf has a known bug where cross-zone ACCEPT rules
-  # are never generated (vnet_policy_candidates requires both from and to to
-  # be on the same VNet — impossible for cross-zone policies). The Proxmox
-  # firewall is disabled for dev passes; fix the bug before enabling it.
   - from: edge_seg
     to: mgmt_seg
     protocol: tcp

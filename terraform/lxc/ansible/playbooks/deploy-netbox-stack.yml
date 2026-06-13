@@ -12,14 +12,15 @@
     compose_file: "{{ compose_dir }}/docker-compose.yml"
     netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
     netbox_bootstrap_timeout: 120
-    netbox_superuser_username: "{{ lookup('env','NETBOX_SUPERUSER_USER') | default('admin', true) }}"
-    netbox_superuser_email: "{{ lookup('env','NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env','TF_VAR_domain') | default('localhost')), true) }}"
-    netbox_superuser_password: "{{ lookup('env','NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
-    netbox_steve_username: "{{ lookup('env','NETBOX_STEVE_USERNAME') | default('steve', true) }}"
-    netbox_steve_email: "{{ lookup('env','NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
-    netbox_breakglass_username: "{{ lookup('env','NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-    netbox_breakglass_email: "{{ lookup('env','NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
-    netbox_breakglass_password: "{{ lookup('env','NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+    netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+    netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+    netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+    netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+    netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+    netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+    netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
 
   tasks:
     - name: Ensure NetBox compose directory exists
@@ -97,14 +98,14 @@
         compose_file: "/srv/docker/netbox/docker-compose.yml"
         netbox_manage: "/opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py"
         netbox_bootstrap_timeout: 120
-        netbox_superuser_username: "{{ lookup('env','NETBOX_SUPERUSER_USER') | default('admin', true) }}"
-        netbox_superuser_email: "{{ lookup('env','NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env','TF_VAR_domain') | default('localhost')), true) }}"
-        netbox_superuser_password: "{{ lookup('env','NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
-        netbox_steve_username: "{{ lookup('env','NETBOX_STEVE_USERNAME') | default('steve', true) }}"
-        netbox_steve_email: "{{ lookup('env','NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
-        netbox_breakglass_username: "{{ lookup('env','NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
-        netbox_breakglass_email: "{{ lookup('env','NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
-        netbox_breakglass_password: "{{ lookup('env','NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+        netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+        netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+        netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+        netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+        netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+        netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+        netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+        netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
         netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) }}"
 
 - name: Configure Docker base
@@ -361,14 +362,18 @@
     netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) | mandatory('NETBOX_API_TOKEN or NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
     portainer_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
     portainer_ip: "{{ lookup('env', 'LAB_IP_PORTAINER') | default('192.168.20.20', true) }}"
-    mikrotik_user: "{{ lookup('env', 'MIKROTIK_READONLY_USER') | default(lookup('env', 'MIKROTIK_USER') | default('', true), true) }}"
-    mikrotik_password: "{{ lookup('env', 'MIKROTIK_READONLY_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD') | default('', true), true) }}"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_READONLY_USER') | default(lookup('env', 'MIKROTIK_USER') | default(lookup('env', 'MIKROTIK_ADMIN') | default('', true), true), true) }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_READONLY_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD') | default(lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default('', true), true), true) }}"
     mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('', true) }}"
     mikrotik_port: "{{ lookup('env', 'MIKROTIK_PORT') | default('', true) }}"
     lab_subnet_infra_cidr: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') | default('', true) }}"
     lab_subnet_mgmt_cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | default('', true) }}"
     lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | default('', true) }}"
     lab_subnet_build_cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | default('', true) }}"
+    pve_readonly_token_id: "{{ lookup('env', 'PVE_READONLY_TOKEN_ID') | default('', true) }}"
+    pve_readonly_token_secret: "{{ lookup('env', 'PVE_READONLY_TOKEN_SECRET') | default('', true) }}"
+    portainer_token: "{{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
 
   tasks:
     - name: Install python3 and pyyaml
@@ -411,7 +416,7 @@
 
     - name: Copy network intent file for deployed service
       ansible.builtin.copy:
-        src: "../../network/pve-test.yaml"
+        src: "../../network/{{ netbox_network_env }}.yaml"
         dest: /etc/netbox-populate/network.yaml
         owner: root
         group: root
@@ -439,7 +444,7 @@
           DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375
           # Legacy single-endpoint fallback (leave unset unless needed):
           # DOCKER_SOCKET_PROXY_URL=
-          NETBOX_NETWORK_ENV=pve-test
+          NETBOX_NETWORK_ENV={{ netbox_network_env }}
           NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
@@ -457,6 +462,12 @@
           {% if lab_subnet_edge_cidr %}LAB_SUBNET_EDGE_CIDR={{ lab_subnet_edge_cidr }}{% endif %}
 
           {% if lab_subnet_build_cidr %}LAB_SUBNET_BUILD_CIDR={{ lab_subnet_build_cidr }}{% endif %}
+
+          {% if pve_readonly_token_id %}PVE_READONLY_TOKEN_ID={{ pve_readonly_token_id }}{% endif %}
+
+          {% if pve_readonly_token_secret %}PVE_READONLY_TOKEN_SECRET={{ pve_readonly_token_secret }}{% endif %}
+
+          {% if portainer_token %}PORTAINER_TOKEN={{ portainer_token }}{% endif %}
 
       no_log: true
 

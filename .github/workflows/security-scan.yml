@@ -4,12 +4,12 @@ on:
   push:
     branches:
       - main
-      - 'dev/pve-test'
+      - 'baseline/teardown-validated'
       - 'dev/**'
   pull_request:
     branches:
       - main
-      - 'dev/pve-test'
+      - 'baseline/teardown-validated'
   workflow_dispatch:
     inputs:
       image_ref:

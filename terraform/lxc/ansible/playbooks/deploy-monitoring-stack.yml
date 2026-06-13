@@ -281,6 +281,16 @@
               static_configs:
                 - targets:
                     - "{{ lookup('env', 'LAB_IP_PROXY') }}:8082"
+
+            - job_name: step-ca
+              scheme: https
+              tls_config:
+                ca_file: /etc/ssl/certs/homelab-root.crt
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_STEP_CA') }}:9443"
+                  labels:
+                    stack: step-ca-stack
       notify: Restart VictoriaMetrics
 
     - name: Write Loki configuration
@@ -587,7 +597,7 @@
       ansible.builtin.copy:
         src: /etc/resolv.conf
         dest: /etc/resolv.conf.backup-ansible
-        remote_src: yes
+        remote_src: true
       when: monitoring_dns_fallback_needed
       failed_when: false
 
@@ -618,7 +628,7 @@
     - name: Add temporary /etc/hosts entry for Harbor when DNS lookup fails
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        line: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }} {{ monitoring_lab_fqdn_harbor }}"
+        line: "{{ lookup('env', 'LAB_IP_HARBOR') | default('192.168.40.10', true) }} {{ monitoring_lab_fqdn_harbor }}"
         state: present
       when: harbor_dns.rc != 0
       failed_when: false
@@ -696,14 +706,14 @@
       ansible.builtin.copy:
         src: /etc/resolv.conf.backup-ansible
         dest: /etc/resolv.conf
-        remote_src: yes
+        remote_src: true
       when: monitoring_dns_fallback_needed | default(false)
       failed_when: false
 
     - name: Remove temporary /etc/hosts entry for Harbor
       ansible.builtin.lineinfile:
         path: /etc/hosts
-        regexp: "{{ lookup('env','LAB_IP_HARBOR') | default('192.168.40.10', true) }}\\s+{{ monitoring_lab_fqdn_harbor }}"
+        regexp: "{{ lookup('env', 'LAB_IP_HARBOR') | default('192.168.40.10', true) }}\\s+{{ monitoring_lab_fqdn_harbor }}"
         state: absent
       when: harbor_dns is defined and harbor_dns.rc != 0
       failed_when: false

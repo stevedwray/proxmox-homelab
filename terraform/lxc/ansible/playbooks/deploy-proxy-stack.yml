@@ -162,7 +162,7 @@
                 forwardAuth:
                   address: "https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik"
                   tls:
-                    insecureSkipVerify: true
+                    ca: /certs/combined-ca.crt
                   trustForwardHeader: true
                   authResponseHeaders:
                     - X-authentik-username

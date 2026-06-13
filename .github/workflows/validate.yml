@@ -4,14 +4,14 @@ on:
   push:
     branches:
       - main
-      - 'dev/pve-test'
+      - 'baseline/teardown-validated'
       - 'dev/**'
       - 'feat/**'
       - 'fix/**'
   pull_request:
     branches:
       - main
-      - 'dev/pve-test'
+      - 'baseline/teardown-validated'
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}

@@ -23,7 +23,16 @@ import ipaddress
 import yaml
 
 from client import NetBoxClient
-from discover import build_full_topology, load_stack_yamls, _build_socket_proxy_services
+from discover import (
+    build_full_topology,
+    build_topology,
+    build_network_topology,
+    build_proxmox_context,
+    load_stack_yamls,
+    _build_socket_proxy_services,
+    PortainerClient,
+)
+from proxmox_client import discover_from_proxmox
 
 # ---------------------------------------------------------------------------
 # Static definitions (things not discovered automatically)
@@ -49,6 +58,7 @@ DEVICE_ROLES = [
 DEVICE_TYPES = [
     {"manufacturer": "Generic", "model": "Proxmox Server", "slug": "proxmox-server"},
     {"manufacturer": "Generic", "model": "Mikrotik Router", "slug": "mikrotik-router"},
+    {"manufacturer": "Generic", "model": "Generic Device", "slug": "generic-device"},
 ]
 
 DEVICES = [
@@ -105,6 +115,8 @@ NB_VIRT_INTERFACES = "/virtualization/interfaces/"
 NB_IPAM_IP_ADDRESSES = "/ipam/ip-addresses/"
 NB_IPAM_SERVICES = "/ipam/services/"
 NB_EXTRAS_TAGS = "/extras/tags/"
+
+ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE = "dcim.interface"
 
 MANAGED_TAG_NAME = "managed-by-proxmox-homelab"
 MANAGED_TAG_SLUG = "managed-by-proxmox-homelab"
@@ -433,6 +445,72 @@ def build_population_intent(
             "interface_name": interface_name,
             "address": _derive_proxmox_host_address(),
         },
+        "inventory_sources": _load_inventory_sources(intent),
+    }
+
+
+def _load_inventory_sources(network_intent: dict) -> dict:
+    """Extract multi-source inventory config from the network intent."""
+    section = network_intent.get("inventory", {})
+    return {
+        "proxmox_nodes": section.get("proxmox_nodes", []),
+        "static_hosts": section.get("static_hosts", []),
+    }
+
+
+def _node_name_from_proxmox_data(proxmox_data: dict) -> str | None:
+    """Return the Proxmox node name from a discover_from_proxmox result."""
+    nodes = proxmox_data.get("nodes", [])
+    if nodes and isinstance(nodes[0], dict):
+        return nodes[0].get("node")
+    return None
+
+
+def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
+    """Build topology by querying each declared Proxmox node and merging results."""
+    all_vms = []
+    discovered_node_names = []
+    primary_proxmox_data = None
+
+    for node_def in proxmox_nodes:
+        host = _resolve_env_token(node_def.get("host", ""))
+        if not host or host.startswith("${"):
+            print(f"  warning: proxmox_nodes entry host unresolvable ({node_def.get('host')!r}) — skipping")
+            continue
+        url = f"https://{host}:8006"
+        token_id = os.environ.get(node_def.get("token_id_env", ""))
+        token_secret = os.environ.get(node_def.get("token_secret_env", ""))
+
+        try:
+            proxmox_data = discover_from_proxmox(url=url, token_id=token_id, token_secret=token_secret)
+        except Exception as exc:
+            print(f"  warning: Proxmox {host} discovery failed: {exc}")
+            continue
+
+        node_name = _node_name_from_proxmox_data(proxmox_data)
+        if node_name:
+            discovered_node_names.append(node_name)
+
+        portainer = None
+        portainer_url = node_def.get("portainer_url")
+        portainer_api_key_env = node_def.get("portainer_api_key_env")
+        if portainer_url and portainer_api_key_env:
+            api_key = os.environ.get(portainer_api_key_env)
+            if api_key:
+                try:
+                    portainer = PortainerClient(url=portainer_url, api_key=api_key)
+                except Exception as exc:
+                    print(f"  warning: Portainer client for {portainer_url} failed: {exc}")
+
+        if primary_proxmox_data is None:
+            primary_proxmox_data = proxmox_data
+        all_vms.extend(build_topology(proxmox_data=proxmox_data, portainer=portainer, portainer_url=portainer_url))
+
+    return {
+        "vms": all_vms,
+        "network": build_network_topology(),
+        "proxmox": build_proxmox_context(primary_proxmox_data) if primary_proxmox_data else {},
+        "discovered_node_names": discovered_node_names,
     }
 
 
@@ -653,6 +731,55 @@ def _legacy_hypervisor_lookups(inventory: dict) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
+def populate_static_hosts(nb, site, static_hosts: list) -> None:
+    """Upsert statically-declared hosts (workstations, Pis, etc.) as NetBox devices."""
+    if not static_hosts:
+        return
+    print("\n=== Static Hosts ===")
+    managed_tags = _managed_tag_refs()
+    dtype = nb.get(NB_DCIM_DEVICE_TYPES, model="Generic Device")["results"][0]
+
+    for host_def in static_hosts:
+        name = host_def.get("name")
+        if not name:
+            continue
+        role_name = host_def.get("role", "server").capitalize()
+        role_slug = re.sub(r"[^a-z0-9]+", "-", role_name.lower()).strip("-")
+
+        nb.ensure(NB_DCIM_DEVICE_ROLES, {"slug": role_slug}, {
+            "name": role_name,
+            "color": "9e9e9e",
+            "tags": managed_tags,
+        }, **_managed_patch_guard())
+        role = nb.get(NB_DCIM_DEVICE_ROLES, slug=role_slug)["results"][0]
+
+        device = nb.ensure(NB_DCIM_DEVICES, {"name": name}, {
+            "role": role["id"],
+            "device_type": dtype["id"],
+            "site": site["id"],
+            "status": "active",
+            "description": host_def.get("description", f"Static host: {name}"),
+            "tags": managed_tags,
+        }, **_managed_patch_guard())
+
+        ip = host_def.get("ip")
+        if ip:
+            address = ip if "/" in ip else f"{ip}/24"
+            iface = nb.ensure(NB_DCIM_INTERFACES, {
+                "device_id": device["id"], "name": "eth0",
+            }, {
+                "device": device["id"],
+                "name": "eth0",
+                "type": "other",
+                "tags": managed_tags,
+            }, **_managed_patch_guard())
+            nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
+                "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
+                "assigned_object_id": iface["id"],
+                "tags": managed_tags,
+            }, **_managed_patch_guard())
+
+
 def populate_foundation(nb):
     """Create site, manufacturers, platforms, cluster types, device roles, device types."""
     print("\n=== Foundation ===")
@@ -753,6 +880,42 @@ def populate_physical(nb, site, inventory):
     )
 
 
+def _ensure_proxmox_hypervisor(nb, site, node_name: str) -> None:
+    """Ensure a Proxmox hypervisor device and cluster exist for the given node name."""
+    managed_tags = _managed_tag_refs()
+    _ensure_tags(nb, [MANAGED_TAG_NAME])
+
+    role = nb.get(NB_DCIM_DEVICE_ROLES, name="Hypervisor")["results"][0]
+    dtype = nb.get(NB_DCIM_DEVICE_TYPES, model="Proxmox Server")["results"][0]
+    platform = nb.get(NB_DCIM_PLATFORMS, name="Proxmox VE")["results"][0]
+
+    device = nb.ensure(NB_DCIM_DEVICES, {"name": node_name}, {
+        "role": role["id"],
+        "device_type": dtype["id"],
+        "platform": platform["id"],
+        "site": site["id"],
+        "status": "active",
+        "description": f"Proxmox VE hypervisor — {node_name}",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
+
+    nb.ensure(NB_DCIM_INTERFACES, {"device_id": device["id"], "name": "vmbr0"}, {
+        "device": device["id"],
+        "name": "vmbr0",
+        "type": "bridge",
+        "description": "Primary bridge",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
+
+    ctype = nb.get(NB_VIRT_CLUSTER_TYPES, name="Proxmox VE")["results"][0]
+    nb.ensure(NB_VIRT_CLUSTERS, {"name": _cluster_name_for_target_node(node_name)}, {
+        "type": ctype["id"],
+        "site": site["id"],
+        "description": f"Single-node Proxmox cluster — {node_name}",
+        "tags": managed_tags,
+    }, **_managed_patch_guard())
+
+
 def populate_network(nb, site, network):
     """Create router device, interfaces, VLANs, and router IPs from Mikrotik discovery."""
     print("\n=== Network Infrastructure ===")
@@ -847,7 +1010,7 @@ def populate_network(nb, site, network):
             continue
         iface = iface_results[0]
         ip_obj = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
-            "assigned_object_type": "dcim.interface",
+            "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
             "assigned_object_id": iface["id"],
             "status": "active",
             "description": f"{router_name}:{iface_name}",
@@ -904,8 +1067,8 @@ def populate_virtual(nb, vms, inventory):
     """Create VMs, their interfaces, and tags from discovered data."""
     print("\n=== Virtual Infrastructure ===")
 
-    cluster = nb.get(NB_VIRT_CLUSTERS, name=inventory["cluster_name"])["results"][0]
     platform = nb.get(NB_DCIM_PLATFORMS, name="Debian 13")["results"][0]
+    cluster_cache = {}
 
     for vm_def in vms:
         extra_tags = vm_def.get("tags", [])
@@ -917,6 +1080,19 @@ def populate_virtual(nb, vms, inventory):
         vm_name = _virtual_machine_name(vm_def, inventory)
         _ensure_tags(nb, [MANAGED_TAG_NAME, _environment_tag_name(vm_env), *extra_tags])
         tag_refs = _managed_tag_refs(extra_tags, environment=vm_env)
+
+        # Resolve the cluster for this VM's source node.
+        vm_node = vm_def.get("node") if (vm_def.get("node") and vm_def.get("node") != "external") else inventory["target_node"]
+        node_cluster_name = _cluster_name_for_target_node(vm_node)
+        if node_cluster_name not in cluster_cache:
+            results = nb.get(NB_VIRT_CLUSTERS, name=node_cluster_name)["results"]
+            if results:
+                cluster_cache[node_cluster_name] = results[0]
+            else:
+                if inventory["cluster_name"] not in cluster_cache:
+                    cluster_cache[inventory["cluster_name"]] = nb.get(NB_VIRT_CLUSTERS, name=inventory["cluster_name"])["results"][0]
+                cluster_cache[node_cluster_name] = cluster_cache[inventory["cluster_name"]]
+        cluster = cluster_cache[node_cluster_name]
 
         # NetBox 4.5 virtual-machines only accept 'active' status; use description for state
         vm = nb.ensure(NB_VIRT_VIRTUAL_MACHINES, {"name": vm_name}, {
@@ -986,7 +1162,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                 )
                 if ip is None:
                     ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": host_address}, {
-                        "assigned_object_type": "dcim.interface",
+                        "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
                         "assigned_object_id": iface["id"],
                         "status": "active",
                         "description": device["name"],
@@ -994,7 +1170,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                     }, **_managed_patch_guard())
                 if (
                     _primary_ip_id(device) != ip["id"]
-                    and ip.get("assigned_object_type") == "dcim.interface"
+                    and ip.get("assigned_object_type") == ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE
                     and ip.get("assigned_object_id") == iface["id"]
                 ):
                     device = _patch_managed_object(
@@ -1007,7 +1183,7 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
                 desired_tags = {MANAGED_TAG_SLUG, inventory["environment_tag"]}
                 assigned_ips = nb.get(
                     NB_IPAM_IP_ADDRESSES,
-                    assigned_object_type="dcim.interface",
+                    assigned_object_type=ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
                     assigned_object_id=iface["id"],
                 )["results"]
                 for assigned_ip in assigned_ips:
@@ -1459,7 +1635,11 @@ def main():
     print(f"Routed segment prefixes in scope: {len(population_intent['prefixes'])}")
 
     # Discover full topology (VM + network).
-    topology = build_full_topology()
+    proxmox_nodes = population_intent.get("inventory_sources", {}).get("proxmox_nodes", [])
+    if proxmox_nodes:
+        topology = _build_topology_from_nodes(proxmox_nodes)
+    else:
+        topology = build_full_topology()
     population_intent = _apply_discovered_proxmox_host_context(population_intent, topology)
     vms = topology["vms"]
     network = topology["network"]
@@ -1490,9 +1670,14 @@ def main():
 
     site = populate_foundation(nb)
     populate_physical(nb, site, inventory)
+    for node_name in topology.get("discovered_node_names", []):
+        if node_name != inventory["target_node"]:
+            _ensure_proxmox_hypervisor(nb, site, node_name)
     populate_network(nb, site, network)
     populate_virtual(nb, vms, inventory)
     populate_ipam(nb, site, vms, population_intent, inventory)
+    static_hosts = population_intent.get("inventory_sources", {}).get("static_hosts", [])
+    populate_static_hosts(nb, site, static_hosts)
     # Service-level reconciliation: ensure managed services' env tags match their VM
     reconcile_service_env_tags(nb)
     stale_total = report_stale_managed_objects(nb, inventory)

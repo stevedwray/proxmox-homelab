@@ -1,0 +1,38 @@
+generated_from:
+  network_intent: /home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test-vm.yaml
+  stacks_dir: /home/steve/git/proxmox-homelab/terraform/lxc/stacks
+zones:
+  infra_seg:
+  - stack_name: apt-cacher-stack
+    ip_address: 192.168.40.11
+    description: apt-cacher-stack
+  - stack_name: harbor-stack
+    ip_address: 192.168.40.10
+    description: harbor-stack
+  - stack_name: netbox-stack
+    ip_address: 192.168.40.12
+    description: netbox-stack
+  mgmt_seg:
+  - stack_name: authentik-stack
+    ip_address: 192.168.20.10
+    description: authentik-stack
+  - stack_name: dns-stack
+    ip_address: 192.168.20.13
+    description: dns-stack
+  - stack_name: monitoring-stack
+    ip_address: 192.168.20.12
+    description: monitoring-stack
+  - stack_name: portainer-stack
+    ip_address: 192.168.20.20
+    description: portainer-stack
+  - stack_name: step-ca-stack
+    ip_address: 192.168.20.11
+    description: step-ca
+  edge_seg:
+  - stack_name: proxy-stack
+    ip_address: 192.168.30.10
+    description: proxy-stack
+  build_seg:
+  - stack_name: ci-runner-01
+    ip_address: 192.168.10.63
+    description: ci-runner-01
