@@ -13,7 +13,7 @@ on:
   workflow_dispatch:
     inputs:
       image_ref:
-        description: "Harbor image reference to scan (for example: 10.57.3.10/project/image:tag)"
+        description: "Harbor image reference to scan (for example: 192.168.40.10/project/image:tag)"
         required: false
         type: string
       source_ref:
@@ -63,7 +63,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          IMAGE_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
+          IMAGE_REF="192.168.40.10/${TARGET_PROJECT}/${TARGET_IMAGE}:${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}"
 
           CRANE_VERSION="v0.20.6"
           curl --proto '=https' --tlsv1.2 -fsSL "https://github.com/google/go-containerregistry/releases/download/${CRANE_VERSION}/go-containerregistry_Linux_x86_64.tar.gz" \
@@ -75,20 +75,20 @@ jobs:
           if [[ -n "$DOCKERHUB_USER" && -n "$DOCKERHUB_PASS" ]]; then
             DOCKERHUB_AUTH_B64="$(printf '%s:%s' "$DOCKERHUB_USER" "$DOCKERHUB_PASS" | base64 -w0)"
             cat > "$HOME/.docker/config.json" <<EOF
-          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
+          {"auths":{"192.168.40.10":{"auth":"${HARBOR_AUTH_B64}"},"https://index.docker.io/v1/":{"auth":"${DOCKERHUB_AUTH_B64}"},"index.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"registry-1.docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"},"docker.io":{"auth":"${DOCKERHUB_AUTH_B64}"}}}
           EOF
           else
             if [[ "$SOURCE_REF" == docker.io/* || "$SOURCE_REF" == library/* || "$SOURCE_REF" != */* ]]; then
               echo "HARBOR_DOCKERHUB_USERNAME/HARBOR_DOCKERHUB_PASSWORD are not set; Docker Hub source pulls may be rate limited." >&2
             fi
             cat > "$HOME/.docker/config.json" <<EOF
-          {"auths":{"10.57.3.10":{"auth":"${HARBOR_AUTH_B64}"}}}
+          {"auths":{"192.168.40.10":{"auth":"${HARBOR_AUTH_B64}"}}}
           EOF
           fi
 
           "$RUNNER_TEMP/crane" copy --insecure "$SOURCE_REF" "$IMAGE_REF"
           DIGEST="$($RUNNER_TEMP/crane digest --insecure "$IMAGE_REF")"
-          DIGEST_REF="10.57.3.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
+          DIGEST_REF="192.168.40.10/${TARGET_PROJECT}/${TARGET_IMAGE}@${DIGEST}"
 
           if [[ -z "$DIGEST" || -z "$DIGEST_REF" ]]; then
             echo "Failed to resolve digest for $IMAGE_REF" >&2
@@ -159,7 +159,7 @@ jobs:
       - name: Generate SBOM (SPDX)
         env:
           SYFT_REGISTRY_INSECURE_USE_HTTP: "true"
-          SYFT_REGISTRY_AUTH_AUTHORITY: "10.57.3.10"
+          SYFT_REGISTRY_AUTH_AUTHORITY: "192.168.40.10"
           SYFT_REGISTRY_AUTH_USERNAME: ${{ secrets.HARBOR_ROBOT_USER }}
           SYFT_REGISTRY_AUTH_PASSWORD: ${{ secrets.HARBOR_ROBOT_PASSWORD }}
           INPUT_IMAGE_REF: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_ref || '' }}
@@ -202,8 +202,8 @@ jobs:
             sign_ref="$BUILT_DIGEST_REF"
           fi
 
-          if [[ ! "$IMAGE_REF" =~ ^10\.57\.3\.10\/ ]]; then
-            echo "Security scan signing requires Harbor image refs (10.57.3.10/...)." >&2
+          if [[ ! "$IMAGE_REF" =~ ^192\.168\.40\.10\/ ]]; then
+            echo "Security scan signing requires Harbor image refs (192.168.40.10/...)." >&2
             exit 1
           fi
 
