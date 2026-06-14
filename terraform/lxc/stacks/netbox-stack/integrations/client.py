@@ -121,48 +121,48 @@ class NetBoxClient:
             return obj.get(key[:-3])
         return obj.get(key)
 
+    def _coerce_existing_dict(self, existing: dict, expected):
+        """Coerce an existing NetBox dict value to match a primitive expected type.
+
+        Called only when expected is neither dict nor list — so expected is a
+        primitive (int, str, or other). Normalises NetBox choice-field wrappers
+        ({value/slug/name}) into the comparable primitive.
+        """
+        if "id" in existing and isinstance(expected, int):
+            return existing["id"]
+        if isinstance(expected, str):
+            for key in ("value", "slug", "name"):
+                if key in existing:
+                    val = existing.get(key)
+                    return val.lower() if isinstance(val, str) else val
+        return existing
+
+    def _coerce_dict_items(self, existing: dict, expected: dict) -> dict:
+        return {k: self._coerce_existing(existing.get(k), v) for k, v in expected.items()}
+
+    def _coerce_list_items(self, existing: list, expected: list) -> list:
+        return [self._coerce_existing(item, expected[0]) if expected else item for item in existing]
+
     def _coerce_existing(self, existing, expected):
-        if isinstance(expected, dict):
-            if not isinstance(existing, dict):
-                return existing
-            if set(expected).issubset({"id", "name", "slug"}):
-                return {key: existing.get(key) for key in expected}
-            return {k: self._coerce_existing(existing.get(k), v) for k, v in expected.items()}
-
-        if isinstance(expected, list):
-            if not isinstance(existing, list):
-                return existing
-            return [self._coerce_existing(item, expected[0]) if expected else item for item in existing]
-
         # Normalize dict wrappers commonly returned by NetBox into the
         # comparable primitive types expected by callers. When the expected
         # value is a string, perform case-insensitive normalization so that
         # NetBox-presented labels/names (which may be Title Case) compare
         # equal to lowercase expected literals such as 'virtual'.
+        if isinstance(expected, dict):
+            if not isinstance(existing, dict):
+                return existing
+            if set(expected).issubset({"id", "name", "slug"}):
+                return {key: existing.get(key) for key in expected}
+            return self._coerce_dict_items(existing, expected)
+        if isinstance(expected, list):
+            if not isinstance(existing, list):
+                return existing
+            return self._coerce_list_items(existing, expected)
         if isinstance(existing, dict):
-            if "id" in existing and isinstance(expected, int):
-                return existing["id"]
-            if isinstance(expected, str):
-                # Prefer canonical keys that NetBox commonly uses for choice
-                # style fields.
-                if "value" in existing:
-                    val = existing.get("value")
-                    return val.lower() if isinstance(val, str) else val
-                if "slug" in existing:
-                    val = existing.get("slug")
-                    return val.lower() if isinstance(val, str) else val
-                if "name" in existing:
-                    val = existing.get("name")
-                    return val.lower() if isinstance(val, str) else val
-            # For non-string expected types, fall through to nested coercion.
-            return {k: self._coerce_existing(v, expected.get(k) if isinstance(expected, dict) else expected)
-                    for k, v in existing.items()} if isinstance(expected, dict) else existing
-
-        # If expected is a string, and the existing value is a plain string,
-        # compare case-insensitively by normalizing to lowercase.
+            return self._coerce_existing_dict(existing, expected)
         if isinstance(expected, str) and isinstance(existing, str):
             return existing.lower()
-
         return existing
 
     def _canonical(self, value):
@@ -273,6 +273,37 @@ class NetBoxClient:
             combined = [obj for obj in combined if self._object_matches_lookup(obj, params)]
         return {"count": len(combined), "results": combined}
 
+    def _resolve_with_legacy_lookups(self, path, lookup, legacy_lookups):
+        results = self.get(path, **lookup)
+        if results["count"] == 0 and legacy_lookups:
+            for legacy_lookup in legacy_lookups:
+                legacy_results = self.get(path, **legacy_lookup)
+                if legacy_results["count"] > 0:
+                    return legacy_results
+        return results
+
+    def _log_create(self, path, desired):
+        if self.dry_run:
+            obj = {"id": self._next_synthetic(), **desired}
+            self._cache_object(path, obj)
+        else:
+            obj = self.post(path, desired)
+        print(f"  {'would create' if self.dry_run else 'created'}: {path} → {self._label(obj)} (id={obj['id']})")
+        return obj
+
+    def _log_patch(self, path, obj, changes):
+        if self.dry_run:
+            obj = {**copy.deepcopy(obj), **changes}
+            self._cache_object(path, obj)
+        else:
+            self.patch(f"{path}{obj['id']}/", changes)
+            obj = {**copy.deepcopy(obj), **changes}
+        print(
+            f"  {'would update' if self.dry_run else 'updated'}: {path} → "
+            f"{self._label(obj)} (id={obj['id']}) fields={sorted(changes)}"
+        )
+        return obj
+
     def ensure(
         self,
         path,
@@ -286,44 +317,18 @@ class NetBoxClient:
         """Create or reconcile an object and log the resulting action."""
         self._record_desired_lookup(path, lookup)
         desired = {**lookup, **(defaults or {})}
-        results = self.get(path, **lookup)
-
-        if results["count"] == 0 and legacy_lookups:
-            for legacy_lookup in legacy_lookups:
-                legacy_results = self.get(path, **legacy_lookup)
-                if legacy_results["count"] > 0:
-                    results = legacy_results
-                    break
+        results = self._resolve_with_legacy_lookups(path, lookup, legacy_lookups)
 
         if results["count"] == 0:
-            if self.dry_run:
-                obj = {"id": self._next_synthetic(), **desired}
-                self._cache_object(path, obj)
-            else:
-                obj = self.post(path, desired)
-            print(f"  {'would create' if self.dry_run else 'created'}: {path} → {self._label(obj)} (id={obj['id']})")
-            return obj
+            return self._log_create(path, desired)
 
         obj = results["results"][0]
         changes = self._build_patch(obj, desired, allowed_patch_fields=allowed_patch_fields)
         if changes and managed_tag_slug and not allow_unmanaged_patch and managed_tag_slug not in self._tag_slugs(obj):
-            print(
-                f"  skip unmanaged: {path} → {self._label(obj)} "
-                f"(id={obj['id']}) fields={sorted(changes)}"
-            )
+            print(f"  skip unmanaged: {path} → {self._label(obj)} (id={obj['id']}) fields={sorted(changes)}")
             return obj
         if changes:
-            if self.dry_run:
-                obj = {**copy.deepcopy(obj), **changes}
-                self._cache_object(path, obj)
-            else:
-                self.patch(f"{path}{obj['id']}/", changes)
-                obj = {**copy.deepcopy(obj), **changes}
-            print(
-                f"  {'would update' if self.dry_run else 'updated'}: {path} → "
-                f"{self._label(obj)} (id={obj['id']}) fields={sorted(changes)}"
-            )
-            return obj
+            return self._log_patch(path, obj, changes)
 
         print(f"  exists: {path} → {self._label(obj)} (id={obj['id']})")
         return obj

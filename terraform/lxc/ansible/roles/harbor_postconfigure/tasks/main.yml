@@ -278,6 +278,57 @@
   delegate_to: localhost
   no_log: true
 
+- name: Warn — OIDC steve user not found; sysadmin deferred to first login
+  ansible.builtin.debug:
+    msg: >-
+      Harbor OIDC user '{{ harbor_postconfigure_steve_username }}' does not exist yet.
+      This is normal on a fresh deploy — the account is created on first OIDC login.
+      Harbor is configured with oidc_admin_group='{{ harbor_postconfigure_oidc_admin_group }}'.
+      On first login, if the oidc_admin_group feature grants sysadmin automatically, no further
+      action is needed. If not, re-run this postconfigure playbook after the first OIDC login
+      to apply the sysadmin assignment.
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - (harbor_postconfigure_steve_candidates | default([]) | length) == 0
+  delegate_to: localhost
+
+- name: Verify Harbor OIDC admin group is configured for deferred sysadmin
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_config_verify
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - (harbor_postconfigure_steve_candidates | default([]) | length) == 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Assert Harbor OIDC admin group matches expected value
+  ansible.builtin.assert:
+    that:
+      - >-
+        (
+          harbor_postconfigure_config_verify.json.oidc_admin_group.value
+          | default('')
+        ) == harbor_postconfigure_oidc_admin_group
+    fail_msg: >-
+      Harbor oidc_admin_group is '{{
+        harbor_postconfigure_config_verify.json.oidc_admin_group.value | default('(not set)')
+      }}' but expected '{{ harbor_postconfigure_oidc_admin_group }}'.
+      Sysadmin will NOT be granted automatically on first login. Fix the OIDC configuration.
+    success_msg: >-
+      Harbor oidc_admin_group='{{ harbor_postconfigure_oidc_admin_group }}' confirmed.
+      Sysadmin will be granted on first OIDC login for members of that group.
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - (harbor_postconfigure_steve_candidates | default([]) | length) == 0
+    - harbor_postconfigure_config_verify is not skipped
+  delegate_to: localhost
+
 # -----------------------------------------------------------------------
 # Docker Hub proxy cache registry endpoint
 # -----------------------------------------------------------------------
