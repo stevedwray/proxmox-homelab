@@ -322,6 +322,92 @@ def _build_portainer_services(portainer, portainer_ep: dict) -> list[dict]:
     return deduped
 
 
+def _fetch_container_summaries(base: str) -> list:
+    """GET /containers/json?all=1 from a Docker socket proxy; return list or []."""
+    # TODO: when DOCKER_SOCKET_PROXY_URL_TEMPLATE is upgraded to https://,
+    # pass an ssl context that verifies against the step-ca or LE cert.
+    try:
+        req = urllib.request.Request(f"{base}/containers/json?all=1")
+        with urllib.request.urlopen(req) as resp:  # nosec B310 — Docker socket proxy on private SDN
+            summaries = json.loads(resp.read().decode())
+    except Exception:
+        return []
+    return summaries if isinstance(summaries, list) else []
+
+
+def _inspect_container_data(base: str, cid: str) -> dict | None:
+    """GET /containers/{cid}/json from a Docker socket proxy; return dict or None."""
+    try:
+        req = urllib.request.Request(f"{base}/containers/{cid}/json")
+        with urllib.request.urlopen(req) as resp:  # nosec B310 — Docker socket proxy on private SDN
+            return json.loads(resp.read().decode())
+    except Exception:
+        return None
+
+
+def _resolve_container_name(data: dict, summary: dict, cid: str) -> str:
+    """Return the canonical container name from an inspect response."""
+    cname = (data.get("Name") or "").lstrip("/")
+    if cname:
+        return cname
+    names = data.get("Names") or summary.get("Names") or []
+    return names[0].lstrip("/") if names else cid
+
+
+def _container_matches_guest(
+    data: dict,
+    summary: dict,
+    container: dict,
+    guest_ip: str | None,
+    guest_scoped: bool,
+) -> bool:
+    """Return True if a container belongs to the Proxmox guest."""
+    if guest_scoped:
+        return True
+    if guest_ip:
+        networks = (data.get("NetworkSettings") or {}).get("Networks") or {}
+        if isinstance(networks, dict):
+            for net in networks.values():
+                if isinstance(net, dict) and net.get("IPAddress") == guest_ip:
+                    return True
+    pve_name = container.get("name")
+    if pve_name:
+        names = data.get("Names") or summary.get("Names") or []
+        return any(pve_name in nn for nn in names)
+    return False
+
+
+def _extract_port_services(ports_map: dict, cname: str, seen: set) -> list[dict]:
+    """Convert a container Ports dict into service dicts, deduplicating via seen."""
+    services = []
+    for port_key, mappings in (ports_map or {}).items():
+        if not re.match(r"\d+/(tcp|udp)$", port_key):
+            continue
+        proto = port_key.split("/", 1)[1]
+        if not mappings:
+            continue
+        for mapping in mappings:
+            host_port_raw = mapping.get("HostPort")
+            if not host_port_raw:
+                continue
+            try:
+                host_port = int(host_port_raw)
+            except Exception:
+                continue
+            key = (cname, host_port, proto)
+            if key in seen:
+                continue
+            seen.add(key)
+            svc_name = f"{cname}-{host_port}" if host_port != 9001 else cname
+            services.append({
+                "name": svc_name,
+                "port": host_port,
+                "protocol": proto,
+                "source": "socket-proxy",
+            })
+    return services
+
+
 def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: bool = False) -> list[dict]:
     """Query a docker-socket-proxy HTTP API and return services for a guest.
 
@@ -344,109 +430,20 @@ def _build_socket_proxy_services(proxy_url: str, container: dict, guest_scoped: 
 
     base = proxy_url.rstrip("/")
     services = []
-    seen = set()
+    seen: set = set()
 
-    try:
-        # TODO: when DOCKER_SOCKET_PROXY_URL_TEMPLATE is upgraded to https://,
-        # pass an ssl context here that verifies against the step-ca or LE cert.
-        # Currently HTTP only; context= omitted so urllib uses no TLS at all.
-        list_req = urllib.request.Request(f"{base}/containers/json?all=1")
-        with urllib.request.urlopen(list_req) as resp:  # nosec B310 — Docker socket proxy on private SDN
-            summaries = json.loads(resp.read().decode())
-    except Exception:
-        return []
-
-    if not isinstance(summaries, list):
-        return []
-
-    for summary in summaries:
-        cid = summary.get("Id") or summary.get("ID") or summary.get("Id")
+    for summary in _fetch_container_summaries(base):
+        cid = summary.get("Id") or summary.get("ID")
         if not cid:
             continue
-
-        try:
-            req = urllib.request.Request(f"{base}/containers/{cid}/json")
-            with urllib.request.urlopen(req) as resp:  # nosec B310 — Docker socket proxy on private SDN
-                data = json.loads(resp.read().decode())
-        except Exception:
-            # skip containers we can't inspect
+        data = _inspect_container_data(base, cid)
+        if data is None:
             continue
-
-        # Determine canonical container name
-        cname = (data.get("Name") or "").lstrip("/")
-        if not cname:
-            # try the Names list from summary or inspect
-            names = data.get("Names") or summary.get("Names") or []
-            if names:
-                cname = names[0].lstrip("/")
-            else:
-                cname = cid
-
-        # Determine whether this container maps to the Proxmox guest. When the
-        # proxy endpoint is guest-scoped (resolved from a per-guest template),
-        # treat all returned containers as belonging to the guest and skip
-        # any name/IP matching. For single-endpoint proxies, fall back to the
-        # Docker-inspect IP match and a conservative name substring fallback.
-        matches = False
-        if guest_scoped:
-            matches = True
-        else:
-            if guest_ip:
-                network_settings = data.get("NetworkSettings") or {}
-                networks = network_settings.get("Networks") or {}
-                if isinstance(networks, dict):
-                    for net in networks.values():
-                        if not isinstance(net, dict):
-                            continue
-                        c_ip = net.get("IPAddress")
-                        if c_ip == guest_ip:
-                            matches = True
-                            break
-
-            # Fallback: check whether the Proxmox guest name appears in container names
-            if not matches:
-                pve_name = container.get("name")
-                if pve_name:
-                    names = data.get("Names") or summary.get("Names") or []
-                    for nn in names:
-                        if pve_name and pve_name in nn:
-                            matches = True
-                            break
-
-        if not matches:
+        cname = _resolve_container_name(data, summary, cid)
+        if not _container_matches_guest(data, summary, container, guest_ip, guest_scoped):
             continue
-
-        # Extract Ports mapping from inspect response
-        network = data.get("NetworkSettings") or {}
-        ports_map = network.get("Ports") or {}
-
-        for port_key, mappings in (ports_map or {}).items():
-            m = re.match(r"(?P<port>\d+)/(tcp|udp)$", port_key)
-            if not m:
-                continue
-            proto = port_key.split("/", 1)[1]
-            if not mappings:
-                # Not published to the host
-                continue
-            for mapping in mappings:
-                host_port_raw = mapping.get("HostPort")
-                if not host_port_raw:
-                    continue
-                try:
-                    host_port = int(host_port_raw)
-                except Exception:
-                    continue
-                key = (cname, host_port, proto)
-                if key in seen:
-                    continue
-                seen.add(key)
-                svc_name = f"{cname}-{host_port}" if host_port != 9001 else cname
-                services.append({
-                    "name": svc_name,
-                    "port": host_port,
-                    "protocol": proto,
-                    "source": "socket-proxy",
-                })
+        ports_map = (data.get("NetworkSettings") or {}).get("Ports") or {}
+        services.extend(_extract_port_services(ports_map, cname, seen))
 
     return services
 
@@ -473,6 +470,25 @@ class RuntimeInspector:
             "DOCKER_SOCKET_PROXY_URL_TEMPLATE"
         )
 
+    def _probe_via_template(self, container: dict, template: str) -> list[dict]:
+        """Probe per-guest socket-proxy using a URL template; return services or []."""
+        guest_ip = _get_container_ip(container)
+        if guest_ip and "/" in guest_ip:
+            guest_ip = guest_ip.split("/", 1)[0]
+        if not guest_ip:
+            return []
+        try:
+            proxy_url = template.format(guest_ip=guest_ip)
+        except Exception:
+            return []
+        if not proxy_url:
+            return []
+        try:
+            return _build_socket_proxy_services(proxy_url, container, guest_scoped=True)
+        except Exception as exc:
+            print(f"  warn: socket-proxy inspection failed for {container.get('name', 'unknown')} via template {template}: {exc}")
+            return []
+
     def inspect(self, container: dict, portainer_ep: dict | None = None) -> list[dict]:
         """Return a list of observed services for `container`.
 
@@ -483,34 +499,17 @@ class RuntimeInspector:
         if self.portainer and portainer_ep:
             return _build_portainer_services(self.portainer, portainer_ep)
 
-        # Next preference: docker socket proxy (read-only Docker API).
         # Preferred: per-guest URL template with `{guest_ip}` placeholder.
         # Note: this template is expected to be provided via environment by
         # the populate job (e.g. /etc/netbox-populate/env when provisioned) or
         # by CI via GitHub Actions secrets. It is intentionally optional and
         # should remain unset on real stacks until the disposable proof and
         # rollout gates have been satisfied.
-        template = self.socket_proxy_url_template or _resolved_env_value(
-            "DOCKER_SOCKET_PROXY_URL_TEMPLATE"
-        )
+        template = self.socket_proxy_url_template or _resolved_env_value("DOCKER_SOCKET_PROXY_URL_TEMPLATE")
         if template:
-            guest_ip = _get_container_ip(container)
-            if guest_ip and "/" in guest_ip:
-                guest_ip = guest_ip.split("/", 1)[0]
-            if guest_ip:
-                try:
-                    proxy_url = template.format(guest_ip=guest_ip)
-                except Exception:
-                    proxy_url = None
-                if proxy_url:
-                    try:
-                        services = _build_socket_proxy_services(proxy_url, container, guest_scoped=True)
-                        if services:
-                            return services
-                    except Exception as exc:
-                        print(
-                            f"  warn: socket-proxy inspection failed for {container.get('name', 'unknown')} via template {template}: {exc}"
-                        )
+            services = self._probe_via_template(container, template)
+            if services:
+                return services
 
         # Fallback: single configured proxy endpoint (legacy)
         proxy_url = self.socket_proxy_url or _resolved_env_value("DOCKER_SOCKET_PROXY_URL")

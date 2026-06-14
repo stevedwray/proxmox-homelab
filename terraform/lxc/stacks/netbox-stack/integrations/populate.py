@@ -280,47 +280,42 @@ def _resolve_env_token(raw_value):
     return raw_value
 
 
+def _get_zone_prefix(zone_def: dict, attachments: dict) -> str | None:
+    """Return the resolved CIDR prefix for one zone, or None if it's a bridge or unresolvable."""
+    attachment_name = zone_def.get("attachment")
+    attachment: dict = {}
+    if isinstance(attachment_name, str):
+        candidate = attachments.get(attachment_name, {})
+        if isinstance(candidate, dict):
+            attachment = candidate
+    if attachment.get("type") == "bridge":
+        return None
+    attachment_sdn = attachment.get("sdn", {})
+    if not isinstance(attachment_sdn, dict):
+        attachment_sdn = {}
+    prefix = (
+        zone_def.get("prefix")
+        or zone_def.get("cidr")
+        or zone_def.get("network")
+        or attachment_sdn.get("subnet")
+    )
+    return _resolve_env_token(prefix)
+
+
 def _extract_routed_segment_prefixes(network_intent: dict) -> list[dict]:
     """Extract one prefix per routed segment from network intent."""
     attachments = network_intent.get("attachments", {})
     zones = network_intent.get("zones", {})
     if not isinstance(attachments, dict) or not isinstance(zones, dict):
         return []
-
     prefixes = []
     for segment_name, zone_def in zones.items():
         if not isinstance(zone_def, dict):
             continue
-
-        attachment = {}
-        attachment_name = zone_def.get("attachment")
-        if isinstance(attachment_name, str):
-            candidate = attachments.get(attachment_name, {})
-            if isinstance(candidate, dict):
-                attachment = candidate
-
-        if attachment.get("type") == "bridge":
-            continue
-
-        attachment_sdn = attachment.get("sdn", {})
-        if not isinstance(attachment_sdn, dict):
-            attachment_sdn = {}
-
-        # Support direct zone CIDR keys plus the repo's attachment.sdn.subnet shape.
-        prefix = (
-            zone_def.get("prefix")
-            or zone_def.get("cidr")
-            or zone_def.get("network")
-            or attachment_sdn.get("subnet")
-        )
-        prefix = _resolve_env_token(prefix)
+        prefix = _get_zone_prefix(zone_def, attachments)
         if not isinstance(prefix, str) or not prefix.strip():
             continue
-        prefixes.append({
-            "prefix": prefix.strip(),
-            "description": zone_def.get("description", segment_name),
-        })
-
+        prefixes.append({"prefix": prefix.strip(), "description": zone_def.get("description", segment_name)})
     return prefixes
 
 
@@ -466,6 +461,22 @@ def _node_name_from_proxmox_data(proxmox_data: dict) -> str | None:
     return None
 
 
+def _build_portainer_for_node(node_def: dict):
+    """Instantiate a PortainerClient for one node declaration, or return None."""
+    portainer_url = node_def.get("portainer_url")
+    portainer_api_key_env = node_def.get("portainer_api_key_env")
+    if not portainer_url or not portainer_api_key_env:
+        return None
+    api_key = os.environ.get(portainer_api_key_env)
+    if not api_key:
+        return None
+    try:
+        return PortainerClient(url=portainer_url, api_key=api_key)
+    except Exception as exc:
+        print(f"  warning: Portainer client for {portainer_url} failed: {exc}")
+        return None
+
+
 def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
     """Build topology by querying each declared Proxmox node and merging results."""
     all_vms = []
@@ -480,7 +491,6 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         url = f"https://{host}:8006"
         token_id = os.environ.get(node_def.get("token_id_env", ""))
         token_secret = os.environ.get(node_def.get("token_secret_env", ""))
-
         try:
             proxmox_data = discover_from_proxmox(url=url, token_id=token_id, token_secret=token_secret)
         except Exception as exc:
@@ -491,17 +501,8 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         if node_name:
             discovered_node_names.append(node_name)
 
-        portainer = None
+        portainer = _build_portainer_for_node(node_def)
         portainer_url = node_def.get("portainer_url")
-        portainer_api_key_env = node_def.get("portainer_api_key_env")
-        if portainer_url and portainer_api_key_env:
-            api_key = os.environ.get(portainer_api_key_env)
-            if api_key:
-                try:
-                    portainer = PortainerClient(url=portainer_url, api_key=api_key)
-                except Exception as exc:
-                    print(f"  warning: Portainer client for {portainer_url} failed: {exc}")
-
         if primary_proxmox_data is None:
             primary_proxmox_data = proxmox_data
         all_vms.extend(build_topology(proxmox_data=proxmox_data, portainer=portainer, portainer_url=portainer_url))
@@ -652,34 +653,18 @@ def _vm_description(vm_def: dict) -> str:
     return description[:200]
 
 
-def _try_reparent_runtime_service(nb, vm, svc_def, vm_env) -> bool:
-    """Conservatively reparent an existing runtime-sourced service to `vm`.
-
-    Returns True when a single, unambiguous existing managed service matching
-    `(name, protocol, port)` and carrying a `runtime-source-*` tag is found
-    and successfully patched to reference the provided `vm`.
-    """
-    # Only perform for socket-proxy discovered services and when the
-    # feature flag is explicitly enabled in the environment.
-    if svc_def.get("source") != "socket-proxy":
-        return False
-    if os.environ.get("REPARENT_RUNTIME_SOCKET_PROXY", "").lower() not in ("1", "true", "yes", "on"):
-        return False
-
+def _find_reparentable_service_candidate(nb, vm: dict, svc_def: dict) -> dict | None:
+    """Return the single unambiguous socket-proxy service to reparent, or None."""
     try:
         results = nb.get(NB_IPAM_SERVICES, name=svc_def.get("name"), protocol=svc_def.get("protocol"))
     except Exception:
-        return False
+        return None
     candidates = results.get("results", []) if isinstance(results, dict) else []
-
     matches = []
     for cand in candidates:
         slugs = _tag_slugs(cand)
         if MANAGED_TAG_SLUG not in slugs:
             continue
-        # Only consider services that were discovered by the socket-proxy
-        # runtime. This avoids accidentally reparenting services created by
-        # other runtime sources.
         if "runtime-source-socket-proxy" not in slugs:
             continue
         if _service_first_port(cand) != svc_def.get("port"):
@@ -690,12 +675,23 @@ def _try_reparent_runtime_service(nb, vm, svc_def, vm_env) -> bool:
         if not parent_id or parent_id == vm.get("id"):
             continue
         matches.append(cand)
+    return matches[0] if len(matches) == 1 else None
 
-    if len(matches) != 1:
-        # Ambiguous or none — do not reparent in these cases
+
+def _try_reparent_runtime_service(nb, vm, svc_def, vm_env) -> bool:
+    """Conservatively reparent an existing runtime-sourced service to `vm`.
+
+    Returns True when a single, unambiguous existing managed service matching
+    `(name, protocol, port)` and carrying a `runtime-source-*` tag is found
+    and successfully patched to reference the provided `vm`.
+    """
+    if svc_def.get("source") != "socket-proxy":
         return False
-
-    candidate = matches[0]
+    if os.environ.get("REPARENT_RUNTIME_SOCKET_PROXY", "").lower() not in ("1", "true", "yes", "on"):
+        return False
+    candidate = _find_reparentable_service_candidate(nb, vm, svc_def)
+    if candidate is None:
+        return False
     runtime_slugs = [s for s in _tag_slugs(candidate) if s.startswith("runtime-source-")]
     new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=vm_env)
     nb.patch_object(NB_IPAM_SERVICES, candidate, {
@@ -916,6 +912,24 @@ def _ensure_proxmox_hypervisor(nb, site, node_name: str) -> None:
     }, **_managed_patch_guard())
 
 
+def _select_router_primary_ip(internal_candidates: list[dict], router: dict) -> dict | None:
+    """Select one internal IP candidate dict as the router primary IP object."""
+    if not internal_candidates:
+        return None
+    router_host_ip = None
+    host_field = router.get("host") if isinstance(router, dict) else None
+    if isinstance(host_field, str) and host_field.strip():
+        router_host_ip = host_field.rsplit(":", 1)[0]
+    if router_host_ip:
+        preferred = [c for c in internal_candidates if c["address"].split("/")[0] == router_host_ip]
+    else:
+        preferred = []
+    if not preferred:
+        preferred = [c for c in internal_candidates if c["address"].split("/")[0].startswith("192.168.1.")]
+    pool = preferred if preferred else internal_candidates
+    return sorted(pool, key=lambda c: int(ipaddress.ip_address(c["address"].split("/")[0])))[0]["ip"]
+
+
 def populate_network(nb, site, network):
     """Create router device, interfaces, VLANs, and router IPs from Mikrotik discovery."""
     print("\n=== Network Infrastructure ===")
@@ -1019,40 +1033,7 @@ def populate_network(nb, site, network):
         if _is_internal_ip(address):
             internal_candidates.append({"ip": ip_obj, "address": address, "iface": iface})
 
-    def _is_mgmt_addr(addr: str) -> bool:
-        return addr.split("/")[0].startswith("192.168.1.")
-
-    def _addr_key(addr: str) -> int:
-        # numeric ordering of IPv4 address for stable selection
-        return int(ipaddress.ip_address(addr.split("/")[0]))
-
-    selected_ip_obj = None
-    if internal_candidates:
-        # Policy preference order:
-        # 1) If the discovered router management/API host address (router['host'])
-        #    appears among the discovered router IPs, prefer that exact IP.
-        # 2) Otherwise prefer management/LAN 192.168.1.x addresses.
-        # 3) Otherwise fall back to numerically lowest internal IP.
-        router_host_ip = None
-        host_field = router.get("host") if isinstance(router, dict) else None
-        if isinstance(host_field, str) and host_field.strip():
-            # router['host'] is formatted as "<host>[:<port>]" in discovery;
-            # strip an optional port portion.
-            router_host_ip = host_field.rsplit(":", 1)[0]
-
-        preferred: list[dict] = []
-        if router_host_ip:
-            preferred = [c for c in internal_candidates if c["address"].split("/")[0] == router_host_ip]
-
-        if not preferred:
-            preferred = [c for c in internal_candidates if _is_mgmt_addr(c["address"])]
-
-        if preferred:
-            chosen = sorted(preferred, key=lambda c: _addr_key(c["address"]))[0]
-        else:
-            chosen = sorted(internal_candidates, key=lambda c: _addr_key(c["address"]))[0]
-
-        selected_ip_obj = chosen["ip"]
+    selected_ip_obj = _select_router_primary_ip(internal_candidates, router)
 
     if selected_ip_obj and _primary_ip_id(router_device) != selected_ip_obj.get("id"):
         router_device = _patch_managed_object(
@@ -1115,6 +1096,122 @@ def populate_virtual(nb, vms, inventory):
         }, **_managed_patch_guard())
 
 
+def _populate_proxmox_host_ip(nb, population_intent: dict, env_managed_tags: list, inventory: dict) -> None:
+    """Create/reconcile the Proxmox hypervisor host IP and prune stale IPs on its interface."""
+    proxmox_host = population_intent.get("proxmox_host", {})
+    host_address = proxmox_host.get("address")
+    if not host_address:
+        return
+    device_results = nb.get(
+        NB_DCIM_DEVICES,
+        name=proxmox_host.get("device_name", DEVICES[0]["name"]),
+    )["results"]
+    if not device_results:
+        return
+    device = device_results[0]
+    iface_name = proxmox_host.get("interface_name") or DEVICES[0]["interfaces"][0]["name"]
+    iface_results = nb.get(NB_DCIM_INTERFACES, device_id=device["id"], name=iface_name)["results"]
+    if not iface_results:
+        return
+    iface = iface_results[0]
+    existing_ip_results = nb.get(NB_IPAM_IP_ADDRESSES, address=host_address)["results"]
+    ip = next((c for c in existing_ip_results if c.get("address") == host_address), None)
+    if ip is None:
+        ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": host_address}, {
+            "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
+            "assigned_object_id": iface["id"],
+            "status": "active",
+            "description": device["name"],
+            "tags": env_managed_tags,
+        }, **_managed_patch_guard())
+    if (
+        _primary_ip_id(device) != ip["id"]
+        and ip.get("assigned_object_type") == ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE
+        and ip.get("assigned_object_id") == iface["id"]
+    ):
+        _patch_managed_object(nb, NB_DCIM_DEVICES, device, {"primary_ip4": ip["id"]})
+
+    desired_tags = {MANAGED_TAG_SLUG, inventory["environment_tag"]}
+    for assigned_ip in nb.get(
+        NB_IPAM_IP_ADDRESSES,
+        assigned_object_type=ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
+        assigned_object_id=iface["id"],
+    )["results"]:
+        if assigned_ip.get("address") == host_address:
+            continue
+        if desired_tags.issubset(_tag_slugs(assigned_ip)):
+            nb.delete_object(NB_IPAM_IP_ADDRESSES, assigned_ip)
+
+
+def _reconcile_vm_services(
+    nb,
+    vm: dict,
+    vm_def: dict,
+    vm_env: str,
+    vm_env_managed_tags: list,
+    service_observed_at: str,
+) -> None:
+    """Upsert desired services and delete stale ones for a single VM."""
+    desired_service_keys = {
+        (svc["name"], svc["protocol"], svc["port"])
+        for svc in vm_def.get("services", [])
+    }
+    desired_env_tag = _environment_tag_name(vm_env)
+
+    for svc_def in vm_def.get("services", []):
+        service_tags = list(vm_env_managed_tags)
+        svc_source = svc_def.get("source")
+        if svc_source:
+            source_tag_name = f"runtime-source-{svc_source}"
+            _ensure_tags(nb, [source_tag_name])
+            service_tags.append(_tag_ref(source_tag_name))
+        try:
+            if _try_reparent_runtime_service(nb, vm, svc_def, vm_env):
+                continue
+        except Exception:
+            pass
+        nb.ensure(NB_IPAM_SERVICES, {
+            "name": svc_def["name"],
+            "parent_object_type": "virtualization.virtualmachine",
+            "parent_object_id": vm["id"],
+            "protocol": svc_def["protocol"],
+        }, {
+            "name": svc_def["name"],
+            "parent_object_type": "virtualization.virtualmachine",
+            "parent_object_id": vm["id"],
+            "ports": [svc_def["port"]],
+            "protocol": svc_def["protocol"],
+            "description": _service_last_seen_description(vm_def["name"], service_observed_at),
+            "tags": service_tags,
+        }, **_managed_patch_guard())
+
+    for existing_service in nb.get(
+        NB_IPAM_SERVICES,
+        parent_object_type="virtualization.virtualmachine",
+        parent_object_id=vm["id"],
+    )["results"]:
+        existing_slugs = _tag_slugs(existing_service)
+        if MANAGED_TAG_SLUG not in existing_slugs:
+            continue
+        existing_env_tags = [s for s in existing_slugs if s.startswith(ENV_TAG_PREFIX)]
+        existing_env_tag = existing_env_tags[0] if existing_env_tags else None
+        existing_key = (
+            existing_service.get("name"),
+            _service_protocol_value(existing_service),
+            _service_first_port(existing_service),
+        )
+        if existing_env_tag == desired_env_tag:
+            if existing_key not in desired_service_keys:
+                nb.delete_object(NB_IPAM_SERVICES, existing_service)
+            continue
+        if existing_key in desired_service_keys:
+            runtime_slugs = [s for s in existing_slugs if s.startswith("runtime-source-")]
+            new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=vm_env)
+            nb.patch_object(NB_IPAM_SERVICES, existing_service, {"tags": new_tags})
+        else:
+            nb.delete_object(NB_IPAM_SERVICES, existing_service)
+
+
 def populate_ipam(nb, site, vms, population_intent, inventory):
     """Create prefix, assign IPs to interfaces, and register services."""
     print("\n=== IPAM ===")
@@ -1130,74 +1227,11 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             "tags": shared_managed_tags,
         }, **_managed_patch_guard())
 
-    # Proxmox host IP from environment/repo-driven population intent.
-    proxmox_host = population_intent.get("proxmox_host", {})
-    host_address = proxmox_host.get("address")
-    if host_address:
-        device_results = nb.get(
-            NB_DCIM_DEVICES,
-            name=proxmox_host.get("device_name", DEVICES[0]["name"]),
-        )["results"]
-        if device_results:
-            device = device_results[0]
-            iface_name = proxmox_host.get("interface_name") or DEVICES[0]["interfaces"][0]["name"]
-            iface_results = nb.get(
-                NB_DCIM_INTERFACES,
-                device_id=device["id"],
-                name=iface_name,
-            )["results"]
-            if iface_results:
-                iface = iface_results[0]
-                existing_ip_results = nb.get(
-                    NB_IPAM_IP_ADDRESSES,
-                    address=host_address,
-                )["results"]
-                ip = next(
-                    (
-                        candidate
-                        for candidate in existing_ip_results
-                        if candidate.get("address") == host_address
-                    ),
-                    None,
-                )
-                if ip is None:
-                    ip = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": host_address}, {
-                        "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
-                        "assigned_object_id": iface["id"],
-                        "status": "active",
-                        "description": device["name"],
-                        "tags": env_managed_tags,
-                    }, **_managed_patch_guard())
-                if (
-                    _primary_ip_id(device) != ip["id"]
-                    and ip.get("assigned_object_type") == ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE
-                    and ip.get("assigned_object_id") == iface["id"]
-                ):
-                    device = _patch_managed_object(
-                        nb,
-                        NB_DCIM_DEVICES,
-                        device,
-                        {"primary_ip4": ip["id"]},
-                    )
+    _populate_proxmox_host_ip(nb, population_intent, env_managed_tags, inventory)
 
-                desired_tags = {MANAGED_TAG_SLUG, inventory["environment_tag"]}
-                assigned_ips = nb.get(
-                    NB_IPAM_IP_ADDRESSES,
-                    assigned_object_type=ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
-                    assigned_object_id=iface["id"],
-                )["results"]
-                for assigned_ip in assigned_ips:
-                    if assigned_ip.get("address") == host_address:
-                        continue
-                    if not desired_tags.issubset(_tag_slugs(assigned_ip)):
-                        continue
-                    nb.delete_object(NB_IPAM_IP_ADDRESSES, assigned_ip)
-
-    # VM IPs and services
     for vm_def in vms:
         if not vm_def.get("ip"):
             continue
-        # Determine VM-specific environment for IP/service tagging.
         vm_env = vm_def.get("node")
         if not vm_env or vm_env == "external":
             vm_env = inventory["environment"]
@@ -1217,103 +1251,9 @@ def populate_ipam(nb, site, vms, population_intent, inventory):
             "tags": vm_env_managed_tags,
         }, **_managed_patch_guard())
         if _primary_ip_id(vm) != ip["id"]:
-            vm = _patch_managed_object(
-                nb,
-                NB_VIRT_VIRTUAL_MACHINES,
-                vm,
-                {"primary_ip4": ip["id"]},
-            )
+            vm = _patch_managed_object(nb, NB_VIRT_VIRTUAL_MACHINES, vm, {"primary_ip4": ip["id"]})
 
-        for svc_def in vm_def.get("services", []):
-            # Compose tags: keep existing managed/environment tags, and
-            # optionally add a single runtime-source tag when discovery source
-            # metadata is available on the observed service.
-            service_tags = list(vm_env_managed_tags)
-            svc_source = svc_def.get("source")
-            if svc_source:
-                source_tag_name = f"runtime-source-{svc_source}"
-                _ensure_tags(nb, [source_tag_name])
-                service_tags.append(_tag_ref(source_tag_name))
-
-            # Conservative reparent: if an existing runtime-sourced service
-            # already exists elsewhere in NetBox that matches this observed
-            # service, reparent it to the current VM instead of creating a
-            # duplicate. This is gated behind the REPARENT_RUNTIME_SOCKET_PROXY
-            # environment flag and only applies to unambiguous matches.
-            try:
-                if _try_reparent_runtime_service(nb, vm, svc_def, vm_env):
-                    # Reparent performed; skip creation step for this service.
-                    continue
-            except Exception:
-                # Non-fatal: fall back to standard ensure behavior.
-                pass
-
-            nb.ensure(NB_IPAM_SERVICES, {
-                "name": svc_def["name"],
-                "parent_object_type": "virtualization.virtualmachine",
-                "parent_object_id": vm["id"],
-                "protocol": svc_def["protocol"],
-            }, {
-                "name": svc_def["name"],
-                "parent_object_type": "virtualization.virtualmachine",
-                "parent_object_id": vm["id"],
-                "ports": [svc_def["port"]],
-                "protocol": svc_def["protocol"],
-                "description": _service_last_seen_description(vm_def["name"], service_observed_at),
-                "tags": service_tags,
-            }, **_managed_patch_guard())
-
-        desired_service_keys = {
-            (svc["name"], svc["protocol"], svc["port"])
-            for svc in vm_def.get("services", [])
-        }
-        # Only consider services that are managed and carry the VM's
-        # environment tag (derived from the VM's source node). Previously
-        # this used the inventory-level environment tag which caused
-        # cross-node VMs to be reconciled against the wrong environment
-        # during cleanup. Use the per-VM environment here.
-        desired_tags = {MANAGED_TAG_SLUG, _environment_tag_name(vm_env)}
-        existing_services = nb.get(
-            NB_IPAM_SERVICES,
-            parent_object_type="virtualization.virtualmachine",
-            parent_object_id=vm["id"],
-        )["results"]
-        for existing_service in existing_services:
-            existing_slugs = _tag_slugs(existing_service)
-            # Only consider automation-managed services.
-            if MANAGED_TAG_SLUG not in existing_slugs:
-                continue
-
-            # Detect any environment tag currently present on the service.
-            existing_env_tags = [s for s in existing_slugs if s.startswith(ENV_TAG_PREFIX)]
-            existing_env_tag = existing_env_tags[0] if existing_env_tags else None
-            desired_env_tag = _environment_tag_name(vm_env)
-
-            existing_key = (
-                existing_service.get("name"),
-                _service_protocol_value(existing_service),
-                _service_first_port(existing_service),
-            )
-
-            if existing_env_tag == desired_env_tag:
-                # Service already carries the VM's environment tag; apply
-                # standard reconciliation (delete if not desired).
-                if existing_key in desired_service_keys:
-                    continue
-                nb.delete_object(NB_IPAM_SERVICES, existing_service)
-                continue
-
-            # Service is managed but either missing an environment tag or
-            # tagged for a different environment (cross-node). If it matches
-            # a desired service, retag it to the current VM environment while
-            # preserving any runtime-source tags. Otherwise delete it so it
-            # will be recreated correctly.
-            if existing_key in desired_service_keys:
-                runtime_slugs = [s for s in existing_slugs if s.startswith("runtime-source-")]
-                new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=vm_env)
-                nb.patch_object(NB_IPAM_SERVICES, existing_service, {"tags": new_tags})
-            else:
-                nb.delete_object(NB_IPAM_SERVICES, existing_service)
+        _reconcile_vm_services(nb, vm, vm_def, vm_env, vm_env_managed_tags, service_observed_at)
 
 
 # ---------------------------------------------------------------------------
@@ -1341,6 +1281,24 @@ WIPE_ORDER = [
 ]
 
 
+def _delete_objects_at_path(nb, path: str, filters: dict) -> int:
+    """Delete all objects at `path` matching `filters`, retrying until none remain."""
+    total = 0
+    while True:
+        items = nb.get(path, **filters).get("results", [])
+        if not items:
+            break
+        for obj in items:
+            name = obj.get("name") or obj.get("display") or obj.get("address") or obj.get("prefix") or str(obj["id"])
+            try:
+                nb.delete(f"{path}{obj['id']}/")
+                print(f"  deleted: {path} → {name} (id={obj['id']})")
+                total += 1
+            except RuntimeError as e:
+                print(f"  skip: {path} → {name} (id={obj['id']}): {e}")
+    return total
+
+
 def clean(nb, inventory):
     """Delete automation-owned objects for the current environment, in reverse dependency order."""
     print(f"NetBox: {nb.url}\n=== Cleaning ===")
@@ -1358,109 +1316,164 @@ def clean(nb, inventory):
             if filters.get("tag") == MANAGED_TAG_SLUG and not managed_tag_exists:
                 continue
         else:
-            filters = _environment_filters(path, inventory)
             if not environment_tag_exists:
                 continue
+            filters = _environment_filters(path, inventory)
         if filters.get("tag") == MANAGED_TAG_SLUG and not managed_tag_exists:
             continue
-        while True:
-            results = nb.get(path, **filters)
-            items = results.get("results", [])
-            if not items:
-                break
-            for obj in items:
-                name = (obj.get("name") or obj.get("display") or
-                        obj.get("address") or obj.get("prefix") or str(obj["id"]))
-                try:
-                    nb.delete(f"{path}{obj['id']}/")
-                    print(f"  deleted: {path} → {name} (id={obj['id']})")
-                    total += 1
-                except RuntimeError as e:
-                    print(f"  skip: {path} → {name} (id={obj['id']}): {e}")
+        total += _delete_objects_at_path(nb, path, filters)
     print(f"\n=== Deleted {total} objects ===")
+
+
+def _print_stale_for_paths(nb, paths: list, tag: str) -> int:
+    """Print and count stale managed objects for each path filtered by tag."""
+    total = 0
+    for path in paths:
+        for obj in nb.find_stale(path, tag=tag):
+            label = obj.get("name") or obj.get("display") or obj.get("address") or obj.get("prefix")
+            print(f"  {'would mark stale' if nb.dry_run else 'stale'}: {path} → {label} (id={obj['id']})")
+            total += 1
+    return total
 
 
 def report_stale_managed_objects(nb, inventory):
     """Report currently managed objects that no longer match desired lookups."""
     print(f"\n=== {'Planned' if nb.dry_run else 'Managed'} Drift Report ===")
-    managed_tag_exists = _managed_tag_exists_live(nb)
-    environment_tag_exists = _environment_tag_exists_live(nb, inventory)
-    if not managed_tag_exists:
+    if not _managed_tag_exists_live(nb):
         print(f"  no stale managed objects detected (ownership tag {MANAGED_TAG_NAME!r} not present live)")
         return 0
-
-    total = 0
-    for path in SHARED_STALE_TRACKED_PATHS:
-        stale = nb.find_stale(path, tag=MANAGED_TAG_SLUG)
-        if not stale:
-            continue
-        total += len(stale)
-        for obj in stale:
-            print(
-                f"  {'would mark stale' if nb.dry_run else 'stale'}: "
-                f"{path} → {obj.get('name') or obj.get('display') or obj.get('address') or obj.get('prefix')} "
-                f"(id={obj['id']})"
-            )
-    if environment_tag_exists:
-        for path in ENV_STALE_TRACKED_PATHS:
-            stale = nb.find_stale(path, tag=inventory["environment_tag"])
-            if not stale:
-                continue
-            total += len(stale)
-            for obj in stale:
-                print(
-                    f"  {'would mark stale' if nb.dry_run else 'stale'}: "
-                    f"{path} → {obj.get('name') or obj.get('display') or obj.get('address') or obj.get('prefix')} "
-                    f"(id={obj['id']})"
-                )
+    total = _print_stale_for_paths(nb, SHARED_STALE_TRACKED_PATHS, MANAGED_TAG_SLUG)
+    if _environment_tag_exists_live(nb, inventory):
+        total += _print_stale_for_paths(nb, ENV_STALE_TRACKED_PATHS, inventory["environment_tag"])
     if total == 0:
         print("  no stale managed objects detected")
     return total
 
 
+def _reconcile_services_for_vm(nb, vm: dict) -> None:
+    """Enforce that managed services on `vm` carry the same environment tag as their VM."""
+    vm_slugs = _tag_slugs(vm)
+    vm_env_tags = [s for s in vm_slugs if s.startswith(ENV_TAG_PREFIX)]
+    if not vm_env_tags:
+        return
+    vm_env_tag = vm_env_tags[0]
+    env_value = vm_env_tag[len(ENV_TAG_PREFIX):]
+    for svc in nb.get(
+        NB_IPAM_SERVICES,
+        parent_object_type="virtualization.virtualmachine",
+        parent_object_id=vm["id"],
+    ).get("results", []):
+        svc_slugs = _tag_slugs(svc)
+        if MANAGED_TAG_SLUG not in svc_slugs:
+            continue
+        svc_env_tags = [s for s in svc_slugs if s.startswith(ENV_TAG_PREFIX)]
+        if svc_env_tags and svc_env_tags[0] == vm_env_tag:
+            continue
+        runtime_slugs = [s for s in svc_slugs if s.startswith("runtime-source-")]
+        nb.patch_object(NB_IPAM_SERVICES, svc, {"tags": _managed_tag_refs(extra_tags=runtime_slugs, environment=env_value)})
+
+
 def reconcile_service_env_tags(nb):
-    """Ensure managed services carry the same environment tag as their parent VM.
-
-    This is a narrowly scoped reconciliation that patches service objects which
-    are owned by the automation but carry an environment tag different from
-    their VM parent. Runtime-source tags are preserved where present.
-    """
-    vms = nb.get(NB_VIRT_VIRTUAL_MACHINES, tag=MANAGED_TAG_SLUG).get("results", [])
-    for vm in vms:
-        vm_id = vm.get("id")
-        if not vm_id:
-            continue
-        vm_slugs = _tag_slugs(vm)
-        vm_env_tags = [s for s in vm_slugs if s.startswith(ENV_TAG_PREFIX)]
-        if not vm_env_tags:
-            continue
-        vm_env_tag = vm_env_tags[0]
-        # Derive environment token to pass to _managed_tag_refs
-        env_value = vm_env_tag[len(ENV_TAG_PREFIX):]
-
-        services = nb.get(
-            NB_IPAM_SERVICES,
-            parent_object_type="virtualization.virtualmachine",
-            parent_object_id=vm_id,
-        ).get("results", [])
-
-        for svc in services:
-            svc_slugs = _tag_slugs(svc)
-            if MANAGED_TAG_SLUG not in svc_slugs:
-                continue
-            svc_env_tags = [s for s in svc_slugs if s.startswith(ENV_TAG_PREFIX)]
-            if svc_env_tags and svc_env_tags[0] == vm_env_tag:
-                continue
-
-            # Preserve runtime-source tags while enforcing managed + VM env tag.
-            runtime_slugs = [s for s in svc_slugs if s.startswith("runtime-source-")]
-            new_tags = _managed_tag_refs(extra_tags=runtime_slugs, environment=env_value)
-            nb.patch_object(NB_IPAM_SERVICES, svc, {"tags": new_tags})
+    """Ensure managed services carry the same environment tag as their parent VM."""
+    for vm in nb.get(NB_VIRT_VIRTUAL_MACHINES, tag=MANAGED_TAG_SLUG).get("results", []):
+        if vm.get("id"):
+            _reconcile_services_for_vm(nb, vm)
 
 
 # ---------------------------------------------------------------------------
 # Augmentation helpers
 # ---------------------------------------------------------------------------
+
+
+def _get_stack_ip_candidates(stack: dict) -> list:
+    """Collect declared candidate probe addresses from a stack YAML definition."""
+    candidates = []
+    ip_raw = stack.get("ip_address")
+    if ip_raw:
+        candidates.append(ip_raw)
+    extra = stack.get("docker_socket_proxy_targets")
+    if isinstance(extra, list):
+        candidates.extend(extra)
+    elif isinstance(extra, str):
+        candidates.append(extra)
+    return candidates
+
+
+def _find_netbox_vms_for_ip(nb, ip: str) -> list[tuple]:
+    """Return (nb_vm, base_name, node_part) tuples for every VM reachable via `ip`."""
+    try:
+        ip_objs = nb.live_get(NB_IPAM_IP_ADDRESSES, address=ip)
+        if not isinstance(ip_objs, dict):
+            ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
+        ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
+    except Exception:
+        return []
+
+    found = []
+    for ip_obj in ip_results:
+        if ip_obj.get("assigned_object_type") != "virtualization.vminterface":
+            continue
+        assigned_id = ip_obj.get("assigned_object_id")
+        if not assigned_id:
+            continue
+        try:
+            iface_res = nb.get(NB_VIRT_INTERFACES, id=assigned_id).get("results", [])
+        except Exception:
+            continue
+        if not iface_res:
+            continue
+        vm_ref = iface_res[0].get("virtual_machine")
+        vm_id = vm_ref.get("id") if isinstance(vm_ref, dict) else vm_ref
+        if not vm_id:
+            continue
+        try:
+            vm_res = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_id).get("results", [])
+        except Exception:
+            continue
+        if not vm_res:
+            continue
+        nb_vm = vm_res[0]
+        nb_name = nb_vm.get("name") or ""
+        if isinstance(nb_name, str) and "@" in nb_name:
+            base, nodepart = nb_name.split("@", 1)
+        else:
+            base = nb_name
+            nodepart = None  # caller fills from stack context
+        found.append((nb_vm, base, nodepart))
+    return found
+
+
+def _build_declared_vm_def(base: str, nodepart: str, ip: str, stack: dict) -> dict:
+    return {
+        "name": base,
+        "ip": ip if "/" in ip else f"{ip}/24",
+        "status": "unknown",
+        "vcpus": stack.get("cores", 1) or 1,
+        "memory": stack.get("memory", 0) or 0,
+        "disk": stack.get("rootfs_size", 0) or 0,
+        "description": stack.get("description", "declared in stack.yaml"),
+        "tags": stack.get("tags", []),
+        "services": [],
+        "mounts": [],
+        "vmid": stack.get("vmid") or 0,
+        "vm_type": "declared",
+        "node": nodepart,
+    }
+
+
+def _probe_socket_services_for_declared_vm(ip_addr: str, base: str, vm_ip: str, template: str) -> list[dict]:
+    """Probe a declared VM via socket-proxy template and return discovered services."""
+    try:
+        proxy_url = template.format(guest_ip=ip_addr)
+    except Exception:
+        return []
+    if not proxy_url:
+        return []
+    try:
+        probe_container = {"name": base, "config": {"net0": f"ip={vm_ip}"}}
+        return _build_socket_proxy_services(proxy_url, probe_container, guest_scoped=True)
+    except Exception:
+        return []
 
 
 def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
@@ -1477,25 +1490,12 @@ def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
     This function will not create new NetBox VM objects.
     """
     existing_ips = {vm.get("ip") for vm in vms if vm.get("ip")}
+    template = os.environ.get("DOCKER_SOCKET_PROXY_URL_TEMPLATE") or os.environ.get("DOCKER_SOCKET_PROXY_URL")
 
     for name, stack in stacks.items():
-        # Collect declared candidate probe addresses from common stack fields
-        candidates = []
-        ip_raw = stack.get("ip_address")
-        if ip_raw:
-            candidates.append(ip_raw)
-
-        extra_targets = stack.get("docker_socket_proxy_targets")
-        if isinstance(extra_targets, list):
-            candidates.extend(extra_targets)
-        elif isinstance(extra_targets, str):
-            candidates.append(extra_targets)
-
+        candidates = _get_stack_ip_candidates(stack)
         if not candidates:
             continue
-
-        # Preserve original behavior: if the stack name is already present in
-        # discovered VMs, skip the stack entirely (do not attempt augmentation).
         if any(vm.get("name") == name for vm in vms):
             continue
 
@@ -1503,106 +1503,20 @@ def _augment_vms_with_declared_socket_proxy_targets(nb, vms, stacks):
             ip = str(_resolve_env_token(ip_candidate)) if isinstance(ip_candidate, str) else None
             if not ip:
                 continue
-
-            # Normalize to address/prefix if template expects guest_ip without prefix
             ip_addr = ip.split("/", 1)[0]
             if ip in existing_ips or ip_addr in existing_ips:
-                # Skip candidates whose address is already present in discovered VMs
                 continue
 
-            # Try to map the declared IP to an existing NetBox VM; if an
-            # existing VM is found by IP, append a vm_def that points to that
-            # VM so the runtime inspection will attach services to the
-            # existing inventory object. Do NOT create new VMs here.
-            try:
-                # Use live_get to avoid client-side lookup coercion filtering
-                # when address tokens are provided without CIDR suffixes.
-                ip_objs = nb.live_get(NB_IPAM_IP_ADDRESSES, address=ip)
-                if not isinstance(ip_objs, dict):
-                    ip_objs = nb.get(NB_IPAM_IP_ADDRESSES, address=ip)
-                ip_results = ip_objs.get("results", []) if isinstance(ip_objs, dict) else []
-            except Exception:
-                ip_results = []
-
-            for ip_obj in ip_results:
-                if ip_obj.get("assigned_object_type") != "virtualization.vminterface":
-                    continue
-                assigned_id = ip_obj.get("assigned_object_id")
-                if not assigned_id:
-                    continue
-                try:
-                    iface_q = nb.get(NB_VIRT_INTERFACES, id=assigned_id)
-                    iface_res = iface_q.get("results", []) if isinstance(iface_q, dict) else []
-                except Exception:
-                    iface_res = []
-                if not iface_res:
-                    continue
-                iface = iface_res[0]
-                vm_ref = iface.get("virtual_machine")
-                vm_id = vm_ref.get("id") if isinstance(vm_ref, dict) else vm_ref
-                if not vm_id:
-                    continue
-                try:
-                    vm_q = nb.get(NB_VIRT_VIRTUAL_MACHINES, id=vm_id)
-                    vm_res = vm_q.get("results", []) if isinstance(vm_q, dict) else []
-                except Exception:
-                    vm_res = []
-                if not vm_res:
-                    continue
-                nb_vm = vm_res[0]
-                nb_name = nb_vm.get("name") or name
-                # Split NetBox name `foo@node` into base and node when present
-                if isinstance(nb_name, str) and "@" in nb_name:
-                    base, nodepart = nb_name.split("@", 1)
-                else:
-                    base = nb_name
+            for _nb_vm, base, nodepart in _find_netbox_vms_for_ip(nb, ip):
+                if nodepart is None:
                     nodepart = stack.get("proxmox", {}).get("target_node") or "external"
-
-                vm_def = {
-                    "name": base,
-                    "ip": ip if "/" in ip else f"{ip}/24",
-                    "status": "unknown",
-                    "vcpus": stack.get("cores", 1) or 1,
-                    "memory": stack.get("memory", 0) or 0,
-                    "disk": stack.get("rootfs_size", 0) or 0,
-                    "description": stack.get("description", "declared in stack.yaml"),
-                    "tags": stack.get("tags", []),
-                    "services": [],
-                    "mounts": [],
-                    "vmid": stack.get("vmid") or 0,
-                    "vm_type": "declared",
-                    "node": nodepart,
-                }
-
-                # Avoid duplicate appends for the same VM/ip
+                vm_def = _build_declared_vm_def(base, nodepart, ip, stack)
                 if not any(v.get("ip") == vm_def["ip"] and v.get("name") == vm_def["name"] for v in vms):
                     vms.append(vm_def)
-                # After appending a declared VM mapping, attempt a conservative
-                # re-probe via the configured socket-proxy template so that
-                # runtime services are available on the vm_def for later
-                # ensure/reconciliation steps. This avoids re-running the
-                # entire discovery pipeline.
-                template = os.environ.get("DOCKER_SOCKET_PROXY_URL_TEMPLATE") or os.environ.get("DOCKER_SOCKET_PROXY_URL")
                 if template:
-                    try:
-                        guest_ip = ip_addr
-                        try:
-                            proxy_url = template.format(guest_ip=guest_ip)
-                        except Exception:
-                            proxy_url = None
-                        if proxy_url:
-                            # Construct a minimal container-like object that
-                            # provides enough context for the socket-proxy
-                            # probe helper. Use guest_scoped=True to treat
-                            # returned containers as belonging to the guest.
-                            probe_container = {"name": base, "config": {"net0": f"ip={vm_def['ip']}"}}
-                            services = _build_socket_proxy_services(proxy_url, probe_container, guest_scoped=True)
-                            if services:
-                                vm_def["services"].extend(services)
-                    except Exception:
-                        # Non-fatal: do not fail augmentation for probe errors
-                        pass
-                # Candidate mapped; mark ip as seen and continue
+                    services = _probe_socket_services_for_declared_vm(ip_addr, base, vm_def["ip"], template)
+                    if services:
+                        vm_def["services"].extend(services)
                 existing_ips.add(ip)
 
 
