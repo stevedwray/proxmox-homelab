@@ -1,14 +1,15 @@
 ---
-- name: Configure Docker base and Portainer Agent
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -30,6 +31,13 @@
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
 
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
   handlers:
     - name: Restart Docker
       ansible.builtin.systemd:
@@ -44,11 +52,17 @@
   vars:
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
-    traefik_image: "{{ registry_host | default('10.57.3.10') }}/dockerhub/library/traefik:{{ traefik_version }}"
-    # Optional control-node source dir for generated per-stack Traefik files.
-    # When provided, files are published into /opt/proxy-stack/dynamic/ so the
-    # active file provider always loads them.
-    traefik_generated_source_dir: ""
+    traefik_image: "traefik:{{ traefik_version }}"
+    proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
+    # Control-node source dir for generated per-stack Traefik files.
+    # Defaults to terraform/lxc/.generated/traefik and can be overridden.
+    # Files are published into /opt/proxy-stack/dynamic/ so the active file
+    # provider always loads router definitions.
+    traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
+    promtail_version: "3.0.0"
+    proxy_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+    promtail_image: "grafana/promtail:{{ promtail_version }}"
 
   tasks:
     - name: Create Traefik directory structure
@@ -99,6 +113,8 @@
                     scheme: https
             websecure:
               address: ":443"
+            metrics:
+              address: ":8082"
 
           certificatesResolvers:
             letsencrypt:
@@ -109,11 +125,11 @@
                 dnsChallenge:
                   provider: cloudflare
                   resolvers:
-                    - "1.1.1.1:53"
-                    - "8.8.8.8:53"
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_PRIMARY') | mandatory('TRAEFIK_DNS_RESOLVER_PRIMARY env var is required') }}"
+                    - "{{ lookup('env', 'TRAEFIK_DNS_RESOLVER_SECONDARY') | mandatory('TRAEFIK_DNS_RESOLVER_SECONDARY env var is required') }}"
             step-ca:
               acme:
-                caServer: "https://10.57.1.11/acme/acme/directory"
+                caServer: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}/acme/acme/directory"
                 email: "admin@gibbsgreatly.xyz"
                 storage: "/certs/step-ca/acme.json"
                 httpChallenge:
@@ -131,6 +147,10 @@
           log:
             level: INFO
 
+          metrics:
+            prometheus:
+              entryPoint: metrics
+
     - name: Write shared Authentik middleware config
       ansible.builtin.copy:
         dest: "{{ proxy_compose_dir }}/dynamic/authentik.yml"
@@ -140,7 +160,9 @@
             middlewares:
               authentik:
                 forwardAuth:
-                  address: "http://10.57.1.10:9000/outpost.goauthentik.io/auth/traefik"
+                  address: "https://{{ proxy_lab_fqdn_authentik_internal }}:9443/outpost.goauthentik.io/auth/traefik"
+                  tls:
+                    ca: /certs/combined-ca.crt
                   trustForwardHeader: true
                   authResponseHeaders:
                     - X-authentik-username
@@ -152,15 +174,66 @@
         dest: "{{ proxy_compose_dir }}/dynamic/certs.yml"
         mode: "0640"
         content: |
-          tls:
-            stores:
-              default:
-                defaultGeneratedCert:
-                  resolver: letsencrypt
-                  domain:
-                    main: "lab.gibbsgreatly.xyz"
-                    sans:
-                      - "*.lab.gibbsgreatly.xyz"
+          # No defaultGeneratedCert: each router requests its own cert via its
+          # certResolver. This prevents the letsencrypt wildcard from shadowing
+          # resolver-specific certs (e.g. step-ca cert for authentik).
+          {}
+
+    - name: Check whether homelab root CA exists on managed host
+      ansible.builtin.stat:
+        path: /usr/local/share/ca-certificates/homelab-root.crt
+      register: proxy_homelab_root_ca_stat
+
+    - name: Build combined CA bundle for lego (system CAs + optional homelab step-ca CA)
+      ansible.builtin.shell: |
+        cat /etc/ssl/certs/ca-certificates.crt > {{ proxy_compose_dir }}/certs/combined-ca.crt
+        if [[ -f /usr/local/share/ca-certificates/homelab-root.crt ]]; then
+          cat /usr/local/share/ca-certificates/homelab-root.crt >> {{ proxy_compose_dir }}/certs/combined-ca.crt
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true
+      when: not ansible_check_mode
+
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ proxy_compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://{{ proxy_lab_ip_monitoring }}:3100/loki/api/v1/push
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: "{{ inventory_hostname }}"
+                    stack: proxy-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: "{{ inventory_hostname }}"
+                - target_label: stack
+                  replacement: proxy-stack
 
     - name: Write Traefik compose definition
       ansible.builtin.copy:
@@ -173,15 +246,44 @@
               container_name: traefik
               restart: unless-stopped
               env_file: .env
+              environment:
+                # Combined CA bundle: system root CAs + homelab step-ca root CA.
+                # LEGO_CA_CERTIFICATES replaces (not augments) the default CA pool,
+                # so both system CAs (for LE) and homelab CA (for step-ca) are needed.
+                LEGO_CA_CERTIFICATES: /certs/combined-ca.crt
               ports:
                 - "80:80"
                 - "443:443"
+                - "8082:8082"
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./traefik.yml:/etc/traefik/traefik.yml:ro
                 - ./dynamic:/etc/traefik/dynamic:ro
                 - ./certs/letsencrypt:/certs/letsencrypt
                 - ./certs/step-ca:/certs/step-ca
+                - ./certs/combined-ca.crt:/certs/combined-ca.crt:ro
+
+            cadvisor:
+              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+
+            promtail:
+              image: {{ promtail_image }}
+              container_name: promtail
+              restart: unless-stopped
+              command: -config.file=/etc/promtail/config.yml
+              volumes:
+                - /var/log:/var/log:ro
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:
@@ -206,11 +308,35 @@
         path: "{{ proxy_compose_dir }}/dynamic/stacks"
         state: absent
 
-    - name: Publish generated Traefik files into active dynamic directory
+    - name: Discover generated Traefik files on control node
+      ansible.builtin.find:
+        paths: "{{ traefik_generated_source_dir }}"
+        file_type: file
+        patterns: "*.yml"
+      register: traefik_generated_files
+      delegate_to: localhost
+      become: false
+      when: traefik_generated_source_dir | trim | length > 0
+
+    - name: Publish rendered Traefik files into active dynamic directory
       ansible.builtin.copy:
-        src: "{{ traefik_generated_source_dir }}/"
-        dest: "{{ proxy_compose_dir }}/dynamic/"
+        dest: "{{ proxy_compose_dir }}/dynamic/{{ item.path | basename }}"
         mode: "0640"
+        content: >-
+          {{
+            lookup('file', item.path)
+            | replace('${LAB_IP_AUTHENTIK}', lookup('env', 'LAB_IP_AUTHENTIK'))
+            | replace('${LAB_IP_STEP_CA}', lookup('env', 'LAB_IP_STEP_CA'))
+            | replace('${LAB_IP_MONITORING}', lookup('env', 'LAB_IP_MONITORING'))
+            | replace('${LAB_IP_DNS}', lookup('env', 'LAB_IP_DNS'))
+            | replace('${LAB_IP_PORTAINER}', lookup('env', 'LAB_IP_PORTAINER'))
+            | replace('${LAB_IP_PROXY}', lookup('env', 'LAB_IP_PROXY'))
+            | replace('${LAB_IP_HARBOR}', lookup('env', 'LAB_IP_HARBOR'))
+            | replace('${LAB_IP_NETBOX}', lookup('env', 'LAB_IP_NETBOX'))
+          }}
+      loop: "{{ traefik_generated_files.files }}"
+      loop_control:
+        label: "{{ item.path | basename }}"
       when: traefik_generated_source_dir | trim | length > 0
 
     - name: Validate Traefik compose configuration
@@ -218,8 +344,10 @@
         cmd: docker compose -f "{{ proxy_compose_dir }}/docker-compose.yml" config -q
         chdir: "{{ proxy_compose_dir }}"
       changed_when: false
+      when: not ansible_check_mode
 
     - name: Start Traefik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
+      when: not ansible_check_mode

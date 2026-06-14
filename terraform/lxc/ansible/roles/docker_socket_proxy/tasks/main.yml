@@ -1,0 +1,74 @@
+---
+# Role: docker_socket_proxy
+# Deploys a read-only Docker socket proxy via Docker Compose when enabled.
+
+- name: "Docker socket proxy explicit no-op when disabled"
+  ansible.builtin.debug:
+    msg: "docker_socket_proxy is disabled; set enable_docker_socket_proxy: true to enable"
+  when: not (enable_docker_socket_proxy | default(false) | bool)
+
+- name: "Validate docker_socket_proxy bind address is safe"
+  ansible.builtin.assert:
+    that:
+      - docker_socket_proxy_bind_addr is defined
+      - docker_socket_proxy_bind_addr | length > 0
+      - docker_socket_proxy_bind_addr not in ['0.0.0.0', '::']
+    fail_msg: "Invalid docker_socket_proxy_bind_addr: bind to 0.0.0.0 or :: is unsafe. Set a specific host IP (for example 127.0.0.1 or the LXC service IP)."
+  when: enable_docker_socket_proxy | default(false) | bool
+
+- name: "Validate docker_socket_proxy_listen_port is in sane range"
+  ansible.builtin.assert:
+    that:
+      - docker_socket_proxy_listen_port is defined
+      - (docker_socket_proxy_listen_port | int) >= 1024
+      - (docker_socket_proxy_listen_port | int) <= 65535
+    fail_msg: "Invalid docker_socket_proxy_listen_port: must be an integer between 1024 and 65535."
+  when: enable_docker_socket_proxy | default(false) | bool
+
+- name: Ensure compose project directory exists
+  ansible.builtin.file:
+    path: "{{ docker_socket_proxy_project_dir }}"
+    state: directory
+    mode: "0750"
+  when: enable_docker_socket_proxy | default(false) | bool
+
+- name: Render docker-compose.yml template
+  ansible.builtin.template:
+    src: docker-compose.yml.j2
+    dest: "{{ docker_socket_proxy_project_dir }}/docker-compose.yml"
+    mode: "0640"
+  register: docker_socket_proxy_compose_write
+  when: enable_docker_socket_proxy | default(false) | bool
+
+- name: Validate compose file
+  ansible.builtin.command:
+    cmd: docker compose -f "{{ docker_socket_proxy_project_dir }}/docker-compose.yml" config -q
+  register: docker_socket_proxy_compose_config
+  changed_when: false
+  failed_when: docker_socket_proxy_compose_config.rc != 0
+  when:
+    - enable_docker_socket_proxy | default(false) | bool
+    - docker_socket_proxy_compose_write is defined
+
+- name: Deploy compose project (idempotent)
+  community.docker.docker_compose_v2:
+    project_src: "{{ docker_socket_proxy_project_dir }}"
+    state: present
+    remove_orphans: true
+  when:
+    - enable_docker_socket_proxy | default(false) | bool
+    - not ansible_check_mode
+
+- name: "Health check /containers/json?all=1"
+  ansible.builtin.uri:
+    url: "http://{{ docker_socket_proxy_bind_addr | default('127.0.0.1') }}:{{ docker_socket_proxy_listen_port }}/containers/json?all=1"
+    method: GET
+    return_content: false
+    status_code: 200
+    timeout: 5
+  register: docker_socket_proxy_health
+  until: docker_socket_proxy_health.status == 200
+  retries: 5
+  delay: 2
+  failed_when: docker_socket_proxy_health.status != 200
+  when: enable_docker_socket_proxy | default(false) | bool

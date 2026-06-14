@@ -1,0 +1,59 @@
+---
+- name: Ensure compose directory exists
+  ansible.builtin.file:
+    path: "{{ direct_stack_compose_dir }}"
+    state: directory
+    mode: "0750"
+
+- name: Write stack environment file
+  ansible.builtin.copy:
+    dest: "{{ direct_stack_compose_dir }}/.env"
+    content: |
+      {% for env_item in direct_stack_env %}
+      {{ env_item.name }}={{ env_item.value }}
+      {% endfor %}
+    mode: "0600"
+  no_log: true
+
+- name: Read existing compose file
+  ansible.builtin.slurp:
+    src: "{{ direct_stack_compose_path }}"
+  register: direct_stack_compose_current
+  failed_when: false
+  changed_when: false
+
+- name: Compute compose content SHA256 values
+  ansible.builtin.set_fact:
+    direct_stack_current_compose_sha256: >-
+      {{
+        (
+          direct_stack_compose_current.content
+          | default('')
+          | b64decode
+        )
+        | hash('sha256')
+      }}
+    direct_stack_desired_compose_sha256: "{{ direct_stack_compose_content | hash('sha256') }}"
+
+- name: Write compose file when content changes
+  ansible.builtin.copy:
+    dest: "{{ direct_stack_compose_path }}"
+    content: "{{ direct_stack_compose_content }}"
+    mode: "0640"
+  register: direct_stack_compose_write
+  when: direct_stack_current_compose_sha256 != direct_stack_desired_compose_sha256
+
+- name: Validate compose file
+  ansible.builtin.command:
+    cmd: docker compose -f "{{ direct_stack_compose_path }}" config -q
+  changed_when: false
+  when:
+    - direct_stack_compose_write is changed
+    - not ansible_check_mode
+
+- name: Deploy compose project
+  community.docker.docker_compose_v2:
+    project_src: "{{ direct_stack_compose_dir }}"
+    state: present
+    remove_orphans: "{{ direct_stack_prune_on_update }}"
+  when: not ansible_check_mode

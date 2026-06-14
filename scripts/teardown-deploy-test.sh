@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Repeatable pve-test teardown/deploy harness.
+# Repeatable teardown/deploy harness with explicit target selection.
 #
 # Safe-by-default phases:
 #   source-preflight   non-destructive source-only validation
@@ -16,15 +16,34 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
-WITH_SECRETS="${REPO_ROOT}/with-secrets"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
-EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/evidence"
-INVENTORY_FILE="${REPO_ROOT}/docs/teardown-test/inventory.md"
-PVE_TEST_HOST="pve-test.gibbsgreatly.xyz"
+EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
+HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
+INVENTORY_FILE="${TEARDOWN_INVENTORY_FILE:-${REPO_ROOT}/docs/teardown-test/inventory.md}"
+TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${PVE_ENV:-${TF_VAR_proxmox_node:-pve-test}}}"
+if [[ "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
+  DEFAULT_WITH_SECRETS_WRAPPER="with-secrets-prod"
+  DEFAULT_TARGET_PVE_HOST="${PVE_PROD_FQDN:-pve.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.pve"
+elif [[ "${TARGET_NODE_EXPECTED}" == "pve-test" ]]; then
+  DEFAULT_WITH_SECRETS_WRAPPER="with-secrets"
+  DEFAULT_TARGET_PVE_HOST="${PVE_TEST_FQDN:-pve-test.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.pve-test"
+else
+  DEFAULT_WITH_SECRETS_WRAPPER="with-secrets"
+  DEFAULT_TARGET_PVE_HOST="${PVE_TEST_FQDN:-${TARGET_NODE_EXPECTED}.gibbsgreatly.xyz}"
+  DEFAULT_ENV_HINT=".env.${TARGET_NODE_EXPECTED}"
+fi
+WITH_SECRETS="${TEARDOWN_WITH_SECRETS:-${REPO_ROOT}/${DEFAULT_WITH_SECRETS_WRAPPER}}"
+TERRAGRUNT_WORKSPACE="${TEARDOWN_TERRAGRUNT_WORKSPACE:-${TARGET_NODE_EXPECTED}}"
+TARGET_PVE_HOST="${TEARDOWN_PVE_HOST:-${DEFAULT_TARGET_PVE_HOST}}"
+TARGET_ENV_FILE="${TEARDOWN_ENV_FILE:-${REPO_ROOT}/${DEFAULT_ENV_HINT}}"
+REQUIRED_APPROVAL_PHRASE="${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}"
 APPROVAL_TEXT=""
 APPROVAL_PACKET=""
 EXECUTE=false
+DISPOSABLE=false
 REQUIRE_CLEAN=false
 PHASE=""
 STAMP="${TEARDOWN_TEST_STAMP:-$(date -u +%Y%m%d-%H%M%S)}"
@@ -84,7 +103,32 @@ BROWSER_HOSTS=(
   "traefik"
 )
 
-BROWSER_DNS_TARGET_IP="10.57.2.10"
+BREAKGLASS_DNS_HOSTS=(
+  "authentik-bg"
+  "harbor-bg"
+  "monitoring-bg"
+  "netbox-bg"
+  "portainer-bg"
+  "proxy-bg"
+)
+
+export LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:-}"
+export LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
+export LAB_IP_DNS="${LAB_IP_DNS:-}"
+export LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
+export LAB_IP_PROXY="${LAB_IP_PROXY:-}"
+export LAB_GW_MGMT="${LAB_GW_MGMT:-}"
+export LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+export LAB_BASE_DOMAIN="${LAB_BASE_DOMAIN:-${LAB_DOMAIN}}"
+export LAB_FQDN_TRAEFIK="${LAB_FQDN_TRAEFIK:-traefik.${LAB_DOMAIN}}"
+export LAB_FQDN_GRAFANA="${LAB_FQDN_GRAFANA:-grafana.${LAB_DOMAIN}}"
+export LAB_FQDN_NETBOX="${LAB_FQDN_NETBOX:-netbox.${LAB_DOMAIN}}"
+export LAB_FQDN_HARBOR="${LAB_FQDN_HARBOR:-harbor.${LAB_DOMAIN}}"
+
+# Runtime-generated deltas that can legitimately appear mid-cycle.
+EXPECTED_RUNTIME_DIRTY_PATHS=(
+  "certs/homelab-root.crt"
+)
 
 usage() {
   cat <<'EOF'
@@ -111,9 +155,14 @@ Options:
   --execute
       Required for destroy, deploy-*, activate-edge, and cycle.
   --approval-text TEXT
-      Required with --execute. Must contain: approve pve-test teardown deploy test
+      Required with --execute. Must contain: ${TEARDOWN_REQUIRED_APPROVAL_PHRASE:-approve}
   --approval-packet PATH
-    Required for destroy and cycle. Must reference stamp/commit/backup approvals.
+    Required for destroy and cycle unless --disposable is set.
+    Must reference stamp/commit/backup approvals.
+    --disposable
+      Disposable environment mode for destroy/cycle.
+      Skips approval-packet metadata validation, backup-artifact evidence checks,
+      and the --approval-text gate. Use for pve-test dev iteration cycles.
   --stamp STAMP
       Use an existing/new evidence stamp instead of generating one.
   --require-clean
@@ -131,7 +180,7 @@ Examples:
   scripts/teardown-deploy-test.sh status --stamp 20260423-010203
   scripts/teardown-deploy-test.sh final-validation
   scripts/teardown-deploy-test.sh deploy-edge --execute \
-    --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24"
+    --approval-text "approve"
 EOF
 }
 
@@ -186,6 +235,13 @@ set_phase_failure_context() {
   CURRENT_PHASE_FAILURE_COMMAND="${command}"
   CURRENT_PHASE_FAILURE_LOG="${log_path}"
   CURRENT_PHASE_FAILURE_MESSAGE="${message}"
+}
+
+clear_phase_failure_context() {
+  CURRENT_PHASE_FAILURE_STEP=""
+  CURRENT_PHASE_FAILURE_COMMAND=""
+  CURRENT_PHASE_FAILURE_LOG=""
+  CURRENT_PHASE_FAILURE_MESSAGE=""
 }
 
 init_state_file() {
@@ -391,6 +447,7 @@ run_phase_handler() {
 
     trap - ERR
     CURRENT_PHASE_END_TIME="$(now_utc)"
+    clear_phase_failure_context
     write_current_phase_state "passed" "0"
   )
 }
@@ -458,26 +515,92 @@ run_dns_answer_check() {
     ' _ "${resolver}" "${fqdn}" "${expected_answer}"
 }
 
-guard_pve_test() {
+run_dns_nonempty_check() {
+  local name="$1"
+  local resolver="$2"
+  local fqdn="$3"
+
+  # shellcheck disable=SC2016
+  run_logged "${name}" \
+    bash -lc '
+      set -euo pipefail
+
+      resolver="$1"
+      fqdn="$2"
+
+      mapfile -t answers < <(dig "@${resolver}" +short "${fqdn}" | sed "/^[[:space:]]*$/d")
+
+      if (( ${#answers[@]} == 0 )); then
+        printf "resolver=%s\n" "${resolver}"
+        printf "fqdn=%s\n" "${fqdn}"
+        printf "observed=<empty>\n"
+        printf "DNS assertion failed for %s via %s: expected at least one answer\n" \
+          "${fqdn}" "${resolver}" >&2
+        exit 1
+      fi
+
+      printf "resolver=%s\n" "${resolver}"
+      printf "fqdn=%s\n" "${fqdn}"
+      printf "observed=%s\n" "$(printf "%s\n" "${answers[@]}" | paste -sd "," -)"
+      printf "DNS assertion passed for %s via %s (non-empty)\n" "${fqdn}" "${resolver}"
+    ' _ "${resolver}" "${fqdn}"
+}
+
+guard_target() {
   local output
   # shellcheck disable=SC2016
-  output="$("${WITH_SECRETS}" bash -c 'echo $TF_VAR_proxmox_node')"
-  if [[ "${output}" != "pve-test" ]]; then
-    log "ERROR target guard returned '${output}', expected pve-test"
+  output="$("${WITH_SECRETS}" printenv TF_VAR_proxmox_node)"
+  if [[ "${output}" != "${TARGET_NODE_EXPECTED}" ]]; then
+    log "ERROR target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     set_phase_failure_context \
       "target-guard" \
-      "${WITH_SECRETS} bash -c 'echo \$TF_VAR_proxmox_node'" \
+      "${WITH_SECRETS} printenv TF_VAR_proxmox_node" \
       "${RUN_LOG}" \
-      "target guard returned '${output}', expected pve-test"
+      "target guard returned '${output}', expected ${TARGET_NODE_EXPECTED}"
     return 1
   fi
   log "target guard passed: ${output}"
 }
 
 require_clean_tree() {
-  if [[ -n "$(git -C "${REPO_ROOT}" status --short)" ]]; then
+  local allowed_path
+  local line path
+  local path_allowed
+  local -a status_lines=()
+  local -a allowed_lines=()
+  local -a disallowed_lines=()
+
+  mapfile -t status_lines < <(git -C "${REPO_ROOT}" status --short)
+  if [[ ${#status_lines[@]} -eq 0 ]]; then
+    return 0
+  fi
+
+  for line in "${status_lines[@]}"; do
+    path="${line:3}"
+    if [[ "${path}" == *" -> "* ]]; then
+      path="${path##* -> }"
+    fi
+
+    path_allowed=false
+    if [[ "${PHASE}" == "cycle" || "${PHASE}" == "activate-edge" || "${PHASE}" == "deploy-platform" ]]; then
+      for allowed_path in "${EXPECTED_RUNTIME_DIRTY_PATHS[@]}"; do
+        if [[ "${path}" == "${allowed_path}" ]]; then
+          path_allowed=true
+          break
+        fi
+      done
+    fi
+
+    if [[ "${path_allowed}" == "true" ]]; then
+      allowed_lines+=("${line}")
+    else
+      disallowed_lines+=("${line}")
+    fi
+  done
+
+  if [[ ${#disallowed_lines[@]} -gt 0 ]]; then
     log "ERROR working tree is dirty"
-    git -C "${REPO_ROOT}" status --short | tee -a "${RUN_LOG}" >&2
+    printf '%s\n' "${status_lines[@]}" | tee -a "${RUN_LOG}" >&2
     set_phase_failure_context \
       "require-clean-tree" \
       "git -C ${REPO_ROOT} status --short" \
@@ -485,6 +608,11 @@ require_clean_tree() {
       "working tree is dirty"
     return 1
   fi
+
+  {
+    printf '[%s] WARNING allowing expected runtime-generated change(s) during %s:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "${PHASE}"
+    printf '%s\n' "${allowed_lines[@]}"
+  } | tee -a "${RUN_LOG}" >&2
 }
 
 record_working_tree_state() {
@@ -528,9 +656,11 @@ record_branch_and_commit() {
 
 assert_traefik_render_output() {
   local logfile="$1"
+  local status=0
 
-  if python3 - "${logfile}" <<'PY'
+  python3 - "${logfile}" <<'PY' || status=$?
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -560,24 +690,24 @@ if missing:
 if empty:
     raise SystemExit("Empty rendered Traefik files: " + ", ".join(empty))
 PY
-  then
-    return 0
-  fi
 
-  local status=$?
-  set_phase_failure_context \
-    "assert-traefik-render-output" \
-    "python3 <traefik-render-output-assertion> ${logfile}" \
-    "${logfile}" \
-    "Traefik render output assertion failed"
-  return "${status}"
+  if [[ "${status}" -ne 0 ]]; then
+    set_phase_failure_context \
+      "assert-traefik-render-output" \
+      "python3 <traefik-render-output-assertion> ${logfile}" \
+      "${logfile}" \
+      "Traefik render output assertion failed"
+    return "${status}"
+  fi
 }
 
 assert_coredns_render_output() {
   local logfile="$1"
+  local status=0
 
-  if python3 - "${logfile}" <<'PY'
+  python3 - "${logfile}" <<'PY' || status=$?
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -594,26 +724,28 @@ if not output_zone.is_file():
 rendered_zone = output_zone.read_text(encoding="utf-8")
 if "Generated browser edge records" not in rendered_zone:
     raise SystemExit("Rendered CoreDNS zone is missing generated browser record section")
-if "10.57.2.10" not in rendered_zone:
-    raise SystemExit("Rendered CoreDNS zone is missing the expected 10.57.2.10 target")
+expected_target = os.environ.get("LAB_IP_PROXY", "")
+if not expected_target:
+    raise SystemExit("LAB_IP_PROXY is not set — source your environment file before running")
+if expected_target not in rendered_zone:
+    raise SystemExit(f"Rendered CoreDNS zone is missing the expected {expected_target} target")
 PY
-  then
-    return 0
-  fi
 
-  local status=$?
-  set_phase_failure_context \
-    "assert-coredns-render-output" \
-    "python3 <coredns-render-output-assertion> ${logfile}" \
-    "${logfile}" \
-    "CoreDNS render output assertion failed"
-  return "${status}"
+  if [[ "${status}" -ne 0 ]]; then
+    set_phase_failure_context \
+      "assert-coredns-render-output" \
+      "python3 <coredns-render-output-assertion> ${logfile}" \
+      "${logfile}" \
+      "CoreDNS render output assertion failed"
+    return "${status}"
+  fi
 }
 
 resolve_stack_specs() {
   local group="$1"
 
-  python3 - "${group}" "${INVENTORY_FILE}" "${TERRAFORM_LXC}" <<'PY'
+  bash -lc "set -a && source '${REPO_ROOT}/.env' && source '${TARGET_ENV_FILE}' && python3 - '${group}' '${INVENTORY_FILE}' '${TERRAFORM_LXC}'" <<'PY'
+import os
 import re
 import sys
 from pathlib import Path
@@ -637,6 +769,22 @@ def clean_cell(value: str) -> str:
 
 def normalize_ip(value: str) -> str:
     return clean_cell(value).split("/", 1)[0]
+
+
+PLACEHOLDER_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}|\$([A-Za-z_][A-Za-z0-9_]*)")
+
+
+def expand_stack_placeholders(text: str) -> str:
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1) or match.group(2)
+        candidates = (name, name.upper(), f"TF_VAR_{name}")
+        for candidate in candidates:
+            value = os.environ.get(candidate)
+            if value:
+                return value
+        return match.group(0)
+
+    return PLACEHOLDER_PATTERN.sub(replace, text)
 
 
 def parse_stack_table(text: str) -> None:
@@ -680,16 +828,16 @@ def parse_order_section(text: str, header: str) -> list[str]:
 
 
 def read_stack_yaml(stack: str) -> tuple[str, str]:
-    stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
-    if not stack_yaml.is_file():
-        raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
+  stack_yaml = terraform_lxc / "stacks" / stack / "stack.yaml"
+  if not stack_yaml.is_file():
+    raise SystemExit(f"missing stack.yaml for inventory stack {stack}: {stack_yaml}")
 
-    text = stack_yaml.read_text(encoding="utf-8")
-    vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
-    ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
-    if not vmid_match or not ip_match:
-        raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
-    return vmid_match.group(1), normalize_ip(ip_match.group(1))
+  text = expand_stack_placeholders(stack_yaml.read_text(encoding="utf-8"))
+  vmid_match = re.search(r"(?m)^vmid:\s*([0-9]+)\s*$", text)
+  ip_match = re.search(r'(?m)^ip_address:\s*"?([^"\n]+)"?\s*$', text)
+  if not vmid_match or not ip_match:
+    raise SystemExit(f"stack.yaml missing vmid or ip_address: {stack_yaml}")
+  return vmid_match.group(1), normalize_ip(ip_match.group(1))
 
 
 parse_stack_table(inventory_text)
@@ -757,6 +905,63 @@ log_stack_plan() {
   printf '%s\n' "$@" | tee -a "${RUN_LOG}"
 }
 
+stack_uses_explicit_storage_contract() {
+  local stack="$1"
+  local stack_yaml="${REPO_ROOT}/terraform/lxc/stacks/${stack}/stack.yaml"
+
+  [[ -f "${stack_yaml}" ]] || return 1
+  grep -Eq '^(docker_mount|extra_mount):' "${stack_yaml}"
+}
+
+review_storage_plan_safety() {
+  local spec="$1"
+  local stack planfile planjson classified
+
+  stack="$(stack_name "${spec}")"
+  if ! stack_uses_explicit_storage_contract "${stack}"; then
+    log "skip storage-plan-review-${stack}: stack does not declare explicit storage contract"
+    return 0
+  fi
+
+  planfile="${LOG_DIR}/${stack}-storage.tfplan"
+  planjson="${LOG_DIR}/${stack}-storage.plan.json"
+  classified="${LOG_DIR}/${stack}-storage.classified.json"
+
+  run_logged "storage-plan-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt plan -target=module.lxc -out='${planfile}' -no-color"
+  run_logged "storage-plan-json-${stack}" \
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt show -json '${planfile}' >'${planjson}'"
+  run_logged "storage-plan-classify-${stack}" \
+    python3 "${TERRAFORM_LXC}/classify-storage-plan.py" --plan-json "${planjson}" --stack-name "${stack}" --out "${classified}"
+  run_logged "storage-plan-safety-${stack}" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${planjson}"
+}
+
+run_storage_classifier_regression_checks() {
+  local nonstorage_plan="${LOG_DIR}/storage-plan-nonstorage-fixture.json"
+  local unsafe_log="${LOG_DIR}/storage-plan-known-unsafe.log"
+
+  cat >"${nonstorage_plan}" <<'EOF'
+{
+  "resource_changes": [
+    {
+      "address": "module.lxc.proxmox_virtual_environment_container.docker_host",
+      "change": {
+        "actions": ["update"],
+        "before": {"memory": {"dedicated": 1024}},
+        "after": {"memory": {"dedicated": 2048}}
+      }
+    }
+  ]
+}
+EOF
+
+  run_logged "storage-plan-safety-nonstorage-fixture" \
+    python3 "${TERRAFORM_LXC}/check-plan-safety.py" --plan-json "${nonstorage_plan}"
+  run_logged "storage-plan-safety-known-unsafe" \
+    bash -lc "if python3 '${TERRAFORM_LXC}/check-plan-safety.py' --plan-json '${REPO_ROOT}/docs/storage-refactor/fixtures/fixture-docker-grow-plan.json' >'${unsafe_log}' 2>&1; then echo 'expected unsafe storage fixture to fail' >&2; exit 1; else status=\$?; cat '${unsafe_log}'; [[ \"\${status}\" -eq 2 ]]; fi"
+}
+
 load_stack_specs() {
   local group="$1"
   local target_name="$2"
@@ -789,22 +994,106 @@ load_stack_specs() {
 }
 
 get_authentik_url() {
-  local output stack ip
+  printf 'https://authentik-int.%s:9443\n' "${LAB_DOMAIN}"
+  return 0
+}
 
-  if ! output="$(resolve_stack_specs all)"; then
-    log "ERROR failed to resolve stack specs for authentik_url derivation"
-    return 1
+hydrate_live_env_contract() {
+  local key value
+  local vars=(
+    LAB_IP_AUTHENTIK
+    LAB_IP_STEP_CA
+    LAB_IP_DNS
+    LAB_IP_PORTAINER
+    LAB_IP_PROXY
+    LAB_GW_MGMT
+  )
+
+  for key in "${vars[@]}"; do
+    if [[ -n "${!key:-}" ]]; then
+      continue
+    fi
+
+    value="$("${WITH_SECRETS}" printenv "${key}" || true)"
+    if [[ -n "${value}" ]]; then
+      printf -v "${key}" '%s' "${value}"
+      export "${key}=${value}"
+    fi
+  done
+}
+
+require_live_env_contract() {
+  local missing=()
+  local vars=(
+    LAB_IP_AUTHENTIK
+    LAB_IP_STEP_CA
+    LAB_IP_DNS
+    LAB_IP_PORTAINER
+    LAB_IP_PROXY
+    LAB_GW_MGMT
+  )
+
+  hydrate_live_env_contract
+
+  for key in "${vars[@]}"; do
+    if [[ -z "${!key:-}" ]]; then
+      missing+=("${key}")
+    fi
+  done
+
+  if [[ ${#missing[@]} -eq 0 ]]; then
+    return 0
   fi
 
-  while IFS=: read -r stack _ ip; do
-    if [[ "${stack}" == "authentik-stack" ]]; then
-      printf 'http://%s:9000\n' "${ip}"
-      return 0
-    fi
-  done <<<"${output}"
-
-  log "ERROR authentik-stack not found in resolved stack specs"
+  log "ERROR Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}"). Source your environment first (for example: source .env && source ${DEFAULT_ENV_HINT}). source-preflight is source-only and does not require these values."
+  set_phase_failure_context \
+    "live-env-contract" \
+    "require_live_env_contract" \
+    "${RUN_LOG}" \
+    "Missing required live-validation environment variable(s): $(IFS=,; echo "${missing[*]}")"
   return 1
+}
+
+wait_for_authentik_api_ready() {
+  local authentik_url="$1"
+  local max_attempts="24"
+  local delay_seconds="5"
+
+  # shellcheck disable=SC2016
+  run_logged "wait-authentik-api-ready" \
+    "${WITH_SECRETS}" bash -lc '
+      set -euo pipefail
+
+      authentik_url="$1"
+      max_attempts="$2"
+      delay_seconds="$3"
+      endpoint="${authentik_url%/}/api/v3/core/applications/?page_size=1"
+      token="${AUTHENTIK_SUPERUSER_API_TOKEN:-}"
+
+      if [[ -z "${token}" ]]; then
+        echo "AUTHENTIK_SUPERUSER_API_TOKEN is not set" >&2
+        exit 1
+      fi
+
+      for attempt in $(seq 1 "${max_attempts}"); do
+        code="$(curl -sk -o /tmp/authentik-api-ready.json -w "%{http_code}" \
+          -H "Authorization: Bearer ${token}" \
+          -H "Accept: application/json" \
+          "${endpoint}" || true)"
+        echo "attempt=${attempt} http_code=${code} endpoint=${endpoint}"
+
+        if [[ "${code}" == "200" ]]; then
+          exit 0
+        fi
+
+        if [[ "${attempt}" -lt "${max_attempts}" ]]; then
+          sleep "${delay_seconds}"
+        fi
+      done
+
+      echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
+      exit 1
+    ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
 }
 
 require_execute_approval() {
@@ -821,28 +1110,56 @@ require_execute_approval() {
     return 1
   fi
 
-  if [[ "${approval_lc}" != *"approve pve-test teardown deploy test"* ]]; then
-    log "ERROR ${PHASE} requires --approval-text containing: approve pve-test teardown deploy test"
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; approval-text gate satisfied by --disposable"
+    return 0
+  fi
+
+  if [[ "${approval_lc}" != *"${REQUIRED_APPROVAL_PHRASE,,}"* ]]; then
+    log "ERROR ${PHASE} requires --approval-text containing: ${REQUIRED_APPROVAL_PHRASE}"
     set_phase_failure_context \
       "require-approval-text" \
       "scripts/teardown-deploy-test.sh ${PHASE} --approval-text <text>" \
       "${RUN_LOG}" \
-      "${PHASE} requires approval text containing: approve pve-test teardown deploy test"
+      "${PHASE} requires approval text containing: ${REQUIRED_APPROVAL_PHRASE}"
     return 1
   fi
+
 }
 
-approval_packet_line_for_service() {
+approval_packet_field_value() {
+  local packet_path="$1"
+  local field_regex="$2"
+
+  awk -v field_regex="${field_regex}" '
+    BEGIN { IGNORECASE = 1 }
+    $0 ~ "^[[:space:]]*" field_regex "[[:space:]]*:[[:space:]]*" {
+      sub("^[[:space:]]*" field_regex "[[:space:]]*:[[:space:]]*", "", $0)
+      print $0
+      exit
+    }
+  ' "${packet_path}" || true
+}
+
+approval_packet_has_heading() {
+  local packet_path="$1"
+  local heading_regex="$2"
+
+  grep -Eiq "^[[:space:]]*${heading_regex}[[:space:]]*:[[:space:]]*$" "${packet_path}"
+}
+
+approval_packet_has_backup_entry() {
   local packet_path="$1"
   local service_regex="$2"
 
-  grep -Eim1 "${service_regex}" "${packet_path}" || true
+  grep -Eiq "^[[:space:]]*-[[:space:]]*${service_regex}[[:space:]]+backup[[:space:]]+evidence[[:space:]]+path:[[:space:]]*[^[:space:]].*$" "${packet_path}"
 }
 
-line_has_evidence_marker() {
-  local line="$1"
+approval_packet_has_data_loss_approval() {
+  local packet_path="$1"
 
-  [[ "${line}" =~ (backup|snapshot|restore|evidence|artifact|path|id|ticket|ref) ]]
+  grep -Eiq "^[[:space:]]*recreatable[[:space:]-]*services[[:space:]-]*approval[[:space:]]*:[[:space:]]*.+$" "${packet_path}" \
+    && grep -Eiq "(data[[:space:]-]*loss|recreat|accept|acknowledg|allowed|approved)" "${packet_path}"
 }
 
 validate_approval_packet() {
@@ -850,7 +1167,14 @@ validate_approval_packet() {
   local packet_hash_file
   local packet_sha
   local current_commit
-  local service line
+  local packet_stamp
+  local packet_target
+  local packet_commit
+  local outage_window
+  local rollback_deadline
+  local scope_approval
+  local scope_exclusions
+  local service
   local -a missing_items
   local -a non_loss_services=(
     "step-ca:step[- ]?ca"
@@ -860,6 +1184,17 @@ validate_approval_packet() {
     "monitoring:monitoring"
     "portainer:portainer"
   )
+  local -a recreatable_services=(
+    "apt-cacher:apt[- ]?cacher"
+    "ci-runner:ci[- ]?runner"
+    "dns:dns"
+    "proxy:proxy"
+  )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping approval packet validation"
+    return 0
+  fi
 
   if [[ -z "${APPROVAL_PACKET}" ]]; then
     log "ERROR ${PHASE} requires --approval-packet PATH"
@@ -883,43 +1218,78 @@ validate_approval_packet() {
   fi
 
   current_commit="$(git_current_commit)"
+  packet_stamp="$(approval_packet_field_value "${packet_path}" "stamp")"
+  packet_target="$(approval_packet_field_value "${packet_path}" "target")"
+  packet_commit="$(approval_packet_field_value "${packet_path}" "approved[[:space:]-]*commit([[:space:]_-]*sha)?")"
+  outage_window="$(approval_packet_field_value "${packet_path}" "outage[[:space:]-]*window")"
+  rollback_deadline="$(approval_packet_field_value "${packet_path}" "rollback[[:space:]-]*deadline")"
+  scope_approval="$(approval_packet_field_value "${packet_path}" "scope[[:space:]-]*approval")"
+  scope_exclusions="$(approval_packet_field_value "${packet_path}" "scope[[:space:]-]*exclusions")"
 
-  if ! grep -Fqi "${STAMP}" "${packet_path}"; then
-    missing_items+=("stamp reference (${STAMP})")
+  if [[ -z "${packet_stamp}" ]]; then
+    missing_items+=("stamp field (stamp: ${STAMP})")
+  elif [[ "${packet_stamp}" != "${STAMP}" ]]; then
+    missing_items+=("stamp field must match active --stamp (${STAMP})")
   fi
 
-  if ! grep -Eiq "(^|[^[:alnum:]])pve-test([^[:alnum:]]|$)" "${packet_path}"; then
-    missing_items+=("pve-test target reference")
+  if [[ -z "${packet_target}" ]]; then
+    missing_items+=("target field (target: ${TARGET_NODE_EXPECTED})")
+  elif [[ "${packet_target}" != "${TARGET_NODE_EXPECTED}" ]]; then
+    missing_items+=("target field must equal ${TARGET_NODE_EXPECTED}")
   fi
 
-  if ! grep -Fqi "${current_commit}" "${packet_path}" \
-    && ! grep -Eiq "approved[[:space:]-]*commit([[:space:]_-]*sha)?[[:space:]:=]+[0-9a-f]{7,40}" "${packet_path}"; then
-    missing_items+=("current commit or approved commit SHA reference")
+  if [[ -z "${packet_commit}" ]]; then
+    missing_items+=("approved commit SHA field")
+  elif [[ ! "${packet_commit}" =~ ^[0-9a-f]{7,40}$ ]]; then
+    missing_items+=("approved commit SHA must be 7-40 lowercase hex characters")
+  elif [[ "${packet_commit}" != "${current_commit}" ]]; then
+    missing_items+=("approved commit SHA must match current commit (${current_commit})")
   fi
 
-  if ! grep -Eiq "(outage|maintenance[[:space:]]+window|window)" "${packet_path}"; then
-    missing_items+=("outage/window field or heading")
+  if [[ -z "${outage_window}" ]]; then
+    missing_items+=("outage window field")
   fi
 
-  if ! grep -Eiq "rollback.*deadline|deadline.*rollback" "${packet_path}"; then
-    missing_items+=("rollback deadline field or heading")
+  if [[ -z "${rollback_deadline}" ]]; then
+    missing_items+=("rollback deadline field")
+  fi
+
+  if [[ -z "${scope_approval}" ]]; then
+    missing_items+=("scope approval field")
+  fi
+
+  if [[ -z "${scope_exclusions}" ]]; then
+    missing_items+=("scope exclusions field")
+  fi
+
+  if ! approval_packet_has_heading "${packet_path}" "service[[:space:]-]*evidence"; then
+    missing_items+=("service evidence heading")
   fi
 
   for service in "${non_loss_services[@]}"; do
     local service_name="${service%%:*}"
     local service_pattern="${service#*:}"
-    line="$(approval_packet_line_for_service "${packet_path}" "${service_pattern}")"
-    if [[ -z "${line}" ]] || ! line_has_evidence_marker "${line,,}"; then
+    if ! approval_packet_has_backup_entry "${packet_path}" "${service_pattern}"; then
       missing_items+=("backup evidence reference for ${service_name}")
     fi
   done
 
-  if ! grep -Eiq "(recreat|data[[:space:]-]*loss).*(approv|accept|acknowledg|allowed)" "${packet_path}" \
-    && ! grep -Eiq "(apt[- ]?cacher|ci[- ]?runner|dns|proxy).*(backup|snapshot|restore|evidence|artifact|path|id|ticket|ref)" "${packet_path}"; then
-    missing_items+=("recreatable services evidence or explicit data-loss/recreate approval")
+  if ! approval_packet_has_data_loss_approval "${packet_path}"; then
+    if ! approval_packet_has_heading "${packet_path}" "recreatable[[:space:]-]*services[[:space:]-]*evidence"; then
+      missing_items+=("recreatable services evidence heading or recreatable services approval field")
+    fi
+    for service in "${recreatable_services[@]}"; do
+      local service_name="${service%%:*}"
+      local service_pattern="${service#*:}"
+      if ! approval_packet_has_backup_entry "${packet_path}" "${service_pattern}"; then
+        missing_items+=("recreatable service evidence reference for ${service_name}")
+      fi
+    done
   fi
 
-  if (( ${#missing_items[@]} > 0 )); then
+  set +u
+  if [[ ${#missing_items[@]} -gt 0 ]]; then
+    set -u
     {
       log "ERROR approval packet validation failed: ${packet_path}"
       printf '[%s] Missing approval packet items:\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" | tee -a "${RUN_LOG}"
@@ -932,12 +1302,82 @@ validate_approval_packet() {
       "approval packet missing required metadata"
     return 1
   fi
+  set -u
 
   packet_hash_file="${LOG_DIR}/approval-packet.sha256"
   packet_sha="$(sha256sum "${packet_path}" | awk '{print $1}')"
   printf '%s  %s\n' "${packet_sha}" "${packet_path}" >"${packet_hash_file}"
   log "approval packet accepted: ${packet_path}"
   log "approval packet sha256: ${packet_sha} (recorded in ${packet_hash_file})"
+}
+
+backup_dir_has_artifact() {
+  local dir="$1"
+  find "${dir}" -mindepth 1 -type f | grep -q .
+}
+
+validate_backup_artifacts_present() {
+  local backup_root="${EVIDENCE_DIR}/backups"
+  local d
+  local -a missing_dirs=()
+  local -a missing_non_loss=()
+  local -a required_dirs=(
+    "portainer"
+    "harbor"
+    "authentik"
+    "netbox"
+    "monitoring"
+    "traefik-certs"
+    "step-ca"
+    "ci-runner"
+    "apt-cacher"
+  )
+  local -a non_loss_dirs=(
+    "step-ca"
+    "authentik"
+    "harbor"
+    "netbox"
+  )
+
+  if [[ "${DISPOSABLE}" == "true" ]]; then
+    log "disposable mode enabled; skipping backup artifact validation"
+    return 0
+  fi
+
+  for d in "${required_dirs[@]}"; do
+    if [[ ! -d "${backup_root}/${d}" ]]; then
+      missing_dirs+=("${backup_root}/${d}")
+    fi
+  done
+
+  for d in "${non_loss_dirs[@]}"; do
+    if [[ -d "${backup_root}/${d}" ]] && ! backup_dir_has_artifact "${backup_root}/${d}"; then
+      missing_non_loss+=("${backup_root}/${d}")
+    fi
+  done
+
+  {
+    echo "backup_root=${backup_root}"
+    echo "required_dirs=${required_dirs[*]}"
+    echo "missing_dir_count=${#missing_dirs[@]}"
+    echo "missing_non_loss_count=${#missing_non_loss[@]}"
+    if (( ${#missing_dirs[@]} > 0 )); then
+      echo "missing_dirs=${missing_dirs[*]}"
+    fi
+    if (( ${#missing_non_loss[@]} > 0 )); then
+      echo "missing_non_loss_artifacts=${missing_non_loss[*]}"
+    fi
+  } >"${LOG_DIR}/backup-gating.log"
+
+  if (( ${#missing_dirs[@]} > 0 )); then
+    log "WARNING backup evidence directories missing under ${backup_root} (advisory only)"
+  fi
+
+  if (( ${#missing_non_loss[@]} > 0 )); then
+    log "WARNING backup evidence artifacts missing under ${backup_root} (advisory only)"
+  fi
+
+  log "backup evidence check complete"
 }
 
 stack_name() {
@@ -953,14 +1393,28 @@ stack_ip() {
   printf '%s\n' "${1##*:}"
 }
 
+ensure_workspace_dir() {
+  local stack="$1"
+  local workspace="${2:-${TERRAGRUNT_WORKSPACE}}"
+  local dir="${REPO_ROOT}/terraform/lxc/stacks/${stack}/terraform.tfstate.d/${workspace}"
+  if [[ ! -d "${dir}" ]]; then
+    mkdir -p "${dir}"
+    log "created workspace dir: ${dir}"
+  fi
+}
+
 stack_apply() {
   local spec="$1"
   local stack
   stack="$(stack_name "${spec}")"
 
-  guard_pve_test
+  ensure_workspace_dir "${stack}"
+  guard_target
   run_logged "deploy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt apply -auto-approve"
+    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
+  guard_target
+  run_logged "provision-${stack}" \
+    "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
   validate_stack_smoke "${spec}"
 }
 
@@ -970,11 +1424,17 @@ stack_destroy() {
   stack="$(stack_name "${spec}")"
   vmid="$(stack_vmid "${spec}")"
 
-  guard_pve_test
-  run_logged "destroy-${stack}" \
-    bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '../../../../with-secrets' terragrunt destroy -auto-approve"
+  ensure_workspace_dir "${stack}"
+  guard_target
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' REBUILD_GATE_TARGET_HOST='${TARGET_PVE_HOST}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
+  else
+    run_logged "destroy-${stack}" \
+      bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' terragrunt destroy -auto-approve"
+  fi
   run_logged "verify-destroy-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then exit 1; fi"
+    ssh -F /dev/null "root@${TARGET_PVE_HOST}" "if pct status '${vmid}' >/dev/null 2>&1; then echo 'FAIL vmid_${vmid}_still_present' >&2; exit 1; fi; echo 'PASS vmid_${vmid}_absent'"
 }
 
 validate_stack_smoke() {
@@ -984,41 +1444,45 @@ validate_stack_smoke() {
   vmid="$(stack_vmid "${spec}")"
   ip="$(stack_ip "${spec}")"
 
+  hydrate_live_env_contract
+
   run_logged "pct-status-${stack}" \
-    ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
+    ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}' | grep -F 'status: running'"
 
   case "${stack}" in
     portainer-stack)
-      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"
+      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     apt-cacher-stack)
-      run_logged "health-${stack}" curl -fsSI "http://${ip}:3142/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     harbor-stack)
-      run_logged "health-${stack}" curl -skI "https://${ip}/v2/"
+      run_logged "health-${stack}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '301' || \"\${code}\" == '302' || \"\${code}\" == '401' ]]"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     ci-runner-01)
       run_logged "health-${stack}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"
       ;;
     dns-stack)
-      run_logged "health-${stack}-authoritative" dig "@${ip}" +short traefik.lab.gibbsgreatly.xyz
-      run_logged "health-${stack}-delegated" dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+      run_logged "health-${stack}-authoritative" dig "@${ip}" +short "${LAB_FQDN_TRAEFIK}"
+      run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short "${LAB_FQDN_TRAEFIK}"
       ;;
     proxy-stack)
-      run_logged "health-${stack}" curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"
       ;;
     step-ca-stack)
       run_logged "health-${stack}" curl -sk "https://${ip}/acme/acme/directory"
       ;;
     authentik-stack)
-      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"
+      run_logged "health-${stack}" curl -fsS "http://${ip}:9000/-/health/live/"  # NOSONAR — unauthenticated health check on private SDN
       ;;
     monitoring-stack)
-      run_logged "health-${stack}" curl -skI --resolve grafana.lab.gibbsgreatly.xyz:443:10.57.2.10 https://grafana.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_GRAFANA}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_GRAFANA}/"
       ;;
     netbox-stack)
-      run_logged "health-${stack}" curl -skI --resolve netbox.lab.gibbsgreatly.xyz:443:10.57.2.10 https://netbox.lab.gibbsgreatly.xyz/
+      run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_NETBOX}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_NETBOX}/"
       ;;
   esac
 }
@@ -1026,12 +1490,34 @@ validate_stack_smoke() {
 run_status_capture() {
   local logfile="$1"
   shift
+  local status=0
 
   mkdir -p "${LOG_DIR}"
-  if "$@" >"${logfile}" 2>&1; then
+  "$@" >"${logfile}" 2>&1
+  status=$?
+  if [[ "${status}" -eq 0 ]]; then
     return 0
   fi
-  return "$?"
+  return "${status}"
+}
+
+classify_pct_capture_failure() {
+  local pct_log="$1"
+
+  PLATFORM_PCT_STATUS="missing"
+  PLATFORM_PCT_DETAIL="pct status unavailable"
+
+  if grep -Eq 'Could not resolve hostname|Temporary failure in name resolution|Name or service not known' "${pct_log}"; then
+    PLATFORM_PCT_STATUS="blocked"
+    PLATFORM_PCT_DETAIL="status collection blocked: operator host cannot resolve ${TARGET_PVE_HOST}"
+    return 0
+  fi
+
+  if grep -Eq 'No route to host|Connection timed out|Connection refused|Host key verification failed|Permission denied' "${pct_log}"; then
+    PLATFORM_PCT_STATUS="blocked"
+    PLATFORM_PCT_DETAIL="status collection blocked: cannot reach Proxmox host via SSH"
+    return 0
+  fi
 }
 
 probe_stack_health() {
@@ -1046,7 +1532,7 @@ probe_stack_health() {
   case "${stack}" in
     portainer-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/api/system/status"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/api/system/status"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="portainer api ok"
       else
@@ -1056,7 +1542,8 @@ probe_stack_health() {
       ;;
     apt-cacher-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsSI "http://${ip}:3142/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:3142/'); printf 'http_status=%s\\n' \"\${code}\"; [[ \"\${code}\" == '200' || \"\${code}\" == '406' ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="apt-cacher http ok"
       else
@@ -1067,7 +1554,7 @@ probe_stack_health() {
     harbor-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" == '401' ]]"; then
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}/v2/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" == '401' ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="registry v2 challenge ok"
       else
@@ -1078,7 +1565,7 @@ probe_stack_health() {
     ci-runner-01)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"; then
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct exec '${vmid}' -- sh -lc 'systemctl list-units --type=service --state=running --no-legend | grep -F actions.runner'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="github actions runner service running"
       else
@@ -1089,7 +1576,7 @@ probe_stack_health() {
     dns-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "dig '@${ip}' +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"; then
+        bash -lc "dig '@${ip}' +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="authoritative dns ok"
       else
@@ -1100,7 +1587,7 @@ probe_stack_health() {
     proxy-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"; then
+        bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"; then
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="traefik https responds"
       else
@@ -1120,7 +1607,7 @@ probe_stack_health() {
       ;;
     authentik-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
-      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/-/health/live/"; then
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" curl -fsS "http://${ip}:9000/-/health/live/"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="authentik health ok"
       else
@@ -1131,7 +1618,7 @@ probe_stack_health() {
     monitoring-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="grafana and victoriametrics ok"
       else
@@ -1142,7 +1629,7 @@ probe_stack_health() {
     netbox-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"; then
+        bash -lc "code=\$(curl -sS -o /dev/null -w '%{http_code}' 'http://${ip}:8080/'); printf 'http_status=%s\n' \"\${code}\"; [[ \"\${code}\" =~ ^(200|301|302)$ ]]"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
         PLATFORM_HEALTH_DETAIL="netbox http ok"
       else
@@ -1177,6 +1664,7 @@ summary = {
     "healthy": sum(1 for row in rows if row["overall"] == "healthy"),
     "running": sum(1 for row in rows if row["overall"] == "running"),
     "degraded": sum(1 for row in rows if row["overall"] == "degraded"),
+    "blocked": sum(1 for row in rows if row["overall"] == "blocked"),
     "stopped": sum(1 for row in rows if row["overall"] == "stopped"),
     "missing": sum(1 for row in rows if row["overall"] == "missing"),
 }
@@ -1205,13 +1693,14 @@ generate_platform_status_report() {
     docker_log="${LOG_DIR}/platform-status-${stack}-docker.log"
     listeners_log="${LOG_DIR}/platform-status-${stack}-listeners.log"
 
-    if run_status_capture "${pct_log}" ssh -F /dev/null "root@${PVE_TEST_HOST}" "pct status '${vmid}'"; then
+    if run_status_capture "${pct_log}" ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}'"; then
       pct_status="$(awk -F': ' '/^status:/ {print $2; exit}' "${pct_log}")"
       if [[ -z "${pct_status}" ]]; then
         pct_status="unknown"
       fi
     else
-      pct_status="missing"
+      classify_pct_capture_failure "${pct_log}"
+      pct_status="${PLATFORM_PCT_STATUS}"
     fi
 
     health_status="skipped"
@@ -1222,10 +1711,10 @@ generate_platform_status_report() {
 
     if [[ "${pct_status}" == "running" ]]; then
       run_status_capture "${docker_log}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
           "pct exec '${vmid}' -- sh -lc 'if command -v docker >/dev/null 2>&1; then docker ps --format \"{{.Names}}|{{.Status}}|{{.Ports}}\"; else echo docker-unavailable; fi'" || true
       run_status_capture "${listeners_log}" \
-        ssh -F /dev/null "root@${PVE_TEST_HOST}" \
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
           "pct exec '${vmid}' -- sh -lc 'if command -v ss >/dev/null 2>&1; then ss -ltnp; else echo ss-unavailable; fi'" || true
 
       probe_stack_health "${stack}" "${vmid}" "${ip}"
@@ -1234,7 +1723,10 @@ generate_platform_status_report() {
       health_log="${PLATFORM_HEALTH_LOG}"
     fi
 
-    if [[ "${pct_status}" == "missing" ]]; then
+    if [[ "${pct_status}" == "blocked" ]]; then
+      overall="blocked"
+      health_detail="${PLATFORM_PCT_DETAIL}"
+    elif [[ "${pct_status}" == "missing" ]]; then
       overall="missing"
     elif [[ "${pct_status}" != "running" ]]; then
       overall="stopped"
@@ -1290,6 +1782,13 @@ create_evidence_dirs() {
 }
 
 run_source_preflight_checks() {
+  run_logged "validate-storage-contract-offline" \
+    python3 "${TERRAFORM_LXC}/validate-storage-contract.py" \
+    --manifest "${TERRAFORM_LXC}/storage/${TARGET_NODE_EXPECTED}.yaml" \
+    --stacks-dir "${TERRAFORM_LXC}/stacks" \
+    --proxmox-node "${TARGET_NODE_EXPECTED}" \
+    --offline
+  run_storage_classifier_regression_checks
   run_logged "validate-edge-manifests" \
     python3 "${TERRAFORM_LXC}/validate-edge-manifests.py" "${TERRAFORM_LXC}"/stacks/*/edge.yaml
   run_logged "edge-unit-tests" \
@@ -1299,7 +1798,9 @@ run_source_preflight_checks() {
       terraform/lxc/test_render_edge_coredns.py \
       terraform/lxc/test_discover_authentik_edge.py \
       terraform/lxc/test_reconcile_authentik_edge.py \
-      terraform/lxc/test_reconcile_edge.py
+      terraform/lxc/test_reconcile_edge.py \
+      terraform/lxc/test_inventory_template.py \
+      terraform/lxc/test_stack_classification.py
   run_logged "git-diff-check" git -C "${REPO_ROOT}" diff --check
 
   rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
@@ -1309,23 +1810,55 @@ run_source_preflight_checks() {
   run_logged "render-edge-coredns" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   assert_coredns_render_output "${LOG_DIR}/render-edge-coredns.log"
   log "CoreDNS render output assertions passed"
+  run_logged "syntax-check-deploy-harbor-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-harbor-stack.yml'"
+  run_logged "syntax-check-deploy-authentik-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-authentik-stack.yml'"
+  run_logged "syntax-check-deploy-monitoring-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-monitoring-stack.yml'"
+  run_logged "syntax-check-deploy-proxy-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml'"
+  run_logged "syntax-check-deploy-netbox-stack" \
+    bash -lc "ANSIBLE_ROLES_PATH='${ANSIBLE_DIR}/roles' \
+      ANSIBLE_CONFIG='${ANSIBLE_DIR}/ansible.cfg' \
+      ansible-playbook --syntax-check \
+        '${ANSIBLE_DIR}/playbooks/deploy-netbox-stack.yml'"
 }
 
 run_live_preflight_checks() {
   local authentik_url
-  guard_pve_test
+  require_live_env_contract
+  guard_target
+  run_logged "validate-storage-contract-live" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/validate-storage-contract.py" \
+    --manifest "${TERRAFORM_LXC}/storage/${TARGET_NODE_EXPECTED}.yaml" \
+    --stacks-dir "${TERRAFORM_LXC}/stacks" \
+    --proxmox-node "${TARGET_NODE_EXPECTED}"
   run_logged "dns-authoritative-traefik" \
-    bash -lc "dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"
+    bash -lc "dig @${LAB_IP_DNS} +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "dns-delegated-traefik" \
-    bash -lc "dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz | grep -Fx '10.57.2.10'"
+    bash -lc "dig @${LAB_GW_MGMT} +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"
   run_logged "https-route-traefik" \
-    bash -lc "curl -skI --resolve traefik.lab.gibbsgreatly.xyz:443:10.57.2.10 https://traefik.lab.gibbsgreatly.xyz/ | grep -Eq '^HTTP/'"
+    bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
-    curl -fsS "http://10.57.1.10:9000/-/health/live/"
+    curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_source_preflight() {
@@ -1367,9 +1900,12 @@ phase_preflight() {
 phase_plan() {
   local -a foundation_specs edge_specs platform_specs destroy_specs
   local -a state_specs
+  local spec
 
   create_evidence_dirs
   log "evidence_dir=${EVIDENCE_DIR}"
+  record_working_tree_state
+  record_branch_and_commit
   load_stack_specs foundation foundation_specs
   load_stack_specs edge edge_specs
   load_stack_specs platform platform_specs
@@ -1393,6 +1929,18 @@ phase_plan() {
   log_stack_plan "edge" "${edge_specs[@]}"
   log_stack_plan "platform" "${platform_specs[@]}"
   log_stack_plan "destroy" "${destroy_specs[@]}"
+
+  require_live_env_contract
+  guard_target
+  for spec in "${foundation_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${edge_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
+  for spec in "${platform_specs[@]}"; do
+    review_storage_plan_safety "${spec}"
+  done
 }
 
 phase_platform_status() {
@@ -1402,7 +1950,7 @@ phase_platform_status() {
   log "evidence_dir=${EVIDENCE_DIR}"
   record_working_tree_state
   record_branch_and_commit
-  guard_pve_test
+  guard_target
   load_stack_specs all specs
   set_current_phase_stack_specs "${specs[@]}"
   generate_platform_status_report "${specs[@]}"
@@ -1414,6 +1962,7 @@ phase_destroy() {
   create_evidence_dirs
   require_execute_approval
   validate_approval_packet
+  validate_backup_artifacts_present
   require_clean_tree
   load_stack_specs destroy specs
   set_current_phase_stack_specs "${specs[@]}"
@@ -1443,6 +1992,9 @@ phase_deploy_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
+  run_logged "render-edge-traefik-deploy" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
+  run_logged "render-edge-coredns-deploy" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   load_stack_specs edge specs
   set_current_phase_stack_specs "${specs[@]}"
   log_stack_plan "edge" "${specs[@]}"
@@ -1456,25 +2008,28 @@ phase_activate_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
-  guard_pve_test
+  guard_target
   authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --apply --json
+      --authentik-url "${authentik_url}" --apply --json
 
-  guard_pve_test
+  guard_target
   run_logged "publish-coredns" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/dns-stack/inventory.yml -u root playbooks/deploy-coredns.yml -e coredns_generated_zone_src='${TERRAFORM_LXC}/.generated/coredns/coredns-lab.zone'"
 
-  guard_pve_test
+  guard_target
   run_logged "publish-traefik" \
-    bash -lc "cd '${ANSIBLE_DIR}' && '../../../with-secrets' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
+    bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_deploy_platform() {
@@ -1492,25 +2047,43 @@ phase_deploy_platform() {
 }
 
 phase_final_validation() {
-  local host fqdn authentik_url
+  local host fqdn authentik_url bg_host bg_fqdn browser_dns_target_ip
   create_evidence_dirs
   record_working_tree_state
-  guard_pve_test
+  require_live_env_contract
+  guard_target
   authentik_url="$(get_authentik_url)" || return 1
+  browser_dns_target_ip="${LAB_IP_PROXY:-}"
+
+  if [[ -z "${browser_dns_target_ip}" ]]; then
+    set_phase_failure_context \
+      "resolve-browser-dns-target" \
+      "LAB_IP_PROXY" \
+      "${RUN_LOG}" \
+      "LAB_IP_PROXY is required for final browser DNS validation"
+    return 1
+  fi
 
   for host in "${BROWSER_HOSTS[@]}"; do
-    fqdn="${host}.lab.gibbsgreatly.xyz"
-    run_dns_answer_check "dns-authoritative-${host}" "10.57.1.13" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_dns_answer_check "dns-delegated-${host}" "10.57.1.1" "${fqdn}" "${BROWSER_DNS_TARGET_IP}"
-    run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:10.57.2.10" "https://${fqdn}/"
+    fqdn="${host}.${LAB_DOMAIN}"
+    run_dns_answer_check "dns-authoritative-${host}" "${LAB_IP_DNS}" "${fqdn}" "${browser_dns_target_ip}"
+    run_dns_answer_check "dns-delegated-${host}" "${LAB_GW_MGMT}" "${fqdn}" "${browser_dns_target_ip}"
+    run_logged "https-route-${host}" curl -skI --resolve "${fqdn}:443:${LAB_IP_PROXY}" "https://${fqdn}/"
   done
 
-  run_logged "harbor-registry-auth" curl -skI --resolve harbor.lab.gibbsgreatly.xyz:443:10.57.2.10 https://harbor.lab.gibbsgreatly.xyz/v2/
-  run_logged "portainer-direct-api" curl -fsS http://10.57.1.20:9000/api/system/status
-  run_logged "authentik-direct-health" curl -fsS http://10.57.1.10:9000/-/health/live/
+  for bg_host in "${BREAKGLASS_DNS_HOSTS[@]}"; do
+    bg_fqdn="${bg_host}.${LAB_DOMAIN}"
+    run_dns_nonempty_check "dns-authoritative-${bg_host}" "${LAB_IP_DNS}" "${bg_fqdn}"
+    run_dns_nonempty_check "dns-delegated-${bg_host}" "${LAB_GW_MGMT}" "${bg_fqdn}"
+  done
+
+  run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
+  run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
+  run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
-      --authentik-url "${authentik_url}" --no-verify-tls --json
+      --authentik-url "${authentik_url}" --json
 }
 
 phase_cycle() {
@@ -1651,6 +2224,10 @@ parse_args() {
         fi
         APPROVAL_PACKET="${2:-}"
         shift 2
+        ;;
+      --disposable)
+        DISPOSABLE=true
+        shift
         ;;
       --stamp)
         if [[ $# -lt 2 ]]; then

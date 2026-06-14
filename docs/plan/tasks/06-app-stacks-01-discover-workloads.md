@@ -14,7 +14,7 @@ Phase 06 — Application Stack Migration
 
 ## Prerequisites
 
-- Phase 04 complete — Traefik, Authentik, step-ca, and Monitoring all running
+- Validated stack-owned edge foundation is running
 - Phase 05 complete — supply chain pipeline active
 - NetBox running at `192.168.1.30`
 
@@ -58,7 +58,7 @@ The migration table in `docs/plan/phase-06-app-stacks.md` is fully populated wit
 - [ ] Migration table in `docs/plan/phase-06-app-stacks.md` has VMID, IP, hostname, services, config paths, and NFS mounts for each workload
 - [ ] GPU/device passthrough noted where applicable
 - [ ] NetBox updated with current workloads
-- [ ] Commit pushed to `dev/pve-test`
+- [ ] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -88,7 +88,7 @@ STEP 3 — Read the migration table in docs/plan/phase-06-app-stacks.md.
   - Jellyfin
   - Pi-hole
   - Game services (Minecraft, etc.)
-  - Nginx Proxy Manager (if still running — to be decommissioned)
+  - Any legacy proxy found during discovery should be recorded as retired cleanup only
 
 STEP 4 — Update NetBox records:
   Access NetBox at http://192.168.1.30.
@@ -98,12 +98,13 @@ STEP 4 — Update NetBox records:
   - Services running on that IP
 
 STEP 5 — Commit the updated discovery document:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/workload-discovery
   git add docs/plan/phase-06-app-stacks.md
   git commit -m "docs(phase-06): document existing application workloads from discovery"
-  git checkout dev/pve-test && git merge feat/workload-discovery
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
+  git merge feat/workload-discovery
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Migration table fully populated, NetBox updated, commit pushed.
 ```

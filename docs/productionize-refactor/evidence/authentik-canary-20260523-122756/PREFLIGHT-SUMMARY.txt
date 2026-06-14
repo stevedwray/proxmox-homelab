@@ -1,0 +1,103 @@
+=============================================================================
+AUTHENTIK-STACK PRODUCTION CANARY — PREFLIGHT SUMMARY
+=============================================================================
+Date: 2026-05-23
+Target: pve (production Proxmox node)
+Status: READY FOR APPROVAL
+
+=== DEPLOYMENT SPECIFICATION ===
+
+Stack: authentik-stack (Identity provider / SSO gateway)
+Container: VMID 20010
+Hostname: authentik-stack
+IP Address: 192.168.20.10/24
+Network: mgmt_seg (SDN vnet tvmgmt, VLAN 20)
+Gateway: 192.168.20.1
+
+=== PREFLIGHT VALIDATION RESULTS ===
+
+✅ Target Node Verification
+   Plan output confirms: target_node = "pve"
+   Environment: TF_VAR_proxmox_node=pve (production)
+   Status: PASS
+
+✅ Required Inputs Available
+   ✓ LAB_IP_AUTHENTIK=192.168.20.10
+   ✓ LAB_GW_MGMT=192.168.20.1
+   ✓ LAB_IP_HARBOR=192.168.40.10
+   ✓ LAB_IP_STEP_CA=192.168.20.11
+   ✓ All SOPS secrets ready (AUTHENTIK_SECRET_KEY, _POSTGRES_PASSWORD, _SUPERUSER_PASSWORD, etc.)
+   Status: PASS
+
+✅ Contract Compliance (terraform/lxc/stacks/authentik-stack/STACK_CONTRACT.md)
+   ✓ Zone: mgmt_seg (VLAN 20) — correct
+   ✓ IP: 192.168.20.10/24 matching ${lab_ip_authentik}
+   ✓ Gateway: 192.168.20.1 matching ${lab_gw_mgmt}
+   ✓ VMID: 20010 — matches contract
+   ✓ Dependencies available:
+     • harbor-stack (registry — 192.168.40.10) ✓
+     • step-ca-stack (ACME — 192.168.20.11) ✓
+   Status: PASS
+
+✅ Infrastructure Plan
+   Resources to create: 5
+     • ansible_inventory
+     • network_sdn_vars
+     • configure_network_sdn_attachment
+     • docker_host (LXC container 20010)
+     • container_epoch
+   Status: PASS
+
+⚠️  OPERATIONAL NOTICE: Counterpart Disposal Required
+   Current state on pve-test:
+     VMID: 20010
+     Status: RUNNING
+     IP: 192.168.20.10/24
+     Action: Must be destroyed before pve apply to prevent IP collision
+
+   Disposal will be performed as Phase 0 before infrastructure apply.
+
+=== DEPLOYMENT PHASES PLANNED ===
+
+Phase 0: Dispose pve-test counterpart (21010 running → destroy)
+Phase 1: Terragrunt apply (5 resources, ~51s typical)
+Phase 2: Ansible provision check (--check mode validation)
+Phase 3: Ansible live provisioning (Docker base + Authentik deploy)
+         Includes: step-cli download, TLS cert issuance from step-ca
+Phase 4: Health validation gates (docker compose, app logs, port checks)
+Phase 5: Documentation & closure
+
+=== CRITICAL NOTES ===
+
+1. AUTHENTIK_SECRET_KEY cannot change post-deployment (Django secret)
+   → Verify correct before first deploy
+
+2. Authentik requires Harbor and step-ca running
+   → Both already confirmed on pve (harbor-stack, step-ca-stack deployed)
+
+3. step-cli will download from GitHub during provisioning
+   → Internet access required on container during Phase 3
+
+4. TLS certificate will be issued from step-ca provisioner
+   → STEP_CA_PROVISIONER_PASSWORD required (in SOPS)
+
+5. Portainer agent will be masked (this is server, not agent)
+   → Intentional per stack.yaml: portainer_agent: false
+
+=== PREFLIGHT GATES PASSED ===
+
+✅ Production targeting verified
+✅ All required inputs present
+✅ Stack contract validated
+✅ Infrastructure plan ready
+✅ Counterpart status identified
+✅ Dependencies available
+
+=== READY FOR OPERATOR APPROVAL ===
+
+To proceed with authentik-stack canary apply and provisioning:
+  1. Review this summary
+  2. Approve in chat: "Proceed with authentik-stack canary"
+  3. Agent will execute full lifecycle with approval gate
+
+Evidence artifacts: $EVID

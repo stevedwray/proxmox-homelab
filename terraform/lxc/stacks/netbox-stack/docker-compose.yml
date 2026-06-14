@@ -2,7 +2,7 @@
 # Adapted for Portainer API deployment: env vars inlined, absolute config path.
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is injected by deploy-netbox-stack.yml via Portainer env vars.
-# pve-test: 10.57.3.10  pve: 192.168.1.10
+# Service addressing is environment-driven via stack.yaml and the selected LAB_IP_* overlay.
 # Upstream: https://github.com/netbox-community/netbox-docker
 services:
   netbox: &netbox
@@ -48,10 +48,18 @@ services:
       # Application
       CORS_ORIGIN_ALLOW_ALL: "True"
       GRAPHQL_ENABLED: "true"
-      METRICS_ENABLED: "false"
+      METRICS_ENABLED: "true"
       WEBHOOKS_ENABLED: "true"
       SKIP_SUPERUSER: "true"
       LOGIN_REQUIRED: "true"
+      # Trust Authentik forwardAuth headers for browser SSO into NetBox.
+      REMOTE_AUTH_ENABLED: "true"
+      REMOTE_AUTH_AUTO_CREATE_USER: "false"
+      REMOTE_AUTH_HEADER: "HTTP_X_AUTHENTIK_USERNAME"
+      REMOTE_AUTH_USER_EMAIL: "HTTP_X_AUTHENTIK_EMAIL"
+      REMOTE_AUTH_GROUP_HEADER: "HTTP_X_AUTHENTIK_GROUPS"
+      REMOTE_AUTH_SUPERUSERS: "steve"
+      REMOTE_AUTH_STAFF_USERS: "steve"
       # Media
       MEDIA_ROOT: /opt/netbox/netbox/media
       # Email (disabled by default — configure when needed)
@@ -154,6 +162,26 @@ services:
     volumes:
       - netbox-redis-cache-data:/data
     restart: unless-stopped
+
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    restart: unless-stopped
+    ports:
+      - "8081:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+
+  promtail:
+    image: grafana/promtail:3.0.0
+    restart: unless-stopped
+    command: -config.file=/etc/promtail/config.yml
+    volumes:
+      - /var/log:/var/log:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
 volumes:
   netbox-media-files:

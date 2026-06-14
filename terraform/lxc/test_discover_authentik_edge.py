@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import importlib.util
-import io
 import json
+import os
 import ssl
 import sys
 import tempfile
@@ -18,6 +18,7 @@ SPEC = importlib.util.spec_from_file_location("discover_authentik_edge", MODULE_
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 AuthentikApiClient = MODULE.AuthentikApiClient
@@ -57,18 +58,23 @@ class FakeClient:
         self,
         applications: list[dict],
         providers: list[dict],
+        oauth2_providers: list[dict],
         outposts: list[dict],
     ) -> None:
         self._applications = applications
         self._providers = providers
+        self._oauth2_providers = oauth2_providers
         self._outposts = outposts
-        self.request_methods = ["GET", "GET", "GET"]
+        self.request_methods = ["GET", "GET", "GET", "GET"]
 
     def fetch_applications(self):
         return self._applications
 
     def fetch_proxy_providers(self):
         return self._providers
+
+    def fetch_oauth2_providers(self):
+        return self._oauth2_providers
 
     def fetch_outposts(self):
         return self._outposts
@@ -103,6 +109,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "external_host": "https://portainer.lab.gibbsgreatly.xyz",
                     }
                 ],
+                oauth2_providers=[],
                 outposts=[
                     {
                         "pk": 301,
@@ -151,6 +158,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "external_host": "https://orphan.lab.gibbsgreatly.xyz",
                     },
                 ],
+                oauth2_providers=[],
                 outposts=[],
             )
 
@@ -191,6 +199,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "external_host": "https://authentik.lab.gibbsgreatly.xyz",
                     }
                 ],
+                oauth2_providers=[],
                 outposts=[],
             )
 
@@ -199,6 +208,52 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
         self.assertFalse(result.ok)
         self.assertEqual("differing", result.route_results[0].classification)
         self.assertEqual(0, len(result.stop_conditions))
+
+    def test_oidc_route_with_existing_objects_is_matching(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+
+            client = FakeClient(
+                applications=[
+                    {
+                        "pk": 21,
+                        "name": "edge-harbor-stack-harbor-app",
+                        "slug": "edge-harbor-stack-harbor",
+                        "meta_launch_url": "https://harbor.gibbsgreatly.xyz/",
+                        "provider": 22,
+                    }
+                ],
+                providers=[],
+                oauth2_providers=[
+                    {
+                        "pk": 22,
+                        "name": "edge-harbor-stack-harbor-provider",
+                        "client_id": "harbor",
+                        "redirect_uris": [
+                            {"url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
+                        ],
+                    }
+                ],
+                outposts=[],
+            )
+
+            with mock.patch.dict(
+                MODULE.os.environ,
+                {"HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz"},
+                clear=False,
+            ):
+                result = discover_authentik_drift([manifest], client)
+
+        self.assertTrue(result.ok)
+        self.assertEqual("matching", result.route_results[0].classification)
+        self.assertEqual(2, len(result.route_results[0].identifiers))
 
 
 class TestReadOnlyApiClient(unittest.TestCase):
@@ -231,6 +286,10 @@ class TestReadOnlyApiClient(unittest.TestCase):
                 "results": [],
                 "next": None,
             },
+            "https://example.local/api/v3/providers/oauth2/?page_size=200": {
+                "results": [],
+                "next": None,
+            },
             "https://example.local/api/v3/outposts/instances/?page_size=200": {
                 "results": [],
                 "next": None,
@@ -245,10 +304,12 @@ class TestReadOnlyApiClient(unittest.TestCase):
         with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             apps = client.fetch_applications()
             providers = client.fetch_proxy_providers()
+            oauth2_providers = client.fetch_oauth2_providers()
             outposts = client.fetch_outposts()
 
         self.assertEqual(2, len(apps))
         self.assertEqual([], providers)
+        self.assertEqual([], oauth2_providers)
         self.assertEqual([], outposts)
         self.assertTrue(all(method == "GET" for method in calls))
         self.assertEqual(calls, client.request_methods)
@@ -277,7 +338,8 @@ class TestClientTlsBehavior(unittest.TestCase):
             return dummy
 
         client = AuthentikApiClient(base_url="https://example.local", token="token")
-        with mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
+        with mock.patch.dict(os.environ, {"AUTHENTIK_EXTRA_CA": ""}), \
+                mock.patch("urllib.request.urlopen", side_effect=fake_urlopen):
             client.fetch_applications()
 
         self.assertIsNone(captured[0], "default client must pass context=None (system TLS verification)")

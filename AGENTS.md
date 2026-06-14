@@ -1,14 +1,33 @@
 # Workflow Instructions
 
+## Branch Model
+
+```
+feat/* / fix/* / task/* / work/*   ← active development (temporary)
+       ↓  teardown + redeploy validated
+baseline/teardown-validated        ← known-good state
+       ↓  stable and tested
+main
+```
+
+| Branch | Meaning | Promotion gate |
+|---|---|---|
+| `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
+
+`dev/pve-test` is retired (archival only — do not use as a PR target).
+
+Do not develop directly in `baseline/teardown-validated`. All active work happens on short-lived `feat/`, `fix/`, `task/`, or `work/*` branches cut from the current working HEAD.
+Promotion merges into `baseline/teardown-validated` require the teardown gate to have been satisfied.
+If the operator explicitly names a merge target, use that exact target and do not silently retarget.
+
 ## Branching
 
-- `dev/pve-test` is the long-running integration branch tracking the test server state
-- Cut short-lived branches from `dev/pve-test` (e.g. `fix/terraform-fmt`, `feat/harbor-deployment`)
-- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging, if issues are encountered in validation stop and offer options.
-- Merge short-lived branches → `dev/pve-test`, not `main`
-- PR `dev/pve-test` → `main` only when stable and tested on the test server
-- After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync
-- Never PR directly to `main` unless already on `dev/pve-test` and tested
+- All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
+- Validate on the short-lived branch (live runs, tests, populate checks).
+- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms the branch is known-good.
+- `baseline/teardown-validated` is a **promotion target only** — never use it as the base for a new development branch.
+- If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
+- PR `baseline/teardown-validated` → `main` only when stable and tested.
 
 ## Commits and Issues
 
@@ -39,6 +58,38 @@ If a scan returns new issues, **stop and present options** — do not merge unti
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
 - Keep runtime evidence, logs, backups, and large snapshots under ignored timestamped evidence directories; summarize results in tracked docs instead of committing bulky artifacts or secrets.
+
+## Script Credential Handling
+
+Some scripts call `./with-secrets` internally; others rely on it being in the environment. Use this table when writing gate commands:
+
+| Script | Credential handling | How to invoke |
+|---|---|---|
+| `scripts/provision.sh` | None — relies on env vars injected by caller | `./with-secrets scripts/provision.sh --stack <name>` |
+| `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
+| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
+
+For `scripts/teardown-deploy-test.sh cycle`, pass `--approval-packet <path>` by default.
+When session context sets `env.disposable: true`, pass `--disposable` and omit `--approval-packet`.
+
+When adding a new script, check whether it calls `${WITH_SECRETS}` or `with-secrets` internally before deciding whether to prefix with `./with-secrets`.
+
+## Stack Service Types
+
+Not all stacks run Docker containers. When writing health/verify gate commands, derive the check from the actual service type — do not assume Docker. Reference the deployment playbook in `terraform/lxc/ansible/playbooks/` to confirm.
+
+| Stack | Service type | Verify approach |
+|---|---|---|
+| `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
+| `dns-stack` | systemd (CoreDNS) | `dig` query against the DNS container IP |
+| `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
+| `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
+| `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
+| `proxy-stack` | Docker Compose (Traefik) | `curl` to Traefik ingress |
+| `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
+| `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
+| `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
 
 ## Execution Guardrails
 

@@ -1,0 +1,72 @@
+---
+# One-shot idempotent playbook to ensure the configured Harbor local/OIDC user
+# has the sysadmin role. Run from a controller worktree with the usual env.
+
+- name: Ensure Harbor admin role for configured user
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  vars:
+    harbor_host: "{{ lookup('env', 'LAB_IP_HARBOR') | default(lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true), true) }}"
+    harbor_port: 80
+    harbor_api_admin_user: "{{ lookup('env', 'HARBOR_ADMIN_USER') | default('admin', true) }}"
+    harbor_api_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | default(lookup('env', 'BREAKGLASS_PASSWORD'), true) | mandatory('HARBOR_ADMIN_PASSWORD or BREAKGLASS_PASSWORD is required') }}"
+    target_username: "{{ lookup('env', 'HARBOR_STEVE_USERNAME') | default('steve', true) }}"
+    target_email: "{{ lookup('env', 'HARBOR_STEVE_EMAIL') | default('', true) }}"
+  tasks:
+    - name: Lookup Harbor user by username
+      ansible.builtin.uri:
+        url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/search?username={{ target_username }}"
+        method: GET
+        headers:
+          Host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
+        validate_certs: false
+        status_code: 200
+      register: harbor_user_lookup
+      no_log: true
+
+    - name: Filter candidates by email when provided
+      ansible.builtin.set_fact:
+        harbor_user: >-
+          {{ (harbor_user_lookup.json | default([]))
+             | selectattr('username', 'equalto', target_username)
+             | selectattr('email','defined')
+             | selectattr('email', 'equalto', target_email)
+             | list
+             | first
+             | default(((harbor_user_lookup.json | default([])) | selectattr('username', 'equalto', target_username) | list | first) | default({})) }}
+      when: target_email | length > 0
+
+    - name: Resolve Harbor user when no email provided
+      ansible.builtin.set_fact:
+        harbor_user: >-
+          {{ (harbor_user_lookup.json | default([])) | selectattr('username', 'equalto', target_username) | list | first | default({}) }}
+      when: target_email | length == 0
+
+    - name: Fail if target user not found
+      ansible.builtin.fail:
+        msg: "Harbor user '{{ target_username }}' not found via API; ensure OIDC/username exists or create a local user."
+      when: harbor_user is not defined or harbor_user | length == 0
+
+    - name: Ensure Harbor user has sysadmin role
+      ansible.builtin.uri:
+        url: "http://{{ harbor_host }}:{{ harbor_port }}/api/v2.0/users/{{ harbor_user.user_id }}/sysadmin"
+        method: PUT
+        headers:
+          Host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+        url_username: "{{ harbor_api_admin_user }}"
+        url_password: "{{ harbor_api_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          sysadmin_flag: true
+        validate_certs: false
+        status_code: 200
+      no_log: true
+
+    - name: Show result
+      ansible.builtin.debug:
+        msg: "Harbor user '{{ target_username }}' was granted sysadmin in Harbor (if API accepted)."

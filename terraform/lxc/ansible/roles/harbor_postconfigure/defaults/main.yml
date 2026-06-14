@@ -3,6 +3,10 @@ harbor_postconfigure_host: "{{ ansible_host }}"
 harbor_postconfigure_port: "{{ harbor_http_port | default(80) }}"
 harbor_postconfigure_admin_user: "admin"
 harbor_postconfigure_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"
+harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(harbor_postconfigure_admin_password, true) }}"
+harbor_postconfigure_steve_username: "{{ lookup('env', 'HARBOR_STEVE_USERNAME') | default('steve', true) }}"
+harbor_postconfigure_steve_email: "{{ lookup('env', 'HARBOR_STEVE_EMAIL') | default('', true) }}"
 
 # Docker Hub proxy cache endpoint
 # Created without credentials: Harbor's health check for authenticated docker-hub
@@ -30,13 +34,45 @@ harbor_postconfigure_robot_description: "CI/CD robot account for automated push 
 # Expiry in days; -1 = never expires
 harbor_postconfigure_robot_expiry: -1
 
-# Bitwarden — where to persist the CI robot secret after creation.
-# Matches the org/collection used by populate-bitwarden.sh.
-harbor_postconfigure_bw_org_id: "03cd75dc-3db4-4b2e-8ecc-af86014151a7"
-harbor_postconfigure_bw_collection_id: "fa8ec932-22d8-4b7e-b13f-b349013d627b"
-harbor_postconfigure_bw_item_name: "Harbor CI Robot"
+# Browser SSO via Harbor OIDC auth mode.
+harbor_postconfigure_oidc_enabled: false
+harbor_postconfigure_oidc_name: "authentik"
+harbor_postconfigure_oidc_endpoint: ""
+harbor_postconfigure_oidc_client_id: ""
+harbor_postconfigure_oidc_client_secret: ""
+harbor_postconfigure_oidc_groups_claim: "groups"
+harbor_postconfigure_oidc_admin_group: "homelab-admins"
+harbor_postconfigure_oidc_group_filter: "^homelab-.*|^harbor-.*"
+harbor_postconfigure_oidc_scope: "openid,profile,email,offline_access,groups"
+harbor_postconfigure_oidc_user_claim: "preferred_username"
+harbor_postconfigure_oidc_verify_cert: true
+harbor_postconfigure_oidc_auto_onboard: true
+harbor_postconfigure_oidc_logout: true
+harbor_postconfigure_oidc_primary_auth_mode: true
 
 # Vulnerability scanning
+# Harbor no longer exposes a reliable global "scan on push" toggle through the
+# configuration API in the way older docs implied. For proxy-cache projects, the
+# effective control is project metadata.auto_scan.
 harbor_postconfigure_scan_on_push: true
-# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly)
-harbor_postconfigure_scan_schedule: "0 2 * * *"
+harbor_postconfigure_proxy_project_auto_scan: "{{ harbor_postconfigure_scan_on_push }}"
+# Cron schedule for periodic re-scan (Trivy DB updates daily; scan nightly).
+# Harbor's scan-all schedule API expects a 6-field cron with seconds first.
+harbor_postconfigure_scan_schedule: "0 0 2 * * *"
+harbor_postconfigure_verify_scan_smoke: true
+harbor_postconfigure_verify_scan_smoke_project: "dockerhub"
+harbor_postconfigure_verify_scan_smoke_repository: "library/alpine"
+harbor_postconfigure_verify_scan_smoke_tag: "3.20.6"
+harbor_postconfigure_verify_scan_smoke_timeout_seconds: 180
+harbor_postconfigure_verify_scan_smoke_poll_interval_seconds: 5
+# Use Harbor's external registry URL for proxy-cache pulls so auth/token flow
+# matches what real OCI clients see. Fall back to the internal API endpoint if
+# no external URL is available in the environment.
+harbor_postconfigure_verify_scan_smoke_registry_url: >-
+  {{
+    lookup('env', 'HARBOR_EXTERNAL_URL')
+    | default('http://' ~ harbor_postconfigure_host ~ ':' ~ (harbor_postconfigure_port | string), true)
+  }}
+# The controller used for live verification may not trust Harbor's external
+# certificate chain yet. Keep smoke verification tolerant by default.
+harbor_postconfigure_verify_scan_smoke_registry_insecure: true

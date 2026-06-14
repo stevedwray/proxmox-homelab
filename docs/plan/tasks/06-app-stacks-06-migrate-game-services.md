@@ -54,7 +54,7 @@ Game servers (Minecraft and others from discovery) are running in a new LXC (`ga
 
 ## Constraints and Conventions
 
-- `stack.yaml`: VMID 163, IP `10.61.0.10/24`, `gateway: 10.61.0.1`, `cores: 4`, `memory: 4096`, `docker_storage_size: "20G"`
+- `stack.yaml`: VMID 163, IP `10.61.0.10/24`, `gateway: 10.61.0.1`, `dns_server: 10.61.0.1`, `network.zone: game_seg`, `cores: 4`, `memory: 4096`, `docker_storage_size: "20G"`
 - Game services need direct port exposure (not through Traefik) — port forwarding via Proxmox firewall
 - All images via Harbor: `10.57.3.10/homelab/apps/<game-service>:<pin>`
 - World data is critical — verify file integrity after migration before destroying old LXC (compare directory sizes, test loading in game client)
@@ -67,7 +67,7 @@ Game servers (Minecraft and others from discovery) are running in a new LXC (`ga
 - [ ] World data migrated and verified (size comparison, game client test connection)
 - [ ] Game server ports accessible from outside via Proxmox port-forwarding rules
 - [ ] Old game server containers snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -94,7 +94,7 @@ STEP 3 — Snapshot old container:
   ssh root@<proxmox-host> "pct snapshot <old-vmid> pre-migration-$(date +%Y%m%d)"
 
 STEP 4 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/game-stack
 
 STEP 5 — Create stack files:
@@ -131,8 +131,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/game-stack/ \
           terraform/lxc/ansible/playbooks/deploy-game-stack.yml
   git commit -m "feat(game-stack): migrate game services to new LXC stack (VMID 163, 10.61.0.10)"
-  git checkout dev/pve-test && git merge feat/game-stack
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
+  git merge feat/game-stack
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Game servers running, world data verified, port access confirmed, old containers destroyed.
 ```

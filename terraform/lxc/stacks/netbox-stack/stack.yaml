@@ -1,25 +1,31 @@
-# NetBox IPAM/DCIM stack — pve-test instance in infra_seg (VLAN 40, 10.57.3.0/24)
+# NetBox IPAM/DCIM stack — infra_seg zone
 hostname: netbox-stack
-ip_address: "10.57.3.12/24"
-gateway: "10.57.3.1"
-proxmox_node: pve-test
+ip_address: "${lab_ip_netbox}/24"
+gateway: "${lab_gw_infra}"
+dns_server: "${lab_gw_infra}"
 network:
   zone: infra_seg
-vmid: 143
+vmid: 40012
 cores: 2
-memory: 1024
+memory: 4096
 swap: 4096
 rootfs_size: 8
-rootfs_storage: infrastructure-containers
-docker_storage_size: "32G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+storage_profile: platform-default
+docker_storage_size: "34G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "34G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - netbox
   - test
   - docker
 depends_on:
   - harbor-stack
-  - portainer-stack
 provides:
   - service: netbox-http
     port: 8080
@@ -28,10 +34,18 @@ keyctl: true
 
 # Deployment
 ansible_playbook: "deploy-netbox-stack"
-portainer_agent: true
+deployment_tier: platform
+portainer_agent: false
 app_stack_name: "netbox"
 
-# pve-test service IPs (explicit — do not rely on variable defaults)
-portainer_server_ip: "10.57.1.20"
-registry_host: "10.57.3.10"
-apt_cacher_host: "10.57.3.11"
+# Docker socket proxy — read-only Docker API endpoint for NetBox discovery
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "${lab_ip_netbox}"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "${lab_ip_netbox}"
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "harbor.lab.gibbsgreatly.xyz"
+apt_cacher_host: "${lab_ip_apt_cacher}"

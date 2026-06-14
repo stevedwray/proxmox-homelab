@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import os
 from pathlib import Path
 from urllib.parse import urlparse
 import re
@@ -13,7 +14,7 @@ import yaml
 API_VERSION = "homelab.gibbsgreatly.xyz/v1alpha1"
 KIND = "EdgeManifest"
 LAB_DOMAIN_SUFFIX = ".lab.gibbsgreatly.xyz"
-EXPECTED_DNS_TARGET = "10.57.2.10"
+SOURCE_DNS_TARGET = "${LAB_IP_PROXY}"
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")
 TTL_PATTERN = re.compile(r"^[1-9]\d*[smhd]$")
@@ -22,7 +23,7 @@ TRAEFIK_SERVICE_REF_PATTERN = re.compile(
 )
 LEGACY_HOST_RULE_PATTERN = re.compile(r"Host\(`([^`]+)`\)")
 JINJA_DEFAULT_HOST_PATTERN = re.compile(
-    r"^\{\{\s*[^}]*\|\s*default\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}$"
+    r"^\{\{\s*\S[^}]*\|\s*default\(\s*['\"]([^'\"]+)['\"]\s*\)\s*\}\}$"
 )
 
 
@@ -277,8 +278,24 @@ def load_manifest(path: Path) -> dict[str, object]:
     """Load a YAML manifest document from disk."""
 
     with path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
+        data = yaml.safe_load(os.path.expandvars(handle.read()))
     return data or {}
+
+
+def _expected_dns_targets() -> tuple[str, ...]:
+    """Return the accepted dns.target forms for source and env-expanded manifests."""
+
+    resolved_target = os.environ.get("LAB_IP_PROXY", "").strip()
+    if resolved_target:
+        return (SOURCE_DNS_TARGET, resolved_target)
+    return (SOURCE_DNS_TARGET,)
+
+
+def _expected_dns_targets_message() -> str:
+    targets = _expected_dns_targets()
+    if len(targets) == 1:
+        return targets[0]
+    return " or ".join(targets)
 
 
 def validate_manifests(manifest_paths: list[Path]) -> ValidationResult:
@@ -665,11 +682,11 @@ def _validate_dns(
             )
         )
 
-    if not isinstance(target, str) or target != EXPECTED_DNS_TARGET:
+    if not isinstance(target, str) or target not in _expected_dns_targets():
         issues.append(
             ValidationIssue(
                 code="EMV117",
-                message=f"dns.target must be {EXPECTED_DNS_TARGET}",
+                message=f"dns.target must be {_expected_dns_targets_message()}",
                 manifest=manifest,
                 route=route_name,
                 field=f"{route_key}.dns.target",

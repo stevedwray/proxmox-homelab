@@ -8,7 +8,10 @@
   gather_facts: true
   vars:
     docker_registry_host: "{{ registry_host | default('') | trim }}"
+    docker_dns_server: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     docker_daemon_config_base:
+      dns:
+        - "{{ docker_dns_server }}"
       log-driver: json-file
       log-opts:
         max-size: 10m
@@ -39,8 +42,17 @@
   roles:
     - lxc_base
     - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json
@@ -65,6 +77,9 @@
   vars:
     portainer_compose_dir: /opt/portainer
     portainer_version: "2.27.3"
+    promtail_version: "3.0.0"
+    portainer_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+    promtail_image: "grafana/promtail:{{ promtail_version }}"
 
   tasks:
     - name: Create Portainer compose directory
@@ -72,6 +87,46 @@
         path: "{{ portainer_compose_dir }}"
         state: directory
         mode: "0750"
+
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ portainer_compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://{{ portainer_lab_ip_monitoring }}:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Loki push on private SDN; HTTP-only endpoint
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: "{{ inventory_hostname }}"
+                    stack: portainer-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: "{{ inventory_hostname }}"
+                - target_label: stack
+                  replacement: portainer-stack
 
     - name: Write docker-compose.yml
       ansible.builtin.copy:
@@ -89,6 +144,29 @@
               volumes:
                 - /var/run/docker.sock:/var/run/docker.sock
                 - /var/lib/portainer:/data
+                - /etc/ssl/certs:/etc/ssl/certs:ro
+
+            cadvisor:
+              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+
+            promtail:
+              image: {{ promtail_image }}
+              container_name: promtail
+              restart: unless-stopped
+              command: -config.file=/etc/promtail/config.yml
+              volumes:
+                - /var/log:/var/log:ro
+                - /var/run/docker.sock:/var/run/docker.sock:ro
+                - ./promtail-config.yml:/etc/promtail/config.yml:ro
 
     - name: Pull Portainer image
       community.docker.docker_image:
@@ -105,58 +183,124 @@
   become: false
   gather_facts: false
 
+  vars:
+    portainer_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    portainer_lab_fqdn_portainer: "{{ lookup('env', 'LAB_FQDN_PORTAINER') | default('portainer.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ portainer_lab_domain, true) }}"
+    portainer_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
+    portainer_admin_password: >-
+      {{
+        lookup('env', 'PORTAINER_ADMIN_PASSWORD')
+        | default(lookup('env', 'TF_VAR_portainer_admin_password'), true)
+      }}
+    portainer_oauth_enabled: "{{ lookup('env', 'PORTAINER_OAUTH_ENABLED') | default('true', true) | bool }}"
+    portainer_public_url: "{{ lookup('env', 'PORTAINER_PUBLIC_URL') | default('https://' ~ portainer_lab_fqdn_portainer, true) }}"
+    portainer_oauth_client_id: "{{ lookup('env', 'PORTAINER_OAUTH_CLIENT_ID') | default('portainer', true) }}"
+    portainer_oauth_client_secret: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_CLIENT_SECRET')
+        | default('', true)
+      }}
+    portainer_oauth_auth_url: "{{ lookup('env', 'PORTAINER_OAUTH_AUTH_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/authorize/', true) }}"
+    portainer_oauth_token_url: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_TOKEN_URL') | default(
+          ((lookup('env', 'LAB_IP_AUTHENTIK') | default('') | trim) != '')
+            | ternary('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000/application/o/token/', 'https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/token/'),
+          true
+        )
+      }}
+    portainer_oauth_resource_url: >-
+      {{
+        lookup('env', 'PORTAINER_OAUTH_RESOURCE_URL') | default(
+          ((lookup('env', 'LAB_IP_AUTHENTIK') | default('') | trim) != '')
+            | ternary('http://' ~ lookup('env', 'LAB_IP_AUTHENTIK') ~ ':9000/application/o/userinfo/', 'https://' ~ portainer_lab_fqdn_authentik_internal ~ ':9443/application/o/userinfo/'),
+          true
+        )
+      }}
+    portainer_oauth_logout_url: "{{ lookup('env', 'PORTAINER_OAUTH_LOGOUT_URL') | default('https://' ~ portainer_lab_fqdn_authentik ~ '/application/o/edge-portainer-stack-portainer/end-session/', true) }}"
+    portainer_oauth_user_identifier: "{{ lookup('env', 'PORTAINER_OAUTH_USER_IDENTIFIER') | default('preferred_username', true) }}"
+    portainer_oauth_scopes: "{{ lookup('env', 'PORTAINER_OAUTH_SCOPES') | default('openid profile email', true) }}"
+    portainer_oauth_default_team_name: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_NAME') | default('oauth-default', true) }}"
+    portainer_oauth_default_team_endpoint_role_id: "{{ lookup('env', 'PORTAINER_OAUTH_DEFAULT_TEAM_ENDPOINT_ROLE_ID') | default('2', true) | int }}"
+    portainer_oauth_admin_usernames_raw: "{{ lookup('env', 'PORTAINER_OAUTH_ADMIN_USERNAMES') | default('akadmin,' ~ portainer_lab_admin_username, true) }}"
+
   tasks:
+    - name: Assert Portainer admin password is configured
+      ansible.builtin.assert:
+        that:
+          - portainer_admin_password | length > 0
+        fail_msg: >-
+          Set PORTAINER_ADMIN_PASSWORD or TF_VAR_portainer_admin_password before running
+          deploy-portainer-stack.
+
+    - name: Assert Portainer OAuth secret is configured when OAuth enabled
+      ansible.builtin.assert:
+        that:
+          - portainer_oauth_client_secret | length > 0
+        fail_msg: >-
+          Set PORTAINER_OAUTH_CLIENT_SECRET before running deploy-portainer-stack when
+          PORTAINER_OAUTH_ENABLED=true.
+      when: portainer_oauth_enabled
+
     - name: Wait for Portainer API to become available
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/system/status"
+        url: "http://{{ ansible_host }}:9000/api/system/status"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         status_code: 200
       register: portainer_status
       until: portainer_status.status == 200
       retries: 30
       delay: 5
+      when: not ansible_check_mode
 
     - name: Initialise admin credentials
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/users/admin/init"
+        url: "http://{{ ansible_host }}:9000/api/users/admin/init"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         body_format: json
         body:
           Username: "admin"
-          Password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+          Password: "{{ portainer_admin_password }}"
         status_code: [200, 409]
       register: portainer_init_result
       no_log: true
+      when: not ansible_check_mode
 
     - name: Get Portainer auth token
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/auth"
+        url: "http://{{ ansible_host }}:9000/api/auth"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         body_format: json
         body:
           username: "admin"
-          password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+          password: "{{ portainer_admin_password }}"
         status_code: 200
       register: portainer_auth_response
       no_log: true
+      when: not ansible_check_mode
 
     - name: Get existing Portainer endpoints
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        url: "http://{{ ansible_host }}:9000/api/endpoints"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
         status_code: 200
       register: portainer_endpoints_response
+      when: not ansible_check_mode
 
     - name: Check for local Docker endpoint
       ansible.builtin.set_fact:
         portainer_local_endpoint_id: "{{ item.Id }}"
-      loop: "{{ portainer_endpoints_response.json }}"
-      when: item.URL == 'unix:///var/run/docker.sock'
+      loop: "{{ portainer_endpoints_response.json | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - item.URL == 'unix:///var/run/docker.sock'
 
     - name: Create local Docker endpoint when missing
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/endpoints"
+        url: "http://{{ ansible_host }}:9000/api/endpoints"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
@@ -166,11 +310,352 @@
           URL: "unix:///var/run/docker.sock"
           EndpointCreationType: 1
         status_code: 200
-      when: portainer_local_endpoint_id is not defined
+      when:
+        - not ansible_check_mode
+        - portainer_local_endpoint_id is not defined
       register: portainer_local_endpoint_create
+
+    - name: Persist local Docker endpoint ID
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_id: "{{ portainer_local_endpoint_create.json.Id | int }}"
+      when:
+        - portainer_local_endpoint_id is not defined
+        - portainer_local_endpoint_create is defined
+        - not (portainer_local_endpoint_create.skipped | default(false) | bool)
+        - portainer_local_endpoint_create.json is defined
+        - portainer_local_endpoint_create.json.Id is defined
+
+    - name: Set local Docker endpoint group ID from existing endpoint list
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: "{{ item.GroupId | int }}"
+      loop: "{{ portainer_endpoints_response.json | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - (item.Id | int) == (portainer_local_endpoint_id | int)
+        - item.GroupId is defined
+
+    - name: Persist local Docker endpoint group ID when endpoint created
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: "{{ portainer_local_endpoint_create.json.GroupId | default(1) | int }}"
+      when:
+        - not ansible_check_mode
+        - portainer_local_endpoint_group_id is not defined
+        - portainer_local_endpoint_create is defined
+
+    - name: Fall back local Docker endpoint group ID to Unassigned
+      ansible.builtin.set_fact:
+        portainer_local_endpoint_group_id: 1
+      when: portainer_local_endpoint_group_id is not defined
+
+    - name: Read current Portainer settings
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/settings"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_settings_response
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Read current Portainer teams
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/teams"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_teams_response
+      when: not ansible_check_mode
+
+    - name: Set OAuth default team ID when team already exists
+      ansible.builtin.set_fact:
+        portainer_oauth_default_team_id: "{{ item.Id | int }}"
+      loop: "{{ portainer_teams_response.json | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - (item.Name | default('')) == portainer_oauth_default_team_name
+
+    - name: Create OAuth default team when missing
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/teams"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Name: "{{ portainer_oauth_default_team_name }}"
+        status_code: 200
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_default_team_id is not defined
+      register: portainer_oauth_default_team_create
+
+    - name: Persist OAuth default team ID
+      ansible.builtin.set_fact:
+        portainer_oauth_default_team_id: "{{ portainer_oauth_default_team_create.json.Id | int }}"
+      when:
+        - portainer_oauth_default_team_id is not defined
+        - portainer_oauth_default_team_create is defined
+        - not (portainer_oauth_default_team_create.skipped | default(false) | bool)
+        - portainer_oauth_default_team_create.json is defined
+        - portainer_oauth_default_team_create.json.Id is defined
+
+    - name: Assert OAuth default team ID resolved when OAuth enabled
+      ansible.builtin.assert:
+        that:
+          - (portainer_oauth_default_team_id | int) > 0
+        fail_msg: "Could not determine Portainer OAuth default team ID."
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_enabled
+
+    - name: Read local endpoint group access policy
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_local_endpoint_group_response
+      when: not ansible_check_mode
+
+    - name: Build desired local endpoint group team access policy
+      ansible.builtin.set_fact:
+        portainer_desired_group_team_access_policies: >-
+          {{
+            (portainer_local_endpoint_group_response.json.TeamAccessPolicies | default({}))
+            | combine(
+                {
+                  (portainer_oauth_default_team_id | string): {
+                    'RoleId': (portainer_oauth_default_team_endpoint_role_id | int)
+                  }
+                },
+                recursive=True
+              )
+          }}
+      when: not ansible_check_mode
+
+    - name: Check whether local endpoint group team policy needs update
+      ansible.builtin.set_fact:
+        portainer_endpoint_group_policy_needs_update: >-
+          {{
+            (portainer_local_endpoint_group_response.json.TeamAccessPolicies
+             | default({})
+             | to_json)
+            !=
+            (portainer_desired_group_team_access_policies
+             | default({})
+             | to_json)
+          }}
+      when: not ansible_check_mode
+    - name: Update local endpoint group policy for OAuth default team
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/endpoint_groups/{{ portainer_local_endpoint_group_id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Name: "{{ portainer_local_endpoint_group_response.json.Name }}"
+          Description: "{{ portainer_local_endpoint_group_response.json.Description | default('') }}"
+          UserAccessPolicies: "{{ portainer_local_endpoint_group_response.json.UserAccessPolicies | default({}) }}"
+          TeamAccessPolicies: "{{ portainer_desired_group_team_access_policies }}"
+          TagIds: "{{ portainer_local_endpoint_group_response.json.TagIds | default([]) }}"
+        status_code: 200
+      when:
+        - not ansible_check_mode
+        - portainer_endpoint_group_policy_needs_update | default(false) | bool
+
+    - name: Build desired Portainer OAuth settings
+      ansible.builtin.set_fact:
+        portainer_desired_auth_method: "{{ 3 if portainer_oauth_enabled else 1 }}"
+        portainer_desired_oauth_settings:
+          ClientID: "{{ portainer_oauth_client_id }}"
+          ClientSecret: "{{ portainer_oauth_client_secret }}"
+          AuthorizationURI: "{{ portainer_oauth_auth_url }}"
+          AccessTokenURI: "{{ portainer_oauth_token_url }}"
+          ResourceURI: "{{ portainer_oauth_resource_url }}"
+          RedirectURI: "{{ portainer_public_url }}"
+          UserIdentifier: "{{ portainer_oauth_user_identifier }}"
+          Scopes: "{{ portainer_oauth_scopes }}"
+          OAuthAutoCreateUsers: true
+          DefaultTeamID: "{{ portainer_oauth_default_team_id | default(1) | int }}"
+          SSO: true
+          LogoutURI: "{{ portainer_oauth_logout_url }}"
+          AuthStyle: 0
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Build list of OAuth usernames to promote to Portainer admin
+      ansible.builtin.set_fact:
+        portainer_oauth_admin_usernames: >-
+          {{
+            portainer_oauth_admin_usernames_raw.split(',')
+            | map('trim')
+            | reject('equalto', '')
+            | list
+          }}
+
+    - name: Check whether Portainer auth settings need update
+      ansible.builtin.set_fact:
+        portainer_auth_settings_need_update: >-
+          {{
+            (portainer_settings_response.json.AuthenticationMethod | int != portainer_desired_auth_method | int)
+            or ((portainer_settings_response.json.OAuthSettings.ClientID | default('')) != portainer_desired_oauth_settings.ClientID)
+            or ((portainer_settings_response.json.OAuthSettings.AuthorizationURI | default('')) != portainer_desired_oauth_settings.AuthorizationURI)
+            or ((portainer_settings_response.json.OAuthSettings.AccessTokenURI | default('')) != portainer_desired_oauth_settings.AccessTokenURI)
+            or ((portainer_settings_response.json.OAuthSettings.ResourceURI | default('')) != portainer_desired_oauth_settings.ResourceURI)
+            or ((portainer_settings_response.json.OAuthSettings.RedirectURI | default('')) != portainer_desired_oauth_settings.RedirectURI)
+            or ((portainer_settings_response.json.OAuthSettings.UserIdentifier | default('')) != portainer_desired_oauth_settings.UserIdentifier)
+            or ((portainer_settings_response.json.OAuthSettings.Scopes | default('')) != portainer_desired_oauth_settings.Scopes)
+            or ((portainer_settings_response.json.OAuthSettings.OAuthAutoCreateUsers | default(false) | bool) != (portainer_desired_oauth_settings.OAuthAutoCreateUsers | bool))
+            or ((portainer_settings_response.json.OAuthSettings.DefaultTeamID | default(0) | int) != (portainer_desired_oauth_settings.DefaultTeamID | int))
+            or ((portainer_settings_response.json.OAuthSettings.LogoutURI | default('')) != portainer_desired_oauth_settings.LogoutURI)
+            or ((portainer_settings_response.json.OAuthSettings.SSO | default(false) | bool) != (portainer_desired_oauth_settings.SSO | bool))
+            or ((portainer_settings_response.json.OAuthSettings.AuthStyle | default(0) | int) != (portainer_desired_oauth_settings.AuthStyle | int))
+          }}
+      when: not ansible_check_mode
+
+    - name: Update Portainer authentication settings
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/settings"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body: >-
+          {{
+            portainer_settings_response.json
+            | combine({'AuthenticationMethod': portainer_desired_auth_method}, recursive=True)
+            | combine({'OAuthSettings': portainer_desired_oauth_settings}, recursive=True)
+          }}
+        status_code: 200
+      when:
+        - not ansible_check_mode
+        - portainer_auth_settings_need_update | bool
+      no_log: true
+
+    - name: Read current Portainer users
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_response
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+      no_log: true
+
+    - name: Build list of existing Portainer usernames
+      ansible.builtin.set_fact:
+        portainer_existing_usernames: >-
+          {{
+            (portainer_users_response.json | default([]))
+            | map(attribute='Username')
+            | map('default', '')
+            | list
+          }}
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+
+    - name: Build list of missing OAuth admin users
+      ansible.builtin.set_fact:
+        portainer_missing_oauth_admin_usernames: >-
+          {{
+            (portainer_oauth_admin_usernames | default([]))
+            | difference(portainer_existing_usernames | default([]))
+          }}
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+
+    - name: Pre-create missing OAuth users for deterministic admin promotion
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          username: "{{ item }}"
+          role: 2
+          authenticationMethod: 3
+        status_code: [200, 409]
+      loop: "{{ portainer_missing_oauth_admin_usernames | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_enabled
+        - (portainer_missing_oauth_admin_usernames | default([])) | length > 0
+      no_log: true
+
+    - name: Refresh Portainer users after OAuth user pre-creation
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_response
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+        - portainer_oauth_enabled
+        - (portainer_missing_oauth_admin_usernames | default([])) | length > 0
+      no_log: true
+
+    - name: Re-read Portainer users for admin role promotion
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        status_code: 200
+      register: portainer_users_for_promotion
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+      no_log: true
+
+    - name: Promote configured OAuth usernames to Portainer admin role
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/users/{{ item.Id }}"  # nosonar: ansible:S5332 — Portainer CE has no HTTPS management port; private SDN only
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ portainer_auth_response.json.jwt }}"
+        body_format: json
+        body:
+          Role: 1
+        status_code: 200
+      loop: "{{ portainer_users_for_promotion.json | default([]) }}"
+      when:
+        - not ansible_check_mode
+        - portainer_oauth_admin_usernames | length > 0
+        - (item.Username | default('')) in portainer_oauth_admin_usernames
+        - (item.Role | int) != 1
+      no_log: true
 
     - name: Report init outcome
       ansible.builtin.debug:
         msg: >-
           {{ 'Portainer admin account initialised.' if portainer_init_result.status == 200
              else 'Portainer admin account already exists (idempotent).' }}
+      when: not ansible_check_mode
+
+    - name: Report Portainer auth settings outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer OAuth settings updated.' if (portainer_auth_settings_need_update | bool)
+             else 'Portainer OAuth settings already match desired state.' }}
+      when: not ansible_check_mode
+
+    - name: Report local endpoint group policy outcome
+      ansible.builtin.debug:
+        msg: >-
+          {{ 'Portainer local endpoint group policy updated for OAuth default team.'
+             if (portainer_endpoint_group_policy_needs_update | bool)
+             else 'Portainer local endpoint group policy already grants OAuth default team access.' }}
+      when: not ansible_check_mode

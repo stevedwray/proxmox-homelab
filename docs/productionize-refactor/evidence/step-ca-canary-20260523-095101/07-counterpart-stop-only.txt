@@ -1,0 +1,3 @@
+Preflight passed: TF_VAR_proxmox_node=pve-test
+No-op: step-ca-stack (vmid=20011) already absent
+rc_stop=0

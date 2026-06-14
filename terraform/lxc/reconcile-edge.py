@@ -21,7 +21,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests
+from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests  # noqa: E402
 
 
 def _load_module(name: str, path: Path) -> Any:
@@ -40,12 +40,12 @@ DISCOVER_AUTHENTIK = _load_module("discover_authentik_edge", SCRIPT_DIR / "disco
 RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "reconcile-authentik-edge.py")
 
 
-TARGET_PREFLIGHT_COMMAND: tuple[str, ...] = ("./with-secrets", "bash", "-c", "echo $TF_VAR_proxmox_node")
-DEFAULT_TRAEFIK_PROBE_HOST = "10.57.2.10"
+DEFAULT_TARGET_PREFLIGHT_EXPECTED = os.environ.get("EDGE_TARGET_PREFLIGHT_EXPECTED") or os.environ.get("PVE_ENV", "pve-test")
+DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
 DEFAULT_TRAEFIK_PROBE_PORT = 443
-DEFAULT_COREDNS_PROBE_SERVER = "10.57.1.13"
+DEFAULT_COREDNS_PROBE_SERVER = os.environ.get("LAB_IP_DNS", "")
 DEFAULT_COREDNS_PROBE_NAME = "traefik.lab.gibbsgreatly.xyz"
-DEFAULT_COREDNS_PROBE_EXPECTED = "10.57.2.10"
+DEFAULT_COREDNS_PROBE_EXPECTED = os.environ["LAB_IP_PROXY"]
 NOT_RUN_DRY_RUN = "not run (dry-run mode)"
 
 
@@ -168,6 +168,11 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="DNS name queried during apply-mode authoritative CoreDNS probe.",
     )
     parser.add_argument(
+        "--target-preflight-expected",
+        default=DEFAULT_TARGET_PREFLIGHT_EXPECTED,
+        help="Expected target value returned by target preflight command in apply mode.",
+    )
+    parser.add_argument(
         "--coredns-probe-expected",
         default=DEFAULT_COREDNS_PROBE_EXPECTED,
         help="Expected IPv4 answer in apply-mode authoritative CoreDNS probe.",
@@ -208,7 +213,7 @@ def _manifest_requires_authentik(manifest_path: Path) -> bool:
         auth = route.get("auth")
         if not isinstance(auth, dict):
             continue
-        if str(auth.get("mode", "")).strip() == "forwardAuth":
+        if str(auth.get("mode", "")).strip() in {"forwardAuth", "oidc"}:
             return True
     return False
 
@@ -333,10 +338,11 @@ def _render_outputs(
     return traefik_result, coredns_result, issues
 
 
-def _run_pve_target_preflight() -> tuple[bool, str]:
+def _run_pve_target_preflight(expected_target: str) -> tuple[bool, str]:
     repo_root = SCRIPT_DIR.parents[1]
+    target_command = _resolve_target_preflight_command(repo_root, expected_target)
     result = subprocess.run(
-        list(TARGET_PREFLIGHT_COMMAND),
+        list(target_command),
         cwd=repo_root,
         text=True,
         capture_output=True,
@@ -350,9 +356,19 @@ def _run_pve_target_preflight() -> tuple[bool, str]:
         return False, message
 
     target = result.stdout.strip()
-    if target != "pve-test":
-        return False, f"target preflight reported {target!r}, expected 'pve-test'"
-    return True, "target preflight passed (pve-test)"
+    if target != expected_target:
+        return False, f"target preflight reported {target!r}, expected {expected_target!r}"
+    return True, f"target preflight passed ({expected_target})"
+
+
+def _resolve_target_preflight_command(repo_root: Path, expected_target: str) -> tuple[str, ...]:
+    configured_command = os.environ.get("EDGE_TARGET_PREFLIGHT_COMMAND", "").strip()
+    if configured_command:
+        return tuple(configured_command.split())
+
+    target = expected_target.strip() or os.environ.get("PVE_ENV", "").strip() or "pve-test"
+    wrapper_name = "with-secrets-prod" if target == "pve" else "with-secrets"
+    return (str(repo_root / wrapper_name), "bash", "-c", "echo $TF_VAR_proxmox_node")
 
 
 def _tcp_health_check(host: str, port: int) -> HealthCheckResult:
@@ -442,7 +458,7 @@ def _build_failed_result(
 
 def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckResult, HealthCheckResult, list[EdgeIssue]]:
     issues: list[EdgeIssue] = []
-    target_ok, target_detail = _run_pve_target_preflight()
+    target_ok, target_detail = _run_pve_target_preflight(args.target_preflight_expected)
     if not target_ok:
         issues.append(EdgeIssue(code="EGR200", message=target_detail))
 
@@ -610,6 +626,7 @@ def _run_authentik_phase(
 def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
     issues: list[EdgeIssue] = []
     applied = bool(args.apply)
+    repo_root = SCRIPT_DIR.parents[1]
     manifest_paths, temp_dir, replacement_issue = _resolve_selected_manifests(args)
     if replacement_issue is not None:
         return _build_failed_result(applied=applied, issues=[replacement_issue])
@@ -690,7 +707,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
         "validation": validation.to_dict(),
         "preflight": {
             "targeting": {
-                "command": " ".join(TARGET_PREFLIGHT_COMMAND),
+                "command": " ".join(_resolve_target_preflight_command(repo_root, args.target_preflight_expected)),
                 "detail": target_detail,
                 "ok": not applied or not any(issue.code == "EGR200" for issue in issues),
             },

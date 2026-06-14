@@ -61,7 +61,7 @@ The specific risks this phase addresses, from the threat model in `docs/design/a
 Phase 03d is Stage 0 in the three-stage bootstrap model. Stage 0 is a workstation-only
 concern: it has no dependency on any Proxmox service, no dependency on any container being
 deployed, and no dependency on any prior phase in the execution plan. It should be
-completed once, merged into `dev/pve-test`, and from that point the `.env` delivery
+completed once, merged into the active branch, and from that point the `.env` delivery
 approach no longer exists anywhere in the repository. All subsequent stages — Stage 1 and
 Stage 2 temporary and permanent container deployments (Phase 00c), and all Phase 04+
 deployments — use `./with-secrets` as the sole secret delivery mechanism.

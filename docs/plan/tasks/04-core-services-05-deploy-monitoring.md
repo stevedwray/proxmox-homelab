@@ -139,7 +139,7 @@ Naming policy for this task:
 - [ ] `dmesg | grep -i oom` on pve-test host shows no new OOM events
 - [ ] All Phase 04 stacks survive `pct restart <vmid>` and return healthy
 - [ ] `terraform/secrets.enc.yaml` has real values for all three Grafana secrets
-- [ ] Branch `feat/monitoring-stack` merged to `dev/pve-test`
+- [ ] Branch `feat/monitoring-stack` merged to `baseline/teardown-validated`
 
 ### DNS delegation validation commands (required)
 
@@ -229,7 +229,7 @@ STEP 0f — Bring up step-ca and distribute CA trust:
   # Then run retroactive CA trust distribution (see task 04-04 Step 7).
 
 STEP 1 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/monitoring-stack
 
 STEP 2 — Check IP availability:
@@ -295,8 +295,8 @@ STEP 10 — Commit and merge:
   git add terraform/lxc/stacks/monitoring-stack/ \
           terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
   git commit -m "feat(monitoring): deploy VictoriaMetrics + Grafana + Loki in mgmt_seg (VMID 154)"
-  git checkout dev/pve-test && git merge feat/monitoring-stack
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/monitoring-stack
+  git push origin baseline/teardown-validated
 
 DONE WHEN: All four containers running, compose file has no literal credentials, Grafana
 datasources test OK, Authentik OIDC login works, no OOM events. Phase 04 complete.

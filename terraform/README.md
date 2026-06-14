@@ -11,9 +11,11 @@ stack deployment.
 ```text
 terraform/
 ├── README.md
-├── lxc/                     # Active Terraform + Ansible pipeline
-├── secrets.enc.yaml         # SOPS-encrypted infrastructure secrets
-└── terraform-providers/     # Local provider mirror/cache
+├── lxc/                         # Active Terraform + Ansible pipeline
+├── secrets.enc.yaml             # SOPS-encrypted dev (pve-test) secrets
+├── secrets.pve.enc.yaml         # Operator-managed SOPS-encrypted production secrets
+├── SECRETS_PVE_TEMPLATE.md      # Template structure for prod secrets
+└── terraform-providers/         # Local provider mirror/cache
 ```
 
 ## What is active
@@ -78,6 +80,41 @@ Related docs:
 - [`docs/plan/phase-00a-proxmox-host-bootstrap.md`](../docs/plan/phase-00a-proxmox-host-bootstrap.md)
 - [`docs/reference/proxmox-server-baseline.md`](../docs/reference/proxmox-server-baseline.md)
 - [`docs/reference/proxmox-terraform-user.md`](../docs/reference/proxmox-terraform-user.md)
+
+## Secret Management
+
+### Development Secrets (pve-test)
+- **File:** `terraform/secrets.enc.yaml`
+- **Wrapper:** `./with-secrets` (from repo root)
+- **Use:** All normal development and pve-test work
+- **Loading:** Automatically decrypted when using `./with-secrets`
+
+### Production Secrets (pve)
+- **File:** `terraform/secrets.pve.enc.yaml` (separate from dev, operator-managed)
+- **Wrapper:** `./with-secrets-prod` (from repo root)
+- **Use:** Only for intentional production workflows
+- **Loading:** Automatically decrypted when using `./with-secrets-prod`
+- **Template:** See `SECRETS_PVE_TEMPLATE.md` for expected structure
+- **Commit policy:** Keep this file encrypted and operator-local; do not commit
+  it casually during production enablement work
+
+### Separation Rationale
+
+Secrets are stored in two separate SOPS-encrypted files to prevent accidental production
+credential exposure. The `./with-secrets` wrapper cannot load production secrets even
+with `ALLOW_PVE=true`, and the `./with-secrets-prod` wrapper loads production secrets only.
+
+The production secret file is intentionally separate from the dev path and can
+be created locally from `SECRETS_PVE_TEMPLATE.md` when the operator is ready to
+enable production access.
+
+As of May 22, 2026, the production Proxmox API token stored in
+`terraform/secrets.pve.enc.yaml` has been validated successfully with a
+read-only API call to `pve.gibbsgreatly.xyz`.
+
+For details on credential controls, approval flows, and environment targeting, see:
+- [`docs/reference/production-credentials.md`](../docs/reference/production-credentials.md)
+- [`docs/productionize-refactor/tasks/01-credential-controls.md`](../docs/productionize-refactor/tasks/01-credential-controls.md)
 
 ## Notes
 

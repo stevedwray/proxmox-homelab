@@ -1,0 +1,14 @@
+all:
+  children:
+    step_ca_stack:
+      hosts:
+        step-ca:
+          ansible_host: 192.168.20.11
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: -F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
+          ssh_access_mode: direct
+          network_zone: mgmt_seg
+          dns_server: 192.168.20.1
+          vmid: 20011
+          stack_name: step-ca-stack

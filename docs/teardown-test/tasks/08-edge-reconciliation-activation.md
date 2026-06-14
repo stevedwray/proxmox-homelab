@@ -35,7 +35,7 @@ Activate stack-owned edge state after Stage 3a is healthy.
 
 ## Validation
 
-- All six browser hosts resolve to `10.57.2.10`.
+- All six browser hosts resolve to `${lab_ip_proxy}`.
 - Generated Traefik files are loaded from `/opt/proxy-stack/dynamic`.
 - Full baseline reconciler dry-run passes after apply.
 

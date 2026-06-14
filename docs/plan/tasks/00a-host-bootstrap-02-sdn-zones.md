@@ -94,13 +94,13 @@ prerequisite for every LXC deployed outside the bootstrap flat-LAN (`vmbr0`).
 ## Session Prompt
 
 ```text
-You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+You are working in /home/steve/git/proxmox-homelab on branch baseline/teardown-validated.
 
 Issue: #128 — feat(sdn): configure Proxmox SDN VLAN zones on pve-test (Phase 00a, task 2)
 
 Context:
 - Task 00a-01 should already be complete or verified enough that pve-test has the expected host baseline and Terraform API access.
-- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into baseline/teardown-validated.
 - `terraform/lxc/network/pve-test.yaml` is the source of truth for pve-test SDN zone names, VLAN IDs, VNet names, subnets, and gateways.
 - Do not invent alternate SDN naming or topology semantics outside that file.
 

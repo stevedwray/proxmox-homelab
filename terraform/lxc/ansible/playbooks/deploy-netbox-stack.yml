@@ -1,17 +1,126 @@
-# NetBox stack lifecycle: Docker base → Portainer Agent → provision config → register → deploy → superuser + API token
+# NetBox stack lifecycle: Docker base -> provision config -> deploy -> superuser + API token
 # Extends the standard deploy-stack.yml with NetBox-specific host preparation.
 
 ---
-- name: Configure Docker base and Portainer Agent
+- name: Provision NetBox configuration files on host
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    netbox_container: "netbox-netbox-1"
+    compose_dir: /srv/docker/netbox
+    compose_file: "{{ compose_dir }}/docker-compose.yml"
+    netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
+    netbox_bootstrap_timeout: 120
+    netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+    netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+    netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+    netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+    netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+    netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+    netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
+
+  tasks:
+    - name: Ensure NetBox compose directory exists
+      ansible.builtin.file:
+        path: "{{ compose_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0755"
+
+    - name: Copy NetBox docker-compose from stack
+      ansible.builtin.copy:
+        src: "../../stacks/netbox-stack/docker-compose.yml"
+        dest: "{{ compose_file }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Copy NetBox configuration directory from stack
+      ansible.builtin.copy:
+        src: "../../stacks/netbox-stack/configuration/"
+        dest: "{{ compose_dir }}/configuration/"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Write Promtail configuration
+      ansible.builtin.copy:
+        dest: "{{ compose_dir }}/promtail-config.yml"
+        mode: "0644"
+        content: |
+          server:
+            http_listen_port: 9080
+            grpc_listen_port: 0
+
+          positions:
+            filename: /tmp/positions.yaml
+
+          clients:
+            - url: http://loki:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+
+          scrape_configs:
+            - job_name: varlogs
+              static_configs:
+                - targets:
+                    - localhost
+                  labels:
+                    job: varlogs
+                    host: netbox-stack
+                    stack: netbox-stack
+                    __path__: /var/log/**/*.log
+            - job_name: docker
+              docker_sd_configs:
+                - host: unix:///var/run/docker.sock
+                  refresh_interval: 15s
+              relabel_configs:
+                - source_labels: [__meta_docker_container_name]
+                  regex: '/(.*)'
+                  target_label: container
+                - source_labels: [__meta_docker_container_log_stream]
+                  target_label: logstream
+                - target_label: host
+                  replacement: netbox-stack
+                - target_label: stack
+                  replacement: netbox-stack
+
+    - name: Debug netbox vars (sanity)
+      ansible.builtin.debug:
+        msg: "netbox_container={{ netbox_container }}, compose_file={{ compose_file }}, netbox_manage={{ netbox_manage }}"
+
+    - name: Set netbox deployment facts
+      ansible.builtin.set_fact:
+        netbox_container: "netbox-netbox-1"
+        compose_dir: "/srv/docker/netbox"
+        compose_file: "/srv/docker/netbox/docker-compose.yml"
+        netbox_manage: "/opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py"
+        netbox_bootstrap_timeout: 120
+        netbox_superuser_username: "{{ lookup('env', 'NETBOX_SUPERUSER_USER') | default('admin', true) }}"
+        netbox_superuser_email: "{{ lookup('env', 'NETBOX_SUPERUSER_EMAIL') | default('admin@' ~ (lookup('env', 'TF_VAR_domain') | default('localhost')), true) }}"
+        netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | default('', true) }}"
+        netbox_steve_username: "{{ lookup('env', 'NETBOX_STEVE_USERNAME') | default('steve', true) }}"
+        netbox_steve_email: "{{ lookup('env', 'NETBOX_STEVE_EMAIL') | default('steve@localhost', true) }}"
+        netbox_breakglass_username: "{{ lookup('env', 'NETBOX_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+        netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
+        netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
+        netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) }}"
+
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
   vars:
-    docker_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    netbox_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | default('', true), true) }}"
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
 
   tasks:
     - name: Trust Harbor HTTP registry in Docker daemon
@@ -21,6 +130,7 @@
         content: |
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ netbox_lab_ip_dns }}"],
             "log-driver": "json-file",
             "log-opts": {
               "max-size": "10m",
@@ -33,134 +143,390 @@
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
 
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+    - name: Write NetBox bootstrap sync script
+      ansible.builtin.copy:
+        dest: /tmp/netbox-bootstrap-sync.py
+        mode: "0600"
+        content: |
+          import os
+          from django.contrib.auth import get_user_model
+          from users.models import Token
+
+          User = get_user_model()
+          user_field_names = {field.name for field in User._meta.get_fields()}
+          changed = False
+
+          def ensure_admin_user(username, email, password_value=None):
+              global changed
+              defaults = {
+                  "email": email,
+                  "is_superuser": True,
+              }
+              if "is_staff" in user_field_names:
+                  defaults["is_staff"] = True
+              if "is_active" in user_field_names:
+                  defaults["is_active"] = True
+
+              user, created = User.objects.get_or_create(username=username, defaults=defaults)
+              updates = []
+
+              if user.email != email:
+                  user.email = email
+                  updates.append("email")
+              if "is_active" in user_field_names and not user.is_active:
+                  user.is_active = True
+                  updates.append("is_active")
+              if "is_staff" in user_field_names and not user.is_staff:
+                  user.is_staff = True
+                  updates.append("is_staff")
+              if not user.is_superuser:
+                  user.is_superuser = True
+                  updates.append("is_superuser")
+
+              if password_value is None:
+                  if user.has_usable_password():
+                      user.set_unusable_password()
+                      updates.append("password")
+              elif not user.check_password(password_value):
+                  user.set_password(password_value)
+                  updates.append("password")
+
+              if updates:
+                  user.save(update_fields=updates)
+
+              if created or updates:
+                  changed = True
+
+          ensure_admin_user(
+              username=os.environ["NB_SUPERUSER_USER"],
+              email=os.environ["NB_SUPERUSER_EMAIL"],
+              password_value=os.environ["NB_SUPERUSER_PASSWORD"],
+          )
+          ensure_admin_user(
+              username=os.environ["NB_STEVE_USER"],
+              email=os.environ["NB_STEVE_EMAIL"],
+          )
+          ensure_admin_user(
+              username=os.environ["NB_BREAKGLASS_USER"],
+              email=os.environ["NB_BREAKGLASS_EMAIL"],
+              password_value=os.environ["NB_BREAKGLASS_PASSWORD"],
+          )
+
+          admin_user = User.objects.get(username=os.environ["NB_SUPERUSER_USER"])
+          if not Token.objects.filter(user=admin_user, description="automation").exists():
+              token = Token(
+                  user=admin_user,
+                  version=1,
+                  description="automation",
+                  write_enabled=True,
+              )
+              token.token = os.environ["NB_API_TOKEN"]
+              token.save()
+              changed = True
+
+          print("CHANGED" if changed else "UNCHANGED")
+
   handlers:
     - name: Restart Docker
       ansible.builtin.systemd:
         name: docker
         state: restarted
 
-- name: Provision NetBox configuration files on host
+- name: Deploy NetBox compose stack
   hosts: all
   become: true
   gather_facts: false
 
   tasks:
-    - name: Create NetBox configuration directory
-      ansible.builtin.file:
-        path: /srv/docker/netbox/configuration
-        state: directory
-        mode: "0750"
-
-    - name: Copy NetBox configuration files
+    - name: Write NetBox secrets env file
       ansible.builtin.copy:
-        src: "../../stacks/{{ stack_name }}/configuration/{{ item }}"
-        dest: "/srv/docker/netbox/configuration/{{ item }}"
-        mode: "0640"
-      loop:
-        - configuration.py
-        - extra.py
-        - plugins.py
-        - logging.py
+        dest: "{{ compose_dir }}/.env"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          REGISTRY_HOST={{ registry_host }}
+          NETBOX_SECRET_KEY={{ lookup('env', 'NETBOX_SECRET_KEY') }}
+          NETBOX_API_TOKEN_PEPPER={{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') }}
+          NETBOX_DB_PASSWORD={{ lookup('env', 'NETBOX_DB_PASSWORD') }}
+          NETBOX_REDIS_PASSWORD={{ lookup('env', 'NETBOX_REDIS_PASSWORD') }}
+          NETBOX_REDIS_CACHE_PASSWORD={{ lookup('env', 'NETBOX_REDIS_CACHE_PASSWORD') }}
+      no_log: true
 
-- name: Register endpoint and deploy stack via Portainer API
-  hosts: all
-  become: false
-  gather_facts: false
+    - name: Pull and start NetBox compose stack
+      ansible.builtin.shell:
+        cmd: >-
+          docker compose -f {{ compose_file }} pull &&
+          docker compose -f {{ compose_file }} up -d
 
-  vars:
-    app_stack_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
-    app_stack_endpoint_name: "{{ inventory_hostname }}"
-    app_stack_force_redeploy: true
-    app_stack_registry_host: "{{ registry_host | default('10.57.3.10') }}"
-    app_stack_server_ip: "{{ portainer_server_ip }}"
-    app_stack_env:
-      - name: NETBOX_DB_PASSWORD
-        value: "{{ lookup('env', 'NETBOX_DB_PASSWORD') | mandatory('NETBOX_DB_PASSWORD env var is not set') }}"
-      - name: NETBOX_REDIS_PASSWORD
-        value: "{{ lookup('env', 'NETBOX_REDIS_PASSWORD') | mandatory('NETBOX_REDIS_PASSWORD env var is not set') }}"
-      - name: NETBOX_REDIS_CACHE_PASSWORD
-        value: "{{ lookup('env', 'NETBOX_REDIS_CACHE_PASSWORD') | mandatory('NETBOX_REDIS_CACHE_PASSWORD env var is not set') }}"
-      - name: NETBOX_SECRET_KEY
-        value: "{{ lookup('env', 'NETBOX_SECRET_KEY') | mandatory('NETBOX_SECRET_KEY env var is not set') }}"
-      - name: NETBOX_API_TOKEN_PEPPER
-        value: "{{ lookup('env', 'NETBOX_API_TOKEN_PEPPER') | mandatory('NETBOX_API_TOKEN_PEPPER env var is not set') }}"
-      - name: REGISTRY_HOST
-        value: "{{ app_stack_registry_host }}"
-    portainer_api_server_ip: "{{ portainer_server_ip }}"
-    portainer_api_endpoint_name: "{{ inventory_hostname }}"
-    portainer_api_agent_ip: "{{ ansible_host }}"
-
-  roles:
-    - portainer_api
-    - app_stack
-
-- name: Create NetBox superuser and API token
-  hosts: all
-  become: true
-  gather_facts: false
-
-  vars:
-    netbox_container: "{{ app_stack_name }}-netbox-1"
-    netbox_manage: /opt/netbox/venv/bin/python /opt/netbox/netbox/manage.py
-    netbox_superuser_username: admin
-    netbox_superuser_email: "admin@gibbsgreatly.xyz"
-    netbox_superuser_password: "{{ lookup('env', 'NETBOX_SUPERUSER_PASSWORD') | mandatory('NETBOX_SUPERUSER_PASSWORD env var is not set') }}"
-    netbox_api_token: "{{ lookup('env', 'NETBOX_SUPERUSER_API_TOKEN') | mandatory('NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
-
-  tasks:
-    - name: Wait for NetBox to be healthy
-      ansible.builtin.command:
+    - name: Wait for NetBox container to report healthy (best-effort)
+      ansible.builtin.shell:
         cmd: docker inspect --format '{{ '{{' }} .State.Health.Status {{ '}}' }}' {{ netbox_container }}
       register: netbox_health
-      retries: 40
+      retries: 12
       delay: 10
-      until: netbox_health.stdout == 'healthy'
-      changed_when: false
+      until: "'healthy' in netbox_health.stdout"
 
-    - name: Create superuser if not exists
+- name: Bootstrap NetBox (run bootstrap sync)
+  hosts: all
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Wait for NetBox bootstrap shell to respond
       ansible.builtin.command:
-        cmd: >-
-          docker exec
-          -e DJANGO_SUPERUSER_PASSWORD={{ netbox_superuser_password }}
-          {{ netbox_container }}
-          {{ netbox_manage }} createsuperuser
-          --no-input
-          --username {{ netbox_superuser_username }}
-          --email {{ netbox_superuser_email }}
-      register: netbox_superuser_result
-      changed_when: "'Superuser created' in netbox_superuser_result.stderr"
-      failed_when:
-        - netbox_superuser_result.rc != 0
-        - "'already taken' not in netbox_superuser_result.stderr"
-      no_log: true
+        argv:
+          - timeout
+          - -k
+          - 10s
+          - "{{ netbox_bootstrap_timeout }}s"
+          - docker
+          - exec
+          - "{{ netbox_container }}"
+          - /opt/netbox/venv/bin/python
+          - /opt/netbox/netbox/manage.py
+          - shell
+          - -c
+          - print('NETBOX_BOOTSTRAP_READY')
+      register: netbox_bootstrap_ready
+      retries: 18
+      delay: 10
+      until:
+        - netbox_bootstrap_ready.rc == 0
+        - "'NETBOX_BOOTSTRAP_READY' in netbox_bootstrap_ready.stdout"
+      changed_when: false
+      when: not ansible_check_mode
 
-    - name: Provision API token (idempotent)
+    - name: Run NetBox bootstrap sync
       ansible.builtin.shell:
-        cmd: |
-          docker exec -i \
-            -e NB_USER='{{ netbox_superuser_username }}' \
-            -e NB_TOKEN='{{ netbox_api_token }}' \
-            {{ netbox_container }} \
-            {{ netbox_manage }} shell <<'PYEOF'
-          import os
-          from django.contrib.auth import get_user_model
-          from users.models import Token
-          User = get_user_model()
-          u = User.objects.get(username=os.environ['NB_USER'])
-          if Token.objects.filter(user=u, description='automation').exists():
-              print('EXISTS')
-          else:
-              t = Token(user=u, version=1, description='automation', write_enabled=True)
-              t.token = os.environ['NB_TOKEN']
-              t.save()
-              print('CREATED')
-          PYEOF
-      register: netbox_token_result
-      changed_when: "'CREATED' in netbox_token_result.stdout"
+        cmd: >-
+          timeout -k 10s {{ netbox_bootstrap_timeout }}s
+          docker exec -i
+          -e NB_SUPERUSER_USER
+          -e NB_SUPERUSER_EMAIL
+          -e NB_SUPERUSER_PASSWORD
+          -e NB_STEVE_USER
+          -e NB_STEVE_EMAIL
+          -e NB_BREAKGLASS_USER
+          -e NB_BREAKGLASS_EMAIL
+          -e NB_BREAKGLASS_PASSWORD
+          -e NB_API_TOKEN
+          {{ netbox_container }}
+          {{ netbox_manage }} shell < /tmp/netbox-bootstrap-sync.py
+      environment:
+        NB_SUPERUSER_USER: "{{ netbox_superuser_username }}"
+        NB_SUPERUSER_EMAIL: "{{ netbox_superuser_email }}"
+        NB_SUPERUSER_PASSWORD: "{{ netbox_superuser_password }}"
+        NB_STEVE_USER: "{{ netbox_steve_username }}"
+        NB_STEVE_EMAIL: "{{ netbox_steve_email }}"
+        NB_BREAKGLASS_USER: "{{ netbox_breakglass_username }}"
+        NB_BREAKGLASS_EMAIL: "{{ netbox_breakglass_email }}"
+        NB_BREAKGLASS_PASSWORD: "{{ netbox_breakglass_password }}"
+        NB_API_TOKEN: "{{ netbox_api_token }}"
+      register: netbox_bootstrap_result
+      changed_when:
+        - netbox_bootstrap_result.rc == 0
+        - "'CHANGED' in netbox_bootstrap_result.stdout"
       failed_when:
-        - netbox_token_result.rc != 0
+        - netbox_bootstrap_result.rc != 0
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Remove NetBox bootstrap sync script
+      ansible.builtin.file:
+        path: /tmp/netbox-bootstrap-sync.py
+        state: absent
+      when: not ansible_check_mode
+
+    - name: Display bootstrap status
+      ansible.builtin.debug:
+        msg: "NetBox bootstrap: {{ 'changed' if 'CHANGED' in netbox_bootstrap_result.stdout else 'already converged' }}"
+
+- name: Install NetBox populate daily timer
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    populate_dir: /opt/netbox-populate
+    populate_env_file: /etc/netbox-populate/env
+    proxmox_host: "{{ lookup('env', 'PROXMOX_HOST') | default('pve.gibbsgreatly.xyz', true) }}"
+    proxmox_token_id: "{{ lookup('env', 'PROXMOX_READONLY_TOKEN_ID') | default(lookup('env', 'PROXMOX_TOKEN_ID') | default(lookup('env', 'TF_VAR_pm_api_token_id'), true), true) | mandatory('PROXMOX_READONLY_TOKEN_ID, PROXMOX_TOKEN_ID, or TF_VAR_pm_api_token_id env var is not set') }}"
+    proxmox_token_secret: "{{ lookup('env', 'PROXMOX_READONLY_TOKEN_SECRET') | default(lookup('env', 'PROXMOX_TOKEN_SECRET') | default(lookup('env', 'TF_VAR_pm_api_token_secret'), true), true) | mandatory('PROXMOX_READONLY_TOKEN_SECRET, PROXMOX_TOKEN_SECRET, or TF_VAR_pm_api_token_secret env var is not set') }}"
+    netbox_api_token: "{{ lookup('env', 'NETBOX_API_TOKEN') | default(lookup('env', 'NETBOX_SUPERUSER_API_TOKEN'), true) | mandatory('NETBOX_API_TOKEN or NETBOX_SUPERUSER_API_TOKEN env var is not set') }}"
+    portainer_password: "{{ lookup('env', 'PORTAINER_ADMIN_PASSWORD') | mandatory('PORTAINER_ADMIN_PASSWORD env var is not set') }}"
+    portainer_ip: "{{ lookup('env', 'LAB_IP_PORTAINER') | default('192.168.20.20', true) }}"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_READONLY_USER') | default(lookup('env', 'MIKROTIK_USER') | default(lookup('env', 'MIKROTIK_ADMIN') | default('', true), true), true) }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_READONLY_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD') | default(lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default('', true), true), true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('', true) }}"
+    mikrotik_port: "{{ lookup('env', 'MIKROTIK_PORT') | default('', true) }}"
+    lab_subnet_infra_cidr: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') | default('', true) }}"
+    lab_subnet_mgmt_cidr: "{{ lookup('env', 'LAB_SUBNET_MGMT_CIDR') | default('', true) }}"
+    lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | default('', true) }}"
+    lab_subnet_build_cidr: "{{ lookup('env', 'LAB_SUBNET_BUILD_CIDR') | default('', true) }}"
+    pve_readonly_token_id: "{{ lookup('env', 'PVE_READONLY_TOKEN_ID') | default('', true) }}"
+    pve_readonly_token_secret: "{{ lookup('env', 'PVE_READONLY_TOKEN_SECRET') | default('', true) }}"
+    portainer_token: "{{ lookup('env', 'PORTAINER_TOKEN') | default('', true) }}"
+    netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
+
+  tasks:
+    - name: Install python3 and pyyaml
+      ansible.builtin.apt:
+        name:
+          - python3
+          - python3-yaml
+        state: present
+        update_cache: false
+
+    - name: Create populate script directory
+      ansible.builtin.file:
+        path: "{{ populate_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Deploy integration scripts
+      ansible.builtin.copy:
+        src: "../../stacks/netbox-stack/integrations/{{ item }}"
+        dest: "{{ populate_dir }}/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - populate.py
+        - client.py
+        - discover.py
+        - proxmox_client.py
+        - mikrotik_client.py
+
+    - name: Create credential env file directory
+      ansible.builtin.file:
+        path: /etc/netbox-populate
+        state: directory
+        owner: root
+        group: root
+        mode: "0700"
+
+    - name: Copy network intent file for deployed service
+      ansible.builtin.copy:
+        src: "../../network/{{ netbox_network_env }}.yaml"
+        dest: /etc/netbox-populate/network.yaml
+        owner: root
+        group: root
+        mode: "0640"
+
+    - name: Write credential env file
+      ansible.builtin.copy:
+        dest: "{{ populate_env_file }}"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # NetBox populate credentials — managed by Ansible, do not edit by hand
+          NETBOX_URL=http://localhost:8080
+          NETBOX_API_TOKEN={{ netbox_api_token }}
+          PROXMOX_HOST={{ proxmox_host }}
+          PROXMOX_URL=https://{{ proxmox_host }}:8006
+          PROXMOX_READONLY_TOKEN_ID={{ proxmox_token_id }}
+          PROXMOX_READONLY_TOKEN_SECRET={{ proxmox_token_secret }}
+          PORTAINER_ADMIN_PASSWORD={{ portainer_password }}
+          LAB_IP_PORTAINER={{ portainer_ip }}
+          # Per-guest docker-socket-proxy (unauthenticated HTTP, internal network only).
+          # TODO: upgrade to authenticated HTTPS once docker-socket-proxy is fronted
+          # by a step-ca or LE cert. See discover.py _ssl_ctx() and _build_socket_proxy_services().
+          DOCKER_SOCKET_PROXY_URL_TEMPLATE=http://{guest_ip}:2375
+          # Legacy single-endpoint fallback (leave unset unless needed):
+          # DOCKER_SOCKET_PROXY_URL=
+          NETBOX_NETWORK_ENV={{ netbox_network_env }}
+          NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
+          NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
+          {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
+
+          {% if mikrotik_password %}MIKROTIK_READONLY_PASSWORD={{ mikrotik_password }}{% endif %}
+
+          {% if mikrotik_host %}MIKROTIK_HOST={{ mikrotik_host }}{% endif %}
+
+          {% if mikrotik_port %}MIKROTIK_PORT={{ mikrotik_port }}{% endif %}
+
+          {% if lab_subnet_infra_cidr %}LAB_SUBNET_INFRA_CIDR={{ lab_subnet_infra_cidr }}{% endif %}
+
+          {% if lab_subnet_mgmt_cidr %}LAB_SUBNET_MGMT_CIDR={{ lab_subnet_mgmt_cidr }}{% endif %}
+
+          {% if lab_subnet_edge_cidr %}LAB_SUBNET_EDGE_CIDR={{ lab_subnet_edge_cidr }}{% endif %}
+
+          {% if lab_subnet_build_cidr %}LAB_SUBNET_BUILD_CIDR={{ lab_subnet_build_cidr }}{% endif %}
+
+          {% if pve_readonly_token_id %}PVE_READONLY_TOKEN_ID={{ pve_readonly_token_id }}{% endif %}
+
+          {% if pve_readonly_token_secret %}PVE_READONLY_TOKEN_SECRET={{ pve_readonly_token_secret }}{% endif %}
+
+          {% if portainer_token %}PORTAINER_TOKEN={{ portainer_token }}{% endif %}
+
       no_log: true
 
-    - name: Display token status
-      ansible.builtin.debug:
-        msg: "API token: {{ 'created' if 'CREATED' in netbox_token_result.stdout else 'already exists' }}"
+    - name: Write netbox-populate systemd service
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/netbox-populate.service
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Populate NetBox with live Proxmox topology
+          After=network-online.target docker.service
+          Wants=network-online.target
+
+          [Service]
+          Type=oneshot
+          WorkingDirectory={{ populate_dir }}
+          EnvironmentFile={{ populate_env_file }}
+          ExecStart=/usr/bin/python3 {{ populate_dir }}/populate.py
+          StandardOutput=journal
+          StandardError=journal
+          SyslogIdentifier=netbox-populate
+
+          [Install]
+          WantedBy=multi-user.target
+      notify: Reload systemd
+
+    - name: Write netbox-populate systemd timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/netbox-populate.timer
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Unit]
+          Description=Run NetBox populate daily
+          Requires=netbox-populate.service
+
+          [Timer]
+          OnCalendar=daily
+          RandomizedDelaySec=1800
+          Persistent=true
+
+          [Install]
+          WantedBy=timers.target
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start netbox-populate timer
+      ansible.builtin.systemd:
+        name: netbox-populate.timer
+        enabled: true
+        state: started
+        daemon_reload: false
+
+  handlers:
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true

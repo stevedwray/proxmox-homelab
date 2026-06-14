@@ -692,12 +692,12 @@ Deploy `node_exporter` on each LXC (or as a Docker container). Add a scrape conf
 
 ## Commit strategy
 
-Create a short-lived branch for each service (`feat/authentik-stack`, `feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), merge to `dev/pve-test` after each service passes its health checks.
+Create a short-lived branch for each service (`feat/authentik-stack`, `feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), merge to `baseline/teardown-validated` after each service passes its health checks.
 
 After all services are deployed and healthy:
 
 ```bash
-git push origin dev/pve-test
+git push origin baseline/teardown-validated
 ```
 
 Update NetBox to record all new services, IPs, and their relationships.

@@ -12,9 +12,9 @@ Identity provider (IdP) and SSO gateway for the platform. Authentik provides:
 | Field        | Value                    |
 |--------------|--------------------------|
 | Zone         | `mgmt_seg` (VLAN 20)     |
-| IP           | `10.57.1.10/24`          |
-| Gateway      | `10.57.1.1` (MikroTik)  |
-| VMID         | 150                      |
+| IP           | `${lab_ip_authentik}/24` |
+| Gateway      | `${lab_gw_mgmt}`         |
+| VMID         | 20010                    |
 
 ## Inputs
 
@@ -25,8 +25,6 @@ Identity provider (IdP) and SSO gateway for the platform. Authentik provides:
 | `AUTHENTIK_SUPERUSER_PASSWORD`| env var (optional)                  | Initial admin password |
 | `AUTHENTIK_SUPERUSER_API_TOKEN`| env var (optional)                 | For API-driven setup |
 | `registry_host`               | generated host var                  | Harbor registry host injected via inventory |
-| Harbor registry               | `10.57.3.10`                        | Current pve-test target for image pulls |
-| Portainer server              | `portainer_server_ip` (`10.57.1.20`) | Agent registration |
 
 **Current implementation:** the platform exposes `registry_host` as a generated host
 var, and the playbook writes `REGISTRY_HOST` into the stack `.env` file so the
@@ -39,7 +37,6 @@ Harbor addresses.
 |--------------------|------|----------|-------|
 | Authentik server   | 9000 | HTTP     | Forward-auth endpoint, UI |
 | Authentik server   | 9443 | HTTPS    | TLS endpoint |
-| Portainer agent    | 9001 | TCP      | Agent registration |
 
 `stack.yaml` service identifiers: `authentik-http`, `authentik-https`.
 
@@ -52,7 +49,6 @@ LAN for admin access. See `pve-test.yaml` policies:
 | Stack           | Why |
 |-----------------|-----|
 | harbor-stack    | All images pulled via `${REGISTRY_HOST}` |
-| portainer-stack | Registers Portainer agent |
 
 ## Persistent State
 
@@ -69,9 +65,11 @@ LAN for admin access. See `pve-test.yaml` policies:
 
 - `AUTHENTIK_SECRET_KEY` must never change once the stack is deployed — it is used
   to encrypt session data and tokens. Rotation requires a full re-setup.
-- The forward-auth middleware in Traefik routes traffic to `10.57.1.10:9000`.
-  Changing the IP or port requires updating Traefik's dynamic config.
+- The forward-auth middleware in Traefik routes traffic to `${lab_ip_authentik}:9000`.
+  Changing the IP or port requires updating Traefik's dynamic config (`dynamic/authentik.yml` in proxy-stack).
 
 ## Playbook
 
-`deploy-authentik-stack` (roles: `lxc_base`, `docker_base`, `portainer_agent`)
+`deploy-authentik-stack` (roles: `lxc_base`, `docker_base`; direct tasks for portainer-agent mask, compose deploy, health probe, and superuser/OIDC bootstrap)
+
+`portainer_agent: false` is intentional; the portainer-agent systemd unit is masked during provisioning.

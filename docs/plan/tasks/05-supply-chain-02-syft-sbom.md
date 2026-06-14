@@ -63,7 +63,7 @@ Syft is installed on ci-runner-01 at a pinned version, a `generate-sbom` CI job 
 - [ ] `deploy-ci-runner.yml` has Syft install task with pinned version
 - [ ] `generate-sbom` job present in CI workflow
 - [ ] SBOM artifact uploaded with name `sbom-${{ github.sha }}` and 90-day retention
-- [ ] Commit pushed to `dev/pve-test`
+- [ ] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -115,12 +115,12 @@ STEP 4 — Add generate-sbom job to the CI workflow (.github/workflows/):
   - actions/upload-artifact@v4 with name sbom-${{ github.sha }}, retention-days: 90
 
 STEP 5 — Commit:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/syft-sbom
   git add terraform/lxc/ansible/playbooks/deploy-ci-runner.yml .github/workflows/
   git commit -m "feat(ci): install Syft on ci-runner and add SBOM generation job"
-  git checkout dev/pve-test && git merge feat/syft-sbom
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/syft-sbom
+  git push origin baseline/teardown-validated
 
 DONE WHEN: syft binary confirmed on ci-runner-01, generate-sbom job in workflow, commit pushed.
 ```

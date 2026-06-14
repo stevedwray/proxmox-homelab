@@ -2,19 +2,24 @@
 
 ## Goal
 
-Migrate existing application stacks (media/arr stack, Jellyfin, Pi-hole) from their current ad-hoc deployment to the standardised LXC+Terragrunt+Ansible pattern used in this repo. All images must be sourced from Harbor. Ingress for externally-accessible services goes through the Phase 04 reverse proxy with Authentik authentication.
+Replan the application-migration phase so it matches the platform that now exists: Harbor is the only image source, the stack-owned edge model is already validated, and browser-facing services use Traefik plus Authentik under `*.lab.gibbsgreatly.xyz` where appropriate.
 
-**This phase intentionally comes last.** The platform must be stable before hobby apps are migrated — not the other way around.
+This phase still follows the platform foundation, but the target is no longer a provisional ingress model. The planning documents now assume the current stack-owned edge path and the current branch workflow from `AGENTS.md`.
 
 ## Prerequisites
 
-- Phase 01 (CI runner) complete
-- Phase 02 complete or otherwise superseded by the current pve-test capacity baseline
-- Phase 04 complete — Authentik, step-ca, Traefik, and monitoring all running
-- **Phase 04b complete** — CoreDNS authoritative DNS server running at `10.57.1.13` with `lab.gibbsgreatly.xyz` zone delegated via MikroTik conditional forwarding
-- Phase 05 complete — Trivy, Syft, and Cosign pipeline work active
+- Validated stack-owned edge foundation is present and reachable:
+  - CoreDNS at `10.57.1.13`
+  - Authentik at `10.57.1.10`
+  - step-ca at `10.57.1.11`
+  - Traefik at `10.57.2.10`
+  - Monitoring at `10.57.1.12`
+- Phase 05 supply-chain pipeline active: Harbor scanning, SBOM generation, signing, and Harbor-only image policy are in place
 - Harbor at `10.57.3.10` operational with projects and scanning configured
 - NetBox updated with current IP allocations
+- Current branch workflow from `AGENTS.md` applies: start from the current
+  active development HEAD, use a short-lived `feat/`/`task/` branch, validate,
+  then merge to `baseline/teardown-validated`
 
 ## Current state of application workloads
 
@@ -30,24 +35,28 @@ Expected workloads to migrate (update this list from actual discovery):
 
 | Service | Current host | Current IP | Notes |
 |---|---|---|---|
-| arr stack (Radarr, Sonarr, Prowlarr, etc.) | TBD | TBD | |
-| Jellyfin | TBD | TBD | High memory, GPU passthrough if applicable |
-| Pi-hole (DNS) | TBD | TBD | Keep on persistent IP; critical path |
-| Game services (Minecraft etc.) | TBD | TBD | |
-| Nginx Proxy Manager (current proxy) | TBD | TBD | Replace with Traefik in Phase 04 |
+| arr stack (Radarr, Sonarr, Prowlarr, etc.) | discovery required | discovery required | Media-management apps; browser routes move to Traefik on `*.lab.gibbsgreatly.xyz` |
+| Jellyfin | discovery required | discovery required | High memory; GPU passthrough if applicable; external hostname under `*.lab.gibbsgreatly.xyz` |
+| Pi-hole (DNS resolver) | discovery required | discovery required | Keep on persistent IP; resolver role only; not authoritative for `lab.gibbsgreatly.xyz` |
+| Game services (Minecraft etc.) | discovery required | discovery required | Direct TCP/UDP access; no browser ingress |
 
 Fill this table in from `pct list`/`qm list` output before proceeding.
+
+If discovery still finds a legacy Nginx Proxy Manager instance, record it as a retired cleanup item only. Do not treat NPM as a live Phase 06 dependency.
 
 ---
 
 ## Segmentation target
 
-Per the revised GreenField architecture, application stacks belong in an application
-segment rather than `mgmt_seg`. Define the zone and IP range in Proxmox SDN:
+Per the validated stack-owned edge model, application stacks belong in an application
+segment rather than `mgmt_seg`. Browser-facing apps use Traefik and Authentik;
+non-browser services keep direct IP/port access.
+
+Define the app and game segments in Proxmox SDN:
 
 | Zone | Subnet | Purpose |
 |---|---|---|
-| `app_seg` | `10.60.0.0/24` | Media stack, Jellyfin, Pi-hole |
+| `app_seg` | `10.60.0.0/24` | Pi-hole, arr stack, Jellyfin |
 | `game_seg` | `10.61.0.0/24` | Game servers |
 
 Adjust subnets if they conflict with the current SDN layer — check
@@ -55,7 +64,7 @@ Adjust subnets if they conflict with the current SDN layer — check
 
 ### Create app_seg zone (if not already defined)
 
-Follow the pattern from `terraform/lxc/network/` (used for the existing SDN zones). If Proxmox SDN zones are Terraform-managed, add `app_seg` there. If managed via Proxmox UI, create it manually and document the spec.
+Follow the pattern from `terraform/lxc/network/` (used for the existing SDN zones). If Proxmox SDN zones are Terraform-managed, add `app_seg` and `game_seg` there. If managed via Proxmox UI, create them manually and document the spec.
 
 ---
 
@@ -98,6 +107,8 @@ Create `terraform/lxc/stacks/pihole-stack/stack.yaml`:
 hostname: pihole-stack
 ip_address: "10.60.0.10/24"   # app_seg
 gateway: "10.60.0.1"
+dns_server: "10.60.0.1"
+network:
 vmid: 160
 cores: 1
 memory: 512
@@ -166,6 +177,9 @@ Create `terraform/lxc/stacks/arr-stack/stack.yaml`:
 hostname: arr-stack
 ip_address: "10.60.0.20/24"
 gateway: "10.60.0.1"
+dns_server: "10.60.0.1"
+network:
+  zone: app_seg
 vmid: 161
 cores: 2
 memory: 2048
@@ -221,7 +235,7 @@ The arr stack UIs should be accessible internally only (not exposed externally).
 ```yaml
 labels:
   traefik.enable: "true"
-  traefik.http.routers.radarr.rule: "Host(`radarr.homelab.internal`)"
+  traefik.http.routers.radarr.rule: "Host(`radarr.lab.gibbsgreatly.xyz`)"
   traefik.http.routers.radarr.middlewares: "authentik@file"  # Authentik SSO gate
 ```
 
@@ -242,6 +256,9 @@ Create `terraform/lxc/stacks/jellyfin-stack/stack.yaml`:
 hostname: jellyfin-stack
 ip_address: "10.60.0.21/24"
 gateway: "10.60.0.1"
+dns_server: "10.60.0.1"
+network:
+  zone: app_seg
 vmid: 162
 cores: 4
 memory: 4096
@@ -283,7 +300,7 @@ Jellyfin is one of the few services that may be exposed externally. Add with rat
 ```yaml
 labels:
   traefik.enable: "true"
-  traefik.http.routers.jellyfin.rule: "Host(`jellyfin.gibbsgreatly.xyz`)"
+  traefik.http.routers.jellyfin.rule: "Host(`jellyfin.lab.gibbsgreatly.xyz`)"
   traefik.http.routers.jellyfin.entrypoints: "websecure"
   traefik.http.routers.jellyfin.tls.certresolver: "step-ca"
   # Jellyfin has its own auth — Authentik middleware optional here
@@ -302,6 +319,9 @@ Create `terraform/lxc/stacks/game-stack/stack.yaml`:
 hostname: game-stack
 ip_address: "10.61.0.10/24"
 gateway: "10.61.0.1"
+dns_server: "10.61.0.1"
+network:
+  zone: game_seg
 vmid: 163
 cores: 4
 memory: 4096
@@ -366,16 +386,16 @@ jobs:
 
       - name: Run Trivy rootfs scan via SSH
         run: |
-          ssh -o StrictHostKeyChecking=no root@${{ matrix.host }} \
-            "trivy rootfs --severity HIGH,CRITICAL --format json --output /tmp/trivy-rootfs.json / && \
-             cat /tmp/trivy-rootfs.json"
+          ssh -o StrictHostKeyChecking=accept-new root@${{ matrix.host }} \
+            "trivy rootfs --severity HIGH,CRITICAL --format sarif --output /tmp/trivy-rootfs.sarif / && \
+             cat /tmp/trivy-rootfs.sarif" > trivy-rootfs-${{ matrix.host }}.sarif
         # Trivy must be installed on each LXC — see below
 
       - name: Upload rootfs SARIF
         uses: github/codeql-action/upload-sarif@v3
         if: always()
         with:
-          sarif_file: trivy-rootfs.sarif
+          sarif_file: trivy-rootfs-${{ matrix.host }}.sarif
 ```
 
 > Trivy can emit SARIF directly if called with `--format sarif`. Replace the JSON example above with `--format sarif --output /tmp/trivy-rootfs.sarif` and adjust the upload step accordingly.
@@ -413,7 +433,7 @@ Add the service and timer files via the base LXC Ansible role.
 
 ### Install Trivy on each LXC
 
-Add to the base LXC Ansible role (`terraform/lxc/ansible/roles/base-lxc/tasks/main.yml`):
+Add to the base LXC Ansible role (`terraform/lxc/ansible/roles/lxc_base/tasks/main.yml`):
 
 ```yaml
 - name: Install Trivy
@@ -429,17 +449,6 @@ Pin to the same Trivy version used in the CI image scan job (Phase 05 Part A).
 ### Update the rootfs scan host matrix
 
 Each time a new LXC is deployed in Phase 06, add its IP to the `matrix.host` list in `rootfs-scan.yml`.
-
----
-
-## Remove legacy Nginx Proxy Manager
-
-Once all services are routed through Traefik (Phase 04 proxy-stack), the existing Nginx Proxy Manager instance can be decommissioned:
-
-1. Verify all routes are working through Traefik
-2. Check that no services still point at NPM
-3. Take a final snapshot of NPM for reference
-4. Destroy the NPM container/VM and remove from NetBox
 
 ---
 
@@ -466,13 +475,12 @@ After each service is migrated and the old container destroyed, update NetBox:
 
 ## Commit strategy
 
-Create a short-lived branch per service:
-- `feat/pihole-stack`
-- `feat/arr-stack`
-- `feat/jellyfin-stack`
-- `feat/game-stack`
+Follow the repository branch model in `AGENTS.md`:
 
-Merge each to `dev/pve-test` after the service is validated and the old instance destroyed.
+1. Start each slice from `baseline/teardown-validated`.
+2. Work on a short-lived `feat/` or `task/` branch.
+3. Validate on that branch before promoting.
+4. Merge to `baseline/teardown-validated` only after the slice is validated and the old instance is retired.
 
 ---
 
@@ -489,14 +497,14 @@ Merge each to `dev/pve-test` after the service is validated and the old instance
 - [ ] Radarr, Sonarr, Prowlarr (and others as applicable) running on new LXC
 - [ ] Media library accessible at `/media` mount
 - [ ] Download client connected and processing
-- [ ] UIs accessible via Traefik at `*.homelab.internal` with Authentik gate
+- [ ] UIs accessible via Traefik at `*.lab.gibbsgreatly.xyz` with Authentik gate
 - [ ] All images sourced from `10.57.3.10/homelab/apps/`
 - [ ] Old containers destroyed
 
 ### Jellyfin
 - [ ] Jellyfin running on new LXC with media library accessible
 - [ ] Hardware transcoding functional (if applicable)
-- [ ] Accessible externally via Traefik at `jellyfin.gibbsgreatly.xyz`
+- [ ] Accessible externally via Traefik at `jellyfin.lab.gibbsgreatly.xyz`
 - [ ] TLS cert issued by step-ca (or Let's Encrypt)
 - [ ] Old container destroyed
 
@@ -509,7 +517,6 @@ Merge each to `dev/pve-test` after the service is validated and the old instance
 ### Overall
 - [ ] All application stacks registered in NetBox with updated IPs and services
 - [ ] No services pulling images from Docker Hub at runtime
-- [ ] Legacy Nginx Proxy Manager decommissioned
 - [ ] All new stacks appear in Grafana dashboards (container metrics visible)
 - [ ] `dmesg | grep -i oom` on pve-test shows no OOM events after full migration
 - [ ] Trivy rootfs scan workflow running (`rootfs-scan.yml`); no CRITICAL findings on any LXC

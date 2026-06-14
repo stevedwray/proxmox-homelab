@@ -158,7 +158,7 @@ Ingress naming policy for this task:
   in `traefik.yml`, using staging CA URL
 - [ ] ACME storage files have mode `0600`
 - [ ] Certs directory persisted using `extra_mount_*` storage fields (survives LXC rebuild)
-- [ ] Branch `feat/proxy-stack` merged to `dev/pve-test`
+- [ ] Branch `feat/proxy-stack` merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -221,7 +221,7 @@ STEP 0d — Bring up authentik-stack and complete first-boot setup:
   # This manual step is a known rebuild gap — the outpost must exist before Traefik auth works.
 
 STEP 1 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/proxy-stack
 
 STEP 2 — Check IP availability:
@@ -298,8 +298,8 @@ STEP 8 — Commit and merge:
   git add terraform/lxc/stacks/proxy-stack/ \
           terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
   git commit -m "feat(traefik): deploy reverse proxy in edge_seg with LE staging cert and Authentik forward-auth (VMID 153)"
-  git checkout dev/pve-test && git merge feat/proxy-stack
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/proxy-stack
+  git push origin baseline/teardown-validated
 
 DONE WHEN: LE staging cert valid in browser, compose file has no literal credentials,
 certs directory is persisted via extra mount, HTTP→HTTPS redirect working, step-ca resolver block present.

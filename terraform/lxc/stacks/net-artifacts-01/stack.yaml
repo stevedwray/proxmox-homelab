@@ -2,13 +2,18 @@
 hostname: net-artifacts-01
 ip_address: "10.57.0.62/24"
 gateway: "10.57.0.1"
+dns_server: "10.57.0.1"
 vmid: 140
 cores: 1
 memory: 512
 rootfs_size: 4
-rootfs_storage: "storage-containers"
+storage_profile: validation-small
 docker_storage_size: "4G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
-
-network:
-  zone: artifacts_seg
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "4G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"

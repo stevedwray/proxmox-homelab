@@ -1,7 +1,8 @@
 # Terraform API User for Proxmox
 
-This reference describes the current Terraform authentication pattern used by this
-repository for the `pve-test` environment.
+This reference describes the Terraform authentication pattern used by this
+repository. The historical implementation started on `pve-test`, and the same
+automation user/token model is now being prepared for production `pve`.
 
 ## Current model
 
@@ -10,7 +11,20 @@ The active automation path uses:
 - Proxmox user: `automation@pve`
 - Proxmox token: `automation@pve!terraform`
 - Terraform stacks under `terraform/lxc/`
-- Token values loaded from local environment files such as `.env` or `.env.pve-test`
+- Token values loaded from local environment files and SOPS-managed secret
+  files
+
+Note: the `automation@pve!terraform` token shown above is the full-scope
+Terraform provisioning token used during bootstrap and apply flows. For
+day-2 discovery and monitoring/read-only automation (NetBox population,
+topology discovery), prefer a dedicated read-only token such as
+`automation@pve!terraform-readonly` exposed via `PROXMOX_READONLY_TOKEN_ID`.
+
+Note: the `automation@pve!terraform` token shown above is the full-scope
+Terraform provisioning token used during bootstrap and apply flows. For
+day-2 discovery and monitoring/read-only automation (NetBox population,
+topology discovery), prefer a dedicated read-only token such as
+`automation@pve!terraform-readonly` exposed via `PROXMOX_READONLY_TOKEN_ID`.
 
 In the current bootstrap flow, the user and token are normally created by:
 
@@ -49,10 +63,25 @@ That playbook prints:
 - `TF_VAR_pm_api_token_id`
 - `TF_VAR_pm_api_token_secret`
 
+If the user already exists and you only want to rotate the token manually on the
+Proxmox host, the minimal sequence is:
+
+```bash
+pveum user token list automation@pve --output-format json
+pveum user token remove automation@pve terraform
+pveum user token add automation@pve terraform --privsep 0 --output-format json
+```
+
+The token secret is shown only at creation time. Capture it immediately and
+store it in the correct SOPS file for the target environment.
+
 For the active `pve-test` workflow, `terraform/secrets.enc.yaml` is the source of truth for
 the token secret. Avoid keeping a second long-lived plaintext copy in `.env.pve-test` if the
 SOPS file is available locally; otherwise you must resync `.env.pve-test` immediately after
 rotation.
+
+For production `pve`, `terraform/secrets.pve.enc.yaml` is the source of truth
+for `TF_VAR_pm_api_token_secret`.
 
 ## Environment variables used by Terraform
 
@@ -90,8 +119,14 @@ curl -ks -H "Authorization: PVEAPIToken=automation@pve!terraform=<TOKEN_SECRET>"
 If Terraform authentication fails, first verify that:
 
 - the token exists
-- the token secret in `.env` or `.env.pve-test` is current
+- the token secret in the correct SOPS-backed environment source is current
 - the target hostname matches the active environment
+
+## Production Validation Note
+
+On May 22, 2026, the production token path for `automation@pve!terraform` was
+validated successfully with a read-only `/version` API call to
+`pve.gibbsgreatly.xyz`, returning HTTP 200.
 
 ## Notes and caveats
 

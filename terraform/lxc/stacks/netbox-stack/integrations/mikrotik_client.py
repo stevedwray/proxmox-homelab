@@ -1,4 +1,14 @@
-"""Mikrotik RouterOS API client for network topology discovery."""
+"""Mikrotik RouterOS API client for network topology discovery.
+
+Credential resolution precedence (highest -> lowest):
+
+- explicit `user` and `password` constructor arguments
+- `MIKROTIK_READONLY_USER` / `MIKROTIK_READONLY_PASSWORD`
+- `MIKROTIK_USER` / `MIKROTIK_PASSWORD` (legacy fallback)
+
+Keep this surface narrow: discovery code should prefer read-only credentials
+to make operator intent explicit while preserving legacy compatibility.
+"""
 
 import base64
 import json
@@ -16,14 +26,27 @@ class MikrotikClient:
     """
 
     def __init__(self, host=None, port=None, user=None, password=None):
-        self.host = host or os.environ.get("MIKROTIK_HOST", "192.168.1.1")
+        self.host = host or os.environ.get("MIKROTIK_HOST")
         self.port = port or int(os.environ.get("MIKROTIK_PORT", "8729"))
-        self.user = user or os.environ.get("MIKROTIK_USER")
-        self.password = password or os.environ.get("MIKROTIK_PASSWORD")
+        self.user = (
+            user
+            or os.environ.get("MIKROTIK_READONLY_USER")
+            or os.environ.get("MIKROTIK_USER")
+        )
+        self.password = (
+            password
+            or os.environ.get("MIKROTIK_READONLY_PASSWORD")
+            or os.environ.get("MIKROTIK_PASSWORD")
+        )
+
+        if not self.host:
+            raise ValueError("Mikrotik host requires an explicit host or MIKROTIK_HOST env var")
 
         if not all([self.user, self.password]):
             raise ValueError(
-                "Mikrotik auth requires MIKROTIK_USER and MIKROTIK_PASSWORD env vars"
+                "Mikrotik auth is missing credentials. Resolution precedence: "
+                "constructor args > MIKROTIK_READONLY_USER/MIKROTIK_READONLY_PASSWORD "
+                "> MIKROTIK_USER/MIKROTIK_PASSWORD (legacy fallback)"
             )
 
         # Create basic auth header: base64(user:password)
@@ -56,7 +79,7 @@ class MikrotikClient:
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
 
         try:
-            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:
+            with urllib.request.urlopen(req, context=ctx, timeout=10) as resp:  # nosec B310 — internal MikroTik API on private SDN
                 if resp.status == 200:
                     return json.loads(resp.read().decode())
                 return None
@@ -217,7 +240,6 @@ def discover_from_mikrotik(host=None, port=None, user=None, password=None):
 
 if __name__ == "__main__":
     """Test connectivity and output network topology."""
-    import pprint
 
     try:
         print(f"Mikrotik: {os.environ.get('MIKROTIK_HOST')}:{os.environ.get('MIKROTIK_PORT')}")

@@ -16,13 +16,13 @@ Phase 06 — Application Stack Migration
 
 - Task 06-01 complete — arr stack's current VMID, IP, services, config paths, and NAS mount documented
 - Task 06-02 complete — `app_seg` (10.60.0.0/24) available
-- Task 04-04 complete — Traefik running; arr UIs will be accessible at `*.homelab.internal`
+- Task 04-04 complete — Traefik running; arr UIs will be accessible at `*.lab.gibbsgreatly.xyz`
 - Phase 03b complete — arr images mirrored to Harbor at `10.57.3.10/homelab/apps/`
 - Phase 05 complete — harbor-image-policy CI check active
 
 ## Objective
 
-Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in a new LXC (`arr-stack`, VMID 161) at `10.60.0.20`, the media library NFS mount is working, all UIs are accessible via Traefik at `*.homelab.internal` with Authentik gate, all images sourced from Harbor, and the old containers are destroyed.
+Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in a new LXC (`arr-stack`, VMID 161) at `10.60.0.20`, the media library NFS mount is working, all UIs are accessible via Traefik at `*.lab.gibbsgreatly.xyz` with Authentik gate, all images sourced from Harbor, and the old containers are destroyed.
 
 ## Scope
 
@@ -56,7 +56,7 @@ Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in 
 ## Constraints and Conventions
 
 - All images via Harbor proxy: `10.57.3.10/homelab/apps/<service>:<pin>`
-- `stack.yaml`: VMID 161, IP `10.60.0.20/24`, `cores: 2`, `memory: 2048`, `docker_storage_size: "10G"`
+- `stack.yaml`: VMID 161, IP `10.60.0.20/24`, `dns_server: 10.60.0.1`, `network.zone: app_seg`, `cores: 2`, `memory: 2048`, `docker_storage_size: "10G"`
 - NAS NFS mount must be configured in `stack.yaml` or as a bind mount via Ansible
 - Traefik labels must include `authentik@file` middleware — arr UIs are internal only
 - Migrate one service at a time (radarr → sonarr → prowlarr), not all at once
@@ -67,12 +67,12 @@ Radarr, Sonarr, Prowlarr (and other arr services from discovery) are running in 
 - [ ] LXC VMID 161 running at `10.60.0.20`
 - [ ] NFS media library mount accessible at `/media` inside the LXC
 - [ ] Radarr, Sonarr, Prowlarr (and others from discovery) responding on their ports
-- [ ] All arr services accessible at `<service>.homelab.internal` via Traefik
+- [ ] All arr services accessible at `<service>.lab.gibbsgreatly.xyz` via Traefik
 - [ ] Authentik SSO gate active on all arr service routes
 - [ ] Download client configured and connected to arr services
 - [ ] All images sourced from `10.57.3.10/...` (harbor-image-policy CI check passes)
 - [ ] Old containers snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -100,7 +100,7 @@ STEP 3 — Snapshot old containers:
   ssh root@<proxmox-host> "pct snapshot <old-vmid> pre-migration-$(date +%Y%m%d)"
 
 STEP 4 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/arr-stack
 
 STEP 5 — Create stack files:
@@ -118,7 +118,7 @@ STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-arr-st
   - All images via 10.57.3.10/homelab/apps/<service>:<pin>
   - Traefik labels on each service:
       traefik.enable: "true"
-      traefik.http.routers.<svc>.rule: "Host(`<svc>.homelab.internal`)"
+      traefik.http.routers.<svc>.rule: "Host(`<svc>.lab.gibbsgreatly.xyz`)"
       traefik.http.routers.<svc>.middlewares: "authentik@file"
   - Restore config tarballs to /srv/docker/arr/<service>/
 
@@ -134,7 +134,7 @@ STEP 8 — Validate each service, migrating one at a time:
   # Check each service UI for existing library entries
 
 STEP 9 — Verify Traefik routing:
-  curl -sk https://radarr.homelab.internal   # Should go through Traefik → Authentik
+  curl -sk https://radarr.lab.gibbsgreatly.xyz   # Should go through Traefik → Authentik
 
 STEP 10 — Once all services verified, destroy old containers:
   ssh root@<proxmox-host> "pct stop <old-vmid> && pct destroy <old-vmid>"
@@ -143,8 +143,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/arr-stack/ \
           terraform/lxc/ansible/playbooks/deploy-arr-stack.yml
   git commit -m "feat(arr-stack): migrate arr media stack to new LXC (VMID 161, 10.60.0.20)"
-  git checkout dev/pve-test && git merge feat/arr-stack
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
+  git merge feat/arr-stack
+  git push origin baseline/teardown-validated
 
 DONE WHEN: All arr services running, media library accessible, Traefik routing with Authentik gate,
 old containers destroyed, harbor-image-policy CI check passes.

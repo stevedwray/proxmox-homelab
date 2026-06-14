@@ -247,9 +247,9 @@ STEP 6 — Commit and merge:
 
   git push origin feat/secrets-hardening
 
-  # Create PR to merge into dev/pve-test
+  # Create PR to merge into baseline/teardown-validated
   gh pr create \
-    --base dev/pve-test \
+    --base baseline/teardown-validated \
     --head feat/secrets-hardening \
     --title "feat(secrets): eliminate .env delivery — sops exec-env via with-secrets" \
     --body "Closes Phase 03d. Replaces sync-secrets.sh + source .env with sops exec-env
@@ -257,18 +257,18 @@ STEP 6 — Commit and merge:
     tests passed in Task 03. See docs/plan/phase-03d-secrets-hardening.md."
 
 STEP 7 — After PR is merged, archive task docs:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git mv docs/plan/tasks/03d-secrets-01-audit.md       docs/plan/tasks/done/
   git mv docs/plan/tasks/03d-secrets-01-gap-analysis.md docs/plan/tasks/done/
   git mv docs/plan/tasks/03d-secrets-02-align-sops.md  docs/plan/tasks/done/
   git mv docs/plan/tasks/03d-secrets-03-wrapper-and-test.md docs/plan/tasks/done/
   git mv docs/plan/tasks/03d-secrets-04-remove-and-update.md docs/plan/tasks/done/
   git commit -m "chore(plan): archive Phase 03d task docs to done/"
-  git push origin dev/pve-test
+  git push origin baseline/teardown-validated
 
 DONE WHEN:
   All acceptance criteria above are checked.
-  feat/secrets-hardening is merged to dev/pve-test.
+  feat/secrets-hardening is merged to baseline/teardown-validated.
   Task docs are archived to done/.
   No .env file exists in the working directory.
 ```

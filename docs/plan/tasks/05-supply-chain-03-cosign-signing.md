@@ -70,7 +70,7 @@ A Cosign signing key pair is generated, `cosign.pub` is committed to the repo, `
 - [ ] Cosign installed on ci-runner-01 at pinned version
 - [ ] `sign-image` job in CI workflow with `needs: [trivy-image-scan]`
 - [ ] `cosign verify --key cosign.pub <harbor-image-ref>` passes for at least one image
-- [ ] Commit pushed to `dev/pve-test`
+- [ ] Commit pushed to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -138,14 +138,14 @@ STEP 8 — Verify signing works (once Phase 06 produces a real image):
   cosign verify --key certs/cosign.pub 10.57.3.10/<project>/<image>@<digest>
 
 STEP 9 — Commit:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull
   git checkout -b feat/cosign-signing
   git add certs/cosign.pub terraform/lxc/ansible/playbooks/deploy-ci-runner.yml .github/workflows/
   # Verify cosign.key not staged:
   git status | grep "cosign.key"  # must be empty
   git commit -m "feat(ci): add Cosign image signing — key pair, CI job, runner install"
-  git checkout dev/pve-test && git merge feat/cosign-signing
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/cosign-signing
+  git push origin baseline/teardown-validated
 
 DONE WHEN: cosign.pub committed, cosign.key NOT in git, sign-image job in workflow,
 Cosign installed on runner.

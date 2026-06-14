@@ -1,0 +1,146 @@
+[provision] RUN proxy-stack: ansible-playbook -i /home/steve/git/proxmox-homelab/terraform/lxc/stacks/proxy-stack/inventory.yml /home/steve/git/proxmox-homelab/terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml
+
+PLAY [Configure Docker base] ***************************************************
+
+TASK [Gathering Facts] *********************************************************
+[WARNING]: Host 'proxy-stack' is using the discovered Python interpreter at '/usr/bin/python3.13', but future installation of another Python interpreter could cause a different interpreter to be discovered. See https://docs.ansible.com/ansible-core/2.20/reference_appendices/interpreter_discovery.html for more information.
+ok: [proxy-stack]
+
+TASK [lxc_base : Configure guest DNS resolver] *********************************
+changed: [proxy-stack]
+
+TASK [lxc_base : Configure apt to use apt-cacher-ng proxy] *********************
+changed: [proxy-stack]
+
+TASK [lxc_base : Remove apt-cacher-ng proxy config when disabled] **************
+skipping: [proxy-stack]
+
+TASK [lxc_base : Check whether homelab root CA exists on the control node] *****
+ok: [proxy-stack -> localhost]
+
+TASK [lxc_base : Install homelab root CA on managed host] **********************
+changed: [proxy-stack]
+
+TASK [lxc_base : Refresh CA trust store after root CA update] ******************
+changed: [proxy-stack]
+
+TASK [docker_base : Wait for host to be reachable] *****************************
+ok: [proxy-stack]
+
+TASK [docker_base : Ensure Docker service is running] **************************
+ok: [proxy-stack]
+
+TASK [docker_base : Check whether Python Docker SDK is importable] *************
+ok: [proxy-stack]
+
+TASK [docker_base : Stop apt timers before installing Docker Python SDK] *******
+changed: [proxy-stack] => (item=apt-daily.service)
+changed: [proxy-stack] => (item=apt-daily.timer)
+changed: [proxy-stack] => (item=apt-daily-upgrade.service)
+changed: [proxy-stack] => (item=apt-daily-upgrade.timer)
+
+TASK [docker_base : Wait for apt/dpkg to be free (avoid racing apt helpers)] ***
+ok: [proxy-stack]
+
+TASK [docker_base : Install Docker Python SDK via system packages] *************
+changed: [proxy-stack]
+
+TASK [docker_base : Ensure docker group exists] ********************************
+ok: [proxy-stack]
+
+TASK [docker_base : Add user to docker group] **********************************
+changed: [proxy-stack]
+
+TASK [docker_base : Check if registry mirror should be configured] *************
+ok: [proxy-stack]
+
+TASK [docker_base : Configure Docker daemon for registry mirror] ***************
+skipping: [proxy-stack]
+
+TASK [docker_base : Verify Docker daemon is responsive] ************************
+skipping: [proxy-stack]
+
+TASK [docker_base : Validate registry mirror configuration] ********************
+skipping: [proxy-stack]
+
+TASK [docker_base : Display registry mirror status] ****************************
+ok: [proxy-stack] => {
+    "msg": "Registry mirror configured: Not configured"
+}
+
+TASK [docker_base : Test registry connectivity] ********************************
+skipping: [proxy-stack]
+
+TASK [docker_base : Display registry connectivity status] **********************
+skipping: [proxy-stack]
+
+TASK [Trust Harbor HTTP registry in Docker daemon] *****************************
+changed: [proxy-stack]
+
+TASK [Flush handlers to apply Docker daemon config before stack deploy] ********
+
+RUNNING HANDLER [Restart Docker] ***********************************************
+changed: [proxy-stack]
+
+TASK [Mask portainer-agent service (platform tier — no agent on this host)] ****
+ok: [proxy-stack]
+
+PLAY [Deploy Traefik compose stack] ********************************************
+
+TASK [Create Traefik directory structure] **************************************
+changed: [proxy-stack] => (item={'path': '/opt/proxy-stack', 'mode': '0750'})
+changed: [proxy-stack] => (item={'path': '/opt/proxy-stack/dynamic', 'mode': '0755'})
+changed: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs', 'mode': '0750'})
+changed: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs/letsencrypt', 'mode': '0700'})
+changed: [proxy-stack] => (item={'path': '/opt/proxy-stack/certs/step-ca', 'mode': '0700'})
+
+TASK [Create ACME storage files with strict permissions] ***********************
+changed: [proxy-stack] => (item=/opt/proxy-stack/certs/letsencrypt/acme.json)
+changed: [proxy-stack] => (item=/opt/proxy-stack/certs/step-ca/acme.json)
+
+TASK [Write compose secrets env file] ******************************************
+changed: [proxy-stack]
+
+TASK [Write Traefik static configuration] **************************************
+changed: [proxy-stack]
+
+TASK [Write shared Authentik middleware config] ********************************
+changed: [proxy-stack]
+
+TASK [Write wildcard certificate request config] *******************************
+changed: [proxy-stack]
+
+TASK [Check whether homelab root CA exists on managed host] ********************
+ok: [proxy-stack]
+
+TASK [Build combined CA bundle for lego (system CAs + optional homelab step-ca CA)] ***
+changed: [proxy-stack]
+
+TASK [Write Traefik compose definition] ****************************************
+changed: [proxy-stack]
+
+TASK [Check requested generated Traefik source directory on control node] ******
+ok: [proxy-stack -> localhost]
+
+TASK [Assert generated Traefik source directory is valid when provided] ********
+ok: [proxy-stack] => {
+    "changed": false,
+    "msg": "All assertions passed"
+}
+
+TASK [Remove legacy generated Traefik stacks directory] ************************
+ok: [proxy-stack]
+
+TASK [Publish generated Traefik files into active dynamic directory] ***********
+changed: [proxy-stack]
+
+TASK [Validate Traefik compose configuration] **********************************
+ok: [proxy-stack]
+
+TASK [Start Traefik via compose] ***********************************************
+changed: [proxy-stack]
+
+PLAY RECAP *********************************************************************
+proxy-stack                : ok=34   changed=19   unreachable=0    failed=0    skipped=6    rescued=0    ignored=0
+
+[provision] Completed provision orchestration

@@ -31,7 +31,7 @@ SonarCloud analysis runs automatically on every push and pull request via the
 - `sonar-project.properties` — remove hardcoded `sonar.branch.name=main` (the action
   sets branch context from git automatically)
 - GitHub repository settings — add `SONAR_TOKEN` secret (manual step, not in code)
-- Branch: `feat/ci-sonarcloud` off `dev/pve-test`
+- Branch: `feat/ci-sonarcloud` off `baseline/teardown-validated`
 
 ## Out of Scope
 
@@ -63,9 +63,9 @@ SonarCloud analysis runs automatically on every push and pull request via the
 - [ ] `sonarcloud` job present in `security-scan.yml`
 - [ ] `sonar.branch.name` removed from `sonar-project.properties`
 - [ ] `SONAR_TOKEN` secret is set in GitHub repository settings (verify before merging)
-- [ ] A push to `dev/pve-test` triggers the sonarcloud job and it passes
+- [ ] A push to `baseline/teardown-validated` triggers the sonarcloud job and it passes
 - [ ] Analysis visible in the SonarCloud dashboard at sonarcloud.io
-- [ ] Commit merged to `dev/pve-test`
+- [ ] Commit merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -80,7 +80,7 @@ STEP 1 — Confirm prerequisites:
   - If missing, ask the user to add it before continuing.
 
 STEP 2 — Create a short-lived branch:
-  git checkout -b feat/ci-sonarcloud dev/pve-test
+  git checkout -b feat/ci-sonarcloud baseline/teardown-validated
 
 STEP 3 — Remove hardcoded branch from sonar-project.properties:
   Read sonar-project.properties, then remove the sonar.branch.name=main line.
@@ -114,9 +114,9 @@ STEP 6 — Add the sonarcloud job to security-scan.yml (before the trufflehog jo
 STEP 7 — Commit and merge:
   git add .github/workflows/security-scan.yml sonar-project.properties
   git commit -m "feat(ci): add SonarCloud analysis job to security-scan workflow"
-  git checkout dev/pve-test && git merge feat/ci-sonarcloud
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/ci-sonarcloud
+  git push origin baseline/teardown-validated
 
 DONE WHEN: The sonarcloud job appears in security-scan.yml, passes on a push to
-dev/pve-test, and the analysis is visible in the SonarCloud dashboard.
+baseline/teardown-validated, and the analysis is visible in the SonarCloud dashboard.
 ```

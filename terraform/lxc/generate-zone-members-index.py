@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Generate an environment-scoped zone-members index from stack metadata."""
+"""Generate an environment-scoped zone-members index from stack metadata.
+
+By default, this loader keeps template placeholders (for example
+"${lab_gw_mgmt}") intact so index generation is stable across shells with
+different exported environment values.
+"""
 
 from __future__ import annotations
 
@@ -9,14 +14,24 @@ from pathlib import Path
 import yaml
 
 
-def load_yaml(path: Path) -> dict:
+def load_yaml(path: Path, *, expand_env: bool = False) -> dict:
     with path.open(encoding="utf-8") as handle:
-        data = yaml.safe_load(handle)
+        raw = handle.read()
+        if expand_env:
+            from os import path as os_path
+
+            raw = os_path.expandvars(raw)
+        data = yaml.safe_load(raw)
     return data or {}
 
 
-def build_zone_members_index(stacks_dir: Path, network_intent_path: Path) -> dict:
-    network_intent = load_yaml(network_intent_path)
+def build_zone_members_index(
+    stacks_dir: Path,
+    network_intent_path: Path,
+    *,
+    expand_env: bool = False,
+) -> dict:
+    network_intent = load_yaml(network_intent_path, expand_env=expand_env)
     zones = network_intent.get("zones", {})
     attachments = network_intent.get("attachments", {})
 
@@ -40,7 +55,7 @@ def build_zone_members_index(stacks_dir: Path, network_intent_path: Path) -> dic
         if ".hold" in stack_path.parts:
             continue
 
-        stack = load_yaml(stack_path)
+        stack = load_yaml(stack_path, expand_env=expand_env)
         zone_name = stack.get("network", {}).get("zone")
         if zone_name not in zones:
             continue
@@ -87,6 +102,11 @@ def parse_args() -> argparse.Namespace:
         required=True,
         help="Path to write the generated zone-members YAML index.",
     )
+    parser.add_argument(
+        "--expand-env",
+        action="store_true",
+        help="Expand ${VAR} placeholders from the current process environment.",
+    )
     return parser.parse_args()
 
 
@@ -95,6 +115,7 @@ def main() -> int:
     index = build_zone_members_index(
         stacks_dir=args.stacks_dir.resolve(),
         network_intent_path=args.network_intent.resolve(),
+        expand_env=args.expand_env,
     )
     args.output.parent.mkdir(parents=True, exist_ok=True)
     with args.output.open("w", encoding="utf-8") as handle:

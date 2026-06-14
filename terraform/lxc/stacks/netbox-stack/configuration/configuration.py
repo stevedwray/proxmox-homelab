@@ -7,7 +7,7 @@
 import re
 from os import environ
 from os.path import abspath, dirname, join
-from typing import Any, Callable, Tuple
+from typing import Any, Callable
 
 # For reference see https://docs.netbox.dev/en/stable/configuration/
 # Based on https://github.com/netbox-community/netbox/blob/develop/netbox/netbox/configuration_example.py
@@ -37,9 +37,9 @@ def _environ_get_and_map(variable_name: str, default: str | None = None, map_fn:
 
     return map_fn(env_value)
 
-_AS_BOOL = lambda value: value.lower() == 'true'
-_AS_INT = lambda value: int(value)
-_AS_LIST = lambda value: list(filter(None, value.split(' ')))
+def _AS_BOOL(value): return value.lower() == 'true'
+def _AS_INT(value): return int(value)
+def _AS_LIST(value): return list(filter(None, value.split(' ')))
 
 _BASE_DIR = dirname(dirname(abspath(__file__)))
 

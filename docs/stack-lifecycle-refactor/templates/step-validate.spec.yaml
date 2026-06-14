@@ -1,0 +1,46 @@
+step:
+  id: "example-validate-01"
+  stage: "1"
+  type: "validate"
+  title: "Run bounded validation step"
+  branch: "task/example-branch"
+
+goal:
+  summary: "Run the bounded validation commands and capture evidence."
+
+scope:
+  allowed_paths:
+    - ".git/ai/reports/"
+  forbidden_actions:
+    - "Unplanned source edits"
+    - "git commit, push, merge, or promotion"
+
+refs:
+  base_branch: "refactor/stack-lifecycle"
+  baseline_sha: "0123456789abcdef0123456789abcdef01234567"
+  starting_sha: "0123456789abcdef0123456789abcdef01234567"
+
+env:
+  target_guard_cmd: "git rev-parse --abbrev-ref HEAD"
+  target_guard_expect: "task/example-branch"
+  approvals_required: false
+  disposable: false
+  scan_gate: "session"
+
+gates:
+  - id: "target-guard"
+    cmd: "git rev-parse --abbrev-ref HEAD"
+    expect: "task/example-branch"
+    critical: true
+  - id: "run-validation"
+    cmd: "test -f docs/stack-lifecycle-refactor/example.md"
+    expect: "exit 0"
+    critical: true
+
+report:
+  path: ".git/ai/reports/example-validate-01.md"
+
+plan_state:
+  path: ".git/ai/plan-state.yaml"
+
+model_hint: "lightweight"

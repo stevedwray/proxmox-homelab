@@ -1,14 +1,22 @@
 # Disposable validation service for the pve-test network layer
 hostname: net-service-01
-ip_address: "10.55.0.62/24"
-gateway: "10.55.0.1"
+ip_address: "192.168.40.62/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
 vmid: 133
 cores: 1
 memory: 512
 rootfs_size: 4
-rootfs_storage: "storage-containers"
+storage_profile: validation-small
 docker_storage_size: "4G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "4G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
 
 network:
   zone: infra_seg

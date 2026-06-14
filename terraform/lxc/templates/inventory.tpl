@@ -6,13 +6,14 @@ all:
           ansible_host: ${ip_address}
           ansible_user: root
           ansible_ssh_private_key_file: ${ssh_key}
-%{ if pve_host != "" ~}
+%{ if use_proxyjump ~}
           ansible_ssh_common_args: '-F /dev/null -o ProxyJump=root@${pve_host} -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 %{ else ~}
           ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 %{ endif ~}
+          ssh_access_mode: ${ssh_access_mode}
           portainer_server_ip: ${portainer_server_ip}
-          registry_host: ${registry_host}
+          registry_host: "${registry_host}"
           apt_cacher_host: ${apt_cacher_host}
           dns_server: ${dns_server}
 %{ if network_zone != "" ~}
@@ -22,10 +23,28 @@ all:
           contract_dns_server: ${contract_dns_server}
 %{ endif ~}
           stack_name: ${stack_name}
+%{ if ansible_playbook != "" ~}
+          ansible_playbook: ${ansible_playbook}
+%{ endif ~}
           vmid: ${vmid}
 %{ if pve_host != "" ~}
           pve_host: ${pve_host}
 %{ endif ~}
 %{ if app_stack_name != "" ~}
           app_stack_name: ${app_stack_name}
+%{ endif ~}
+%{ if docker_socket_proxy_metadata_declared ~}
+          enable_docker_socket_proxy: ${enable_docker_socket_proxy}
+%{ endif ~}
+%{ if docker_socket_proxy_bind_addr != "" ~}
+          docker_socket_proxy_bind_addr: "${docker_socket_proxy_bind_addr}"
+%{ endif ~}
+%{ if docker_socket_proxy_listen_port != null ~}
+          docker_socket_proxy_listen_port: ${docker_socket_proxy_listen_port}
+%{ endif ~}
+%{ if length(docker_socket_proxy_targets) > 0 ~}
+          docker_socket_proxy_targets:
+%{ for target in docker_socket_proxy_targets ~}
+            - "${target}"
+%{ endfor ~}
 %{ endif ~}

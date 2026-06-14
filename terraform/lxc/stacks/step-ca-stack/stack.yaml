@@ -1,15 +1,15 @@
 # step-ca internal certificate authority — mgmt_seg zone
 hostname: step-ca
-ip_address: "10.57.1.11/24"
-gateway: "10.57.1.1"
-proxmox_node: pve-test
-vmid: 152
+ip_address: "${lab_ip_step_ca}/24"
+gateway: "${lab_gw_mgmt}"
+dns_server: "${lab_gw_mgmt}"
+vmid: 20011
 cores: 1
-memory: 512
-swap: 256
+memory: 1024
+swap: 512
 rootfs_size: 8
-rootfs_storage: infrastructure-containers
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+storage_profile: platform-default
+template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - step-ca
   - pki
@@ -25,8 +25,10 @@ network:
   zone: mgmt_seg
 
 ansible_playbook: "deploy-step-ca"
+deployment_tier: platform
+portainer_agent: false
 
-# pve-test service IPs (explicit — do not rely on variable defaults)
-portainer_server_ip: "10.57.1.20"
-registry_host: "10.57.3.10"
-apt_cacher_host: "10.57.3.11"
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-MONITORING_HOST="${MONITORING_HOST:-10.57.1.12}"
+MONITORING_HOST="${MONITORING_HOST:-${LAB_IP_MONITORING:?LAB_IP_MONITORING must be set in .env}}"
 GRAFANA_URL="${GRAFANA_URL:-http://${MONITORING_HOST}:3000}"
 VICTORIAMETRICS_URL="${VICTORIAMETRICS_URL:-http://${MONITORING_HOST}:8428/metrics}"
 LOKI_READY_URL="${LOKI_READY_URL:-http://${MONITORING_HOST}:3100/ready}"
@@ -19,7 +19,7 @@ Required environment variables:
   GRAFANA_ADMIN_PASSWORD  Grafana admin password for datasource API checks
 
 Optional environment variables:
-  MONITORING_HOST         Monitoring host (default: 10.57.1.12)
+  MONITORING_HOST         Monitoring host (default: LAB_IP_MONITORING from .env)
   GRAFANA_URL             Grafana base URL (default: http://<host>:3000)
   VICTORIAMETRICS_URL     VictoriaMetrics metrics URL
   LOKI_READY_URL          Loki readiness URL

@@ -3,18 +3,21 @@ kind: EdgeManifest
 metadata:
   name: portainer-edge
   stack: portainer-stack
+  annotations:
+    repo.auth.oidc.client_id_env: PORTAINER_OAUTH_CLIENT_ID
+    repo.auth.oidc.client_secret_env: PORTAINER_OAUTH_CLIENT_SECRET
 spec:
   routes:
     - name: portainer
       host: portainer.lab.gibbsgreatly.xyz
       backend:
         type: url
-        url: http://10.57.1.20:9000
+        url: http://${LAB_IP_PORTAINER}:9000
       dns:
         enabled: true
-        target: 10.57.2.10
+        target: ${LAB_IP_PROXY}
         ttl: 5m
       tls:
         resolver: letsencrypt
       auth:
-        mode: forwardAuth
+        mode: oidc

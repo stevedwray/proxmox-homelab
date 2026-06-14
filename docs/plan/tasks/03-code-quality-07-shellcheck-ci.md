@@ -27,7 +27,7 @@ undetected.
 ## Scope
 
 - `.github/workflows/validate.yml` — add a `shellcheck` job
-- Branch: `feat/ci-shellcheck` off `dev/pve-test`
+- Branch: `feat/ci-shellcheck` off `baseline/teardown-validated`
 - Scope of ShellCheck: all `.sh` files, excluding `_legacy/` and `.terragrunt-cache/`
 
 ## Out of Scope
@@ -58,8 +58,8 @@ undetected.
 - [ ] `shellcheck` job present in `validate.yml`
 - [ ] Job runs `find . -name '*.sh' -not -path './.git/*' -not -path './_legacy/*' -not -path './.terragrunt-cache/*' | xargs shellcheck`
 - [ ] Local `shellcheck scripts/*.sh` passes before the CI job is added
-- [ ] CI passes on a test push to `dev/pve-test` (or a short-lived branch)
-- [ ] Commit merged to `dev/pve-test`
+- [ ] CI passes on a test push to `baseline/teardown-validated` (or a short-lived branch)
+- [ ] Commit merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -69,7 +69,7 @@ You are working in the proxmox-homelab repository at /home/steve/git/proxmox-hom
 TASK: Add a ShellCheck job to the validate.yml CI workflow.
 
 STEP 1 — Create a short-lived branch:
-  git checkout -b feat/ci-shellcheck dev/pve-test
+  git checkout -b feat/ci-shellcheck baseline/teardown-validated
 
 STEP 2 — Run ShellCheck locally first:
   shellcheck scripts/check-proxmox-status.sh scripts/setup-dev-env.sh
@@ -97,9 +97,9 @@ STEP 4 — Add the shellcheck job.
 STEP 5 — Commit and merge:
   git add .github/workflows/validate.yml
   git commit -m "feat(ci): add ShellCheck lint job to validate workflow"
-  git checkout dev/pve-test && git merge feat/ci-shellcheck
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git merge feat/ci-shellcheck
+  git push origin baseline/teardown-validated
 
-DONE WHEN: The shellcheck job is present in validate.yml and a push to dev/pve-test shows
+DONE WHEN: The shellcheck job is present in validate.yml and a push to baseline/teardown-validated shows
 it passing in GitHub Actions.
 ```

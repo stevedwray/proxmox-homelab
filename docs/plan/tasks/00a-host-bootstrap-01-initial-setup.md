@@ -80,12 +80,12 @@ runs can authenticate to the Proxmox API.
 ## Session Prompt
 
 ```text
-You are working in /home/steve/git/proxmox-homelab on branch dev/pve-test.
+You are working in /home/steve/git/proxmox-homelab on branch baseline/teardown-validated.
 
 Issue: #129 — feat(host-bootstrap): run Proxmox host initial setup on pve-test (Phase 00a, task 1)
 
 Context:
-- Boundary-strengthening Sessions 3, 4, and 5 are merged into dev/pve-test.
+- Boundary-strengthening Sessions 3, 4, and 5 are merged into baseline/teardown-validated.
 - Active pve-test shared-service wiring and stack metadata validation are already in place.
 - Do not reopen boundary-strengthening work unless this host-bootstrap task directly depends on it.
 

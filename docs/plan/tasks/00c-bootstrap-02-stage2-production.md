@@ -211,7 +211,7 @@ STEP 2 — Deploy Stage 2 CI runner (VMID 141, build_seg, 10.57.0.63):
   # GitHub → Repository → Settings → Actions → Runners → ci-runner-01 → Idle
 
   # Trigger a validation workflow run on Stage 2 runner
-  gh workflow run validate.yml --ref dev/pve-test
+  gh workflow run validate.yml --ref baseline/teardown-validated
   gh run list --workflow=validate.yml --limit 3
   # Expect: at least one run completed on the Stage 2 runner
 

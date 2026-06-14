@@ -15,11 +15,26 @@ operator has explicitly approved the destructive window.
 
 ## Current Status
 
-The first full teardown/rebuild rehearsal completed successfully and is
-summarized in [reports/20260422-044416.md](reports/20260422-044416.md).
-The repeatable harness is documented in
-[repeatable-test.md](repeatable-test.md) and implemented at
-`scripts/teardown-deploy-test.sh`.
+On `baseline/teardown-validated` (commit `f4d1f25`).
+
+Two full teardown/rebuild cycles have completed successfully:
+
+- Initial rehearsal (2026-04-22): [artifacts/reports/20260422-044416.md](artifacts/reports/20260422-044416.md)
+- Storage-refactor gate (2026-05-17): [artifacts/reports/20260517-033905-storage-refactor-gate.md](artifacts/reports/20260517-033905-storage-refactor-gate.md)
+- Multi-source inventory gate (2026-06-13): [artifacts/reports/20260613-pve-test-vm-teardown.md](artifacts/reports/20260613-pve-test-vm-teardown.md)
+
+The June 2026 cycle was run against **pve-test-vm** (`192.168.1.41`), a
+VM-hosted Proxmox instance that replaced the retired bare-metal `pve-test`
+laptop. All cold-start failures discovered during that cycle were fixed in the
+same branch and merged. Durable takeaways are in [lessons-learned.md](lessons-learned.md).
+
+The repeatable harness is documented in [repeatable-test.md](repeatable-test.md)
+and implemented at `scripts/teardown-deploy-test.sh`.
+
+**Next action:** cut `fix/ci-pipeline-cleanup` from `baseline/teardown-validated`
+and work through CI pipeline items (workflow trigger cleanup, ShellCheck
+directives, Harbor image policy, Ansible lint). No teardown gate required for
+that branch.
 
 The harness is safe by default: non-destructive validation phases can run during
 development, while destroy/apply/publish phases require explicit execution
@@ -36,7 +51,7 @@ At the end of the test:
 - Generated CoreDNS and Traefik state is regenerated from current manifests and
   published from fresh artifacts.
 - Authentik discovery/reconciliation is converged without automatic deletes.
-- All six browser routes resolve to Traefik at `10.57.2.10` and show expected
+- All six browser routes resolve to Traefik at `${lab_ip_proxy}` and show expected
   auth behavior.
 - The final edge reconciler dry-run is a no-op.
 - Destroy, deploy, validation, and rollback evidence are captured.
@@ -67,12 +82,15 @@ Production `pve` is out of scope.
 
 ## Safety Rules
 
-- The target guard must return exactly `pve-test` before any apply, destroy, or
-  deployment validation command:
+- The target guard must confirm the expected non-production node before any
+  apply, destroy, or deployment validation command. The active test target is
+  `pve-test-vm`; set `PVE_ENV=pve-test-vm` and confirm with:
 
   ```bash
-  ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+  PVE_ENV=pve-test-vm ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
   ```
+
+  Any result other than the intended non-production node must stop execution.
 
 - Teardown requires explicit human approval after backups are verified.
 - Run from a clean working tree and a known commit.
@@ -88,11 +106,10 @@ Production `pve` is out of scope.
 - [task-sequence.md](task-sequence.md) lists the atomic test plan.
 - [operations-plan.md](operations-plan.md) breaks the test into single-stack
   and single-handoff execution components with file touch sets.
+- [lessons-learned.md](lessons-learned.md) captures durable findings that
+  should stay current as the rehearsal process evolves.
 - [repeatable-test.md](repeatable-test.md) describes the reusable harness for
   repeated preflight, live validation, and approved teardown/deploy cycles.
-- [recovery-checklist-20260423.md](recovery-checklist-20260423.md) captures the
-  strict read-only incident recovery checklist before any future approved
-  mutating session.
 - [harness-roadmap.md](harness-roadmap.md) lists the remaining work needed to
   turn the current harness prototype into a robust reusable playbook.
 - [runbook.md](runbook.md) contains the operator command flow.

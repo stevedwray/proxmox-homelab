@@ -347,7 +347,7 @@ watch -n 5 'curl -s -o /dev/null -w "%{http_code}" http://10.57.1.10:9000/-/heal
 
 Once all four services are deployed and validated on pve-test:
 
-1. Merge all feature branches to `dev/pve-test`
+1. Merge all feature branches to `baseline/teardown-validated`
 2. Phase 05 (Supply Chain) — assumes Phase 04 services are stable
 3. Phase 06 (Application Migration) — assumes Phase 04 + Phase 05 complete
 4. Outstanding rebuild-safety work: secrets injection for Traefik/Authentik/Monitoring,

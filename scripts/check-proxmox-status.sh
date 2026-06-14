@@ -52,11 +52,12 @@ else
 fi
 
 # Configuration
-PROXMOX_HOST="${PROXMOX_HOST:-192.168.1.100}"
+PROXMOX_HOST="${PROXMOX_HOST:?PROXMOX_HOST must be set in .env}"
 PROXMOX_USER="${PROXMOX_USER:-root@pam}"
 PROXMOX_PASSWORD="${PROXMOX_PASSWORD:-}"
 SSH_USER="${SSH_USER:-root}"
-AUTOMATION_USER="automation"
+PVE_AUTOMATION_USER="${PROXMOX_AUTOMATION_USER:-automation@pve}"
+AUTOMATION_USER="${AUTOMATION_USER:-${PVE_AUTOMATION_USER%@*}}"
 SSH_OPTS=(-o ConnectTimeout=10 -o BatchMode=yes -o StrictHostKeyChecking=no)
 SEPARATOR="=============================================="
 
@@ -146,7 +147,7 @@ test_proxmox_configuration() {
     run_check "Automation system user exists" "ssh ${SSH_OPTS[*]} root@$PROXMOX_HOST 'getent passwd $AUTOMATION_USER >/dev/null'" "true"
 
     # Test PVE automation user exists
-    run_check "Automation PVE user exists" "ssh ${SSH_OPTS[*]} root@$PROXMOX_HOST 'pveum user list | grep -q \"automation@pve\"'" "true"
+    run_check "Automation PVE user exists" "ssh ${SSH_OPTS[*]} root@$PROXMOX_HOST 'pveum user list | grep -q \"$PVE_AUTOMATION_USER\"'" "true"
 
     # Test sudo access for automation user
     run_check "Automation user sudo access" "ssh ${SSH_OPTS[*]} $AUTOMATION_USER@$PROXMOX_HOST 'sudo -n whoami | grep root' 2>/dev/null" "true"
@@ -194,10 +195,11 @@ get_system_info() {
             echo "  System user 'automation': ✗ Missing"
         fi
 
-        if ssh "${SSH_OPTS[@]}" root@"$PROXMOX_HOST" 'pveum user list 2>/dev/null | grep -q automation@pve'; then
-            echo "  PVE user 'automation@pve': ✓ Exists"
+        # shellcheck disable=SC2029  # $PVE_AUTOMATION_USER intentionally expands on the client side before SSH
+        if ssh "${SSH_OPTS[@]}" root@"$PROXMOX_HOST" "pveum user list 2>/dev/null | grep -q '$PVE_AUTOMATION_USER'"; then
+            echo "  PVE user '$PVE_AUTOMATION_USER': ✓ Exists"
         else
-            echo "  PVE user 'automation@pve': ✗ Missing"
+            echo "  PVE user '$PVE_AUTOMATION_USER': ✗ Missing"
         fi
     else
         log_error "Cannot retrieve system information - SSH access failed"
@@ -304,7 +306,7 @@ case "${1:-}" in
         echo "  --no-api       Skip API connectivity tests"
         echo
         echo "Environment variables (or .env file):"
-        echo "  PROXMOX_HOST     - Proxmox server IP/hostname (default: 192.168.1.100)"
+        echo "  PROXMOX_HOST     - Proxmox server IP/hostname (required from .env)"
         echo "  PROXMOX_USER     - Proxmox API username (default: root@pam)"
         echo "  PROXMOX_PASSWORD - Proxmox API password"
         echo "  SSH_USER         - SSH username (default: root)"

@@ -2,18 +2,21 @@
 # Delegates pct commands to the Proxmox host, then waits for the
 # container to come back online after reboot.
 #
-# Required inventory vars: vmid, pve_host
+# Required inventory vars: vmid
+# Optional inventory vars: pve_host
 # Optional inventory vars: pve_ssh_user (default: root)
 ---
 - name: Configure keyctl feature flag on LXC container
   hosts: all
   gather_facts: false
+  vars:
+    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PROXMOX_HOST'), true) | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
 
   tasks:
     - name: Set keyctl feature flag via pct
       ansible.builtin.command:
         cmd: "pct set {{ vmid }} -features nesting=1,keyctl=1"
-      delegate_to: "{{ pve_host }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
       vars:
         ansible_user: "{{ pve_ssh_user | default('root') }}"
         ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
@@ -23,7 +26,7 @@
     - name: Reboot container to apply feature flags
       ansible.builtin.command:
         cmd: "pct reboot {{ vmid }}"
-      delegate_to: "{{ pve_host }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
       vars:
         ansible_user: "{{ pve_ssh_user | default('root') }}"
         ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"

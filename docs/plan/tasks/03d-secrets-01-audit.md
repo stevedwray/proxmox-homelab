@@ -188,7 +188,7 @@ BUILD THE GAP ANALYSIS:
   The document must contain ONLY key names, never values.
 
 COMMIT (no branch needed — this is a documentation commit):
-  git checkout -b feat/secrets-hardening dev/pve-test
+  git checkout -b feat/secrets-hardening baseline/teardown-validated
   git add docs/plan/tasks/03d-secrets-01-gap-analysis.md
   git commit -m "docs(secrets): add Phase 03d gap analysis
 

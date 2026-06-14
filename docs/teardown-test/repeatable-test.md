@@ -18,13 +18,13 @@ scripts/teardown-deploy-test.sh <phase> [options]
 Evidence is written under:
 
 ```text
-docs/teardown-test/evidence/<stamp>/logs/
+docs/teardown-test/artifacts/evidence/<stamp>/logs/
 ```
 
 Machine-readable checkpoint state is written to:
 
 ```text
-docs/teardown-test/evidence/<stamp>/state.json
+docs/teardown-test/artifacts/evidence/<stamp>/state.json
 ```
 
 The script reuses the current workspace patterns:
@@ -36,7 +36,7 @@ The script reuses the current workspace patterns:
 - generated edge artifacts are regenerated before publish
 - logs and runtime evidence stay under ignored evidence directories
 - full edge reconciler dry-runs use the direct Authentik URL
-  `http://10.57.1.10:9000`
+  `http://${lab_ip_authentik}:9000`
 
 ## Development Loop
 
@@ -103,6 +103,39 @@ evidence stamp:
 This phase is read-only. A degraded or missing stack is reported in the table;
 the phase itself is an observation pass, not a repair action.
 
+Socket-proxy disposable test: opt-in and proof expectations
+
+The `docker-socket-proxy-test` disposable target is excluded by default. To run the proxy proof as part of a repeatable teardown-test cycle follow the opt-in steps described in `variables.md` (create a temporary inventory and run the harness via `TEARDOWN_INVENTORY_FILE`). The expected, repeatable proof covers the following checks and evidence capture:
+
+- Target creation/deploy path: the harness deploy phase will run `terragrunt apply` for the test stack; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/deploy-docker-socket-proxy-test.log` (contains terragrunt/apply output).
+- Workload containers present: verify via Ansible raw/curl against the test LXC inventory. Example (ip resolved from stack.yaml):
+
+```bash
+IP=$(grep -E 'ip_address:' terraform/lxc/stacks/docker-socket-proxy-test/stack.yaml | sed -E 's/.*ip_address: ?"?([^" ]+)"?.*/\1/' | cut -d'/' -f1)
+ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a "curl -sS 'http://$IP:2375/containers/json?all=1'" | tee docs/teardown-test/evidence/<stamp>/logs/proxy-probe.log
+```
+
+- Proxy reachable: the `proxy-probe.log` above should contain JSON output listing deployed containers (nginx/whoami/redis/docker-socket-proxy, etc.).
+- `GET /containers/json?all=1` succeeds: the probe should return HTTP 200 and valid JSON; record `proxy-probe.log` under the evidence stamp.
+- Mutating request is blocked: example check (expect HTTP 403):
+
+```bash
+ansible -i terraform/lxc/stacks/docker-socket-proxy-test/inventory.yml docker-socket-proxy-test -m raw -u root -a \
+  "curl -sS -o /dev/null -w '%{http_code}' -XPOST -H 'Content-Type: application/json' -d '{\"Image\":\"alpine\"}' 'http://$IP:2375/containers/create'" \
+  | tee docs/teardown-test/evidence/<stamp>/logs/proxy-mutating-test.log
+# Expected result: 403
+```
+
+- Optional cleanup/removal: when running `cycle` (with `--disposable`) the destroy phase should remove the test LXC; expected evidence: `docs/teardown-test/evidence/<stamp>/logs/destroy-docker-socket-proxy-test.log` and the harness VMID verification logs.
+
+Keep raw evidence under the standard evidence stamp (`docs/teardown-test/evidence/<stamp>/logs/`) and avoid committing raw evidence files. The temporary inventory remains local and reversible.
+
+If `platform-status` cannot collect `pct status` because the operator host
+cannot reach or resolve the Proxmox SSH host, that stack is reported as
+`overall=blocked` with an explicit `status collection blocked` detail. This
+prevents SSH collection failures from being misreported as container stop
+states.
+
 Use `approval-preflight` as the go/no-go check before preparing any destructive
 approval packet:
 
@@ -156,28 +189,31 @@ scripts/teardown-deploy-test.sh status --stamp <stamp>
 Mutating phases require both `--execute` and an approval phrase containing:
 
 ```text
-approve pve-test teardown deploy test
+approve
 ```
 
-`destroy` and `cycle` also require an approval packet:
+`destroy` and `cycle` also require an approval packet. The approval text itself
+is intentionally simple; the approval packet is the detailed safety record:
 
 ```bash
 scripts/teardown-deploy-test.sh destroy --execute \
-  --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24" \
-  --approval-packet docs/teardown-test/packets/20260423-010203.md \
+  --approval-text "approve" \
+  --approval-packet docs/teardown-test/artifacts/packets/20260423-010203.md \
   --stamp 20260423-010203
 ```
 
 Minimum approval packet checks for destructive phases:
 
 - packet file exists
-- packet references the active `--stamp` value
-- packet references `pve-test`
-- packet references the current commit SHA or an approved commit SHA
-- packet includes outage/window metadata
-- packet includes rollback deadline metadata
-- packet includes backup evidence references for `step-ca`, `authentik`, `harbor`, `netbox`, `monitoring`, and `portainer`
-- packet includes recreatable-service backup evidence or explicit data-loss/recreate approval
+- packet has a `stamp: <value>` field matching active `--stamp`
+- packet has a `target: pve-test` field
+- packet has `approved commit SHA: <sha>` and it matches current HEAD
+- packet has non-empty `outage window:` and `rollback deadline:` fields
+- packet has non-empty `scope approval:` and `scope exclusions:` fields
+- packet includes `service evidence:` heading with explicit `backup evidence path:` entries for `step-ca`, `authentik`, `harbor`, `netbox`, `monitoring`, and `portainer`
+- packet includes either:
+  - `recreatable services evidence:` heading with explicit `backup evidence path:` entries for `apt-cacher`, `ci-runner`, `dns`, and `proxy`, or
+  - `recreatable services approval:` text that explicitly accepts/acknowledges data loss or recreation
 
 When accepted, the harness logs the packet path and records its SHA256 under the
 evidence stamp (`logs/approval-packet.sha256`).
@@ -186,7 +222,7 @@ Example:
 
 ```bash
 scripts/teardown-deploy-test.sh deploy-edge --execute \
-  --approval-text "I approve pve-test teardown deploy test OP-21 through OP-24"
+  --approval-text "approve"
 ```
 
 Available live phases:
@@ -226,7 +262,7 @@ Example:
 
 ```bash
 scripts/teardown-deploy-test.sh deploy-edge --stamp 20260423-010203 --execute \
-  --approval-text "I approve pve-test teardown deploy test resume deploy-edge"
+  --approval-text "approve"
 ```
 
 ## Relationship To The Runbook
@@ -247,4 +283,8 @@ repeatable test continues to encode the current operating contract.
 The current harness is a working prototype, not the final reusable playbook.
 Before treating it as the long-term test interface, complete the follow-up work
 in [harness-roadmap.md](harness-roadmap.md). The next major implementation item
-is machine-readable resume state and checkpointing.
+list there should be kept current.
+
+Machine-readable resume state and checkpointing are already implemented through
+per-stamp `state.json`. Do not leave roadmap prose behind when completed
+features move into the harness.

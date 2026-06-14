@@ -3,6 +3,10 @@
 # Creates: Docker Hub proxy cache endpoint, dockerhub project, CI robot account.
 # All tasks delegate to localhost (Ansible controller calls Harbor API directly).
 
+- name: Skip Harbor post-configuration in check mode (requires live Harbor API)
+  ansible.builtin.meta: end_play
+  when: ansible_check_mode
+
 - name: Authenticate with Harbor API
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/current"
@@ -12,6 +16,265 @@
     force_basic_auth: true
     status_code: 200
   register: harbor_postconfigure_auth_check
+  delegate_to: localhost
+  no_log: true
+
+- name: Get Harbor current auth mode
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_current_config
+  delegate_to: localhost
+  no_log: true
+
+- name: Record Harbor current auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_current_auth_mode: >-
+      {{
+        (
+          harbor_postconfigure_current_config.json.auth_mode.value
+          if (harbor_postconfigure_current_config.json.auth_mode is mapping)
+          else harbor_postconfigure_current_config.json.auth_mode
+        ) | default('db_auth', true)
+      }}
+  delegate_to: localhost
+
+- name: Start with Harbor current auth mode as the effective auth mode
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "{{ harbor_postconfigure_current_auth_mode }}"
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
+# Browser SSO (OIDC)
+# -----------------------------------------------------------------------
+
+- name: Validate Harbor OIDC inputs
+  ansible.builtin.assert:
+    that:
+      - harbor_postconfigure_oidc_endpoint | length > 0
+      - harbor_postconfigure_oidc_client_id | length > 0
+      - harbor_postconfigure_oidc_client_secret | length > 0
+      - harbor_postconfigure_oidc_user_claim | length > 0
+      - "'openid' in harbor_postconfigure_oidc_scope"
+    fail_msg: "Harbor OIDC is enabled but one or more required HARBOR_OIDC_* settings are missing or invalid."
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Configure Harbor OIDC auth mode
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body: >-
+      {{
+        {
+          'auth_mode': 'oidc_auth',
+          'primary_auth_mode': harbor_postconfigure_oidc_primary_auth_mode | bool,
+          'oidc_name': harbor_postconfigure_oidc_name,
+          'oidc_endpoint': harbor_postconfigure_oidc_endpoint,
+          'oidc_client_id': harbor_postconfigure_oidc_client_id,
+          'oidc_client_secret': harbor_postconfigure_oidc_client_secret,
+          'oidc_groups_claim': harbor_postconfigure_oidc_groups_claim,
+          'oidc_admin_group': harbor_postconfigure_oidc_admin_group,
+          'oidc_group_filter': harbor_postconfigure_oidc_group_filter,
+          'oidc_scope': harbor_postconfigure_oidc_scope,
+          'oidc_user_claim': harbor_postconfigure_oidc_user_claim,
+          'oidc_verify_cert': harbor_postconfigure_oidc_verify_cert | bool,
+          'oidc_auto_onboard': harbor_postconfigure_oidc_auto_onboard | bool,
+          'oidc_logout': harbor_postconfigure_oidc_logout | bool
+        } | to_json
+      }}
+    status_code: 200
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Display Harbor OIDC status
+  ansible.builtin.debug:
+    msg:
+      - "Harbor browser sign-in is configured for OIDC provider '{{ harbor_postconfigure_oidc_name }}'."
+      - "Docker and Helm CLI users still need Harbor CLI secrets after first browser SSO login."
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Record Harbor effective auth mode after OIDC configuration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_effective_auth_mode: "oidc_auth"
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Look up Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup
+  delegate_to: localhost
+  no_log: true
+
+- name: Determine whether Harbor must preserve OIDC auth migration
+  ansible.builtin.set_fact:
+    harbor_postconfigure_preserve_oidc_migration: >-
+      {{
+        (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
+        and harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+      }}
+  delegate_to: localhost
+
+- name: Create Harbor breakglass user when missing
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      username: "{{ harbor_postconfigure_breakglass_username }}"
+      email: "{{ harbor_postconfigure_breakglass_username }}@lab.gibbsgreatly.xyz"
+      realname: "Breakglass Administrator"
+      comment: "Emergency admin"
+      password: "{{ harbor_postconfigure_breakglass_password }}"
+    status_code: [201, 409]
+  when:
+    - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth'
+    - not (harbor_postconfigure_preserve_oidc_migration | default(false) | bool)
+  delegate_to: localhost
+  no_log: true
+
+- name: Skip Harbor breakglass local-user creation while Harbor is OIDC-managed
+  ansible.builtin.debug:
+    msg: >-
+      Skipping Harbor breakglass local-user creation because Harbor OIDC is
+      managed for this deployment and creating local users before auth_mode is
+      switched would block the later OIDC migration. The built-in admin account
+      remains the local recovery path.
+  when:
+    - (harbor_postconfigure_oidc_requested | default(harbor_postconfigure_oidc_enabled, true) | bool)
+    - (harbor_postconfigure_breakglass_lookup.json | default([]) | length) == 0
+  delegate_to: localhost
+
+- name: Re-fetch Harbor breakglass user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_breakglass_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_breakglass_lookup_after
+  when:
+    - harbor_postconfigure_effective_auth_mode != 'oidc_auth' or (harbor_postconfigure_breakglass_lookup.json | default([]) | length) > 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Ensure Harbor breakglass user has sysadmin role
+  ansible.builtin.uri:
+    url: >-
+      {{
+        'http://' ~ harbor_postconfigure_host ~ ':' ~ harbor_postconfigure_port
+        ~ '/api/v2.0/users/' ~ harbor_postconfigure_breakglass_lookup_after.json[0].user_id
+        ~ '/sysadmin'
+      }}
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      sysadmin_flag: true
+    status_code: 200
+  when:
+    - harbor_postconfigure_breakglass_lookup_after is defined
+    - (harbor_postconfigure_breakglass_lookup_after.json | default([]) | length) > 0
+  delegate_to: localhost
+  no_log: true
+
+- name: Look up Harbor OIDC steve user
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/search?username={{ harbor_postconfigure_steve_username }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_steve_lookup
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+  no_log: true
+
+- name: Collect Harbor OIDC steve username matches
+  ansible.builtin.set_fact:
+    harbor_postconfigure_steve_candidates: >-
+      {{
+        harbor_postconfigure_steve_lookup.json | default([])
+        | selectattr('username', 'equalto', harbor_postconfigure_steve_username)
+        | list
+      }}
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Resolve Harbor OIDC steve user
+  ansible.builtin.set_fact:
+    harbor_postconfigure_steve_user: >-
+      {{
+        (
+          harbor_postconfigure_steve_candidates | default([])
+          | selectattr('email', 'defined')
+          | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
+          | list
+          | first
+        )
+        if (
+          (harbor_postconfigure_steve_email | length) > 0
+          and (
+            (
+              harbor_postconfigure_steve_candidates | default([])
+              | selectattr('email', 'defined')
+              | selectattr('email', 'equalto', harbor_postconfigure_steve_email)
+              | list
+              | length
+            ) > 0
+          )
+        )
+        else (
+          harbor_postconfigure_steve_candidates | default([])
+          | list
+          | first
+        )
+        | default({})
+      }}
+  when: harbor_postconfigure_oidc_enabled
+  delegate_to: localhost
+
+- name: Ensure OIDC steve user has sysadmin role
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/users/{{ harbor_postconfigure_steve_user.user_id }}/sysadmin"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      sysadmin_flag: true
+    status_code: 200
+  when:
+    - harbor_postconfigure_oidc_enabled
+    - harbor_postconfigure_steve_user is defined
+    - harbor_postconfigure_steve_user.user_id is defined
+    - not (harbor_postconfigure_steve_user.sysadmin_flag | default(false) | bool)
   delegate_to: localhost
   no_log: true
 
@@ -33,7 +296,7 @@
 - name: Check if Docker Hub endpoint already exists
   ansible.builtin.set_fact:
     harbor_postconfigure_dockerhub_endpoint_id: "{{ item.id }}"
-  loop: "{{ harbor_postconfigure_registries.json }}"
+  loop: "{{ harbor_postconfigure_registries.json | default([]) }}"
   when: item.name == harbor_postconfigure_dockerhub_endpoint_name
   delegate_to: localhost
 
@@ -91,6 +354,7 @@
         if harbor_postconfigure_endpoint_result is not skipped
         else 'already exists (ID: ' + harbor_postconfigure_dockerhub_endpoint_id | string + ')'
       }}
+  when: harbor_postconfigure_dockerhub_endpoint_id is defined
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
@@ -125,8 +389,11 @@
     body:
       project_name: "{{ harbor_postconfigure_proxy_project_name }}"
       public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_proxy_project_auto_scan else 'false' }}"
       registry_id: "{{ harbor_postconfigure_dockerhub_endpoint_id | int }}"
     status_code: 201
+  register: harbor_postconfigure_proxy_project_create_result
   when: harbor_postconfigure_proxy_project_exists is not defined
   delegate_to: localhost
 
@@ -206,10 +473,13 @@
     body:
       project_name: "{{ item.name }}"
       public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_proxy_project_auto_scan else 'false' }}"
       registry_id: >-
         {{ (harbor_postconfigure_all_registries_updated.json
             | selectattr('name', 'equalto', item.name) | list | first).id | int }}
     status_code: 201
+  register: harbor_postconfigure_additional_proxy_project_create_result
   loop: "{{ harbor_postconfigure_proxy_registries }}"
   when: >
     harbor_postconfigure_all_projects.json
@@ -220,6 +490,131 @@
   ansible.builtin.debug:
     msg: "Proxy cache registry '{{ item.name }}' ({{ item.url }}) configured"
   loop: "{{ harbor_postconfigure_proxy_registries }}"
+  delegate_to: localhost
+
+- name: Record expected proxy cache project names
+  ansible.builtin.set_fact:
+    harbor_postconfigure_expected_proxy_projects: >-
+      {{
+        [harbor_postconfigure_proxy_project_name]
+        + (harbor_postconfigure_proxy_registries | map(attribute='name') | list)
+      }}
+  delegate_to: localhost
+
+- name: Record proxy cache projects created in this run
+  ansible.builtin.set_fact:
+    harbor_postconfigure_proxy_projects_created: >-
+      {{
+        (
+          [harbor_postconfigure_proxy_project_name]
+          if (
+            harbor_postconfigure_proxy_project_create_result is defined
+            and not (harbor_postconfigure_proxy_project_create_result is skipped)
+          )
+          else []
+        )
+        + (
+          harbor_postconfigure_additional_proxy_project_create_result.results | default([])
+          | selectattr('status', 'defined')
+          | map(attribute='item.name')
+          | list
+        )
+      }}
+  delegate_to: localhost
+
+- name: Read back proxy cache project metadata
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ harbor_postconfigure_expected_proxy_projects }}"
+  register: harbor_postconfigure_proxy_project_details
+  delegate_to: localhost
+
+- name: Record existing proxy cache projects missing auto_scan metadata
+  ansible.builtin.set_fact:
+    harbor_postconfigure_proxy_projects_missing_auto_scan: >-
+      {{
+        harbor_postconfigure_proxy_project_details.results
+        | rejectattr('json.metadata.auto_scan', 'equalto', 'true')
+        | map(attribute='item')
+        | list
+      }}
+  delegate_to: localhost
+
+- name: Warn when existing proxy cache projects are missing auto_scan metadata
+  ansible.builtin.debug:
+    msg: >-
+      Existing Harbor proxy cache projects are missing auto_scan metadata:
+      {{ harbor_postconfigure_proxy_projects_missing_auto_scan | join(', ') }}.
+      Fresh rebuilds will create them correctly, but this existing Harbor instance
+      still needs drift remediation before scan coverage can be trusted.
+  when:
+    - (harbor_postconfigure_proxy_projects_missing_auto_scan | default([]) | length) > 0
+    - (
+        harbor_postconfigure_proxy_projects_missing_auto_scan
+        | difference(harbor_postconfigure_proxy_projects_created | default([]))
+        | length
+      ) > 0
+  delegate_to: localhost
+
+- name: Attempt to reconcile existing proxy cache projects to enable auto_scan
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item.json.project_id }}"
+    method: PUT
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_id: "{{ item.json.project_id }}"
+      project_name: "{{ item.json.name }}"
+      public: true
+      metadata:
+        auto_scan: "true"
+    status_code: 200
+  loop: "{{ harbor_postconfigure_proxy_project_details.results }}"
+  when: >-
+    (item.json.metadata is not defined) or (item.json.metadata.auto_scan is not defined) or (item.json.metadata.auto_scan != 'true')
+  register: harbor_postconfigure_proxy_project_reconcile_results
+  delegate_to: localhost
+
+- name: Re-read proxy cache project metadata after reconciliation
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects/{{ item }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  loop: "{{ harbor_postconfigure_expected_proxy_projects }}"
+  register: harbor_postconfigure_proxy_project_details_after_reconcile
+  delegate_to: localhost
+
+- name: Assert all proxy cache projects expose auto_scan=true after reconcile
+  ansible.builtin.assert:
+    that:
+      - item.json.metadata.auto_scan | default('false') == 'true'
+    fail_msg: >-
+      Harbor proxy cache project '{{ item.item }}' does not expose
+      metadata.auto_scan=true after reconciliation. Manual remediation is
+      required to ensure scan policies are applied consistently.
+  loop: "{{ harbor_postconfigure_proxy_project_details_after_reconcile.results }}"
+  delegate_to: localhost
+
+- name: Assert newly created proxy cache projects enable auto_scan
+  ansible.builtin.assert:
+    that:
+      - item.json.metadata.auto_scan | default('false') == 'true'
+    fail_msg: >-
+      Harbor proxy cache project '{{ item.item }}' was created but does not expose
+      metadata.auto_scan=true on read-back. Fresh rebuild scan coverage will not be
+      reliable until this project metadata converges.
+  loop: "{{ harbor_postconfigure_proxy_project_details.results }}"
+  when: item.item in (harbor_postconfigure_proxy_projects_created | default([]))
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
@@ -270,65 +665,26 @@
   delegate_to: localhost
   no_log: true
 
-- name: Check Bitwarden CLI is available and vault is unlocked
-  ansible.builtin.shell: |
-    command -v bw >/dev/null 2>&1 && bw status 2>/dev/null | grep -q '"status":"unlocked"'
-  register: harbor_postconfigure_bw_check
-  failed_when: false
-  changed_when: false
-  delegate_to: localhost
-  when: harbor_postconfigure_robot_exists is not defined
-
-- name: Save robot credentials to Bitwarden
-  ansible.builtin.shell: |
-    json=$(jq -n \
-      --arg name "{{ harbor_postconfigure_bw_item_name }}" \
-      --arg org  "{{ harbor_postconfigure_bw_org_id }}" \
-      --arg coll "{{ harbor_postconfigure_bw_collection_id }}" \
-      --arg user "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}" \
-      --arg pw   "{{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}" \
-      '{type:1, name:$name, organizationId:$org, collectionIds:[$coll],
-        login:{username:$user, password:$pw}}')
-    existing_id=$(bw list items \
-      --search "{{ harbor_postconfigure_bw_item_name }}" \
-      --organizationid "{{ harbor_postconfigure_bw_org_id }}" 2>/dev/null \
-      | jq -r '.[] | select(.name == "{{ harbor_postconfigure_bw_item_name }}") | .id' \
-      | head -1)
-    if [ -n "$existing_id" ]; then
-      echo "$json" | bw encode | bw edit item "$existing_id" --quiet
-    else
-      echo "$json" | bw encode | bw create item --quiet
-    fi
-  delegate_to: localhost
-  no_log: true
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc == 0
-
-- name: Confirm robot credentials saved to Bitwarden
-  ansible.builtin.debug:
-    msg: "CI robot credentials saved to Bitwarden item '{{ harbor_postconfigure_bw_item_name }}'"
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc == 0
-  delegate_to: localhost
-
-- name: Warn if Bitwarden unavailable — save robot credentials manually
+- name: Display new robot credentials — operator must capture and store in SOPS
   ansible.builtin.debug:
     msg:
       - "================================================================"
-      - "Bitwarden CLI unavailable or vault locked — save manually!"
-      - "Name:   {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('name') }}"
-      - "Secret: {{ harbor_postconfigure_robot_result.get('json', harbor_postconfigure_robot_result).get('secret') }}"
+      - "ACTION REQUIRED: Harbor CI robot account created."
+      - "Copy these credentials and store them in terraform/secrets.enc.yaml"
+      - "(and terraform/secrets.pve.enc.yaml for production) under the keys:"
+      - "  HARBOR_ROBOT_USER  = {{ harbor_postconfigure_robot_result.json.name }}"
+      - "  HARBOR_ROBOT_PASSWORD = <secret shown below>"
+      - "Secret: {{ harbor_postconfigure_robot_result.json.secret }}"
+      - "This is the only time the secret is shown. It cannot be retrieved later."
       - "================================================================"
-  when:
-    - harbor_postconfigure_robot_exists is not defined
-    - harbor_postconfigure_bw_check.rc != 0
+  when: harbor_postconfigure_robot_exists is not defined
   delegate_to: localhost
 
 - name: Display robot already exists notice
   ansible.builtin.debug:
-    msg: "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists — credentials are in Bitwarden"
+    msg:
+      - "CI robot account 'robot${{ harbor_postconfigure_robot_name }}' already exists."
+      - "Credentials were captured at initial creation and stored in SOPS."
   when: harbor_postconfigure_robot_exists is defined
   delegate_to: localhost
 
@@ -336,43 +692,110 @@
 # Vulnerability scanning (Trivy)
 # -----------------------------------------------------------------------
 
-- name: Enable scan on push
+- name: Configure Harbor nightly full scan schedule
   ansible.builtin.uri:
-    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/configurations"
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/system/scanAll/schedule"
     method: PUT
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
     force_basic_auth: true
     body_format: json
     body:
-      scan_all_policy:
-        type: "schedule"
-        parameter:
-          schedule:
-            type: "Custom"
-            cron: "{{ harbor_postconfigure_scan_schedule }}"
-      scan_on_push_enabled: "{{ harbor_postconfigure_scan_on_push }}"
-    status_code: 200
+      schedule:
+        type: "Custom"
+        cron: "{{ harbor_postconfigure_scan_schedule }}"
+    status_code: [200, 201]
+  register: harbor_postconfigure_scan_schedule_write
   delegate_to: localhost
 
-- name: Trigger immediate full scan of all cached artifacts
+- name: Read back Harbor nightly full scan schedule
   ansible.builtin.uri:
     url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/system/scanAll/schedule"
-    method: POST
+    method: GET
     url_username: "{{ harbor_postconfigure_admin_user }}"
     url_password: "{{ harbor_postconfigure_admin_password }}"
     force_basic_auth: true
-    body_format: json
-    body:
-      schedule:
-        type: "Manual"
-    status_code: [200, 201, 409]
-  register: harbor_postconfigure_scan_result
+    return_content: true
+    status_code: 200
+  register: harbor_postconfigure_scan_schedule_readback
   delegate_to: localhost
 
-- name: Display scan status
+- name: Assert Harbor nightly full scan schedule persisted
+  ansible.builtin.assert:
+    that:
+      - harbor_postconfigure_scan_schedule_readback.content | trim | length > 0
+      - harbor_postconfigure_scan_schedule_readback.content is search(harbor_postconfigure_scan_schedule)
+    fail_msg: >-
+      Harbor accepted the scan schedule write but did not read back the expected
+      cron '{{ harbor_postconfigure_scan_schedule }}'. Do not trust rebuild scan
+      policy convergence until this is fixed.
+  delegate_to: localhost
+
+- name: Run Harbor cached-artifact scan smoke check
+  ansible.builtin.command:
+    argv: >-
+      {{
+        [
+          'python3',
+          role_path ~ '/files/harbor_scan_smoke.py',
+          '--base-url',
+          'http://' ~ harbor_postconfigure_host ~ ':' ~ (harbor_postconfigure_port | string),
+          '--registry-url',
+          harbor_postconfigure_verify_scan_smoke_registry_url,
+        ]
+        + (
+          ['--registry-insecure']
+          if harbor_postconfigure_verify_scan_smoke_registry_insecure
+          else []
+        )
+        + [
+          '--username',
+          harbor_postconfigure_admin_user,
+          '--password',
+          harbor_postconfigure_admin_password,
+          '--project',
+          harbor_postconfigure_verify_scan_smoke_project,
+          '--repository',
+          harbor_postconfigure_verify_scan_smoke_repository,
+          '--tag',
+          harbor_postconfigure_verify_scan_smoke_tag,
+          '--timeout-seconds',
+          harbor_postconfigure_verify_scan_smoke_timeout_seconds | string,
+          '--poll-interval-seconds',
+          harbor_postconfigure_verify_scan_smoke_poll_interval_seconds | string,
+        ]
+      }}
+  register: harbor_postconfigure_scan_smoke_result
+  changed_when: false
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+  no_log: true
+
+- name: Record Harbor cached-artifact scan smoke summary
+  ansible.builtin.set_fact:
+    harbor_postconfigure_scan_smoke_summary: "{{ harbor_postconfigure_scan_smoke_result.stdout | from_json }}"
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+  no_log: true
+
+- name: Display Harbor scan status
   ansible.builtin.debug:
-    msg: >-
-      Vulnerability scan triggered (scan-on-push enabled, nightly schedule: {{ harbor_postconfigure_scan_schedule }}).
-      {{ 'Scan already running.' if harbor_postconfigure_scan_result.status == 409 else 'Full scan started.' }}
+    msg:
+      - "Harbor nightly full scan schedule verified at '{{ harbor_postconfigure_scan_schedule }}'."
+      - >-
+        Harbor scan smoke check passed for
+        {{ harbor_postconfigure_scan_smoke_summary.repository }}
+        :{{ harbor_postconfigure_scan_smoke_summary.tag }}
+        after {{ harbor_postconfigure_scan_smoke_summary.elapsed_seconds }}s.
+      - >-
+        Cached manifest {{ harbor_postconfigure_scan_smoke_summary.parent_digest }}
+        produced scan data via {{ harbor_postconfigure_scan_smoke_summary.scan_source }}
+        on digest {{ harbor_postconfigure_scan_smoke_summary.scanned_digest }}.
+  when: harbor_postconfigure_verify_scan_smoke
+  delegate_to: localhost
+
+- name: Display Harbor scan schedule status when smoke verification is disabled
+  ansible.builtin.debug:
+    msg: "Harbor nightly full scan schedule verified at '{{ harbor_postconfigure_scan_schedule }}'."
+  when: not harbor_postconfigure_verify_scan_smoke
   delegate_to: localhost

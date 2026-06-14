@@ -19,6 +19,11 @@
 # Active source of truth for stack-owned edge provisioning refactor:
 #   docs/provisioning-refactor/prompts/index.yaml
 # This file keeps older Phase 04c prompt entries as legacy/superseded context.
+#
+# Post-baseline convergence / hardening prompt pack:
+#   docs/prompts/post-baseline-evolution-pack.md
+# Use that pack for the next wave of documentation convergence, teardown
+# harness hardening, shared stack-contract tidyup, and app-migration replanning.
 
 prompts:
 

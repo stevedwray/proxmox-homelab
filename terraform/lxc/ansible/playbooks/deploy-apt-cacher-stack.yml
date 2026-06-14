@@ -4,7 +4,19 @@
   become: true
   gather_facts: false
 
+  pre_tasks:
+    - name: Apply lxc_base role (DNS, CA trust, node_exporter)
+      ansible.builtin.include_role:
+        name: lxc_base
+
   tasks:
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
     - name: Install apt-cacher-ng
       ansible.builtin.apt:
         name: apt-cacher-ng
@@ -16,6 +28,7 @@
         name: apt-cacher-ng
         enabled: true
         state: started
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Configure PassThroughPattern to allow HTTPS passthrough
       ansible.builtin.lineinfile:
@@ -23,6 +36,7 @@
         regexp: "^#?PassThroughPattern:"
         line: "PassThroughPattern: .*"
       notify: Restart apt-cacher-ng
+      ignore_errors: "{{ ansible_check_mode }}"
 
     - name: Check whether UFW is active
       ansible.builtin.command:
@@ -40,6 +54,13 @@
           - allow
           - "3142/tcp"
       when: "ufw_status.stdout is search('Status: active')"
+
+    - name: Install and configure Promtail
+      ansible.builtin.include_role:
+        name: promtail
+      vars:
+        promtail_loki_url: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}:3100"
+        promtail_stack_name: apt-cacher-stack
 
   handlers:
     - name: Restart apt-cacher-ng

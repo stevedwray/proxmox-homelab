@@ -9,10 +9,10 @@ spec:
       host: netbox.lab.gibbsgreatly.xyz
       backend:
         type: url
-        url: http://10.57.3.12:8080
+        url: http://${LAB_IP_NETBOX}:8080
       dns:
         enabled: true
-        target: 10.57.2.10
+        target: ${LAB_IP_PROXY}
         ttl: 5m
       tls:
         resolver: letsencrypt

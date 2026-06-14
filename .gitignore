@@ -1,16 +1,33 @@
 # Operational cutover evidence snapshots (local only)
 docs/provisioning-refactor/snapshots/
+docs/sessions/evidence/
+docs/**/handoffs/
+docs/**/artifacts/*
+docs/docker-refactor/evidence/
+docs/docker-refactor/reports/
+docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
+docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
+docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
+docs/productionize-refactor/handoffs/*handoff*.md
 # Environment files
 storage-audit
-.env
 .env.local
 *.env
 .env.*
+!.env
+!.env.pve
+!.env.pve-test
+!.env.pve-test-vm
 !.env.template
+!.env.pve-test.template
+!.env.pve-test-vm.template
+!.env.pve.template
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
 *.dec.env
+secrets.dec.*
+terraform/secrets.dec.*
 
 # Terraform
 *.tfstate
@@ -34,6 +51,7 @@ override.tf.json
 
 # Generated Terraform outputs in stack dirs
 **/stacks/*/inventory.yml
+**/stacks/*/inventory.generated.yml
 **/stacks/*/network-*-vars.yml
 terraform/lxc/.generated/
 
@@ -70,6 +88,7 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
+certs/homelab-root.crt
 
 # Logs
 *.log
@@ -78,8 +97,12 @@ cosign.key
 *~
 .scannerwork/
 
-# BMAD GenAI agents and tooling (not committed — sourced from bmad-core)
+# BMAD GenAI tooling (not committed — sourced from bmad-core)
+# .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
-.github/agents/
-.github/skills/
-.github/instructions/
+
+# Local CI artifacts (logs, scan outputs)
+/artifacts/
+.tmp/
+docs/harbor-stack/artifacts
+!docs/harbor-stack/artifacts/.gitkeep

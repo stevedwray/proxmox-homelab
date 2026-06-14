@@ -7,19 +7,18 @@
     network_vnet_firewall_rendered_config: "{{ lookup('template', playbook_dir + '/../templates/vnet-firewall.fw.j2') }}"
 
   tasks:
-    - name: Assert pve-test-only execution
+    - name: Assert non-production execution
       ansible.builtin.assert:
         that:
           - network_vnet_firewall_enable | bool
-          - network_vnet_firewall_target == 'pve-test'
-          - network_vnet_firewall_pve_host == 'pve-test.gibbsgreatly.xyz'
+          - network_vnet_firewall_target != 'pve'
           - network_vnet_firewall_vnet | length > 0
-        fail_msg: "VNet firewall automation is restricted to pve-test and must not run on pve."
-        success_msg: "VNet firewall automation is pinned to pve-test."
+        fail_msg: "VNet firewall automation must not run on production node pve."
+        success_msg: "VNet firewall automation is targeting non-production node: {{ network_vnet_firewall_target }}"
 
-    - name: Read pve-test host firewall options
+    - name: Read Proxmox host firewall options
       ansible.builtin.command:
-        cmd: cat /etc/pve/nodes/pve-test/host.fw
+        cmd: cat /etc/pve/nodes/{{ network_vnet_firewall_target }}/host.fw
       delegate_to: "{{ network_vnet_firewall_pve_host }}"
       vars:
         ansible_user: root
@@ -35,7 +34,7 @@
         fail_msg: >-
           VNet firewall enforcement requires the host-level nftables-backed
           Proxmox firewall to be enabled first. Apply
-          ansible/00-initial-setup/proxmox-initial-setup.yml on pve-test with
+          ansible/00-initial-setup/proxmox-initial-setup.yml on the target node with
           pmx_enable_nftables_firewall=true before running SDN VNet policy
           automation.
         success_msg: "Host-level nftables-backed Proxmox firewall is enabled."
@@ -60,7 +59,7 @@
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       changed_when: true
 
-    - name: Write VNet firewall config on pve-test
+    - name: Write VNet firewall config on Proxmox host
       ansible.builtin.shell: |
         cat > /etc/pve/sdn/firewall/{{ network_vnet_firewall_vnet }}.fw <<'EOF'
         {{ network_vnet_firewall_rendered_config }}
@@ -75,7 +74,7 @@
         ansible_ssh_common_args: '-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
       changed_when: true
 
-    - name: Validate Proxmox firewall compilation on pve-test
+    - name: Validate Proxmox firewall compilation on Proxmox host
       ansible.builtin.command:
         cmd: /usr/libexec/proxmox/proxmox-firewall compile
       delegate_to: "{{ network_vnet_firewall_pve_host }}"

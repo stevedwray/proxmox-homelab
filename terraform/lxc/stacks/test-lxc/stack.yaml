@@ -1,8 +1,10 @@
 # Test LXC container — Debian 13 with Docker, no app stack
 hostname: test-lxc
 ip_address: "192.168.1.51/24"
+dns_server: "192.168.1.1"
 vmid: 130
 cores: 2
 memory: 2048
 rootfs_size: 8
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
+storage_profile: platform-default
+template_name: "debian-13.1-2-docker-template.tar.gz"

@@ -9,6 +9,9 @@
   become: true
   gather_facts: true
 
+  vars:
+    pve_terraform_user: "{{ lookup('env', 'PROXMOX_USER') | default('automation@pve', true) }}"
+
   tasks:
     # Phase 1: System Information
     - name: Display Proxmox system information
@@ -84,7 +87,7 @@
         set -o pipefail
         pveum user list --output-format json | python3 -c \
           "import sys, json; users = json.load(sys.stdin); \
-          print('exists' if any(u['userid'] == 'automation@pve' for u in users) else 'missing')"
+          print('exists' if any(u['userid'] == '{{ pve_terraform_user }}' for u in users) else 'missing')"
       register: pve_user_check
       failed_when: false
       changed_when: false
@@ -92,7 +95,7 @@
     - name: Check if Terraform API token exists
       ansible.builtin.shell: |
         set -o pipefail
-        pveum user token list automation@pve --output-format json 2>/dev/null \
+        pveum user token list {{ pve_terraform_user }} --output-format json 2>/dev/null \
           | python3 -c \
           "import sys, json; tokens = json.load(sys.stdin); \
           print('exists' if any(t['tokenid'] == 'terraform' for t in tokens) else 'missing')" \
@@ -138,7 +141,7 @@
             + ([] if (pending_upgrades.stdout | int) == 0
                 else ['INFO: ' + pending_upgrades.stdout + ' package(s) pending upgrade'])
             + ([] if pve_user_check.stdout == 'exists'
-                else ['WARN: PVE user automation@pve not found'])
+              else ['WARN: PVE user ' + pve_terraform_user + ' not found'])
             + ([] if terraform_token_check.stdout == 'exists'
                 else ['INFO: Terraform API token not found (run proxmox-initial-setup.yml)'])
             + ([] if subscription_nag_status.stdout == 'removed'
@@ -164,7 +167,7 @@
           - "  Pending upgrades: {{ pending_upgrades.stdout }} package(s)"
           - ""
           - "PVE User Configuration:"
-          - "  PVE user 'automation@pve': {{ pve_user_check.stdout | default('unknown') }}"
+          - "  PVE user '{{ pve_terraform_user }}': {{ pve_user_check.stdout | default('unknown') }}"
           - "  Terraform API token: {{ terraform_token_check.stdout | default('unknown') }}"
           - ""
           - "Security Configuration:"

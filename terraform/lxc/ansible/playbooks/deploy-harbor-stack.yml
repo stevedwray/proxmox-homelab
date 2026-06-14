@@ -1,29 +1,52 @@
 # Harbor registry stack — full deployment playbook.
-# Play 1: Docker base + Portainer agent (standard)
-# Play 2: Register endpoint with Portainer (visibility only; Harbor manages its own compose)
-# Play 3: Download, configure, and start Harbor via harbor_installer role
-# Play 4: Post-install configuration via Harbor API (proxy cache, robot account)
+# Play 1: Docker base configuration
+# Play 2: Download, configure, and start Harbor via harbor_installer role
+# Play 3: Ensure Harbor's Authentik OIDC client exists
+# Play 4: Post-install configuration via Harbor API (proxy cache, robot account, OIDC)
 
 ---
-- name: Configure Docker base and Portainer Agent
+- name: Configure Docker base
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
+    harbor_docker_daemon_config:
+      dns:
+        - "{{ harbor_lab_ip_dns }}"
+      log-driver: json-file
+      log-opts:
+        max-size: 10m
+        max-file: "3"
+      storage-driver: overlay2
   roles:
     - lxc_base
     - docker_base
-    - portainer_agent
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
+  tasks:
+    - name: Normalize Docker daemon DNS for Harbor runtime
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: "{{ harbor_docker_daemon_config | to_nice_json }}\n"
+      notify: Restart Docker
 
-- name: Register endpoint with Portainer
-  hosts: all
-  become: false
-  gather_facts: false
-  vars:
-    portainer_api_server_ip: "{{ portainer_server_ip }}"
-    portainer_api_endpoint_name: "{{ inventory_hostname }}"
-    portainer_api_agent_ip: "{{ ansible_host }}"
-  roles:
-    - portainer_api
+    - name: Flush handlers to apply Docker daemon config before Harbor install
+      ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
 
 - name: Install and start Harbor
   hosts: all
@@ -31,14 +54,175 @@
   gather_facts: false
   vars:
     harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
+    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('https://' ~ harbor_installer_hostname, true) }}"
   roles:
     - harbor_installer
 
-- name: Configure Harbor (proxy cache, robot account)
+- name: Configure Harbor (proxy cache, robot account, OIDC)
   hosts: all
   become: false
   gather_facts: false
   vars:
+    harbor_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    harbor_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ harbor_lab_domain, true) }}"
+    harbor_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ harbor_lab_domain, true) }}"
     harbor_postconfigure_host: "{{ ansible_host }}"
+    harbor_postconfigure_oidc_enabled: "{{ lookup('env', 'HARBOR_OIDC_ENABLED') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_name: "{{ lookup('env', 'HARBOR_OIDC_PROVIDER_NAME') | default('authentik', true) }}"
+    harbor_postconfigure_oidc_endpoint: "{{ lookup('env', 'HARBOR_OIDC_ENDPOINT') | default('https://' ~ harbor_lab_fqdn_authentik ~ '/application/o/edge-harbor-stack-harbor/', true) }}"
+    harbor_postconfigure_oidc_client_id: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_ID') | default('harbor', true) }}"
+    harbor_postconfigure_oidc_client_secret: "{{ lookup('env', 'HARBOR_OIDC_CLIENT_SECRET') | default('', true) }}"
+    harbor_postconfigure_oidc_groups_claim: "{{ lookup('env', 'HARBOR_OIDC_GROUPS_CLAIM') | default('groups', true) }}"
+    harbor_postconfigure_oidc_admin_group: "{{ lookup('env', 'HARBOR_OIDC_ADMIN_GROUP') | default('homelab-admins', true) }}"
+    harbor_postconfigure_oidc_group_filter: "{{ lookup('env', 'HARBOR_OIDC_GROUP_FILTER') | default('^homelab-.*|^harbor-.*', true) }}"
+    harbor_postconfigure_oidc_scope: "{{ lookup('env', 'HARBOR_OIDC_SCOPE') | default('openid,profile,email,offline_access,groups', true) }}"
+    harbor_postconfigure_oidc_user_claim: "{{ lookup('env', 'HARBOR_OIDC_USER_CLAIM') | default('preferred_username', true) }}"
+    harbor_postconfigure_oidc_verify_cert: "{{ lookup('env', 'HARBOR_OIDC_VERIFY_CERT') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_auto_onboard: "{{ lookup('env', 'HARBOR_OIDC_AUTO_ONBOARD') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_logout: "{{ lookup('env', 'HARBOR_OIDC_LOGOUT') | default('true', true) | bool }}"
+    harbor_postconfigure_oidc_primary_auth_mode: "{{ lookup('env', 'HARBOR_OIDC_PRIMARY_AUTH_MODE') | default('false', true) | bool }}"
+    harbor_postconfigure_breakglass_username: "{{ lookup('env', 'HARBOR_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
+    harbor_postconfigure_breakglass_password: "{{ lookup('env', 'BREAKGLASS_PASSWORD') | default(lookup('env', 'HARBOR_ADMIN_PASSWORD'), true) }}"
+    # Fresh installs need longer: Trivy DB loads cold, proxy pull is first-time.
+    # 180s default is too tight; 600s covers the worst-case cold start.
+    harbor_postconfigure_verify_scan_smoke_timeout_seconds: 600
+  pre_tasks:
+    - name: Enforce readable Harbor OIDC username claim
+      ansible.builtin.assert:
+        that:
+          - harbor_postconfigure_oidc_user_claim == 'preferred_username'
+        fail_msg: >-
+          Harbor OIDC user claim must be 'preferred_username' to avoid opaque
+          hash-style Harbor usernames from the 'sub' claim.
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
+    - name: Check Authentik health endpoint reachability for Harbor OIDC reconcile
+      ansible.builtin.uri:
+        url: "https://{{ harbor_lab_fqdn_authentik_internal }}:9443/-/health/live/"
+        method: GET
+        status_code: 200
+        validate_certs: false
+      register: harbor_authentik_health
+      # Retry briefly to allow Authentik to finish coming up during deploy.
+      # This reduces false deferral of Harbor OIDC configuration when Authentik
+      # is expected to be deployed earlier in the sequence but is still
+      # initializing at the moment the check runs.
+      retries: 18
+      delay: 10
+      until: harbor_authentik_health.status == 200
+      changed_when: false
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
+    - name: Skip Harbor Authentik OIDC reconcile when Authentik is unavailable
+      ansible.builtin.debug:
+        msg: "Skipping Harbor Authentik OIDC reconcile because Authentik is not reachable yet; reconcile will run in a later phase."
+      when:
+        - harbor_postconfigure_oidc_enabled
+        - (harbor_authentik_health.status | default(0)) != 200
+      delegate_to: localhost
+      run_once: true
+
+    - name: Reconcile Harbor Authentik OIDC client
+      ansible.builtin.command:
+        # Keep API reconcile on internal direct-TLS endpoint for controller paths
+        argv:
+          - python3
+          - "{{ playbook_dir }}/../../reconcile-authentik-edge.py"
+          - "{{ playbook_dir }}/../../stacks/harbor-stack/edge.yaml"
+          - --authentik-url
+          - "https://{{ harbor_lab_fqdn_authentik_internal }}:9443"
+          - --no-verify-tls
+          - --apply
+          - --json
+      register: harbor_authentik_reconcile
+      changed_when: "harbor_authentik_reconcile.stdout is not search('\\\"write_count\\\": 0')"
+      when:
+        - harbor_postconfigure_oidc_enabled
+        - (harbor_authentik_health.status | default(0)) == 200
+      delegate_to: localhost
+      run_once: true
+
+    - name: Determine Harbor OIDC readiness for this run
+      ansible.builtin.set_fact:
+        harbor_postconfigure_oidc_ready: >-
+          {{
+            (harbor_postconfigure_oidc_enabled | bool)
+            and ((harbor_authentik_health.status | default(0)) == 200)
+            and (harbor_authentik_reconcile is defined)
+            and not (harbor_authentik_reconcile is skipped)
+            and ((harbor_authentik_reconcile.rc | default(0)) == 0)
+          }}
+      when: harbor_postconfigure_oidc_enabled
+      delegate_to: localhost
+      run_once: true
+
+    - name: Defer Harbor OIDC config until Authentik reconcile succeeds
+      ansible.builtin.debug:
+        msg: >-
+          Harbor OIDC was requested but Authentik client reconcile did not run
+          successfully in this pass, so Harbor OIDC config is deferred to keep
+          Harbor out of a partial OIDC state.
+      when:
+        - harbor_postconfigure_oidc_enabled
+        - not (harbor_postconfigure_oidc_ready | default(false) | bool)
+      delegate_to: localhost
+      run_once: true
   roles:
-    - harbor_postconfigure
+    - role: harbor_postconfigure
+      vars:
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+        harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"
+
+- name: Deploy cAdvisor for container metrics on Harbor host
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    harbor_cadvisor_compose_dir: /opt/harbor-cadvisor
+    harbor_cadvisor_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host or LAB_IP_HARBOR is required') }}"
+
+  tasks:
+    - name: Create cAdvisor compose directory
+      ansible.builtin.file:
+        path: "{{ harbor_cadvisor_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write cAdvisor compose definition
+      ansible.builtin.copy:
+        dest: "{{ harbor_cadvisor_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cadvisor:
+              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+
+    - name: Deploy cAdvisor via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ harbor_cadvisor_compose_dir }}"
+        state: present
+
+- name: Install and configure Promtail on Harbor host
+  hosts: all
+  gather_facts: false
+  vars:
+    lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+  roles:
+    - role: promtail
+      vars:
+        promtail_loki_url: "{{ lab_ip_monitoring }}:3100"
+        promtail_stack_name: harbor-stack

@@ -1,14 +1,33 @@
 # Workflow Instructions
 
+## Branch Model
+
+```
+feat/* / fix/* / task/* / work/*   ← active development (temporary)
+       ↓  teardown + redeploy validated
+baseline/teardown-validated        ← known-good state
+       ↓  stable and tested
+main
+```
+
+| Branch | Meaning | Promotion gate |
+|---|---|---|
+| `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
+
+`dev/pve-test` is retired (archival only — do not use as a PR target).
+
+Do not develop directly in `baseline/teardown-validated`. All active work happens on short-lived `feat/`, `fix/`, `task/`, or `work/*` branches cut from the current working HEAD.
+Promotion merges into `baseline/teardown-validated` require the teardown gate to have been satisfied.
+If the operator explicitly names a merge target, use that exact target and do not silently retarget.
+
 ## Branching
 
-- `dev/pve-test` is the long-running integration branch tracking the test server state
-- Cut short-lived branches from `dev/pve-test` (e.g. `fix/terraform-fmt`, `feat/harbor-deployment`)
-- Validate changes in the short-lived branch (tests pass, playbook runs clean) before merging, if issues are encountered in validation stop and offer options.
-- Merge short-lived branches → `dev/pve-test`, not `main`
-- PR `dev/pve-test` → `main` only when stable and tested on the test server
-- After merging to `main`, pull `main` back into `dev/pve-test` to stay in sync
-- Never PR directly to `main` unless already on `dev/pve-test` and tested
+- All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
+- Validate on the short-lived branch (live runs, tests, populate checks).
+- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms the branch is known-good.
+- `baseline/teardown-validated` is a **promotion target only** — never use it as the base for a new development branch.
+- If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
+- PR `baseline/teardown-validated` → `main` only when stable and tested.
 
 ## Commits and Issues
 

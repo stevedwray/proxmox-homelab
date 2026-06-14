@@ -2,13 +2,18 @@
 hostname: net-app-01
 ip_address: "192.168.1.71/24"
 gateway: "192.168.1.1"
+dns_server: "192.168.1.1"
 vmid: 134
 cores: 1
 memory: 512
 rootfs_size: 4
-rootfs_storage: "storage-containers"
+storage_profile: validation-small
 docker_storage_size: "4G"
-ostemplate: "storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz"
-
-network:
-  zone: apps
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "4G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"

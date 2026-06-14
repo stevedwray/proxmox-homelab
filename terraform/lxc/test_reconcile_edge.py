@@ -19,10 +19,29 @@ SPEC = importlib.util.spec_from_file_location("reconcile_edge", MODULE_PATH)
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+import os  # noqa: E402
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 
 class TestReconcileEdge(unittest.TestCase):
+    def test_import_tolerates_missing_lab_ip_dns(self):
+        spec = importlib.util.spec_from_file_location("reconcile_edge_missing_dns", MODULE_PATH)
+        module = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+
+        previous_dns = os.environ.pop("LAB_IP_DNS", None)
+        try:
+            sys.modules[spec.name] = module
+            spec.loader.exec_module(module)
+        finally:
+            if previous_dns is not None:
+                os.environ["LAB_IP_DNS"] = previous_dns
+            sys.modules.pop(spec.name, None)
+
+        args = module.parse_args([])
+        self.assertEqual("", args.coredns_probe_server)
+
     def test_parse_args_defaults_to_dry_run(self):
         args = MODULE.parse_args([])
         self.assertFalse(args.apply)
@@ -99,6 +118,36 @@ class TestReconcileEdge(unittest.TestCase):
         self.assertEqual("passed", result["status"])
         self.assertEqual("passed", result["traefik"]["status"])
         self.assertEqual([], result["issues"])
+
+        def test_oidc_manifest_requires_authentik(self):
+                with tempfile.TemporaryDirectory() as tmpdir:
+                        manifest = Path(tmpdir) / "harbor.yaml"
+                        manifest.write_text(
+                                """apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+    name: harbor-edge
+    stack: harbor-stack
+spec:
+    routes:
+        - name: harbor
+            host: harbor.lab.gibbsgreatly.xyz
+            backend:
+                type: url
+                url: http://10.57.3.10
+            dns:
+                enabled: true
+                target: 10.57.2.10
+                ttl: 5m
+            tls:
+                resolver: letsencrypt
+            auth:
+                mode: oidc
+""",
+                                encoding="utf-8",
+                        )
+
+                        self.assertTrue(MODULE._manifest_requires_authentik(manifest))
 
 
 if __name__ == "__main__":

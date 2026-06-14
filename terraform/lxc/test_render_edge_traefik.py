@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+import os
 
 import yaml
 
@@ -18,6 +19,7 @@ SPEC = importlib.util.spec_from_file_location("render_edge_traefik", RENDER_MODU
 MODULE = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = MODULE
+os.environ["LAB_IP_PROXY"] = "10.57.2.10"
 SPEC.loader.exec_module(MODULE)
 
 render_traefik_dry_run = MODULE.render_traefik_dry_run

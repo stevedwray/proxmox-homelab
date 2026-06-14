@@ -31,6 +31,21 @@ SERVICES=(
 )
 
 STACK_DIR="terraform/lxc/stacks"
+LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .env}"
+LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
+LAB_IP_MONITORING="${LAB_IP_MONITORING:?LAB_IP_MONITORING must be set in .env}"
+AUTHENTIK_PORT="${AUTHENTIK_PORT:-9443}"
+AUTHENTIK_LIVE_PATH="${AUTHENTIK_LIVE_PATH:-/-/health/live/}"
+AUTHENTIK_LIVE_URL="${AUTHENTIK_LIVE_URL:-https://authentik-int.${LAB_DOMAIN}:${AUTHENTIK_PORT}${AUTHENTIK_LIVE_PATH}}"
+STEP_CA_ACME_PATH_PREFIX="${STEP_CA_ACME_PATH_PREFIX:-/acme}"
+STEP_CA_ACME_DIRECTORY_PATH="${STEP_CA_ACME_DIRECTORY_PATH:-${STEP_CA_ACME_PATH_PREFIX}/acme/directory}"
+STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB_IP_STEP_CA}${STEP_CA_ACME_DIRECTORY_PATH}}"
+MONITORING_PORT="${MONITORING_PORT:-8428}"
+MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
+MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
+TARGET_NODE_EXPECTED="${PHASE04_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+ENV_OVERRIDE_FILE="${PHASE04_ENV_OVERRIDE_FILE:-.env.pve-test}"
 
 # Functions
 log_info() {
@@ -59,15 +74,15 @@ check_env() {
 
   # shellcheck disable=SC1091
   source .env
-  if [ -f ".env.pve-test" ]; then
-    # shellcheck disable=SC1091
-    source .env.pve-test
+  if [ -f "$ENV_OVERRIDE_FILE" ]; then
+    # shellcheck disable=SC1090,SC1091  # non-constant source path; file checked before sourcing
+    source "$ENV_OVERRIDE_FILE"
   fi
 
   : "${TF_VAR_proxmox_node:=}"
 
-  if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
-    log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"
+  if [ "$TF_VAR_proxmox_node" != "$TARGET_NODE_EXPECTED" ]; then
+    log_error "Target node is $TF_VAR_proxmox_node, expected $TARGET_NODE_EXPECTED"
     return 1
   fi
 
@@ -137,8 +152,7 @@ validate_service() {
   case "$service" in
     "authentik-stack")
       # Check health endpoints
-      local ip="10.57.1.10"
-      if curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; then
+      if curl -sf "$AUTHENTIK_LIVE_URL" > /dev/null 2>&1; then
         log_success "Authentik live health check passed"
       else
         log_error "Authentik live health check failed (expected - wait for startup)"
@@ -148,15 +162,18 @@ validate_service() {
       log_info "Traefik validation - check dashboard accessibility"
       ;;
     "step-ca-stack")
-      local ip="10.57.1.11"
-      if curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q "nonce-url"; then
+      if curl -sk "$STEP_CA_ACME_DIRECTORY_URL" 2>&1 | grep -q "nonce-url"; then
         log_success "step-ca ACME directory accessible"
       else
         log_error "step-ca ACME directory not yet accessible (expected - wait for startup)"
       fi
       ;;
     "monitoring-stack")
-      log_info "Monitoring validation - check container startup"
+      if curl -sf "$MONITORING_TARGETS_URL" 2>/dev/null | grep -q "activeTargets"; then
+        log_success "VictoriaMetrics responding"
+      else
+        log_info "Monitoring validation - check container startup at $LAB_IP_MONITORING"
+      fi
       ;;
   esac
 }

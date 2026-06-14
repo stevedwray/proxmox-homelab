@@ -21,19 +21,17 @@
 # Backward-compatible fallback:
 #   MIKROTIK_USER / MIKROTIK_PASSWORD
 #
-# After running this playbook, the following dig checks must pass from the operator workstation:
-#   dig @10.57.0.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
-#   dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
-#   dig @10.57.2.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
-#   dig @10.57.3.1 +short traefik.lab.gibbsgreatly.xyz  # expect 10.57.2.10
-#   dig @10.57.1.1 +short github.com                    # expect public IP (non-delegated path)
+# After running this playbook, delegated queries should resolve via the configured LAB_GW_* resolvers,
+# and public recursion should still succeed through the configured management resolver.
 
 - name: Apply lab.gibbsgreatly.xyz DNS baseline records to MikroTik
   hosts: localhost
   gather_facts: false
 
   vars:
-    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | default('192.168.1.1', true) }}"
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_fqdn_traefik: "{{ lookup('env', 'LAB_FQDN_TRAEFIK') | default('traefik.' ~ lab_domain, true) }}"
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
     mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
     mikrotik_user: >-
       {{
@@ -50,26 +48,26 @@
     # Lab zone baseline records — Phase 1: static A records per platform name.
     # Add new platform names here; remove entries and switch to FWD in Phase 2.
     lab_zone_records:
-      - name: "traefik.lab.gibbsgreatly.xyz"
-        address: "10.57.2.10"
+      - name: "{{ lab_fqdn_traefik }}"
+        address: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
         comment: "lab-zone-baseline"
 
     # Validation targets
     delegated_probes:
-      - resolver: "10.57.0.1"
-        name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.1.1"
-        name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.2.1"
-        name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
-      - resolver: "10.57.3.1"
-        name: "traefik.lab.gibbsgreatly.xyz"
-        expected: "10.57.2.10"
+      - resolver: "{{ lookup('env', 'LAB_GW_BUILD') | mandatory('LAB_GW_BUILD env var is required') }}"
+        name: "{{ lab_fqdn_traefik }}"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
+        name: "{{ lab_fqdn_traefik }}"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_EDGE') | mandatory('LAB_GW_EDGE env var is required') }}"
+        name: "{{ lab_fqdn_traefik }}"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
+      - resolver: "{{ lookup('env', 'LAB_GW_INFRA') | mandatory('LAB_GW_INFRA env var is required') }}"
+        name: "{{ lab_fqdn_traefik }}"
+        expected: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}"
 
-    public_probe_resolver: "10.57.1.1"
+    public_probe_resolver: "{{ lookup('env', 'LAB_GW_MGMT') | mandatory('LAB_GW_MGMT env var is required') }}"
     public_probe_name: "github.com"
 
   pre_tasks:
@@ -199,10 +197,10 @@
       ansible.builtin.debug:
         msg:
           - "=== DNS delegation baseline validation ==="
-          - "Delegated (lab.gibbsgreatly.xyz):"
-          - "  @10.57.0.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[0].stdout | trim }}"
-          - "  @10.57.1.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[1].stdout | trim }}"
-          - "  @10.57.2.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[2].stdout | trim }}"
-          - "  @10.57.3.1 traefik.lab.gibbsgreatly.xyz = {{ delegated_results.results[3].stdout | trim }}"
+          - "Delegated ({{ lab_domain }}):"
+          - "  @{{ delegated_probes[0].resolver }} {{ delegated_probes[0].name }} = {{ delegated_results.results[0].stdout | trim }}"
+          - "  @{{ delegated_probes[1].resolver }} {{ delegated_probes[1].name }} = {{ delegated_results.results[1].stdout | trim }}"
+          - "  @{{ delegated_probes[2].resolver }} {{ delegated_probes[2].name }} = {{ delegated_results.results[2].stdout | trim }}"
+          - "  @{{ delegated_probes[3].resolver }} {{ delegated_probes[3].name }} = {{ delegated_results.results[3].stdout | trim }}"
           - "Non-delegated (public probe):"
-          - "  @10.57.1.1 github.com = {{ public_probe_result.stdout | trim }}"
+          - "  @{{ public_probe_resolver }} {{ public_probe_name }} = {{ public_probe_result.stdout | trim }}"

@@ -21,7 +21,7 @@ Phase 06 — Application Stack Migration
 
 ## Objective
 
-Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, the media library NFS mount is accessible, hardware transcoding is working (if applicable), Jellyfin is accessible externally at `jellyfin.gibbsgreatly.xyz` via Traefik, and the old container is destroyed.
+Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, the media library NFS mount is accessible, hardware transcoding is working (if applicable), Jellyfin is accessible externally at `jellyfin.lab.gibbsgreatly.xyz` via Traefik, and the old container is destroyed.
 
 ## Scope
 
@@ -55,7 +55,7 @@ Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, t
 ## Constraints and Conventions
 
 - Image via Harbor: `10.57.3.10/homelab/apps/jellyfin:<pin>`
-- `stack.yaml`: VMID 162, IP `10.60.0.21/24`, `gateway: 10.60.0.1`, `cores: 4`, `memory: 4096`, `docker_storage_size: "10G"`
+- `stack.yaml`: VMID 162, IP `10.60.0.21/24`, `gateway: 10.60.0.1`, `dns_server: 10.60.0.1`, `network.zone: app_seg`, `cores: 4`, `memory: 4096`, `docker_storage_size: "10G"`
 - GPU passthrough (LXC config additions) cannot be set via the standard Terraform LXC resource — use SSH via a Terraform `null_resource` or add it after `terragrunt apply` via Ansible
 - GPU passthrough lines for Proxmox LXC conf: `lxc.cgroup2.devices.allow: c 226:* rwm` and `lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir`
 - Traefik route: `jellyfin.gibbsgreatly.xyz` on the `websecure` entrypoint; Jellyfin has its own auth — Authentik middleware optional
@@ -67,9 +67,9 @@ Jellyfin is running in a new LXC (`jellyfin-stack`, VMID 162) at `10.60.0.21`, t
 - [ ] NFS media library mount accessible inside LXC at `/media`
 - [ ] Jellyfin admin UI accessible at `http://10.60.0.21:8096`
 - [ ] Hardware transcoding working (if applicable — verify via Jellyfin → Dashboard → Devices)
-- [ ] `https://jellyfin.gibbsgreatly.xyz` accessible via Traefik with valid TLS cert
+- [ ] `https://jellyfin.lab.gibbsgreatly.xyz` accessible via Traefik with valid TLS cert
 - [ ] Old Jellyfin container snapshotted and destroyed
-- [ ] NetBox updated; branch merged to `dev/pve-test`
+- [ ] NetBox updated; branch merged to `baseline/teardown-validated`
 
 ## Session Prompt
 
@@ -97,7 +97,7 @@ STEP 3 — Snapshot old container:
   ssh root@<proxmox-host> "pct snapshot <old-vmid> pre-migration-$(date +%Y%m%d)"
 
 STEP 4 — Create branch:
-  git checkout dev/pve-test && git pull
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
   git checkout -b feat/jellyfin-stack
 
 STEP 5 — Create stack files:
@@ -110,7 +110,7 @@ STEP 6 — Create Ansible playbook terraform/lxc/ansible/playbooks/deploy-jellyf
   - Mount /media (NAS NFS) and /opt/jellyfin-stack/config:/config
   - Traefik labels:
       traefik.enable: "true"
-      traefik.http.routers.jellyfin.rule: "Host(`jellyfin.gibbsgreatly.xyz`)"
+      traefik.http.routers.jellyfin.rule: "Host(`jellyfin.lab.gibbsgreatly.xyz`)"
       traefik.http.routers.jellyfin.entrypoints: "websecure"
       traefik.http.routers.jellyfin.tls.certresolver: "step-ca"
   - Restore jellyfin-config.tar.gz to /opt/jellyfin-stack/config/
@@ -139,7 +139,7 @@ STEP 8 — Validate:
   # Test hardware transcoding: start video playback and check transcoding mode in dashboard
 
 STEP 9 — Verify external access:
-  curl -sk https://jellyfin.gibbsgreatly.xyz   # Via Traefik
+  curl -sk https://jellyfin.lab.gibbsgreatly.xyz   # Via Traefik
 
 STEP 10 — Once verified, destroy old container:
   ssh root@<proxmox-host> "pct stop <old-vmid> && pct destroy <old-vmid>"
@@ -148,8 +148,9 @@ STEP 11 — Commit and merge:
   git add terraform/lxc/stacks/jellyfin-stack/ \
           terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml
   git commit -m "feat(jellyfin): migrate Jellyfin to new LXC stack (VMID 162, 10.60.0.21)"
-  git checkout dev/pve-test && git merge feat/jellyfin-stack
-  git push origin dev/pve-test
+  git checkout baseline/teardown-validated && git pull --ff-only origin baseline/teardown-validated
+  git merge feat/jellyfin-stack
+  git push origin baseline/teardown-validated
 
 DONE WHEN: Jellyfin accessible internally and at jellyfin.gibbsgreatly.xyz, hardware transcoding
 confirmed, media library loaded, old container destroyed.

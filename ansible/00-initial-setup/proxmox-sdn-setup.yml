@@ -1,13 +1,19 @@
 ---
-- name: Configure Proxmox SDN VLAN zones for pve-test
+- name: Configure Proxmox SDN VLAN zones
   hosts: "{{ target_hosts | default('proxmox_testbed') }}"
   become: true
   gather_facts: true
 
-  vars_files:
-    - ../../terraform/lxc/network/pve-test.yaml
-
   vars:
+    # Subnet/gateway per VNet, resolved from env at task time (avoids ${} legacy var issue)
+    sdn_subnet_tvinfra: "{{ lookup('env', 'lab_subnet_infra_cidr') }}"
+    sdn_gw_tvinfra: "{{ lookup('env', 'lab_gw_infra') }}"
+    sdn_subnet_tvmgmt: "{{ lookup('env', 'lab_subnet_mgmt_cidr') }}"
+    sdn_gw_tvmgmt: "{{ lookup('env', 'lab_gw_mgmt') }}"
+    sdn_subnet_tvedge: "{{ lookup('env', 'lab_subnet_edge_cidr') }}"
+    sdn_gw_tvedge: "{{ lookup('env', 'lab_gw_edge') }}"
+    sdn_subnet_tvnetc: "{{ lookup('env', 'lab_subnet_build_cidr') }}"
+    sdn_gw_tvnetc: "{{ lookup('env', 'lab_gw_build') }}"
     proxmox_sdn_attachments: >-
       {{
         attachments
@@ -17,15 +23,32 @@
       }}
 
   tasks:
-    - name: Assert pve-test VLAN SDN source of truth
+    - name: Load network intent for target environment
+      ansible.builtin.include_vars:
+        file: "../../terraform/lxc/network/{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}.yaml"
+
+    - name: Inject resolved subnet and gateway into SDN attachments
+      ansible.builtin.set_fact:
+        proxmox_sdn_attachments: >-
+          {%- set ns = namespace(result=[]) -%}
+          {%- for item in proxmox_sdn_attachments -%}
+            {%- set vnet = item.value.sdn.vnet -%}
+            {%- set subnet = lookup('vars', 'sdn_subnet_' + vnet) -%}
+            {%- set gateway = lookup('vars', 'sdn_gw_' + vnet) -%}
+            {%- set new_item = item | combine({'value': item.value | combine({'sdn': item.value.sdn | combine({'subnet': subnet, 'gateway': gateway})})}, recursive=True) -%}
+            {%- set _ = ns.result.append(new_item) -%}
+          {%- endfor -%}
+          {{ ns.result }}
+
+    - name: Assert VLAN SDN source of truth matches target node
       ansible.builtin.assert:
         that:
-          - proxmox.target_node == 'pve-test'
+          - proxmox.target_node == (lookup('env', 'TF_VAR_proxmox_node') | default('pve-test', true))
           - proxmox_sdn_attachments | length == 4
           - proxmox_sdn_attachments | map(attribute='value.sdn.zone_type') | unique == ['vlan']
           - proxmox_sdn_attachments | map(attribute='value.sdn.bridge') | unique == ['vmbr0']
-        fail_msg: "The loaded SDN network definition is not the expected pve-test VLAN model."
-        success_msg: "Loaded the pve-test VLAN SDN definition from terraform/lxc/network/pve-test.yaml."
+        fail_msg: "The loaded SDN network definition does not match the expected VLAN model for {{ proxmox.target_node }}."
+        success_msg: "Loaded VLAN SDN definition for {{ proxmox.target_node }} from terraform/lxc/network/{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}.yaml."
 
     - name: Read current SDN zones
       ansible.builtin.command:
@@ -67,7 +90,7 @@
           - current_zone.type == item.value.sdn.zone_type
           - current_zone.bridge == item.value.sdn.bridge
           - (current_zone.nodes | default('')) == (item.value.sdn.nodes | join(','))
-        fail_msg: "Existing SDN zone {{ item.value.sdn.zone }} does not match terraform/lxc/network/pve-test.yaml."
+        fail_msg: "Existing SDN zone {{ item.value.sdn.zone }} does not match the network intent for {{ proxmox.target_node }}."
         success_msg: "Existing SDN zone {{ item.value.sdn.zone }} matches the source of truth."
       vars:
         current_zone: >-
@@ -110,7 +133,7 @@
           - current_vnet.zone == item.value.sdn.zone
           - (current_vnet.tag | string) == (item.value.sdn.vlan_tag | string)
           - (current_vnet.alias | default('')) == item.value.sdn.alias
-        fail_msg: "Existing SDN VNet {{ item.value.sdn.vnet }} does not match terraform/lxc/network/pve-test.yaml."
+        fail_msg: "Existing SDN VNet {{ item.value.sdn.vnet }} does not match the network intent for {{ proxmox.target_node }}."
         success_msg: "Existing SDN VNet {{ item.value.sdn.vnet }} matches the source of truth."
       vars:
         current_vnet: >-
@@ -131,6 +154,18 @@
       loop_control:
         loop_var: sdn_attachment
         label: "{{ sdn_attachment.value.sdn.vnet }}"
+
+    - name: Disable Proxmox cluster firewall (test nodes run without guest bridge firewall)
+      ansible.builtin.shell: |
+        cat > /etc/pve/firewall/cluster.fw <<'EOF'
+        [OPTIONS]
+        enable: 0
+        EOF
+        chmod 0640 /etc/pve/firewall/cluster.fw
+      args:
+        executable: /bin/bash
+      changed_when: true
+      notify: Restart pve-firewall
 
     - name: Apply pending SDN changes
       ansible.builtin.command:
@@ -160,7 +195,7 @@
         that:
           - expected_zones | difference(current_zones) | length == 0
         fail_msg: "One or more expected SDN zones are missing after playbook execution."
-        success_msg: "All expected SDN zones exist on pve-test."
+        success_msg: "All expected SDN zones exist on {{ proxmox.target_node }}."
       vars:
         expected_zones: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.zone') | list }}"
         current_zones: "{{ proxmox_sdn_final_zones_result.stdout | from_json | map(attribute='zone') | list }}"
@@ -170,7 +205,7 @@
         that:
           - expected_vnets | difference(current_vnets) | length == 0
         fail_msg: "One or more expected SDN VNets are missing after applying SDN config."
-        success_msg: "All expected SDN VNets exist on pve-test."
+        success_msg: "All expected SDN VNets exist on {{ proxmox.target_node }}."
       vars:
         expected_vnets: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.vnet') | list }}"
         current_vnets: "{{ proxmox_sdn_final_vnets_result.stdout | from_json | map(attribute='vnet') | list }}"
@@ -180,7 +215,13 @@
         that:
           - expected_bridges | difference(current_bridges) | length == 0
         fail_msg: "One or more expected SDN VNet bridges are missing after applying SDN config."
-        success_msg: "All expected SDN VNet bridges exist on pve-test."
+        success_msg: "All expected SDN VNet bridges exist on {{ proxmox.target_node }}."
       vars:
         expected_bridges: "{{ proxmox_sdn_attachments | map(attribute='value.sdn.vnet') | list }}"
         current_bridges: "{{ proxmox_sdn_link_result.stdout_lines | map('regex_replace', '\\s+.*$', '') | list }}"
+
+  handlers:
+    - name: Restart pve-firewall
+      ansible.builtin.systemd:
+        name: pve-firewall
+        state: restarted

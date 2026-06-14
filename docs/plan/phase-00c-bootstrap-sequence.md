@@ -198,7 +198,7 @@ cd /home/steve/git/proxmox-homelab
 # Repository → Settings → Actions → Runners → ci-runner-01 must show "Idle"
 
 # Trigger a self-hosted workflow job and confirm it completes:
-gh workflow run validate.yml --ref dev/pve-test
+gh workflow run validate.yml --ref baseline/teardown-validated
 gh run list --workflow=validate.yml --limit 1
 ```
 
@@ -398,7 +398,7 @@ cd /home/steve/git/proxmox-homelab
 ```bash
 # Confirm runner appears as online: GitHub → Repository → Settings → Actions → Runners
 # Run a self-hosted pipeline job and confirm completion:
-gh workflow run validate.yml --ref dev/pve-test
+gh workflow run validate.yml --ref baseline/teardown-validated
 gh run list --workflow=validate.yml --limit 1
 ```
 

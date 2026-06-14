@@ -32,6 +32,23 @@ readonly STACK_DIR="terraform/lxc/stacks"
 readonly ANSIBLE_DIR="terraform/lxc/ansible/playbooks"
 readonly ANSIBLE_CONFIG_FILE="${PROJECT_ROOT}/terraform/lxc/ansible/ansible.cfg"
 readonly ANSIBLE_ROLES_DIR="${PROJECT_ROOT}/terraform/lxc/ansible/roles"
+readonly LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
+readonly LAB_IP_AUTHENTIK="${LAB_IP_AUTHENTIK:?LAB_IP_AUTHENTIK must be set in .env}"
+readonly LAB_IP_PROXY="${LAB_IP_PROXY:?LAB_IP_PROXY must be set in .env}"
+readonly LAB_IP_STEP_CA="${LAB_IP_STEP_CA:?LAB_IP_STEP_CA must be set in .env}"
+readonly LAB_IP_MONITORING="${LAB_IP_MONITORING:?LAB_IP_MONITORING must be set in .env}"
+readonly AUTHENTIK_PORT="${AUTHENTIK_PORT:-9443}"
+readonly AUTHENTIK_LIVE_PATH="${AUTHENTIK_LIVE_PATH:-/-/health/live/}"
+readonly AUTHENTIK_LIVE_URL="${AUTHENTIK_LIVE_URL:-https://authentik-int.${LAB_DOMAIN}:${AUTHENTIK_PORT}${AUTHENTIK_LIVE_PATH}}"
+readonly STEP_CA_ACME_PATH_PREFIX="${STEP_CA_ACME_PATH_PREFIX:-/acme}"
+readonly STEP_CA_ACME_DIRECTORY_PATH="${STEP_CA_ACME_DIRECTORY_PATH:-${STEP_CA_ACME_PATH_PREFIX}/acme/directory}"
+readonly STEP_CA_ACME_DIRECTORY_URL="${STEP_CA_ACME_DIRECTORY_URL:-https://${LAB_IP_STEP_CA}${STEP_CA_ACME_DIRECTORY_PATH}}"
+readonly MONITORING_PORT="${MONITORING_PORT:-8428}"
+readonly MONITORING_TARGETS_PATH="${MONITORING_TARGETS_PATH:-/api/v1/targets}"
+readonly MONITORING_TARGETS_URL="${MONITORING_TARGETS_URL:-http://${LAB_IP_MONITORING}:${MONITORING_PORT}${MONITORING_TARGETS_PATH}}"
+readonly TARGET_NODE_EXPECTED="${PHASE04_ORCHESTRATE_TARGET_NODE_EXPECTED:-${TF_VAR_proxmox_node:-pve-test}}"
+readonly ENV_OVERRIDE_FILE="${PHASE04_ORCHESTRATE_ENV_OVERRIDE_FILE:-.env.pve-test}"
+readonly PVE_ENV_VALUE="${PHASE04_ORCHESTRATE_PVE_ENV:-${TARGET_NODE_EXPECTED}}"
 readonly DEPLOY_MODE="${1:-full}"  # "full", service name, or "--dry-run"
 LOG_DIR="/tmp/phase-04-logs-$(date +%Y%m%d-%H%M%S)"
 readonly LOG_DIR
@@ -80,10 +97,10 @@ check_prerequisites() {
     log_success ".env found"
   fi
 
-  if [ ! -f ".env.pve-test" ]; then
-    log_warn ".env.pve-test not found (may not be needed)"
+  if [ ! -f "$ENV_OVERRIDE_FILE" ]; then
+    log_warn "$ENV_OVERRIDE_FILE not found (may not be needed)"
   else
-    log_success ".env.pve-test found"
+    log_success "$ENV_OVERRIDE_FILE found"
   fi
 
   # Check required tools
@@ -107,23 +124,23 @@ check_prerequisites() {
   # Source environment
   # shellcheck disable=SC1091
   source .env 2>/dev/null || { log_error "Failed to source .env"; prereqs_ok=false; }
-  # shellcheck disable=SC1091
-  [ -f ".env.pve-test" ] && source .env.pve-test 2>/dev/null
+  # shellcheck disable=SC1090,SC1091  # non-constant source path; file checked before sourcing
+  [ -f "$ENV_OVERRIDE_FILE" ] && source "$ENV_OVERRIDE_FILE" 2>/dev/null
 
   : "${TF_VAR_proxmox_node:=}"
 
-  if [ "$TF_VAR_proxmox_node" != "pve-test" ]; then
-    log_error "Target node is $TF_VAR_proxmox_node, expected pve-test"
+  if [ "$TF_VAR_proxmox_node" != "$TARGET_NODE_EXPECTED" ]; then
+    log_error "Target node is $TF_VAR_proxmox_node, expected $TARGET_NODE_EXPECTED"
     prereqs_ok=false
   else
-    log_success "Target node: pve-test ✓"
+    log_success "Target node: $TARGET_NODE_EXPECTED ✓"
   fi
 
-  # Ensure with-secrets loads environment overrides for pve-test.
-  # Without this, with-secrets falls back to .env (pve) and causes Proxmox 401s.
-  if [ "${PVE_ENV:-}" = "" ] && [ "$TF_VAR_proxmox_node" = "pve-test" ]; then
-    export PVE_ENV="pve-test"
-    log_info "Set PVE_ENV=pve-test for with-secrets commands"
+  # Ensure with-secrets loads environment overrides for the expected node.
+  # Without this, with-secrets can fall back to .env (pve) and cause Proxmox auth failures.
+  if [ "${PVE_ENV:-}" = "" ] && [ "$TF_VAR_proxmox_node" = "$TARGET_NODE_EXPECTED" ]; then
+    export PVE_ENV="$PVE_ENV_VALUE"
+    log_info "Set PVE_ENV=$PVE_ENV_VALUE for with-secrets commands"
   fi
 
   # Check for SOPS secrets
@@ -245,9 +262,9 @@ validate_service() {
 
   case "$service" in
     "authentik-stack")
-      local ip="10.57.1.10"
+      local ip="$LAB_IP_AUTHENTIK"
       log_info "Testing Authentik health endpoints at $ip..."
-      if timeout 30 bash -c "until curl -sf http://$ip:9000/-/health/live/ > /dev/null 2>&1; do sleep 2; done"; then
+      if timeout 30 bash -c "until curl -sf \"$AUTHENTIK_LIVE_URL\" > /dev/null 2>&1; do sleep 2; done"; then
         log_success "Authentik live health check passed"
       else
         log_warn "Authentik not yet responding (service may still be starting)"
@@ -255,7 +272,7 @@ validate_service() {
       ;;
 
     "proxy-stack")
-      local ip="10.57.2.10"
+      local ip="$LAB_IP_PROXY"
       log_info "Testing Traefik at $ip..."
       if timeout 10 bash -c "docker ps 2>/dev/null | grep -q traefik" 2>/dev/null; then
         log_success "Traefik container running"
@@ -265,9 +282,9 @@ validate_service() {
       ;;
 
     "step-ca-stack")
-      local ip="10.57.1.11"
+      local ip="$LAB_IP_STEP_CA"
       log_info "Testing step-ca ACME directory at $ip..."
-      if timeout 30 bash -c "until curl -sk https://$ip/acme/acme/directory 2>&1 | grep -q 'nonce-url'; do sleep 2; done" 2>/dev/null; then
+      if timeout 30 bash -c "until curl -sk \"$STEP_CA_ACME_DIRECTORY_URL\" 2>&1 | grep -q 'nonce-url'; do sleep 2; done" 2>/dev/null; then
         log_success "step-ca ACME directory accessible"
       else
         log_warn "step-ca ACME not yet accessible (service may still be starting)"
@@ -275,9 +292,9 @@ validate_service() {
       ;;
 
     "monitoring-stack")
-      local ip="10.57.1.12"
+      local ip="$LAB_IP_MONITORING"
       log_info "Testing Monitoring stack at $ip..."
-      if timeout 30 bash -c "until curl -sf http://$ip:8428/api/v1/targets 2>/dev/null | grep -q 'activeTargets'; do sleep 2; done" 2>/dev/null; then
+      if timeout 30 bash -c "until curl -sf \"$MONITORING_TARGETS_URL\" 2>/dev/null | grep -q 'activeTargets'; do sleep 2; done" 2>/dev/null; then
         log_success "VictoriaMetrics responding"
       else
         log_warn "Monitoring services still initializing"
