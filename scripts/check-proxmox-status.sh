@@ -77,6 +77,7 @@ run_check() {
         if [[ "$optional" == "true" ]]; then
             log_warning "$check_name (optional - may need setup)"
             CHECKS_TOTAL=$((CHECKS_TOTAL - 1)) # Don't count optional failures
+            return 0
         else
             log_error "$check_name"
         fi
@@ -325,8 +326,11 @@ case "${1:-}" in
             return 0
         }
         ;;
+    "")
+        # No option; run main normally
+        ;;
     *)
-        echo "Unknown option: ${1}" >&2
+        echo "Unknown option: ${1:-}" >&2
         echo "Run '$0 --help' for usage." >&2
         exit 1
         ;;
