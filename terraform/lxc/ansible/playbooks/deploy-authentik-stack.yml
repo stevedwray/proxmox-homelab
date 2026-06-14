@@ -465,11 +465,13 @@
 
     - name: Check if lab admin user exists in Authentik
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/users/?username={{ lab_admin_username }}"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/users/?username={{ lab_admin_username }}"
         method: GET
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         status_code: [200, 403]
       register: authentik_steve_check
       retries: 12
@@ -480,11 +482,13 @@
 
     - name: Create lab admin user in Authentik
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/users/"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/users/"
         method: POST
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         body_format: json
         body:
           username: "{{ lab_admin_username }}"
@@ -512,11 +516,13 @@
 
     - name: Set lab admin user password in Authentik
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ steve_pk }}/set_password/"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/users/{{ steve_pk }}/set_password/"
         method: POST
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         body_format: json
         body:
           password: "{{ authentik_steve_password }}"
@@ -531,11 +537,13 @@
 
     - name: Ensure homelab-admins group exists in Authentik
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/?name=homelab-admins"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/groups/?name=homelab-admins"
         method: GET
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         status_code: [200]
       register: authentik_homelab_admins_check
       no_log: true
@@ -543,11 +551,13 @@
 
     - name: Create homelab-admins group when missing
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/groups/"
         method: POST
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         body_format: json
         body:
           name: "homelab-admins"
@@ -572,11 +582,13 @@
 
     - name: Add lab admin user to homelab-admins group
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9000/api/v3/core/groups/{{ homelab_admins_pk }}/add_user/"
+        url: "https://{{ authentik_internal_tls_fqdn }}:9443/api/v3/core/groups/{{ homelab_admins_pk }}/add_user/"
         method: POST
         headers:
           Authorization: "Bearer {{ authentik_superuser_api_token }}"
           Content-Type: "application/json"
+        validate_certs: true
+        ca_path: /usr/local/share/ca-certificates/homelab-root.crt
         body_format: json
         body:
           pk: "{{ steve_pk }}"
