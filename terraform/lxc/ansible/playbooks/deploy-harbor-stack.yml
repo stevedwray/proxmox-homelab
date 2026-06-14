@@ -54,7 +54,7 @@
   gather_facts: false
   vars:
     harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
-    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('https://' ~ harbor_installer_hostname, true) }}"
+    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('http://' ~ harbor_installer_hostname, true) }}"
   roles:
     - harbor_installer
 
