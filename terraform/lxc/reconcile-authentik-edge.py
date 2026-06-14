@@ -126,6 +126,14 @@ class ReconcileResult:
         }
 
 
+@dataclass(frozen=True)
+class _Prereqs:
+    auth_pk: str | None
+    inval_pk: str | None
+    signing_pk: str | None
+    scope_ids: list[str] | None
+
+
 class AuthentikApiClient:
     """Minimal Authentik client with read + create/update support."""
 
@@ -926,6 +934,391 @@ def _validate_forwardauth_endpoint_serving(
     return tuple(issues)
 
 
+def _call_create_provider(client: Any, intent: RouteIntent, payload: dict[str, Any]) -> dict[str, Any]:
+    if intent.auth_mode == "forwardAuth":
+        return client.create_proxy_provider(payload)
+    return client.create_oauth2_provider(payload)
+
+
+def _call_update_provider(client: Any, intent: RouteIntent, provider_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+    if intent.auth_mode == "forwardAuth":
+        return client.update_proxy_provider(provider_id, patch)
+    return client.update_oauth2_provider(provider_id, patch)
+
+
+def _handle_delete_reports_for_intent(
+    intent: RouteIntent,
+    applications: list[dict[str, Any]],
+    providers: list[dict[str, Any]],
+    actions: list[ReconcileAction],
+    consumed: dict[str, set[str]],
+    stop_conditions: list[str],
+) -> None:
+    app_matches, provider_matches, route_stops = _resolve_delete_reports(intent, applications, providers)
+    stop_conditions.extend(route_stops)
+    _reason = "route auth mode is not Authentik-managed; object would be deleted in cleanup task"
+    for app in app_matches:
+        app_id = _as_id(app)
+        if app_id:
+            consumed["application"].add(app_id)
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="application", object_name=_DISCOVER._get_name(app),
+            operation="delete-report", reason=_reason, object_id=app_id,
+        ))
+    for provider in provider_matches:
+        provider_id = _as_id(provider)
+        if provider_id:
+            consumed["provider"].add(provider_id)
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="provider", object_name=_DISCOVER._get_name(provider),
+            operation="delete-report", reason=_reason, object_id=provider_id,
+        ))
+
+
+def _resolve_intent_provider_payload(
+    intent: RouteIntent,
+    authorization_flow_pk: str,
+    invalidation_flow_pk: str,
+    oidc_signing_key_pk: str | None,
+    oidc_scope_property_mapping_ids: list[str] | None,
+) -> tuple[dict[str, Any] | None, ReconcileIssue | None]:
+    if intent.auth_mode == "forwardAuth":
+        return _provider_payload(
+            intent,
+            authorization_flow_pk=authorization_flow_pk,
+            invalidation_flow_pk=invalidation_flow_pk,
+        ), None
+    client_secret, secret_issue = _oidc_provider_secret(intent)
+    if secret_issue is not None:
+        return None, secret_issue
+    assert client_secret is not None
+    return _oidc_provider_payload(
+        intent,
+        authorization_flow_pk=authorization_flow_pk,
+        invalidation_flow_pk=invalidation_flow_pk,
+        client_secret=client_secret,
+        signing_key_pk=oidc_signing_key_pk,
+        property_mapping_ids=oidc_scope_property_mapping_ids,
+    ), None
+
+
+def _reconcile_provider_for_intent(
+    client: Any,
+    intent: RouteIntent,
+    provider_obj: dict[str, Any] | None,
+    provider_payload: dict[str, Any],
+    route_stops: list[str],
+    stop_conditions: list[str],
+    apply: bool,
+    actions: list[ReconcileAction],
+    providers: list[dict[str, Any]],
+    consumed: dict[str, set[str]],
+) -> tuple[dict[str, Any] | None, int, str | None]:
+    write_count = 0
+    if provider_obj is None:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="provider", object_name=intent.provider_name,
+            operation="create", reason="owned provider is missing",
+        ))
+        if apply and not route_stops and not stop_conditions:
+            created = _call_create_provider(client, intent, provider_payload)
+            write_count += 1
+            providers.append(created)
+            provider_obj = created
+        return provider_obj, write_count, None
+
+    provider_id = _as_id(provider_obj)
+    if provider_id:
+        consumed["provider"].add(provider_id)
+    provider_patch = _patch_from_existing(provider_obj, provider_payload)
+    if provider_patch:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="provider", object_name=intent.provider_name,
+            operation="update", reason="owned provider differs from desired state",
+            object_id=provider_id,
+        ))
+        if apply and not route_stops and not stop_conditions and provider_id:
+            updated = _call_update_provider(client, intent, provider_id, provider_patch)
+            write_count += 1
+            provider_obj.update(updated)
+    else:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="provider", object_name=intent.provider_name,
+            operation="noop", reason="owned provider already matches desired state",
+            object_id=provider_id,
+        ))
+    return provider_obj, write_count, provider_id
+
+
+def _reconcile_application_for_intent(
+    client: Any,
+    intent: RouteIntent,
+    app_obj: dict[str, Any] | None,
+    app_payload: dict[str, Any],
+    route_stops: list[str],
+    stop_conditions: list[str],
+    apply: bool,
+    actions: list[ReconcileAction],
+    applications: list[dict[str, Any]],
+    consumed: dict[str, set[str]],
+) -> int:
+    write_count = 0
+    if app_obj is None:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="application", object_name=intent.app_name,
+            operation="create", reason="owned application is missing",
+        ))
+        if apply and not route_stops and not stop_conditions:
+            created = client.create_application(app_payload)
+            write_count += 1
+            applications.append(created)
+            created_id = _as_id(created)
+            if created_id:
+                consumed["application"].add(created_id)
+        return write_count
+
+    app_id = _as_id(app_obj)
+    app_patch = _patch_from_existing(app_obj, app_payload)
+    if app_patch:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="application", object_name=intent.app_name,
+            operation="update", reason="owned application differs from desired state",
+            object_id=app_id,
+        ))
+        if apply and not route_stops and not stop_conditions and app_id:
+            app_slug = app_obj.get("slug") or intent.app_slug
+            updated = client.update_application(app_slug, app_patch)
+            write_count += 1
+            app_obj.update(updated)
+    else:
+        actions.append(ReconcileAction(
+            stack=intent.stack, route=intent.route,
+            object_kind="application", object_name=intent.app_name,
+            operation="noop", reason="owned application already matches desired state",
+            object_id=app_id,
+        ))
+    return write_count
+
+
+def _build_outpost_update_patch(
+    shared_outpost: dict[str, Any],
+    required_provider_ids: set[str],
+) -> tuple[dict[str, Any], str]:
+    linked = _DISCOVER._provider_references(shared_outpost)
+    missing_links = sorted(required_provider_ids - linked)
+    desired_links = sorted(linked | required_provider_ids)
+    outpost_config = shared_outpost.get("config")
+    outpost_config = outpost_config if isinstance(outpost_config, dict) else {}
+    desired_config = dict(outpost_config)
+    config_changed = False
+    for key, value in OUTPOST_DEFAULT_CONFIG.items():
+        if outpost_config.get(key) in (None, ""):
+            desired_config[key] = value
+            config_changed = True
+    patch: dict[str, Any] = {}
+    reason_parts: list[str] = []
+    if missing_links:
+        patch["providers"] = desired_links
+        reason_parts.append("shared outpost missing provider links")
+    if config_changed:
+        patch["config"] = desired_config
+        reason_parts.append("shared outpost host config missing required values")
+    return patch, "; ".join(reason_parts) if reason_parts else ""
+
+
+def _reconcile_shared_outpost(
+    client: Any,
+    outposts: list[dict[str, Any]],
+    required_provider_ids: set[str],
+    apply: bool,
+    stop_conditions: list[str],
+    actions: list[ReconcileAction],
+    consumed: dict[str, set[str]],
+) -> tuple[list[dict[str, Any]], int]:
+    write_count = 0
+    shared_outpost, outpost_stop = _find_single_shared_outpost(outposts)
+    if outpost_stop:
+        stop_conditions.append(outpost_stop)
+        return outposts, 0
+    if shared_outpost is None:
+        actions.append(ReconcileAction(
+            stack="_shared", route="forwardAuth",
+            object_kind="outpost", object_name=SHARED_FORWARD_OUTPOST,
+            operation="create", reason="shared forward-auth outpost is missing",
+        ))
+        if apply and not stop_conditions:
+            created = client.create_outpost({
+                "name": SHARED_FORWARD_OUTPOST,
+                "type": SHARED_OUTPOST_TYPE,
+                "providers": sorted(required_provider_ids),
+                "config": OUTPOST_DEFAULT_CONFIG,
+            })
+            write_count += 1
+            outposts.append(created)
+        return outposts, write_count
+
+    outpost_id = _as_id(shared_outpost)
+    if outpost_id:
+        consumed["outpost"].add(outpost_id)
+    outpost_patch, reason = _build_outpost_update_patch(shared_outpost, required_provider_ids)
+    if outpost_patch:
+        actions.append(ReconcileAction(
+            stack="_shared", route="forwardAuth",
+            object_kind="outpost", object_name=SHARED_FORWARD_OUTPOST,
+            operation="update", reason=reason, object_id=outpost_id,
+        ))
+        if apply and not stop_conditions and outpost_id:
+            updated = client.update_outpost(outpost_id, outpost_patch)
+            write_count += 1
+            shared_outpost.update(updated)
+    else:
+        actions.append(ReconcileAction(
+            stack="_shared", route="forwardAuth",
+            object_kind="outpost", object_name=SHARED_FORWARD_OUTPOST,
+            operation="noop", reason="shared outpost already linked to all managed providers",
+            object_id=outpost_id,
+        ))
+    return outposts, write_count
+
+
+def _check_app_provider_link(
+    app_obj: dict[str, Any] | None,
+    provider_id: str | None,
+    intent: "RouteIntent",
+    consumed: dict[str, set[str]],
+    stop_conditions: list[str],
+) -> None:
+    if app_obj is None:
+        return
+    app_id = _as_id(app_obj)
+    if app_id:
+        consumed["application"].add(app_id)
+    linked_provider = _DISCOVER._get_provider_id_from_application(app_obj)
+    if linked_provider and provider_id and linked_provider != provider_id:
+        stop_conditions.append(f"{intent.stack}/{intent.route}: application links a different provider id")
+
+
+def _detect_unmanaged_orphans(
+    applications: list[dict[str, Any]],
+    providers: list[dict[str, Any]],
+    intents: list[Any],
+    consumed: dict[str, set[str]],
+    stop_conditions: list[str],
+) -> None:
+    for item in applications:
+        item_id = _as_id(item)
+        if not item_id or item_id in consumed["application"]:
+            continue
+        name = _DISCOVER._get_name(item)
+        if _DISCOVER._is_owned_object(name) and any(f"edge-{intent.stack}-" in name for intent in intents):
+            stop_conditions.append(f"unmanaged owned application detected: {name}")
+    for item in providers:
+        item_id = _as_id(item)
+        if not item_id or item_id in consumed["provider"]:
+            continue
+        name = _DISCOVER._get_name(item)
+        if _DISCOVER._is_owned_object(name) and any(f"edge-{intent.stack}-" in name for intent in intents):
+            stop_conditions.append(f"unmanaged owned provider detected: {name}")
+
+
+def _process_intent(
+    client: Any,
+    intent: Any,
+    applications: list[dict[str, Any]],
+    providers: list[dict[str, Any]],
+    actions: list[ReconcileAction],
+    issues: list[ReconcileIssue],
+    stop_conditions: list[str],
+    consumed: dict[str, set[str]],
+    required_provider_ids: set[str],
+    prereqs: _Prereqs,
+    apply: bool,
+) -> int:
+    if intent.stack == "authentik-stack" and intent.auth_mode == "forwardAuth":
+        stop_conditions.append(f"{intent.stack}/{intent.route}: Authentik self-route must not use forwardAuth")
+        return 0
+    if intent.auth_mode not in {"forwardAuth", "oidc"}:
+        _handle_delete_reports_for_intent(intent, applications, providers, actions, consumed, stop_conditions)
+        return 0
+    if intent.auth_mode == "forwardAuth":
+        app_obj, provider_obj, route_stops = _resolve_forwardauth_candidates(intent, applications, providers)
+    else:
+        if not _DISCOVER._oidc_route_supported(intent):
+            issues.append(ReconcileIssue(
+                code="AKR005",
+                message=f"native OIDC route {intent.stack}/{intent.route} has no repo-managed Authentik mapping",
+                manifest=intent.manifest, route=intent.route,
+                object_kind="provider", object_name=intent.provider_name,
+            ))
+            return 0
+        app_obj, provider_obj, route_stops = _resolve_oidc_candidates(intent, applications, providers)
+    stop_conditions.extend(route_stops)
+    provider_payload, payload_issue = _resolve_intent_provider_payload(
+        intent, prereqs.auth_pk, prereqs.inval_pk, prereqs.signing_pk, prereqs.scope_ids,
+    )
+    if payload_issue is not None:
+        issues.append(payload_issue)
+        return 0
+    provider_obj, wc, provider_id = _reconcile_provider_for_intent(
+        client, intent, provider_obj, provider_payload, route_stops, stop_conditions, apply, actions, providers, consumed,
+    )
+    write_count = wc
+    provider_id = _as_id(provider_obj) if provider_obj is not None else provider_id
+    if provider_id:
+        required_provider_ids.add(provider_id)
+        consumed["provider"].add(provider_id)
+    _check_app_provider_link(app_obj, provider_id, intent, consumed, stop_conditions)
+    write_count += _reconcile_application_for_intent(
+        client, intent, app_obj, _application_payload(intent, provider_id),
+        route_stops, stop_conditions, apply, actions, applications, consumed,
+    )
+    return write_count
+
+
+def _resolve_prerequisite_ids(
+    client: Any,
+    intents: list[Any],
+    authorization_flow_slug_override: str | None,
+    invalidation_flow_slug_override: str | None,
+) -> tuple[_Prereqs | None, tuple[ReconcileIssue, ...] | None]:
+    has_managed = any(intent.auth_mode in {"forwardAuth", "oidc"} for intent in intents)
+    has_oidc = any(intent.auth_mode == "oidc" for intent in intents)
+    auth_pk = inval_pk = None
+    if has_managed:
+        flow_ids, flow_issues = _resolve_proxy_flow_ids(
+            client,
+            authorization_flow_slug_override=authorization_flow_slug_override,
+            invalidation_flow_slug_override=invalidation_flow_slug_override,
+        )
+        if flow_issues:
+            return None, flow_issues
+        assert flow_ids is not None
+        auth_pk, inval_pk = flow_ids
+    signing_pk: str | None = None
+    scope_ids: tuple[str, ...] | None = None
+    if has_oidc:
+        signing_pk, signing_issue = _resolve_oidc_signing_key_id(
+            client,
+            signing_key_name_override=_resolve_slug_override(OIDC_SIGNING_KEY_NAME_ENV),
+        )
+        if signing_issue is not None:
+            return None, (signing_issue,)
+        assert signing_pk is not None
+        raw_scope_ids, scope_mapping_issue = _resolve_oidc_scope_property_mapping_ids(client)
+        if scope_mapping_issue is not None:
+            return None, (scope_mapping_issue,)
+        assert raw_scope_ids is not None
+        scope_ids = list(raw_scope_ids)
+    return _Prereqs(auth_pk=auth_pk, inval_pk=inval_pk, signing_pk=signing_pk, scope_ids=scope_ids), None
+
+
 def reconcile_authentik(
     manifest_paths: list[Path],
     client: Any,
@@ -967,381 +1360,42 @@ def reconcile_authentik(
     write_count = 0
     consumed: dict[str, set[str]] = {"application": set(), "provider": set(), "outpost": set()}
     required_provider_ids: set[str] = set()
-    has_managed_authentik = any(intent.auth_mode in {"forwardAuth", "oidc"} for intent in intents)
-    has_oidc_managed = any(intent.auth_mode == "oidc" for intent in intents)
 
-    authorization_flow_pk: str | None = None
-    invalidation_flow_pk: str | None = None
-    if has_managed_authentik:
-        flow_ids, flow_issues = _resolve_proxy_flow_ids(
-            client,
-            authorization_flow_slug_override=authorization_flow_slug_override,
-            invalidation_flow_slug_override=invalidation_flow_slug_override,
+    prereqs, prereq_issues = _resolve_prerequisite_ids(
+        client, intents, authorization_flow_slug_override, invalidation_flow_slug_override,
+    )
+    if prereq_issues is not None:
+        return ReconcileResult(
+            apply=apply,
+            actions=(),
+            issues=prereq_issues,
+            stop_conditions=(),
+            request_methods=tuple(client.request_methods),
+            write_count=0,
         )
-        if flow_issues:
-            return ReconcileResult(
-                apply=apply,
-                actions=(),
-                issues=flow_issues,
-                stop_conditions=(),
-                request_methods=tuple(client.request_methods),
-                write_count=0,
-            )
-        assert flow_ids is not None
-        authorization_flow_pk, invalidation_flow_pk = flow_ids
-
-    oidc_signing_key_pk: str | None = None
-    oidc_scope_property_mapping_ids: list[str] | None = None
-    if has_oidc_managed:
-        oidc_signing_key_pk, signing_issue = _resolve_oidc_signing_key_id(
-            client,
-            signing_key_name_override=_resolve_slug_override(OIDC_SIGNING_KEY_NAME_ENV),
-        )
-        if signing_issue is not None:
-            return ReconcileResult(
-                apply=apply,
-                actions=(),
-                issues=(signing_issue,),
-                stop_conditions=(),
-                request_methods=tuple(client.request_methods),
-                write_count=0,
-            )
-        assert oidc_signing_key_pk is not None
-        oidc_scope_property_mapping_ids, scope_mapping_issue = _resolve_oidc_scope_property_mapping_ids(client)
-        if scope_mapping_issue is not None:
-            return ReconcileResult(
-                apply=apply,
-                actions=(),
-                issues=(scope_mapping_issue,),
-                stop_conditions=(),
-                request_methods=tuple(client.request_methods),
-                write_count=0,
-            )
-        assert oidc_scope_property_mapping_ids is not None
+    assert prereqs is not None
 
     intents = sorted(intents, key=lambda item: (item.stack, item.route, item.host))
     for intent in intents:
-        if intent.stack == "authentik-stack" and intent.auth_mode == "forwardAuth":
-            stop_conditions.append(
-                f"{intent.stack}/{intent.route}: Authentik self-route must not use forwardAuth"
-            )
-            continue
+        write_count += _process_intent(
+            client, intent, applications, providers, actions, issues,
+            stop_conditions, consumed, required_provider_ids, prereqs, apply,
+        )
 
-        if intent.auth_mode not in {"forwardAuth", "oidc"}:
-            app_matches, provider_matches, route_stops = _resolve_delete_reports(
-                intent,
-                applications,
-                providers,
-            )
-            stop_conditions.extend(route_stops)
-            for app in app_matches:
-                app_id = _as_id(app)
-                if app_id:
-                    consumed["application"].add(app_id)
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="application",
-                        object_name=_DISCOVER._get_name(app),
-                        operation="delete-report",
-                        reason="route auth mode is not Authentik-managed; object would be deleted in cleanup task",
-                        object_id=app_id,
-                    )
-                )
-            for provider in provider_matches:
-                provider_id = _as_id(provider)
-                if provider_id:
-                    consumed["provider"].add(provider_id)
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="provider",
-                        object_name=_DISCOVER._get_name(provider),
-                        operation="delete-report",
-                        reason="route auth mode is not Authentik-managed; object would be deleted in cleanup task",
-                        object_id=provider_id,
-                    )
-                )
-            continue
+    has_forwardauth = any(intent.auth_mode == "forwardAuth" for intent in intents)
+    if has_forwardauth:
+        outposts, wc = _reconcile_shared_outpost(
+            client, outposts, required_provider_ids, apply, stop_conditions, actions, consumed,
+        )
+        write_count += wc
 
-        if intent.auth_mode == "forwardAuth":
-            app_obj, provider_obj, route_stops = _resolve_forwardauth_candidates(intent, applications, providers)
-        else:
-            if not _DISCOVER._oidc_route_supported(intent):
-                issues.append(
-                    ReconcileIssue(
-                        code="AKR005",
-                        message=f"native OIDC route {intent.stack}/{intent.route} has no repo-managed Authentik mapping",
-                        manifest=intent.manifest,
-                        route=intent.route,
-                        object_kind="provider",
-                        object_name=intent.provider_name,
-                    )
-                )
-                continue
-            app_obj, provider_obj, route_stops = _resolve_oidc_candidates(intent, applications, providers)
-        stop_conditions.extend(route_stops)
-
-        assert authorization_flow_pk is not None
-        assert invalidation_flow_pk is not None
-        if intent.auth_mode == "forwardAuth":
-            provider_payload = _provider_payload(
-                intent,
-                authorization_flow_pk=authorization_flow_pk,
-                invalidation_flow_pk=invalidation_flow_pk,
-            )
-        else:
-            client_secret, secret_issue = _oidc_provider_secret(intent)
-            if secret_issue is not None:
-                issues.append(secret_issue)
-                continue
-            assert client_secret is not None
-            provider_payload = _oidc_provider_payload(
-                intent,
-                authorization_flow_pk=authorization_flow_pk,
-                invalidation_flow_pk=invalidation_flow_pk,
-                client_secret=client_secret,
-                signing_key_pk=oidc_signing_key_pk,
-                property_mapping_ids=oidc_scope_property_mapping_ids,
-            )
-        provider_id: str | None = None
-
-        if provider_obj is None:
-            actions.append(
-                ReconcileAction(
-                    stack=intent.stack,
-                    route=intent.route,
-                    object_kind="provider",
-                    object_name=intent.provider_name,
-                    operation="create",
-                    reason="owned provider is missing",
-                )
-            )
-            if apply and not route_stops and not stop_conditions:
-                if intent.auth_mode == "forwardAuth":
-                    created = client.create_proxy_provider(provider_payload)
-                else:
-                    created = client.create_oauth2_provider(provider_payload)
-                write_count += 1
-                providers.append(created)
-                provider_obj = created
-        else:
-            provider_id = _as_id(provider_obj)
-            if provider_id:
-                consumed["provider"].add(provider_id)
-            provider_patch = _patch_from_existing(provider_obj, provider_payload)
-            if provider_patch:
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="provider",
-                        object_name=intent.provider_name,
-                        operation="update",
-                        reason="owned provider differs from desired state",
-                        object_id=provider_id,
-                    )
-                )
-                if apply and not route_stops and not stop_conditions and provider_id:
-                    if intent.auth_mode == "forwardAuth":
-                        updated = client.update_proxy_provider(provider_id, provider_patch)
-                    else:
-                        updated = client.update_oauth2_provider(provider_id, provider_patch)
-                    write_count += 1
-                    provider_obj.update(updated)
-            else:
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="provider",
-                        object_name=intent.provider_name,
-                        operation="noop",
-                        reason="owned provider already matches desired state",
-                        object_id=provider_id,
-                    )
-                )
-
-        provider_id = _as_id(provider_obj) if provider_obj is not None else provider_id
-        if provider_id:
-            required_provider_ids.add(provider_id)
-            consumed["provider"].add(provider_id)
-
-        if app_obj is not None:
-            app_id = _as_id(app_obj)
-            if app_id:
-                consumed["application"].add(app_id)
-            linked_provider = _DISCOVER._get_provider_id_from_application(app_obj)
-            if linked_provider and provider_id and linked_provider != provider_id:
-                stop_conditions.append(
-                    f"{intent.stack}/{intent.route}: application links a different provider id"
-                )
-
-        app_payload = _application_payload(intent, provider_id)
-        if app_obj is None:
-            actions.append(
-                ReconcileAction(
-                    stack=intent.stack,
-                    route=intent.route,
-                    object_kind="application",
-                    object_name=intent.app_name,
-                    operation="create",
-                    reason="owned application is missing",
-                )
-            )
-            if apply and not route_stops and not stop_conditions:
-                created = client.create_application(app_payload)
-                write_count += 1
-                applications.append(created)
-                created_id = _as_id(created)
-                if created_id:
-                    consumed["application"].add(created_id)
-        else:
-            app_id = _as_id(app_obj)
-            app_patch = _patch_from_existing(app_obj, app_payload)
-            if app_patch:
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="application",
-                        object_name=intent.app_name,
-                        operation="update",
-                        reason="owned application differs from desired state",
-                        object_id=app_id,
-                    )
-                )
-                if apply and not route_stops and not stop_conditions and app_id:
-                    app_slug = app_obj.get("slug") or intent.app_slug
-                    updated = client.update_application(app_slug, app_patch)
-                    write_count += 1
-                    app_obj.update(updated)
-            else:
-                actions.append(
-                    ReconcileAction(
-                        stack=intent.stack,
-                        route=intent.route,
-                        object_kind="application",
-                        object_name=intent.app_name,
-                        operation="noop",
-                        reason="owned application already matches desired state",
-                        object_id=app_id,
-                    )
-                )
-
-    if any(intent.auth_mode == "forwardAuth" for intent in intents):
-        shared_outpost, outpost_stop = _find_single_shared_outpost(outposts)
-        if outpost_stop:
-            stop_conditions.append(outpost_stop)
-        elif shared_outpost is None:
-            actions.append(
-                ReconcileAction(
-                    stack="_shared",
-                    route="forwardAuth",
-                    object_kind="outpost",
-                    object_name=SHARED_FORWARD_OUTPOST,
-                    operation="create",
-                    reason="shared forward-auth outpost is missing",
-                )
-            )
-            if apply and not stop_conditions:
-                payload = {
-                    "name": SHARED_FORWARD_OUTPOST,
-                    "type": SHARED_OUTPOST_TYPE,
-                    "providers": sorted(required_provider_ids),
-                    "config": OUTPOST_DEFAULT_CONFIG,
-                }
-                created = client.create_outpost(payload)
-                write_count += 1
-                outposts.append(created)
-        else:
-            outpost_id = _as_id(shared_outpost)
-            if outpost_id:
-                consumed["outpost"].add(outpost_id)
-            linked = _DISCOVER._provider_references(shared_outpost)
-            missing_links = sorted(required_provider_ids - linked)
-            desired_links = sorted(linked | required_provider_ids)
-
-            outpost_config_raw = shared_outpost.get("config")
-            outpost_config = outpost_config_raw if isinstance(outpost_config_raw, dict) else {}
-            desired_config = dict(outpost_config)
-            config_changed = False
-            for key, value in OUTPOST_DEFAULT_CONFIG.items():
-                existing = outpost_config.get(key)
-                if existing in (None, ""):
-                    desired_config[key] = value
-                    config_changed = True
-
-            outpost_patch: dict[str, Any] = {}
-            reason_parts: list[str] = []
-            if missing_links:
-                outpost_patch["providers"] = desired_links
-                reason_parts.append("shared outpost missing provider links")
-            if config_changed:
-                outpost_patch["config"] = desired_config
-                reason_parts.append("shared outpost host config missing required values")
-
-            if outpost_patch:
-                reason = "; ".join(reason_parts)
-                actions.append(
-                    ReconcileAction(
-                        stack="_shared",
-                        route="forwardAuth",
-                        object_kind="outpost",
-                        object_name=SHARED_FORWARD_OUTPOST,
-                        operation="update",
-                        reason=reason,
-                        object_id=outpost_id,
-                    )
-                )
-                if apply and not stop_conditions and outpost_id:
-                    updated = client.update_outpost(outpost_id, outpost_patch)
-                    write_count += 1
-                    shared_outpost.update(updated)
-            else:
-                actions.append(
-                    ReconcileAction(
-                        stack="_shared",
-                        route="forwardAuth",
-                        object_kind="outpost",
-                        object_name=SHARED_FORWARD_OUTPOST,
-                        operation="noop",
-                        reason="shared outpost already linked to all managed providers",
-                        object_id=outpost_id,
-                    )
-                )
-
-    for item in applications:
-        item_id = _as_id(item)
-        if not item_id or item_id in consumed["application"]:
-            continue
-        name = _DISCOVER._get_name(item)
-        if _DISCOVER._is_owned_object(name) and any(
-            f"edge-{intent.stack}-" in name for intent in intents
-        ):
-            stop_conditions.append(f"unmanaged owned application detected: {name}")
-    for item in providers:
-        item_id = _as_id(item)
-        if not item_id or item_id in consumed["provider"]:
-            continue
-        name = _DISCOVER._get_name(item)
-        if _DISCOVER._is_owned_object(name) and any(
-            f"edge-{intent.stack}-" in name for intent in intents
-        ):
-            stop_conditions.append(f"unmanaged owned provider detected: {name}")
+    _detect_unmanaged_orphans(applications, providers, intents, consumed, stop_conditions)
 
     stop_conditions = sorted(set(stop_conditions))
-    if stop_conditions:
-        # Applies must fail closed; do not permit partial writes after stop detection.
-        # Writes are prevented by guarded apply branches above.
-        pass
-
-    if any(intent.auth_mode == "forwardAuth" for intent in intents) and not apply:
+    if has_forwardauth and not apply:
         issues.extend(_validate_forwardauth_endpoint_serving(client, intents))
 
-    actions.sort(key=lambda action: (action.stack, action.route, action.object_kind, action.object_name, action.operation))
+    actions.sort(key=lambda a: (a.stack, a.route, a.object_kind, a.object_name, a.operation))
     return ReconcileResult(
         apply=apply,
         actions=tuple(actions),
@@ -1350,6 +1404,29 @@ def reconcile_authentik(
         request_methods=tuple(client.request_methods),
         write_count=write_count,
     )
+
+
+def _print_reconcile_summary(result: ReconcileResult, args: Any) -> None:
+    mode = "apply" if args.apply else "dry-run"
+    print(f"Authentik reconciliation {mode} completed.")
+    print(f"Actions: {len(result.actions)} (writes={result.write_count})")
+    if result.issues:
+        print(f"Issues: {len(result.issues)}")
+        for issue in result.issues:
+            print(f"- [{issue.code}] {issue.message}")
+    if result.stop_conditions:
+        print(f"Stop conditions: {len(result.stop_conditions)}")
+        for stop in result.stop_conditions:
+            print(f"- [STOP] {stop}")
+    for action in result.actions:
+        if action.operation == "noop":
+            continue
+        print(
+            f"- [{action.operation}] {action.stack}/{action.route} "
+            f"{action.object_kind} {action.object_name}: {action.reason}"
+        )
+    if any(action.operation == "delete-report" for action in result.actions):
+        print("Note: delete actions are reported only and never applied by this tool.")
 
 
 def main() -> int:
@@ -1390,29 +1467,7 @@ def main() -> int:
         print(json.dumps(result.to_dict(), indent=2, sort_keys=True))
         return 0 if result.ok else 1
 
-    mode = "apply" if args.apply else "dry-run"
-    print(f"Authentik reconciliation {mode} completed.")
-    print(f"Actions: {len(result.actions)} (writes={result.write_count})")
-    if result.issues:
-        print(f"Issues: {len(result.issues)}")
-        for issue in result.issues:
-            print(f"- [{issue.code}] {issue.message}")
-    if result.stop_conditions:
-        print(f"Stop conditions: {len(result.stop_conditions)}")
-        for stop in result.stop_conditions:
-            print(f"- [STOP] {stop}")
-
-    for action in result.actions:
-        if action.operation == "noop":
-            continue
-        print(
-            f"- [{action.operation}] {action.stack}/{action.route} "
-            f"{action.object_kind} {action.object_name}: {action.reason}"
-        )
-
-    if any(action.operation == "delete-report" for action in result.actions):
-        print("Note: delete actions are reported only and never applied by this tool.")
-
+    _print_reconcile_summary(result, args)
     return 0 if result.ok else 1
 
 

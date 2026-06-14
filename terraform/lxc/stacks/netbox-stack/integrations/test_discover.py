@@ -386,7 +386,7 @@ class TestBuildTopology(unittest.TestCase):
             )
 
         self.assertEqual(result, [])
-        build_vm_list.assert_called_once_with(fake_proxmox, {}, portainer=fake_portainer)
+        build_vm_list.assert_called_once_with(fake_proxmox, {}, portainer=fake_portainer, portainer_url=None)
 
 
 if __name__ == "__main__":
