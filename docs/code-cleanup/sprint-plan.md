@@ -10,15 +10,15 @@
 
 | Session | Status | Branch / PR | Notes |
 |---|---|---|---|
-| CC-1 | **Partial** | `fix/sonar-suppressions` / PR #366 | CC-1f (#362) and CC-1g (#363) still open |
-| CC-2 | **Partial** | — | #355 #357 #361 closed; #356 (ruff lint) still open |
+| CC-1 | **Done** | `fix/sonar-suppressions` / PR #366 | #362 #363 closed 2026-06-15 |
+| CC-2 | **Done** | — | #355 #356 #357 #361 closed |
 | CC-3 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #359 closed |
 | CC-4 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #364 closed |
 | CC-5 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #365 closed |
 
 **`baseline/teardown-validated` is at `009e2b3` (teardown-validated 2026-06-14).**
 
-**Remaining open issues:** #362 (CC-1f), #363 (CC-1g), #356 (CC-2a-c)
+**All code-cleanup issues closed. Sprint complete.**
 
 See [findings.md](findings.md) for full classification rationale.
 See [docs/plan/sprint-plan.md](../plan/sprint-plan.md) for the main
