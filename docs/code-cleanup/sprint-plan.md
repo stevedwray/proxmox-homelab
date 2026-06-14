@@ -6,6 +6,20 @@
 **Prerequisite:** PR #358 (`fix/ci-pipeline-cleanup`) must merge first —
   it adds the `python-lint` CI job that gates sessions CC-1 and CC-2.
 
+## Sprint status (updated 2026-06-14)
+
+| Session | Status | Branch / PR | Notes |
+|---|---|---|---|
+| CC-1 | **Partial** | `fix/sonar-suppressions` / PR #366 | CC-1f (#362) and CC-1g (#363) still open |
+| CC-2 | **Partial** | — | #355 #357 #361 closed; #356 (ruff lint) still open |
+| CC-3 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #359 closed |
+| CC-4 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #364 closed |
+| CC-5 | **Done** | `fix/cognitive-complexity-cc5` / PR #370 | #365 closed |
+
+**`baseline/teardown-validated` is at `009e2b3` (teardown-validated 2026-06-14).**
+
+**Remaining open issues:** #362 (CC-1f), #363 (CC-1g), #356 (CC-2a-c)
+
 See [findings.md](findings.md) for full classification rationale.
 See [docs/plan/sprint-plan.md](../plan/sprint-plan.md) for the main
 infrastructure sprint; CC-3 is absorbed into that sprint's Session 2.
@@ -310,9 +324,10 @@ Closes [#361](https://github.com/stevedwray/proxmox-homelab/issues/361).
 
 ---
 
-## Session CC-3 — Authentik API HTTPS (absorbed into main sprint Session 2)
+## Session CC-3 — Authentik API HTTPS ✓ DONE
 
-**Branch:** `fix/tls-hardening` (main sprint Session 2)
+**Branch:** `fix/cognitive-complexity-cc5` / PR #370 (merged 2026-06-14)
+**Originally planned as:** `fix/tls-hardening` (main sprint Session 2)
 **Live infra required:** Yes — pve-test-vm must be up
 **Promotion gate:** Authentik playbook redeploy succeeds; no `ansible:S5332`
   findings for credential-carrying API calls; Authentik SSO still works
@@ -357,9 +372,10 @@ Closes [#359](https://github.com/stevedwray/proxmox-homelab/issues/359).
 
 ---
 
-## Session CC-4 — NetBox cognitive complexity
+## Session CC-4 — NetBox cognitive complexity ✓ DONE
 
-**Branch:** `fix/cognitive-complexity-netbox` from `baseline/teardown-validated`
+**Branch:** `fix/cognitive-complexity-cc5` / PR #370 (merged 2026-06-14)
+**Originally planned as:** `fix/cognitive-complexity-netbox` from `baseline/teardown-validated`
 **Live infra required:** No (unit tests provide the gate)
 **Promotion gate:** All existing tests in `test_populate_paths.py`,
   `test_populate_multi_source.py`, `test_augment.py` pass; no function in
@@ -417,9 +433,10 @@ helper. Extract per-object-type helpers following the same pattern as
 
 ---
 
-## Session CC-5 — Authentik reconciler and Harbor tooling complexity
+## Session CC-5 — Authentik reconciler and Harbor tooling complexity ✓ DONE
 
-**Branch:** `fix/cognitive-complexity-reconciler` from `baseline/teardown-validated`
+**Branch:** `fix/cognitive-complexity-cc5` / PR #370 (merged 2026-06-14)
+**Originally planned as:** `fix/cognitive-complexity-reconciler` from `baseline/teardown-validated`
 **Live infra required:** No (existing unit tests gate the reconciler;
   harbor tooling has no live dependency for the refactor itself)
 **Promotion gate:** No function in the target files exceeds complexity 40
