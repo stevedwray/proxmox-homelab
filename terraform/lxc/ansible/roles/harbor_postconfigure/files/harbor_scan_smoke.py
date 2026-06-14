@@ -338,6 +338,65 @@ def _trigger_manual_scan_all(base_url: str, username: str, password: str) -> str
     return "already-running" if status == 409 else "started"
 
 
+def _fetch_child_manifests(
+    registry_url: str,
+    project: str,
+    repository: str,
+    manifests: list,
+    username: str,
+    password: str,
+    registry_insecure: bool,
+) -> None:
+    for child in manifests:
+        digest = child.get("digest")
+        if digest:
+            try:
+                _fetch_registry_manifest(registry_url, project, repository, digest, username, password, registry_insecure=registry_insecure)
+            except Exception:
+                pass
+
+
+def _collect_blob_candidates(mjson: dict | None) -> list[str]:
+    if not isinstance(mjson, dict):
+        return []
+    candidates = []
+    for layer in mjson.get("layers", []) or []:
+        d = layer.get("digest")
+        if d:
+            candidates.append(d)
+    return candidates
+
+
+def _fetch_blobs(registry_url: str, project: str, repository: str, candidates: list[str], registry_insecure: bool) -> None:
+    for digest in candidates:
+        try:
+            _request(f"{registry_url}/v2/{project}/{repository}/blobs/{digest}", insecure=registry_insecure)
+        except Exception:
+            pass
+
+
+def _populate_harbor_cache(registry_url: str, manifest_body: str, project: str, repository: str, username: str, password: str, registry_insecure: bool) -> None:
+    try:
+        mjson: dict | None = json.loads(manifest_body)
+    except Exception:
+        mjson = None
+
+    if isinstance(mjson, dict) and mjson.get("manifests"):
+        _fetch_child_manifests(registry_url, project, repository, mjson.get("manifests", []), username, password, registry_insecure)
+    else:
+        try:
+            if mjson is None:
+                mjson = json.loads(manifest_body)
+        except Exception:
+            mjson = None
+
+    try:
+        candidates = _collect_blob_candidates(mjson)
+        _fetch_blobs(registry_url, project, repository, candidates, registry_insecure)
+    except Exception:
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-url", required=True)
@@ -386,62 +445,8 @@ def main() -> int:
     except Exception:
         pulled = False
 
-    # If no OCI client was available or the pull failed, try explicitly
-    # fetching referenced child manifests and blobs to force Harbor to
-    # materialize the proxy-cached artifact. This is more aggressive than a
-    # manifest-only probe and often triggers Harbor to fetch upstream layers.
     if not pulled and manifest_body:
-        try:
-            mjson = json.loads(manifest_body)
-        except Exception:
-            mjson = None
-
-        if isinstance(mjson, dict) and mjson.get("manifests"):
-            # manifest list: fetch each child manifest by digest
-            for child in mjson.get("manifests", []):
-                digest = child.get("digest")
-                if digest:
-                    try:
-                        _fetch_registry_manifest(
-                            registry_url,
-                            args.project,
-                            args.repository,
-                            digest,
-                            args.username,
-                            args.password,
-                            registry_insecure=args.registry_insecure,
-                        )
-                    except Exception:
-                        pass
-        else:
-            # single manifest — parse layers below
-            try:
-                # ensure we have a manifest JSON for layer extraction
-                if mjson is None:
-                    mjson = json.loads(manifest_body)
-            except Exception:
-                mjson = None
-
-        # Attempt to GET each blob referenced by the manifest (or child manifests)
-        try:
-            candidates = []
-            if isinstance(mjson, dict):
-                # OCI/Docker manifest: 'layers' key
-                for layer in mjson.get("layers", []) or []:
-                    d = layer.get("digest")
-                    if d:
-                        candidates.append(d)
-
-            for digest in candidates:
-                try:
-                    _request(
-                        f"{registry_url}/v2/{args.project}/{args.repository}/blobs/{digest}",
-                        insecure=args.registry_insecure,
-                    )
-                except Exception:
-                    pass
-        except Exception:
-            pass
+        _populate_harbor_cache(registry_url, manifest_body, args.project, args.repository, args.username, args.password, args.registry_insecure)
 
     parent_artifact = None
     while time.monotonic() < deadline:

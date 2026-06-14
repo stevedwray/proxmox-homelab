@@ -258,6 +258,103 @@ class SnapshotStore:
             return json.dumps(payload, default=str)
 
 
+def _determine_scan_state(
+    report: dict | None,
+    severity_counts: Counter[str],
+    last_scan_ts: float | None,
+    now: float,
+    scan_stale_after: int,
+) -> str:
+    if not report and not severity_counts:
+        return "unscanned"
+    if last_scan_ts is not None and now - last_scan_ts > scan_stale_after:
+        return "stale"
+    return "scanned"
+
+
+def _scanner_name_from_report(report_value: dict) -> str:
+    scanner = report_value.get("scanner")
+    if isinstance(scanner, dict):
+        return scanner.get("name") or scanner.get("vendor") or ""
+    return scanner or report_value.get("scanner_name") or ""
+
+
+def _extract_vuln_ids(vuln: dict) -> tuple[str, str]:
+    cve = vuln.get("vuln_id") or vuln.get("id") or vuln.get("vulnerability_id") or vuln.get("CVE") or vuln.get("cve") or ""
+    pkg = vuln.get("pkg_name") or vuln.get("package") or vuln.get("name") or ""
+    return cve, pkg
+
+
+def _extract_vuln_versions(vuln: dict) -> tuple[str, str]:
+    installed = vuln.get("installed_version") or vuln.get("pkg_version") or vuln.get("installedVersion") or vuln.get("version") or ""
+    fixed = vuln.get("fixed_version") or vuln.get("fix_version") or vuln.get("fixedVersion") or ""
+    return installed, fixed
+
+
+def _extract_vuln_text(vuln: dict) -> tuple[str, str, list[str] | str]:
+    severity = vuln.get("severity") or "Unknown"
+    summary = vuln.get("title") or vuln.get("description") or vuln.get("summary") or ""
+    links = vuln.get("links") or vuln.get("references") or []
+    return severity, summary, links
+
+
+def _extract_vuln_link(links: list[str] | str) -> str:
+    if isinstance(links, str):
+        return links
+    return links[0] if links else ""
+
+
+def _parse_vuln_entry(
+    project: str,
+    repository: str,
+    tag: str,
+    digest: str,
+    push_time: Any,
+    scanner_name: str,
+    generated_at: Any,
+    vuln: dict,
+) -> tuple[tuple, dict]:
+    cve, pkg = _extract_vuln_ids(vuln)
+    installed, fixed = _extract_vuln_versions(vuln)
+    severity, summary, links = _extract_vuln_text(vuln)
+    link = _extract_vuln_link(links)
+    key = (project, repository, digest, pkg, cve)
+    row = {
+        "project": project, "repository": repository, "tag": tag, "digest": digest,
+        "artifact_push_time": push_time, "scan_completed_at": generated_at or None,
+        "scanner": scanner_name, "cve_id": cve, "severity": severity,
+        "package": pkg, "installed_version": installed, "fixed_version": fixed,
+        "link": link, "summary": summary,
+    }
+    return key, row
+
+
+def _build_vuln_findings_rows(
+    project: str,
+    repository: str,
+    digest: str,
+    selected: dict,
+    artifacts: list,
+    vuln_payload: dict,
+) -> list[dict]:
+    rows: list[dict] = []
+    seen: set = set()
+    tag = _artifact_tag_name(selected, artifacts)
+    push_time = selected.get("push_time") or selected.get("extra_attrs", {}).get("created")
+    for _report_name, report_value in (vuln_payload or {}).items():
+        if not isinstance(report_value, dict):
+            continue
+        scanner_name = _scanner_name_from_report(report_value)
+        generated_at = report_value.get("generated_at")
+        for vuln in report_value.get("vulnerabilities") or []:
+            key, row = _parse_vuln_entry(project, repository, tag, digest, push_time, scanner_name, generated_at, vuln)
+            if key in seen:
+                continue
+            seen.add(key)
+            rows.append(row)
+    return rows
+
+
 class HarborFindingsExporter:
     def __init__(self) -> None:
         self.projects = [project.strip() for project in _env("HARBOR_FINDINGS_PROJECTS", "dockerhub,ghcr,quay,lscr").split(",") if project.strip()]
@@ -270,6 +367,92 @@ class HarborFindingsExporter:
             insecure=_parse_bool("HARBOR_API_INSECURE", default=False),
         )
         self.snapshot = SnapshotStore()
+
+    def _resolve_severity_and_timestamp(
+        self,
+        project: str,
+        repository: str,
+        digest: str,
+        report: dict | None,
+        severity_counts: Counter[str],
+        last_scan_ts: float | None,
+        lines: list[str],
+    ) -> tuple[Counter[str], float | None, dict | None, bool]:
+        if severity_counts or report:
+            return severity_counts, last_scan_ts, None, False
+        try:
+            payload = self.client.get_vulnerabilities(project, repository, digest)
+        except Exception:
+            lines.append(_metric_line(
+                "harbor_findings_repository_info", 1,
+                {"project": project, "repository": repository, "state": "error", "digest": digest},
+            ))
+            return Counter(), last_scan_ts, None, True
+        severity_counts = _severity_counts_from_vulnerability_payload(payload)
+        for report_value in (payload or {}).values():
+            if isinstance(report_value, dict):
+                last_scan_ts = _parse_rfc3339(report_value.get("generated_at")) or last_scan_ts
+                break
+        return severity_counts, last_scan_ts, payload, False
+
+    def _collect_repository_metrics(
+        self,
+        project: str,
+        repository: str,
+        now: float,
+        lines: list[str],
+        project_state_counts: dict,
+        findings_rows: list[dict],
+    ) -> None:
+        try:
+            artifacts = self.client.list_artifacts(project, repository)
+        except Exception:
+            project_state_counts[project]["error"] += 1
+            lines.append(_metric_line(
+                "harbor_findings_repository_info", 1,
+                {"project": project, "repository": repository, "state": "error", "digest": ""},
+            ))
+            return
+        selected = _choose_repository_artifact(artifacts)
+        if selected is None:
+            return
+        digest = selected.get("digest", "")
+        report = _scan_report_from_overview(selected)
+        severity_counts = _severity_counts_from_scan_overview(report)
+        last_scan_ts = _parse_rfc3339(report.get("end_time") if report else None)
+        severity_counts, last_scan_ts, api_payload, had_error = self._resolve_severity_and_timestamp(
+            project, repository, digest, report, severity_counts, last_scan_ts, lines,
+        )
+        if had_error:
+            project_state_counts[project]["error"] += 1
+            return
+        state = _determine_scan_state(report, severity_counts, last_scan_ts, now, self.scan_stale_after)
+        project_state_counts[project][state] += 1
+        lines.append(_metric_line(
+            "harbor_findings_repository_info", 1,
+            {"project": project, "repository": repository, "state": state, "digest": digest},
+        ))
+        if last_scan_ts is not None:
+            lines.append(_metric_line(
+                "harbor_findings_repository_last_scan_timestamp_seconds", last_scan_ts,
+                {"project": project, "repository": repository, "digest": digest},
+            ))
+        for severity in SEVERITIES:
+            count = int(severity_counts.get(severity, 0))
+            if count == 0:
+                continue
+            lines.append(_metric_line(
+                "harbor_findings_vulnerabilities_total", count,
+                {"project": project, "repository": repository, "severity": severity},
+            ))
+        vuln_payload = api_payload
+        if vuln_payload is None:
+            try:
+                vuln_payload = self.client.get_vulnerabilities(project, repository, digest)
+            except Exception:
+                vuln_payload = None
+        if vuln_payload:
+            findings_rows.extend(_build_vuln_findings_rows(project, repository, digest, selected, artifacts, vuln_payload))
 
     def _collect_metrics(self) -> tuple[str, list[dict[str, Any]]]:
         findings_rows: list[dict[str, Any]] = []
@@ -284,165 +467,23 @@ class HarborFindingsExporter:
             "# HELP harbor_findings_vulnerabilities_total Harbor vulnerability counts by repository and severity.",
             "# TYPE harbor_findings_vulnerabilities_total gauge",
         ]
-
         project_state_counts: dict[str, Counter[str]] = defaultdict(Counter)
-
         for project in self.projects:
             repositories = self.client.list_repositories(project)
             for repository_item in repositories:
                 repository_name = repository_item.get("name", "")
                 prefix = f"{project}/"
-                repository = repository_name[len(prefix) :] if repository_name.startswith(prefix) else repository_name
+                repository = repository_name[len(prefix):] if repository_name.startswith(prefix) else repository_name
                 if not repository:
                     continue
-
-                try:
-                    artifacts = self.client.list_artifacts(project, repository)
-                except Exception:
-                    project_state_counts[project]["error"] += 1
-                    lines.append(
-                        _metric_line(
-                            "harbor_findings_repository_info",
-                            1,
-                            {"project": project, "repository": repository, "state": "error", "digest": ""},
-                        )
-                    )
-                    continue
-
-                selected = _choose_repository_artifact(artifacts)
-                if selected is None:
-                    continue
-
-                digest = selected.get("digest", "")
-                report = _scan_report_from_overview(selected)
-                severity_counts = _severity_counts_from_scan_overview(report)
-                last_scan_ts = _parse_rfc3339(report.get("end_time") if report else None)
-
-                if not severity_counts and not report:
-                    try:
-                        payload = self.client.get_vulnerabilities(project, repository, digest)
-                    except Exception:
-                        payload = None
-                        project_state_counts[project]["error"] += 1
-                        lines.append(
-                            _metric_line(
-                                "harbor_findings_repository_info",
-                                1,
-                                {"project": project, "repository": repository, "state": "error", "digest": digest},
-                            )
-                        )
-                        continue
-                    severity_counts = _severity_counts_from_vulnerability_payload(payload)
-                    for report_value in (payload or {}).values():
-                        if isinstance(report_value, dict):
-                            last_scan_ts = _parse_rfc3339(report_value.get("generated_at")) or last_scan_ts
-                            break
-
-                state = "unscanned"
-                if report or severity_counts:
-                    state = "scanned"
-                    if last_scan_ts is not None and now - last_scan_ts > self.scan_stale_after:
-                        state = "stale"
-
-                project_state_counts[project][state] += 1
-                lines.append(
-                    _metric_line(
-                        "harbor_findings_repository_info",
-                        1,
-                        {"project": project, "repository": repository, "state": state, "digest": digest},
-                    )
-                )
-
-                if last_scan_ts is not None:
-                    lines.append(
-                        _metric_line(
-                            "harbor_findings_repository_last_scan_timestamp_seconds",
-                            last_scan_ts,
-                            {"project": project, "repository": repository, "digest": digest},
-                        )
-                    )
-
-                for severity in SEVERITIES:
-                    count = int(severity_counts.get(severity, 0))
-                    if count == 0:
-                        continue
-                    lines.append(
-                        _metric_line(
-                            "harbor_findings_vulnerabilities_total",
-                            count,
-                            {"project": project, "repository": repository, "severity": severity},
-                        )
-                    )
-
-                # Attempt to fetch full vulnerability payload for detailed rows.
-                vuln_payload = None
-                try:
-                    vuln_payload = self.client.get_vulnerabilities(project, repository, digest)
-                except Exception:
-                    vuln_payload = None
-
-                # Build detailed findings rows from vulnerability payload when present.
-                if vuln_payload:
-                    seen = set()
-                    tag_name = _artifact_tag_name(selected, artifacts)
-                    for report_name, report_value in (vuln_payload or {}).items():
-                        if not isinstance(report_value, dict):
-                            continue
-                        scanner = report_value.get("scanner")
-                        if isinstance(scanner, dict):
-                            scanner_name = scanner.get("name") or scanner.get("vendor") or ""
-                        else:
-                            scanner_name = scanner or report_value.get("scanner_name") or ""
-                        generated_at = report_value.get("generated_at")
-                        for vuln in report_value.get("vulnerabilities") or []:
-                            # Try multiple common keys for fields.
-                            cve = vuln.get("vuln_id") or vuln.get("id") or vuln.get("vulnerability_id") or vuln.get("CVE") or vuln.get("cve") or ""
-                            pkg = vuln.get("pkg_name") or vuln.get("package") or vuln.get("name") or ""
-                            installed = vuln.get("installed_version") or vuln.get("pkg_version") or vuln.get("installedVersion") or vuln.get("version") or ""
-                            fixed = vuln.get("fixed_version") or vuln.get("fix_version") or vuln.get("fixedVersion") or ""
-                            severity = vuln.get("severity") or "Unknown"
-                            summary = vuln.get("title") or vuln.get("description") or vuln.get("summary") or ""
-                            links = vuln.get("links") or vuln.get("references") or []
-                            if isinstance(links, str):
-                                link = links
-                            else:
-                                link = links[0] if links else ""
-                            push_time = selected.get("push_time") or selected.get("extra_attrs", {}).get("created") or None
-
-                            key = (project, repository, digest, pkg, cve)
-                            if key in seen:
-                                continue
-                            seen.add(key)
-
-                            row = {
-                                "project": project,
-                                "repository": repository,
-                                "tag": tag_name,
-                                "digest": digest,
-                                "artifact_push_time": push_time,
-                                "scan_completed_at": generated_at or None,
-                                "scanner": scanner_name,
-                                "cve_id": cve,
-                                "severity": severity,
-                                "package": pkg,
-                                "installed_version": installed,
-                                "fixed_version": fixed,
-                                "link": link,
-                                "summary": summary,
-                            }
-                            findings_rows.append(row)
-
+                self._collect_repository_metrics(project, repository, now, lines, project_state_counts, findings_rows)
         for project, counts in project_state_counts.items():
             for state in ("scanned", "unscanned", "stale", "error"):
-                lines.append(
-                    _metric_line(
-                        "harbor_findings_repositories_total",
-                        int(counts.get(state, 0)),
-                        {"project": project, "state": state},
-                    )
-                )
-
-        # attach findings rows to exporter snapshot by returning it alongside
+                lines.append(_metric_line(
+                    "harbor_findings_repositories_total",
+                    int(counts.get(state, 0)),
+                    {"project": project, "state": state},
+                ))
         return "\n".join(lines), findings_rows
 
     def refresh_forever(self) -> None:
