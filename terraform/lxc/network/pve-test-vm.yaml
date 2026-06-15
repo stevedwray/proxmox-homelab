@@ -186,6 +186,10 @@ inventory:
       role: hypervisor-vm
       ip: 192.168.1.41
       description: "Proxmox test hypervisor — VM on pve (LAN management IP)"
+    - name: linux-desktop
+      role: workstation
+      ip: 192.168.1.104
+      description: "Linux desktop workstation"
 
 policies:
   - from: edge_seg
