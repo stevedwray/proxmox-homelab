@@ -11,7 +11,7 @@ WORKDIR /app
 
 COPY client.py discover.py mikrotik_client.py proxmox_client.py populate.py /app/
 
-RUN pip install --no-cache-dir pyyaml
+RUN pip install --no-cache-dir --only-binary :all: pyyaml==6.0.2
 
 RUN useradd --system --no-create-home appuser
 
