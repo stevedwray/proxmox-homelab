@@ -190,6 +190,14 @@ inventory:
       role: workstation
       ip: 192.168.1.104
       description: "Linux desktop workstation"
+    - name: argon-01
+      role: iot
+      ip: 192.168.1.22
+      description: "Raspberry Pi — argon-01"
+    - name: argon-02
+      role: iot
+      ip: 192.168.1.23
+      description: "Raspberry Pi — argon-02"
 
 policies:
   - from: edge_seg
