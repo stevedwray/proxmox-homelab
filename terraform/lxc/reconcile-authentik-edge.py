@@ -639,23 +639,21 @@ def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[s
     return payload
 
 
+def _url_host_differs(current: Any, desired: Any) -> bool:
+    return _DISCOVER._normalize_url_host(current) != _DISCOVER._normalize_url_host(desired)
+
+
 def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> dict[str, Any]:
     patch: dict[str, Any] = {}
     for key, value in desired.items():
         current = existing.get(key)
-        if key == "meta_launch_url":
-            current_host = _DISCOVER._normalize_url_host(current)
-            desired_host = _DISCOVER._normalize_url_host(value)
-            if current_host != desired_host:
+        if key in ("meta_launch_url", "external_host"):
+            if _url_host_differs(current, value):
                 patch[key] = value
-            continue
-        if key == "external_host":
-            current_host = _DISCOVER._normalize_url_host(current)
-            desired_host = _DISCOVER._normalize_url_host(value)
-            if current_host != desired_host:
+        elif key == "property_mappings" and isinstance(current, list) and isinstance(value, list):
+            if {str(x) for x in current} != {str(x) for x in value}:
                 patch[key] = value
-            continue
-        if current != value:
+        elif current != value:
             patch[key] = value
     return patch
 
