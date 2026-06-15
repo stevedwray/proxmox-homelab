@@ -425,7 +425,88 @@ phase_error_trap() {
       "Phase ${CURRENT_PHASE_NAME} failed"
   fi
   write_current_phase_state "failed" "${status}"
+  write_phase_summary "${CURRENT_PHASE_NAME}" "failed"
   exit "${status}"
+}
+
+write_phase_summary() {
+  local phase_name="${1:-${CURRENT_PHASE_NAME}}"
+  local phase_status="${2:-unknown}"
+  local summary_file="${EVIDENCE_DIR}/summary-${phase_name}.md"
+
+  STATE_FILE_PATH="${STATE_FILE}" \
+  SUMMARY_PHASE="${phase_name}" \
+  SUMMARY_STATUS="${phase_status}" \
+  SUMMARY_FILE="${summary_file}" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(os.environ["STATE_FILE_PATH"])
+phase = os.environ["SUMMARY_PHASE"]
+summary_file = Path(os.environ["SUMMARY_FILE"])
+
+if not state_path.exists():
+    print(f"[write_phase_summary] state file not found: {state_path}", file=sys.stderr)
+    sys.exit(0)
+
+data = json.loads(state_path.read_text(encoding="utf-8"))
+entry = data.get("phases", {}).get(phase, {})
+
+status = entry.get("status", os.environ.get("SUMMARY_STATUS", "unknown"))
+branch = entry.get("branch") or data.get("branch") or "unknown"
+commit_full = entry.get("commit") or data.get("commit") or "unknown"
+commit = commit_full[:12] if commit_full and commit_full != "unknown" else commit_full
+start_time = entry.get("start_time") or "—"
+end_time = entry.get("end_time") or "—"
+stamp = data.get("stamp", "unknown")
+log_paths = entry.get("log_paths", [])
+failure = entry.get("failure") or {}
+dirty_info = entry.get("dirty_tree") or {}
+dirty_status = dirty_info.get("status", "unknown")
+
+status_badge = {"passed": "PASSED", "failed": "FAILED"}.get(status, status.upper())
+
+lines = [
+    f"# Phase: {phase} — {status_badge}",
+    "",
+    f"**Stamp:** {stamp}  ",
+    f"**Branch:** {branch}  ",
+    f"**Commit:** {commit}  ",
+    f"**Tree:** {dirty_status}  ",
+    f"**Started:** {start_time}  ",
+    f"**Ended:** {end_time}  ",
+    "",
+    f"## Result: {status_badge}",
+    "",
+]
+
+if log_paths:
+    lines.append("## Logs")
+    for lp in log_paths:
+        lines.append(f"- `{Path(lp).name}`")
+    lines.append("")
+
+if failure and any(failure.values()):
+    lines.append("## Failure")
+    if failure.get("step"):
+        lines.append(f"**Step:** {failure['step']}  ")
+    if failure.get("message"):
+        lines.append(f"**Message:** {failure['message']}  ")
+    if failure.get("log_path"):
+        lines.append(f"**Log:** `{Path(failure['log_path']).name}`  ")
+    lines.append("")
+else:
+    lines.append("## Deviations")
+    lines.append("None.")
+    lines.append("")
+
+summary_file.parent.mkdir(parents=True, exist_ok=True)
+summary_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"[summary] written: {summary_file}")
+PY
 }
 
 run_phase_handler() {
@@ -449,6 +530,7 @@ run_phase_handler() {
     CURRENT_PHASE_END_TIME="$(now_utc)"
     clear_phase_failure_context
     write_current_phase_state "passed" "0"
+    write_phase_summary "${phase_name}" "passed"
   )
 }
 

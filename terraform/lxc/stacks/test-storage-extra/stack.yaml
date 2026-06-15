@@ -4,7 +4,7 @@ hostname: test-storage-extra
 ip_address: "192.168.10.65/24"
 gateway: "192.168.10.1"
 dns_server: "192.168.10.1"
-deployment_tier: platform
+deployment_tier: test
 vmid: 151
 cores: 1
 memory: 1024
