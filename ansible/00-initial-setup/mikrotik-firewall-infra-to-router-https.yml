@@ -51,7 +51,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         return_content: true
         status_code: 200
       register: firewall_filters
@@ -88,7 +88,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body: "{{ infra_router_https_rule | combine({'place-before': input_drop_anchor['.id']}) }}"
         status_code: [200, 201]
@@ -104,7 +104,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body: "{{ infra_router_https_rule }}"
         status_code: [200, 201]
@@ -120,7 +120,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         return_content: true
         status_code: 200
       register: firewall_filters_final

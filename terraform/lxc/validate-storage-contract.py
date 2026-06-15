@@ -444,7 +444,7 @@ def validate_api_base_url(proxmox_api_url: str, proxmox_node: str) -> tuple[str,
 
 
 def build_ssl_context(insecure_tls: bool) -> ssl.SSLContext:
-    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+    context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)  # nosonar: python:S5527,python:S4423
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_default_certs()
     context.check_hostname = True
