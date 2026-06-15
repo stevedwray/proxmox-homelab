@@ -51,6 +51,8 @@ EVIDENCE_DIR="${EVIDENCE_ROOT}/${STAMP}"
 LOG_DIR="${EVIDENCE_DIR}/logs"
 RUN_LOG="${LOG_DIR}/teardown-deploy-test-${STAMP}.log"
 STATE_FILE="${EVIDENCE_DIR}/state.json"
+LOCK_FILE="${EVIDENCE_ROOT}/.harness.lock"
+LOCK_HELD=false
 
 TRACKED_PHASES=(
   "source-preflight"
@@ -1094,6 +1096,44 @@ wait_for_authentik_api_ready() {
       echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
       exit 1
     ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
+}
+
+acquire_harness_lock() {
+  mkdir -p "${EVIDENCE_ROOT}"
+  if [[ -f "${LOCK_FILE}" ]]; then
+    local existing_pid existing_stamp
+    existing_pid="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('pid',''))" "${LOCK_FILE}" 2>/dev/null || true)"
+    existing_stamp="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('stamp',''))" "${LOCK_FILE}" 2>/dev/null || true)"
+    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+      printf '[harness] ERROR: another harness run is active (PID %s, stamp %s)\n' \
+        "${existing_pid}" "${existing_stamp}" >&2
+      printf '[harness] Lock file: %s\n' "${LOCK_FILE}" >&2
+      printf '[harness] If the other process is no longer running, remove the lock file and retry.\n' >&2
+      return 1
+    fi
+    printf '[harness] WARNING: stale lock file (PID %s no longer running); removing.\n' "${existing_pid}" >&2
+    rm -f "${LOCK_FILE}"
+  fi
+  python3 -c "
+import json, os, sys
+data = {
+    'stamp': sys.argv[1],
+    'pid': str(os.getppid()),
+    'branch': sys.argv[2],
+    'commit': sys.argv[3],
+}
+print(json.dumps(data))
+" "${STAMP}" "$(git_current_branch)" "$(git_current_commit)" > "${LOCK_FILE}"
+  LOCK_HELD=true
+  printf '[harness] lock acquired: %s\n' "${LOCK_FILE}" >&2
+}
+
+release_harness_lock() {
+  if [[ "${LOCK_HELD}" == "true" ]]; then
+    rm -f "${LOCK_FILE}"
+    LOCK_HELD=false
+    printf '[harness] lock released\n' >&2
+  fi
 }
 
 require_execute_approval() {
@@ -2285,26 +2325,21 @@ main() {
     status)
       phase_status
       ;;
-    destroy)
-      run_phase_handler "destroy" phase_destroy
-      ;;
-    deploy-foundation)
-      run_phase_handler "deploy-foundation" phase_deploy_foundation
-      ;;
-    deploy-edge)
-      run_phase_handler "deploy-edge" phase_deploy_edge
-      ;;
-    activate-edge)
-      run_phase_handler "activate-edge" phase_activate_edge
-      ;;
-    deploy-platform)
-      run_phase_handler "deploy-platform" phase_deploy_platform
+    destroy|deploy-foundation|deploy-edge|activate-edge|deploy-platform|cycle)
+      acquire_harness_lock
+      trap 'release_harness_lock' EXIT
+      case "${PHASE}" in
+        destroy)          run_phase_handler "destroy"           phase_destroy ;;
+        deploy-foundation) run_phase_handler "deploy-foundation" phase_deploy_foundation ;;
+        deploy-edge)      run_phase_handler "deploy-edge"       phase_deploy_edge ;;
+        activate-edge)    run_phase_handler "activate-edge"     phase_activate_edge ;;
+        deploy-platform)  run_phase_handler "deploy-platform"   phase_deploy_platform ;;
+        cycle)            run_phase_handler "cycle"             phase_cycle ;;
+      esac
+      release_harness_lock
       ;;
     final-validation)
       run_phase_handler "final-validation" phase_final_validation
-      ;;
-    cycle)
-      run_phase_handler "cycle" phase_cycle
       ;;
     *)
       printf 'Unknown phase: %s\n\n' "${PHASE}" >&2

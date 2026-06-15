@@ -181,7 +181,11 @@ inventory:
       token_secret_env: PVE_READONLY_TOKEN_SECRET
       portainer_url: "https://management-stack.gibbsgreatly.xyz:9443"
       portainer_api_key_env: PORTAINER_TOKEN
-  static_hosts: []
+  static_hosts:
+    - name: pve-test-vm
+      role: hypervisor-vm
+      ip: 192.168.1.41
+      description: "Proxmox test hypervisor — VM on pve (LAN management IP)"
 
 policies:
   - from: edge_seg

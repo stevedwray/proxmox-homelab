@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+# Mock: exit 0 for any terragrunt command
+exit 0

@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Mock dig: return a generic A record answer
+printf ';; ANSWER SECTION:\nexample.test. 5 IN A 192.168.30.10\n'
+exit 0
