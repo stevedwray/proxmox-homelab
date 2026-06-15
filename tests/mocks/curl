@@ -1,0 +1,12 @@
+#!/usr/bin/env bash
+# Mock curl: output 401 for /v2/ checks, 200 for everything else
+for arg in "$@"; do
+  case "${arg}" in
+    *"/v2/"*)
+      printf 'HTTP/1.1 401 Unauthorized\r\n'
+      exit 0
+      ;;
+  esac
+done
+printf '{"status": "ok"}\n'
+exit 0

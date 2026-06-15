@@ -85,6 +85,7 @@ CLUSTERS = [
 NETWORK_INTENT_FILES = {
     "pve": "pve.yaml",
     "pve-test": "pve-test.yaml",
+    "pve-test-vm": "pve-test-vm.yaml",
 }
 
 try:
