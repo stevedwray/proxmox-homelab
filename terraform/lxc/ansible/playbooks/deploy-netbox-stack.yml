@@ -401,6 +401,7 @@
         mode: "0640"
       loop:
         - populate.py
+        - flows.py
         - client.py
         - discover.py
         - proxmox_client.py
@@ -508,6 +509,7 @@
           Requires=netbox-populate.service
 
           [Timer]
+          OnBootSec=2min
           OnCalendar=daily
           RandomizedDelaySec=1800
           Persistent=true
