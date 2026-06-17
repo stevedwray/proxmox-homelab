@@ -488,10 +488,16 @@
           Type=oneshot
           WorkingDirectory={{ populate_dir }}
           EnvironmentFile={{ populate_env_file }}
+          ExecStartPre=/bin/bash -c '\
+            for i in $(seq 1 60); do \
+              /usr/bin/python3 -c \
+                "import urllib.request; urllib.request.urlopen(\"http://localhost:8080/api/\")" \
+                2>/dev/null && exit 0 || sleep 5; \
+            done; \
+            echo "netbox-populate: NetBox API did not respond after 5 minutes" >&2; exit 1'
           ExecStart=/usr/bin/python3 {{ populate_dir }}/populate.py
-          StandardOutput=journal
-          StandardError=journal
-          SyslogIdentifier=netbox-populate
+          StandardOutput=append:/var/log/netbox-populate.log
+          StandardError=append:/var/log/netbox-populate.log
 
           [Install]
           WantedBy=multi-user.target
@@ -502,14 +508,13 @@
         dest: /etc/systemd/system/netbox-populate.timer
         owner: root
         group: root
-        mode: "0644"
+        mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
         content: |
           [Unit]
           Description=Run NetBox populate daily
           Requires=netbox-populate.service
 
           [Timer]
-          OnBootSec=2min
           OnCalendar=daily
           RandomizedDelaySec=1800
           Persistent=true
