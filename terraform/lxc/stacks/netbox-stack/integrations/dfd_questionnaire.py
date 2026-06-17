@@ -7,6 +7,88 @@ netbox container; appears under Operations → Scripts in the NetBox UI.
 
 from extras.scripts import BooleanVar, ChoiceVar, Script, StringVar, TextVar
 
+_HARBOR_FLOW_IDS = (
+    "df-p-apt-cacher-to-p-harbor",
+    "df-p-authentik-to-p-harbor",
+    "df-p-ci-runner-01-to-p-harbor",
+    "df-p-dns-to-p-harbor",
+    "df-p-monitoring-to-p-harbor",
+    "df-p-netbox-to-p-harbor",
+    "df-p-proxy-to-p-harbor",
+    "df-p-step-ca-to-p-harbor",
+)
+
+_DS_FIELDS = (
+    ("ds-authentik-db", "ds_authentik_db_encrypted"),
+    ("ds-harbor-db", "ds_harbor_db_encrypted"),
+    ("ds-harbor-storage", "ds_harbor_storage_encrypted"),
+    ("ds-netbox-db", "ds_netbox_db_encrypted"),
+    ("ds-monitoring-metrics", "ds_monitoring_metrics_encrypted"),
+    ("ds-monitoring-logs", "ds_monitoring_logs_encrypted"),
+    ("ds-step-ca-keys", "ds_step_ca_keys_encrypted"),
+)
+
+
+def _deep_copy_model(data):
+    return {k: [dict(obj) for obj in v] if isinstance(v, list) else v for k, v in data.items()}
+
+
+def _update_obj(model, section, obj_id, updates, warn):
+    for obj in model.get(section, []):
+        if obj.get("id") == obj_id:
+            obj.update({k: v for k, v in updates.items() if v is not None})
+            obj.pop("needs_annotation", None)
+            obj.pop("annotation_hint", None)
+            return
+    warn(f"{section}: id '{obj_id}' not found — skipped")
+
+
+def _apply_flow_annotations(model, data, warn):
+    scope = data["user_to_traefik_scope"]
+    _update_obj(model, "data_flows", "df-user-to-traefik", {
+        "notes": "LAN-only — not internet-facing" if scope == "lan_only" else "Internet-facing — port-forwarded from WAN",
+    }, warn)
+
+    uses_https = data["apt_cacher_uses_https"]
+    _update_obj(model, "data_flows", "df-apt-cacher-upstream", {
+        "transport_security": "tls" if uses_https else "plaintext",
+        "notes": "Uses HTTPS upstream mirrors" if uses_https else "Uses HTTP upstream mirrors (unencrypted transit)",
+    }, warn)
+
+    harbor_auth = "robot-account" if data["harbor_pull_auth"] == "robot_account" else "anonymous"
+    harbor_notes = data.get("harbor_pull_auth_notes") or None
+    for fid in _HARBOR_FLOW_IDS:
+        _update_obj(model, "data_flows", fid, {"auth": harbor_auth, "notes": harbor_notes}, warn)
+
+    loki_updates = {"auth": data["loki_push_auth"], "log_filtering": data["loki_log_filtering"]}
+    for fid in ("df-authentik-to-loki", "df-netbox-to-loki"):
+        _update_obj(model, "data_flows", fid, loki_updates, warn)
+
+    if data["monitoring_scrapes_confirmed"]:
+        for fid in ("df-monitoring-scrape-authentik", "df-monitoring-scrape-netbox"):
+            _update_obj(model, "data_flows", fid, {"confirmed": True}, warn)
+
+
+def _apply_store_annotations(model, data, warn):
+    for ds_id, field in _DS_FIELDS:
+        _update_obj(model, "data_stores", ds_id, {"encryption_at_rest": data[field]}, warn)
+
+
+def _apply_process_annotations(model, data, warn):
+    ci_updates = {"scope": data["ci_runner_scope"]}
+    if data.get("ci_runner_notes"):
+        ci_updates["notes"] = data["ci_runner_notes"]
+    _update_obj(model, "processes", "p-ci-runner-01", ci_updates, warn)
+
+
+def _count_needs_annotation(model):
+    return sum(
+        1
+        for section in ("data_flows", "processes", "data_stores")
+        for obj in model.get(section, [])
+        if obj.get("needs_annotation")
+    )
+
 
 class DFDAnnotationQuestionnaire(Script):
     class Meta:
@@ -166,102 +248,20 @@ class DFDAnnotationQuestionnaire(Script):
 
     # -------------------------------------------------------------------------
 
-    def run(self, data, commit):  # noqa: C901
+    def run(self, data, commit):
         from extras.models import ConfigContext
 
         ctx = ConfigContext.objects.get(name="threat-model")
-        # Deep-copy the lists so mutations don't affect the original on dry-run
-        model = {}
-        for k, v in ctx.data.items():
-            model[k] = [dict(obj) for obj in v] if isinstance(v, list) else v
+        model = _deep_copy_model(ctx.data)
 
-        def _update(section, obj_id, updates):
-            for obj in model.get(section, []):
-                if obj.get("id") == obj_id:
-                    for k, v in updates.items():
-                        if v is not None:
-                            obj[k] = v
-                    obj.pop("needs_annotation", None)
-                    obj.pop("annotation_hint", None)
-                    return True
-            self.log_warning(f"{section}: id '{obj_id}' not found — skipped")
-            return False
+        _apply_flow_annotations(model, data, self.log_warning)
+        _apply_store_annotations(model, data, self.log_warning)
+        _apply_process_annotations(model, data, self.log_warning)
 
-        # Internet exposure
-        scope = data["user_to_traefik_scope"]
-        _update("data_flows", "df-user-to-traefik", {
-            "notes": (
-                "LAN-only — not internet-facing"
-                if scope == "lan_only"
-                else "Internet-facing — port-forwarded from WAN"
-            ),
-        })
-
-        # apt-cacher upstream
-        uses_https = data["apt_cacher_uses_https"]
-        _update("data_flows", "df-apt-cacher-upstream", {
-            "transport_security": "tls" if uses_https else "plaintext",
-            "notes": (
-                "Uses HTTPS upstream mirrors"
-                if uses_https
-                else "Uses HTTP upstream mirrors (unencrypted transit)"
-            ),
-        })
-
-        # Harbor pull auth
-        harbor_auth = "robot-account" if data["harbor_pull_auth"] == "robot_account" else "anonymous"
-        harbor_notes = data.get("harbor_pull_auth_notes") or None
-        for fid in (
-            "df-p-apt-cacher-to-p-harbor",
-            "df-p-authentik-to-p-harbor",
-            "df-p-ci-runner-01-to-p-harbor",
-            "df-p-dns-to-p-harbor",
-            "df-p-monitoring-to-p-harbor",
-            "df-p-netbox-to-p-harbor",
-            "df-p-proxy-to-p-harbor",
-            "df-p-step-ca-to-p-harbor",
-        ):
-            _update("data_flows", fid, {"auth": harbor_auth, "notes": harbor_notes})
-
-        # Loki push
-        loki_auth = data["loki_push_auth"]
-        loki_filtering = data["loki_log_filtering"]
-        for fid in ("df-authentik-to-loki", "df-netbox-to-loki"):
-            _update("data_flows", fid, {"auth": loki_auth, "log_filtering": loki_filtering})
-
-        # Monitoring scrapes
-        if data["monitoring_scrapes_confirmed"]:
-            for fid in ("df-monitoring-scrape-authentik", "df-monitoring-scrape-netbox"):
-                _update("data_flows", fid, {"confirmed": True})
-
-        # Data stores
-        for ds_id, field in (
-            ("ds-authentik-db", "ds_authentik_db_encrypted"),
-            ("ds-harbor-db", "ds_harbor_db_encrypted"),
-            ("ds-harbor-storage", "ds_harbor_storage_encrypted"),
-            ("ds-netbox-db", "ds_netbox_db_encrypted"),
-            ("ds-monitoring-metrics", "ds_monitoring_metrics_encrypted"),
-            ("ds-monitoring-logs", "ds_monitoring_logs_encrypted"),
-            ("ds-step-ca-keys", "ds_step_ca_keys_encrypted"),
-        ):
-            _update("data_stores", ds_id, {"encryption_at_rest": data[field]})
-
-        # CI runner
-        ci_updates = {"scope": data["ci_runner_scope"]}
-        if data.get("ci_runner_notes"):
-            ci_updates["notes"] = data["ci_runner_notes"]
-        _update("processes", "p-ci-runner", ci_updates)
-
-        # General notes
         if data.get("general_notes"):
             model["notes"] = data["general_notes"]
 
-        remaining = sum(
-            1
-            for section in ("data_flows", "processes", "data_stores")
-            for obj in model.get(section, [])
-            if obj.get("needs_annotation")
-        )
+        remaining = _count_needs_annotation(model)
 
         if commit:
             ctx.data = model
