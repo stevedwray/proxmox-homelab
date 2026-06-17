@@ -1,6 +1,34 @@
-# Management stack — runs central Portainer server
+# Management stack — currently on pve LAN bridge (legacy, not SDN-managed)
+# Migration target: gradual decommission — services split to their SDN equivalents
+# See docs/plan/pve-migration-inventory.md for full detail
+#
+# CURRENT STATE (discovered 2026-06-18 via Portainer):
+#   IP: 192.168.1.70 (on vmbr0, LAN bridge)
+#   Services:
+#     portainer         (running, ports 8000/9000/9443) — replaced by portainer-stack on SDN
+#     portainer-agent   (running, port 9001)
+#     nginx-proxy-manager (running, ports 80/81/443) — MUST inventory routes before decommission
+#       data: bind /srv/npm/data, /srv/npm/letsencrypt
+#     central-registry  (running, port 5000) — local Docker registry, replaced by Harbor
+#       data: named vol harbor_registry_data
+#     registry-ui       (running, port 5001) — UI for central-registry
+#     trivy-scanner     (running, port 4954) — replaced by Harbor built-in Trivy
+#
+# DECOMMISSION STEPS (in order):
+#   1. Inventory all active NPM proxy routes (access NPM admin at http://192.168.1.70:81)
+#   2. Recreate NPM routes as Traefik labels/rules in each service's stack
+#   3. Cut over DNS/router from NPM → Traefik
+#   4. Verify all services accessible via Traefik
+#   5. Re-register all Portainer endpoints (gaming, media, torrent) to new Portainer on SDN
+#   6. Verify Portainer on SDN has all endpoints and stacks visible
+#   7. Evaluate central-registry image blobs — migrate any non-reproducible images to Harbor
+#   8. Stop and destroy management-stack LXC
+#
+# NOTE: NPM currently holds LE certificates for *.gibbsgreatly.xyz (non-lab domain).
+#   These routes and certs must be handled carefully — step-ca/Traefik handles *.lab.* only.
+
 hostname: management-server
-ip_address: "192.168.1.70/24"
+ip_address: "192.168.1.70/24"   # current IP — on LAN bridge (no SDN zone planned)
 vmid: 101
 cores: 2
 memory: 3072

@@ -1,11 +1,30 @@
-# Media services stack
+# Media services stack — currently on pve LAN bridge (legacy, not SDN-managed)
+# Migration target: app_seg (VLAN 50, 10.60.0.0/24) — see docs/plan/pve-migration-inventory.md
+#
+# CURRENT STATE (discovered 2026-06-18 via Portainer):
+#   IP: 192.168.1.6 (on vmbr0, LAN bridge)
+#   Portainer endpoint: tcp://192.168.1.6:9001
+#   Services: jellyfin (lscr.io/linuxserver/jellyfin:latest)
+#
+# DATA DEPENDENCIES:
+#   LXC-local: /config/jellyfin  (metadata, library DB, users — must be backed up)
+#   NFS: /nas-media/video/movies -> jellyfin:/movies
+#   NFS: /nas-media/video/tv    -> jellyfin:/tv
+#   NFS: /nas-media/music       -> jellyfin:/music
+#   (confirm NAS IP before migration; MikroTik must permit app_seg -> NAS NFS)
+#
+# MIGRATION GATE: Harbor must have lscr.io/linuxserver/jellyfin mirrored
+# MIGRATION GATE: GPU passthrough status must be confirmed (check pve LXC config)
+# MIGRATION GATE: DLNA on port 1900 (UDP multicast) — check if any clients use it
+
 hostname: media-stack
-ip_address: "192.168.1.80/24"
-vmid: 800
+ip_address: "10.60.0.21/24"   # target IP in app_seg — placeholder until zone is created
+gateway: "10.60.0.1"
+vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 4
 memory: 8192
 rootfs_size: "50G"
-docker_storage_size: "200G"
-tags: "media,docker"
+docker_storage_size: "0G"
+tags: "media,docker,jellyfin"
 ansible_playbook: "docker-base"
 portainer_agent: true

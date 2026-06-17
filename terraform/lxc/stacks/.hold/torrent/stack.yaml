@@ -1,10 +1,39 @@
-# Torrent/media automation stack
+# Torrent/media automation stack — currently on pve LAN bridge (legacy, not SDN-managed)
+# Migration target: app_seg (VLAN 50, 10.60.0.0/24) — see docs/plan/pve-migration-inventory.md
+#
+# CURRENT STATE (discovered 2026-06-18 via Portainer):
+#   IP: 192.168.1.5 (on vmbr0, LAN bridge)
+#   Portainer endpoint: tcp://192.168.1.5:9001
+#   Services: gluetun, qbittorrent, prowlarr, radarr, sonarr, lidarr, flaresolverr
+#
+# DATA DEPENDENCIES:
+#   LXC-local: /config/torrents/<service>/  (config for all arr services — must be backed up)
+#   LXC-local: /incoming/                  (in-progress downloads — confirm size)
+#   LXC-local: /config/torrents/gluetun/wireguard/  (WireGuard VPN credentials — SENSITIVE)
+#   NFS: /nas/video/movies  -> radarr:/movies + radarr:/media/movies
+#   NFS: /nas/video/tv      -> sonarr:/tv + sonarr:/media/tv
+#   NFS: /nas/music         -> lidarr:/music + lidarr:/media/music
+#   (confirm NAS IP before migration; MikroTik must permit app_seg -> NAS NFS)
+#
+# VPN DEPENDENCY: gluetun handles all download traffic via WireGuard VPN.
+#   MikroTik must permit app_seg -> internet on udp/51820 (WireGuard)
+#
+# HARBOR IMAGES NEEDED:
+#   lscr.io/linuxserver/qbittorrent
+#   lscr.io/linuxserver/prowlarr
+#   lscr.io/linuxserver/radarr
+#   lscr.io/linuxserver/sonarr
+#   blampe/lidarr
+#   ghcr.io/flaresolverr/flaresolverr
+#   qmcgaw/gluetun
+
 hostname: torrent-stack
-ip_address: "192.168.1.72/24"
+ip_address: "10.60.0.22/24"   # target IP in app_seg — placeholder until zone is created
+gateway: "10.60.0.1"
+vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 2
 memory: 4096
 rootfs_size: "50G"
-rootfs_storage: "apps-containers"
 docker_storage_size: "30G"
 tags: "torrent,media,docker"
 ansible_playbook: "docker-base"
