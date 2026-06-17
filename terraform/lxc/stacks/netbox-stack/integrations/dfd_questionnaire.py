@@ -120,7 +120,10 @@ class DFDAnnotationQuestionnaire(Script):
 
     apt_cacher_uses_https = BooleanVar(
         label="apt-cacher uses HTTPS upstream mirrors",
-        description="Does apt-cacher-ng use https:// upstream mirrors? (df-apt-cacher-upstream)",
+        description=(
+            "Does apt-cacher-ng use https:// upstream mirrors? "
+            "PassThroughPattern is set for CONNECT tunnelling but apt mirrors are HTTP. Default: false."
+        ),
         default=False,
     )
 
@@ -132,14 +135,13 @@ class DFDAnnotationQuestionnaire(Script):
         label="LXC → Harbor pull auth",
         description=(
             "Do LXC containers authenticate to Harbor for image pulls? "
-            "Applied to: apt-cacher, authentik, ci-runner-01, dns, monitoring, "
-            "netbox, proxy, step-ca → harbor."
+            "No docker-login step exists in any deploy playbook — daemon uses insecure-registries. Default: anonymous."
         ),
         choices=[
             ("anonymous", "Anonymous — no credentials required"),
             ("robot_account", "Robot account — per-stack or shared"),
         ],
-        default="robot_account",
+        default="anonymous",
     )
     harbor_pull_auth_notes = StringVar(
         label="Harbor pull auth details",
@@ -153,7 +155,9 @@ class DFDAnnotationQuestionnaire(Script):
 
     loki_push_auth = ChoiceVar(
         label="Loki push auth",
-        description="Auth for log pushes to Loki. (df-authentik-to-loki, df-netbox-to-loki)",
+        description=(
+            "Auth for log pushes to Loki. Promtail template uses bare HTTP push URL with no Authorization header. Default: none."
+        ),
         choices=[
             ("none", "None — unauthenticated push"),
             ("bearer_token", "Bearer token"),
@@ -162,7 +166,10 @@ class DFDAnnotationQuestionnaire(Script):
     )
     loki_log_filtering = BooleanVar(
         label="Logs filtered before Loki",
-        description="Are logs redacted to remove secrets before being pushed to Loki?",
+        description=(
+            "Are logs redacted before being pushed to Loki? "
+            "Promtail scrapes /var/log/**/*.log verbatim with no relabel redaction. Default: false."
+        ),
         default=False,
     )
 
@@ -223,7 +230,9 @@ class DFDAnnotationQuestionnaire(Script):
 
     ci_runner_scope = ChoiceVar(
         label="CI runner registration scope",
-        description="Repo-scoped = lower blast radius if runner is compromised.",
+        description=(
+            "Registered against repos/stevedwray/proxmox-homelab via repo-level registration token. Default: repo."
+        ),
         choices=[
             ("repo", "Repository-scoped"),
             ("org", "Organisation-scoped"),
