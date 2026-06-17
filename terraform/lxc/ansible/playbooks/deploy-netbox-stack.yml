@@ -407,6 +407,36 @@
         - proxmox_client.py
         - mikrotik_client.py
 
+    - name: Find stack YAML files for threat model derivation
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../stacks"
+        patterns:
+          - "stack.yaml"
+          - "edge.yaml"
+          - "docker-compose.yml"
+        depth: 2
+        recurse: true
+      delegate_to: localhost
+      register: stack_yaml_files
+
+    - name: Ensure stack subdirectories exist for threat model files
+      ansible.builtin.file:
+        path: "{{ populate_dir }}/stacks/{{ item.path | regex_replace('^.*\\/stacks\\/', '') | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop: "{{ stack_yaml_files.files }}"
+
+    - name: Deploy stack YAML files for threat model derivation
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ populate_dir }}/stacks/{{ item.path | regex_replace('^.*\\/stacks\\/', '') }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop: "{{ stack_yaml_files.files }}"
+
     - name: Create credential env file directory
       ansible.builtin.file:
         path: /etc/netbox-populate
@@ -447,6 +477,7 @@
           # DOCKER_SOCKET_PROXY_URL=
           NETBOX_NETWORK_ENV={{ netbox_network_env }}
           NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
+          STACKS_DIR={{ populate_dir }}/stacks
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
 
