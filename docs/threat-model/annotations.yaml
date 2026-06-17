@@ -1,0 +1,97 @@
+# Threat model manual annotations
+#
+# Fields here override or supplement auto-derived values in the threat model.
+# Each section is keyed by object id (matching the `id` field in the derived model).
+#
+# Supported per-object overrides:
+#   - Any field from the derived object (data_classification, auth, notes, etc.)
+#   - exclude: true    → remove this object from the model entirely
+#
+# Run to preview the derived model before annotations are applied:
+#   python3 terraform/lxc/stacks/netbox-stack/integrations/flows.py --env pve
+#
+# Run to push to NetBox:
+#   ./with-secrets python3 terraform/lxc/stacks/netbox-stack/integrations/populate.py
+
+# ---------------------------------------------------------------------------
+# Data flows
+# ---------------------------------------------------------------------------
+
+flows:
+
+  # Is port 443 forwarded from the internet, or LAN-only?
+  df-user-to-traefik:
+    notes: ""  # e.g. "LAN-only — not internet-facing"
+
+  # Does the CI runner actually push built images to Harbor?
+  # Set exclude: true if this flow does not exist.
+  df-p-ci-runner-01-to-p-harbor:
+    needs_annotation: true
+    notes: ""  # e.g. "CI pushes images using robot account harbor-ci-push"
+    auth: ""   # e.g. "harbor-robot-account"
+
+  # Why does the CI runner reach Authentik? (from zone policy build_seg → mgmt_seg :9000)
+  # Set exclude: true if this is a vestigial firewall rule with no active flow.
+  df-zone-policy-02:
+    notes: ""  # e.g. "CI authenticates to Authentik before pushing to Harbor"
+
+  # Does the CI runner push metrics/logs to the monitoring stack?
+  df-p-ci-runner-01-to-p-monitoring:
+    needs_annotation: true
+    notes: ""
+    auth: ""   # e.g. "none" or "bearer-token"
+
+  # Confirm Loki push auth and log filtering:
+  df-authentik-stack-to-loki:
+    auth: "none"  # or: "bearer-token"
+    notes: ""     # e.g. "Logs are not filtered — may contain credential fragments"
+
+  df-netbox-stack-to-loki:
+    auth: "none"
+    notes: ""
+
+# ---------------------------------------------------------------------------
+# Processes
+# ---------------------------------------------------------------------------
+
+processes:
+
+  p-ci-runner:
+    notes: ""
+    # runner_scope: repo    # or: org  (repo-scoped = lower blast radius)
+    # secrets_in_scope: []  # list secrets available to CI workflows at runtime
+
+# ---------------------------------------------------------------------------
+# Data stores
+# ---------------------------------------------------------------------------
+
+data_stores:
+
+  ds-authentik-db:
+    encryption_at_rest: false  # set true if the LXC data volume is encrypted
+    notes: ""
+
+  ds-harbor-storage:
+    encryption_at_rest: false
+    notes: ""
+
+  ds-harbor-db:
+    encryption_at_rest: false
+    notes: ""
+
+  ds-netbox-db:
+    encryption_at_rest: false
+    notes: ""
+
+  ds-monitoring-metrics:
+    encryption_at_rest: false
+    notes: ""
+
+  ds-monitoring-logs:
+    encryption_at_rest: false
+    log_filtering: false  # set true if logs are filtered to redact secrets before Loki
+    notes: ""
+
+  ds-step-ca-keys:
+    encryption_at_rest: false  # set true if step-ca passphrase-encrypts the CA keys
+    notes: ""

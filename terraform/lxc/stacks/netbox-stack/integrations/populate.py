@@ -32,6 +32,7 @@ from discover import (
     _build_socket_proxy_services,
     PortainerClient,
 )
+from flows import populate_threat_model
 from proxmox_client import discover_from_proxmox
 
 # ---------------------------------------------------------------------------
@@ -1595,6 +1596,7 @@ def main():
     populate_static_hosts(nb, site, static_hosts)
     # Service-level reconciliation: ensure managed services' env tags match their VM
     reconcile_service_env_tags(nb)
+    populate_threat_model(nb, site, _managed_tag_refs(), env=population_intent["environment"])
     stale_total = report_stale_managed_objects(nb, inventory)
 
     print("\n=== Done ===")
