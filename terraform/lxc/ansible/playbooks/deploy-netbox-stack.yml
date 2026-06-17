@@ -490,8 +490,7 @@
           EnvironmentFile={{ populate_env_file }}
           ExecStartPre=/bin/bash -c '\
             for i in $(seq 1 60); do \
-              /usr/bin/python3 -c \
-                "import urllib.request; urllib.request.urlopen(\"http://localhost:8080/api/\")" \
+              curl -s -o /dev/null http://localhost:8080/api/ \
                 2>/dev/null && exit 0 || sleep 5; \
             done; \
             echo "netbox-populate: NetBox API did not respond after 5 minutes" >&2; exit 1'

@@ -30,12 +30,42 @@ import yaml
 # ---------------------------------------------------------------------------
 # Path resolution
 # ---------------------------------------------------------------------------
+# When running from the repo: __file__ is .../terraform/lxc/stacks/netbox-stack/integrations/flows.py
+# When deployed to LXC:       __file__ is /opt/netbox-populate/flows.py (parents[4] doesn't exist)
+# Env vars STACKS_DIR, NETWORK_DIR, ANNOTATIONS_PATH, NETBOX_NETWORK_INTENT_PATH override defaults.
 
 _INTEG_DIR = Path(__file__).parent.resolve()
-_STACKS_DIR = _INTEG_DIR.parent.parent          # terraform/lxc/stacks/
-_NETWORK_DIR = _INTEG_DIR.parent.parent.parent / "network"  # terraform/lxc/network/
-_REPO_ROOT = _INTEG_DIR.parents[4]              # repo root
-_ANNOTATIONS_PATH = _REPO_ROOT / "docs" / "threat-model" / "annotations.yaml"
+
+
+def _safe_parent(path, n):
+    try:
+        return path.parents[n]
+    except IndexError:
+        return None
+
+
+_REPO_ROOT = _safe_parent(_INTEG_DIR, 4)
+
+if os.environ.get("STACKS_DIR"):
+    _STACKS_DIR = Path(os.environ["STACKS_DIR"])
+elif _REPO_ROOT:
+    _STACKS_DIR = _INTEG_DIR.parent.parent
+else:
+    _STACKS_DIR = Path("/nonexistent/stacks")
+
+if os.environ.get("NETWORK_DIR"):
+    _NETWORK_DIR = Path(os.environ["NETWORK_DIR"])
+elif _REPO_ROOT:
+    _NETWORK_DIR = _REPO_ROOT / "terraform" / "lxc" / "network"
+else:
+    _NETWORK_DIR = Path("/nonexistent/network")
+
+if os.environ.get("ANNOTATIONS_PATH"):
+    _ANNOTATIONS_PATH = Path(os.environ["ANNOTATIONS_PATH"])
+elif _REPO_ROOT:
+    _ANNOTATIONS_PATH = _REPO_ROOT / "docs" / "threat-model" / "annotations.yaml"
+else:
+    _ANNOTATIONS_PATH = Path("/nonexistent/annotations.yaml")
 
 _ENV_TOKEN_RE = re.compile(r"^\$\{([A-Za-z_]\w*)\}$")
 _HOLD_DIR = "/.hold/"  # nosonar: python:S1192
@@ -148,6 +178,9 @@ def load_docker_composes(stacks_dir=None):
 
 def load_network_intent(env=None):
     """Load the network intent YAML for the given environment."""
+    intent_path = os.environ.get("NETBOX_NETWORK_INTENT_PATH")
+    if intent_path:
+        return _load_yaml(intent_path)
     if env is None:
         env = (os.environ.get("NETBOX_NETWORK_ENV")
                or os.environ.get("PVE_ENV")
@@ -274,7 +307,7 @@ TRUST_BOUNDARIES = [
         "type": "network-zone",
         "description": "VLAN 30 → VLAN 20. MikroTik enforces firewall rules.",
         "allowed_flows": "tcp/9000, tcp/9443 (forwardAuth); tcp/80 (ACME callback)",
-        "enforcement": "MikroTik inter-VLAN firewall",
+        "enforcement": _MIKROTIK_FIREWALL,
     },
     {
         "id": "tb-edge-to-infra",
@@ -282,7 +315,7 @@ TRUST_BOUNDARIES = [
         "type": "network-zone",
         "description": "VLAN 30 → VLAN 40. MikroTik enforces firewall rules.",
         "allowed_flows": "tcp/80, tcp/443, tcp/3142",
-        "enforcement": "MikroTik inter-VLAN firewall",
+        "enforcement": _MIKROTIK_FIREWALL,
     },
     {
         "id": "tb-mgmt-to-infra",
@@ -290,7 +323,7 @@ TRUST_BOUNDARIES = [
         "type": "network-zone",
         "description": "VLAN 20 → VLAN 40. MikroTik enforces firewall rules.",
         "allowed_flows": "tcp/80, tcp/443, tcp/3142, tcp/9000, tcp/9443",
-        "enforcement": "MikroTik inter-VLAN firewall",
+        "enforcement": _MIKROTIK_FIREWALL,
     },
     {
         "id": "tb-build-to-mgmt",
@@ -298,7 +331,7 @@ TRUST_BOUNDARIES = [
         "type": "network-zone",
         "description": "VLAN 10 → VLAN 20. MikroTik enforces firewall rules.",
         "allowed_flows": "tcp/9000, tcp/8428, tcp/3100",
-        "enforcement": "MikroTik inter-VLAN firewall",
+        "enforcement": _MIKROTIK_FIREWALL,
     },
     {
         "id": "tb-build-to-infra",
@@ -306,7 +339,7 @@ TRUST_BOUNDARIES = [
         "type": "network-zone",
         "description": "VLAN 10 → VLAN 40. MikroTik enforces firewall rules.",
         "allowed_flows": "tcp/80, tcp/443, tcp/3142",
-        "enforcement": "MikroTik inter-VLAN firewall",
+        "enforcement": _MIKROTIK_FIREWALL,
     },
     {
         "id": "tb-lxc-host",
@@ -438,7 +471,7 @@ _EXTERNAL_FLOWS = [
         "protocol": "tcp",
         "port": 443,
         "transport_security": "tls",
-        "auth": "acme-account-key",
+        "auth": "acme-account-key",  # nosonar: python:S6418 — descriptive label, not a secret
         "data_classification": "internal",
         "data": "ACME CSRs for *.lab.gibbsgreatly.xyz TLS certificates.",
         "trigger": "scheduled",
@@ -483,7 +516,7 @@ _EXTERNAL_FLOWS = [
         "protocol": "tcp",
         "port": 443,
         "transport_security": "tls",
-        "auth": "runner-registration-token",
+        "auth": "runner-registration-token",  # nosonar: python:S6418 — descriptive label, not a secret
         "data_classification": "confidential",
         "data": (
             "Job polling (long-poll), job status reporting, artifact uploads, "
@@ -717,7 +750,6 @@ def derive_edge_flows(stacks, edge_yamls, processes):
 
             port = _url_port(url)
             host = route.get("host", "")
-            route_name = route.get("name", stack_name)
 
             # Map auth mode to transport and auth fields
             transport_security = "none"   # backend connection within zone
@@ -750,7 +782,7 @@ def derive_edge_flows(stacks, edge_yamls, processes):
     return flows
 
 
-def derive_zone_policy_flows(network_intent, processes):
+def derive_zone_policy_flows(network_intent):
     """Derive zone-level flows from network intent policy section.
 
     These are zone-level (not service-level) firewall intents that document
@@ -956,7 +988,7 @@ def build_threat_model(env=None, stacks_dir=None, annotations_path=None):
     flows.extend(derive_socket_proxy_flows(stacks, processes))
     flows.extend(derive_edge_flows(stacks, edge_yamls, processes))
     flows.extend(derive_monitoring_flows(stacks, composes, processes))
-    flows.extend(derive_zone_policy_flows(network_intent, processes))
+    flows.extend(derive_zone_policy_flows(network_intent))
 
     model = {
         "metadata": {
@@ -1004,6 +1036,9 @@ def populate_threat_model(nb, site, managed_tags, env=None):
     process_count = len(model.get("processes", []))
     print(f"  derived {process_count} processes, {flow_count} data flows")
 
+    # Config-contexts tag serializer accepts plain slug strings, not dicts.
+    tag_slugs = [t["slug"] for t in managed_tags if isinstance(t, dict) and "slug" in t]
+
     nb.ensure(
         NB_CONFIG_CONTEXTS,
         {"name": THREAT_MODEL_CONTEXT_NAME},
@@ -1017,7 +1052,7 @@ def populate_threat_model(nb, site, managed_tags, env=None):
             ),
             "data": model,
             "sites": [site["id"]],
-            "tags": managed_tags,
+            "tags": tag_slugs,
         },
         managed_tag_slug="managed-by-proxmox-homelab",
         allow_unmanaged_patch=False,
