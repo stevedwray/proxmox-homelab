@@ -106,7 +106,7 @@ class DFDAnnotationQuestionnaire(Script):
 
     user_to_traefik_scope = ChoiceVar(
         label="Is tcp/443 internet-facing?",
-        description="Trust boundary for df-user-to-traefik (external user → Traefik).",
+        description="Trust boundary for df-user-to-traefik. Confirmed LAN-only — no port-forward from WAN.",
         choices=[
             ("lan_only", "LAN-only — not internet-facing"),
             ("internet", "Internet-facing (port-forwarded from WAN)"),
