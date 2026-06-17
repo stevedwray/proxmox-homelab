@@ -406,6 +406,7 @@
         - discover.py
         - proxmox_client.py
         - mikrotik_client.py
+        - dfd_questionnaire.py
 
     - name: Find stack YAML files for threat model derivation
       ansible.builtin.find:
@@ -562,6 +563,13 @@
         enabled: true
         state: started
         daemon_reload: false
+
+    - name: Deploy DFD questionnaire script to NetBox scripts volume
+      ansible.builtin.shell:
+        cmd: >
+          docker cp {{ populate_dir }}/dfd_questionnaire.py
+          {{ netbox_container }}:/opt/netbox/netbox/scripts/dfd_questionnaire.py
+      changed_when: true
 
   handlers:
     - name: Reload systemd
