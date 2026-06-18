@@ -156,3 +156,29 @@ policies:
     protocol: tcp
     ports: [9000, 9443]
     description: NetBox to Portainer socket proxy and Authentik
+
+inventory:
+  proxmox_nodes:
+    - host: "${proxmox_host}"
+      host_ip: "192.168.1.2"
+      token_id_env: PROXMOX_READONLY_TOKEN_ID
+      token_secret_env: PROXMOX_READONLY_TOKEN_SECRET
+      portainer_url: "https://management-stack.gibbsgreatly.xyz:9443"
+      portainer_api_key_env: PORTAINER_TOKEN
+  static_hosts:
+    - name: pve-test-vm
+      role: hypervisor-vm
+      ip: 192.168.1.41
+      description: "Proxmox test hypervisor — VM on pve (LAN management IP)"
+    - name: linux-desktop
+      role: workstation
+      ip: 192.168.1.104
+      description: "Linux desktop workstation"
+    - name: argon-01
+      role: iot
+      ip: 192.168.1.22
+      description: "Raspberry Pi — argon-01"
+    - name: argon-02
+      role: iot
+      ip: 192.168.1.23
+      description: "Raspberry Pi — argon-02"

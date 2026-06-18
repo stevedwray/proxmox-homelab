@@ -21,6 +21,7 @@
     netbox_breakglass_email: "{{ lookup('env', 'NETBOX_BREAKGLASS_EMAIL') | default('breakglass@localhost', true) }}"
     netbox_breakglass_password: "{{ lookup('env', 'NETBOX_BREAKGLASS_PASSWORD') | default('', true) }}"
     netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
+    netbox_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
 
   tasks:
     - name: Ensure NetBox compose directory exists
@@ -60,7 +61,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://loki:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+            - url: http://{{ netbox_lab_ip_monitoring }}:3100/loki/api/v1/push  # nosonar: ansible:S5332 — internal management IP, never reaches SDN
 
           scrape_configs:
             - job_name: varlogs

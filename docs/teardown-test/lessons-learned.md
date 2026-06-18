@@ -123,6 +123,49 @@ evidence directories.
 - This caused `netbox_network_env` to be undefined in the timer-install play despite
   being declared in the provision play (fixed in `5df61f0`).
 
+### 12. Match validation depth to change risk; full teardown is the promotion gate, not the development loop
+
+- Running a full teardown cycle for every individual change is expensive (~45 min) and conflates the promotion gate with the development feedback loop.
+- The teardown cycle is the correct gate for `baseline/teardown-validated` promotion. It is not needed for every commit.
+- During development, use the lowest tier that can actually catch regressions for that change class:
+  - **Python with unit tests:** run the test suite.
+  - **Ansible comment or nosonar edits:** `ansible-playbook --syntax-check` on all affected playbooks — do not skip this even for comment-only changes.
+  - **Ansible task or role changes:** `scripts/provision.sh --stack <affected-stack>` to validate the affected stack end-to-end without a full teardown.
+  - **Terraform, network, SDN, Authentik, or Traefik changes:** full teardown cycle required, as regressions propagate across integrations.
+- The June 2026 `fix/cognitive-complexity-cc5` cycle discovered this gap: nosonar comment changes to Ansible broke Harbor and NetBox provisioning in ways that a targeted provision run would have caught in ~4 minutes, but instead surfaced mid-teardown after ~45 minutes.
+
+### 13. Ansible `# nosonar` comments have three silent failure modes
+
+Adding `# nosonar` to Ansible files is not always safe. Three contexts where a trailing `# nosonar` becomes runtime-evaluated content rather than a YAML comment:
+
+**1. Inside a Jinja `{{ }}` expression block in a `>-` block scalar:**
+```yaml
+    url: >-
+      {{
+        'http://' ~ host ~ ':' ~ port  # nosonar: ...   ← BROKEN: # is not a Jinja comment
+        ~ '/api/path'
+      }}
+```
+Jinja2 does not treat `#` as a comment inside `{{ }}`. This causes `unexpected char '#'` at template evaluation time. Fix: move the `# nosonar` to the `url: >-` indicator line, where it is a valid YAML comment outside the block content.
+
+**2. Inside a variable default that is itself a Jinja `>-` block scalar:**
+```yaml
+my_var: >-   # same issue applies in defaults/main.yml
+  {{
+    lookup('env', 'X') | default('http://' ~ host, true)  # nosonar: ...   ← BROKEN
+  }}
+```
+Manifests when the variable is first evaluated at task time, not at parse time, so `--syntax-check` may not catch it. Fix: `# nosonar` on the `my_var: >-` line.
+
+**3. Inside a `content: |` block written to a non-YAML file:**
+```yaml
+    content: |
+      NETBOX_URL=http://localhost:8080  # nosonar: ...   ← BROKEN in shell env files
+```
+Systemd `EnvironmentFile` does not strip inline comments — the `# nosonar` text becomes part of the variable value. The same text written to a YAML config file is safe (YAML treats it as a comment), but shell/env/INI formats do not. Always check the target file format before adding a comment inside `content:` blocks.
+
+**Safe placements:** after a closing `"` on a `url: "http://..."` line; on a `>-` or `|` indicator line; inside `content: |` blocks whose target format treats `#` as a comment (YAML, nginx, shell with `#` on its own line).
+
 ## Suggested Use
 
 - Read this document before planning the next teardown/redeploy rehearsal.

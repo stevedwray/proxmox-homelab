@@ -57,6 +57,7 @@ LOCK_HELD=false
 TRACKED_PHASES=(
   "source-preflight"
   "live-preflight"
+  "external-preflight"
   "approval-preflight"
   "preflight"
   "plan"
@@ -74,6 +75,7 @@ RESUME_PHASE_SEQUENCE=(
   "plan"
   "source-preflight"
   "live-preflight"
+  "external-preflight"
   "approval-preflight"
   "destroy"
   "deploy-foundation"
@@ -140,6 +142,7 @@ Usage:
 Phases:
   source-preflight    Run non-destructive source-only validation.
   live-preflight      Run non-destructive live read-only validation.
+  external-preflight  Verify production SOPS secrets and external system connectivity (pve only).
   approval-preflight  Run clean-tree source + live preflight under one stamp.
   preflight           Backwards-compatible alias for source-preflight + live-preflight.
   plan                Show inventory-derived deploy/destroy stack plans.
@@ -1999,6 +2002,18 @@ phase_live_preflight() {
   run_live_preflight_checks
 }
 
+phase_external_preflight() {
+  create_evidence_dirs
+  log "evidence_dir=${EVIDENCE_DIR}"
+  if [[ "${TARGET_NODE_EXPECTED}" != "pve" ]]; then
+    log "external-preflight: skipped (TARGET_NODE_EXPECTED=${TARGET_NODE_EXPECTED}, only runs for pve)"
+    return 0
+  fi
+  run_logged "external-preflight" \
+    "${WITH_SECRETS}" python3 "${REPO_ROOT}/scripts/preflight-production-external.py" \
+    --save-evidence "${EVIDENCE_DIR}"
+}
+
 phase_approval_preflight() {
   create_evidence_dirs
   log "evidence_dir=${EVIDENCE_DIR}"
@@ -2211,6 +2226,7 @@ phase_final_validation() {
 phase_cycle() {
   require_execute_approval
   validate_approval_packet
+  run_phase_handler "external-preflight" phase_external_preflight
   run_phase_handler "destroy" phase_destroy
   run_phase_handler "deploy-foundation" phase_deploy_foundation
   run_phase_handler "deploy-edge" phase_deploy_edge
@@ -2391,6 +2407,9 @@ main() {
       ;;
     live-preflight)
       run_phase_handler "live-preflight" phase_live_preflight
+      ;;
+    external-preflight)
+      run_phase_handler "external-preflight" phase_external_preflight
       ;;
     approval-preflight)
       run_phase_handler "approval-preflight" phase_approval_preflight
