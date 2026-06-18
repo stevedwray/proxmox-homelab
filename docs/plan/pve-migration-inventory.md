@@ -18,9 +18,9 @@ containers are unconfirmed.
 | Container | Current IP | Zone Target | Status | Data at risk | Priority |
 |---|---|---|---|---|---|
 | management-stack | 192.168.1.70 | decomm / split | running | NPM config, central-registry blobs | low |
-| media-stack | 192.168.1.6 | `app_seg` | running | NFS: `/nas-media/` | medium |
-| torrent-stack | 192.168.1.5 | `app_seg` | running | NFS: `/nas/`, VPN config, `/incoming` | medium |
-| gaming-stack | 192.168.1.7 | `game_seg` | running (dockge only) | `/ark/` game world data | low |
+| media-stack | 192.168.1.6 | `media_seg` VLAN 50 | running | NFS: `/nas-media/` | medium |
+| torrent-stack | 192.168.1.5 | `dl_seg` VLAN 55 | running | NFS: `/nas/`, VPN config, `/incoming` | medium |
+| gaming-stack | 192.168.1.7 | `game_seg` VLAN 60 | running (dockge only) | `/ark/` game world data | low |
 | elastic-stack | 192.168.1.24 | unknown/decomm | Portainer agent only | unknown | low |
 | analysis-stack | 192.168.1.16 | unknown | offline | unknown | low |
 | security-stack | 192.168.1.11 | unknown | offline | unknown | low |
@@ -61,9 +61,32 @@ from the new VLAN zones before migration.**
 
 ### NAS identity
 
-The media-stack uses `/nas-media/...` while torrent-stack uses `/nas/...` — these are
-different mount points on the same or different NAS. Confirm NAS IP and export paths
-before migration. MikroTik firewall rules must allow `app_seg` → NAS IP on port 2049 (NFS).
+- **Device:** ASUSTOR AS3302T v2, ADM 5.1.3
+- **LAN IP:** 192.168.1.3 (static, LAN bridge vmbr0) — stays here permanently
+- **Protocols in use:** iSCSI (→ pve host, backs PBS datastore), NFS (→ media/torrent LXCs), SMB (→ LAN clients), web UI (:8080)
+
+The NAS stays on the LAN bridge. It is single-homed (one switch port in use). No VLAN
+migration for the NAS itself.
+
+The media-stack uses `/nas-media/...` while torrent-stack uses `/nas/...` — different NFS
+export paths on the same NAS.
+
+**iSCSI:** pve host ↔ 192.168.1.3:3260 — stays flat LAN, unaffected by any zone changes.
+  WARNING: ASUSTOR iSCSI does not support multiple simultaneous initiators on a single target.
+  Do not change NAS addressing, VLANs, or initiator paths while the PBS LUN is mounted.
+
+**NFS access from new VLANs:** Two-layer access control required:
+- Layer 1 — MikroTik allow rules (routed VLAN traffic to NAS):
+  - `media_seg` (192.168.50.0/24) → 192.168.1.3 tcp+udp/2049
+  - `dl_seg` (192.168.55.0/24) → 192.168.1.3 tcp+udp/2049
+  - `infra_seg` (PBS, 192.168.40.x) → 192.168.1.3 (NFS or iSCSI, per PBS backend config)
+  - `mgmt_seg` admin → 192.168.1.3 tcp/8080,443 (ADM UI) and tcp/22 (SSH if needed)
+  - All other routed VLAN traffic → 192.168.1.3: DROP
+- Layer 2 — ADM NFS per-share client IP allowlist:
+  - Add only the specific LXC IPs (media-stack, torrent-stack) to NFS share permissions in ADM
+  - ADM Defender: enable, but allowlist trusted IPs before enabling deny rules to avoid lockout
+
+**PBS client port:** 8007/tcp — used by pve and Garuda workstation to connect to PBS in infra_seg.
 
 ---
 
@@ -224,7 +247,7 @@ have no Portainer agent and cannot be inspected without prod access.
 | cloud-stack | 25 | Unknown. May be Nextcloud (a Portainer stack named "nextcloud" was found against a deleted endpoint ep-14). |
 | ai-stack | 26 | Unknown. Likely AI/ML services with large model weight data. |
 | scanning-stack | 13 | Unknown. Possibly Trivy or Nessus. |
-| proxmox-backup-server | 20 | PBS. Manages backups for pve. Not a migration target — keep in place or migrate to new zone carefully. |
+| proxmox-backup-server | 20 | PBS. Migration target: `infra_seg` (192.168.40.x). Client port: 8007/tcp. See PBS migration sequence below. |
 | debian13-template-builder | 23 | Template builder VM. No persistent service data. Rebuild on demand. |
 
 ---
@@ -234,15 +257,20 @@ have no Portainer agent and cannot be inspected without prod access.
 Before any pve container can be migrated to the SDN:
 
 1. **New SDN zones defined** in `terraform/lxc/network/pve.yaml`:
-   - `app_seg`: VLAN for media, arr stack (propose VLAN 50, subnet TBD)
-   - `game_seg`: VLAN for game servers (propose VLAN 60, subnet TBD)
-   - These match the subnets in `phase-06-app-stacks.md`: `10.60.0.0/24` and `10.61.0.0/24`
+   - `media_seg`: VLAN 50, 192.168.50.0/24 — Jellyfin
+   - `dl_seg`: VLAN 55, 192.168.55.0/24 — torrent stack (gluetun + arr)
+   - `game_seg`: VLAN 60, 192.168.60.0/24 — gaming (Minecraft, ARK, Dockge)
+   - PBS: moves to `infra_seg` (VLAN 40, alongside Harbor/NetBox/apt-cacher)
+   - NAS: stays on LAN bridge at 192.168.1.3 — no VLAN migration
 
-2. **MikroTik firewall rules** for new zones:
-   - `app_seg` → NAS (NFS tcp+udp/2049)
-   - `app_seg` → internet udp/51820 (gluetun WireGuard)
-   - `game_seg` → internet tcp+udp/25565 (Minecraft), udp/7777-7778, udp/27015 (ARK)
-   - `app_seg` → `infra_seg` tcp/80,443,3142 (Harbor, apt-cacher) — already in all_zones policy
+2. **MikroTik firewall rules** for new zones (see full table in design session notes):
+   - `media_seg` → 192.168.1.3 tcp+udp/2049 (NFS to NAS)
+   - `dl_seg` → NAS tcp+udp/2049
+   - `dl_seg` → internet udp/51820 (gluetun WireGuard)
+   - `game_seg` → LAN tcp+udp/25565 (Minecraft), udp/7777,7778,27015 (ARK) — LAN-only, no WAN forward yet
+   - LAN → `infra_seg`:8007 (PBS backup access for Garuda + future clients)
+   - `edge_seg` → `media_seg`/`dl_seg`/`game_seg`:2375 (Traefik socket-proxy discovery)
+   - `mgmt_seg` → `media_seg`/`dl_seg`/`game_seg`:9001 (Portainer agent)
 
 3. **Harbor image mirroring** for all images currently from docker.io/lscr.io/ghcr.io:
    - `lscr.io/linuxserver/jellyfin`
@@ -260,8 +288,36 @@ Before any pve container can be migrated to the SDN:
    These must move to Traefik labels before NPM is decommissioned. NPM admin UI is at
    `http://192.168.1.70:81` (requires LAN access).
 
-5. **NAS IP confirmation**: What is the NAS IP? Confirm NFS export paths and ensure
-   they match what's in container mount paths (`/nas-media/...` and `/nas/...`).
+5. **NAS confirmed:** 192.168.1.3, stays on LAN bridge permanently. NFS export paths to
+   confirm against mount points (`/nas-media/...` and `/nas/...`) before migration.
+   ADM NFS per-share client IP allowlist must be updated when LXCs move to new VLANs.
+
+---
+
+## PBS Migration Sequence
+
+PBS is currently on the LAN bridge (NetBox ID 20, VMID unknown). Migration target: `infra_seg`
+(192.168.40.x). iSCSI-backed datastore from NAS 192.168.1.3 — handle with care.
+
+**Pre-conditions before starting:**
+- Confirm PBS VMID via `./with-secrets-prod pvesh get /nodes/pve/qemu`
+- Confirm whether PBS datastore uses iSCSI LUN or NFS from NAS
+- Ensure a PBS backup has completed successfully immediately before migration
+
+**Sequence (do not reorder):**
+1. MikroTik: add `LAN → infra_seg:8007` allow rule (pve host + Garuda → PBS)
+2. MikroTik: add `infra_seg → 192.168.1.3` allow rule (PBS → NAS storage protocol)
+3. Move PBS VM network interface to `infra_seg` (new IP: 192.168.40.x)
+4. Update pve Datacenter → Storage: change PBS server address to new infra_seg IP
+5. Update Garuda backup client config to point to new PBS IP
+6. Run a full PBS backup job and verify it completes
+7. Run a restore test (single file or VM snapshot verify)
+8. Only after step 7: remove any temporary broad LAN allowances
+
+**iSCSI caution:** If PBS datastore is iSCSI-backed, do not change NAS addressing or
+unmount the LUN during or after migration. The iSCSI initiator (pve host) connects to
+192.168.1.3:3260 at the hypervisor level — this is unaffected by PBS's network interface
+moving to infra_seg, as long as the NAS LAN IP stays unchanged.
 
 ---
 

@@ -1,5 +1,5 @@
-# Torrent/media automation stack — currently on pve LAN bridge (legacy, not SDN-managed)
-# Migration target: app_seg (VLAN 50, 10.60.0.0/24) — see docs/plan/pve-migration-inventory.md
+# Torrent/download automation stack — currently on pve LAN bridge (legacy, not SDN-managed)
+# Migration target: dl_seg (VLAN 55, 192.168.55.0/24) — see docs/plan/pve-migration-inventory.md
 #
 # CURRENT STATE (discovered 2026-06-18 via Portainer):
 #   IP: 192.168.1.5 (on vmbr0, LAN bridge)
@@ -13,10 +13,10 @@
 #   NFS: /nas/video/movies  -> radarr:/movies + radarr:/media/movies
 #   NFS: /nas/video/tv      -> sonarr:/tv + sonarr:/media/tv
 #   NFS: /nas/music         -> lidarr:/music + lidarr:/media/music
-#   (confirm NAS IP before migration; MikroTik must permit app_seg -> NAS NFS)
+#   (NAS at 192.168.1.3, stays on LAN bridge; MikroTik must permit dl_seg -> 192.168.1.3 tcp+udp/2049)
 #
 # VPN DEPENDENCY: gluetun handles all download traffic via WireGuard VPN.
-#   MikroTik must permit app_seg -> internet on udp/51820 (WireGuard)
+#   MikroTik must permit dl_seg -> internet on udp/51820 (WireGuard)
 #
 # HARBOR IMAGES NEEDED:
 #   lscr.io/linuxserver/qbittorrent
@@ -28,8 +28,8 @@
 #   qmcgaw/gluetun
 
 hostname: torrent-stack
-ip_address: "10.60.0.22/24"   # target IP in app_seg — placeholder until zone is created
-gateway: "10.60.0.1"
+ip_address: "192.168.55.22/24"   # target IP in dl_seg (VLAN 55) — placeholder until zone is created
+gateway: "192.168.55.1"
 vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 2
 memory: 4096

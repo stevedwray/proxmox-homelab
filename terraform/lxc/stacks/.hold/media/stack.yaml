@@ -1,5 +1,5 @@
 # Media services stack — currently on pve LAN bridge (legacy, not SDN-managed)
-# Migration target: app_seg (VLAN 50, 10.60.0.0/24) — see docs/plan/pve-migration-inventory.md
+# Migration target: media_seg (VLAN 50, 192.168.50.0/24) — see docs/plan/pve-migration-inventory.md
 #
 # CURRENT STATE (discovered 2026-06-18 via Portainer):
 #   IP: 192.168.1.6 (on vmbr0, LAN bridge)
@@ -11,15 +11,15 @@
 #   NFS: /nas-media/video/movies -> jellyfin:/movies
 #   NFS: /nas-media/video/tv    -> jellyfin:/tv
 #   NFS: /nas-media/music       -> jellyfin:/music
-#   (confirm NAS IP before migration; MikroTik must permit app_seg -> NAS NFS)
+#   (NAS at 192.168.1.3, stays on LAN bridge; MikroTik must permit media_seg -> 192.168.1.3 tcp+udp/2049)
 #
 # MIGRATION GATE: Harbor must have lscr.io/linuxserver/jellyfin mirrored
 # MIGRATION GATE: GPU passthrough status must be confirmed (check pve LXC config)
 # MIGRATION GATE: DLNA on port 1900 (UDP multicast) — check if any clients use it
 
 hostname: media-stack
-ip_address: "10.60.0.21/24"   # target IP in app_seg — placeholder until zone is created
-gateway: "10.60.0.1"
+ip_address: "192.168.50.21/24"   # target IP in media_seg (VLAN 50) — placeholder until zone is created
+gateway: "192.168.50.1"
 vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 4
 memory: 8192

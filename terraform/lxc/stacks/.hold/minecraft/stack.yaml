@@ -30,8 +30,8 @@
 #   louislam/dockge:1
 
 hostname: gaming-stack
-ip_address: "10.61.0.10/24"   # target IP in game_seg — placeholder until zone is created
-gateway: "10.61.0.1"
+ip_address: "192.168.60.10/24"   # target IP in game_seg (VLAN 60) — placeholder until zone is created
+gateway: "192.168.60.1"
 vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 4
 memory: 16384
