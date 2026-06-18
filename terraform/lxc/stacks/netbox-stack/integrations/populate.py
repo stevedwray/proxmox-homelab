@@ -32,6 +32,7 @@ from discover import (
     _build_socket_proxy_services,
     PortainerClient,
 )
+from flows import populate_threat_model
 from proxmox_client import discover_from_proxmox
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ CLUSTERS = [
 NETWORK_INTENT_FILES = {
     "pve": "pve.yaml",
     "pve-test": "pve-test.yaml",
+    "pve-test-vm": "pve-test-vm.yaml",
 }
 
 try:
@@ -481,6 +483,7 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
     """Build topology by querying each declared Proxmox node and merging results."""
     all_vms = []
     discovered_node_names = []
+    node_host_ips: dict[str, str] = {}
     primary_proxmox_data = None
 
     for node_def in proxmox_nodes:
@@ -500,6 +503,12 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         node_name = _node_name_from_proxmox_data(proxmox_data)
         if node_name:
             discovered_node_names.append(node_name)
+            # Prefer explicit host_ip in node_def; fall back to the raw host if it looks like an IP
+            explicit_ip = node_def.get("host_ip", "").strip()
+            if explicit_ip:
+                node_host_ips[node_name] = explicit_ip
+            elif host and not any(c.isalpha() for c in host):
+                node_host_ips[node_name] = host
 
         portainer = _build_portainer_for_node(node_def)
         portainer_url = node_def.get("portainer_url")
@@ -512,6 +521,7 @@ def _build_topology_from_nodes(proxmox_nodes: list) -> dict:
         "network": build_network_topology(),
         "proxmox": build_proxmox_context(primary_proxmox_data) if primary_proxmox_data else {},
         "discovered_node_names": discovered_node_names,
+        "node_host_ips": node_host_ips,
     }
 
 
@@ -769,11 +779,13 @@ def populate_static_hosts(nb, site, static_hosts: list) -> None:
                 "type": "other",
                 "tags": managed_tags,
             }, **_managed_patch_guard())
-            nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
+            ip_obj = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
                 "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
                 "assigned_object_id": iface["id"],
                 "tags": managed_tags,
             }, **_managed_patch_guard())
+            if _primary_ip_id(device) != ip_obj.get("id"):
+                _patch_managed_object(nb, NB_DCIM_DEVICES, device, {"primary_ip4": ip_obj["id"]})
 
 
 def populate_foundation(nb):
@@ -876,7 +888,7 @@ def populate_physical(nb, site, inventory):
     )
 
 
-def _ensure_proxmox_hypervisor(nb, site, node_name: str) -> None:
+def _ensure_proxmox_hypervisor(nb, site, node_name: str, host_ip: str | None = None) -> None:
     """Ensure a Proxmox hypervisor device and cluster exist for the given node name."""
     managed_tags = _managed_tag_refs()
     _ensure_tags(nb, [MANAGED_TAG_NAME])
@@ -895,13 +907,25 @@ def _ensure_proxmox_hypervisor(nb, site, node_name: str) -> None:
         "tags": managed_tags,
     }, **_managed_patch_guard())
 
-    nb.ensure(NB_DCIM_INTERFACES, {"device_id": device["id"], "name": "vmbr0"}, {
+    iface = nb.ensure(NB_DCIM_INTERFACES, {"device_id": device["id"], "name": "vmbr0"}, {
         "device": device["id"],
         "name": "vmbr0",
         "type": "bridge",
         "description": "Primary bridge",
         "tags": managed_tags,
     }, **_managed_patch_guard())
+
+    if host_ip:
+        address = host_ip if "/" in host_ip else f"{host_ip}/24"
+        ip_obj = nb.ensure(NB_IPAM_IP_ADDRESSES, {"address": address}, {
+            "assigned_object_type": ASSIGNED_OBJECT_TYPE_DCIM_INTERFACE,
+            "assigned_object_id": iface["id"],
+            "status": "active",
+            "description": node_name,
+            "tags": managed_tags,
+        }, **_managed_patch_guard())
+        if _primary_ip_id(device) != ip_obj.get("id"):
+            _patch_managed_object(nb, NB_DCIM_DEVICES, device, {"primary_ip4": ip_obj["id"]})
 
     ctype = nb.get(NB_VIRT_CLUSTER_TYPES, name="Proxmox VE")["results"][0]
     nb.ensure(NB_VIRT_CLUSTERS, {"name": _cluster_name_for_target_node(node_name)}, {
@@ -1584,9 +1608,10 @@ def main():
 
     site = populate_foundation(nb)
     populate_physical(nb, site, inventory)
+    node_host_ips = topology.get("node_host_ips", {})
     for node_name in topology.get("discovered_node_names", []):
         if node_name != inventory["target_node"]:
-            _ensure_proxmox_hypervisor(nb, site, node_name)
+            _ensure_proxmox_hypervisor(nb, site, node_name, host_ip=node_host_ips.get(node_name))
     populate_network(nb, site, network)
     populate_virtual(nb, vms, inventory)
     populate_ipam(nb, site, vms, population_intent, inventory)
@@ -1594,6 +1619,7 @@ def main():
     populate_static_hosts(nb, site, static_hosts)
     # Service-level reconciliation: ensure managed services' env tags match their VM
     reconcile_service_env_tags(nb)
+    populate_threat_model(nb, site, _managed_tag_refs(), env=population_intent["environment"])
     stale_total = report_stale_managed_objects(nb, inventory)
 
     print("\n=== Done ===")

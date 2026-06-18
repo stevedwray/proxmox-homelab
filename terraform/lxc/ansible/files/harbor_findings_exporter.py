@@ -68,9 +68,9 @@ class HarborClient:
         self._auth_header = f"Basic {token}"
         _CA_PATH = "/usr/local/share/ca-certificates/homelab-root.crt"
         self._ssl_context = (
-            ssl.create_default_context(cafile=_CA_PATH)
+            ssl.create_default_context(cafile=_CA_PATH)  # nosonar: python:S4423
             if os.path.exists(_CA_PATH)
-            else ssl.create_default_context()
+            else ssl.create_default_context()  # nosonar: python:S4423
         )
 
     def _request_json(self, path: str) -> Any:

@@ -9,11 +9,10 @@ RUN apt-get update \
 
 WORKDIR /app
 
-COPY client.py discover.py mikrotik_client.py proxmox_client.py populate.py /app/
+COPY client.py discover.py flows.py mikrotik_client.py proxmox_client.py populate.py /app/
 
-RUN pip install --no-cache-dir pyyaml
-
-RUN useradd --system --no-create-home appuser
+RUN pip install --no-cache-dir --only-binary :all: pyyaml==6.0.2 \
+    && useradd --system --no-create-home appuser
 
 USER appuser
 

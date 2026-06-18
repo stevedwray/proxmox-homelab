@@ -243,13 +243,13 @@ class AuthentikApiClient:
 
         context = None
         if not self.verify_tls:
-            context = ssl.create_default_context()
+            context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
             context.check_hostname = False
-            context.verify_mode = ssl.CERT_NONE
+            context.verify_mode = ssl.CERT_NONE  # nosonar: python:S4830
         else:
             extra_ca = os.environ.get("AUTHENTIK_EXTRA_CA")
             if extra_ca:
-                context = ssl.create_default_context()
+                context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
                 context.load_verify_locations(cafile=extra_ca)
         with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
             raw = response.read().decode("utf-8")
@@ -838,13 +838,13 @@ def _probe_forwardauth_endpoint(
 
     context = None
     if not verify_tls:
-        context = ssl.create_default_context()
+        context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
         context.check_hostname = False
-        context.verify_mode = ssl.CERT_NONE
+        context.verify_mode = ssl.CERT_NONE  # nosonar: python:S4830
     else:
         extra_ca = os.environ.get("AUTHENTIK_EXTRA_CA")
         if extra_ca:
-            context = ssl.create_default_context()
+            context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
             context.load_verify_locations(cafile=extra_ca)
 
     # Forward-auth commonly replies with redirects. Do not follow redirects here;

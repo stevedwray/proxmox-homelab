@@ -51,6 +51,8 @@ EVIDENCE_DIR="${EVIDENCE_ROOT}/${STAMP}"
 LOG_DIR="${EVIDENCE_DIR}/logs"
 RUN_LOG="${LOG_DIR}/teardown-deploy-test-${STAMP}.log"
 STATE_FILE="${EVIDENCE_DIR}/state.json"
+LOCK_FILE="${EVIDENCE_ROOT}/.harness.lock"
+LOCK_HELD=false
 
 TRACKED_PHASES=(
   "source-preflight"
@@ -425,7 +427,88 @@ phase_error_trap() {
       "Phase ${CURRENT_PHASE_NAME} failed"
   fi
   write_current_phase_state "failed" "${status}"
+  write_phase_summary "${CURRENT_PHASE_NAME}" "failed"
   exit "${status}"
+}
+
+write_phase_summary() {
+  local phase_name="${1:-${CURRENT_PHASE_NAME}}"
+  local phase_status="${2:-unknown}"
+  local summary_file="${EVIDENCE_DIR}/summary-${phase_name}.md"
+
+  STATE_FILE_PATH="${STATE_FILE}" \
+  SUMMARY_PHASE="${phase_name}" \
+  SUMMARY_STATUS="${phase_status}" \
+  SUMMARY_FILE="${summary_file}" \
+  python3 - <<'PY'
+import json
+import os
+import sys
+from pathlib import Path
+
+state_path = Path(os.environ["STATE_FILE_PATH"])
+phase = os.environ["SUMMARY_PHASE"]
+summary_file = Path(os.environ["SUMMARY_FILE"])
+
+if not state_path.exists():
+    print(f"[write_phase_summary] state file not found: {state_path}", file=sys.stderr)
+    sys.exit(0)
+
+data = json.loads(state_path.read_text(encoding="utf-8"))
+entry = data.get("phases", {}).get(phase, {})
+
+status = entry.get("status", os.environ.get("SUMMARY_STATUS", "unknown"))
+branch = entry.get("branch") or data.get("branch") or "unknown"
+commit_full = entry.get("commit") or data.get("commit") or "unknown"
+commit = commit_full[:12] if commit_full and commit_full != "unknown" else commit_full
+start_time = entry.get("start_time") or "—"
+end_time = entry.get("end_time") or "—"
+stamp = data.get("stamp", "unknown")
+log_paths = entry.get("log_paths", [])
+failure = entry.get("failure") or {}
+dirty_info = entry.get("dirty_tree") or {}
+dirty_status = dirty_info.get("status", "unknown")
+
+status_badge = {"passed": "PASSED", "failed": "FAILED"}.get(status, status.upper())
+
+lines = [
+    f"# Phase: {phase} — {status_badge}",
+    "",
+    f"**Stamp:** {stamp}  ",
+    f"**Branch:** {branch}  ",
+    f"**Commit:** {commit}  ",
+    f"**Tree:** {dirty_status}  ",
+    f"**Started:** {start_time}  ",
+    f"**Ended:** {end_time}  ",
+    "",
+    f"## Result: {status_badge}",
+    "",
+]
+
+if log_paths:
+    lines.append("## Logs")
+    for lp in log_paths:
+        lines.append(f"- `{Path(lp).name}`")
+    lines.append("")
+
+if failure and any(failure.values()):
+    lines.append("## Failure")
+    if failure.get("step"):
+        lines.append(f"**Step:** {failure['step']}  ")
+    if failure.get("message"):
+        lines.append(f"**Message:** {failure['message']}  ")
+    if failure.get("log_path"):
+        lines.append(f"**Log:** `{Path(failure['log_path']).name}`  ")
+    lines.append("")
+else:
+    lines.append("## Deviations")
+    lines.append("None.")
+    lines.append("")
+
+summary_file.parent.mkdir(parents=True, exist_ok=True)
+summary_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"[summary] written: {summary_file}")
+PY
 }
 
 run_phase_handler() {
@@ -449,6 +532,7 @@ run_phase_handler() {
     CURRENT_PHASE_END_TIME="$(now_utc)"
     clear_phase_failure_context
     write_current_phase_state "passed" "0"
+    write_phase_summary "${phase_name}" "passed"
   )
 }
 
@@ -1094,6 +1178,44 @@ wait_for_authentik_api_ready() {
       echo "Authentik API token-auth probe did not return 200 after ${max_attempts} attempts" >&2
       exit 1
     ' _ "${authentik_url}" "${max_attempts}" "${delay_seconds}"
+}
+
+acquire_harness_lock() {
+  mkdir -p "${EVIDENCE_ROOT}"
+  if [[ -f "${LOCK_FILE}" ]]; then
+    local existing_pid existing_stamp
+    existing_pid="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('pid',''))" "${LOCK_FILE}" 2>/dev/null || true)"
+    existing_stamp="$(python3 -c "import json,sys; d=json.load(open(sys.argv[1])); print(d.get('stamp',''))" "${LOCK_FILE}" 2>/dev/null || true)"
+    if [[ -n "${existing_pid}" ]] && kill -0 "${existing_pid}" 2>/dev/null; then
+      printf '[harness] ERROR: another harness run is active (PID %s, stamp %s)\n' \
+        "${existing_pid}" "${existing_stamp}" >&2
+      printf '[harness] Lock file: %s\n' "${LOCK_FILE}" >&2
+      printf '[harness] If the other process is no longer running, remove the lock file and retry.\n' >&2
+      return 1
+    fi
+    printf '[harness] WARNING: stale lock file (PID %s no longer running); removing.\n' "${existing_pid}" >&2
+    rm -f "${LOCK_FILE}"
+  fi
+  python3 -c "
+import json, os, sys
+data = {
+    'stamp': sys.argv[1],
+    'pid': str(os.getppid()),
+    'branch': sys.argv[2],
+    'commit': sys.argv[3],
+}
+print(json.dumps(data))
+" "${STAMP}" "$(git_current_branch)" "$(git_current_commit)" > "${LOCK_FILE}"
+  LOCK_HELD=true
+  printf '[harness] lock acquired: %s\n' "${LOCK_FILE}" >&2
+}
+
+release_harness_lock() {
+  if [[ "${LOCK_HELD}" == "true" ]]; then
+    rm -f "${LOCK_FILE}"
+    LOCK_HELD=false
+    printf '[harness] lock released\n' >&2
+  fi
 }
 
 require_execute_approval() {
@@ -2285,26 +2407,21 @@ main() {
     status)
       phase_status
       ;;
-    destroy)
-      run_phase_handler "destroy" phase_destroy
-      ;;
-    deploy-foundation)
-      run_phase_handler "deploy-foundation" phase_deploy_foundation
-      ;;
-    deploy-edge)
-      run_phase_handler "deploy-edge" phase_deploy_edge
-      ;;
-    activate-edge)
-      run_phase_handler "activate-edge" phase_activate_edge
-      ;;
-    deploy-platform)
-      run_phase_handler "deploy-platform" phase_deploy_platform
+    destroy|deploy-foundation|deploy-edge|activate-edge|deploy-platform|cycle)
+      acquire_harness_lock
+      trap 'release_harness_lock' EXIT
+      case "${PHASE}" in
+        destroy)          run_phase_handler "destroy"           phase_destroy ;;
+        deploy-foundation) run_phase_handler "deploy-foundation" phase_deploy_foundation ;;
+        deploy-edge)      run_phase_handler "deploy-edge"       phase_deploy_edge ;;
+        activate-edge)    run_phase_handler "activate-edge"     phase_activate_edge ;;
+        deploy-platform)  run_phase_handler "deploy-platform"   phase_deploy_platform ;;
+        cycle)            run_phase_handler "cycle"             phase_cycle ;;
+      esac
+      release_harness_lock
       ;;
     final-validation)
       run_phase_handler "final-validation" phase_final_validation
-      ;;
-    cycle)
-      run_phase_handler "cycle" phase_cycle
       ;;
     *)
       printf 'Unknown phase: %s\n\n' "${PHASE}" >&2

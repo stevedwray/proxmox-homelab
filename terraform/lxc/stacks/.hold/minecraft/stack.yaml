@@ -1,10 +1,42 @@
-# Minecraft server stack
-hostname: minecraft-server
-ip_address: "192.168.1.73/24"
+# Gaming stack — currently on pve LAN bridge (legacy, not SDN-managed)
+# Migration target: game_seg (VLAN 60, 10.61.0.0/24) — see docs/plan/pve-migration-inventory.md
+# NOTE: This LXC hosts Minecraft AND multiple ARK servers (not just Minecraft).
+#       Renamed category: "gaming-stack" to reflect actual use.
+#
+# CURRENT STATE (discovered 2026-06-18 via Portainer):
+#   IP: 192.168.1.7 (on vmbr0, LAN bridge)
+#   Portainer endpoint: tcp://192.168.1.7:9001
+#   Services:
+#     dockge (running, port 5001) — manages ARK stacks
+#     newworld-minecraft (exited) — itzg/minecraft-server:stable-java21
+#     newworld-minecraft-debug (exited)
+#     minimalworld-minecraft (exited)
+#     newworld-minecraft-test-betterend-only (exited)
+#     updatedworld-minecraft (exited, image by SHA256)
+#     ARK servers: master, island, fjordur, crystalisle, lostisland, extinction, scorched (all exited)
+#
+# DATA DEPENDENCIES:
+#   LXC-local: /ark/         (game world data for all ARK servers — managed by Dockge at /opt/stacks)
+#   LXC-local: /opt/dockge/  (Dockge config)
+#   No named Docker volumes — all data is in /ark/ bind mounts
+#
+# GAME PORT REQUIREMENTS (MikroTik must expose from game_seg):
+#   Minecraft: tcp+udp/25565
+#   ARK: udp/7777, udp/7778, udp/27015 (per-server, may need multiple ranges)
+#
+# HARBOR IMAGES NEEDED:
+#   itzg/minecraft-server:stable-java21
+#   ARK server images (currently referenced by SHA256 digest — need to identify tags)
+#   louislam/dockge:1
+
+hostname: gaming-stack
+ip_address: "192.168.60.10/24"   # target IP in game_seg (VLAN 60) — placeholder until zone is created
+gateway: "192.168.60.1"
+vmid: null                     # unknown — confirm with: ./with-secrets-prod pvesh get /nodes/pve/lxc
 cores: 4
 memory: 16384
 rootfs_size: "100G"
 docker_storage_size: "50G"
-tags: "minecraft,gaming,docker"
+tags: "gaming,minecraft,ark,docker"
 ansible_playbook: "docker-base"
 portainer_agent: true

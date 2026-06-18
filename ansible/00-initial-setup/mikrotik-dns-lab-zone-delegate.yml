@@ -96,7 +96,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         return_content: true
         status_code: 200
       register: existing_dns
@@ -121,7 +121,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         status_code: [200, 204]
       loop: "{{ baseline_entries }}"
       no_log: true
@@ -175,7 +175,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body:
           regexp: "{{ fwd_regexp }}"
@@ -194,7 +194,7 @@
         user: "{{ mikrotik_user }}"
         password: "{{ mikrotik_password }}"
         force_basic_auth: true
-        validate_certs: false
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
         body_format: json
         body:
           regexp: "{{ fwd_regexp }}"

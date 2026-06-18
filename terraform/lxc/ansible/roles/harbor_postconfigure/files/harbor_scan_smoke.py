@@ -21,6 +21,7 @@ import urllib.request
 from typing import Any
 import shutil
 import subprocess
+import tempfile
 
 
 MANIFEST_ACCEPT = ",".join(
@@ -49,9 +50,9 @@ def _request(
     request = urllib.request.Request(url, method=method, data=body, headers=headers or {})
     _CA_PATH = "/usr/local/share/ca-certificates/homelab-root.crt"
     if insecure:
-        context = ssl._create_unverified_context()  # nosec B323 — explicit insecure flag from caller
+        context = ssl._create_unverified_context()  # nosec B323 — explicit insecure flag from caller  # nosonar: python:S4830,python:S5527
     else:
-        context = ssl.create_default_context(cafile=_CA_PATH) if os.path.exists(_CA_PATH) else ssl.create_default_context()
+        context = ssl.create_default_context(cafile=_CA_PATH) if os.path.exists(_CA_PATH) else ssl.create_default_context()  # nosonar: python:S4423
     try:
         with urllib.request.urlopen(request, timeout=15, context=context) as response:  # nosec B310 — internal Harbor API on private SDN
             response_headers = {k: v for k, v in response.info().items()}
@@ -165,7 +166,8 @@ def _attempt_oci_pull_via_client(
 
     # Prefer skopeo because it does not depend on docker daemon registry config.
     if shutil.which("skopeo"):
-        out_tar = f"/tmp/harbor_smoke_{project}_{tag}.tar"  # nosec B108 — smoke test artifact, ephemeral
+        fd, out_tar = tempfile.mkstemp(suffix=".tar")
+        os.close(fd)
         try:
             cmd = [
                 "skopeo",
@@ -180,9 +182,12 @@ def _attempt_oci_pull_via_client(
             return True
         except Exception:
             return False
+        finally:
+            os.unlink(out_tar)
 
     if shutil.which("crane"):
-        out_tar = f"/tmp/harbor_smoke_{tag}.tar"  # nosec B108 — smoke test artifact, ephemeral
+        fd, out_tar = tempfile.mkstemp(suffix=".tar")
+        os.close(fd)
         try:
             cmd = ["crane", "pull"]
             if registry_insecure:
@@ -192,6 +197,8 @@ def _attempt_oci_pull_via_client(
             return True
         except Exception:
             return False
+        finally:
+            os.unlink(out_tar)
 
     if shutil.which("docker"):
         try:

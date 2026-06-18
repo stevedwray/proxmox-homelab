@@ -1,0 +1,1028 @@
+# Proxmox Homelab Threat Model — REFERENCE / EXAMPLE
+#
+# This file is a hand-written reference showing the expected output format and
+# documenting all known flows. It is NOT the live model.
+#
+# The live model is auto-derived and stored in NetBox as a config context
+# named 'threat-model'. To regenerate it, run:
+#
+#   ./with-secrets python3 terraform/lxc/stacks/netbox-stack/integrations/populate.py
+#
+# To preview the auto-derived model as YAML (without pushing to NetBox):
+#
+#   python3 terraform/lxc/stacks/netbox-stack/integrations/flows.py --env pve
+#
+# To annotate flows that can't be auto-derived, edit:
+#   docs/threat-model/annotations.yaml
+#
+# Fields marked  # ANNOTATE  need operator input (same fields are in annotations.yaml).
+
+metadata:
+  name: Proxmox Homelab
+  version: "1.0"
+  date: "2026-06-18"
+  description: >
+    Self-hosted homelab running on a single Proxmox VE host. Services are
+    distributed across LXC containers in four VLAN-backed SDN zones. The
+    MikroTik router is the L3 gateway and enforces inter-zone firewall policy.
+    All external browser access flows through Traefik (edge_seg). Authentik
+    provides SSO for all user-facing services. Harbor proxies all container
+    image pulls. There is no direct internet exposure of any backend service.
+  methodology: STRIDE
+
+# ---------------------------------------------------------------------------
+# Trust boundaries
+# ---------------------------------------------------------------------------
+
+trust_boundaries:
+  - id: tb-internet
+    name: Internet perimeter
+    type: network
+    description: >
+      Physical boundary between the public internet and the LAN. MikroTik
+      performs NAT; only ports 80 and 443 are forwarded inbound to Traefik.
+    enforcement: MikroTik NAT + firewall
+
+  - id: tb-edge-to-mgmt
+    name: edge_seg → mgmt_seg
+    type: network-zone
+    description: VLAN 30 → VLAN 20. MikroTik enforces firewall rules.
+    allowed_flows: "tcp/9000, tcp/9443 (Traefik forwardAuth to Authentik); tcp/80 (step-ca ACME callback)"
+    enforcement: MikroTik inter-VLAN firewall
+
+  - id: tb-edge-to-infra
+    name: edge_seg → infra_seg
+    type: network-zone
+    description: VLAN 30 → VLAN 40. MikroTik enforces firewall rules.
+    allowed_flows: "tcp/80, tcp/443, tcp/3142 (Harbor, apt-cacher)"
+    enforcement: MikroTik inter-VLAN firewall
+
+  - id: tb-mgmt-to-infra
+    name: mgmt_seg → infra_seg
+    type: network-zone
+    description: VLAN 20 → VLAN 40. MikroTik enforces firewall rules.
+    allowed_flows: "tcp/80, tcp/443, tcp/3142 (all zones to Harbor/apt-cacher); tcp/9000, tcp/9443 (NetBox to Portainer proxy)"
+    enforcement: MikroTik inter-VLAN firewall
+
+  - id: tb-build-to-mgmt
+    name: build_seg → mgmt_seg
+    type: network-zone
+    description: VLAN 10 → VLAN 20. MikroTik enforces firewall rules.
+    allowed_flows: "tcp/9000 (Authentik), tcp/8428 (VictoriaMetrics), tcp/3100 (Loki)"
+    enforcement: MikroTik inter-VLAN firewall
+
+  - id: tb-build-to-infra
+    name: build_seg → infra_seg
+    type: network-zone
+    description: VLAN 10 → VLAN 40. MikroTik enforces firewall rules.
+    allowed_flows: "tcp/80, tcp/443, tcp/3142 (Harbor, apt-cacher)"
+    enforcement: MikroTik inter-VLAN firewall
+
+  - id: tb-lxc-host
+    name: LXC container boundary
+    type: host
+    description: >
+      Proxmox LXC namespace boundary. Each LXC is an unprivileged container
+      sharing the host kernel. Breakout from LXC reaches the pve host directly.
+    enforcement: Proxmox LXC (Linux namespaces, cgroups)
+
+  - id: tb-pve-host
+    name: Proxmox VE host
+    type: host
+    description: >
+      The bare-metal hypervisor. Compromise of this layer gives full control
+      of all LXC containers and their data volumes.
+    enforcement: Physical access controls; SSH key auth only
+
+# ---------------------------------------------------------------------------
+# External entities
+# ---------------------------------------------------------------------------
+
+external_entities:
+  - id: ee-lan-user
+    name: LAN User / Operator
+    description: >
+      Human operator accessing lab services via browser from the local LAN
+      (192.168.1.0/24). Currently a single-person homelab; no multi-user
+      trust distinction between operator and end-user.
+    trust_level: medium
+    notes: >  # ANNOTATE
+      Clarify: is there any access from outside the LAN (VPN, external)?
+      Are there any non-operator users?
+
+  - id: ee-internet
+    name: Public internet
+    description: >
+      The untrusted public internet. Inbound access is limited to tcp/80 and
+      tcp/443 forwarded by MikroTik NAT to Traefik. All outbound connections
+      from LXCs reach the internet via MikroTik NAT.
+    trust_level: untrusted
+
+  - id: ee-github
+    name: GitHub / GitHub Actions
+    description: >
+      GitHub-hosted infrastructure providing: git repository hosting, Actions
+      job dispatch to the self-hosted CI runner, and the GitHub REST API
+      (polled by NetBox for release checks). The CI runner registers itself
+      with GitHub and polls for queued jobs; GitHub dispatches jobs to the
+      runner over this connection.
+    trust_level: low
+    notes: >
+      GitHub Actions executes arbitrary code from workflow files. A compromised
+      upstream repository or malicious PR workflow can run code as the ci-runner
+      LXC. The runner has outbound access to Harbor (image push) and monitoring.
+
+  - id: ee-letsencrypt
+    name: Let's Encrypt ACME
+    description: >
+      Public CA used for TLS certificates on *.lab.gibbsgreatly.xyz.
+      Traefik handles ACME certificate issuance and renewal using
+      httpChallenge (Let's Encrypt calls back to tcp/80 on Traefik).
+    trust_level: medium
+
+  - id: ee-upstream-registries
+    name: Upstream container registries
+    description: >
+      Docker Hub (docker.io), GitHub Container Registry (ghcr.io), and
+      Google Container Registry (gcr.io). Harbor proxies all pulls from these
+      sources; LXCs never contact upstream registries directly.
+    trust_level: low
+    notes: >
+      Supply chain risk: Harbor caches upstream images. Compromised image tags
+      on upstream registries propagate to Harbor cache on next pull.
+
+  - id: ee-debian-mirrors
+    name: Debian package mirrors
+    description: >
+      Public Debian APT mirrors (ftp.debian.org etc). apt-cacher-ng proxies
+      all package fetches; LXCs never contact mirrors directly.
+    trust_level: low
+
+  - id: ee-github-api
+    name: GitHub REST API
+    description: >
+      GitHub API endpoint polled by NetBox for release version checks.
+      Hardcoded in netbox-stack docker-compose as RELEASE_CHECK_URL.
+      Unauthenticated GET to api.github.com/repos/netbox-community/netbox/releases.
+    trust_level: low
+    notes: >
+      This is an unauthenticated outbound call from the netbox LXC to the
+      internet. Rate-limiting or DNS poisoning could cause netbox errors.
+
+# ---------------------------------------------------------------------------
+# Processes (LXC containers)
+# ---------------------------------------------------------------------------
+
+processes:
+  - id: p-traefik
+    name: Traefik reverse proxy
+    stack: proxy-stack
+    vmid: 30010
+    zone: edge_seg
+    network: 192.168.30.0/24
+    provides:
+      - port: 80
+        protocol: tcp
+        service: http-ingress
+      - port: 443
+        protocol: tcp
+        service: https-ingress
+    trust_level: medium
+    description: >
+      Single ingress point for all browser-facing lab services. Terminates TLS
+      (Let's Encrypt certs). Routes to backends by hostname. Enforces
+      forwardAuth (Authentik) or OIDC depending on the route. Also handles
+      ACME httpChallenge callbacks from Let's Encrypt and step-ca.
+    notes: >
+      Traefik has a Docker socket proxy sidecar (:2375) for NetBox discovery.
+      The Traefik dashboard is exposed at traefik.lab.gibbsgreatly.xyz with
+      forwardAuth — if Authentik is down, dashboard access is blocked.
+
+  - id: p-authentik
+    name: Authentik identity provider
+    stack: authentik-stack
+    vmid: 20010
+    zone: mgmt_seg
+    network: 192.168.20.0/24
+    provides:
+      - port: 9000
+        protocol: tcp
+        service: authentik-http
+      - port: 9443
+        protocol: tcp
+        service: authentik-https
+      - port: 9300
+        protocol: tcp
+        service: authentik-metrics
+    trust_level: high
+    description: >
+      Central identity provider. Provides SSO (OIDC) for Harbor, Grafana,
+      Portainer. Provides forwardAuth for NetBox and Traefik dashboard.
+      Stores user credentials, OAuth clients, sessions, and outpost config
+      in its own PostgreSQL instance. Redis used for session cache.
+    notes: >
+      Authentik is the single point of authentication failure for all
+      user-facing services. Compromise gives access to all SSO-protected
+      services. The direct_tls nginx sidecar exposes :9443 with internal
+      certificates for services requiring HTTPS to Authentik.
+
+  - id: p-harbor
+    name: Harbor container registry
+    stack: harbor-stack
+    vmid: 40010
+    zone: infra_seg
+    network: 192.168.40.0/24
+    provides:
+      - port: 80
+        protocol: tcp
+        service: registry-http
+      - port: 443
+        protocol: tcp
+        service: registry-https
+    trust_level: high
+    description: >
+      OCI registry and proxy cache for all container image pulls. Acts as a
+      pull-through cache for Docker Hub, ghcr.io, and gcr.io. All LXCs pull
+      images exclusively from Harbor, never from upstream registries directly.
+      Protected by OIDC auth (Authentik) via Traefik.
+    notes: >
+      Harbor stores image blobs in /var/lib/harbor (120G dedicated volume).
+      Built-in Trivy for vulnerability scanning. OIDC client credentials
+      (HARBOR_OIDC_CLIENT_ID/SECRET) stored in SOPS secrets.
+
+  - id: p-apt-cacher
+    name: apt-cacher-ng
+    stack: apt-cacher-stack
+    vmid: 40011
+    zone: infra_seg
+    network: 192.168.40.0/24
+    provides:
+      - port: 3142
+        protocol: tcp
+        service: apt-proxy
+    trust_level: medium
+    description: >
+      APT package proxy cache for all LXC containers. Reduces external
+      traffic and ensures reproducible package installs. No authentication
+      on the proxy port — any LXC in any zone can reach it.
+    notes: >
+      No auth on :3142. MikroTik firewall is the only access control
+      (all_zones → infra_seg/3142 is permitted by zone policy).
+
+  - id: p-netbox
+    name: NetBox IPAM/DCIM
+    stack: netbox-stack
+    vmid: 40012
+    zone: infra_seg
+    network: 192.168.40.0/24
+    provides:
+      - port: 8080
+        protocol: tcp
+        service: netbox-http
+    trust_level: medium
+    description: >
+      Source of truth for network topology: VMs, IPs, prefixes, VLANs, and
+      runtime-discovered services. Protected by forwardAuth (Authentik) via
+      Traefik. The populate.py script connects to docker-socket-proxy
+      endpoints on other LXCs to discover running containers.
+    notes: >
+      NetBox makes outbound connections to docker socket proxies (:2375) on
+      every discovered host — these are unauthenticated TCP connections.
+      NetBox also makes an unauthenticated call to api.github.com for release
+      checks. The automation token (NETBOX_AUTOMATION_TOKEN) is stored in
+      SOPS prod secrets.
+
+  - id: p-monitoring
+    name: Monitoring stack (Grafana + VictoriaMetrics + Loki)
+    stack: monitoring-stack
+    vmid: 20012
+    zone: mgmt_seg
+    network: 192.168.20.0/24
+    provides:
+      - port: 3000
+        protocol: tcp
+        service: grafana-ui
+      - port: 8428
+        protocol: tcp
+        service: victoriametrics-http
+      - port: 3100
+        protocol: tcp
+        service: loki-http
+    trust_level: medium
+    description: >
+      Observability stack. Grafana for dashboards (OIDC via Authentik).
+      VictoriaMetrics for metrics storage (push from agents, scrape from
+      cadvisor endpoints). Loki for log aggregation (push from promtail).
+      Receives logs and metrics from other LXCs.
+    notes: >  # ANNOTATE
+      Which LXCs currently ship logs to Loki via promtail? Confirmed:
+      authentik-stack and netbox-stack (from docker-compose.yml).
+      Which LXCs does VictoriaMetrics scrape for cadvisor metrics?
+      Confirmed cadvisor on: authentik (:8080), netbox (:8081).
+      Are other stacks also scraped? Check VictoriaMetrics scrape config.
+
+  - id: p-portainer
+    name: Portainer CE
+    stack: portainer-stack
+    vmid: 20020
+    zone: mgmt_seg
+    network: 192.168.20.0/24
+    provides:
+      - port: 9000
+        protocol: tcp
+        service: portainer-http
+      - port: 9443
+        protocol: tcp
+        service: portainer-https
+      - port: 8000
+        protocol: tcp
+        service: portainer-edge-agent
+    trust_level: high
+    description: >
+      Docker management UI. Manages container stacks on all LXCs that expose
+      a docker-socket-proxy. OIDC auth via Authentik. Also used by NetBox
+      populate.py as a discovery source for running services.
+    notes: >
+      Portainer has deep access to Docker APIs on managed hosts. Compromise
+      of Portainer gives full container control across all managed LXCs.
+      The docker-socket-proxy on each LXC limits Portainer to read-only
+      Docker API — it cannot create/destroy containers via the socket proxy.
+
+  - id: p-step-ca
+    name: step-ca internal CA
+    stack: step-ca-stack
+    vmid: 20011
+    zone: mgmt_seg
+    network: 192.168.20.0/24
+    provides:
+      - port: 443
+        protocol: tcp
+        service: step-ca-acme
+    trust_level: high
+    description: >
+      Internal PKI CA for lab.gibbsgreatly.xyz. Issues TLS certificates
+      via ACME protocol. The step-ca itself gets its server certificate
+      from Let's Encrypt (via Traefik ACME httpChallenge).
+    notes: >
+      CA private key stored in step-ca container filesystem. No HSM.
+      step-ca bootstrap requires manual provisioner password from SOPS secrets.
+
+  - id: p-dns
+    name: CoreDNS
+    stack: dns-stack
+    vmid: 20013
+    zone: mgmt_seg
+    network: 192.168.20.0/24
+    provides:
+      - port: 53
+        protocol: tcp+udp
+        service: dns
+    trust_level: high
+    description: >
+      Authoritative DNS for lab.gibbsgreatly.xyz zone, delegated from
+      MikroTik. LXC containers use their VLAN gateway (MikroTik) as their
+      DNS server; MikroTik forwards lab.gibbsgreatly.xyz queries to CoreDNS.
+    notes: >
+      DNS poisoning of CoreDNS would redirect internal service resolution
+      for all lab services. CoreDNS has no auth on its listener.
+
+  - id: p-ci-runner
+    name: GitHub Actions self-hosted runner
+    stack: ci-runner-01
+    vmid: 10063
+    zone: build_seg
+    network: 192.168.10.0/24
+    provides: []
+    trust_level: low
+    description: >
+      Self-hosted GitHub Actions runner. Executes CI workflows from the
+      proxmox-homelab repository. Has outbound access to Harbor (image
+      pulls/pushes for CI builds) and monitoring (metrics/logs). Runs
+      arbitrary workflow YAML — a compromised workflow can exfiltrate
+      SOPS-decrypted secrets available at CI time.
+    notes: >  # ANNOTATE
+      Does the runner push built images to Harbor, or only pull?
+      What secrets are available to CI workflows?
+      Is the runner registered as a repository-scoped runner (preferred)
+      or organisation-scoped (higher blast radius)?
+
+# ---------------------------------------------------------------------------
+# Data stores (significant persistent state, no intra-LXC flows listed)
+# ---------------------------------------------------------------------------
+
+data_stores:
+  - id: ds-authentik-db
+    name: Authentik PostgreSQL
+    host: p-authentik
+    type: postgresql
+    data_classification: secret
+    contents: >
+      User accounts and hashed passwords, OAuth2 client credentials (client
+      IDs and secrets for Harbor, Grafana, Portainer), OIDC tokens, active
+      sessions, group memberships, outpost configuration.
+    encryption_at_rest: false  # ANNOTATE — is the LXC volume encrypted?
+    notes: >
+      This is the highest-value data store: compromise gives access to all
+      SSO-protected service credentials.
+
+  - id: ds-harbor-storage
+    name: Harbor image storage
+    host: p-harbor
+    type: filesystem
+    data_classification: internal
+    contents: >
+      OCI image blobs and manifests for all lab services. Includes cached
+      copies of upstream images (Docker Hub, ghcr.io, gcr.io) and any
+      custom-built CI images.
+    encryption_at_rest: false  # ANNOTATE
+    notes: >
+      Images pulled from upstream registries are cached here. A malicious
+      image delivered via a compromised upstream tag would be stored and
+      served to all LXCs.
+
+  - id: ds-harbor-db
+    name: Harbor PostgreSQL
+    host: p-harbor
+    type: postgresql
+    data_classification: confidential
+    contents: >
+      Registry metadata, user accounts, OIDC mappings, project and
+      repository configuration, vulnerability scan results.
+    encryption_at_rest: false  # ANNOTATE
+
+  - id: ds-netbox-db
+    name: NetBox PostgreSQL
+    host: p-netbox
+    type: postgresql
+    data_classification: internal
+    contents: >
+      Full infrastructure inventory: VM IDs, IP addresses, MAC addresses,
+      network topology, service endpoints, VLAN assignments, custom field data.
+    encryption_at_rest: false  # ANNOTATE
+    notes: >
+      Useful to an attacker for network reconnaissance — provides a complete
+      map of all services, IPs, and zones.
+
+  - id: ds-monitoring-metrics
+    name: VictoriaMetrics time-series
+    host: p-monitoring
+    type: victoriametrics
+    data_classification: internal
+    contents: >
+      Container resource metrics (CPU, memory, disk, network) for all
+      monitored LXCs. May include application-level metrics from CI.
+    encryption_at_rest: false
+
+  - id: ds-monitoring-logs
+    name: Loki log store
+    host: p-monitoring
+    type: loki
+    data_classification: confidential  # ANNOTATE — logs may contain tokens/secrets
+    contents: >
+      Container logs from authentik and netbox (confirmed). Possibly other
+      stacks. Logs may contain application errors with credential fragments,
+      auth tokens in URLs, or session IDs.
+    encryption_at_rest: false
+    notes: >
+      Log aggregation from multiple services means a single Loki compromise
+      leaks logs from all shipping services. Check whether logs are filtered
+      before shipping to redact secrets.  # ANNOTATE
+
+  - id: ds-step-ca-keys
+    name: step-ca CA private keys
+    host: p-step-ca
+    type: filesystem
+    data_classification: secret
+    contents: >
+      CA root and intermediate private keys. Anyone with these keys can issue
+      valid TLS certificates for any lab.gibbsgreatly.xyz hostname.
+    encryption_at_rest: false  # ANNOTATE — step-ca can encrypt keys with a passphrase
+    notes: >
+      No HSM. Keys are stored in the LXC filesystem. Compromise of the
+      step-ca LXC or its data volume gives the CA keys.
+
+  - id: ds-sops-secrets
+    name: SOPS-encrypted secrets
+    host: pve-host
+    type: filesystem
+    data_classification: secret
+    contents: >
+      terraform/secrets.enc.yaml (dev) and terraform/secrets.pve.enc.yaml
+      (prod). Contains DB passwords, API tokens, OIDC client secrets,
+      Authentik secret key, Harbor admin password, NetBox API token pepper,
+      step-ca provisioner password. Encrypted with age key at
+      ~/.config/sops/age/keys.txt on the pve host.
+    encryption_at_rest: true
+    notes: >
+      The age private key on the pve host is the master key for all secrets.
+      If the pve host is compromised, all secrets are exposed regardless of
+      SOPS encryption. CI workflows that call ./with-secrets decrypt secrets
+      into the CI runner environment.
+
+# ---------------------------------------------------------------------------
+# Data flows
+# ---------------------------------------------------------------------------
+
+data_flows:
+
+  # --- User ingress ---
+
+  - id: df-user-to-traefik
+    name: Browser HTTPS ingress
+    from: ee-lan-user
+    to: p-traefik
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: none
+    data_classification: varies
+    data: >
+      HTTPS requests for all lab services: web UI sessions, API calls,
+      authentication flows. TLS terminated at Traefik.
+    trigger: runtime
+    trust_boundary_crossing: tb-internet  # if from LAN, crosses NAT only; LAN is trusted
+    inferred_from: edge.yaml routes, MikroTik port forward
+    notes: >  # ANNOTATE
+      Is TCP/443 port-forwarded from the internet, or LAN-only?
+      If internet-facing, this is a much higher-risk ingress.
+
+  - id: df-traefik-to-authentik-ui
+    name: Traefik routes Authentik UI
+    from: p-traefik
+    to: p-authentik
+    protocol: tcp
+    port: 9000
+    transport_security: none  # plain HTTP within the VLAN
+    auth: none
+    data_classification: confidential
+    data: >
+      Authentik login UI, OAuth2 authorization flows, OIDC token responses,
+      user credential submissions (POST to Authentik login endpoint).
+    trigger: runtime
+    trust_boundary_crossing: tb-edge-to-mgmt
+    inferred_from: "authentik edge.yaml (auth.mode: none — Authentik is the IdP itself)"
+
+  - id: df-traefik-forwardauth
+    name: Traefik forward auth check to Authentik
+    from: p-traefik
+    to: p-authentik
+    protocol: tcp
+    port: 9000
+    transport_security: none
+    auth: session-cookie
+    data_classification: confidential
+    data: >
+      Per-request auth check: Traefik forwards request headers (cookies,
+      X-Forwarded-For, X-Forwarded-Host) to Authentik outpost. Authentik
+      returns X-Authentik-* headers (username, email, groups) on success,
+      or 401/302 to redirect to login.
+    trigger: runtime  # every authenticated request
+    trust_boundary_crossing: tb-edge-to-mgmt
+    inferred_from: "netbox edge.yaml (auth.mode: forwardAuth), proxy-stack edge.yaml"
+
+  - id: df-traefik-to-harbor
+    name: Traefik routes Harbor
+    from: p-traefik
+    to: p-harbor
+    protocol: tcp
+    port: 80
+    transport_security: none
+    auth: oidc
+    data_classification: internal
+    data: >
+      Harbor UI and OCI registry API calls. Image manifest queries, tag
+      listings, vulnerability scan results. User-facing: auth redirected
+      to Authentik via OIDC before reaching Harbor.
+    trigger: runtime
+    trust_boundary_crossing: tb-edge-to-infra
+    inferred_from: "harbor edge.yaml (auth.mode: oidc)"
+
+  - id: df-traefik-to-grafana
+    name: Traefik routes Grafana
+    from: p-traefik
+    to: p-monitoring
+    protocol: tcp
+    port: 3000
+    transport_security: none
+    auth: oidc
+    data_classification: internal
+    data: >
+      Grafana dashboard UI. Metrics, logs, alerting configuration. OIDC auth
+      via Authentik before access is granted.
+    trigger: runtime
+    trust_boundary_crossing: tb-edge-to-mgmt
+    inferred_from: "monitoring edge.yaml (auth.mode: oidc)"
+
+  - id: df-traefik-to-netbox
+    name: Traefik routes NetBox
+    from: p-traefik
+    to: p-netbox
+    protocol: tcp
+    port: 8080
+    transport_security: none
+    auth: forward-auth
+    data_classification: internal
+    data: >
+      NetBox UI and REST/GraphQL API. Infrastructure inventory data (IPs,
+      VMs, prefixes). Authentik injects X-Authentik-Username header which
+      NetBox trusts for REMOTE_AUTH login.
+    trigger: runtime
+    trust_boundary_crossing: tb-mgmt-to-infra
+    inferred_from: "netbox edge.yaml (auth.mode: forwardAuth)"
+    notes: >
+      NetBox trusts REMOTE_AUTH_HEADER from Traefik without further
+      verification. If Traefik is bypassed and the NetBox port (8080) is
+      reachable, REMOTE_AUTH could be forged.
+
+  - id: df-traefik-to-portainer
+    name: Traefik routes Portainer
+    from: p-traefik
+    to: p-portainer
+    protocol: tcp
+    port: 9000
+    transport_security: none
+    auth: oidc
+    data_classification: confidential
+    data: >
+      Portainer management UI. Container and stack lifecycle operations,
+      environment configuration, Docker API access. OIDC auth via Authentik.
+    trigger: runtime
+    trust_boundary_crossing: tb-edge-to-mgmt
+    inferred_from: "portainer edge.yaml (auth.mode: oidc)"
+    notes: >
+      Portainer manages Docker on all connected LXCs. Operator actions via
+      Portainer UI can create/destroy/modify containers on any managed host.
+
+  # --- TLS / PKI ---
+
+  - id: df-traefik-to-letsencrypt
+    name: Traefik ACME certificate issuance
+    from: p-traefik
+    to: ee-letsencrypt
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: acme-account-key
+    data_classification: internal
+    data: >
+      ACME CSRs for *.lab.gibbsgreatly.xyz certificates, ACME account
+      registration and renewal requests.
+    trigger: scheduled  # cert renewal every ~60 days
+    trust_boundary_crossing: tb-internet
+    inferred_from: "edge.yaml (tls.resolver: letsencrypt on all routes)"
+
+  - id: df-letsencrypt-to-traefik
+    name: Let's Encrypt httpChallenge validation
+    from: ee-letsencrypt
+    to: p-traefik
+    protocol: tcp
+    port: 80
+    transport_security: none
+    auth: none
+    data_classification: public
+    data: >
+      Let's Encrypt validation GET request to /.well-known/acme-challenge/<token>.
+      Proves domain control for TLS certificate issuance.
+    trigger: on-demand  # at cert issuance/renewal
+    trust_boundary_crossing: tb-internet
+    inferred_from: pve.yaml policy (step-ca → Traefik :80 for ACME callback)
+
+  - id: df-step-ca-to-traefik
+    name: step-ca ACME challenge via Traefik
+    from: p-step-ca
+    to: p-traefik
+    protocol: tcp
+    port: 80
+    transport_security: none
+    auth: none
+    data_classification: public
+    data: >
+      step-ca's own certificate renewal through Let's Encrypt ACME httpChallenge.
+      step-ca requests its TLS cert from Let's Encrypt; the httpChallenge token
+      is served via Traefik.
+    trigger: scheduled
+    trust_boundary_crossing: tb-edge-to-mgmt  # mgmt_seg → edge_seg
+    inferred_from: pve.yaml policy (mgmt_seg → edge_seg :80)
+
+  # --- Image registry pulls (deploy-time) ---
+
+  - id: df-harbor-upstream-pull
+    name: Harbor upstream registry proxy
+    from: p-harbor
+    to: ee-upstream-registries
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: none  # anonymous pull; Harbor caches result
+    data_classification: public
+    data: >
+      OCI image manifests and layer blobs pulled from Docker Hub (docker.io),
+      GitHub Container Registry (ghcr.io), Google Container Registry (gcr.io).
+      Triggered on cache miss when any LXC pulls a new or updated image.
+    trigger: on-demand  # on cache miss
+    trust_boundary_crossing: tb-internet
+    inferred_from: Harbor proxy-cache configuration; all stack.yaml registry_host values
+
+  - id: df-image-pull-to-harbor
+    name: LXC container image pulls from Harbor
+    from: [p-traefik, p-authentik, p-monitoring, p-netbox, p-portainer, p-step-ca, p-ci-runner]
+    to: p-harbor
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: none  # ANNOTATE — do LXCs authenticate to Harbor for pulls, or anonymous?
+    data_classification: public
+    data: OCI image layers and manifests for all deployed containers.
+    trigger: deploy-time
+    trust_boundary_crossing: varies  # each caller's zone → infra_seg
+    inferred_from: registry_host field in all stack.yaml files
+
+  # --- APT package proxy (deploy-time) ---
+
+  - id: df-apt-proxy-pull
+    name: LXC apt package installs via apt-cacher-ng
+    from: [p-traefik, p-authentik, p-monitoring, p-netbox, p-step-ca, p-ci-runner]
+    to: p-apt-cacher
+    protocol: tcp
+    port: 3142
+    transport_security: none
+    auth: none
+    data_classification: public
+    data: Debian/Ubuntu package downloads (deb files, package lists).
+    trigger: deploy-time
+    trust_boundary_crossing: varies
+    inferred_from: apt_cacher_host in stack.yaml files
+    notes: >
+      No authentication on apt-cacher-ng :3142. A compromised LXC could
+      send arbitrary requests to apt-cacher. A compromised apt-cacher
+      could serve malicious packages to all LXCs.
+
+  - id: df-apt-cacher-upstream
+    name: apt-cacher-ng upstream mirror fetch
+    from: p-apt-cacher
+    to: ee-debian-mirrors
+    protocol: tcp
+    port: 80
+    transport_security: none  # ANNOTATE — does apt-cacher use https mirrors?
+    auth: none
+    data_classification: public
+    data: Debian package files and index metadata.
+    trigger: on-demand  # on cache miss
+    trust_boundary_crossing: tb-internet
+    inferred_from: apt-cacher-ng standard operation
+
+  # --- Monitoring / observability ---
+
+  - id: df-promtail-to-loki
+    name: Promtail log shipping to Loki
+    from: [p-authentik, p-netbox]  # ANNOTATE — confirm all stacks with promtail
+    to: p-monitoring
+    protocol: tcp
+    port: 3100
+    transport_security: none  # ANNOTATE — is Loki push authenticated?
+    auth: none  # ANNOTATE
+    data_classification: confidential  # logs may contain secrets/tokens
+    data: >
+      Container stdout/stderr logs. May include authentication events,
+      error traces with internal URLs, and potentially credential fragments
+      in log lines.
+    trigger: runtime  # continuous push
+    trust_boundary_crossing: tb-mgmt-to-infra  # for netbox; same zone for authentik
+    inferred_from: promtail service in authentik and netbox docker-compose.yml
+
+  - id: df-victoriametrics-scrape
+    name: VictoriaMetrics cadvisor scrape
+    from: p-monitoring
+    to: [p-authentik, p-netbox]  # ANNOTATE — confirm full scrape target list
+    protocol: tcp
+    port: 8080  # cadvisor port (8081 on netbox)
+    transport_security: none
+    auth: none
+    data_classification: internal
+    data: >
+      Container resource metrics: CPU, memory, disk I/O, network throughput
+      per container. No application-level secrets, but reveals resource usage
+      patterns (e.g. auth spike = login attempt).
+    trigger: runtime  # periodic scrape
+    trust_boundary_crossing: tb-mgmt-to-infra  # for netbox
+    inferred_from: cadvisor service in docker-compose.yml
+    notes: >  # ANNOTATE
+      Confirm which stacks have cadvisor deployed and what port VictoriaMetrics
+      scrapes. Check monitoring-stack scrape config.
+
+  - id: df-authentik-metrics
+    name: VictoriaMetrics scrapes Authentik metrics endpoint
+    from: p-monitoring
+    to: p-authentik
+    protocol: tcp
+    port: 9300
+    transport_security: none
+    auth: none  # ANNOTATE — is the metrics endpoint open or auth-protected?
+    data_classification: internal
+    data: >
+      Authentik Prometheus metrics: active sessions, auth flow success/failure
+      rates, task queue depth, outpost health.
+    trigger: runtime
+    trust_boundary_crossing: none  # both mgmt_seg
+    inferred_from: AUTHENTIK_LISTEN__METRICS in docker-compose.yml
+    notes: >
+      The auth success/failure metrics on this endpoint are sensitive — they
+      can reveal brute-force patterns. Verify the metrics endpoint requires
+      no auth (it currently appears open on 0.0.0.0:9300).
+
+  # --- NetBox discovery ---
+
+  - id: df-netbox-socket-proxy
+    name: NetBox docker-socket-proxy discovery
+    from: p-netbox
+    to: [p-harbor, p-authentik, p-monitoring, p-portainer, p-traefik]
+    protocol: tcp
+    port: 2375
+    transport_security: none
+    auth: none
+    data_classification: internal
+    data: >
+      Read-only Docker API responses: container list, image list, running
+      service names, port bindings. Used by populate.py to discover services
+      for NetBox inventory.
+    trigger: on-demand  # when populate.py is run
+    trust_boundary_crossing: tb-mgmt-to-infra  # netbox (infra) → mgmt hosts
+    inferred_from: docker_socket_proxy_targets in stack.yaml files
+    notes: >
+      Docker socket proxy is unauthenticated plain-HTTP on each host's IP.
+      The socket proxy filters to read-only Docker API paths, but any host
+      that can reach port 2375 gets read access to the Docker daemon metadata.
+      MikroTik zone policy is the only access control.
+
+  - id: df-netbox-to-portainer-api
+    name: NetBox populate to Portainer API
+    from: p-netbox
+    to: p-portainer
+    protocol: tcp
+    port: 9000
+    transport_security: none  # ANNOTATE — does populate.py use Portainer API token?
+    auth: api-token  # ANNOTATE — confirm token type
+    data_classification: internal
+    data: >
+      Portainer API queries for stack and container listings, used as a
+      discovery source when docker-socket-proxy is not available.
+    trigger: on-demand
+    trust_boundary_crossing: tb-mgmt-to-infra
+    inferred_from: pve.yaml policy (infra_seg → mgmt_seg :9000/:9443)
+
+  - id: df-netbox-to-github-api
+    name: NetBox release check to GitHub API
+    from: p-netbox
+    to: ee-github-api
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: none  # unauthenticated
+    data_classification: public
+    data: GET /repos/netbox-community/netbox/releases (GitHub REST API)
+    trigger: runtime  # periodic, configured in NetBox
+    trust_boundary_crossing: tb-internet
+    inferred_from: RELEASE_CHECK_URL in netbox docker-compose.yml
+    notes: >
+      Unauthenticated outbound call from infra_seg to the internet.
+      Subject to GitHub API rate limits. Could be disabled to reduce
+      outbound internet exposure from the infra zone.
+
+  # --- CI runner ---
+
+  - id: df-ci-to-github
+    name: CI runner to GitHub Actions
+    from: p-ci-runner
+    to: ee-github
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: runner-registration-token
+    data_classification: confidential
+    data: >
+      Job polling (runner long-polls GitHub for queued workflow jobs),
+      job status reporting, artifact uploads, git repository fetch for
+      checked-out code.
+    trigger: runtime  # continuous polling
+    trust_boundary_crossing: tb-internet
+    inferred_from: ci-runner-01 stack.yaml (build_seg zone, GitHub Actions runner)
+
+  - id: df-github-to-ci
+    name: GitHub dispatches jobs to CI runner
+    from: ee-github
+    to: p-ci-runner
+    protocol: tcp
+    port: 443  # ANNOTATE — does GitHub push inbound, or does runner only poll?
+    transport_security: tls
+    auth: runner-registration-token
+    data_classification: confidential
+    data: >
+      Workflow job definitions, secrets injected at job start, repository
+      code checkout instructions.
+    trigger: on-demand
+    trust_boundary_crossing: tb-internet
+    inferred_from: GitHub Actions self-hosted runner architecture
+    notes: >  # ANNOTATE
+      Clarify: self-hosted runners use long-poll from runner → GitHub; GitHub
+      does not initiate inbound connections to the runner. If so, remove this
+      flow and add detail to df-ci-to-github.
+
+  - id: df-ci-to-harbor
+    name: CI runner pulls images from Harbor
+    from: p-ci-runner
+    to: p-harbor
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: none  # ANNOTATE — does CI runner authenticate to Harbor?
+    data_classification: public
+    data: OCI image pulls for CI build jobs.
+    trigger: on-demand  # during workflow runs
+    trust_boundary_crossing: tb-build-to-infra
+    inferred_from: registry_host in ci-runner stack.yaml, depends_on harbor-stack
+
+  - id: df-ci-push-harbor
+    name: CI runner pushes built images to Harbor
+    from: p-ci-runner
+    to: p-harbor
+    protocol: tcp
+    port: 443
+    transport_security: tls
+    auth: harbor-robot-account  # ANNOTATE — confirm auth mechanism
+    data_classification: internal
+    data: Built OCI images from CI workflows pushed to Harbor registry.
+    trigger: on-demand
+    trust_boundary_crossing: tb-build-to-infra
+    inferred_from: inferred  # ANNOTATE — confirm this actually happens
+    needs_annotation: true
+
+  - id: df-ci-to-metrics
+    name: CI runner pushes metrics and logs to monitoring
+    from: p-ci-runner
+    to: p-monitoring
+    protocol: tcp
+    port: 8428  # VictoriaMetrics
+    transport_security: none
+    auth: none  # ANNOTATE — is push auth configured?
+    data_classification: internal
+    data: CI job metrics (duration, pass/fail counts, build stats).
+    trigger: on-demand
+    trust_boundary_crossing: tb-build-to-mgmt
+    inferred_from: pve.yaml policy (build_seg → mgmt_seg :8428/:3100)
+    needs_annotation: true
+
+  - id: df-ci-to-loki
+    name: CI runner pushes logs to Loki
+    from: p-ci-runner
+    to: p-monitoring
+    protocol: tcp
+    port: 3100
+    transport_security: none
+    auth: none  # ANNOTATE
+    data_classification: confidential  # workflow logs may contain secret fragments
+    data: CI workflow run logs.
+    trigger: on-demand
+    trust_boundary_crossing: tb-build-to-mgmt
+    inferred_from: pve.yaml policy (build_seg → mgmt_seg :3100)
+    needs_annotation: true
+
+  - id: df-ci-to-authentik
+    name: CI runner to Authentik API
+    from: p-ci-runner
+    to: p-authentik
+    protocol: tcp
+    port: 9000
+    transport_security: none
+    auth: none  # ANNOTATE — what does CI use Authentik for?
+    data_classification: confidential
+    data: Unknown — policy permits this flow but purpose is not documented.
+    trigger: unknown
+    trust_boundary_crossing: tb-build-to-mgmt
+    inferred_from: pve.yaml policy (build_seg → mgmt_seg :9000)
+    needs_annotation: true
+    notes: >  # ANNOTATE
+      Why does the CI runner need to reach Authentik? Is this for OIDC token
+      exchange to authenticate to Harbor or Portainer? Or is this a vestigial
+      firewall rule? Confirm and document or remove.
+
+  # --- DNS ---
+
+  - id: df-lxc-to-dns
+    name: LXC containers resolve lab.gibbsgreatly.xyz via CoreDNS
+    from: [p-traefik, p-authentik, p-harbor, p-apt-cacher, p-netbox, p-monitoring, p-portainer, p-step-ca, p-ci-runner]
+    to: p-dns
+    protocol: udp+tcp
+    port: 53
+    transport_security: none
+    auth: none
+    data_classification: internal
+    data: >
+      DNS queries for lab.gibbsgreatly.xyz hostnames (e.g. harbor.lab.gibbsgreatly.xyz,
+      authentik.lab.gibbsgreatly.xyz). Queries are forwarded from each LXC's
+      gateway (MikroTik) which delegates the lab zone to CoreDNS.
+    trigger: runtime
+    trust_boundary_crossing: varies  # depends on LXC zone
+    inferred_from: dns_server pointing to VLAN gateway in stack.yaml; CoreDNS zone delegation from MikroTik
+    notes: >
+      LXCs use the MikroTik gateway as their DNS server, not CoreDNS directly.
+      MikroTik delegates lab.gibbsgreatly.xyz to the CoreDNS LXC.

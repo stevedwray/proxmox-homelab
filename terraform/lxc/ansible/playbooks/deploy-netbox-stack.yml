@@ -401,10 +401,42 @@
         mode: "0640"
       loop:
         - populate.py
+        - flows.py
         - client.py
         - discover.py
         - proxmox_client.py
         - mikrotik_client.py
+        - dfd_questionnaire.py
+
+    - name: Find stack YAML files for threat model derivation
+      ansible.builtin.find:
+        paths: "{{ playbook_dir }}/../../stacks"
+        patterns:
+          - "stack.yaml"
+          - "edge.yaml"
+          - "docker-compose.yml"
+        depth: 2
+        recurse: true
+      delegate_to: localhost
+      register: stack_yaml_files
+
+    - name: Ensure stack subdirectories exist for threat model files
+      ansible.builtin.file:
+        path: "{{ populate_dir }}/stacks/{{ item.path | regex_replace('^.*\\/stacks\\/', '') | dirname }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop: "{{ stack_yaml_files.files }}"
+
+    - name: Deploy stack YAML files for threat model derivation
+      ansible.builtin.copy:
+        src: "{{ item.path }}"
+        dest: "{{ populate_dir }}/stacks/{{ item.path | regex_replace('^.*\\/stacks\\/', '') }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop: "{{ stack_yaml_files.files }}"
 
     - name: Create credential env file directory
       ansible.builtin.file:
@@ -446,6 +478,7 @@
           # DOCKER_SOCKET_PROXY_URL=
           NETBOX_NETWORK_ENV={{ netbox_network_env }}
           NETBOX_NETWORK_INTENT_PATH=/etc/netbox-populate/network.yaml
+          STACKS_DIR={{ populate_dir }}/stacks
           NETBOX_RUNTIME_PROBE_TIMEOUT_SECONDS=8
           {% if mikrotik_user %}MIKROTIK_READONLY_USER={{ mikrotik_user }}{% endif %}
 
@@ -487,10 +520,15 @@
           Type=oneshot
           WorkingDirectory={{ populate_dir }}
           EnvironmentFile={{ populate_env_file }}
+          ExecStartPre=/bin/bash -c '\
+            for i in $(seq 1 60); do \
+              curl -s -o /dev/null http://localhost:8080/api/ \
+                2>/dev/null && exit 0 || sleep 5; \
+            done; \
+            echo "netbox-populate: NetBox API did not respond after 5 minutes" >&2; exit 1'
           ExecStart=/usr/bin/python3 {{ populate_dir }}/populate.py
-          StandardOutput=journal
-          StandardError=journal
-          SyslogIdentifier=netbox-populate
+          StandardOutput=append:/var/log/netbox-populate.log
+          StandardError=append:/var/log/netbox-populate.log
 
           [Install]
           WantedBy=multi-user.target
@@ -501,7 +539,7 @@
         dest: /etc/systemd/system/netbox-populate.timer
         owner: root
         group: root
-        mode: "0644"
+        mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
         content: |
           [Unit]
           Description=Run NetBox populate daily
@@ -525,6 +563,13 @@
         enabled: true
         state: started
         daemon_reload: false
+
+    - name: Deploy DFD questionnaire script to NetBox scripts volume
+      ansible.builtin.shell:
+        cmd: >
+          docker cp {{ populate_dir }}/dfd_questionnaire.py
+          {{ netbox_container }}:/opt/netbox/netbox/scripts/dfd_questionnaire.py
+      changed_when: true
 
   handlers:
     - name: Reload systemd
