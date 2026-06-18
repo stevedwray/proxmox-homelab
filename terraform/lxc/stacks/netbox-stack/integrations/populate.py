@@ -1610,8 +1610,7 @@ def main():
     populate_physical(nb, site, inventory)
     node_host_ips = topology.get("node_host_ips", {})
     for node_name in topology.get("discovered_node_names", []):
-        if node_name != inventory["target_node"]:
-            _ensure_proxmox_hypervisor(nb, site, node_name, host_ip=node_host_ips.get(node_name))
+        _ensure_proxmox_hypervisor(nb, site, node_name, host_ip=node_host_ips.get(node_name))
     populate_network(nb, site, network)
     populate_virtual(nb, vms, inventory)
     populate_ipam(nb, site, vms, population_intent, inventory)
