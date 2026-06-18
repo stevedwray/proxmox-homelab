@@ -29,6 +29,22 @@ If the operator explicitly names a merge target, use that exact target and do no
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `baseline/teardown-validated` → `main` only when stable and tested.
 
+## Validation Tiers
+
+The full teardown cycle is the **promotion gate** for `baseline/teardown-validated`. It is not required for every commit during development. Match validation depth to change risk:
+
+| Change class | Minimum validation |
+|---|---|
+| Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
+| Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
+| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` |
+| Terraform / network / SDN / firewall | Full teardown cycle |
+| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle |
+
+Batch related changes during development and run the appropriate tier. Run the full teardown cycle once before promoting to `baseline/teardown-validated`.
+
+**Ansible changes are not low-risk even when they appear comment-only.** A `# nosonar` comment placed inside a Jinja `{{ }}` expression block or a `content: |` env file block becomes runtime-evaluated content that can silently break deployments. Always run `--syntax-check` on the affected playbooks after any Ansible edit, no matter how trivial it looks. See `docs/teardown-test/lessons-learned.md` §12–13 for specific failure modes.
+
 ## Commits and Issues
 
 - After a fix is verified (tests pass, playbook runs clean), commit and close the issue immediately — do not wait to be asked
