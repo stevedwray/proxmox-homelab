@@ -464,16 +464,20 @@ def _node_name_from_proxmox_data(proxmox_data: dict) -> str | None:
 
 
 def _build_portainer_for_node(node_def: dict):
-    """Instantiate a PortainerClient for one node declaration, or return None."""
+    """Instantiate a PortainerClient for one node declaration, or return None.
+
+    Prefers an explicit API key (portainer_api_key_env) but falls back to
+    password-based auth via PORTAINER_ADMIN_PASSWORD if no key is set.
+    This means PORTAINER_TOKEN in SOPS is optional — a Portainer rebuild
+    does not break discovery because the admin password is always redeployed.
+    """
     portainer_url = node_def.get("portainer_url")
-    portainer_api_key_env = node_def.get("portainer_api_key_env")
-    if not portainer_url or not portainer_api_key_env:
+    if not portainer_url:
         return None
-    api_key = os.environ.get(portainer_api_key_env)
-    if not api_key:
-        return None
+    api_key_env = node_def.get("portainer_api_key_env")
+    api_key = os.environ.get(api_key_env) if api_key_env else None
     try:
-        return PortainerClient(url=portainer_url, api_key=api_key)
+        return PortainerClient(url=portainer_url, api_key=api_key or None)
     except Exception as exc:
         print(f"  warning: Portainer client for {portainer_url} failed: {exc}")
         return None
