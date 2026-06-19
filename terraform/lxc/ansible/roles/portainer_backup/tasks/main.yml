@@ -1,4 +1,60 @@
 ---
+- name: Check if NAS backup bind mount is configured on pve host
+  ansible.builtin.command:
+    cmd: grep -q "mp1:.*portainer-backup" /etc/pve/lxc/{{ vmid }}.conf
+  delegate_to: "{{ pve_host }}"
+  vars:
+    ansible_user: "{{ pve_ssh_user | default('root') }}"
+    ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+  register: mp1_check
+  failed_when: false
+  changed_when: false
+
+- name: Apply NAS backup bind mount to LXC (requires brief stop/start)
+  when: mp1_check.rc != 0
+  block:
+    - name: Stop portainer LXC for bind mount configuration
+      ansible.builtin.command:
+        cmd: pct stop {{ vmid }}
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: pct_stop
+      failed_when: pct_stop.rc != 0 and "not running" not in pct_stop.stderr
+
+    - name: Wait for container to stop
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 22
+        state: stopped
+        timeout: 30
+
+    - name: Configure NAS backup bind mount via pct set
+      ansible.builtin.command:
+        cmd: pct set {{ vmid }} -mp1 /mnt/nas-backup/portainer-backup,mp=/var/backups/portainer
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    - name: Start portainer LXC
+      ansible.builtin.command:
+        cmd: pct start {{ vmid }}
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+    - name: Wait for container to come back online
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
+
 - name: Create portainer-backup script directory
   ansible.builtin.file:
     path: "{{ portainer_backup_script_dir }}"
