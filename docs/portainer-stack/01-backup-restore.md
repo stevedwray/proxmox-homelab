@@ -238,89 +238,60 @@ Then open a PR: `task/portainer-backup-restore` → `baseline/teardown-validated
 
 ## Restore Runbook
 
-**Verified 2026-06-19.** Commands below are confirmed working.
+**Verified 2026-06-19** — full destroy → apply → restore → provision cycle confirmed.
 
-### Critical constraint: restore must happen before `provision.sh`
+### Automated path (use this)
 
-`POST /api/restore` only works on an **uninitialized** Portainer instance. Once
-`provision.sh` runs the init play (`POST /api/users/admin/init`), the instance is
-initialized and the restore API returns 400. The correct order is:
-
-1. `terragrunt apply` → LXC created, Portainer starts uninitialized
-2. Restore from backup (no auth required on uninitialized instance)
-3. `provision.sh` → init play gets 409 (already initialized from backup, skips);
-   OAuth, timer, bind mount all apply idempotently
+`scripts/portainer-restore.sh` automates the full sequence. It handles the ordering
+constraint (Portainer CE must start before restore, init must not run before restore),
+wipes stale DB state from the fresh LXC, and runs both provision phases.
 
 ```bash
-# 0. Verify NAS backup directory is accessible and has a backup file
-ls /mnt/nas-backup/portainer-backup/
-
-# 1. Deploy fresh LXC (Terraform only — do NOT run provision.sh yet)
+# 1. Destroy the LXC
 export TASK_APPROVAL="portainer-restore"
+NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
+  ./with-secrets-prod terragrunt destroy \
+  --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
+
+# 2. Recreate the LXC from template
 NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
   ./with-secrets-prod terragrunt apply \
   --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
 
-# 2. Wait for Portainer API to come up (uninitialized — no auth needed yet)
-until curl -sf http://192.168.20.20:9000/api/system/status > /dev/null; do sleep 3; done
-echo "Portainer API ready — InstanceID before restore:"
-curl -s http://192.168.20.20:9000/api/system/status | jq .InstanceID
-
-# 3. Restore from NAS backup (no Bearer token — instance is not yet initialized)
-#    The backup file is accessible inside the LXC at /var/backups/portainer/
-#    (NAS bind mount is applied at container creation time)
-ssh root@pve.gibbsgreatly.xyz "pct exec 20020 -- bash -c '
-  BACKUP=\$(ls -t /var/backups/portainer/portainer-*.tar.gz | head -1)
-  echo \"Restoring from: \${BACKUP}\"
-  tar tzf \"\${BACKUP}\" | head -5
-  curl -sf -X POST http://localhost:9000/api/restore \
-    -F \"file=@\${BACKUP}\" \
-    -w \"\nHTTP %{http_code}\n\"
-'"
-
-# 4. Restart Portainer to load restored state
-ssh root@pve.gibbsgreatly.xyz "pct exec 20020 -- docker restart portainer-portainer-1"
-sleep 10
-
-# 5. Verify InstanceID matches the backed-up instance
-curl -s http://192.168.20.20:9000/api/system/status | jq .InstanceID
-
-# 6. Run provision.sh — init gets 409 (skipped), everything else applies
-./with-secrets-prod scripts/provision.sh --stack portainer-stack
-
-# 7. Verify Portainer is healthy and auth works
-curl -s http://192.168.20.20:9000/api/system/status | jq .
+# 3. Run the restore script — handles everything from here
+./with-secrets-prod scripts/portainer-restore.sh
 ```
 
-### Bind mount note
+The script sequence:
+1. Wipes `/var/lib/portainer` (stale DB can survive template recreation)
+2. Runs `provision.sh --stack portainer-stack --tags pre_restore` (Docker base + Portainer CE, no init)
+3. Waits for uninitialized Portainer API
+4. POSTs the latest NAS backup to `/api/restore` from pve via SSH
+5. Restarts Portainer container to load restored DB
+6. Verifies InstanceID changed (confirms restore applied)
+7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth, bind mount, timer apply idempotently)
 
-`mp1` (`/mnt/nas-backup/portainer-backup → /var/backups/portainer`) is applied by the
-`portainer_backup` Ansible role via `pct set` on the pve host. Because step 6 runs
-`provision.sh` after the restore, the bind mount is guaranteed to be in place.
+### Critical constraint: restore must happen before init
 
-The backup file at `/var/backups/portainer/` is accessible from the LXC **as soon as
-`provision.sh` has run at least once** (or if restored from a backup that included the
-bind mount in the container config). On a brand-new LXC before provision, the NAS path
-is not yet mounted — use the NAS path directly on pve for the initial restore instead:
+`POST /api/restore` only works on an **uninitialized** Portainer instance — before
+`POST /api/users/admin/init` has been called. The `pre_restore` tag in
+`deploy-portainer-stack.yml` splits the playbook so only plays 1+2 (Docker base,
+Portainer CE start) run before restore. Plays 3+4 (init, backup timer) run after.
 
-```bash
-# Alternative step 3 (if bind mount not yet applied — before first provision.sh):
-ssh root@pve.gibbsgreatly.xyz "bash -c '
-  BACKUP=\$(ls -t /mnt/nas-backup/portainer-backup/portainer-*.tar.gz | head -1)
-  curl -sf -X POST http://192.168.20.20:9000/api/restore \
-    -F \"file=@\${BACKUP}\" \
-    -w \"\nHTTP %{http_code}\n\"
-'"
-```
+### Backup file location
 
-After restore, Ansible can run again safely — the provisioner is idempotent and will
-only update settings that differ from desired state (admin password and OAuth settings
-will match SOPS, so no changes should apply).
+The NAS backup bind mount (`/mnt/nas-backup/portainer-backup → /var/backups/portainer`
+inside the LXC) is applied by the `portainer_backup` Ansible role via `pct set` on pve.
+The restore script accesses the backup directly from pve via SSH rather than relying on
+the bind mount being present, so it works even before `provision.sh` has run.
+
+Backups: `/mnt/nas-backup/portainer-backup/portainer-YYYYMMDD.tar.gz` on pve.
+The script picks the latest file with `ls -t | head -1`.
 
 ---
 
 ## Pre-conditions
 
-- [ ] Infrastructure Portainer deployed and stable on pve
-- [ ] NAS reachable from pve (`/mnt/nas-backup` mounted and healthy)
-- [ ] No application stacks migrated yet (nothing to lose during test restore)
+- [x] Infrastructure Portainer deployed and stable on pve
+- [x] NAS reachable from pve (`/mnt/nas-backup` mounted and healthy)
+- [x] Restore cycle validated with no application stacks (2026-06-19)

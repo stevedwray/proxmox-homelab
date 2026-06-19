@@ -63,9 +63,15 @@ not break netbox-populate discovery.
 
 On full teardown + rebuild:
 - Admin password, Harbor registry, Authentik OAuth — auto-reprovisioned by Ansible
-- Application stack definitions — restored from NAS backup (see sprint 01)
-- Application endpoints — portainer-agents keep running and reconnect automatically
-  once Portainer is back at the same URL
+- Application stack definitions — restored from NAS backup via `scripts/portainer-restore.sh`
+- Application endpoints — portainer-agents keep running on their hosts; however, after a
+  Portainer rebuild the agents are paired with the old (destroyed) instance. The restore script
+  restores the DB including endpoint registrations. Agents reconnect automatically once Portainer
+  is back at the same URL and the restored DB contains their endpoint record.
+
+The full restore sequence is automated: `./with-secrets-prod scripts/portainer-restore.sh`
+runs Phase 1 (deploy Portainer CE without init), restores the DB, then Phase 2 (init skip +
+OAuth + backup timer). See [sprint 01 restore runbook](01-backup-restore.md#restore-runbook).
 
 ---
 
@@ -133,7 +139,8 @@ showing the complete stack (including the new backup timer) survives a rebuild.
 
 | Sprint | Goal | Status |
 |---|---|---|
-| [01](01-backup-restore.md) | Backup and restore from NAS — prove before migration | planned |
-| [02](02-migration.md) | Migrate application stacks from existing Portainer | planned |
+| [01](01-backup-restore.md) | Backup and restore from NAS — prove before migration | **complete** — validated 2026-06-19 |
+| [02](02-migration.md) | Migrate application stacks from existing Portainer | **IaC ready** — test harness validated 2026-06-19; real migration pending |
 
-Sprint 01 must complete and be validated before sprint 02 begins.
+Sprint 01 is complete. Sprint 02 IaC is in place (`migrate-portainer-stack.yml`); the real migration
+runs when the legacy Portainer admin password is retrieved and the production approval workflow is followed.
