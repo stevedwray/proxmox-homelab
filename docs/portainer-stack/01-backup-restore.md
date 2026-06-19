@@ -205,7 +205,20 @@ After restore: verify stacks, endpoints, and env vars match pre-destroy state.
 
 Fill in the Restore Runbook section below with exact commands confirmed in step 7.
 
-### 9. Commit, merge, and promote
+### 9. Tidyup — add single-stack redeploy harness
+
+During this sprint it became clear there is no top-level command to apply Terraform + Ansible
+for a single named stack without running the full teardown cycle. The pattern is embedded inside
+`teardown-deploy-test.sh`'s `stack_apply()` but not exposed externally.
+
+Tracked in **issue #381**. After the restore gate is passed, cut a `task/single-stack-harness`
+branch and add a `--stack NAME` flag (or a new `scripts/deploy-stack.sh`) that runs:
+1. `terragrunt apply -auto-approve` from the stack directory
+2. `provision.sh --stack NAME`
+
+This is a separate task; do not block sprint 01 promotion on it.
+
+### 10. Commit, merge, and promote
 
 ```bash
 git add -p
