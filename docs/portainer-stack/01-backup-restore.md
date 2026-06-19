@@ -238,38 +238,79 @@ Then open a PR: `task/portainer-backup-restore` → `baseline/teardown-validated
 
 ## Restore Runbook
 
-_To be completed and verified during task 7. Commands below are a template — confirm
-the exact steps work during the test restore before treating this as authoritative._
+**Verified 2026-06-19.** Commands below are confirmed working.
+
+### Critical constraint: restore must happen before `provision.sh`
+
+`POST /api/restore` only works on an **uninitialized** Portainer instance. Once
+`provision.sh` runs the init play (`POST /api/users/admin/init`), the instance is
+initialized and the restore API returns 400. The correct order is:
+
+1. `terragrunt apply` → LXC created, Portainer starts uninitialized
+2. Restore from backup (no auth required on uninitialized instance)
+3. `provision.sh` → init play gets 409 (already initialized from backup, skips);
+   OAuth, timer, bind mount all apply idempotently
 
 ```bash
-# 0. Verify NAS backup directory is accessible from pve host
+# 0. Verify NAS backup directory is accessible and has a backup file
 ls /mnt/nas-backup/portainer-backup/
 
-# 1. Provision fresh Portainer LXC (Ansible sets admin credentials, OAuth, Harbor)
+# 1. Deploy fresh LXC (Terraform only — do NOT run provision.sh yet)
 export TASK_APPROVAL="portainer-restore"
+NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
+  ./with-secrets-prod terragrunt apply \
+  --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
+
+# 2. Wait for Portainer API to come up (uninitialized — no auth needed yet)
+until curl -sf http://192.168.20.20:9000/api/system/status > /dev/null; do sleep 3; done
+echo "Portainer API ready — InstanceID before restore:"
+curl -s http://192.168.20.20:9000/api/system/status | jq .InstanceID
+
+# 3. Restore from NAS backup (no Bearer token — instance is not yet initialized)
+#    The backup file is accessible inside the LXC at /var/backups/portainer/
+#    (NAS bind mount is applied at container creation time)
+ssh root@pve.gibbsgreatly.xyz "pct exec 20020 -- bash -c '
+  BACKUP=\$(ls -t /var/backups/portainer/portainer-*.tar.gz | head -1)
+  echo \"Restoring from: \${BACKUP}\"
+  tar tzf \"\${BACKUP}\" | head -5
+  curl -sf -X POST http://localhost:9000/api/restore \
+    -F \"file=@\${BACKUP}\" \
+    -w \"\nHTTP %{http_code}\n\"
+'"
+
+# 4. Restart Portainer to load restored state
+ssh root@pve.gibbsgreatly.xyz "pct exec 20020 -- docker restart portainer-portainer-1"
+sleep 10
+
+# 5. Verify InstanceID matches the backed-up instance
+curl -s http://192.168.20.20:9000/api/system/status | jq .InstanceID
+
+# 6. Run provision.sh — init gets 409 (skipped), everything else applies
 ./with-secrets-prod scripts/provision.sh --stack portainer-stack
 
-# 2. Get admin JWT — PORTAINER_ADMIN_PASSWORD resolved from SOPS by with-secrets-prod
-PORTAINER_IP=192.168.20.20
-TOKEN=$(./with-secrets-prod env | grep PORTAINER_ADMIN_PASSWORD | cut -d= -f2- | \
-  xargs -I{} curl -s -X POST http://$PORTAINER_IP:9000/api/auth \
-    -H "Content-Type: application/json" \
-    -d "{\"Username\":\"admin\",\"Password\":\"{}\"}" | jq -r .jwt)
+# 7. Verify Portainer is healthy and auth works
+curl -s http://192.168.20.20:9000/api/system/status | jq .
+```
 
-# 3. Restore from latest NAS backup
-#    The backup file is a tar.gz of Portainer's BoltDB — verify with: tar tzf <file> | head
-BACKUP=$(ls -t /mnt/nas-backup/portainer-backup/portainer-*.tar.gz | head -1)
-echo "Restoring from: $BACKUP"
-curl -X POST http://$PORTAINER_IP:9000/api/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$BACKUP" \
-  -w "\nHTTP %{http_code}\n"
+### Bind mount note
 
-# 4. Restart Portainer to apply restored state
-./with-secrets-prod pct exec 20020 -- docker restart portainer
+`mp1` (`/mnt/nas-backup/portainer-backup → /var/backups/portainer`) is applied by the
+`portainer_backup` Ansible role via `pct set` on the pve host. Because step 6 runs
+`provision.sh` after the restore, the bind mount is guaranteed to be in place.
 
-# 5. Verify stacks, endpoints, and env vars match pre-destroy state
-curl -s -H "Authorization: Bearer $TOKEN" http://$PORTAINER_IP:9000/api/stacks | jq '[.[].Name]'
+The backup file at `/var/backups/portainer/` is accessible from the LXC **as soon as
+`provision.sh` has run at least once** (or if restored from a backup that included the
+bind mount in the container config). On a brand-new LXC before provision, the NAS path
+is not yet mounted — use the NAS path directly on pve for the initial restore instead:
+
+```bash
+# Alternative step 3 (if bind mount not yet applied — before first provision.sh):
+ssh root@pve.gibbsgreatly.xyz "bash -c '
+  BACKUP=\$(ls -t /mnt/nas-backup/portainer-backup/portainer-*.tar.gz | head -1)
+  curl -sf -X POST http://192.168.20.20:9000/api/restore \
+    -F \"file=@\${BACKUP}\" \
+    -w \"\nHTTP %{http_code}\n\"
+'"
 ```
 
 After restore, Ansible can run again safely — the provisioner is idempotent and will
