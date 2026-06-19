@@ -1,28 +1,14 @@
 services:
-  nginx:
-    image: harbor.gibbsgreatly.xyz/dockerhub/library/nginx:alpine
-    container_name: test-docker-nginx
-    ports:
-      - "80:80"
-    restart: unless-stopped
-
-  redis:
-    image: harbor.gibbsgreatly.xyz/dockerhub/library/redis:alpine
-    container_name: test-docker-redis
-    ports:
-      - "6379:6379"
-    restart: unless-stopped
-
   whoami:
-    image: harbor.gibbsgreatly.xyz/dockerhub/traefik/whoami:latest
+    image: traefik/whoami:latest
     container_name: test-docker-whoami
     ports:
       - "8080:80"
     restart: unless-stopped
 
-  grafana:
-    image: harbor.gibbsgreatly.xyz/dockerhub/grafana/grafana:latest
-    container_name: test-docker-grafana
+  nginx:
+    image: nginx:alpine
+    container_name: test-docker-nginx
     ports:
-      - "3000:3000"
+      - "80:80"
     restart: unless-stopped
