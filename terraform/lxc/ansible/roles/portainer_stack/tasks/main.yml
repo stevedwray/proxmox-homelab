@@ -26,6 +26,11 @@
       delegate_to: localhost
       no_log: true
 
+    - name: Resolve portainer_endpoint_id from delegation context
+      ansible.builtin.set_fact:
+        portainer_endpoint_id: "{{ hostvars['localhost']['portainer_endpoint_id'] }}"
+      when: portainer_endpoint_id is not defined
+
     - name: Get existing stacks
       ansible.builtin.uri:
         url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks" # nosonar
@@ -38,9 +43,7 @@
 
     - name: Deploy each stack not already present on this endpoint
       ansible.builtin.uri:
-        url: >-
-          http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port
-          }}/api/stacks/create/standalone/string?endpointId={{ portainer_endpoint_id }} # nosonar
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks/create/standalone/string?endpointId={{ portainer_endpoint_id }}" # nosonar
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_stack_jwt }}"

@@ -1,0 +1,79 @@
+services:
+  mc:
+    image: itzg/minecraft-server:stable-java21
+    container_name: newworld-minecraft
+    tmpfs:
+      - /tmp:rw,exec,size=2g
+    tty: true
+    stdin_open: true
+    ports:
+      - "25568:25566"
+      - "25578:25575"
+    environment:
+      SERVER_PORT: "25566"
+      EULA: "TRUE"
+      TYPE: "NEOFORGE"
+      VERSION: "1.21.1"
+      NEOFORGE_VERSION: "21.1.219"
+      OVERRIDE_SERVER_PROPERTIES: "true"
+      MAX_PLAYERS: "2"
+      DIFFICULTY: "3"
+      ENABLE_COMMAND_BLOCK: "true"
+      GENERATE_STRUCTURES: "true"
+      SNOOPER_ENABLED: "false"
+      SPAWN_ANIMALS: "true"
+      SPAWN_MONSTERS: "true"
+      SPAWN_NPCS: "true"
+      SPAWN_PROTECTION: 0
+      MODE: "0"
+      PVP: "false"
+      WHITELIST: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a,3e9e78a4-6b43-4dd2-88c8-a854850da8f7"
+      OPS: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a"
+      NETWORK_COMPRESSION_THRESHOLD: "64"
+      PLAYER_IDLE_TIMEOUT: "0"
+      ENTITY_ACTIVATION_RANGE_ANIMALS: "16"
+      ENTITY_ACTIVATION_RANGE_MONSTERS: "24"
+      ENTITY_ACTIVATION_RANGE_RAIDERS: "16"
+      ENTITY_ACTIVATION_RANGE_MISC: "8"
+      ENTITY_ACTIVATION_RANGE_WATER: "8"
+      MEMORY: "16G"
+      USE_AIKAR_FLAGS: "false"
+      JVM_OPTS: >
+        -Xms16G -Xmx16G
+        -XX:+UseG1GC
+        -XX:+AlwaysPreTouch
+        -XX:+ParallelRefProcEnabled
+        -XX:+UseStringDeduplication
+        -XX:+DisableExplicitGC
+        -XX:G1HeapRegionSize=16M
+        -XX:G1HeapWastePercent=5
+        -XX:G1MixedGCCountTarget=4
+        -XX:InitiatingHeapOccupancyPercent=20
+        -XX:MaxTenuringThreshold=1
+        -XX:MaxGCPauseMillis=150
+        -XX:ParallelGCThreads=8
+        -XX:ConcGCThreads=2
+        -XX:ReservedCodeCacheSize=768m
+        -XX:InitialCodeCacheSize=384m
+        -XX:+PerfDisableSharedMem
+        -Djava.io.tmpdir=/tmp
+        -Djava.awt.headless=true
+      SERVER_NAME: "newworld"
+      SEED: "-8233912588774771127"
+      MAX_TICK_TIME: "600000"
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "minecraft" # gitleaks:allow
+      RCON_PORT: "25575"
+      RCON_CMDS_STARTUP: |-
+        gamerule doFireTick false
+        gamerule doDaylightCycle false
+        gamerule doWeatherCycle false
+        gamerule keepInventory true
+        time set 600
+    volumes:
+      - "/minecraft/newworld:/data"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped

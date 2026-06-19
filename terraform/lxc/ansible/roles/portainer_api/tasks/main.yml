@@ -77,23 +77,24 @@
       when: portainer_api_existing_endpoint is none
       delegate_to: localhost
 
+    - name: Set portainer_endpoint_id from existing endpoint
+      ansible.builtin.set_fact:
+        portainer_endpoint_id: "{{ portainer_api_existing_endpoint.Id }}"
+      when: portainer_api_existing_endpoint is not none
+      delegate_to: localhost
+
     - name: Update existing endpoint URL
       ansible.builtin.uri:
         url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints/{{ portainer_api_existing_endpoint.Id }}" # nosonar
         method: PUT
         headers:
           Authorization: "Bearer {{ portainer_api_token }}"
-        body_format: form-urlencoded
+          Content-Type: application/json
+        body_format: json
         body:
           Name: "{{ portainer_api_endpoint_name }}"
           URL: "tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
         status_code: 200
-      when: portainer_api_existing_endpoint is not none
-      delegate_to: localhost
-
-    - name: Set portainer_endpoint_id from existing endpoint
-      ansible.builtin.set_fact:
-        portainer_endpoint_id: "{{ portainer_api_existing_endpoint.Id }}"
       when: portainer_api_existing_endpoint is not none
       delegate_to: localhost
 

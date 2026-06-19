@@ -1,0 +1,19 @@
+hostname: gaming-stack
+ip_address: "192.168.1.7"
+vmid: 103
+portainer_agent: true
+
+portainer_stacks:
+  - name: foreverworld
+    compose_file: foreverworld-docker-compose.yml
+  - name: testworld
+    compose_file: testworld-docker-compose.yml
+  - name: dayz
+    compose_file: dayz-docker-compose.yml
+    env:
+      - name: DAYZ_STEAM_USERNAME
+        value: "${dayz_steam_username}"
+      - name: DAYZ_STEAM_PASSWORD
+        value: "${dayz_steam_password}"
+  - name: newworld
+    compose_file: newworld-docker-compose.yml
