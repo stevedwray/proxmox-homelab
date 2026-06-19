@@ -170,13 +170,27 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 
 ---
 
+## How to Provision
+
+```bash
+./with-secrets scripts/provision.sh --stack monitoring-stack
+```
+
+This is a pve-test-only operation during development. For production (`pve`), use `./with-secrets-prod` with `TASK_APPROVAL` set (see [Production Credentials Reference](../reference/production-credentials.md)).
+
+On pve-test, the full stack must already be up (harbor-stack, authentik-stack, proxy-stack, dns-stack) before monitoring-stack can be provisioned — it pulls images from Harbor and reconciles an Authentik OIDC client during provisioning.
+
+---
+
 ## Variables and Secrets
 
 ```
 LAB_IP_PROXMOX_HOST=192.168.1.2    # Proxmox bare-metal host — for node_exporter scrape
 ```
 
-All other `LAB_IP_*` variables are in `.env`. No secrets required for Loki or VictoriaMetrics (both are mgmt_seg-internal, no auth).
+All other `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
+
+No secrets are required for Loki or VictoriaMetrics (both are mgmt_seg-internal, no auth).
 
 ---
 
@@ -300,7 +314,7 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 | 3 | Add `victorialogs-logs-datasource` Grafana plugin | Set `GF_INSTALL_PLUGINS` in Grafana container env |
 | 4 | Add VictoriaLogs service to monitoring compose in `deploy-monitoring-stack.yml` | Single container, named volume, port 9428 |
 | 5 | Add VictoriaLogs datasource to Grafana provisioning | Point at `http://victorialogs:9428` |
-| 6 | Update Promtail push URL across all stacks | Change `3100/loki/api/v1/push` → `9428/insert/loki/api/v1/push` in all Promtail configs |
+| 6 | Update Promtail push URL across all stacks | Two patterns — see note below |
 | 7 | Rebuild Lab Logs and Auth Logs dashboards with LogsQL | Replace Loki datasource and PromQL-style log queries |
 | 8 | Verify ingestion (`/select/logsql/query?query=*`) | Confirm streams from all stacks are arriving |
 | 9 | Remove Loki service and volumes | After dashboards confirmed working |
@@ -308,11 +322,40 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 | 11 | Update teardown health gate | Replace Loki `:3100/ready` check with VictoriaLogs `:9428/health` |
 | 12 | Provision + smoke test on pve-test | Full deploy cycle confirming VictoriaLogs survives teardown |
 
+### Promtail URL changes (task 6 detail)
+
+Promtail configs live in two patterns across the codebase:
+
+**Pattern A — promtail role** (systemd, non-Docker stacks: step-ca, apt-cacher, ci-runner, dns-stack, harbor-stack):
+
+The role template at `terraform/lxc/ansible/roles/promtail/templates/config.yml.j2` builds the push URL as:
+```
+http://{{ promtail_loki_url }}/loki/api/v1/push
+```
+
+Two changes needed:
+1. Change the template path suffix from `/loki/api/v1/push` → `/insert/loki/api/v1/push`
+2. Change `promtail_loki_url` in each playbook from `LAB_IP_MONITORING:3100` → `LAB_IP_MONITORING:9428`
+
+**Pattern B — inline Docker Promtail config** (Docker stacks: netbox, portainer, authentik, proxy):
+
+Each playbook writes a Promtail config block inline with a hardcoded URL like:
+```
+url: http://{{ lab_ip_monitoring }}:3100/loki/api/v1/push
+```
+Change to:
+```
+url: http://{{ lab_ip_monitoring }}:9428/insert/loki/api/v1/push
+```
+
+**monitoring-stack self-Promtail** (`deploy-monitoring-stack.yml`): uses Docker-internal hostname `loki:3100/loki/api/v1/push` — change to `victorialogs:9428/insert/loki/api/v1/push`. Also update the Grafana datasource from `http://loki:3100` → `http://victorialogs:9428`.
+
 ### Pre-conditions
 
 - [ ] VictoriaLogs stable release confirmed and pinned
 - [ ] Harbor mirror of VictoriaLogs image available
-- [ ] Branch cut from `baseline/teardown-validated`
+- [ ] Portainer migration branch (`task/portainer-migration-test`) merged into `baseline/teardown-validated`
+- [ ] Branch cut from updated `baseline/teardown-validated`
 
 ### Branch
 
