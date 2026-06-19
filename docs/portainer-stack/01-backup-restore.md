@@ -62,23 +62,68 @@ accessible from pve at `/mnt/nas-backup/portainer-backup/`.
 
 ### 1. Confirm Portainer LXC privilege level
 
-```bash
-./with-secrets-prod pct config 20020 | grep unprivileged
-```
+**Confirmed:** LXC 20020 runs `unprivileged: 1` with `features: nesting=1`.
+subuid mapping is `root:100000:65536`, so:
+- UID 0 (root) inside LXC = UID **100000** on pve host
+- Proxmox presents a directory owned by host UID 100000 as root-owned inside the LXC
 
-The Portainer LXC runs Docker, which typically requires a privileged LXC.
-A privileged LXC (no `unprivileged: 1` line) means UID 0 inside = UID 0 on
-host, which simplifies NFS permissions. If unprivileged, a bindfs re-mount
-will be needed (same pattern as CT105/PBS in the existing pve fstab).
+No bindfs re-mount is needed — correct ownership on the NAS directory is sufficient.
 
 ### 2. Create NAS directory
 
-On the NAS (ADM GUI or SSH): create `/volume1/ProxmoxBackup/portainer-backup/`
-with write permissions for root (privileged LXC) or the mapped UID (unprivileged).
+On pve, via the NFS mount (NFS export uses no_root_squash — verified by `dump/`
+being root-owned under the same mount):
+
+```bash
+mkdir /mnt/nas-backup/portainer-backup
+chown 100000:100000 /mnt/nas-backup/portainer-backup
+chmod 700 /mnt/nas-backup/portainer-backup
+```
+
+Inside the LXC, Proxmox's UID remapping presents this directory as root-owned 700.
+The backup script running as root inside the LXC can read/write it, and no other
+user or process can.
 
 ### 3. Configure NFS bind mount into Portainer LXC
 
-Add to the Portainer LXC Terraform resource or apply directly to test:
+The `lxc-docker-host` Terraform module (`terraform/lxc/modules/lxc-docker-host/main.tf`)
+supports `mount_point` blocks for LVM volumes but does not yet have a host bind mount
+input. Add one before this sprint begins — it unlocks a clean teardown-cycle-safe path.
+
+**Extend the module** — add a `host_bind_mounts` variable and dynamic block:
+
+```hcl
+# In terraform/lxc/modules/lxc-docker-host/variables.tf
+variable "host_bind_mounts" {
+  type    = list(object({ host_path = string, lxc_path = string }))
+  default = []
+}
+
+# In terraform/lxc/modules/lxc-docker-host/main.tf  (inside the container resource)
+dynamic "mount_point" {
+  for_each = var.host_bind_mounts
+  content {
+    volume = mount_point.value.host_path
+    path   = mount_point.value.lxc_path
+  }
+}
+```
+
+**Declare the bind mount in `stack.yaml`:**
+
+```yaml
+host_bind_mounts:
+  - host_path: /mnt/nas-backup/portainer-backup
+    lxc_path: /var/backups/portainer
+```
+
+Wire the new variable through `terraform/lxc/main.tf` (pass
+`local.stack.host_bind_mounts` to the module call).
+
+This bind mount will be re-applied on every `terraform apply`, surviving teardown
+cycles automatically.
+
+**Test manually first** before wiring into Terraform (verify NFS permissions work):
 
 ```bash
 export TASK_APPROVAL="portainer-backup-restore"
@@ -88,14 +133,11 @@ export TASK_APPROVAL="portainer-backup-restore"
 The pve NFS mount at `/mnt/nas-backup` is already in fstab with `_netdev` and
 `x-systemd.requires=network-online.target` — it mounts before LXCs start.
 
-Also add the bind mount to the Portainer LXC's Terraform config so it survives
-a full teardown cycle.
-
 ### 4. Write backup systemd service and timer
 
 Service: authenticates via `POST /api/auth`, then calls `POST /api/backup`,
 writes binary to `/var/backups/portainer/portainer-YYYYMMDD.tar.gz`.
-Retains last 7 backups.
+Retains last 7 backups (rotation: `ls -t | tail -n +8 | xargs -r rm`).
 
 Timer: daily, `Persistent=true`, `RandomizedDelaySec=1800`.
 
@@ -105,8 +147,18 @@ Model on `netbox-populate.timer` (same credential env file pattern):
 
 ### 5. Provision via Ansible
 
-Add tasks to `deploy-portainer-stack.yml` (run after the Ansible validation
-tier — syntax-check first, then provision to apply):
+Create a `portainer_backup` Ansible role at
+`terraform/lxc/ansible/roles/portainer_backup/` — follow the role-per-concern
+pattern used by `portainer_api` and `portainer_agent`. Include the role in
+`deploy-portainer-stack.yml` after the Portainer init play.
+
+Role tasks:
+- Write `/etc/portainer-backup/env` (mode 0600, templated from `PORTAINER_ADMIN_PASSWORD`)
+- Write `/opt/portainer-backup/backup.sh`
+- Write systemd service and timer units to `/etc/systemd/system/`
+- `systemctl daemon-reload && systemctl enable --now portainer-backup.timer`
+
+After writing the role, run the Ansible validation tier:
 
 ```bash
 # Syntax check first (always, even for comment-only changes)
@@ -116,12 +168,6 @@ ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-portainer
 export TASK_APPROVAL="portainer-backup-restore"
 ./with-secrets-prod scripts/provision.sh --stack portainer-stack
 ```
-
-Tasks to add:
-- Write `/etc/portainer-backup/env` (mode 0600, templated from `PORTAINER_ADMIN_PASSWORD`)
-- Write `/opt/portainer-backup/backup.sh`
-- Write systemd service and timer units to `/etc/systemd/system/`
-- `systemctl daemon-reload && systemctl enable --now portainer-backup.timer`
 
 ### 6. Test backup
 
@@ -159,7 +205,20 @@ After restore: verify stacks, endpoints, and env vars match pre-destroy state.
 
 Fill in the Restore Runbook section below with exact commands confirmed in step 7.
 
-### 9. Commit, merge, and promote
+### 9. Tidyup — add single-stack redeploy harness
+
+During this sprint it became clear there is no top-level command to apply Terraform + Ansible
+for a single named stack without running the full teardown cycle. The pattern is embedded inside
+`teardown-deploy-test.sh`'s `stack_apply()` but not exposed externally.
+
+Tracked in **issue #381**. After the restore gate is passed, cut a `task/single-stack-harness`
+branch and add a `--stack NAME` flag (or a new `scripts/deploy-stack.sh`) that runs:
+1. `terragrunt apply -auto-approve` from the stack directory
+2. `provision.sh --stack NAME`
+
+This is a separate task; do not block sprint 01 promotion on it.
+
+### 10. Commit, merge, and promote
 
 ```bash
 git add -p
@@ -179,40 +238,60 @@ Then open a PR: `task/portainer-backup-restore` → `baseline/teardown-validated
 
 ## Restore Runbook
 
-_To be completed and verified during task 7. Commands below are a template — fill in
-actual Portainer LXC IP and confirm the exact steps work before treating this as
-authoritative._
+**Verified 2026-06-19** — full destroy → apply → restore → provision cycle confirmed.
+
+### Automated path (use this)
+
+`scripts/portainer-restore.sh` automates the full sequence. It handles the ordering
+constraint (Portainer CE must start before restore, init must not run before restore),
+wipes stale DB state from the fresh LXC, and runs both provision phases.
 
 ```bash
-# 1. Provision fresh Portainer LXC
+# 1. Destroy the LXC
 export TASK_APPROVAL="portainer-restore"
-./with-secrets-prod scripts/provision.sh --stack portainer-stack
+NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
+  ./with-secrets-prod terragrunt destroy \
+  --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
 
-# 2. Get admin JWT (from inside the LXC or from a host that can reach mgmt_seg)
-#    Admin password is in terraform/secrets.pve.enc.yaml — use ./with-secrets-prod
-#    to resolve it rather than typing it in plaintext
-PORTAINER_IP=192.168.20.20
-TOKEN=$(./with-secrets-prod bash -c '
-  curl -s -X POST http://'"$PORTAINER_IP"':9000/api/auth \
-    -H "Content-Type: application/json" \
-    -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
-  | jq -r .jwt
-')
+# 2. Recreate the LXC from template
+NETWORK_SDN_ALLOW_DESTROY_OVERRIDE=true \
+  ./with-secrets-prod terragrunt apply \
+  --working-dir terraform/lxc/stacks/portainer-stack -auto-approve
 
-# 3. Restore from latest NAS backup
-BACKUP=$(ls -t /mnt/nas-backup/portainer-backup/portainer-*.tar.gz | head -1)
-curl -X POST http://$PORTAINER_IP:9000/api/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$BACKUP"
-
-# 4. Restart Portainer to apply restored state
-./with-secrets-prod pct exec 20020 -- docker restart portainer
+# 3. Run the restore script — handles everything from here
+./with-secrets-prod scripts/portainer-restore.sh
 ```
+
+The script sequence:
+1. Wipes `/var/lib/portainer` (stale DB can survive template recreation)
+2. Runs `provision.sh --stack portainer-stack --tags pre_restore` (Docker base + Portainer CE, no init)
+3. Waits for uninitialized Portainer API
+4. POSTs the latest NAS backup to `/api/restore` from pve via SSH
+5. Restarts Portainer container to load restored DB
+6. Verifies InstanceID changed (confirms restore applied)
+7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth, bind mount, timer apply idempotently)
+
+### Critical constraint: restore must happen before init
+
+`POST /api/restore` only works on an **uninitialized** Portainer instance — before
+`POST /api/users/admin/init` has been called. The `pre_restore` tag in
+`deploy-portainer-stack.yml` splits the playbook so only plays 1+2 (Docker base,
+Portainer CE start) run before restore. Plays 3+4 (init, backup timer) run after.
+
+### Backup file location
+
+The NAS backup bind mount (`/mnt/nas-backup/portainer-backup → /var/backups/portainer`
+inside the LXC) is applied by the `portainer_backup` Ansible role via `pct set` on pve.
+The restore script accesses the backup directly from pve via SSH rather than relying on
+the bind mount being present, so it works even before `provision.sh` has run.
+
+Backups: `/mnt/nas-backup/portainer-backup/portainer-YYYYMMDD.tar.gz` on pve.
+The script picks the latest file with `ls -t | head -1`.
 
 ---
 
 ## Pre-conditions
 
-- [ ] Infrastructure Portainer deployed and stable on pve
-- [ ] NAS reachable from pve (`/mnt/nas-backup` mounted and healthy)
-- [ ] No application stacks migrated yet (nothing to lose during test restore)
+- [x] Infrastructure Portainer deployed and stable on pve
+- [x] NAS reachable from pve (`/mnt/nas-backup` mounted and healthy)
+- [x] Restore cycle validated with no application stacks (2026-06-19)

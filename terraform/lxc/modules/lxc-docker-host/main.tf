@@ -50,6 +50,15 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     }
   }
 
+  dynamic "mount_point" {
+    for_each = var.host_bind_mounts
+    content {
+      volume = mount_point.value.host_path
+      path   = mount_point.value.lxc_path
+      backup = false
+    }
+  }
+
   operating_system {
     template_file_id = var.ostemplate
     type             = var.ostype

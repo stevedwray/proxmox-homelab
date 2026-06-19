@@ -1,0 +1,68 @@
+# portainer_stack — idempotent stack deployment via Portainer API.
+# Deploys each stack in portainer_stacks to the endpoint identified by
+# portainer_endpoint_id (set by the portainer_api role).
+# Skips stacks that already exist; does not update existing stacks.
+
+---
+- name: Deploy stacks to Portainer endpoint
+  when: portainer_stacks | length > 0
+  block:
+    - name: Authenticate to Portainer for stack operations
+      ansible.builtin.uri:
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/auth" # nosonar
+        method: POST
+        body_format: json
+        body:
+          Username: "{{ portainer_api_admin_user }}"
+          Password: "{{ portainer_api_admin_password }}"
+        status_code: 200
+      register: portainer_stack_auth
+      delegate_to: localhost
+      no_log: true
+
+    - name: Set stack auth token
+      ansible.builtin.set_fact:
+        portainer_stack_jwt: "{{ portainer_stack_auth.json.jwt }}"
+      delegate_to: localhost
+      no_log: true
+
+    - name: Get existing stacks
+      ansible.builtin.uri:
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks" # nosonar
+        method: GET
+        headers:
+          Authorization: "Bearer {{ portainer_stack_jwt }}"
+        status_code: 200
+      register: portainer_stack_existing
+      delegate_to: localhost
+
+    - name: Deploy each stack not already present on this endpoint
+      ansible.builtin.uri:
+        url: >-
+          http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port
+          }}/api/stacks/create/standalone/string?endpointId={{ portainer_endpoint_id }} # nosonar
+        method: POST
+        headers:
+          Authorization: "Bearer {{ portainer_stack_jwt }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          Name: "{{ item.name }}"
+          StackFileContent: "{{ lookup('file', stack_dir + '/' + item.compose_file) }}"
+          Env: "{{ item.env | default([]) }}"
+        status_code: 200
+      loop: "{{ portainer_stacks }}"
+      when: >-
+        portainer_stack_existing.json
+        | selectattr('Name', 'equalto', item.name)
+        | selectattr('EndpointId', 'equalto', portainer_endpoint_id | int)
+        | list | length == 0
+      delegate_to: localhost
+      register: portainer_stack_deploy_result
+
+    - name: Report deployed stacks
+      ansible.builtin.debug:
+        msg: "Deployed stack '{{ item.item.name }}' (ID: {{ item.json.Id }})"
+      loop: "{{ portainer_stack_deploy_result.results }}"
+      when: not item.skipped | default(false)
+      delegate_to: localhost

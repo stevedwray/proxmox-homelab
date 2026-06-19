@@ -629,6 +629,8 @@ module "lxc" {
   extra_mount_storage        = local.resolved_extra_mount_storage
   extra_mount_backup_enabled = local.resolved_extra_mount_backup_enabled
 
+  host_bind_mounts = try(local.stack.host_bind_mounts, [])
+
   depends_on = [null_resource.configure_network_sdn_attachment]
 }
 

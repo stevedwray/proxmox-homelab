@@ -1,0 +1,169 @@
+---
+- name: Check if NAS backup bind mount is configured on pve host
+  ansible.builtin.command:
+    cmd: grep -q "mp1:.*portainer-backup" /etc/pve/lxc/{{ vmid }}.conf
+  delegate_to: "{{ pve_host }}"
+  vars:
+    ansible_user: "{{ pve_ssh_user | default('root') }}"
+    ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+    ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+  register: mp1_check
+  failed_when: false
+  changed_when: false
+
+- name: Apply NAS backup bind mount to LXC (requires brief stop/start)
+  when: mp1_check.rc != 0
+  block:
+    - name: Stop portainer LXC for bind mount configuration
+      ansible.builtin.command:
+        cmd: pct stop {{ vmid }}
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: pct_stop
+      failed_when: pct_stop.rc != 0 and "not running" not in pct_stop.stderr
+
+    - name: Configure NAS backup bind mount via pct set
+      ansible.builtin.command:
+        cmd: pct set {{ vmid }} -mp1 /mnt/nas-backup/portainer-backup,mp=/var/backups/portainer
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+
+  always:
+    - name: Start portainer LXC
+      ansible.builtin.command:
+        cmd: pct start {{ vmid }}
+      delegate_to: "{{ pve_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: pct_start
+      failed_when: pct_start.rc != 0 and "already running" not in pct_start.stderr
+
+    - name: Wait for container to come back online
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120
+
+- name: Create portainer-backup script directory
+  ansible.builtin.file:
+    path: "{{ portainer_backup_script_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create portainer-backup credential directory
+  ansible.builtin.file:
+    path: "{{ portainer_backup_env_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write portainer-backup credential env file
+  ansible.builtin.copy:
+    dest: "{{ portainer_backup_env_dir }}/env"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Portainer backup credentials — managed by Ansible, do not edit by hand
+      PORTAINER_IP={{ portainer_backup_portainer_ip }}
+      PORTAINER_PORT={{ portainer_backup_portainer_port }}
+      PORTAINER_ADMIN_PASSWORD={{ portainer_backup_admin_password }}
+      BACKUP_DIR={{ portainer_backup_dir }}
+      RETAIN_DAYS={{ portainer_backup_retain_days }}
+  no_log: true
+
+- name: Write portainer-backup script
+  ansible.builtin.copy:
+    dest: "{{ portainer_backup_script_dir }}/backup.sh"
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      AUTH_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth"  # nosonar: ansible:S5332 — HTTP-only internal SDN
+      BACKUP_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"  # nosonar: ansible:S5332 — HTTP-only internal SDN
+
+      TOKEN=$(curl -sf -X POST "${AUTH_URL}" \
+        -H "Content-Type: application/json" \
+        -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
+        | jq -r .jwt)
+
+      OUTFILE="${BACKUP_DIR}/portainer-$(date +%Y%m%d).tar.gz"
+
+      curl -sf -X POST -o "${OUTFILE}" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        "${BACKUP_URL}"
+
+      # Rotate — remove backups older than RETAIN_DAYS
+      find "${BACKUP_DIR}" -maxdepth 1 -name "portainer-*.tar.gz" \
+        -mtime "+${RETAIN_DAYS}" -delete
+
+      echo "portainer-backup: wrote ${OUTFILE}"
+
+- name: Write portainer-backup systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/portainer-backup.service
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
+    content: |
+      [Unit]
+      Description=Back up Portainer state to NAS
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile={{ portainer_backup_env_dir }}/env
+      ExecStart={{ portainer_backup_script_dir }}/backup.sh
+      StandardOutput=append:/var/log/portainer-backup.log
+      StandardError=append:/var/log/portainer-backup.log
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reload systemd
+
+- name: Write portainer-backup systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/portainer-backup.timer
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
+    content: |
+      [Unit]
+      Description=Run Portainer backup daily
+      Requires=portainer-backup.service
+
+      [Timer]
+      OnCalendar=daily
+      RandomizedDelaySec=1800
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Flush handlers before enabling timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start portainer-backup timer
+  ansible.builtin.systemd:
+    name: portainer-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: false
+  when: not ansible_check_mode

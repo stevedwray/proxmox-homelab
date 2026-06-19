@@ -1,0 +1,86 @@
+---
+# Migrates a portainer-agent host from legacy to infrastructure Portainer.
+#
+# The portainer-agent pairs with the first Portainer server that connects
+# after it starts. Pairing state lives in the container writable layer and
+# persists across `docker restart`. Legacy Portainer polls its endpoints
+# continuously and reconnects within seconds of an agent restart.
+#
+# This playbook handles that race by:
+#   1. Blocking legacy Portainer's IP at the agent host while the transition runs
+#   2. Doing a full docker compose down/up (not just restart) to clear pairing state
+#   3. Registering the fresh agent with infra Portainer before unblocking
+#
+# Usage (via provision.sh):
+#   ANSIBLE_TAGS=pre_migrate  provision.sh --stack <name>   # step 1+2 only (debug)
+#   provision.sh --stack <name>                              # full migration
+#
+# Usage (direct):
+#   source .env
+#   ansible-playbook -i terraform/lxc/stacks/<name>/inventory.yml \
+#     terraform/lxc/ansible/playbooks/migrate-portainer-stack.yml \
+#     -e "@/tmp/<name>.ansible-extra-vars.yml"
+#
+# Required extra vars (from stack.yaml via provision.sh render_stack_ansible_extra_vars):
+#   stack_dir                    — absolute path to the stack directory (auto-injected)
+#   portainer_stacks             — list of {name, compose_file} to deploy
+#   portainer_migration_legacy_ip (optional, default 192.168.1.4)
+
+- name: Block legacy Portainer and reset agent pairing state
+  hosts: all
+  become: true
+  tags: [pre_migrate]
+  vars:
+    _legacy_ip: "{{ portainer_migration_legacy_ip | default('192.168.1.4') }}"
+  tasks:
+    - name: Block legacy Portainer from reconnecting during migration
+      ansible.builtin.iptables:
+        chain: INPUT
+        source: "{{ _legacy_ip }}"
+        protocol: tcp
+        destination_port: "9001"
+        jump: DROP
+
+    - name: Bring compose project down (removes container and clears pairing state)
+      community.docker.docker_compose_v2:
+        project_src: "{{ portainer_agent_compose_dir | default('/opt/portainer') }}"
+        state: absent
+
+    - name: Bring portainer-agent back up (fresh, no pairing state)
+      community.docker.docker_compose_v2:
+        project_src: "{{ portainer_agent_compose_dir | default('/opt/portainer') }}"
+        state: present
+
+    - name: Wait for agent to be reachable
+      ansible.builtin.uri:
+        url: "https://{{ ansible_host }}:9001/ping"
+        method: GET
+        status_code: 204
+        validate_certs: false
+      retries: 15
+      delay: 2
+      register: _agent_ping
+      until: _agent_ping.status == 204
+
+- name: Register endpoint and deploy stacks in infra Portainer
+  hosts: all
+  tags: [pre_migrate, post_migrate]
+  roles:
+    - portainer_api
+    - portainer_stack
+
+- name: Unblock legacy Portainer
+  hosts: all
+  become: true
+  tags: [post_migrate]
+  vars:
+    _legacy_ip: "{{ portainer_migration_legacy_ip | default('192.168.1.4') }}"
+  tasks:
+    - name: Remove iptables block on legacy Portainer
+      ansible.builtin.iptables:
+        chain: INPUT
+        source: "{{ _legacy_ip }}"
+        protocol: tcp
+        destination_port: "9001"
+        jump: DROP
+        state: absent

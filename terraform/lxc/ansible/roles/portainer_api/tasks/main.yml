@@ -1,13 +1,13 @@
 # portainer_api — idempotent agent endpoint registration via Portainer API
-# Registers agent if not already present; skips if endpoint name exists.
-# Wrapped in block/rescue so auth failures don't abort subsequent plays.
+# Registers endpoint if not present; updates URL if already registered.
+# Always sets portainer_endpoint_id for downstream roles (e.g. portainer_stack).
 
 ---
 - name: Register agent endpoint with Portainer
   block:
     - name: Get Portainer authentication token
       ansible.builtin.uri:
-        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/auth"
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/auth" # nosonar
         method: POST
         body_format: json
         body:
@@ -28,7 +28,7 @@
 
     - name: Get existing endpoints
       ansible.builtin.uri:
-        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints"
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints" # nosonar
         method: GET
         headers:
           Authorization: "Bearer {{ portainer_api_token }}"
@@ -36,16 +36,19 @@
       register: portainer_api_endpoints_response
       delegate_to: localhost
 
-    - name: Check if endpoint already exists
+    - name: Find existing endpoint by name
       ansible.builtin.set_fact:
-        portainer_api_existing_endpoint_id: "{{ item.Id }}"
-      loop: "{{ portainer_api_endpoints_response.json }}"
-      when: item.Name == portainer_api_endpoint_name
+        portainer_api_existing_endpoint: >-
+          {{
+            portainer_api_endpoints_response.json
+            | selectattr('Name', 'equalto', portainer_api_endpoint_name)
+            | list | first | default(none)
+          }}
       delegate_to: localhost
 
-    - name: Register agent with Portainer Server
+    - name: Register agent with Portainer (endpoint not yet present)
       ansible.builtin.uri:
-        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints"
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints" # nosonar
         method: POST
         headers:
           Authorization: "Bearer {{ portainer_api_token }}"
@@ -59,18 +62,24 @@
           TLSSkipClientVerify: "true"
         status_code: 200
       register: portainer_api_registration_result
-      when: portainer_api_existing_endpoint_id is not defined
+      when: portainer_api_existing_endpoint is none
       delegate_to: localhost
 
-    - name: Display registration result
+    - name: Set portainer_endpoint_id from new registration
+      ansible.builtin.set_fact:
+        portainer_endpoint_id: "{{ portainer_api_registration_result.json.Id }}"
+      when: portainer_api_existing_endpoint is none
+      delegate_to: localhost
+
+    - name: Report new endpoint registration
       ansible.builtin.debug:
-        msg: "Agent '{{ portainer_api_endpoint_name }}' registered with ID: {{ portainer_api_registration_result.json.Id }}"
-      when: portainer_api_existing_endpoint_id is not defined
+        msg: "Registered '{{ portainer_api_endpoint_name }}' as endpoint ID {{ portainer_endpoint_id }}"
+      when: portainer_api_existing_endpoint is none
       delegate_to: localhost
 
-    - name: Update existing endpoint URL to current agent IP
+    - name: Update existing endpoint URL
       ansible.builtin.uri:
-        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints/{{ portainer_api_existing_endpoint_id }}"
+        url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/endpoints/{{ portainer_api_existing_endpoint.Id }}" # nosonar
         method: PUT
         headers:
           Authorization: "Bearer {{ portainer_api_token }}"
@@ -79,21 +88,28 @@
           Name: "{{ portainer_api_endpoint_name }}"
           URL: "tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}"
         status_code: 200
-      when: portainer_api_existing_endpoint_id is defined
+      when: portainer_api_existing_endpoint is not none
       delegate_to: localhost
 
-    - name: Display existing endpoint
+    - name: Set portainer_endpoint_id from existing endpoint
+      ansible.builtin.set_fact:
+        portainer_endpoint_id: "{{ portainer_api_existing_endpoint.Id }}"
+      when: portainer_api_existing_endpoint is not none
+      delegate_to: localhost
+
+    - name: Report existing endpoint
       ansible.builtin.debug:
         msg: >-
-          Agent '{{ portainer_api_endpoint_name }}' already registered
-          (ID: {{ portainer_api_existing_endpoint_id }}) — URL updated to
+          Endpoint '{{ portainer_api_endpoint_name }}' already registered
+          (ID: {{ portainer_endpoint_id }}) — URL updated to
           tcp://{{ portainer_api_agent_ip }}:{{ portainer_api_agent_port }}
-      when: portainer_api_existing_endpoint_id is defined
+      when: portainer_api_existing_endpoint is not none
       delegate_to: localhost
 
   rescue:
     - name: Warn on Portainer registration failure
       ansible.builtin.debug:
         msg: >-
-          WARNING: Portainer endpoint registration failed for '{{ portainer_api_endpoint_name }}'.
-          Harbor install will continue. Register the endpoint manually in Portainer if needed.
+          WARNING: Portainer endpoint registration failed for
+          '{{ portainer_api_endpoint_name }}'. Register the endpoint manually
+          in Portainer if needed.

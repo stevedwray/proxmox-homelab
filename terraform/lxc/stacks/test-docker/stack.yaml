@@ -1,6 +1,7 @@
-# test-docker — Nginx test stack deployed via Portainer API
+# test-docker — Docker host for migration test harness
 hostname: test-docker
 ip_address: "192.168.1.52/24"
+gateway: "192.168.1.1"
 dns_server: "192.168.1.1"
 vmid: 131
 cores: 2
@@ -9,7 +10,9 @@ rootfs_size: 8
 storage_profile: platform-default
 template_name: "debian-13.1-2-docker-template.tar.gz"
 
-# Deployment
-ansible_playbook: "deploy-stack"
+ansible_playbook: "deploy-portainer-agent"
 portainer_agent: true
-app_stack_name: "test-docker"
+
+portainer_stacks:
+  - name: test-docker
+    compose_file: docker-compose.yml

@@ -26,18 +26,81 @@ All pve commands run through `./with-secrets-prod`. Mutating commands require
 
 ---
 
+## Existing Portainer
+
+**Server:** `management-stack` LXC — `192.168.1.4`, on the LAN bridge.
+**Portainer CE:** `2.33.6`, port 9000 (HTTP).
+**Credentials:** not in SOPS — admin password must be retrieved from management-stack
+before this sprint begins.
+
+**Version incompatibility:** legacy is `2.33.6`, infra Portainer is `2.27.3`. A backup
+from a newer version cannot restore into an older one. **Option A (backup/restore) is
+not available for this migration.** All stacks must be migrated via Option B
+(re-register agents, re-create stacks manually or via API).
+
+Also running on management-stack: NPM, central Docker registry, registry-ui, Trivy.
+This sprint covers the Portainer migration only. Full management-stack decommission
+is a later step — see
+[application-migration/05-management-decommission.md](../application-migration/05-management-decommission.md).
+
+**Application hosts currently managed (on LAN bridge):**
+- `torrent-stack` — `192.168.1.5`, endpoint `tcp://192.168.1.5:9001`
+- `media-stack` — `192.168.1.6`, endpoint `tcp://192.168.1.6:9001`
+- `gaming-stack` — `192.168.1.7`, endpoint `tcp://192.168.1.7:9001`
+
+After this sprint, infra Portainer owns these endpoints at their **current LAN IPs**.
+Endpoint URLs will be updated to VLAN IPs as each application-migration sprint runs.
+
+---
+
+## Relationship to Application-Migration Sprints
+
+This sprint (portainer-stack/02) migrates ownership of the Portainer server — all
+endpoints re-registered from the management-stack Portainer to infra Portainer.
+
+The [application-migration sprints](../application-migration/00-overview.md) migrate
+the application LXCs themselves into VLAN zones (dl_seg, media_seg, game_seg). Those
+sprints run after this one, and each updates the portainer endpoint URL from the old
+LAN IP to the new VLAN IP via the `portainer_api` role.
+
+Sequencing:
+```
+portainer-stack/01  →  portainer-stack/02  →  app-migration/01  →  app-migration/02
+(backup validated)     (ownership migrated)   (torrent → dl_seg) (media → media_seg)
+                                                ↓ each sprint updates endpoint URL in infra Portainer
+```
+
+---
+
 ## Goal
 
 After this sprint:
-- All application stacks (torrent, media, gaming, any others) are owned and
-  managed by infrastructure Portainer
+- All application stacks (torrent, media, gaming) are owned and managed by
+  infrastructure Portainer
 - Application host portainer-agents are registered as endpoints in infrastructure Portainer
-- Existing Portainer server is shut down and decommissioned
+  (initially at their LAN bridge IPs — updated to VLAN IPs by later app-migration sprints)
+- Existing management-stack Portainer is stopped (management-stack LXC remains up;
+  full decommission is sprint 05 of application-migration)
 - First backup of the migrated state has run and landed on NAS
 
 ---
 
 ## Tasks
+
+### 0. Check existing Portainer version
+
+Before doing anything else, check the existing Portainer version to determine whether
+Option A (backup/restore) will work cleanly.
+
+In the existing Portainer UI: **Settings → About** — note the version number.
+Or via API:
+
+```bash
+curl -s http://192.168.1.4:9000/api/system/status | jq .Version
+```
+
+Infrastructure Portainer runs **2.27.3**. Legacy is **2.33.6** — newer than infra.
+Backup/restore across versions is incompatible. **Use Option B only** (task 5).
 
 ### 1. Identify agent type on existing Portainer
 
@@ -45,11 +108,12 @@ In the existing Portainer UI: **Settings → Environments** — check the Type c
 - "Agent" → regular agent (port 9001, Portainer dials in)
 - "Edge Agent" → edge agent (agent dials out, has join token)
 
-This determines steps 4 and 5 below.
+This determines steps 4 and 5 below. The existing agent type is expected to be
+"Agent" (regular) based on the application-migration sprint docs.
 
 ### 2. Inventory existing stacks
 
-In the existing Portainer: list all stacks, note:
+In the existing Portainer at `http://192.168.1.4:9000`: list all stacks, note:
 - Stack names
 - Which endpoint each stack runs on
 - Any non-obvious environment variables (secrets stored in Portainer)
@@ -60,12 +124,11 @@ in SOPS.
 
 ### 3. Export backup from existing Portainer
 
-The existing Portainer credentials are not in `secrets.pve.enc.yaml`. Retrieve
-the admin password from the existing Portainer host (check its stack env file
-or the management LXC where it's deployed) and run:
+Retrieve the admin password from the existing Portainer host (check its stack env
+file or the management LXC where it's deployed) and run:
 
 ```bash
-EXISTING_PORTAINER_IP=<ip-of-existing-portainer>
+EXISTING_PORTAINER_IP=192.168.1.4
 TOKEN=$(curl -s -X POST http://$EXISTING_PORTAINER_IP:9000/api/auth \
   -H "Content-Type: application/json" \
   -d '{"Username":"admin","Password":"<existing-password>"}' | jq -r .jwt)
@@ -78,18 +141,63 @@ curl -o /mnt/nas-backup/portainer-backup/portainer-migration-$(date +%Y%m%d).tar
 Writing directly to `/mnt/nas-backup/portainer-backup/` keeps the backup off
 local disk and immediately on the NAS.
 
-### 4a. If regular agents — register endpoints in infrastructure Portainer
+### 4a. If regular agents — migrate via Ansible playbook
 
-Regular agents just listen — no reconfiguration needed on the app hosts.
-Add each application host as an endpoint in infrastructure Portainer via the UI
-or portainer_api role:
+**Agent pairing constraint (validated 2026-06-19):** A portainer-agent can only be paired
+with ONE Portainer server at a time. Pairing state lives in the container's writable layer.
+`docker restart` does NOT clear it. Legacy Portainer polls continuously and reconnects
+within seconds of an agent restart, winning any naive race.
 
-- Endpoint name: matches existing (e.g., `torrent-stack`, `media-stack`)
-- URL: `tcp://<app-lxc-ip>:9001`
-- Verify endpoint goes green (agent is reachable)
+The migration playbook (`migrate-portainer-stack.yml`) handles this automatically:
+it blocks legacy Portainer's IP while resetting the agent and registering with infra
+Portainer, then unblocks.
 
-MikroTik pre-condition: `mgmt_seg → <zone>:9001` rule must exist.
-See application-migration/00-overview.md pre-conditions.
+**Per-host stack.yaml** must declare `portainer_stacks` (compose files to deploy) and
+optionally `portainer_migration_legacy_ip` (default: `192.168.1.4`):
+
+```yaml
+# terraform/lxc/stacks/<name>/stack.yaml
+ansible_playbook: "deploy-portainer-agent"
+portainer_agent: true
+portainer_stacks:
+  - name: <stack-name>
+    compose_file: docker-compose.yml   # relative to the stack directory
+```
+
+**Run migration:**
+
+```bash
+export TASK_APPROVAL="portainer-migration"
+./with-secrets-prod scripts/provision.sh --stack <name> \
+  --playbook terraform/lxc/ansible/playbooks/migrate-portainer-stack.yml
+```
+
+Or directly with ansible-playbook:
+
+```bash
+source .env
+ansible-playbook \
+  -i terraform/lxc/stacks/<name>/inventory.yml \
+  terraform/lxc/ansible/playbooks/migrate-portainer-stack.yml \
+  -e "@/tmp/<name>.ansible-extra-vars.yml"
+```
+
+If legacy Portainer admin access is available, remove the endpoint from legacy first
+(`DELETE /api/endpoints/<id>`) — this stops legacy polling and makes the iptables block
+unnecessary. The playbook works either way.
+
+`mgmt_seg → 192.168.1.0/24:9001` routing confirmed in place — no MikroTik changes required.
+
+Application hosts and LAN IPs:
+
+| Stack yaml  | Endpoint name   | Agent URL                | VMID |
+|---|---|---|---|
+| `torrent-stack` | `torrent-stack` | `tcp://192.168.1.5:9001` | TBD  |
+| `media-stack`   | `media-stack`   | `tcp://192.168.1.6:9001` | TBD  |
+| `gaming-stack`  | `gaming-stack`  | `tcp://192.168.1.7:9001` | TBD  |
+
+These LAN bridge IPs are temporary — endpoint URLs will be updated to VLAN
+addresses by the `portainer_api` role as each application-migration sprint runs.
 
 ### 4b. If edge agents — update join tokens on app hosts
 
@@ -98,38 +206,25 @@ On each application host update the portainer-agent config with the new
 join token and restart the service. The agent will re-register with
 infrastructure Portainer.
 
-### 5. Restore or re-create stacks in infrastructure Portainer
+### 5. Re-create stacks in infrastructure Portainer
 
-Two options depending on Portainer version compatibility:
+Option A (backup/restore) is not available — legacy is 2.33.6, infra is 2.27.3.
+Restoring a newer-version backup into an older Portainer is incompatible.
 
-**Option A — restore backup (preferred if versions are close)**
+**Option B — re-create stacks via IaC (automated)**
 
-```bash
-# Infrastructure Portainer is at 192.168.20.20
-# Use ./with-secrets-prod to resolve PORTAINER_ADMIN_PASSWORD from SOPS
-TOKEN=$(./with-secrets-prod bash -c '
-  curl -s -X POST http://192.168.20.20:9000/api/auth \
-    -H "Content-Type: application/json" \
-    -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
-  | jq -r .jwt
-')
+The `portainer_stack` Ansible role deploys stacks idempotently via the Portainer API
+as part of the migration playbook (task 4a). Compose files must be committed to the
+repo under each stack's directory before running the playbook.
 
-BACKUP=/mnt/nas-backup/portainer-backup/portainer-migration-<date>.tar.gz
-curl -X POST http://192.168.20.20:9000/api/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$BACKUP"
-```
+For each application host before running the migration:
+1. Commit the compose file to `terraform/lxc/stacks/<name>/docker-compose.yml`
+2. Declare it in `stack.yaml` under `portainer_stacks`
+3. Add any environment variables under `portainer_stacks[].env` (from SOPS where
+   available, from manual notes in step 2 for Portainer-only secrets)
 
-After restore: verify stacks are present and endpoints are assigned correctly.
-Stack env vars should be intact.
-
-**Option B — re-create stacks manually (if versions differ or restore fails)**
-
-For each stack:
-1. In infrastructure Portainer: Stacks → Add Stack
-2. Paste compose file content
-3. Add environment variables (from SOPS where available, from notes in step 2 for others)
-4. Deploy on the correct endpoint
+The playbook then deploys stacks automatically during endpoint registration. Stacks
+already present on the endpoint are skipped (idempotent).
 
 ### 6. Verify stacks are running
 
@@ -144,13 +239,16 @@ Run `systemctl start portainer-backup.service` on the Portainer LXC to take
 an immediate backup of the migrated state. Verify it lands on the NAS.
 This is the recovery point from this moment forward.
 
-### 8. Decommission existing Portainer
+### 8. Stop existing Portainer
 
 Once all stacks are verified in infrastructure Portainer:
-- Stop the existing Portainer server (or its container)
-- Confirm app stacks continue running (they're now managed by infrastructure Portainer)
-- Decommission the old LXC/VM if it was dedicated to Portainer
-- Remove the old portainer DNS record if applicable
+- Stop the Portainer container on management-stack: `docker stop portainer` (inside VMID 101)
+- Confirm app stacks continue running (they're now managed by infrastructure Portainer,
+  not by the management-stack Portainer)
+- Leave the management-stack LXC (VMID 101) up — it still runs NPM and the central
+  Docker registry, which are decommissioned in application-migration sprint 05
+- Remove the old portainer DNS record if it points at 192.168.1.70 and there is
+  no other service using that hostname
 
 ### 9. Commit, merge, and promote
 
@@ -173,8 +271,8 @@ infrastructure still deploys cleanly with the migrated Portainer state.
 
 ## Pre-conditions
 
-- [ ] Sprint 01 complete: backup and restore validated
-- [ ] Access to existing Portainer (credentials)
-- [ ] Application host IPs known for endpoint registration
-- [ ] MikroTik `mgmt_seg → <zone>:9001` rules in place for each app zone
+- [x] Sprint 01 complete: backup and restore validated (2026-06-19 — full destroy+apply+restore cycle confirmed)
+- [ ] Existing Portainer admin password retrieved (not in SOPS — get from management-stack)
+- [x] MikroTik rule: `mgmt_seg → 192.168.1.0/24:9001` in place (confirmed 2026-06-19 — no changes needed)
 - [ ] Inventory of stacks and any Portainer-only secrets (step 2) complete before proceeding
+- [x] Version compatibility confirmed: legacy 2.33.6 > infra 2.27.3, Option B (re-create stacks) only

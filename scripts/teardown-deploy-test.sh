@@ -1550,6 +1550,13 @@ stack_destroy() {
   vmid="$(stack_vmid "${spec}")"
 
   ensure_workspace_dir "${stack}"
+
+  if [[ "${stack}" == "portainer-stack" ]]; then
+    run_logged "pre-destroy-backup-${stack}" \
+      ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
+        "pct exec ${vmid} -- bash -c 'set -a; source /etc/portainer-backup/env; set +a; /opt/portainer-backup/backup.sh'"
+  fi
+
   guard_target
   if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \

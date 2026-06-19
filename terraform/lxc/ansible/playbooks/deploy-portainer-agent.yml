@@ -1,0 +1,47 @@
+---
+# Provisions Docker base and Portainer Agent on an LXC host,
+# then registers the endpoint with infra Portainer.
+# For migrating from legacy Portainer use migrate-portainer-stack.yml instead.
+
+- name: Configure Docker base and install Portainer Agent
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+  roles:
+    - lxc_base
+    - docker_base
+    - portainer_agent
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Register endpoint with infra Portainer
+  hosts: all
+  roles:
+    - portainer_api
+    - portainer_stack
