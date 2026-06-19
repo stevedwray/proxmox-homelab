@@ -1,0 +1,13 @@
+---
+portainer_backup_portainer_ip: "{{ ansible_host }}"
+portainer_backup_portainer_port: "9000"
+portainer_backup_admin_password: >-
+  {{
+    lookup('env', 'PORTAINER_ADMIN_PASSWORD')
+    | default(lookup('env', 'TF_VAR_portainer_admin_password'), true)
+    | mandatory('PORTAINER_ADMIN_PASSWORD environment variable is required')
+  }}
+portainer_backup_dir: /var/backups/portainer
+portainer_backup_env_dir: /etc/portainer-backup
+portainer_backup_script_dir: /opt/portainer-backup
+portainer_backup_retain_days: 7

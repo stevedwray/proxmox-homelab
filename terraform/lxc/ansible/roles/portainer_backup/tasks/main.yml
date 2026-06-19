@@ -1,0 +1,112 @@
+---
+- name: Create portainer-backup script directory
+  ansible.builtin.file:
+    path: "{{ portainer_backup_script_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0750"
+
+- name: Create portainer-backup credential directory
+  ansible.builtin.file:
+    path: "{{ portainer_backup_env_dir }}"
+    state: directory
+    owner: root
+    group: root
+    mode: "0700"
+
+- name: Write portainer-backup credential env file
+  ansible.builtin.copy:
+    dest: "{{ portainer_backup_env_dir }}/env"
+    owner: root
+    group: root
+    mode: "0600"
+    content: |
+      # Portainer backup credentials — managed by Ansible, do not edit by hand
+      PORTAINER_IP={{ portainer_backup_portainer_ip }}
+      PORTAINER_PORT={{ portainer_backup_portainer_port }}
+      PORTAINER_ADMIN_PASSWORD={{ portainer_backup_admin_password }}
+      BACKUP_DIR={{ portainer_backup_dir }}
+      RETAIN_DAYS={{ portainer_backup_retain_days }}
+  no_log: true
+
+- name: Write portainer-backup script
+  ansible.builtin.copy:
+    dest: "{{ portainer_backup_script_dir }}/backup.sh"
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      TOKEN=$(curl -sf -X POST "http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth" \
+        -H "Content-Type: application/json" \
+        -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
+        | jq -r .jwt)
+
+      OUTFILE="${BACKUP_DIR}/portainer-$(date +%Y%m%d).tar.gz"
+
+      curl -sf -o "${OUTFILE}" \
+        -H "Authorization: Bearer ${TOKEN}" \
+        "http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"
+
+      # Rotate — remove backups older than RETAIN_DAYS
+      find "${BACKUP_DIR}" -maxdepth 1 -name "portainer-*.tar.gz" \
+        -mtime "+${RETAIN_DAYS}" -delete
+
+      echo "portainer-backup: wrote ${OUTFILE}"
+
+- name: Write portainer-backup systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/portainer-backup.service
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
+    content: |
+      [Unit]
+      Description=Back up Portainer state to NAS
+      After=network-online.target docker.service
+      Wants=network-online.target
+
+      [Service]
+      Type=oneshot
+      EnvironmentFile={{ portainer_backup_env_dir }}/env
+      ExecStart={{ portainer_backup_script_dir }}/backup.sh
+      StandardOutput=append:/var/log/portainer-backup.log
+      StandardError=append:/var/log/portainer-backup.log
+
+      [Install]
+      WantedBy=multi-user.target
+  notify: Reload systemd
+
+- name: Write portainer-backup systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/portainer-backup.timer
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — standard systemd unit file permissions; world-read is required
+    content: |
+      [Unit]
+      Description=Run Portainer backup daily
+      Requires=portainer-backup.service
+
+      [Timer]
+      OnCalendar=daily
+      RandomizedDelaySec=1800
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  notify: Reload systemd
+
+- name: Flush handlers before enabling timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start portainer-backup timer
+  ansible.builtin.systemd:
+    name: portainer-backup.timer
+    enabled: true
+    state: started
+    daemon_reload: false
+  when: not ansible_check_mode

@@ -164,3 +164,9 @@ variable "extra_mount_backup_enabled" {
   type        = bool
   default     = true
 }
+
+variable "host_bind_mounts" {
+  description = "Host filesystem paths to bind-mount into the container (no size — host path must exist on the Proxmox node)"
+  type        = list(object({ host_path = string, lxc_path = string }))
+  default     = []
+}

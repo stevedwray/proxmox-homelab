@@ -659,3 +659,10 @@
              if (portainer_endpoint_group_policy_needs_update | bool)
              else 'Portainer local endpoint group policy already grants OAuth default team access.' }}
       when: not ansible_check_mode
+
+- name: Install Portainer NAS backup timer
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - portainer_backup
