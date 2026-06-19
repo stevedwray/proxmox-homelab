@@ -92,9 +92,8 @@
       #!/bin/bash
       set -euo pipefail
 
-      # nosonar: ansible:S5332 — Portainer API is HTTP-only on internal SDN; no TLS on port 9000
-      AUTH_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth"
-      BACKUP_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"
+      AUTH_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth"  # nosonar: ansible:S5332 — HTTP-only internal SDN
+      BACKUP_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"  # nosonar: ansible:S5332 — HTTP-only internal SDN
 
       TOKEN=$(curl -sf -X POST "${AUTH_URL}" \
         -H "Content-Type: application/json" \
@@ -103,8 +102,10 @@
 
       OUTFILE="${BACKUP_DIR}/portainer-$(date +%Y%m%d).tar.gz"
 
-      curl -sf -o "${OUTFILE}" \
+      curl -sf -X POST -o "${OUTFILE}" \
         -H "Authorization: Bearer ${TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
         "${BACKUP_URL}"
 
       # Rotate — remove backups older than RETAIN_DAYS
