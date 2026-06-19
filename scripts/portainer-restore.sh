@@ -15,7 +15,7 @@
 #
 # Environment (resolved by with-secrets-prod):
 #   LAB_IP_PORTAINER         — Portainer LXC IP
-#   PORTAINER_ADMIN_PASSWORD — admin password (used by provision.sh after restore)
+#   TF_VAR_portainer_admin_password — admin password (resolved by provision.sh after restore)
 
 set -euo pipefail
 

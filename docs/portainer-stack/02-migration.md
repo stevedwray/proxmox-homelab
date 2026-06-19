@@ -96,7 +96,7 @@ In the existing Portainer UI: **Settings → About** — note the version number
 Or via API:
 
 ```bash
-curl -s http://192.168.1.70:9000/api/system/status | jq .Version
+curl -s http://192.168.1.4:9000/api/system/status | jq .Version
 ```
 
 Infrastructure Portainer runs **2.27.3**. Legacy is **2.33.6** — newer than infra.
@@ -113,7 +113,7 @@ This determines steps 4 and 5 below. The existing agent type is expected to be
 
 ### 2. Inventory existing stacks
 
-In the existing Portainer at `http://192.168.1.70:9000`: list all stacks, note:
+In the existing Portainer at `http://192.168.1.4:9000`: list all stacks, note:
 - Stack names
 - Which endpoint each stack runs on
 - Any non-obvious environment variables (secrets stored in Portainer)
@@ -128,7 +128,7 @@ Retrieve the admin password from the existing Portainer host (check its stack en
 file or the management LXC where it's deployed) and run:
 
 ```bash
-EXISTING_PORTAINER_IP=192.168.1.70
+EXISTING_PORTAINER_IP=192.168.1.4
 TOKEN=$(curl -s -X POST http://$EXISTING_PORTAINER_IP:9000/api/auth \
   -H "Content-Type: application/json" \
   -d '{"Username":"admin","Password":"<existing-password>"}' | jq -r .jwt)
@@ -141,20 +141,59 @@ curl -o /mnt/nas-backup/portainer-backup/portainer-migration-$(date +%Y%m%d).tar
 Writing directly to `/mnt/nas-backup/portainer-backup/` keeps the backup off
 local disk and immediately on the NAS.
 
-### 4a. If regular agents — register endpoints in infrastructure Portainer
+### 4a. If regular agents — un-pair from legacy and register in infrastructure Portainer
 
-Regular agents just listen — no reconfiguration needed on the app hosts.
-Add each application host as an endpoint in infrastructure Portainer via the UI
-or portainer_api role:
+**Agent pairing constraint (validated 2026-06-19):** A portainer-agent can only be paired
+with ONE Portainer server at a time. Pairing state is stored in the agent container's
+writable layer. `docker restart` does NOT clear it — the old state remains in the
+container filesystem. Additionally, legacy Portainer's polling reconnects within seconds
+of an agent restart, winning any race to re-pair.
 
-| Endpoint name   | URL                             |
-|---|---|
-| `torrent-stack` | `tcp://192.168.1.5:9001`        |
-| `media-stack`   | `tcp://192.168.1.6:9001`        |
-| `gaming-stack`  | `tcp://192.168.1.7:9001`        |
+**Required procedure per host:**
 
-Verify each endpoint goes green (agent reachable). The MikroTik
-`mgmt_seg → 192.168.1.0/24:9001` rule (pre-condition) must be in place.
+```bash
+APP_HOST_IP=192.168.1.5   # change per host
+APP_HOST_VMID=...          # Proxmox LXC VMID
+
+# 1. Block legacy Portainer from reconnecting during the transition
+ssh root@pve.gibbsgreatly.xyz "pct exec ${APP_HOST_VMID} -- \
+  iptables -I INPUT -s 192.168.1.4 -p tcp --dport 9001 -j DROP"
+
+# 2. Destroy and recreate the agent container (docker rm clears writable layer)
+ssh root@pve.gibbsgreatly.xyz "pct exec ${APP_HOST_VMID} -- bash -c \
+  'cd /opt/portainer && docker compose down && docker compose up -d portainer-agent'"
+
+# 3. Immediately register with infra Portainer (while legacy is still blocked)
+JWT=$(curl -sf http://192.168.20.20:9000/api/auth \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"<PORTAINER_ADMIN_PASSWORD>"}' | jq -r '.jwt')
+
+curl -s http://192.168.20.20:9000/api/endpoints \
+  -H "Authorization: Bearer ${JWT}" \
+  -F "Name=<endpoint-name>" \
+  -F "EndpointCreationType=2" \
+  -F "URL=tcp://${APP_HOST_IP}:9001" \
+  -F "TLS=true" -F "TLSSkipVerify=true" -F "TLSSkipClientVerify=true"
+
+# 4. Remove iptables block
+ssh root@pve.gibbsgreatly.xyz "pct exec ${APP_HOST_VMID} -- \
+  iptables -D INPUT -s 192.168.1.4 -p tcp --dport 9001 -j DROP"
+```
+
+Note: if legacy Portainer admin access is available, remove the endpoint from legacy first
+(`DELETE /api/endpoints/<id>` via API). This is cleaner than the iptables block approach,
+but the block works when legacy API access is unavailable.
+
+After registering, verify each endpoint goes green. The `mgmt_seg → 192.168.1.0/24:9001`
+routing was confirmed in place during testing — no MikroTik changes required.
+
+Application hosts and LAN IPs:
+
+| Endpoint name   | URL                      | VMID |
+|---|---|---|
+| `torrent-stack` | `tcp://192.168.1.5:9001` | TBD  |
+| `media-stack`   | `tcp://192.168.1.6:9001` | TBD  |
+| `gaming-stack`  | `tcp://192.168.1.7:9001` | TBD  |
 
 These LAN bridge IPs are temporary — endpoint URLs will be updated to VLAN
 addresses by the `portainer_api` role as each application-migration sprint runs.
@@ -224,10 +263,8 @@ infrastructure still deploys cleanly with the migrated Portainer state.
 
 ## Pre-conditions
 
-- [ ] Sprint 01 complete: backup and restore validated
+- [x] Sprint 01 complete: backup and restore validated (2026-06-19 — full destroy+apply+restore cycle confirmed)
 - [ ] Existing Portainer admin password retrieved (not in SOPS — get from management-stack)
-- [ ] MikroTik rule: `mgmt_seg → 192.168.1.0/24:9001` in place
-  — infra Portainer (192.168.20.x) must reach app hosts on the LAN bridge during
-  the transition phase (before they move to VLAN zones in application-migration sprints)
+- [x] MikroTik rule: `mgmt_seg → 192.168.1.0/24:9001` in place (confirmed 2026-06-19 — no changes needed)
 - [ ] Inventory of stacks and any Portainer-only secrets (step 2) complete before proceeding
-- [ ] Version compatibility confirmed (step 0) before choosing Option A vs B
+- [x] Version compatibility confirmed: legacy 2.33.6 > infra 2.27.3, Option B (re-create stacks) only
