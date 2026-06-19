@@ -150,6 +150,11 @@ SOCKET_PROXY_KEYS = (
     "docker_socket_proxy_targets",
 )
 
+PORTAINER_MIGRATION_KEYS = (
+    "portainer_stacks",
+    "portainer_migration_legacy_ip",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -186,6 +191,10 @@ with open(stack_file, "r", encoding="utf-8") as handle:
     stack = yaml.safe_load(handle) or {}
 
 extra_vars = {}
+
+# Always inject the stack directory so playbooks can reference compose files
+extra_vars["stack_dir"] = os.path.dirname(os.path.abspath(stack_file))
+
 for key in SOCKET_PROXY_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
@@ -196,6 +205,10 @@ if extra_vars.get("enable_docker_socket_proxy") is True:
         die(f"{stack_file}: enabled docker socket proxy requires docker_socket_proxy_bind_addr")
     if "${" in bind_addr:
         die(f"{stack_file}: unresolved docker_socket_proxy_bind_addr placeholder: {bind_addr}")
+
+for key in PORTAINER_MIGRATION_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
 
 with open(output_file, "w", encoding="utf-8") as handle:
     yaml.safe_dump(extra_vars, handle, sort_keys=False)

@@ -1,4 +1,4 @@
-# terraform/ansible/shared-roles/portainer_api/defaults/main.yml
+# portainer_stack role defaults
 
 ---
 portainer_api_server_ip: >-
@@ -10,7 +10,6 @@ portainer_api_server_ip: >-
 portainer_api_server_port: "9000"
 
 portainer_api_admin_user: "admin"
-# TF_VAR_portainer_admin_password is the canonical name in SOPS/with-secrets
 portainer_api_admin_password: >-
   {{
     lookup('env', 'TF_VAR_portainer_admin_password')
@@ -18,6 +17,7 @@ portainer_api_admin_password: >-
     | mandatory('TF_VAR_portainer_admin_password environment variable is not set')
   }}
 
-portainer_api_endpoint_name: "{{ inventory_hostname }}"
-portainer_api_agent_ip: "{{ ansible_host }}"
-portainer_api_agent_port: "9001"
+# portainer_endpoint_id must be set by portainer_api role before this role runs.
+# portainer_stacks is a list of {name, compose_file} dicts from stack.yaml.
+# compose_file paths are relative to stack_dir (injected by provision.sh).
+portainer_stacks: []

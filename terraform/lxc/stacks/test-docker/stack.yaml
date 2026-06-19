@@ -1,5 +1,4 @@
 # test-docker — Docker host for migration test harness
-# Portainer agent only — endpoint registration done via legacy Portainer API
 hostname: test-docker
 ip_address: "192.168.1.52/24"
 gateway: "192.168.1.1"
@@ -13,3 +12,7 @@ template_name: "debian-13.1-2-docker-template.tar.gz"
 
 ansible_playbook: "deploy-portainer-agent"
 portainer_agent: true
+
+portainer_stacks:
+  - name: test-docker
+    compose_file: docker-compose.yml

@@ -1,7 +1,8 @@
 ---
-# Provisions Docker base and Portainer Agent on an LXC host.
-# Does NOT register the endpoint with any Portainer server — registration
-# is done separately via the target Portainer's API.
+# Provisions Docker base and Portainer Agent on an LXC host,
+# then registers the endpoint with infra Portainer.
+# For migrating from legacy Portainer use migrate-portainer-stack.yml instead.
+
 - name: Configure Docker base and install Portainer Agent
   hosts: all
   become: true
@@ -38,3 +39,9 @@
       ansible.builtin.systemd:
         name: docker
         state: restarted
+
+- name: Register endpoint with infra Portainer
+  hosts: all
+  roles:
+    - portainer_api
+    - portainer_stack
