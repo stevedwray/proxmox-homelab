@@ -1,0 +1,8 @@
+hostname: torrent-stack
+ip_address: "192.168.1.5"
+vmid: 100
+portainer_agent: true
+
+portainer_stacks:
+  - name: torrent-stack
+    compose_file: torrent-stack-docker-compose.yml

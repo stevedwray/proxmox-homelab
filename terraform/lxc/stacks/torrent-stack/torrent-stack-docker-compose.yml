@@ -1,0 +1,107 @@
+services:
+  gluetun:
+    image: qmcgaw/gluetun
+    container_name: gluetun
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun
+    environment:
+      - VPN_TYPE=wireguard
+      - VPN_SERVICE_PROVIDER=custom
+      - TZ=Pacific/Auckland
+      - HEALTH_TARGET_ADDRESSES=google.com:443
+      - FIREWALL_INPUT_PORTS=8888
+      - VPN_PORT_FORWARDING=on
+      - VPN_PORT_FORWARDING_PROVIDER=protonvpn
+      - DNS_ADDRESS=1.1.1.1
+      - DNS_SERVER=on
+    volumes:
+      - /config/torrents/gluetun:/gluetun
+      - /config/torrents/gluetun/wireguard:/gluetun/wireguard
+    ports:
+      - 8080:8888
+      - 6881:6881/tcp
+      - 6881:6881/udp
+    restart: unless-stopped
+  qbittorrent:
+    image: lscr.io/linuxserver/qbittorrent
+    container_name: qbittorrent
+    network_mode: "service:gluetun"
+    depends_on:
+      - gluetun
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+      - WEBUI_PORT=8888
+    volumes:
+      - /config/torrents/qbittorrent:/config
+      - /incoming:/downloads
+    restart: unless-stopped
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    environment:
+      - LOG_LEVEL=info
+      - TZ=Pacific/Auckland
+    ports:
+      - 8191:8191
+    restart: unless-stopped
+  prowlarr:
+    image: lscr.io/linuxserver/prowlarr:latest
+    container_name: prowlarr
+    ports:
+      - 9696:9696
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+    volumes:
+      - /config/torrents/prowlarr:/config
+    restart: unless-stopped
+  radarr:
+    image: lscr.io/linuxserver/radarr:latest
+    container_name: radarr
+    ports:
+      - 7878:7878
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+    volumes:
+      - /config/torrents/radarr:/config
+      - /nas/video/movies:/movies
+      - /nas/video/movies:/media/movies
+      - /incoming:/downloads
+    restart: unless-stopped
+  sonarr:
+    image: lscr.io/linuxserver/sonarr:latest
+    container_name: sonarr
+    ports:
+      - 8989:8989
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+    volumes:
+      - /config/torrents/sonarr:/config
+      - /nas/video/tv:/tv
+      - /nas/video/tv:/media/tv
+      - /incoming:/downloads
+    restart: unless-stopped
+  lidarr:
+    image: blampe/lidarr:latest
+    container_name: lidarr
+    ports:
+      - 8686:8686
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+    volumes:
+      - /config/torrents/lidarr:/config
+      - /nas/music:/music
+      - /nas/music:/media/music
+      - /incoming:/downloads
+    restart: unless-stopped
