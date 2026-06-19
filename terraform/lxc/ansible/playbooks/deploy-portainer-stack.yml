@@ -6,6 +6,7 @@
   hosts: all
   become: true
   gather_facts: true
+  tags: [pre_restore]
   vars:
     docker_registry_host: "{{ registry_host | default('') | trim }}"
     docker_dns_server: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
@@ -73,6 +74,7 @@
   hosts: all
   become: true
   gather_facts: false
+  tags: [pre_restore]
 
   vars:
     portainer_compose_dir: /opt/portainer
@@ -182,6 +184,7 @@
   hosts: all
   become: false
   gather_facts: false
+  tags: [post_restore]
 
   vars:
     portainer_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
@@ -664,5 +667,6 @@
   hosts: all
   become: true
   gather_facts: false
+  tags: [post_restore]
   roles:
     - portainer_backup

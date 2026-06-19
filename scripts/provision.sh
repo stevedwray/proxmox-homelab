@@ -481,6 +481,10 @@ for stack in "${ordered_stacks[@]}"; do
     cmd+=(--check)
   fi
 
+  if [[ -n "${ANSIBLE_TAGS:-}" ]]; then
+    cmd+=(--tags "$ANSIBLE_TAGS")
+  fi
+
   log "RUN ${stack}: ${cmd[*]}"
   "${cmd[@]}"
 done
