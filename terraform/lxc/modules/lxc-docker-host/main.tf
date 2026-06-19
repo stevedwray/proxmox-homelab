@@ -55,6 +55,7 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     content {
       volume = mount_point.value.host_path
       path   = mount_point.value.lxc_path
+      backup = false
     }
   }
 

@@ -62,19 +62,27 @@ accessible from pve at `/mnt/nas-backup/portainer-backup/`.
 
 ### 1. Confirm Portainer LXC privilege level
 
-```bash
-./with-secrets-prod pct config 20020 | grep unprivileged
-```
+**Confirmed:** LXC 20020 runs `unprivileged: 1` with `features: nesting=1`.
+subuid mapping is `root:100000:65536`, so:
+- UID 0 (root) inside LXC = UID **100000** on pve host
+- Proxmox presents a directory owned by host UID 100000 as root-owned inside the LXC
 
-The Portainer LXC runs Docker, which typically requires a privileged LXC.
-A privileged LXC (no `unprivileged: 1` line) means UID 0 inside = UID 0 on
-host, which simplifies NFS permissions. If unprivileged, a bindfs re-mount
-will be needed (same pattern as CT105/PBS in the existing pve fstab).
+No bindfs re-mount is needed — correct ownership on the NAS directory is sufficient.
 
 ### 2. Create NAS directory
 
-On the NAS (ADM GUI or SSH): create `/volume1/ProxmoxBackup/portainer-backup/`
-with write permissions for root (privileged LXC) or the mapped UID (unprivileged).
+On pve, via the NFS mount (NFS export uses no_root_squash — verified by `dump/`
+being root-owned under the same mount):
+
+```bash
+mkdir /mnt/nas-backup/portainer-backup
+chown 100000:100000 /mnt/nas-backup/portainer-backup
+chmod 700 /mnt/nas-backup/portainer-backup
+```
+
+Inside the LXC, Proxmox's UID remapping presents this directory as root-owned 700.
+The backup script running as root inside the LXC can read/write it, and no other
+user or process can.
 
 ### 3. Configure NFS bind mount into Portainer LXC
 
