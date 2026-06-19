@@ -8,6 +8,24 @@ is decommissioned.
 
 ---
 
+## Branch
+
+Cut from `baseline/teardown-validated` (not from the sprint 01 branch):
+
+```bash
+git checkout baseline/teardown-validated && git pull
+git checkout -b task/portainer-migration
+```
+
+Sprint 01 must be merged to `baseline/teardown-validated` before this branch
+is cut — this sprint builds on the backup infrastructure being present and
+provisioned.
+
+All pve commands run through `./with-secrets-prod`. Mutating commands require
+`TASK_APPROVAL`. See [00-overview.md — Working in This Repo](00-overview.md#working-in-this-repo).
+
+---
+
 ## Goal
 
 After this sprint:
@@ -42,19 +60,23 @@ in SOPS.
 
 ### 3. Export backup from existing Portainer
 
-```bash
-# Get JWT from existing Portainer
-TOKEN=$(curl -s -X POST http://<existing-portainer-ip>:9000/api/auth \
-  -H "Content-Type: application/json" \
-  -d '{"Username":"admin","Password":"<password>"}' | jq -r .jwt)
+The existing Portainer credentials are not in `secrets.pve.enc.yaml`. Retrieve
+the admin password from the existing Portainer host (check its stack env file
+or the management LXC where it's deployed) and run:
 
-# Download backup
-curl -o portainer-migration-backup.tar.gz \
+```bash
+EXISTING_PORTAINER_IP=<ip-of-existing-portainer>
+TOKEN=$(curl -s -X POST http://$EXISTING_PORTAINER_IP:9000/api/auth \
+  -H "Content-Type: application/json" \
+  -d '{"Username":"admin","Password":"<existing-password>"}' | jq -r .jwt)
+
+curl -o /mnt/nas-backup/portainer-backup/portainer-migration-$(date +%Y%m%d).tar.gz \
   -H "Authorization: Bearer $TOKEN" \
-  http://<existing-portainer-ip>:9000/api/backup
+  http://$EXISTING_PORTAINER_IP:9000/api/backup
 ```
 
-Store backup on NAS at `/volume1/ProxmoxBackup/portainer-backup/portainer-migration-YYYYMMDD.tar.gz`.
+Writing directly to `/mnt/nas-backup/portainer-backup/` keeps the backup off
+local disk and immediately on the NAS.
 
 ### 4a. If regular agents — register endpoints in infrastructure Portainer
 
@@ -83,13 +105,19 @@ Two options depending on Portainer version compatibility:
 **Option A — restore backup (preferred if versions are close)**
 
 ```bash
-TOKEN=$(curl -s -X POST http://192.168.20.20:9000/api/auth \
-  -H "Content-Type: application/json" \
-  -d '{"Username":"admin","Password":"<password>"}' | jq -r .jwt)
+# Infrastructure Portainer is at 192.168.20.20
+# Use ./with-secrets-prod to resolve PORTAINER_ADMIN_PASSWORD from SOPS
+TOKEN=$(./with-secrets-prod bash -c '
+  curl -s -X POST http://192.168.20.20:9000/api/auth \
+    -H "Content-Type: application/json" \
+    -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
+  | jq -r .jwt
+')
 
+BACKUP=/mnt/nas-backup/portainer-backup/portainer-migration-<date>.tar.gz
 curl -X POST http://192.168.20.20:9000/api/restore \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@portainer-migration-backup.tar.gz"
+  -F "file=@$BACKUP"
 ```
 
 After restore: verify stacks are present and endpoints are assigned correctly.
@@ -124,7 +152,22 @@ Once all stacks are verified in infrastructure Portainer:
 - Decommission the old LXC/VM if it was dedicated to Portainer
 - Remove the old portainer DNS record if applicable
 
-### 9. Commit and merge
+### 9. Commit, merge, and promote
+
+There are no Terraform or Ansible code changes in this sprint (it is purely
+an operational migration). Commit any runbook updates and close the branch:
+
+```bash
+git add docs/portainer-stack/
+git commit -m "docs(portainer): complete migration runbook with verified commands"
+```
+
+Merge into `baseline/teardown-validated` after verifying all stacks are running
+and the first post-migration backup has landed on the NAS.
+
+No teardown cycle gate is required for a docs-only commit, but run one before
+the next `baseline/teardown-validated` → `main` promotion to confirm the full
+infrastructure still deploys cleanly with the migrated Portainer state.
 
 ---
 

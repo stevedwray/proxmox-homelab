@@ -69,6 +69,66 @@ On full teardown + rebuild:
 
 ---
 
+## Working in This Repo
+
+### Branching
+
+Every sprint runs on a short-lived branch cut from `baseline/teardown-validated`:
+
+```bash
+git checkout baseline/teardown-validated
+git pull
+git checkout -b task/portainer-backup-restore   # or task/portainer-migration
+```
+
+Never develop directly in `baseline/teardown-validated`. Merge back only after
+the sprint's validation gate is satisfied (see each sprint doc). The merge target
+is always `baseline/teardown-validated`, not `main`.
+
+Promotion from `baseline/teardown-validated` to `main` happens separately after
+a full teardown + redeploy cycle confirms the combined state is stable.
+
+### Running commands against pve (production)
+
+All commands that touch pve run through `./with-secrets-prod`, which loads
+`terraform/secrets.pve.enc.yaml` and enforces production controls:
+
+```bash
+# Read-only — allowed by default
+./with-secrets-prod pct config 20020
+./with-secrets-prod scripts/provision.sh --stack portainer-stack  # plan/validate only
+
+# Mutating — requires TASK_APPROVAL to be set first
+export TASK_APPROVAL="portainer-backup-restore"
+./with-secrets-prod scripts/provision.sh --stack portainer-stack
+```
+
+For a full teardown + redeploy cycle, `--disposable` bypasses the approval chain:
+
+```bash
+./with-secrets-prod scripts/teardown-deploy-test.sh --stack all --disposable
+```
+
+See [docs/reference/production-credentials.md](../reference/production-credentials.md)
+and [docs/reference/secrets-management.md](../reference/secrets-management.md)
+for the full model. The credential controls are also specified in `CLAUDE.md`.
+
+### Validation tiers
+
+Match validation depth to the change being made:
+
+| Change | Minimum validation |
+|---|---|
+| Ansible comment / nosonar edit | `ansible-playbook --syntax-check` on affected playbooks |
+| Ansible task or role change | `./with-secrets-prod scripts/provision.sh --stack portainer-stack` |
+| New systemd unit or script | Provision and trigger manually, verify output |
+| Terraform / bind-mount / LXC config | Full teardown + redeploy cycle |
+
+Sprint promotion to `baseline/teardown-validated` requires a full teardown cycle
+showing the complete stack (including the new backup timer) survives a rebuild.
+
+---
+
 ## Sprint Plan
 
 | Sprint | Goal | Status |
