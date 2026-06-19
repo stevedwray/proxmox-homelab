@@ -25,13 +25,6 @@
       register: pct_stop
       failed_when: pct_stop.rc != 0 and "not running" not in pct_stop.stderr
 
-    - name: Wait for container to stop
-      ansible.builtin.wait_for:
-        host: "{{ ansible_host }}"
-        port: 22
-        state: stopped
-        timeout: 30
-
     - name: Configure NAS backup bind mount via pct set
       ansible.builtin.command:
         cmd: pct set {{ vmid }} -mp1 /mnt/nas-backup/portainer-backup,mp=/var/backups/portainer
