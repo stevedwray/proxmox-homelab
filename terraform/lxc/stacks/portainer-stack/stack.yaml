@@ -49,10 +49,3 @@ docker_socket_proxy_bind_addr: "${lab_ip_portainer}"
 docker_socket_proxy_listen_port: 2375
 docker_socket_proxy_targets:
   - "${lab_ip_portainer}"
-
-# NAS backup bind mount — exposes pve's NFS-mounted backup path inside the LXC.
-# The NAS directory must exist at /volume1/ProxmoxBackup/portainer-backup/ before
-# provisioning. The portainer_backup role writes the systemd timer that uses this path.
-host_bind_mounts:
-  - host_path: /mnt/nas-backup/portainer-backup
-    lxc_path: /var/backups/portainer
