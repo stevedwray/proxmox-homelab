@@ -28,14 +28,19 @@ All pve commands run through `./with-secrets-prod`. Mutating commands require
 
 ## Existing Portainer
 
-**Server:** `management-stack` LXC — `192.168.1.70`, VMID 101, on the LAN bridge.
-**Portainer CE:** port 9000 (HTTP), port 9443 (HTTPS).
-**Credentials:** not in SOPS — retrieve the admin password from the management LXC
-before this sprint begins (check its stack env file or Docker compose env).
+**Server:** `management-stack` LXC — `192.168.1.4`, on the LAN bridge.
+**Portainer CE:** `2.33.6`, port 9000 (HTTP).
+**Credentials:** not in SOPS — admin password must be retrieved from management-stack
+before this sprint begins.
 
-The management-stack also runs NPM, a central Docker registry, and Trivy. This sprint
-covers the Portainer migration only. Full management-stack decommission (including NPM,
-registry, and DNS cutover) is a later step — see
+**Version incompatibility:** legacy is `2.33.6`, infra Portainer is `2.27.3`. A backup
+from a newer version cannot restore into an older one. **Option A (backup/restore) is
+not available for this migration.** All stacks must be migrated via Option B
+(re-register agents, re-create stacks manually or via API).
+
+Also running on management-stack: NPM, central Docker registry, registry-ui, Trivy.
+This sprint covers the Portainer migration only. Full management-stack decommission
+is a later step — see
 [application-migration/05-management-decommission.md](../application-migration/05-management-decommission.md).
 
 **Application hosts currently managed (on LAN bridge):**
@@ -94,9 +99,8 @@ Or via API:
 curl -s http://192.168.1.70:9000/api/system/status | jq .Version
 ```
 
-Infrastructure Portainer runs **2.27.3**. If the existing version differs significantly,
-prefer Option B (re-create stacks manually) in task 5 to avoid compatibility issues.
-Minor version differences within 2.x are generally safe for backup/restore.
+Infrastructure Portainer runs **2.27.3**. Legacy is **2.33.6** — newer than infra.
+Backup/restore across versions is incompatible. **Use Option B only** (task 5).
 
 ### 1. Identify agent type on existing Portainer
 
@@ -162,36 +166,12 @@ On each application host update the portainer-agent config with the new
 join token and restart the service. The agent will re-register with
 infrastructure Portainer.
 
-### 5. Restore or re-create stacks in infrastructure Portainer
+### 5. Re-create stacks in infrastructure Portainer
 
-Two options depending on Portainer version compatibility:
+Option A (backup/restore) is not available — legacy is 2.33.6, infra is 2.27.3.
+Restoring a newer-version backup into an older Portainer is incompatible.
 
-**Option A — restore backup (preferred if versions are close)**
-
-```bash
-# Infrastructure Portainer is at 192.168.20.20
-# PORTAINER_ADMIN_PASSWORD resolved from SOPS by with-secrets-prod
-TOKEN=$(./with-secrets-prod env | grep PORTAINER_ADMIN_PASSWORD | cut -d= -f2- | \
-  xargs -I{} curl -s -X POST http://192.168.20.20:9000/api/auth \
-    -H "Content-Type: application/json" \
-    -d "{\"Username\":\"admin\",\"Password\":\"{}\"}" | jq -r .jwt)
-
-BACKUP=/mnt/nas-backup/portainer-backup/portainer-migration-$(date +%Y%m%d).tar.gz
-curl -X POST http://192.168.20.20:9000/api/restore \
-  -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$BACKUP" \
-  -w "\nHTTP %{http_code}\n"
-
-# Restart Portainer to apply restored database
-./with-secrets-prod pct exec 20020 -- docker restart portainer
-```
-
-After restore: verify stacks are present and endpoints are assigned correctly.
-Stack env vars should be intact. Note that endpoint URLs in the restored backup
-will reflect the old Portainer's registrations — update them if needed (or they
-will be updated automatically when each app-migration sprint provisions its LXC).
-
-**Option B — re-create stacks manually (if versions differ or restore fails)**
+**Option B — re-create stacks via API or UI**
 
 For each stack:
 1. In infrastructure Portainer: Stacks → Add Stack
