@@ -34,6 +34,7 @@
         ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
 
+  always:
     - name: Start portainer LXC
       ansible.builtin.command:
         cmd: pct start {{ vmid }}
@@ -42,6 +43,8 @@
         ansible_user: "{{ pve_ssh_user | default('root') }}"
         ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
         ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      register: pct_start
+      failed_when: pct_start.rc != 0 and "already running" not in pct_start.stderr
 
     - name: Wait for container to come back online
       ansible.builtin.wait_for_connection:
@@ -89,7 +92,11 @@
       #!/bin/bash
       set -euo pipefail
 
-      TOKEN=$(curl -sf -X POST "http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth" \
+      # nosonar: ansible:S5332 — Portainer API is HTTP-only on internal SDN; no TLS on port 9000
+      AUTH_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/auth"
+      BACKUP_URL="http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"
+
+      TOKEN=$(curl -sf -X POST "${AUTH_URL}" \
         -H "Content-Type: application/json" \
         -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
         | jq -r .jwt)
@@ -98,7 +105,7 @@
 
       curl -sf -o "${OUTFILE}" \
         -H "Authorization: Bearer ${TOKEN}" \
-        "http://${PORTAINER_IP}:${PORTAINER_PORT}/api/backup"
+        "${BACKUP_URL}"
 
       # Rotate — remove backups older than RETAIN_DAYS
       find "${BACKUP_DIR}" -maxdepth 1 -name "portainer-*.tar.gz" \
