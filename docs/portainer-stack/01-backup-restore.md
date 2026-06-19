@@ -78,7 +78,44 @@ with write permissions for root (privileged LXC) or the mapped UID (unprivileged
 
 ### 3. Configure NFS bind mount into Portainer LXC
 
-Add to the Portainer LXC Terraform resource or apply directly to test:
+The `lxc-docker-host` Terraform module (`terraform/lxc/modules/lxc-docker-host/main.tf`)
+supports `mount_point` blocks for LVM volumes but does not yet have a host bind mount
+input. Add one before this sprint begins — it unlocks a clean teardown-cycle-safe path.
+
+**Extend the module** — add a `host_bind_mounts` variable and dynamic block:
+
+```hcl
+# In terraform/lxc/modules/lxc-docker-host/variables.tf
+variable "host_bind_mounts" {
+  type    = list(object({ host_path = string, lxc_path = string }))
+  default = []
+}
+
+# In terraform/lxc/modules/lxc-docker-host/main.tf  (inside the container resource)
+dynamic "mount_point" {
+  for_each = var.host_bind_mounts
+  content {
+    volume = mount_point.value.host_path
+    path   = mount_point.value.lxc_path
+  }
+}
+```
+
+**Declare the bind mount in `stack.yaml`:**
+
+```yaml
+host_bind_mounts:
+  - host_path: /mnt/nas-backup/portainer-backup
+    lxc_path: /var/backups/portainer
+```
+
+Wire the new variable through `terraform/lxc/main.tf` (pass
+`local.stack.host_bind_mounts` to the module call).
+
+This bind mount will be re-applied on every `terraform apply`, surviving teardown
+cycles automatically.
+
+**Test manually first** before wiring into Terraform (verify NFS permissions work):
 
 ```bash
 export TASK_APPROVAL="portainer-backup-restore"
@@ -88,14 +125,11 @@ export TASK_APPROVAL="portainer-backup-restore"
 The pve NFS mount at `/mnt/nas-backup` is already in fstab with `_netdev` and
 `x-systemd.requires=network-online.target` — it mounts before LXCs start.
 
-Also add the bind mount to the Portainer LXC's Terraform config so it survives
-a full teardown cycle.
-
 ### 4. Write backup systemd service and timer
 
 Service: authenticates via `POST /api/auth`, then calls `POST /api/backup`,
 writes binary to `/var/backups/portainer/portainer-YYYYMMDD.tar.gz`.
-Retains last 7 backups.
+Retains last 7 backups (rotation: `ls -t | tail -n +8 | xargs -r rm`).
 
 Timer: daily, `Persistent=true`, `RandomizedDelaySec=1800`.
 
@@ -105,8 +139,18 @@ Model on `netbox-populate.timer` (same credential env file pattern):
 
 ### 5. Provision via Ansible
 
-Add tasks to `deploy-portainer-stack.yml` (run after the Ansible validation
-tier — syntax-check first, then provision to apply):
+Create a `portainer_backup` Ansible role at
+`terraform/lxc/ansible/roles/portainer_backup/` — follow the role-per-concern
+pattern used by `portainer_api` and `portainer_agent`. Include the role in
+`deploy-portainer-stack.yml` after the Portainer init play.
+
+Role tasks:
+- Write `/etc/portainer-backup/env` (mode 0600, templated from `PORTAINER_ADMIN_PASSWORD`)
+- Write `/opt/portainer-backup/backup.sh`
+- Write systemd service and timer units to `/etc/systemd/system/`
+- `systemctl daemon-reload && systemctl enable --now portainer-backup.timer`
+
+After writing the role, run the Ansible validation tier:
 
 ```bash
 # Syntax check first (always, even for comment-only changes)
@@ -116,12 +160,6 @@ ansible-playbook --syntax-check terraform/lxc/ansible/playbooks/deploy-portainer
 export TASK_APPROVAL="portainer-backup-restore"
 ./with-secrets-prod scripts/provision.sh --stack portainer-stack
 ```
-
-Tasks to add:
-- Write `/etc/portainer-backup/env` (mode 0600, templated from `PORTAINER_ADMIN_PASSWORD`)
-- Write `/opt/portainer-backup/backup.sh`
-- Write systemd service and timer units to `/etc/systemd/system/`
-- `systemctl daemon-reload && systemctl enable --now portainer-backup.timer`
 
 ### 6. Test backup
 
@@ -179,35 +217,43 @@ Then open a PR: `task/portainer-backup-restore` → `baseline/teardown-validated
 
 ## Restore Runbook
 
-_To be completed and verified during task 7. Commands below are a template — fill in
-actual Portainer LXC IP and confirm the exact steps work before treating this as
-authoritative._
+_To be completed and verified during task 7. Commands below are a template — confirm
+the exact steps work during the test restore before treating this as authoritative._
 
 ```bash
-# 1. Provision fresh Portainer LXC
+# 0. Verify NAS backup directory is accessible from pve host
+ls /mnt/nas-backup/portainer-backup/
+
+# 1. Provision fresh Portainer LXC (Ansible sets admin credentials, OAuth, Harbor)
 export TASK_APPROVAL="portainer-restore"
 ./with-secrets-prod scripts/provision.sh --stack portainer-stack
 
-# 2. Get admin JWT (from inside the LXC or from a host that can reach mgmt_seg)
-#    Admin password is in terraform/secrets.pve.enc.yaml — use ./with-secrets-prod
-#    to resolve it rather than typing it in plaintext
+# 2. Get admin JWT — PORTAINER_ADMIN_PASSWORD resolved from SOPS by with-secrets-prod
 PORTAINER_IP=192.168.20.20
-TOKEN=$(./with-secrets-prod bash -c '
-  curl -s -X POST http://'"$PORTAINER_IP"':9000/api/auth \
+TOKEN=$(./with-secrets-prod env | grep PORTAINER_ADMIN_PASSWORD | cut -d= -f2- | \
+  xargs -I{} curl -s -X POST http://$PORTAINER_IP:9000/api/auth \
     -H "Content-Type: application/json" \
-    -d "{\"Username\":\"admin\",\"Password\":\"${PORTAINER_ADMIN_PASSWORD}\"}" \
-  | jq -r .jwt
-')
+    -d "{\"Username\":\"admin\",\"Password\":\"{}\"}" | jq -r .jwt)
 
 # 3. Restore from latest NAS backup
+#    The backup file is a tar.gz of Portainer's BoltDB — verify with: tar tzf <file> | head
 BACKUP=$(ls -t /mnt/nas-backup/portainer-backup/portainer-*.tar.gz | head -1)
+echo "Restoring from: $BACKUP"
 curl -X POST http://$PORTAINER_IP:9000/api/restore \
   -H "Authorization: Bearer $TOKEN" \
-  -F "file=@$BACKUP"
+  -F "file=@$BACKUP" \
+  -w "\nHTTP %{http_code}\n"
 
 # 4. Restart Portainer to apply restored state
 ./with-secrets-prod pct exec 20020 -- docker restart portainer
+
+# 5. Verify stacks, endpoints, and env vars match pre-destroy state
+curl -s -H "Authorization: Bearer $TOKEN" http://$PORTAINER_IP:9000/api/stacks | jq '[.[].Name]'
 ```
+
+After restore, Ansible can run again safely — the provisioner is idempotent and will
+only update settings that differ from desired state (admin password and OAuth settings
+will match SOPS, so no changes should apply).
 
 ---
 
