@@ -2,7 +2,7 @@
 
 ## Overview
 
-The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Loki, Grafana, and Promtail via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and Loki are internal-only data stores.
+The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, VictoriaLogs, Grafana, and Promtail via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and VictoriaLogs are internal-only data stores.
 
 ---
 
@@ -21,16 +21,16 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Loki,
 
 ## Current State
 
-**All five implementation phases are complete.** Metrics and logs are collected from all lab stacks.
+**Phases 1–5 complete; Phase 6 (VictoriaLogs) implemented, pending pve-test smoke test.**
 
 ### Running services
 
 | Service | Port | Notes |
 |---------|------|-------|
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
-| Loki | `:3100` | Filesystem storage, schema v13; no retention period set (see Remaining Work) |
-| Grafana | `:3000` | OAuth via Authentik |
-| Promtail (self) | — | Docker discovery + `/var/log` on monitoring-stack |
+| VictoriaLogs | `:9428` | `--retentionPeriod=30d`; named Docker volume on `/var/lib/docker` mount; `v1.24.0-victorialogs` |
+| Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
+| Promtail (self) | — | Docker discovery + `/var/log` on monitoring-stack; pushes to VictoriaLogs |
 
 ### Active scrape targets
 
@@ -49,7 +49,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Loki,
 | harbor-findings-exporter | monitoring-stack internal | ✅ up |
 | netbox | 192.168.40.12:8080 | ✅ up |
 | victoriametrics | 192.168.20.12:8428 | ✅ up |
-| loki | 192.168.20.12:3100 | ✅ up |
+| victorialogs | 192.168.20.12:9428 | ⏳ pending smoke test |
 | grafana | 192.168.20.12:3000 | ✅ up |
 | step-ca | — | ❌ not deployed — TLS complexity deferred (see Remaining Work) |
 
@@ -65,8 +65,8 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Loki,
 | Harbor Operations | Component health, queue state, proxy-cache activity |
 | Harbor Scan Coverage | Findings exporter health, scan coverage, severity totals |
 | Harbor CVE Inventory | Detailed CVE rows from the live Harbor findings feed |
-| Lab Logs | Full-stack log explorer (Loki) |
-| Auth Logs | SSH/sudo/auth.log across all hosts (Loki) |
+| Lab Logs | Full-stack log explorer (VictoriaLogs / LogsQL) |
+| Auth Logs | SSH/sudo/auth.log across all hosts (VictoriaLogs / LogsQL) |
 
 ### Notable deviations from original plan
 
@@ -190,7 +190,7 @@ LAB_IP_PROXMOX_HOST=192.168.1.2    # Proxmox bare-metal host — for node_export
 
 All other `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
 
-No secrets are required for Loki or VictoriaMetrics (both are mgmt_seg-internal, no auth).
+No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-internal, no auth).
 
 ---
 
@@ -200,43 +200,20 @@ No secrets are required for Loki or VictoriaMetrics (both are mgmt_seg-internal,
 |------|-------|
 | Proxmox host node_exporter | Manual bootstrap — install node_exporter directly on 192.168.1.2 |
 | step-ca scrape job | Mount homelab CA into VictoriaMetrics container; add `scheme: https` + `tls_config.ca_file` to scrape config |
-| Loki retention | Add `compactor` block and `retention_period: 30d` to Loki config in `deploy-monitoring-stack.yml` (see below) |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
-| Teardown health gate | Update monitoring-stack health check in `teardown-deploy-test.sh` to assert `> 0` active targets via `/api/v1/targets` |
-| VictoriaLogs | Replace Loki with VictoriaLogs for full-text log search and LLM analysis pipeline (see Phase 6) |
-
----
-
-## Loki Retention (pending)
-
-Add a `compactor` block and `retention_period` to the Loki config in `deploy-monitoring-stack.yml`:
-
-```yaml
-compactor:
-  working_directory: /loki/compactor
-  compaction_interval: 10m
-  retention_enabled: true
-  retention_delete_delay: 2h
-  retention_delete_worker_count: 150
-
-limits_config:
-  allow_structured_metadata: false
-  volume_enabled: true
-  retention_period: 30d
-```
-
-Note: if VictoriaLogs replaces Loki (Phase 6), this is not worth implementing.
+| VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*`; tune dashboard queries post-deploy if needed |
 
 ---
 
 ## Teardown Health Gate
 
-After Phase 6 lands, the monitoring-stack health check in `teardown-deploy-test.sh` should be extended to assert at least one VictoriaMetrics scrape target is up:
+The monitoring-stack health check in `teardown-deploy-test.sh` asserts Grafana, VictoriaMetrics, and VictoriaLogs are all responding:
 
 ```bash
-curl -fsS "http://${ip}:8428/api/v1/targets" \
-  | python3 -c "import sys,json; t=json.load(sys.stdin); up=[x for x in t['data']['activeTargets'] if x['health']=='up']; print(len(up),'targets up'); sys.exit(0 if len(up)>0 else 1)"
+curl -fsS "http://${ip}:3000/login" && \
+curl -fsS "http://${ip}:8428/-/ready" && \
+curl -fsS "http://${ip}:9428/health"
 ```
 
 ---
@@ -307,61 +284,22 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 
 ### Tasks
 
-| # | Task | Notes |
-|---|------|-------|
-| 1 | Pin a VictoriaLogs release version | Check https://github.com/VictoriaMetrics/VictoriaMetrics/releases for latest stable `-victorialogs` tag |
-| 2 | Mirror VictoriaLogs image to Harbor | `harbor.lab.gibbsgreatly.xyz/dockerhub/victoriametrics/victoria-logs:<tag>` |
-| 3 | Add `victorialogs-logs-datasource` Grafana plugin | Set `GF_INSTALL_PLUGINS` in Grafana container env |
-| 4 | Add VictoriaLogs service to monitoring compose in `deploy-monitoring-stack.yml` | Single container, named volume, port 9428 |
-| 5 | Add VictoriaLogs datasource to Grafana provisioning | Point at `http://victorialogs:9428` |
-| 6 | Update Promtail push URL across all stacks | Two patterns — see note below |
-| 7 | Rebuild Lab Logs and Auth Logs dashboards with LogsQL | Replace Loki datasource and PromQL-style log queries |
-| 8 | Verify ingestion (`/select/logsql/query?query=*`) | Confirm streams from all stacks are arriving |
-| 9 | Remove Loki service and volumes | After dashboards confirmed working |
-| 10 | Write LLM analysis script | Python: accept `stack=<name>`, fetch N lines from VictoriaLogs API, POST to Claude API |
-| 11 | Update teardown health gate | Replace Loki `:3100/ready` check with VictoriaLogs `:9428/health` |
-| 12 | Provision + smoke test on pve-test | Full deploy cycle confirming VictoriaLogs survives teardown |
-
-### Promtail URL changes (task 6 detail)
-
-Promtail configs live in two patterns across the codebase:
-
-**Pattern A — promtail role** (systemd, non-Docker stacks: step-ca, apt-cacher, ci-runner, dns-stack, harbor-stack):
-
-The role template at `terraform/lxc/ansible/roles/promtail/templates/config.yml.j2` builds the push URL as:
-```
-http://{{ promtail_loki_url }}/loki/api/v1/push
-```
-
-Two changes needed:
-1. Change the template path suffix from `/loki/api/v1/push` → `/insert/loki/api/v1/push`
-2. Change `promtail_loki_url` in each playbook from `LAB_IP_MONITORING:3100` → `LAB_IP_MONITORING:9428`
-
-**Pattern B — inline Docker Promtail config** (Docker stacks: netbox, portainer, authentik, proxy):
-
-Each playbook writes a Promtail config block inline with a hardcoded URL like:
-```
-url: http://{{ lab_ip_monitoring }}:3100/loki/api/v1/push
-```
-Change to:
-```
-url: http://{{ lab_ip_monitoring }}:9428/insert/loki/api/v1/push
-```
-
-**monitoring-stack self-Promtail** (`deploy-monitoring-stack.yml`): uses Docker-internal hostname `loki:3100/loki/api/v1/push` — change to `victorialogs:9428/insert/loki/api/v1/push`. Also update the Grafana datasource from `http://loki:3100` → `http://victorialogs:9428`.
-
-### Pre-conditions
-
-- [ ] VictoriaLogs stable release confirmed and pinned
-- [ ] Harbor mirror of VictoriaLogs image available
-- [ ] Portainer migration branch (`task/portainer-migration-test`) merged into `baseline/teardown-validated`
-- [ ] Branch cut from updated `baseline/teardown-validated`
+| # | Task | Status |
+|---|------|--------|
+| 1 | Pin VictoriaLogs release version | ✅ `v1.24.0-victorialogs` |
+| 2 | Mirror VictoriaLogs image to Harbor | ✅ via `dockerhub/` proxy cache — no explicit push needed |
+| 3 | Add `victoriametrics-logs-datasource` Grafana plugin | ✅ `GF_INSTALL_PLUGINS` |
+| 4 | Add VictoriaLogs service to compose; remove Loki | ✅ port 9428, 30d retention, named volume |
+| 5 | Add VictoriaLogs datasource to Grafana provisioning | ✅ uid=VictoriaLogs |
+| 6 | Update Promtail push URL across all stacks | ✅ all 9 stacks: `:9428/insert/loki/api/v1/push` |
+| 7 | Rebuild Lab Logs and Auth Logs dashboards with LogsQL | ✅ `field_values()` vars, `stats count()` timeseries |
+| 8 | Verify ingestion | ⏳ requires pve-test provision |
+| 9 | Write LLM analysis script | ✅ `scripts/victorialogs-analyze.py` |
+| 10 | Update teardown health gate | ✅ `:9428/health` added to monitoring-stack check |
+| 11 | Provision + smoke test on pve-test | ⏳ gate for promotion to baseline |
 
 ### Branch
 
-```bash
-git checkout baseline/teardown-validated && git pull
-git checkout -b task/monitoring-victorialogs
-```
+`work/victorialogs` — rebased onto PR #384 (portainer-teardown-restore)
 
-Promotion gate: full teardown + redeploy cycle confirms log ingestion resumes and all dashboards show data after rebuild.
+Promotion gate: full teardown + redeploy cycle on pve-test confirms log ingestion resumes and all dashboards show data after rebuild.
