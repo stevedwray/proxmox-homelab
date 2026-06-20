@@ -1602,9 +1602,13 @@ stack_destroy() {
   ensure_workspace_dir "${stack}"
 
   if [[ "${stack}" == "portainer-stack" && "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
-    run_logged "pre-destroy-backup-${stack}" \
-      ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
-        "pct exec ${vmid} -- bash -c 'set -a; source /etc/portainer-backup/env; set +a; /opt/portainer-backup/backup.sh'"
+    if ssh -F /dev/null "root@${TARGET_PVE_HOST}" "pct status '${vmid}' 2>/dev/null | grep -q 'running'" 2>/dev/null; then
+      run_logged "pre-destroy-backup-${stack}" \
+        ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
+          "pct exec ${vmid} -- bash -c 'set -a; source /etc/portainer-backup/env; set +a; /opt/portainer-backup/backup.sh'"
+    else
+      log "SKIP pre-destroy-backup-${stack}: LXC ${vmid} is not running on ${TARGET_PVE_HOST} — no live state to back up"
+    fi
   fi
 
   guard_target
