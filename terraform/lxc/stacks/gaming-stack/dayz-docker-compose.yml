@@ -1,0 +1,22 @@
+services:
+  dayz:
+    image: ich777/steamcmd:dayz
+    container_name: dayz
+    restart: unless-stopped
+    environment:
+      - GAME_ID=223350
+      - GAME_PORT=2302
+      - GAME_PARAMS=-config=/serverdata/serverfiles/serverDZ.cfg -port=2302 -profiles=/serverdata/serverfiles/profiles -dologs -adminlog -netlog -freezecheck -mod=@1559212036;@1564026768;@1582756848;@1623711988;@2017605880;@3382463948;@1870524790
+      - USERNAME=${DAYZ_STEAM_USERNAME}
+      - PASSWRD=${DAYZ_STEAM_PASSWORD}
+      - UID=1000
+      - GID=1000
+      - VALIDATE=
+    volumes:
+      - /azerothcore/dayz/steam:/serverdata/Steam
+      - /azerothcore/dayz/steamcmd:/serverdata/steamcmd
+      - /azerothcore/dayz/server:/serverdata/serverfiles
+      - /azerothcore/dayz/mods:/serverdata/workshop
+    ports:
+      - "2302:2302/udp"
+      - "27016:27016/udp"

@@ -1,0 +1,60 @@
+services:
+  testworld:
+    image: itzg/minecraft-server:stable-java21
+    container_name: testworld-minecraft
+    tty: true
+    stdin_open: true
+    tmpfs:
+      - /tmp:size=2g
+    ports:
+      - "25567:25566"
+      - "25576:25575"
+    environment:
+      EULA: "TRUE"
+      TYPE: "FORGE"
+      VERSION: "1.20.1"
+      FORGE_VERSION: "47.4.0"
+      SERVER_NAME: "testworld"
+      SERVER_PORT: "25566"
+      MEMORY: "16G"
+      USE_AIKAR_FLAGS: "true"
+      JVM_OPTS: >
+        -Xms4G -Xmx16G
+        -XX:+UseG1GC
+        -XX:+ParallelRefProcEnabled
+        -XX:+UseStringDeduplication
+        -Djava.io.tmpdir=/tmp
+        -Xshare:on
+        -Xlog:cds=info
+      ENABLE_RCON: "true"
+      RCON_PASSWORD: "minecraft" # gitleaks:allow
+      RCON_PORT: "25575"
+      LEVEL_TYPE: "flat"
+      DIFFICULTY: "0"
+      MODE: "creative"
+      ALLOW_FLIGHT: "true"
+      SPAWN_MONSTERS: "false"
+      SPAWN_NPCS: "false"
+      PVP: "false"
+      VIEW_DISTANCE: "6"
+      SIMULATION_DISTANCE: "6"
+      MAX_PLAYERS: "2"
+      SNOOPER_ENABLED: "false"
+      GENERATE_STRUCTURES: "false"
+      OVERRIDE_SERVER_PROPERTIES: "true"
+      SYNC_CHUNK_WRITES: "false"
+      MAX_TICK_TIME: "600000"
+      RCON_CMDS_STARTUP: |
+        gamerule doMobSpawning false
+        gamerule doWeatherCycle false
+        gamerule doDaylightCycle true
+      OPS: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a"
+      WHITELIST: "8fa12314-eba1-43cf-a232-d8ceb3bc8d1a,3e9e78a4-6b43-4dd2-88c8-a854850da8f7"
+      TZ: "Pacific/Auckland"
+    volumes:
+      - "/minecraft/testworld:/data"
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+    restart: unless-stopped

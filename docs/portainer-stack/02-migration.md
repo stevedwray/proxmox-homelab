@@ -190,11 +190,13 @@ unnecessary. The playbook works either way.
 
 Application hosts and LAN IPs:
 
-| Stack yaml  | Endpoint name   | Agent URL                | VMID |
-|---|---|---|---|
-| `torrent-stack` | `torrent-stack` | `tcp://192.168.1.5:9001` | TBD  |
-| `media-stack`   | `media-stack`   | `tcp://192.168.1.6:9001` | TBD  |
-| `gaming-stack`  | `gaming-stack`  | `tcp://192.168.1.7:9001` | TBD  |
+| Stack yaml  | Endpoint name   | Agent URL                | VMID | Stacks |
+|---|---|---|---|---|
+| `torrent-stack` | `torrent-stack` | `tcp://192.168.1.5:9001` | 100 | torrent-stack (gluetun + qbittorrent + arr suite) |
+| `media-stack`   | `media-stack`   | `tcp://192.168.1.6:9001` | 102 | jellyfin |
+| `gaming-stack`  | `gaming-stack`  | `tcp://192.168.1.7:9001` | 103 | foreverworld, testworld, dayz, newworld |
+| `analysis-stack` | `analysis-stack` | `tcp://192.168.1.16:9001` | 110 | (no stacks — agent only) |
+| `security-stack` | `security-stack` | `tcp://192.168.1.11:9001` | 109 | (no stacks — agent only) |
 
 These LAN bridge IPs are temporary — endpoint URLs will be updated to VLAN
 addresses by the `portainer_api` role as each application-migration sprint runs.
@@ -228,10 +230,119 @@ already present on the endpoint are skipped (idempotent).
 
 ### 6. Verify stacks are running
 
-For each migrated stack:
-- Check stack status in Portainer (running)
-- Spot-check the actual service (UI accessible, expected behaviour)
-- Confirm Traefik has picked up the stack's labels (if applicable)
+Do one host at a time. Verify each host fully before migrating the next —
+this limits any split state to a single host if something goes wrong.
+
+**Per-host verification checklist:**
+
+```bash
+# 1. Confirm endpoint is online in infra Portainer
+JWT=$(curl -sf http://192.168.20.20:9000/api/auth \
+  -H "Content-Type: application/json" \
+  -d '{"username":"admin","password":"Calm4-Scrap-Seventy"}' | jq -r .jwt)
+
+curl -sf http://192.168.20.20:9000/api/endpoints \
+  -H "Authorization: Bearer $JWT" \
+  | jq '[.[] | {Name, Status, URL}]'
+# Status 1 = online
+
+# 2. Confirm stack is running on the endpoint
+curl -sf http://192.168.20.20:9000/api/stacks \
+  -H "Authorization: Bearer $JWT" \
+  | jq '[.[] | select(.Name=="<stack-name>") | {Name, Status, EndpointId}]'
+# Status 1 = running
+
+# 3. Confirm containers are up on the host itself
+ssh root@pve.gibbsgreatly.xyz "pct exec <vmid> -- docker ps --format 'table {{.Names}}\t{{.Status}}'"
+
+# 4. Check recent container logs for errors
+ssh root@pve.gibbsgreatly.xyz "pct exec <vmid> -- docker compose -f /opt/<stack>/docker-compose.yml logs --tail=50"
+```
+
+**Per-stack spot-checks:**
+
+| Stack | Check |
+|---|---|
+| torrent-stack | qBittorrent WebUI at `http://192.168.1.5:8080` — confirm gluetun VPN is up (check gluetun logs for `healthy`) |
+| media-stack (jellyfin) | Jellyfin UI at `http://192.168.1.6:8096` — confirm library is intact |
+| gaming-stack | Check each game server port is listening: `nc -zv 192.168.1.7 25566` (Minecraft), `25567` (testworld), `2302` (DayZ UDP) |
+| analysis-stack | Confirm relevant containers are running via `docker ps` |
+| security-stack | Confirm relevant containers are running via `docker ps` |
+
+**Log check via Loki (if Promtail is running on the host):**
+
+```bash
+# Query recent logs for a host — look for errors or restarts
+curl -G "http://192.168.20.12:3100/loki/api/v1/query_range" \
+  --data-urlencode 'query={host="<hostname>"} |= "error"' \
+  --data-urlencode "start=$(date -d '5 minutes ago' +%s)000000000" \
+  --data-urlencode "end=$(date +%s)000000000" \
+  | jq '.data.result[].values[][1]'
+```
+
+**Confirm legacy Portainer no longer manages the endpoint:**
+
+After successful migration, the endpoint should show as offline or absent in
+legacy Portainer (`http://192.168.1.4:9000`). Verify with the API token:
+
+```bash
+./with-secrets bash -c '
+curl -sf -H "X-API-Key: $PORTAINER_TOKEN" http://192.168.1.4:9000/api/endpoints \
+  | jq "[.[] | select(.Name==\"<stack-name>\") | {Name, Status}]"'
+# Status 2 = offline (agent no longer paired with legacy)
+```
+
+---
+
+## Back-out Procedure
+
+Application services are never stopped during migration — only the portainer-agent
+container is reset. Back-out is therefore safe to run at any point without
+disrupting running services.
+
+### Per-host back-out
+
+If a migration fails or a stack cannot be verified, back out the affected host:
+
+```bash
+# On the application host (via pct exec or SSH)
+ssh root@pve.gibbsgreatly.xyz "pct exec <vmid> -- bash -c '
+  # Remove iptables block if the playbook left it in place
+  iptables -D INPUT -s 192.168.1.4 -p tcp --dport 9001 -j DROP 2>/dev/null || true
+
+  # Reset agent — legacy Portainer reconnects within ~3 seconds
+  cd /opt/portainer-agent && docker compose down && docker compose up -d
+'"
+```
+
+Legacy Portainer polls continuously. Once the agent container is fresh,
+legacy Portainer reclaims it automatically.
+
+### After back-out
+
+- Confirm the endpoint shows Status 1 in legacy Portainer
+- Confirm the endpoint shows Status 2 (offline) in infra Portainer, then
+  delete the stale endpoint from infra Portainer via the UI or:
+
+```bash
+curl -sf -X DELETE http://192.168.20.20:9000/api/endpoints/<endpoint-id> \
+  -H "Authorization: Bearer $JWT"
+```
+
+- Diagnose the failure before retrying (missing env vars, compose issue,
+  network reachability) — do not retry blind
+
+### Failure modes and responses
+
+| Failure | Response |
+|---|---|
+| Agent won't start after `docker compose up` | Check compose file and image availability on the host; back-out not needed since legacy will reconnect once agent is up |
+| Infra Portainer can't reach agent (endpoint stays Status 2) | Check `mgmt_seg → 192.168.1.x:9001` routing; verify agent is listening on port 9001 |
+| Stack fails to deploy (compose error) | Containers are still running; fix compose in infra Portainer and redeploy; no back-out needed |
+| Stack deploys but service is unhealthy | Check container logs; app data is on host volumes and untouched; fix config and restart stack |
+| Multiple hosts in bad state | Run per-host back-out on each; legacy Portainer resumes control |
+
+---
 
 ### 7. Trigger backup
 
@@ -271,8 +382,11 @@ infrastructure still deploys cleanly with the migrated Portainer state.
 
 ## Pre-conditions
 
-- [x] Sprint 01 complete: backup and restore validated (2026-06-19 — full destroy+apply+restore cycle confirmed)
-- [ ] Existing Portainer admin password retrieved (not in SOPS — get from management-stack)
+- [x] Sprint 01 complete: backup and restore validated (2026-06-19 — full destroy+apply+restore cycle confirmed, re-validated 2026-06-20 with stacks and endpoints in backup)
+- [x] Legacy Portainer API access confirmed: `PORTAINER_TOKEN` in SOPS is valid (verified 2026-06-20)
 - [x] MikroTik rule: `mgmt_seg → 192.168.1.0/24:9001` in place (confirmed 2026-06-19 — no changes needed)
-- [ ] Inventory of stacks and any Portainer-only secrets (step 2) complete before proceeding
+- [x] Stack inventory complete (2026-06-20): compose files retrieved, no Portainer-stored secrets on migration targets
 - [x] Version compatibility confirmed: legacy 2.33.6 > infra 2.27.3, Option B (re-create stacks) only
+- [ ] DayZ Steam credentials (`USERNAME`, `PASSWRD`) moved to SOPS before committing `gaming-stack/docker-compose.yml`
+- [ ] Compose files committed to repo for each migration target
+- [ ] VMIDs confirmed: torrent-stack=100, media-stack=102, gaming-stack=103, analysis-stack=110, security-stack=109

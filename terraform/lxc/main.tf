@@ -40,6 +40,8 @@ locals {
     lab_subnet_infra_cidr = var.lab_subnet_infra_cidr
     lab_subnet_build_cidr = var.lab_subnet_build_cidr
     proxmox_host          = var.proxmox_host
+    dayz_steam_username   = var.dayz_steam_username
+    dayz_steam_password   = var.dayz_steam_password
   }
   stack = yamldecode(templatefile(var.stack_yaml_path, local.stack_template_vars))
 
