@@ -247,3 +247,15 @@ variable "lab_subnet_build_cidr" {
   type        = string
   default     = ""
 }
+
+variable "dayz_steam_username" {
+  description = "Steam username for DayZ server authentication"
+  type        = string
+  default     = ""
+}
+
+variable "dayz_steam_password" {
+  description = "Steam password for DayZ server authentication"
+  type        = string
+  default     = ""
+}
