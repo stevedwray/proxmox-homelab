@@ -69,13 +69,13 @@
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
     grafana_version: "11.6.0"
-    loki_version: "3.0.0"
+    victorialogs_version: "v1.24.0-victorialogs"
     promtail_version: "3.0.0"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
-    loki_image: "{{ monitoring_registry_host }}/dockerhub/grafana/loki:{{ loki_version }}"
+    victorialogs_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-logs:{{ victorialogs_version }}"
     promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.49.1"
@@ -148,7 +148,6 @@
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/harbor-findings-exporter", mode: "0750" }
-        - { path: "{{ monitoring_compose_dir }}/loki", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
     - name: Write VictoriaMetrics scrape config
@@ -267,10 +266,10 @@
                 - targets:
                     - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8428"
 
-            - job_name: loki
+            - job_name: victorialogs
               static_configs:
                 - targets:
-                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:3100"
+                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:9428"
 
             - job_name: grafana
               static_configs:
@@ -293,45 +292,6 @@
                     stack: step-ca-stack
       notify: Restart VictoriaMetrics
 
-    - name: Write Loki configuration
-      ansible.builtin.copy:
-        dest: "{{ monitoring_compose_dir }}/loki/config.yml"
-        mode: "0644"
-        content: |
-          auth_enabled: false
-          server:
-            http_listen_port: 3100
-          common:
-            path_prefix: /loki
-            storage:
-              filesystem:
-                chunks_directory: /loki/chunks
-                rules_directory: /loki/rules
-            replication_factor: 1
-            ring:
-              kvstore:
-                store: inmemory
-          schema_config:
-            configs:
-              - from: 2024-01-01
-                store: tsdb
-                object_store: filesystem
-                schema: v13
-                index:
-                  prefix: index_
-                  period: 24h
-          limits_config:
-            allow_structured_metadata: false
-            volume_enabled: true
-            retention_period: 30d
-          compactor:
-            working_directory: /loki/compactor
-            compaction_interval: 10m
-            retention_enabled: true
-            delete_request_store: filesystem
-            retention_delete_delay: 2h
-            retention_delete_worker_count: 150
-
     - name: Write Promtail configuration
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/promtail-config.yml"
@@ -345,7 +305,7 @@
             filename: /tmp/positions.yaml
 
           clients:
-            - url: http://loki:3100/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+            - url: http://victorialogs:9428/insert/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
 
           scrape_configs:
             - job_name: varlogs
@@ -385,10 +345,11 @@
               url: http://victoriametrics:8428  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               isDefault: true
               editable: true
-            - name: Loki
-              type: loki
+            - name: VictoriaLogs
+              type: victoriametrics-logs-datasource
+              uid: VictoriaLogs
               access: proxy
-              url: http://loki:3100  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+              url: http://victorialogs:9428  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               editable: true
             - name: Harbor Findings
               type: yesoreyeram-infinity-datasource
@@ -473,7 +434,7 @@
               environment:
                 GF_SERVER_ROOT_URL: "{{ grafana_public_url }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "{{ 'true' if grafana_oauth_enabled else 'false' }}"
-                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
+                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource,victoriametrics-logs-datasource"
                 GF_AUTH_GENERIC_OAUTH_NAME: "{{ grafana_oauth_name }}"
                 GF_AUTH_GENERIC_OAUTH_SCOPES: "{{ grafana_oauth_scopes }}"
                 GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ grafana_oauth_auth_url }}"
@@ -496,18 +457,19 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
-                - loki
+                - victorialogs
 
-            loki:
-              image: {{ loki_image }}
-              container_name: loki
+            victorialogs:
+              image: {{ victorialogs_image }}
+              container_name: victorialogs
               restart: unless-stopped
               ports:
-                - "3100:3100"
-              command: -config.file=/etc/loki/config.yml
+                - "9428:9428"
               volumes:
-                - loki-data:/loki
-                - ./loki/config.yml:/etc/loki/config.yml:ro
+                - victorialogs-data:/vlogs
+              command:
+                - -storageDataPath=/vlogs
+                - -retentionPeriod=30d
 
             promtail:
               image: {{ promtail_image }}
@@ -519,7 +481,7 @@
                 - /var/run/docker.sock:/var/run/docker.sock:ro
                 - ./promtail-config.yml:/etc/promtail/config.yml:ro
               depends_on:
-                - loki
+                - victorialogs
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}
@@ -559,7 +521,7 @@
           volumes:
             vm-data: {}
             grafana-data: {}
-            loki-data: {}
+            victorialogs-data: {}
       no_log: true
       register: monitoring_compose_definition
 
@@ -680,15 +642,15 @@
       until: vm_health.status == 200
       when: not ansible_check_mode
 
-    - name: Wait for Loki readiness endpoint
+    - name: Wait for VictoriaLogs health endpoint
       ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:3100/ready"  # nosonar: ansible:S5332 — Loki health check on private SDN
+        url: "http://{{ ansible_host }}:9428/health"  # nosonar: ansible:S5332 — VictoriaLogs health check on private SDN
         method: GET
         status_code: 200
-      register: loki_health
+      register: victorialogs_health
       retries: 30
       delay: 10
-      until: loki_health.status == 200
+      until: victorialogs_health.status == 200
       when: not ansible_check_mode
 
     - name: Wait for Harbor findings exporter metrics endpoint

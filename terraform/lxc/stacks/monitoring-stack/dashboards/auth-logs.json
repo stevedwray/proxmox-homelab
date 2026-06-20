@@ -10,7 +10,7 @@
   "links": [],
   "panels": [
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -24,7 +24,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum by (host) (count_over_time({host=~\"$host\"} |= \"Accepted\" |= \"sshd\" [5m]))",
+          "expr": "{host=~\"$host\"} |= \"Accepted\" |= \"sshd\" | stats count() by (host)",
           "legendFormat": "{{host}}",
           "refId": "A"
         }
@@ -33,7 +33,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -47,7 +47,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum by (host) (count_over_time({host=~\"$host\"} |= \"Failed password\" |= \"sshd\" [5m]))",
+          "expr": "{host=~\"$host\"} |= \"Failed password\" |= \"sshd\" | stats count() by (host)",
           "legendFormat": "{{host}}",
           "refId": "A"
         }
@@ -56,7 +56,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -70,7 +70,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum by (host) (count_over_time({host=~\"$host\"} |= \"sudo\" [5m]))",
+          "expr": "{host=~\"$host\"} |= \"sudo\" | stats count() by (host)",
           "legendFormat": "{{host}}",
           "refId": "A"
         }
@@ -79,7 +79,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 12 },
       "id": 4,
@@ -101,7 +101,7 @@
       "type": "logs"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "gridPos": { "h": 10, "w": 24, "x": 0, "y": 22 },
       "id": 5,
@@ -125,19 +125,19 @@
   ],
   "refresh": "",
   "schemaVersion": 38,
-  "tags": ["lab", "auth", "security", "loki"],
+  "tags": ["lab", "auth", "security", "victorialogs"],
   "templating": {
     "list": [
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "loki", "uid": "Loki" },
-        "definition": "label_values(host)",
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+        "definition": "field_values(host)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "host",
         "options": [],
-        "query": "label_values(host)",
+        "query": "field_values(host)",
         "refresh": 2,
         "regex": "",
         "sort": 1,

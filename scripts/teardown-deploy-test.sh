@@ -1756,12 +1756,12 @@ probe_stack_health() {
     monitoring-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready'"; then  # NOSONAR — unauthenticated health check on private SDN
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready' && curl -fsS 'http://${ip}:9428/health'"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
-        PLATFORM_HEALTH_DETAIL="grafana and victoriametrics ok"
+        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, and victorialogs ok"
       else
         PLATFORM_HEALTH_STATUS="failed"
-        PLATFORM_HEALTH_DETAIL="grafana or victoriametrics failed"
+        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, or victorialogs failed"
       fi
       ;;
     netbox-stack)

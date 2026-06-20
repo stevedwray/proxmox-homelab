@@ -304,7 +304,7 @@
       ansible.builtin.include_role:
         name: promtail
       vars:
-        promtail_loki_url: "{{ lab_ip_monitoring }}:3100"
+        promtail_loki_url: "{{ lab_ip_monitoring }}:9428"
         promtail_stack_name: dns-stack
 
   handlers:

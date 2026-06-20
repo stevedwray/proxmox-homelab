@@ -6,7 +6,7 @@ positions:
   filename: /tmp/positions.yaml
 
 clients:
-  - url: http://{{ promtail_loki_url }}/loki/api/v1/push
+  - url: http://{{ promtail_loki_url }}/insert/loki/api/v1/push
 
 scrape_configs:
 {% if promtail_scrape_varlogs | default(true) %}
