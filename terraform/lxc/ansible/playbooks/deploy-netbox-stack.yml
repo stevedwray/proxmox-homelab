@@ -23,6 +23,12 @@
     netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
     netbox_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
 
+  handlers:
+    - name: Restart Promtail
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ compose_file }}" restart promtail
+      changed_when: true
+
   tasks:
     - name: Ensure NetBox compose directory exists
       ansible.builtin.file:
@@ -87,6 +93,7 @@
                   replacement: netbox-stack
                 - target_label: stack
                   replacement: netbox-stack
+      notify: Restart Promtail
 
     - name: Debug netbox vars (sanity)
       ansible.builtin.debug:

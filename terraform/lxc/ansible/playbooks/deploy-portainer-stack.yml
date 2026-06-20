@@ -83,6 +83,12 @@
     portainer_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
     promtail_image: "grafana/promtail:{{ promtail_version }}"
 
+  handlers:
+    - name: Restart Promtail
+      ansible.builtin.command:
+        cmd: docker restart promtail
+      changed_when: true
+
   tasks:
     - name: Create Portainer compose directory
       ansible.builtin.file:
@@ -129,6 +135,7 @@
                   replacement: "{{ inventory_hostname }}"
                 - target_label: stack
                   replacement: portainer-stack
+      notify: Restart Promtail
 
     - name: Write docker-compose.yml
       ansible.builtin.copy:

@@ -610,6 +610,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ monitoring_compose_dir }}"
         state: present
+        remove_orphans: true
       when: not ansible_check_mode
 
     - name: Restart Harbor findings exporter after script updates

@@ -55,6 +55,12 @@
     authentik_internal_tls_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
     authentik_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
 
+  handlers:
+    - name: Restart Promtail
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ authentik_compose_path }}" restart promtail
+      changed_when: true
+
   tasks:
     - name: Create Authentik compose directory
       ansible.builtin.file:
@@ -107,6 +113,7 @@
                   replacement: "{{ inventory_hostname }}"
                 - target_label: stack
                   replacement: authentik-stack
+      notify: Restart Promtail
 
     - name: Create direct TLS asset directories
       ansible.builtin.file:
