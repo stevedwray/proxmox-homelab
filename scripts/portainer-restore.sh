@@ -22,7 +22,7 @@ set -euo pipefail
 PORTAINER_IP="${LAB_IP_PORTAINER:-192.168.20.20}"
 PORTAINER_PORT="9000"
 PORTAINER_VMID="20020"
-PVE_HOST="pve.gibbsgreatly.xyz"
+PVE_HOST="${PORTAINER_RESTORE_PVE_HOST:-pve.gibbsgreatly.xyz}"
 NAS_BACKUP_DIR="/mnt/nas-backup/portainer-backup"
 CONTAINER_NAME="portainer-portainer-1"
 WAIT_TIMEOUT=180

@@ -1538,8 +1538,14 @@ stack_apply() {
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
   guard_target
-  run_logged "provision-${stack}" \
-    "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
+  if [[ "${stack}" == "portainer-stack" ]]; then
+    run_logged "restore-${stack}" \
+      env PORTAINER_RESTORE_PVE_HOST="${TARGET_PVE_HOST}" \
+      "${WITH_SECRETS}" "${REPO_ROOT}/scripts/portainer-restore.sh"
+  else
+    run_logged "provision-${stack}" \
+      "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
+  fi
   validate_stack_smoke "${spec}"
 }
 
