@@ -10,7 +10,7 @@
   "links": [],
   "panels": [
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
       "id": 1,
@@ -32,7 +32,7 @@
       "type": "logs"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
@@ -46,7 +46,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "sum by (stack) (count_over_time({stack=~\"$stack\",host=~\"$host\"} |= \"$search\" [5m]))",
+          "expr": "{stack=~\"$stack\",host=~\"$host\"} |= \"$search\" | stats count() by (stack)",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }
@@ -55,7 +55,7 @@
       "type": "timeseries"
     },
     {
-      "datasource": { "type": "loki", "uid": "Loki" },
+      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
       "gridPos": { "h": 16, "w": 24, "x": 0, "y": 12 },
       "id": 3,
@@ -79,19 +79,19 @@
   ],
   "refresh": "",
   "schemaVersion": 38,
-  "tags": ["lab", "logs", "loki"],
+  "tags": ["lab", "logs", "victorialogs"],
   "templating": {
     "list": [
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "loki", "uid": "Loki" },
-        "definition": "label_values(stack)",
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+        "definition": "field_values(stack)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "stack",
         "options": [],
-        "query": "label_values(stack)",
+        "query": "field_values(stack)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
@@ -99,14 +99,14 @@
       },
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "loki", "uid": "Loki" },
-        "definition": "label_values(host)",
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+        "definition": "field_values(host)",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "host",
         "options": [],
-        "query": "label_values(host)",
+        "query": "field_values(host)",
         "refresh": 2,
         "regex": "",
         "sort": 1,
