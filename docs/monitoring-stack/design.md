@@ -21,16 +21,16 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) planned — see below.**
+**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) in progress — additive infrastructure deployed on pve (2026-06-21), Promtail removal and dashboard rebuild pending.**
 
 ### Running services
 
 | Service | Port | Notes |
 |---------|------|-------|
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
-| VictoriaLogs | `:9428` | `--retentionPeriod=30d`; named Docker volume on `/var/lib/docker` mount; `v1.24.0-victorialogs` |
+| VictoriaLogs | `:9428`, `:5140` | `--retentionPeriod=30d`; syslog TCP input on `:5140`; named Docker volume on `/var/lib/docker` mount; `v1.24.0-victorialogs` |
 | Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
-| Promtail (self) | — | Docker discovery + `/var/log` on monitoring-stack; pushes to VictoriaLogs |
+| Promtail (self) | — | Still running pending Phase 7C removal; will be removed once syslog collection is verified |
 
 ### Active scrape targets
 
@@ -419,34 +419,35 @@ The stdout→`info` / stderr→`err` mapping is real signal: many services write
 
 | # | Decision | Choice | Rationale |
 |---|----------|--------|-----------|
-| 1 | Docker log routing | `unixgram:///dev/log` → local rsyslog → VictoriaLogs TCP | rsyslog is the natural OS syslog concentrator; single forwarding rule covers Docker and system logs; local disk queue if VictoriaLogs is briefly unavailable |
+| 1 | Docker log routing | `tcp://127.0.0.1:10514` → local rsyslog imtcp → VictoriaLogs TCP | Direct TCP to rsyslog bypasses journald; journald mangles RFC 5424 APPNAME on the `/dev/log` path (see Implementation notes §3). rsyslog `imtcp` correctly parses RFC 5424 — container name preserved in full. System logs (non-Docker) still flow via imuxsock from journald. |
 | 2 | Stack identity in queries | `hostname` field (no synthetic `stack` label) | Each LXC hostname is already the stack name; `hostname` is set by the transport layer, not the application |
 | 2a | Container as metadata | `appname` field carries Docker container name via `tag` option | Grafana can filter by `appname=~"docker/authentik.*"` to drill into individual containers within a host |
-| 3 | Docker logging config scope | Daemon-level default in `docker_base` role (`daemon.json`) | Applies to all containers on every host including Harbor's installer-managed containers; persists through Harbor upgrades; no per-compose `logging:` blocks needed |
+| 3 | Docker logging config scope | Daemon-level default in `docker_base` role (`daemon.json`) | Applies to all containers on every host; persists through upgrades; no per-compose `logging:` blocks needed. Harbor exception: Harbor's installer-managed compose has per-service `logging:` blocks pointing to its own log aggregator — these override daemon default and are not overridden by us (accepted). |
 | 4 | Cutover strategy | Parallel — verify syslog per host, then remove Promtail | Safe; brief duplicate logs are acceptable; no risk of losing logs if syslog config is wrong |
 
 ---
 
 ### Architecture (confirmed)
 
+**Important**: the original design routed Docker container logs via `unixgram:///dev/log`. This was changed to `tcp://127.0.0.1:10514` after discovering that journald mangles RFC 5424 APPNAME on the `/dev/log` path — see Implementation notes §3.
+
 ```
 Each LXC host
-┌──────────────────────────────────────────────────────────────────┐
-│                                                                  │
-│  Docker containers (all hosts including Harbor)                  │
-│  ┌──────────────┐   Docker daemon syslog driver (daemon.json)   │
-│  │ any container├──────────────────────────────────────────────►│
-│  └──────────────┘                                                │
-│                                              ┌───────────────┐  │
-│  System logs                                 │               │  │
-│  auth, syslog, kern ────────────────────────►│   rsyslog     │  │
-│                                              │               │  │
-│  journald (step-ca, ci-runner)               │ - imuxsock    │  │
-│  via /dev/log ──────────────────────────────►│ - imjournal   │  │
-│                                              │               │  │
-│                                              └───────┬───────┘  │
-│                                                      │           │
-└──────────────────────────────────────────────────────┼──────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                                                                      │
+│  Docker containers (stdout/stderr via daemon syslog driver)          │
+│  ┌──────────────┐   syslog driver: tcp://127.0.0.1:10514            │
+│  │ any container├────────────────────────────────────────────►       │
+│  └──────────────┘                           ┌────────────────────┐  │
+│                                             │                    │  │
+│  System logs (auth, kern, daemon, etc)      │   rsyslog          │  │
+│  via journald → imuxsock ──────────────────►│                    │  │
+│                                             │  - imtcp :10514    │  │
+│                                             │  - imuxsock        │  │
+│                                             │    (journald path) │  │
+│                                             └────────┬───────────┘  │
+│                                                      │               │
+└──────────────────────────────────────────────────────┼──────────────┘
                                                        │ TCP :5140 (RFC 5424)
                                            ┌───────────▼────────────────┐
                                            │  VictoriaLogs              │
@@ -468,16 +469,18 @@ Each LXC host
 
 ### VictoriaLogs fields from syslog ingestion
 
-| Field | Source | Example values |
-|-------|--------|----------------|
-| `hostname` | syslog RFC 5424 header | `authentik-stack`, `harbor-stack` |
-| `appname` | syslog APPNAME field (container name for Docker) | `authentik-worker`, `postgresql`, `traefik` |
-| `facility` | syslog facility code | `daemon`, `auth`, `syslog`, `kern` |
-| `severity` | syslog severity | `debug`, `info`, `notice`, `warning`, `err`, `crit` |
-| `_msg` | syslog MSG field | the log line |
-| `procid` | syslog PROCID (PID) | `1234` |
+| Field | Source | Example values | Notes |
+|-------|--------|----------------|-------|
+| `hostname` | syslog RFC 5424 header | `authentik-stack`, `harbor-stack` | Stream label |
+| `app_name` | syslog APPNAME field | `docker/traefik`, `sshd`, `rsyslogd` | Regular field; stream label flag uses `appname` (without underscore) — VictoriaLogs stores it as `app_name` internally |
+| `facility` | syslog facility | `3` (daemon), `10` (auth) | Stream label (numeric code) |
+| `severity` | syslog severity | `6` (info), `3` (err) | Stream label (numeric code) |
+| `_msg` | syslog MSG field | the log line | |
+| `proc_id` | syslog PROCID (PID) | `1234` | Regular field |
 
 `severity` and `facility` are first-class LogsQL filter fields. Grafana variable queries against `field_values?field=severity` return real severity values — no regex heuristics.
+
+**Field naming note**: VictoriaLogs stores APPNAME as `app_name` (underscore) in regular fields. The `-syslog.streamFields.tcp` flag references `appname` (no underscore) to index it as a stream label. Testing showed `appname` appeared in the `_stream` label set while `app_name` holds the value in the message fields. Use `{appname=~"docker/.*"}` in LogsQL stream selectors and `app_name` for message-level filtering.
 
 ### Regression risks
 
@@ -495,69 +498,126 @@ Each LXC host
 
 ### Implementation tasks
 
-| # | Task | File(s) / Role | Regression risk |
-|---|------|----------------|-----------------|
-| 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: add `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=hostname,appname,facility,severity`, expose port 5140 | Low — additive only; existing Loki-push ingestion unaffected |
-| 2 | Update network docs | `docs/monitoring-stack/design.md` port table: add `:5140 syslog TCP` | None |
-| 3 | Create `rsyslog_forward` Ansible role | `terraform/lxc/ansible/roles/rsyslog_forward/` | Low — new role; only active when included in a playbook |
-| 4 | Configure Docker daemon syslog default | `docker_base` role: write `log-driver` and `log-opts` to `daemon.json`; handler to restart Docker | Medium — Docker restart on every host; plan per-host sequencing |
-| 5 | Add `rsyslog_forward` role to `lxc_base` | `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml` | Low — rsyslog install is additive before Docker stack deploy |
-| 6 | Verify syslog ingestion per host | After each host provisioned, query `{hostname="<host>"}` | Gate for next step |
-| 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | Medium — remove promtail service block, remove handler, remove Write Promtail config task, remove Promtail config content block |
-| 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | Medium — remove `promtail:` service; remove `/var/run/docker.sock` mount from compose |
-| 9 | Remove `promtail` role from systemd-Promtail stacks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | Medium — role removal; handler for Restart Promtail must also be removed |
-| 10 | Uninstall Promtail systemd service (idempotent) | Add task to above playbooks: `apt: name=promtail state=absent`, disable+stop systemd unit | Low — cleanup only |
-| 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: replace `{stack=~"$stack", host=~"$host"}` with `{hostname=~"$hostname"} severity=~"$severity"`; update variables | Medium — test all panel queries before deploy |
-| 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: replace `{job="varlogs"}` with `{facility="auth"}`; update host variable to use `hostname` field | Medium — verify SSH/sudo events appear under `facility=auth` after cutover |
-| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: after provision, query VictoriaLogs for recent entries from at least one host | Low — additive check |
-| 14 | Provision all stacks on pve-test | Run full provision; verify ingestion, dashboards, severity filter | Gate for promotion |
-| 15 | Full teardown + redeploy on pve-test | Promotion gate for `baseline/teardown-validated` | Required for promotion |
+| # | Task | File(s) / Role | Status (2026-06-21) |
+|---|------|----------------|---------------------|
+| 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=["hostname","appname","facility","severity"]`, port 5140 | ✅ deployed on pve |
+| 2 | Update network docs | `docs/monitoring-stack/design.md` port table | ✅ done |
+| 3 | Create `rsyslog_forward` Ansible role | `terraform/lxc/ansible/roles/rsyslog_forward/` — installs rsyslog, writes `/etc/rsyslog.d/90-victorialogs.conf`, imtcp listener on `127.0.0.1:10514`, forwards all to VictoriaLogs:5140 | ✅ role created and running on all provisioned stacks |
+| 4 | Configure Docker daemon syslog default | `docker_base` role `daemon.json`: `log-driver=syslog`, `syslog-address=tcp://127.0.0.1:10514`, `syslog-format=rfc5424`, `tag=docker/{{.Name}}`; conditional `recreate: always` when daemon config changes | ✅ deployed; pending re-provision after §3 APPNAME fix |
+| 5 | Add `rsyslog_forward` role to `lxc_base` | `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml` | ✅ done |
+| 6 | Verify syslog ingestion per host | Query `{hostname="<host>"}` after each provision | ⏳ system logs confirmed working; Docker container logs pending re-provision with TCP fix |
+| 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ⏳ Phase 7C — after Docker container log verification |
+| 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ⏳ Phase 7C |
+| 9 | Remove `promtail` role from systemd-Promtail stacks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ⏳ Phase 7C |
+| 10 | Uninstall Promtail systemd service (idempotent) | `apt: name=promtail state=absent`, disable+stop systemd unit | ⏳ Phase 7C |
+| 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: `{hostname=~"$hostname"}`, severity variable | ⏳ Phase 7D |
+| 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="auth"}` | ⏳ Phase 7D |
+| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
+| 14 | Provision all stacks on pve-test | Full provision; verify ingestion, dashboards, severity filter | ⏳ Phase 7E |
+| 15 | Full teardown + redeploy on pve-test | Promotion gate for `baseline/teardown-validated` | ⏳ Phase 7E |
 
-### rsyslog_forward role outline
+### Implementation notes (Phase 7 — live deployment on pve, 2026-06-21)
 
-The role needs to:
-1. Install `rsyslog` package
-2. Write `/etc/rsyslog.d/90-victorialogs.conf` using Ansible template, parameterised by `rsyslog_forward_target` (defaults to `LAB_IP_MONITORING:5140`)
-3. Enable and start rsyslog service
+These are issues discovered during live deployment and their resolutions. Read before making changes to the syslog collection path.
+
+#### §1 — VictoriaLogs `-syslog.streamFields.tcp` requires JSON array format
+
+**Symptom**: VictoriaLogs crashed on startup with:
+```
+cannot parse -syslog.streamFields.tcp="hostname" for -syslog.listenAddr.tcp=":5140":
+invalid character 'h' looking for beginning of value
+```
+**Root cause**: The flag expects a JSON array string `["hostname","appname","facility","severity"]`, not a comma-separated list.
+**Fix**: Wrap the flag value in single quotes in the YAML compose `command:` block to prevent YAML from interpreting the JSON array:
+```yaml
+command:
+  - '-syslog.streamFields.tcp=["hostname","appname","facility","severity"]'
+```
+**Commit**: `fix(monitoring): correct syslog.streamFields.tcp flag to JSON array format`
+
+#### §2 — `docker compose up -d` does not recreate containers when `daemon.json` changes
+
+**Symptom**: After provisioning a stack with the syslog log driver in daemon.json, `docker inspect <container>` showed `json-file` — the old driver. The containers were running fine but using the old log config.
+**Root cause**: `docker compose up -d` only recreates containers when their compose service definition changes. `daemon.json` is external to compose — Docker daemon restart (triggered by the handler) restarts containers, but they restart with whatever log config they were originally created with, not the new daemon default.
+**Fix**: Register the daemon.json write task result in each playbook (`register: docker_daemon_config`), then pass `recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"` to the `community.docker.docker_compose_v2` task. For the NetBox playbook (uses shell-based compose), pass `{{ '--force-recreate' if docker_daemon_config.changed else '' }}` in the command string.
+**One-time remediation**: For stacks already provisioned before this fix, manually ran `docker compose up -d --force-recreate` via SSH on `/opt/monitoring-stack`, `/opt/authentik-stack`, `/opt/harbor-cadvisor`.
+**Commit**: `fix(ansible): force-recreate containers when Docker log driver changes`
+
+#### §3 — APPNAME truncated at `/` via the journald path (CRITICAL)
+
+**Symptom**: After provisioning proxy-stack, sent a test message with `logger -t 'docker/test-container' 'phase7 test'`. VictoriaLogs received it but showed `app_name: "docker"` — the container name portion was lost. Traefik container logs were not appearing in VictoriaLogs at all.
+**Root cause**: Docker's syslog driver with `syslog-address: unixgram:///dev/log` writes to journald's socket. journald receives the RFC 5424 message and converts it to RFC 3164 format when forwarding to rsyslog's syslog socket. In this conversion, the APPNAME field `docker/traefik` is truncated at `/` because rsyslog's traditional BSD syslog parser treats `/` as a separator in the TAG field. The `$programname` variable (which maps to APPNAME in the RFC 5424 output template) is extracted as everything before the first `[` or `/`. Result: container name is entirely lost in transport.
+**Fix**: Bypass journald entirely. Configure rsyslog to listen on a local TCP socket that Docker connects to directly:
+- rsyslog: add `module(load="imtcp")` + `input(type="imtcp" port="10514" address="127.0.0.1")` in `90-victorialogs.conf`
+- Docker daemon.json: change `syslog-address` from `unixgram:///dev/log` to `tcp://127.0.0.1:10514`
+- rsyslog's `imtcp` module correctly parses the full RFC 5424 message including APPNAME with `/` characters
+- System logs (non-Docker) continue to flow via journald → rsyslog `imuxsock` as before — no change there
+**Files changed**: `roles/rsyslog_forward/templates/victorialogs.conf.j2`, `roles/docker_base/templates/daemon.json.j2`, and inline daemon.json in all 9 stack playbooks
+**Status**: Fix implemented (2026-06-21), pending re-provision of all stacks
+
+#### §4 — Harbor containers use per-service log config (not overridable via daemon default)
+
+**Symptom**: After deploying Harbor and enabling the syslog daemon default, Harbor containers continued using their original log driver.
+**Root cause**: Harbor's installer-managed `docker-compose.yml` (at `/opt/harbor/`) contains per-service `logging:` blocks that send to `tcp://localhost:1514` (Harbor's built-in log aggregator). Per-service config takes precedence over the daemon default. We do not control this file.
+**Resolution**: Accepted as expected behavior. Harbor's own log aggregator handles Harbor container logs internally. Only cAdvisor (managed by our `/opt/harbor-cadvisor/` compose) uses the daemon default and sends via syslog.
+
+---
+
+### rsyslog_forward role
+
+Role at `terraform/lxc/ansible/roles/rsyslog_forward/`. What it does:
+1. Installs `rsyslog` package
+2. Writes `/etc/rsyslog.d/90-victorialogs.conf` via Jinja2 template, parameterised by `rsyslog_forward_target_host` (defaults to `$LAB_IP_MONITORING`) and `rsyslog_forward_target_port` (default `5140`)
+3. Enables and starts rsyslog service
 4. Handler: restart rsyslog on config change
 
-Forwarding config (RFC 5424, TCP, queue for resilience):
+Forwarding config (actual deployed template):
 
 ```
-# Forward all messages to VictoriaLogs syslog input
+# Accept Docker container logs directly via TCP on localhost, bypassing journald.
+# journald mangles RFC 5424 APPNAME on the /dev/log path (truncates at '/'),
+# which would lose the container name from docker/<name> tags.
+module(load="imtcp")
+input(type="imtcp" port="10514" address="127.0.0.1")
+
+# Forward all syslog messages to VictoriaLogs TCP syslog input.
+# Queue persists to disk so messages survive a brief VictoriaLogs outage.
 $WorkDirectory /var/spool/rsyslog
-$ActionQueueFileName fwdVL
-$ActionQueueMaxDiskSpace 64m
-$ActionQueueSaveOnShutdown on
-$ActionQueueType LinkedList
-$ActionResumeRetryCount -1
+
 *.* action(type="omfwd"
-     target="{{ rsyslog_forward_target_host }}"
-     port="{{ rsyslog_forward_target_port }}"
-     protocol="tcp"
-     Template="RSYSLOG_SyslogProtocol23Format")
+           target="{{ rsyslog_forward_target_host }}"
+           port="{{ rsyslog_forward_target_port }}"
+           protocol="tcp"
+           Template="RSYSLOG_SyslogProtocol23Format"
+           queue.type="LinkedList"
+           queue.filename="victorialogs-fwd"
+           queue.maxDiskSpace="64m"
+           queue.saveOnShutdown="on"
+           action.resumeRetryCount="-1")
 ```
 
 `RSYSLOG_SyslogProtocol23Format` is the built-in rsyslog template for RFC 5424 (syslog protocol version 2.3) format.
 
 ### Docker daemon logging config
 
-To be added to `docker_base` role (in `daemon.json`):
+Deployed in `docker_base` role (`daemon.json`):
 
 ```json
 {
   "log-driver": "syslog",
   "log-opts": {
-    "syslog-address": "unixgram:///dev/log",
+    "syslog-address": "tcp://127.0.0.1:10514",
     "syslog-format": "rfc5424",
     "tag": "docker/{{.Name}}"
   }
 }
 ```
 
-The `tag` value `docker/{{.Name}}` sets the syslog `APPNAME` to e.g. `docker/authentik-worker-1`. The `docker/` prefix distinguishes Docker container entries from native system processes (`sshd`, `cron`, `rsyslogd`) in the same syslog stream. In Grafana, the `appname` dropdown will show `docker/authentik-worker-1` (container) alongside `sshd` (system) — cleanly separated by prefix.
+The `tag` value `docker/{{.Name}}` sets the syslog APPNAME to e.g. `docker/authentik-worker-1`. The `docker/` prefix distinguishes Docker container entries from native system processes (`sshd`, `cron`, `rsyslogd`) in the same syslog stream. In LogsQL, `{appname=~"docker/.*"}` selects all Docker container logs; `{appname="docker/traefik"}` selects a specific container.
 
-> **Note**: Changing `daemon.json` requires a Docker daemon restart. The `docker_base` role already has a `Restart Docker` handler — the daemon.json write task should notify it. After the restart, `docker logs <container>` will not work for newly started containers. Logs exist in VictoriaLogs only. This is the expected trade-off of the syslog driver.
+`tcp://127.0.0.1:10514` sends directly to rsyslog's imtcp listener on the same host. This bypasses journald and preserves the full APPNAME including the `/container-name` portion (see Implementation notes §3).
+
+> **Operational note**: With the `syslog` driver, `docker logs <container>` does not work — there is no local JSON file. Container logs exist only in VictoriaLogs. This is the expected trade-off. During debugging of container startup issues before VictoriaLogs is available (e.g. fresh provision), temporarily switch back to `json-file` in daemon.json, restart Docker, recreate the container, then switch back.
 
 ### Branch
 
