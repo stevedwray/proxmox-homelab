@@ -28,10 +28,11 @@
           {
             "insecure-registries": ["{{ docker_registry_host }}"],
             "dns": ["{{ monitoring_lab_ip_dns }}"],
-            "log-driver": "json-file",
+            "log-driver": "syslog",
             "log-opts": {
-              "max-size": "10m",
-              "max-file": "3"
+              "syslog-address": "unixgram:///dev/log",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker/{{.Name}}{% endraw %}"
             },
             "storage-driver": "overlay2"
           }
@@ -465,11 +466,14 @@
               restart: unless-stopped
               ports:
                 - "9428:9428"
+                - "5140:5140"
               volumes:
                 - victorialogs-data:/vlogs
               command:
                 - -storageDataPath=/vlogs
                 - -retentionPeriod=30d
+                - -syslog.listenAddr.tcp=:5140
+                - -syslog.streamFields.tcp=hostname,appname,facility,severity
 
             promtail:
               image: {{ promtail_image }}

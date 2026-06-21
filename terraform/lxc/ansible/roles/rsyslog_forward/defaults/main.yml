@@ -1,0 +1,3 @@
+---
+rsyslog_forward_target_host: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
+rsyslog_forward_target_port: "5140"

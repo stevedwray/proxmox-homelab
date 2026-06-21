@@ -13,10 +13,11 @@
     docker_daemon_config_base:
       dns:
         - "{{ docker_dns_server }}"
-      log-driver: json-file
+      log-driver: syslog
       log-opts:
-        max-size: 10m
-        max-file: "3"
+        syslog-address: "unixgram:///dev/log"
+        syslog-format: rfc5424
+        tag: "{% raw %}docker/{{.Name}}{% endraw %}"
       storage-driver: overlay2
     docker_daemon_config: >-
       {{

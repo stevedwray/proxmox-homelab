@@ -1,0 +1,14 @@
+# Forward all syslog messages to VictoriaLogs TCP syslog input.
+# Queue persists to disk so messages survive a brief VictoriaLogs outage.
+$WorkDirectory /var/spool/rsyslog
+
+*.* action(type="omfwd"
+           target="{{ rsyslog_forward_target_host }}"
+           port="{{ rsyslog_forward_target_port }}"
+           protocol="tcp"
+           Template="RSYSLOG_SyslogProtocol23Format"
+           queue.type="LinkedList"
+           queue.filename="victorialogs-fwd"
+           queue.maxDiskSpace="64m"
+           queue.saveOnShutdown="on"
+           action.resumeRetryCount="-1")

@@ -308,10 +308,11 @@
           {
             "insecure-registries": ["{{ authentik_registry_host }}"],
             "dns": ["{{ authentik_lab_ip_dns }}"],
-            "log-driver": "json-file",
+            "log-driver": "syslog",
             "log-opts": {
-              "max-size": "10m",
-              "max-file": "3"
+              "syslog-address": "unixgram:///dev/log",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker/{{.Name}}{% endraw %}"
             },
             "storage-driver": "overlay2"
           }

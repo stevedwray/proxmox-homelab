@@ -14,10 +14,11 @@
     harbor_docker_daemon_config:
       dns:
         - "{{ harbor_lab_ip_dns }}"
-      log-driver: json-file
+      log-driver: syslog
       log-opts:
-        max-size: 10m
-        max-file: "3"
+        syslog-address: "unixgram:///dev/log"
+        syslog-format: rfc5424
+        tag: "{% raw %}docker/{{.Name}}{% endraw %}"
       storage-driver: overlay2
   roles:
     - lxc_base

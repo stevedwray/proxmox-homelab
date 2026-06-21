@@ -132,6 +132,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | 9300 | Authentik metrics | authentik-stack |
 | 9443 | step-ca metrics (HTTPS) | step-ca-stack — TLS, needs CA or skip-verify |
 | 3100 | Loki ingest | monitoring-stack receives from Promtail agents |
+| 5140 | VictoriaLogs syslog TCP | monitoring-stack receives RFC 5424 from rsyslog on all LXCs |
 
 ---
 

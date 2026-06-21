@@ -1,0 +1,22 @@
+---
+- name: Install rsyslog
+  ansible.builtin.apt:
+    name: rsyslog
+    state: present
+    update_cache: false
+
+- name: Write VictoriaLogs forwarding config
+  ansible.builtin.template:
+    src: victorialogs.conf.j2
+    dest: /etc/rsyslog.d/90-victorialogs.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: Restart rsyslog
+
+- name: Enable and start rsyslog
+  ansible.builtin.systemd:
+    name: rsyslog
+    enabled: true
+    state: started
+    daemon_reload: false

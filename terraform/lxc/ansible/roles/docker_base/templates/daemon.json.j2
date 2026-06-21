@@ -1,10 +1,11 @@
 {
   "registry-mirrors": ["http://{{ docker_registry_mirror }}:{{ docker_registry_mirror_port | default(5000) }}"],
   "insecure-registries": ["{{ docker_registry_mirror }}:{{ docker_registry_mirror_port | default(5000) }}"],
-  "log-driver": "json-file",
+  "log-driver": "syslog",
   "log-opts": {
-    "max-size": "10m",
-    "max-file": "3"
+    "syslog-address": "unixgram:///dev/log",
+    "syslog-format": "rfc5424",
+    "tag": "{% raw %}docker/{{.Name}}{% endraw %}"
   },
   "storage-driver": "overlay2"
 }
