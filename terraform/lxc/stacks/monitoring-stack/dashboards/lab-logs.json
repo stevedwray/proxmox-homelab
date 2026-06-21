@@ -27,12 +27,20 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\" | stats by (hostname) count()",
+          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\" | stats by (hostname) count() as cnt",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
       "title": "Log Volume by Host",
+      "transformations": [
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [{ "targetField": "cnt", "destinationType": "number" }]
+          }
+        }
+      ],
       "type": "timeseries"
     },
     {
@@ -122,5 +130,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 5
+  "version": 6
 }
