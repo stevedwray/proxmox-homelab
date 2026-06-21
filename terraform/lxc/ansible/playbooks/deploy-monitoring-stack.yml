@@ -71,7 +71,7 @@
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
     grafana_version: "11.6.0"
-    victorialogs_version: "v1.24.0-victorialogs"
+    victorialogs_version: "v1.51.0-victorialogs"
     promtail_version: "3.0.0"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
