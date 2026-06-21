@@ -31,7 +31,7 @@
       ],
       "title": "SSH Successful Logins by Host",
       "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "cnt", "destinationType": "number" }] } }
+        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
       ],
       "type": "timeseries"
     },
@@ -57,7 +57,7 @@
       ],
       "title": "SSH Failed Logins by Host",
       "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "cnt", "destinationType": "number" }] } }
+        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
       ],
       "type": "timeseries"
     },
@@ -83,7 +83,7 @@
       ],
       "title": "Sudo Events by Host",
       "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "cnt", "destinationType": "number" }] } }
+        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
       ],
       "type": "timeseries"
     },
@@ -166,5 +166,5 @@
   "timezone": "browser",
   "title": "Auth Logs",
   "uid": "auth-logs",
-  "version": 5
+  "version": 6
 }

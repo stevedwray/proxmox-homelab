@@ -37,7 +37,7 @@
         {
           "id": "convertFieldType",
           "options": {
-            "conversions": [{ "targetField": "cnt", "destinationType": "number" }]
+            "conversions": [{ "targetField": "Value", "destinationType": "number" }]
           }
         }
       ],
@@ -130,5 +130,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 6
+  "version": 7
 }
