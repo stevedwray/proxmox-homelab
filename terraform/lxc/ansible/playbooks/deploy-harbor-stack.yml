@@ -32,6 +32,7 @@
         mode: "0644"
         content: "{{ harbor_docker_daemon_config | to_nice_json }}\n"
       notify: Restart Docker
+      register: harbor_daemon_config
 
     - name: Flush handlers to apply Docker daemon config before Harbor install
       ansible.builtin.meta: flush_handlers
@@ -216,6 +217,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ harbor_cadvisor_compose_dir }}"
         state: present
+        recreate: "{{ 'always' if harbor_daemon_config.changed else 'auto' }}"
 
 - name: Install and configure Promtail on Harbor host
   hosts: all

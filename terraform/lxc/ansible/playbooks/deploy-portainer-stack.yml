@@ -61,6 +61,7 @@
         mode: "0644"
         content: "{{ docker_daemon_config | to_nice_json }}\n"
       notify: Restart Docker
+      register: portainer_docker_daemon_config
 
     - name: Flush handlers to apply Docker daemon config
       ansible.builtin.meta: flush_handlers
@@ -187,6 +188,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ portainer_compose_dir }}"
         state: present
+        recreate: "{{ 'always' if portainer_docker_daemon_config.changed else 'auto' }}"
 
 - name: Initialise Portainer admin account
   hosts: all

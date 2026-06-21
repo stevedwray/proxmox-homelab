@@ -148,6 +148,7 @@
             "storage-driver": "overlay2"
           }
       notify: Restart Docker
+      register: docker_daemon_config
 
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
@@ -274,6 +275,7 @@
         cmd: >-
           docker compose -f {{ compose_file }} pull &&
           docker compose -f {{ compose_file }} up -d
+          {{ '--force-recreate' if docker_daemon_config.changed else '' }}
 
     - name: Wait for NetBox container to report healthy (best-effort)
       ansible.builtin.shell:

@@ -401,6 +401,7 @@
         project_src: "{{ authentik_compose_dir }}"
         state: present
         pull: "{{ 'never' if (authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0) else 'policy' }}"
+        recreate: "{{ 'always' if authentik_docker_daemon_config.changed else 'auto' }}"
       when: not ansible_check_mode
 
     - name: Restore host resolver to internal DNS after bootstrap fallback

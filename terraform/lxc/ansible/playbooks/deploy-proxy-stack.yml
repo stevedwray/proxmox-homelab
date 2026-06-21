@@ -28,6 +28,7 @@
             "storage-driver": "overlay2"
           }
       notify: Restart Docker
+      register: docker_daemon_config
 
     - name: Flush handlers to apply Docker daemon config before stack deploy
       ansible.builtin.meta: flush_handlers
@@ -358,4 +359,5 @@
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
+        recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"
       when: not ansible_check_mode
