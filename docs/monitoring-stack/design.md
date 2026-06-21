@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) in progress — 7A/7B/7C/7D complete on pve (2026-06-21). Phase 7E (pve-test provision + teardown gate) pending. One open dashboard issue: "Log Volume by Host" timeseries panel shows "Data is missing a number field" — see §7.**
+**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9.**
 
 ### Running services
 
@@ -503,7 +503,7 @@ Each LXC host
 | 7A | Enable VictoriaLogs syslog TCP input (`:5140`); create `rsyslog_forward` role; add to `lxc_base` | ✅ complete on pve |
 | 7B | Configure Docker daemon syslog default (`docker_base` role + all playbooks); verify ingestion | ✅ complete on pve |
 | 7C | Remove Promtail from all stacks (10 files: compose blocks, include_roles, vars, handlers) | ✅ complete on pve |
-| 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ dashboards working — one open issue (see §7c) |
+| 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ complete (2026-06-22) — all panels working, severity labels, appname filter |
 | 7E | Provision all stacks on pve-test; add smoke test to teardown harness; full teardown + redeploy cycle (promotion gate for `baseline/teardown-validated`) | ⏳ pending |
 
 ### Implementation tasks
@@ -606,10 +606,17 @@ The `by` keyword after a stats function is parsed as an alias name, not a groupi
 **Fix**: The `by` clause must precede the function: `| stats by (hostname) count()`.
 With an alias: `| stats by (hostname) count() as cnt`
 
-**7c — stats_query_range returns count values as strings; timeseries panel rejects them**
-The `stats_query_range` endpoint returns Prometheus matrix format where values are JSON strings (`"42"`, not `42`). The victoriametrics-logs-datasource v0.28.0 plugin does not convert these to numbers before handing them to timeseries panels. Result: "Data is missing a number field".
-**Attempted fix**: Added `convertFieldType` transformation targeting field `"Value"` (the plugin's internal field name). As of 2026-06-21 this is applied to all timeseries panels in both dashboards but the error persists — the transformation does not appear to be resolving it. **This is the one open issue going into Phase 7E.**
-To resume: investigate whether the plugin uses a different data frame structure for `stats_query_range` vs standard Prometheus matrix. Check the Grafana query inspector (panel → "Query inspector" → "Data") to see the actual field names and types returned by the plugin. May need to switch the panel type or use a different query approach. Grafana URL: `https://grafana.lab.gibbsgreatly.xyz`.
+**7c — stats query panels require explicit `queryType: "statsRange"` — resolved 2026-06-22**
+Without an explicit `queryType`, the victoriametrics-logs-datasource v0.28.0 plugin treats all queries (including `| stats by (...) count() as cnt`) as raw log queries. It returns results as log-panel data frames: a "Time" field and a "Line" field where each value is a JSON string like `{"cnt":"34","hostname":"proxy-stack"}`. There is no numeric field for a timeseries panel to plot, hence "Data is missing a number field".
+**Root cause confirmed via** `/api/ds/query`: querying without `queryType` returns `{name: "Line", type: "string"}` frames; querying with `queryType: "statsRange"` returns `{name: "Value", type: "number", frame: "float64"}` per-series frames — already converted to numbers by the plugin backend, no `convertFieldType` transformation needed.
+**Fix**: Add `"queryType": "statsRange"` to every timeseries panel target that uses a `| stats` query. Remove all `convertFieldType` transformations. Applied to all timeseries panels in `lab-logs.json` (Log Volume by Host) and `auth-logs.json` (SSH Successful, SSH Failed, Sudo Events). Commit: `work/syslog-collection`.
+
+#### §9 — `appname` is not the correct stream field name for APPNAME — use `app_name` — resolved 2026-06-22
+
+**Symptom**: The `appname` stream label in VictoriaLogs was always empty string. The `_stream` dict on syslog-ingested entries showed `{facility="3",hostname="...",severity="6"}` — no `appname` field. The Grafana dashboard `appname` variable (querying `field_values?field=appname`) returned only empty string with no real values.
+**Root cause**: VictoriaLogs stores the RFC 5424 APPNAME field internally as `app_name` (underscore). The `-syslog.streamFields.tcp` flag was configured as `["hostname","appname","facility","severity"]`. VictoriaLogs looked for a stream-eligible field named `appname` (no underscore), found nothing, and indexed the stream label as empty. The `app_name` regular field was correctly populated but was not indexed as a stream label.
+**Fix**: Change `-syslog.streamFields.tcp=["hostname","appname","facility","severity"]` to `-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]`. After redeploying VictoriaLogs, new entries carry `app_name` in their `_stream` dict. Dashboard variable updated to `field: "app_name"`. Panel queries use `app_name:~"$appname"` (message-level filter rather than stream selector) so the filter works for both pre-fix entries (where `app_name` is a message field only) and post-fix entries (where it is also a stream label). Pre-fix entries will age out at 30-day retention.
+**Commit**: `work/syslog-collection`
 
 #### §8 — Harbor containers use per-service log config (not overridable via daemon default)
 
@@ -696,4 +703,262 @@ The `tag` value `docker-{{.Name}}` sets the syslog APPNAME to e.g. `docker-authe
 
 ### Branch
 
-`work/syslog-collection` (current) — Phase 7A/7B/7C/7D complete on pve. One open issue: Lab Logs "Log Volume by Host" timeseries panel shows "Data is missing a number field" despite `convertFieldType` transformation (see §7c). Resume with Phase 7E (pve-test provision + teardown gate) once the dashboard issue is resolved or accepted.
+`work/syslog-collection` (current) — Phase 7A/7B/7C/7D complete on pve (2026-06-22). Dashboard issues resolved. Next: Phase 7E (pve-test provision + teardown gate), then operational fixes documented in §health-findings below.
+
+---
+
+## Phase 8 — VictoriaLogs MCP Server
+
+### Goal
+
+Expose VictoriaLogs query capabilities to Claude Code (and any MCP client) via the Model Context Protocol, enabling LLM-driven log analysis without ad-hoc shell sessions.
+
+The immediate motivation: systematic log health analysis (§health-findings) required constructing and running multiple API queries by hand. The same patterns, encoded as MCP tools, would make this kind of investigation a natural part of any working session.
+
+### Architecture
+
+**Local stdio MCP server** — a Python process on the dev machine, registered in `~/.claude/claude_code_config.json`. It makes HTTP requests to VictoriaLogs. No new lab infrastructure is required.
+
+```
+Claude Code session
+      │  MCP stdio
+      ▼
+victorialogs-mcp/server.py  (Python, runs on dev machine)
+      │  HTTP
+      ▼
+VictoriaLogs :9428  (monitoring-stack, 192.168.20.12)
+```
+
+```json
+// ~/.claude/claude_code_config.json
+{
+  "mcpServers": {
+    "victorialogs": {
+      "command": "python3",
+      "args": ["tools/victorialogs-mcp/server.py"],
+      "env": { "VICTORIALOGS_URL": "http://192.168.20.12:9428" }
+    }
+  }
+}
+```
+
+`VICTORIALOGS_URL` is non-secret (internal lab IP, no auth on VictoriaLogs). It can be hardcoded in the MCP config or read from `.env` at server startup.
+
+### Data model context
+
+Two data populations exist simultaneously. The MCP server's `schema_overview` tool must describe both so the LLM can write correct queries without hallucinating field names.
+
+| Population | Stream labels | Key fields | Expires |
+|---|---|---|---|
+| Syslog/RFC5424 (current) | `hostname`, `app_name`, `facility`, `severity` | `level`, `facility_keyword`, `proc_id` | permanent |
+| Promtail-era (legacy) | `host`, `stack`, `container` or `filename`, `job` | `logger`, `task_id`, `method`, `status`, `user.email` | ~30 days from 2026-06-21 |
+
+Important field behaviours:
+- `severity` is a **numeric string** (`"3"` not `"error"`); facility codes are also numeric
+- `app_name` starts with `docker-` for Docker containers, plain name for system services
+- `hostname` = LXC hostname = stack name (e.g. `netbox-stack`)
+- Docker stderr → severity `"3"` (err) regardless of application log level; this is a known false-positive source for container error counts
+
+### VictoriaLogs API endpoints (v1.51.0)
+
+| Endpoint | Returns | Notes |
+|---|---|---|
+| `/select/logsql/query` | NDJSON log lines | `query`, `start`, `end` (Unix epoch), `limit` |
+| `/select/logsql/hits` | `{hits:[{timestamps[], values[], total}]}` | Fast count-over-time; `step` is a duration string (`5m`, `1h`) |
+| `/select/logsql/stats_query_range` | Prometheus matrix format | `\| stats by (field) count() as cnt`; `step` is duration string |
+| `/select/logsql/field_values` | `{values:[{value, hits}]}` | Distinct values for a named field |
+| `/select/logsql/field_names` | `{values:[{value, hits}]}` | All fields present in matching logs |
+| `/select/logsql/streams` | `{values:[{value, hits}]}` | Distinct stream label combinations |
+
+### Proposed MCP tools
+
+| Tool | Inputs | Returns | VictoriaLogs endpoint |
+|---|---|---|---|
+| `search_logs` | `query`, `time_range` (`"1h"`/`"24h"`), `limit` (default 50) | Array of log entries with all fields | `/query` |
+| `count_logs` | `query`, `group_by` (field name), `time_range` | `{field_value: count}` dict | `/stats_query_range` |
+| `log_volume` | `query`, `time_range`, `step` | `[{time, count}]` | `/hits` |
+| `field_values` | `field`, `query`, `time_range`, `limit` | `[{value, hits}]` | `/field_values` |
+| `field_names` | `query`, `time_range` | `[{field, hits}]` | `/field_names` |
+| `schema_overview` | — | Static description of field model and example queries | (static) |
+
+`schema_overview` is required — without it an LLM will hallucinate field names. It should describe both data populations, numeric severity/facility codes, the `docker-` prefix convention, and example LogsQL patterns.
+
+`search_logs` must cap result size (hard max 500 entries). Encourage callers to use `count_logs` or `aggregate_logs` for "give me a summary" questions and `search_logs` only for specific event investigation.
+
+### Result size management
+
+Raw log queries can return hundreds of thousands of entries. Design guardrails:
+- `search_logs`: default `limit=50`, hard cap 500; tool description should recommend aggregate queries for summaries
+- `count_logs`: returns a dict, always bounded by number of distinct field values
+- `log_volume`: returns a list of time buckets, bounded by `time_range / step`
+
+### LogsQL quick reference (for tool descriptions)
+
+```
+# Stream selectors (indexed — fast):
+{hostname="netbox-stack"}                        # exact match
+{hostname=~".*-stack"}                           # regex
+{facility="4"}                                   # auth facility
+{severity=~"0|1|2|3"}                           # emerg through err
+
+# Word/phrase filter (full-text search):
+"Accepted publickey"                             # phrase
+error AND ssh                                    # AND
+_msg:~"Accepted|Failed"                          # regex on _msg
+
+# Field filter (message-level, covers pre-stream-label data too):
+app_name:="docker-netbox-netbox-1"              # exact
+app_name:~"docker-netbox-.*"                    # regex
+
+# Stats (group_by before function):
+| stats by (hostname) count() as cnt
+| stats by (hostname, severity) count() as cnt
+
+# Time range:  start/end accept Unix epoch or RFC3339
+```
+
+### Implementation plan
+
+| # | Task | File | Status |
+|---|---|---|---|
+| 1 | Create `tools/victorialogs-mcp/server.py` | Python, `mcp` SDK or `fastmcp` | ⏳ pending |
+| 2 | Create `tools/victorialogs-mcp/requirements.txt` | `mcp`, `httpx` | ⏳ pending |
+| 3 | Register in `~/.claude/claude_code_config.json` | Non-repo config | ⏳ pending |
+| 4 | Implement `schema_overview` tool | Static doc of field model | ⏳ pending |
+| 5 | Implement `search_logs`, `count_logs`, `log_volume` | Core query tools | ⏳ pending |
+| 6 | Implement `field_values`, `field_names` | Discovery tools | ⏳ pending |
+
+Prerequisite: Phase 7E must be complete before this becomes a teardown-gate concern. The MCP server is dev tooling, not stack infrastructure, so it does not block Phase 7E.
+
+---
+
+## Syslog Health Findings — 2026-06-22
+
+Systematic analysis of the VictoriaLogs dataset on 2026-06-22, querying across all 10 hosts over the last 24 hours (~185k log entries at the time). These are the distinct problems found, ranked by priority.
+
+The same query patterns used here would be encoded as MCP tools in Phase 8, making this kind of investigation reusable across sessions.
+
+### Summary
+
+| # | Issue | Scope | Priority | Fix location |
+|---|---|---|---|---|
+| 1 | VictoriaMetrics cannot scrape `http://:9100/metrics` (empty host) | monitoring-stack | High | scrape config in `deploy-monitoring-stack.yml` |
+| 2 | VictoriaMetrics cannot scrape `https://192.168.20.11:9443/metrics` (step-ca) | monitoring-stack | High | step-ca scrape job in same file |
+| 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | `rsyslog_forward` role config |
+| 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | `rsyslog_forward` role `omfwd` keepalive |
+| 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | cAdvisor container config or LXC template |
+| 6 | Promtail still running on portainer-stack | portainer-stack | Low | re-run `provision.sh --stack portainer-stack` |
+
+### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
+
+**Observed**: ~6,500 warn messages per day from `docker-victoriametrics`:
+```
+warn VictoriaMetrics/lib/promscrape/scrapework.go:385
+cannot scrape target "http://:9100/metrics" ({instance=":9100",job="node",...})
+```
+The instance label is `":9100"` — the IP is blank.
+
+**Cause**: A node_exporter entry in the VictoriaMetrics scrape config in `deploy-monitoring-stack.yml` resolves to an empty IP. Either a `LAB_IP_*` variable is unset at deploy time (producing `http://:9100`) or the scrape config has a placeholder left in.
+
+**Fix**: Audit `deploy-monitoring-stack.yml` `scrape.yml` content block. Find the node_exporter job entry with the blank IP. Either remove it (if it refers to a host not yet set up) or set the correct `LAB_IP_*` variable.
+
+### Finding 2 — VictoriaMetrics scraping `https://192.168.20.11:9443/metrics` (step-ca)
+
+**Observed**: ~2,880 warn messages per day:
+```
+warn cannot scrape target "https://192.168.20.11:9443/metrics" ({instance="192.168.20.11:9443",job="step-ca",...})
+```
+Every 30 seconds, continuously.
+
+**Cause**: The step-ca scrape job is configured with `scheme: https` but either the endpoint does not exist at that port, or VictoriaMetrics cannot verify the TLS certificate (step-ca uses the homelab CA, which is not in VictoriaMetrics's trust store). This was already noted in `Remaining Work` as a deferred item ("Mount homelab CA into VictoriaMetrics container").
+
+**Fix (option A — complete the deferred work)**: Mount the homelab CA cert into the VictoriaMetrics container. Add `tls_config.ca_file` to the step-ca scrape job.
+
+**Fix (option B — suppress until ready)**: Remove or comment out the step-ca scrape job entry until the CA mount is implemented. Eliminates ~2,880 warn lines per day with no data loss (step-ca metrics aren't being collected anyway).
+
+### Finding 3 — rsyslogd `imklog` permission denied on all LXC hosts
+
+**Observed**: 4–8 error events per host per day (fires on every rsyslog restart):
+```
+[rsyslogd] imklog: cannot open kernel log (/proc/kmsg): Permission denied
+[rsyslogd] activation of module imklog failed
+```
+Affects all 10 managed LXC hosts.
+
+**Cause**: Debian's default rsyslog package includes `imklog` (kernel log module) in `/etc/rsyslog.conf`. LXC containers do not have access to `/proc/kmsg` — this is a container security boundary.
+
+**Fix**: Add a line to the rsyslog_forward role's `victorialogs.conf.j2` template (or a separate snippet) that explicitly unloads or disables `imklog`:
+```
+# Disable kernel log module — LXC containers cannot access /proc/kmsg
+module(load="imklog" PermitNonKernelFacility="off")
+```
+Or more cleanly, write a `/etc/rsyslog.d/10-no-imklog.conf` snippet in the role that overrides the default `/etc/rsyslog.conf` include:
+```
+# Suppress imklog — not available in LXC containers
+module(load="imklog" PermitNonKernelFacility="off")
+```
+Alternatively, if the role owns `/etc/rsyslog.conf` entirely, replace the default with one that omits the `imklog` include. File: `terraform/lxc/ansible/roles/rsyslog_forward/`.
+
+### Finding 4 — rsyslog TCP connection drops to VictoriaLogs
+
+**Observed**: All 10 hosts experience periodic TCP connection drops to `192.168.20.12:5140` — 4–20 per host per day (102 total). rsyslog reconnects automatically and re-queues; no log data is lost. Each drop generates two error log lines from rsyslogd:
+```
+omfwd: remote server closed connection. Server is 192.168.20.12:5140.
+ptcp network driver: CheckConnection detected that peer closed connection.
+```
+
+**Cause**: VictoriaLogs closes idle TCP connections after a timeout (likely its default keepalive or idle-connection timeout). rsyslog's `omfwd` action does not send TCP keepalives by default, so idle periods (when a host has no log events for a while) cause the connection to be silently dropped by the remote side.
+
+**Fix**: Add `tcp.KeepAliveInterval` or configure keepalive in the `omfwd` action in `victorialogs.conf.j2`:
+```
+action(type="omfwd"
+       ...
+       tcp.KeepAliveInterval="30"
+       tcp.KeepAliveProbes="3"
+       tcp.KeepAliveTime="300")
+```
+This causes rsyslog to send TCP keepalive probes on the idle connection, preventing VictoriaLogs from timing it out. File: `terraform/lxc/ansible/roles/rsyslog_forward/templates/victorialogs.conf.j2`. Apply to both the system-log `omfwd` action and the docker-tcp ruleset `omfwd` action.
+
+### Finding 5 — cAdvisor cannot read `/etc/machine-id`
+
+**Observed**: Every 5 minutes on every host running cAdvisor (monitoring-stack, portainer-stack, harbor-stack, netbox-stack, authentik-stack, proxy-stack):
+```
+[docker-cadvisor] E info.go:119] Failed to get system UUID: open /etc/machine-id: no such file or directory
+```
+
+**Cause**: cAdvisor reads `/etc/machine-id` to generate a stable machine UUID for its metrics. LXC containers do not have `/etc/machine-id` by default; it's generated at first boot by `systemd-machine-id-setup` which the LXC template does not run.
+
+**Fix (option A — create `/etc/machine-id` in LXC template)**: Add a task to `lxc_base` that creates `/etc/machine-id` if absent:
+```yaml
+- name: Ensure /etc/machine-id exists
+  ansible.builtin.command: systemd-machine-id-setup
+  args:
+    creates: /etc/machine-id
+```
+
+**Fix (option B — bind-mount from host)**: In the cAdvisor Docker service definition, mount the host's `/etc/machine-id`:
+```yaml
+volumes:
+  - /etc/machine-id:/etc/machine-id:ro
+```
+This works if the LXC container can see the LXC host's `/etc/machine-id`, but may not be correct semantically (it would report the LXC host's UUID, not the container's).
+
+Option A is cleaner: gives each LXC a stable, unique UUID, which is also useful for other purposes. File: `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml`.
+
+### Finding 6 — Promtail still running on portainer-stack
+
+**Observed**: `docker-promtail` generates 29 error-level log entries per day on portainer-stack. The Promtail container is still running even though it was removed from the playbook in Phase 7C.
+
+**Cause**: `deploy-portainer-stack.yml` no longer includes the Promtail container in its compose definition (commit `b12db11`), but the playbook has not been re-run since. The running Promtail container predates the removal.
+
+**Fix**: Re-run `provision.sh --stack portainer-stack`. The compose reconciliation will remove the container. Verify with `{hostname="portainer-stack"} app_name:~"docker-promtail"` returning no results in VictoriaLogs after the run.
+
+Also check harbor-stack — it had Promtail as a systemd service (`docker/promtail` entries visible in Promtail-era stream labels). Task 10 in the Phase 7 implementation table marked this as N/A, but the service may still be installed. Verify: `ssh root@$LAB_IP_HARBOR systemctl status promtail` and stop/disable if present.
+
+### Known behaviours (not bugs)
+
+**Docker stderr → severity=3 inflation**: All Docker containers write stderr output as syslog severity `3` (err), regardless of the application's actual log level. This is a Docker syslog driver behaviour — Docker maps stderr→err, stdout→info. The result is that aggregate "error" counts by host and the `severity` stream label are not reliable indicators of real error rates for containerised services. In VictoriaLogs, `severity` is meaningful for journald/systemd service logs (where systemd correctly maps the journal priority to syslog severity) but is a blunt instrument for Docker container logs.
+
+To get the real log level from a Docker container, parse the `_msg` content — most structured loggers (Authentik, NetBox, VictoriaMetrics) embed their level in a JSON field (`"level"`, `"severity"`, or similar). This is a target use case for the MCP server's `schema_overview` tool and for future structured log extraction work.
+
+**cAdvisor machine-info message fragmentation**: cAdvisor logs its complete machine hardware description at startup as a single large structured string. This exceeds the rsyslog message size limit and gets split across multiple syslog frames. The continuation frames lack correct syslog headers, so VictoriaLogs parses them with garbage `hostname` values (`localhost`, `df`, numeric strings like `04886016`). These appear as valid log entries with `facility="1"` (user) and `severity="5"` (notice). They are harmless and will be eliminated by fixing Finding 5 (once cAdvisor has `/etc/machine-id`, the machine-info log line disappears from the output) or by applying rsyslog `$MaxMessageSize` limits.
