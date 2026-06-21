@@ -181,8 +181,6 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_CI_RUNNER') }}:9100"]
                   labels: {stack: ci-runner-01}
-                - targets: ["{{ lookup('env', 'LAB_IP_PROXMOX_HOST') }}:9100"]
-                  labels: {stack: pve-test}
 
             - job_name: cadvisor
               static_configs:

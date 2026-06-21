@@ -37,7 +37,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Job | Instance | Status |
 |-----|----------|--------|
 | node_exporter | all 10 managed LXCs | ✅ up |
-| node_exporter | 192.168.1.2 (Proxmox host) | ❌ down — node_exporter not installed on bare-metal host |
+| node_exporter | Proxmox host | intentionally not scraped — keep bare-metal host services minimal |
 | cadvisor | authentik, monitoring, portainer, proxy, harbor, netbox stacks | ✅ up |
 | coredns | 192.168.20.13:9153 | ✅ up |
 | traefik | 192.168.30.10:8082 | ✅ up |
@@ -153,7 +153,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | netbox-stack | infra_seg | ✓ | ✓ | NetBox :8080/metrics | ✓ (Docker) |
 | ci-runner-01 | build_seg | ✓ | — | — | ✓ (systemd) |
 
-**Proxmox host** (192.168.1.2): node_exporter must be installed manually — not managed by LXC provisioning pipeline.
+**Proxmox host** (`$PROXMOX_HOST`): host performance metrics are intentionally not scraped. Proxmox host logs should be forwarded separately via remote syslog when needed, rather than by installing monitoring agents on the host.
 
 ### Application metrics endpoints
 
@@ -185,11 +185,7 @@ On pve-test, the full stack must already be up (harbor-stack, authentik-stack, p
 
 ## Variables and Secrets
 
-```
-LAB_IP_PROXMOX_HOST=192.168.1.2    # Proxmox bare-metal host — for node_exporter scrape
-```
-
-All other `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
+All `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
 
 No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-internal, no auth).
 
@@ -199,7 +195,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-i
 
 | Item | Notes |
 |------|-------|
-| Proxmox host node_exporter | Manual bootstrap — install node_exporter directly on 192.168.1.2 |
+| Proxmox host logs | Configure bare-metal Proxmox remote syslog forwarding to VictoriaLogs/syslog listener; do not install node_exporter for host performance metrics |
 | step-ca scrape job | Mount homelab CA into VictoriaMetrics container; add `scheme: https` + `tls_config.ca_file` to scrape config |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
@@ -858,9 +854,9 @@ cannot scrape target "http://:9100/metrics" ({instance=":9100",job="node",...})
 ```
 The instance label is `":9100"` — the IP is blank.
 
-**Cause**: A node_exporter entry in the VictoriaMetrics scrape config in `deploy-monitoring-stack.yml` resolves to an empty IP. Either a `LAB_IP_*` variable is unset at deploy time (producing `http://:9100`) or the scrape config has a placeholder left in.
+**Cause**: A node_exporter entry in the VictoriaMetrics scrape config in `deploy-monitoring-stack.yml` resolved from the old `LAB_IP_PROXMOX_HOST` variable. That variable was absent in the active environment, producing `http://:9100`.
 
-**Fix**: Audit `deploy-monitoring-stack.yml` `scrape.yml` content block. Find the node_exporter job entry with the blank IP. Either remove it (if it refers to a host not yet set up) or set the correct `LAB_IP_*` variable.
+**Fix**: Remove the bare-metal Proxmox host from the `node_exporter` scrape job. The Proxmox host should not run node_exporter as part of this architecture; when Proxmox host logs are needed, configure remote syslog forwarding to the monitoring stack instead.
 
 ### Finding 2 — VictoriaMetrics scraping `https://192.168.20.11:9443/metrics` (step-ca)
 
