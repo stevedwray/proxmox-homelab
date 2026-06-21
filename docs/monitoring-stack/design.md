@@ -496,6 +496,16 @@ Each LXC host
 | authentik static compose file | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` is a static file in the repo. If daemon-level logging driver is used (Decision 3 Option C), no changes needed there. If per-service logging blocks are needed, this file must be edited — unlike other stacks where the compose is written inline by Ansible. | Decision 3 Option C eliminates the need to touch this file |
 | monitoring-stack self-monitoring | monitoring-stack runs its own Promtail container. Removing it means monitoring-stack's own Docker logs go via rsyslog+Docker daemon syslog driver like every other host. | No special handling needed — same pattern applies |
 
+### Sub-phases
+
+| Sub-phase | Scope | Status |
+|-----------|-------|--------|
+| 7A | Enable VictoriaLogs syslog TCP input (`:5140`); create `rsyslog_forward` role; add to `lxc_base` | ✅ complete on pve |
+| 7B | Configure Docker daemon syslog default (`docker_base` role + all playbooks); verify ingestion | ✅ complete on pve |
+| 7C | Remove Promtail from all stacks (10 files: compose blocks, include_roles, vars, handlers) | ✅ complete on pve |
+| 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ dashboards working — one open issue (see §7c) |
+| 7E | Provision all stacks on pve-test; add smoke test to teardown harness; full teardown + redeploy cycle (promotion gate for `baseline/teardown-validated`) | ⏳ pending |
+
 ### Implementation tasks
 
 | # | Task | File(s) / Role | Status (2026-06-21) |
