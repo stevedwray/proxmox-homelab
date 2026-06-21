@@ -1,20 +1,41 @@
-# Accept Docker container logs directly via TCP on localhost, bypassing journald.
-# journald mangles RFC 5424 APPNAME on the /dev/log path (truncates at '/'),
-# which would lose the container name from docker/<name> tags.
-module(load="imtcp")
-input(type="imtcp" port="10514" address="127.0.0.1")
+# Custom template uses %programname% (not %syslogtag%) for the RFC 5424 APPNAME.
+# %syslogtag% appends [PID] and is truncated to 32 chars, which loses long
+# container names and can break VictoriaLogs field extraction.
+# %programname% gives a clean APPNAME: "sshd", "docker/grafana", etc.
+template(name="VictoriaLogsForward" type="string"
+  string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - - %msg%\n")
 
-# Forward all syslog messages to VictoriaLogs TCP syslog input.
-# Queue persists to disk so messages survive a brief VictoriaLogs outage.
 $WorkDirectory /var/spool/rsyslog
 
+# Forward system logs (received via imuxsock from journald) to VictoriaLogs.
 *.* action(type="omfwd"
            target="{{ rsyslog_forward_target_host }}"
            port="{{ rsyslog_forward_target_port }}"
            protocol="tcp"
-           Template="RSYSLOG_SyslogProtocol23Format"
+           Template="VictoriaLogsForward"
            queue.type="LinkedList"
            queue.filename="victorialogs-fwd"
            queue.maxDiskSpace="64m"
            queue.saveOnShutdown="on"
            action.resumeRetryCount="-1")
+
+# Accept Docker container logs via TCP on localhost, bypassing journald.
+# The imtcp input is bound to an explicit RFC 5424 ruleset — without this,
+# rsyslog's default pmrfc3164 parser sees the RFC 5424 version field '1'
+# as the syslog TAG, causing app_name="1" in VictoriaLogs.
+module(load="imtcp")
+
+ruleset(name="docker-tcp" parser="rsyslog.rfc5424") {
+    *.* action(type="omfwd"
+               target="{{ rsyslog_forward_target_host }}"
+               port="{{ rsyslog_forward_target_port }}"
+               protocol="tcp"
+               Template="VictoriaLogsForward"
+               queue.type="LinkedList"
+               queue.filename="victorialogs-fwd-docker"
+               queue.maxDiskSpace="32m"
+               queue.saveOnShutdown="on"
+               action.resumeRetryCount="-1")
+}
+
+input(type="imtcp" port="10514" address="127.0.0.1" ruleset="docker-tcp")
