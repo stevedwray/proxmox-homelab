@@ -473,7 +473,7 @@
                 - -storageDataPath=/vlogs
                 - -retentionPeriod=30d
                 - -syslog.listenAddr.tcp=:5140
-                - -syslog.streamFields.tcp=hostname,appname,facility,severity
+                - '-syslog.streamFields.tcp=["hostname","appname","facility","severity"]'
 
             promtail:
               image: {{ promtail_image }}
