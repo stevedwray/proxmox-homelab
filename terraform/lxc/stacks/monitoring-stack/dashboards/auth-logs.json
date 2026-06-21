@@ -131,13 +131,19 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "field_values(host)",
+        "definition": "fieldValue - host",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "host",
         "options": [],
-        "query": "field_values(host)",
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "host",
+          "query": "*",
+          "limit": 1000
+        },
         "refresh": 2,
         "regex": "",
         "sort": 1,

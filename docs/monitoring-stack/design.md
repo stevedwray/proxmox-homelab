@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–5 complete; Phase 6 (VictoriaLogs) implemented, pending pve-test smoke test.**
+**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) planned — see below.**
 
 ### Running services
 
@@ -202,7 +202,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-i
 | step-ca scrape job | Mount homelab CA into VictoriaMetrics container; add `scheme: https` + `tls_config.ca_file` to scrape config |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
-| VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*`; tune dashboard queries post-deploy if needed |
+| VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*` after Phase 7 syslog collection is in place |
 
 ---
 
@@ -298,8 +298,117 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 | 10 | Update teardown health gate | ✅ `:9428/health` added to monitoring-stack check |
 | 11 | Provision + smoke test on pve-test | ⏳ gate for promotion to baseline |
 
+### Known limitations (current Promtail approach)
+
+The Promtail-based collection scrapes Docker container stdout/stderr via the Docker socket and ships raw lines to VictoriaLogs. This bypasses the syslog transport layer entirely, meaning:
+
+- **No facilities** — all logs arrive without RFC 5424 facility classification
+- **No reliable severity** — containers write plain text or application-specific JSON to stdout; severity must be inferred by heuristic regex, which silently misfires on services that don't embed level keywords
+- **Host attribution is fragile** — Promtail sets a `host` stream label from `relabel_configs`, but VictoriaLogs auto-parses JSON bodies and surfaces any `host` key found there (e.g. HTTP Host headers, bind addresses) alongside the transport label, polluting the host field
+- **App-specific workarounds compound** — `?_msg_field=event` for authentik, per-stack `replace` pipeline stages, dashboard regex filters: each is a patch on a structural problem
+
+These limitations are inherent to scraping stdout rather than using the syslog protocol. Phase 7 addresses this properly.
+
 ### Branch
 
 `work/victorialogs` — rebased onto PR #384 (portainer-teardown-restore)
 
 Promotion gate: full teardown + redeploy cycle on pve-test confirms log ingestion resumes and all dashboards show data after rebuild.
+
+---
+
+## Phase 7 — syslog-based log collection
+
+### Motivation
+
+The Promtail stdout-scraping approach (Phase 6) does not model logs correctly. Syslog is the established Unix log transport: it carries facility (what kind of process), severity (how important), hostname (transport-layer, not application-set), and a process tag — all as structured header fields, separate from the message body. These have been defined in the protocol since RFC 3164 (1984) and formalised in RFC 5424 (2009).
+
+Replacing Promtail with rsyslog-based collection restores this model: the syslog envelope is authoritative, severity filtering is real, and host attribution is clean by design.
+
+### Target architecture
+
+```
+                     per LXC host
+┌──────────────────────────────────────────────────────────────────┐
+│                                                                  │
+│  Docker containers                                               │
+│  ┌──────────────┐   syslog driver    ┌─────────────────────┐   │
+│  │ nginx        ├──────────────────► │                     │   │
+│  │ postgres     ├──────────────────► │   rsyslog           │   │
+│  │ redis        ├──────────────────► │   (receives via     │   │
+│  │ authentik    ├──(native syslog)──►│    /dev/log         │   │
+│  └──────────────┘                    │    or TCP 514)      │   │
+│                                      │                     │   │
+│  System logs                         │                     │   │
+│  /var/log/auth.log  ──(native)──────►│                     │   │
+│  /var/log/syslog    ──(native)──────►│                     │   │
+│                                      └──────────┬──────────┘   │
+│                                                 │ forward       │
+└─────────────────────────────────────────────────┼──────────────┘
+                                                  │ TCP syslog (RFC 5424)
+                                      ┌───────────▼────────────┐
+                                      │  VictoriaLogs :5140    │
+                                      │  (syslog input)        │
+                                      │                        │
+                                      │  fields: facility,     │
+                                      │  severity, hostname,   │
+                                      │  appname, _msg         │
+                                      └───────────┬────────────┘
+                                                  │
+                                      ┌───────────▼────────────┐
+                                      │  Grafana               │
+                                      │  filter by severity,   │
+                                      │  facility, hostname    │
+                                      └────────────────────────┘
+```
+
+### Key design decisions
+
+| Decision | Choice | Reason |
+|----------|--------|--------|
+| Transport | TCP syslog RFC 5424 | Reliable delivery; structured header preserves facility+severity |
+| Collection agent | rsyslog | Already installed on all Debian LXCs; mature, well-documented |
+| Docker integration | `syslog` logging driver per service | Sends container stdout/stderr to local rsyslog; `tag` option sets program name |
+| App-native syslog | Where supported (nginx, postgres, redis) | Proper per-message severity from apps that call syslog() directly |
+| Stack label | rsyslog property via template | Map Docker program-name (container name) → stack name in rsyslog rules |
+| Promtail | Remove from all stacks | No longer needed; rsyslog handles both Docker and system log collection |
+| VictoriaLogs backend | Keep | Syslog input is a native VictoriaLogs feature; no change to storage or Grafana |
+
+### What VictoriaLogs exposes from syslog ingestion
+
+When VictoriaLogs receives syslog via its TCP/UDP listener, each log entry gets these indexed fields:
+
+| Field | Source | Example |
+|-------|--------|---------|
+| `hostname` | syslog header | `authentik-stack` |
+| `appname` | syslog header / Docker tag | `authentik-worker` |
+| `facility` | syslog header | `daemon`, `auth`, `local0` |
+| `severity` | syslog header | `info`, `warning`, `err`, `crit` |
+| `_msg` | syslog message body | the log line |
+
+`severity` and `facility` become first-class LogsQL filter fields. Grafana dropdowns backed by `field_values?field=severity` return `info`, `warning`, `err`, `crit` — no regex heuristics needed.
+
+### Open questions before implementation
+
+1. **rsyslog module availability on Debian 12**: confirm `rsyslog-module-imtcp`, `mmjsonparse`, `omfwd` are in standard packages
+2. **Docker syslog driver tag format**: confirm `tag` option (`{{.Name}}`) is available; test that rsyslog receives container name as `APPNAME` in RFC 5424
+3. **Stack-name mapping in rsyslog**: container names include replica suffixes (e.g. `authentik-worker-1`). Decide: use container name as-is as `appname`, or add a property-replace rule to strip suffixes and set a custom `stack` property forwarded as structured data
+4. **Native syslog per app**: audit each service in each stack for syslog output support (nginx ✓, postgres ✓, redis ✓, authentik — Python SysLogHandler, traefik — unknown)
+5. **VictoriaLogs syslog listener config**: confirm flag names for enabling syslog TCP input and verify RFC 5424 parsing (not just RFC 3164)
+6. **Auth Logs dashboard**: currently queries `job="varlogs"` (Promtail scraping `/var/log`). With rsyslog, auth events arrive via syslog with `facility=auth` — dashboard query becomes `{facility="auth"}`, which is cleaner
+7. **Promtail removal ordering**: decide whether to cut over per-stack or all at once; consider a brief parallel-run period
+
+### Tasks
+
+| # | Task | Notes |
+|---|------|-------|
+| 1 | Research rsyslog module availability on Debian 12 | `apt-cache show rsyslog-*`; confirm imtcp, mmjsonparse, omfwd |
+| 2 | Enable VictoriaLogs syslog TCP input | Add `-syslog.listenAddr.tcp=:5140` flag to compose; open port in network docs |
+| 3 | Create `rsyslog_forward` Ansible role | Install rsyslog config to forward all logs to VictoriaLogs :5140 via RFC 5424; parameterised by host label |
+| 4 | Configure Docker `syslog` logging driver per stack | Add `logging:` block to each service in each compose file; set `tag` to container name |
+| 5 | Configure app-native syslog where supported | nginx, postgres, redis; test per-message severity is preserved |
+| 6 | Add `rsyslog_forward` role to all LXC provision playbooks | Runs before docker stack deploy |
+| 7 | Remove Promtail from all stacks | Remove from compose files; remove `deploy-*` playbook Promtail config blocks |
+| 8 | Rebuild Grafana dashboards using syslog fields | Filter by `severity`, `facility`, `hostname`, `appname`; replace LogsQL stream selectors |
+| 9 | Smoke test on pve-test | Full provision; verify `{severity="err"}` and `{facility="auth"}` return results |
+| 10 | Promotion gate | Full teardown + redeploy on pve-test; confirm log ingestion resumes cleanly |

@@ -23,7 +23,7 @@
       },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |= \"$search\"",
+          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -36,23 +36,36 @@
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "custom": { "lineWidth": 1, "fillOpacity": 10 },
-          "unit": "short"
+          "unit": "short",
+          "min": 0
         },
         "overrides": []
       },
       "gridPos": { "h": 6, "w": 24, "x": 0, "y": 6 },
       "id": 2,
-      "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "options": {
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "displayMode": "gradient",
+        "valueMode": "color"
+      },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |= \"$search\" | stats count() by (stack)",
+          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\" | stats by (stack) count() as logs",
           "legendFormat": "{{stack}}",
           "refId": "A"
         }
       ],
-      "title": "Log Rate by Stack",
-      "type": "timeseries"
+      "title": "Log Count by Stack (window)",
+      "transformations": [
+        {
+          "id": "convertFieldType",
+          "options": {
+            "conversions": [{ "targetField": "logs", "destinationType": "number" }]
+          }
+        }
+      ],
+      "type": "bargauge"
     },
     {
       "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
@@ -68,7 +81,7 @@
       },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |= \"$search\"",
+          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -85,13 +98,19 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "field_values(stack)",
+        "definition": "fieldValue - stack",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "stack",
         "options": [],
-        "query": "field_values(stack)",
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "stack",
+          "query": "*",
+          "limit": 1000
+        },
         "refresh": 2,
         "regex": "",
         "sort": 1,
@@ -100,15 +119,21 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "field_values(host)",
+        "definition": "fieldValue - host",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "host",
         "options": [],
-        "query": "field_values(host)",
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "host",
+          "query": "*",
+          "limit": 1000
+        },
         "refresh": 2,
-        "regex": "",
+        "regex": "^[a-zA-Z][a-zA-Z0-9._-]+$",
         "sort": 1,
         "type": "query"
       },
