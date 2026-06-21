@@ -2,7 +2,7 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Full-stack log explorer, filterable by hostname and free-text search",
+  "description": "Full-stack log explorer, filterable by hostname, severity, and free-text search",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -11,66 +11,34 @@
   "panels": [
     {
       "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-      "fieldConfig": { "defaults": {}, "overrides": [] },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
-      "id": 1,
-      "options": {
-        "dedupStrategy": "none",
-        "enableLogDetails": true,
-        "prettifyLogMessage": false,
-        "showTime": true,
-        "wrapLogMessage": false
-      },
-      "targets": [
-        {
-          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\"",
-          "legendFormat": "",
-          "refId": "A"
-        }
-      ],
-      "title": "Log Volume",
-      "type": "logs"
-    },
-    {
-      "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": {
         "defaults": {
           "color": { "mode": "palette-classic" },
-          "unit": "short",
-          "min": 0
+          "custom": { "lineWidth": 1, "fillOpacity": 10 },
+          "unit": "short"
         },
         "overrides": []
       },
-      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 6 },
-      "id": 2,
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "id": 1,
       "options": {
-        "orientation": "horizontal",
-        "reduceOptions": { "calcs": ["lastNotNull"] },
-        "displayMode": "gradient",
-        "valueMode": "color"
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": [] },
+        "tooltip": { "mode": "multi" }
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\" | stats by (hostname) count() as logs",
+          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\" | stats by (hostname) count()",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
-      "title": "Log Count by Host (window)",
-      "transformations": [
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [{ "targetField": "logs", "destinationType": "number" }]
-          }
-        }
-      ],
-      "type": "bargauge"
+      "title": "Log Volume by Host",
+      "type": "timeseries"
     },
     {
       "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
       "fieldConfig": { "defaults": {}, "overrides": [] },
-      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 12 },
+      "gridPos": { "h": 16, "w": 24, "x": 0, "y": 6 },
       "id": 3,
       "options": {
         "dedupStrategy": "none",
@@ -81,7 +49,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\"",
+          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -118,6 +86,28 @@
         "type": "query"
       },
       {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+        "definition": "fieldValue - severity",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "severity",
+        "options": [],
+        "query": {
+          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
+          "type": "fieldValue",
+          "field": "severity",
+          "query": "*",
+          "limit": 100
+        },
+        "refresh": 2,
+        "regex": "^[0-7]$",
+        "sort": 1,
+        "type": "query"
+      },
+      {
         "current": { "selected": true, "text": ".*", "value": ".*" },
         "hide": 0,
         "name": "search",
@@ -132,5 +122,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 4
+  "version": 5
 }
