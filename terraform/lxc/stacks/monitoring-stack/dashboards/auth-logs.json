@@ -2,7 +2,7 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "SSH logins, sudo, and auth.log events across all lab hosts",
+  "description": "SSH logins, sudo, and auth events across all lab hosts",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -24,8 +24,8 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{host=~\"$host\"} |= \"Accepted\" |= \"sshd\" | stats count() by (host)",
-          "legendFormat": "{{host}}",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Accepted\" | stats count() by (hostname)",
+          "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
@@ -47,8 +47,8 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{host=~\"$host\"} |= \"Failed password\" |= \"sshd\" | stats count() by (host)",
-          "legendFormat": "{{host}}",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Failed\" | stats count() by (hostname)",
+          "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
@@ -70,8 +70,8 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{host=~\"$host\"} |= \"sudo\" | stats count() by (host)",
-          "legendFormat": "{{host}}",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sudo\" | stats count() by (hostname)",
+          "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
@@ -92,7 +92,7 @@
       },
       "targets": [
         {
-          "expr": "{host=~\"$host\",job=\"varlogs\"} |= \"sshd\" |~ \"Accepted|Failed password|session opened\"",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sshd\" |~ \"Accepted|Failed|session opened\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -114,7 +114,7 @@
       },
       "targets": [
         {
-          "expr": "{host=~\"$host\",job=\"varlogs\"} |= \"sudo\"",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sudo\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -131,16 +131,16 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "fieldValue - host",
+        "definition": "fieldValue - hostname",
         "hide": 0,
         "includeAll": true,
         "multi": true,
-        "name": "host",
+        "name": "hostname",
         "options": [],
         "query": {
           "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
           "type": "fieldValue",
-          "field": "host",
+          "field": "hostname",
           "query": "*",
           "limit": 1000
         },
@@ -156,5 +156,5 @@
   "timezone": "browser",
   "title": "Auth Logs",
   "uid": "auth-logs",
-  "version": 1
+  "version": 2
 }

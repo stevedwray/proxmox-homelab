@@ -2,7 +2,7 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Full-stack log explorer, filterable by host, stack, and severity",
+  "description": "Full-stack log explorer, filterable by hostname and free-text search",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -23,7 +23,7 @@
       },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\"",
+          "expr": "{hostname=~\"$hostname\"} |~ \"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -51,12 +51,12 @@
       },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\" | stats by (stack) count() as logs",
-          "legendFormat": "{{stack}}",
+          "expr": "{hostname=~\"$hostname\"} |~ \"$search\" | stats by (hostname) count() as logs",
+          "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
-      "title": "Log Count by Stack (window)",
+      "title": "Log Count by Host (window)",
       "transformations": [
         {
           "id": "convertFieldType",
@@ -81,7 +81,7 @@
       },
       "targets": [
         {
-          "expr": "{stack=~\"$stack\",host=~\"$host\"} |~ \"$search\"",
+          "expr": "{hostname=~\"$hostname\"} |~ \"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -98,37 +98,16 @@
       {
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "fieldValue - stack",
+        "definition": "fieldValue - hostname",
         "hide": 0,
         "includeAll": true,
         "multi": true,
-        "name": "stack",
+        "name": "hostname",
         "options": [],
         "query": {
           "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
           "type": "fieldValue",
-          "field": "stack",
-          "query": "*",
-          "limit": 1000
-        },
-        "refresh": 2,
-        "regex": "",
-        "sort": 1,
-        "type": "query"
-      },
-      {
-        "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "fieldValue - host",
-        "hide": 0,
-        "includeAll": true,
-        "multi": true,
-        "name": "host",
-        "options": [],
-        "query": {
-          "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
-          "type": "fieldValue",
-          "field": "host",
+          "field": "hostname",
           "query": "*",
           "limit": 1000
         },
@@ -152,5 +131,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 1
+  "version": 2
 }
