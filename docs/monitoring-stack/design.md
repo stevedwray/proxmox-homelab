@@ -325,90 +325,320 @@ The Promtail stdout-scraping approach (Phase 6) does not model logs correctly. S
 
 Replacing Promtail with rsyslog-based collection restores this model: the syslog envelope is authoritative, severity filtering is real, and host attribution is clean by design.
 
-### Target architecture
+### Research findings
+
+These facts were confirmed before writing this plan and should not be re-investigated during implementation.
+
+**rsyslog**
+- rsyslog is **not** currently installed on any LXC host. All hosts show `un rsyslog` (uninstalled, never configured).
+- rsyslog **8.2504.0-1** is available in apt on Debian 12 (very recent, 2025-04). No backports or third-party repos needed.
+- Modules needed: `omfwd` (TCP forwarding — built into the base package), `imuxsock` (receives from `/dev/log` — built in), `imjournal` (reads journald — built in). There is no separate `rsyslog-module-imtcp` package; TCP input is built into the base `rsyslog` package.
+- The `rsyslog-docker` package exists in apt but is for enriching logs with Docker container metadata — not required for our approach since we use the Docker syslog driver.
+
+**VictoriaLogs syslog input**
+- Confirmed present in v1.24.0. Flags verified via `docker run --rm ... -help`.
+- `-syslog.listenAddr.tcp=:5140` enables TCP listener. UDP also available.
+- `-syslog.streamFields.tcp=hostname,appname,facility` controls which syslog header fields become VictoriaLogs stream labels (indexed for fast filtering).
+- `-syslog.extraFields.tcp=...` adds arbitrary static metadata to all ingested messages.
+- Both RFC 3164 and RFC 5424 are parsed. Timezone handling is configurable for RFC 3164.
+- No compression needed for LAN-local traffic.
+- The existing VictoriaLogs container currently runs with only `-storageDataPath=/vlogs -retentionPeriod=30d`. Port 5140 is not yet exposed.
+
+**Network reachability**
+- Port 5140 will work: all stacks already push to monitoring-stack:9428 successfully, which uses the same inter-VLAN routing. No new firewall rules are required.
+- VictoriaLogs container will need port 5140 mapped in the Docker compose definition.
+
+**Promtail deployment inventory**
+
+There are three distinct Promtail patterns in use, each requiring a different removal approach:
+
+| Pattern | Stacks | How deployed |
+|---------|--------|-------------|
+| Docker container in stack compose (inline) | portainer-stack, proxy-stack, netbox-stack, monitoring-stack | Compose written inline in playbook `content:` block; Promtail has `/var/log` and `/var/run/docker.sock` mounts |
+| Docker container in static compose file | authentik-stack | Compose is a static file at `terraform/lxc/stacks/authentik-stack/docker-compose.yml` checked into the repo; Promtail defined there |
+| systemd service via `promtail` role | harbor-stack, apt-cacher-stack, dns-stack (coredns), step-ca-stack, ci-runner-01 | `promtail` Ansible role installs via Grafana apt repo, writes config from `config.yml.j2` template, manages systemd unit |
+
+**Harbor special case**
+- Harbor installs its own containers via a separate installer at `/opt/harbor/`. The installer writes its own `docker-compose.yml` which we do not control.
+- Harbor's Promtail is a **systemd** service (role-based, same as apt-cacher/dns/step-ca), not a container in Harbor's compose. So Harbor container logs currently flow via Docker socket scraping by this systemd Promtail.
+- After Phase 7: Harbor container logs need to reach rsyslog. **Decision required** — see Decision 3 below.
+
+**step-ca special case**
+- Promtail on step-ca uses `promtail_scrape_varlogs: false` and `promtail_scrape_journal: true`, meaning it reads from systemd journal rather than `/var/log`. This was set because step-ca logs to journal rather than to files.
+- With rsyslog: step-ca's journal entries are naturally readable by rsyslog's `imjournal` module. This is actually cleaner — no special-casing needed.
+
+**App-native syslog support audit**
+
+| Service | Stack | Native syslog support | Notes |
+|---------|-------|-----------------------|-------|
+| nginx (direct_tls) | authentik-stack | ✓ | `error_log syslog:server=/dev/log;` / `access_log syslog:...` |
+| postgres | authentik-stack | ✓ | `log_destination = 'syslog'` in postgresql.conf — but requires mount into container or env var |
+| redis | authentik-stack | ✓ | `syslog-enabled yes` in redis.conf — but requires config mount |
+| authentik server/worker | authentik-stack | Partial | Python `logging.handlers.SysLogHandler` available but requires app-level config; not exposed as an env var in goauthentik |
+| traefik | proxy-stack | ✗ | Logs to stdout only; no native syslog output option |
+| portainer | portainer-stack | ✗ | Logs to stdout only |
+| Harbor services | harbor-stack | Unknown | Harbor manages its own services; syslog config would require Harbor-level configuration |
+| NetBox/gunicorn | netbox-stack | Partial | gunicorn supports `--error-logfile=syslog:` but requires config change |
+| CoreDNS | dns-stack | ✗ | Logs to stdout/stderr only |
+| step-ca | step-ca-stack | ✗ | Logs to stdout only |
+| cadvisor | all Docker stacks | ✗ | Logs to stdout only |
+
+**Conclusion**: native syslog configuration is possible for postgres and nginx but requires mounting config files into containers or env vars. For most services (traefik, portainer, CoreDNS, step-ca, cadvisor, authentik), stdout is the only output. The Docker `syslog` logging driver is the correct mechanism for these — it intercepts stdout/stderr at the Docker daemon level, wrapping each line in a syslog envelope before delivery to rsyslog. The key difference from Promtail is that the **transport layer** (rsyslog header) carries the authoritative hostname and appname, not the message body.
+
+---
+
+### Design decisions required
+
+These are choices that cannot be resolved from the code or infrastructure alone. Each needs an answer before implementation begins.
+
+---
+
+**Decision 1: Docker syslog driver routing — local rsyslog or direct to VictoriaLogs?**
+
+Option A: Docker `syslog` driver → local rsyslog (`unix:///dev/log`) → rsyslog forwards to VictoriaLogs TCP
 
 ```
-                     per LXC host
+container stdout → Docker syslog driver → /dev/log → rsyslog → VictoriaLogs :5140
+```
+
+- Pro: rsyslog buffers locally if VictoriaLogs is briefly unavailable; system logs and Docker logs share a single forwarding config; rsyslog rules can enrich or filter before forwarding
+- Con: Adds a hop; rsyslog must be running or Docker syslog driver will block/fail on container start
+
+Option B: Docker `syslog` driver → VictoriaLogs TCP directly (`tcp://192.168.20.12:5140`)
+
+```
+container stdout → Docker syslog driver → VictoriaLogs :5140 (direct TCP)
+system logs → rsyslog → VictoriaLogs :5140 (separate path)
+```
+
+- Pro: Simpler; no dependency on local rsyslog for Docker logs; each container connects independently
+- Con: Two separate pipelines (Docker → VL, rsyslog → VL); no local buffering; rsyslog still needed for system logs; per-service network config rather than a single forwarding rule; if VictoriaLogs is down, container log writes fail silently
+
+**Recommendation**: Option A. Local rsyslog acts as a reliable syslog concentrator (exactly what it was designed for). A single forwarding rule covers both Docker and system logs. If VictoriaLogs is briefly unavailable, rsyslog queues messages on disk. rsyslog startup is fast and reliable — the risk of it not being available is low.
+
+---
+
+**Decision 2: Stack label strategy — hostname or appname?**
+
+With syslog, each LXC host has a unique hostname (e.g. `authentik-stack`, `portainer-stack`). The syslog `hostname` field carries this automatically. The `appname` field carries the Docker container name (e.g. `authentik-worker-1`).
+
+Option A: Use `hostname` as the stack identifier (no `stack` label)
+
+- LogsQL query: `{hostname="authentik-stack"}`
+- The `hostname` field already maps 1:1 to the stack name for Docker stacks
+- Non-Docker hosts (harbor-stack LXC) also have unique hostnames
+- Downside: The concept of "stack" disappears; you filter by hostname only
+
+Option B: Retain a `stack` label, set it via rsyslog structured data
+
+- rsyslog rule maps hostname → stack name and adds it as RFC 5424 SD-ELEMENT
+- VictoriaLogs can be configured to promote SD fields to indexed fields
+- Maintains backward compatibility with existing LogsQL queries that use `stack=~"$stack"`
+- More complexity in rsyslog config
+
+**Recommendation**: Option A — use `hostname` directly. Since each LXC is dedicated to one stack and its hostname is already the stack name, the distinction between "hostname" and "stack" is artificial. The Grafana `host` variable in the dashboard becomes `hostname`. The LogsQL queries become simpler.
+
+---
+
+**Decision 3: Harbor container logs**
+
+Harbor installs and manages its own Docker containers via its own installer (`/opt/harbor/docker-compose.yml`). This file is overwritten on Harbor upgrades.
+
+Option A: Configure Docker daemon default logging driver on harbor-stack LXC
+
+```json
+// /etc/docker/daemon.json
+{
+  "log-driver": "syslog",
+  "log-opts": {
+    "syslog-address": "unix:///dev/log",
+    "syslog-format": "rfc5424"
+  }
+}
+```
+
+- All containers on the host (including Harbor's) use syslog automatically
+- Persists through Harbor upgrades (Docker daemon config, not Harbor config)
+- Requires Docker daemon restart on change (brief outage for Harbor)
+- The `docker_base` role already manages `daemon.json` — this would be the natural place to add it
+
+Option B: Leave Harbor containers on default `json-file` logging
+
+- Harbor container logs are not captured in VictoriaLogs
+- The systemd Promtail on harbor-stack, which currently scrapes Docker socket, would be removed
+- Harbor operational logs from its own health checks, push/pull activity etc. would be invisible
+
+Option C: Docker daemon default logging driver for all hosts (not just Harbor)
+
+- Same as Option A but applied universally via `docker_base` role
+- Covers Harbor naturally without Harbor-specific treatment
+- Also means per-compose `logging:` blocks are not needed (daemon-level default applies)
+- Simpler overall — single place to configure, no per-service compose changes
+
+**Note**: If Option C (daemon-level default) is chosen for Decision 3, it substantially simplifies Decision 1 as well — the Docker syslog routing is configured once in daemon.json, not per-service in compose files. It also handles any future new services automatically.
+
+**Recommendation**: Option C — daemon-level default for all Docker hosts. Set in `docker_base` role so it applies everywhere consistently, including Harbor and any future stacks. Per-compose `logging:` blocks can then be omitted. This does require a Docker daemon restart on each host once during the migration.
+
+---
+
+**Decision 4: Cutover strategy — per-stack or parallel?**
+
+Option A: Parallel operation (brief overlap)
+
+1. Deploy rsyslog + VictoriaLogs syslog input
+2. Start receiving syslog from all hosts
+3. Verify syslog ingestion is working
+4. Remove Promtail from each stack in sequence
+5. Confirm logs still arriving after Promtail removal
+
+- Pro: Safe; can verify syslog is working before removing Promtail; brief duplicate log entries are acceptable
+- Con: Brief period of duplicate logs in VictoriaLogs
+
+Option B: Big-bang cutover
+
+1. Deploy rsyslog + configure Docker logging driver on all hosts simultaneously
+2. Remove Promtail from all stacks simultaneously
+3. Provision all stacks in one pass
+
+- Pro: Clean; no duplicate logs
+- Con: If syslog is not working for any reason, log ingestion stops with no fallback
+
+**Recommendation**: Option A — parallel operation during migration, removing Promtail stack by stack once syslog ingestion is confirmed per host. Duplicate logs for a brief window are acceptable.
+
+---
+
+### Architecture (post-decisions, assuming recommendations accepted)
+
+```
+Each LXC host
 ┌──────────────────────────────────────────────────────────────────┐
 │                                                                  │
-│  Docker containers                                               │
-│  ┌──────────────┐   syslog driver    ┌─────────────────────┐   │
-│  │ nginx        ├──────────────────► │                     │   │
-│  │ postgres     ├──────────────────► │   rsyslog           │   │
-│  │ redis        ├──────────────────► │   (receives via     │   │
-│  │ authentik    ├──(native syslog)──►│    /dev/log         │   │
-│  └──────────────┘                    │    or TCP 514)      │   │
-│                                      │                     │   │
-│  System logs                         │                     │   │
-│  /var/log/auth.log  ──(native)──────►│                     │   │
-│  /var/log/syslog    ──(native)──────►│                     │   │
-│                                      └──────────┬──────────┘   │
-│                                                 │ forward       │
-└─────────────────────────────────────────────────┼──────────────┘
-                                                  │ TCP syslog (RFC 5424)
-                                      ┌───────────▼────────────┐
-                                      │  VictoriaLogs :5140    │
-                                      │  (syslog input)        │
-                                      │                        │
-                                      │  fields: facility,     │
-                                      │  severity, hostname,   │
-                                      │  appname, _msg         │
-                                      └───────────┬────────────┘
-                                                  │
-                                      ┌───────────▼────────────┐
-                                      │  Grafana               │
-                                      │  filter by severity,   │
-                                      │  facility, hostname    │
-                                      └────────────────────────┘
+│  Docker containers (all hosts including Harbor)                  │
+│  ┌──────────────┐   Docker daemon syslog driver (daemon.json)   │
+│  │ any container├──────────────────────────────────────────────►│
+│  └──────────────┘                                                │
+│                                              ┌───────────────┐  │
+│  System logs                                 │               │  │
+│  auth, syslog, kern ────────────────────────►│   rsyslog     │  │
+│                                              │               │  │
+│  journald (step-ca, ci-runner)               │ - imuxsock    │  │
+│  via /dev/log ──────────────────────────────►│ - imjournal   │  │
+│                                              │               │  │
+│                                              └───────┬───────┘  │
+│                                                      │           │
+└──────────────────────────────────────────────────────┼──────────┘
+                                                       │ TCP :5140 (RFC 5424)
+                                           ┌───────────▼────────────────┐
+                                           │  VictoriaLogs              │
+                                           │  :9428 (HTTP/LogsQL/Loki)  │
+                                           │  :5140 (syslog TCP input)  │
+                                           │                            │
+                                           │  Stream labels:            │
+                                           │    hostname, appname,      │
+                                           │    facility, severity      │
+                                           └───────────┬────────────────┘
+                                                       │
+                                           ┌───────────▼────────────────┐
+                                           │  Grafana                   │
+                                           │  filter by severity,       │
+                                           │  facility, hostname,       │
+                                           │  appname (container)       │
+                                           └────────────────────────────┘
 ```
 
-### Key design decisions
+### VictoriaLogs fields from syslog ingestion
 
-| Decision | Choice | Reason |
-|----------|--------|--------|
-| Transport | TCP syslog RFC 5424 | Reliable delivery; structured header preserves facility+severity |
-| Collection agent | rsyslog | Already installed on all Debian LXCs; mature, well-documented |
-| Docker integration | `syslog` logging driver per service | Sends container stdout/stderr to local rsyslog; `tag` option sets program name |
-| App-native syslog | Where supported (nginx, postgres, redis) | Proper per-message severity from apps that call syslog() directly |
-| Stack label | rsyslog property via template | Map Docker program-name (container name) → stack name in rsyslog rules |
-| Promtail | Remove from all stacks | No longer needed; rsyslog handles both Docker and system log collection |
-| VictoriaLogs backend | Keep | Syslog input is a native VictoriaLogs feature; no change to storage or Grafana |
+| Field | Source | Example values |
+|-------|--------|----------------|
+| `hostname` | syslog RFC 5424 header | `authentik-stack`, `harbor-stack` |
+| `appname` | syslog APPNAME field (container name for Docker) | `authentik-worker`, `postgresql`, `traefik` |
+| `facility` | syslog facility code | `daemon`, `auth`, `syslog`, `kern` |
+| `severity` | syslog severity | `debug`, `info`, `notice`, `warning`, `err`, `crit` |
+| `_msg` | syslog MSG field | the log line |
+| `procid` | syslog PROCID (PID) | `1234` |
 
-### What VictoriaLogs exposes from syslog ingestion
+`severity` and `facility` are first-class LogsQL filter fields. Grafana variable queries against `field_values?field=severity` return real severity values — no regex heuristics.
 
-When VictoriaLogs receives syslog via its TCP/UDP listener, each log entry gets these indexed fields:
+### Regression risks
 
-| Field | Source | Example |
-|-------|--------|---------|
-| `hostname` | syslog header | `authentik-stack` |
-| `appname` | syslog header / Docker tag | `authentik-worker` |
-| `facility` | syslog header | `daemon`, `auth`, `local0` |
-| `severity` | syslog header | `info`, `warning`, `err`, `crit` |
-| `_msg` | syslog message body | the log line |
+| Risk | Detail | Mitigation |
+|------|--------|------------|
+| Log gap during cutover | If Promtail is removed before rsyslog+syslog is confirmed, logs stop flowing | Option A (parallel) cutover — confirm per host before removing Promtail |
+| Docker daemon restart | Changing `daemon.json` requires Docker restart, causing brief container outage on each host | Schedule during maintenance; restart Docker before provisioning compose stacks |
+| Harbor containers | Harbor's own compose is managed by Harbor installer; Docker daemon default covers this without touching Harbor config | Verify Harbor log ingestion after daemon restart |
+| VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `appname`, `facility`, `severity`. | Dashboard queries need to handle both, OR accept that pre-cutover logs require different query fields. Dashboards will be rebuilt for the new field set; historic data remains queryable via LogsQL explore. |
+| Auth Logs dashboard | Currently queries `{job="varlogs"}` to find auth events. This label is set by Promtail. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Rebuild Auth Logs dashboard to use `{facility="auth"}` — cleaner and correct |
+| Teardown test smoke test | The teardown test checks `curl http://...:9428/health` but does not verify log ingestion. A broken syslog config would pass the health gate. | Add a log ingestion verification step to the smoke test: after provision, query `{hostname=~".+"} \| limit 1` and assert non-empty |
+| Port 5140 not documented | The network reachability table in this doc lists port 9428 for VictoriaLogs. Port 5140 needs to be added. | Update network docs as part of Phase 7 |
+| authentik static compose file | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` is a static file in the repo. If daemon-level logging driver is used (Decision 3 Option C), no changes needed there. If per-service logging blocks are needed, this file must be edited — unlike other stacks where the compose is written inline by Ansible. | Decision 3 Option C eliminates the need to touch this file |
+| monitoring-stack self-monitoring | monitoring-stack runs its own Promtail container. Removing it means monitoring-stack's own Docker logs go via rsyslog+Docker daemon syslog driver like every other host. | No special handling needed — same pattern applies |
 
-`severity` and `facility` become first-class LogsQL filter fields. Grafana dropdowns backed by `field_values?field=severity` return `info`, `warning`, `err`, `crit` — no regex heuristics needed.
+### Implementation tasks
 
-### Open questions before implementation
+| # | Task | File(s) / Role | Regression risk |
+|---|------|----------------|-----------------|
+| 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: add `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=hostname,appname,facility,severity`, expose port 5140 | Low — additive only; existing Loki-push ingestion unaffected |
+| 2 | Update network docs | `docs/monitoring-stack/design.md` port table: add `:5140 syslog TCP` | None |
+| 3 | Create `rsyslog_forward` Ansible role | `terraform/lxc/ansible/roles/rsyslog_forward/` | Low — new role; only active when included in a playbook |
+| 4 | Configure Docker daemon syslog default | `docker_base` role: write `log-driver` and `log-opts` to `daemon.json`; handler to restart Docker | Medium — Docker restart on every host; plan per-host sequencing |
+| 5 | Add `rsyslog_forward` role to `lxc_base` | `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml` | Low — rsyslog install is additive before Docker stack deploy |
+| 6 | Verify syslog ingestion per host | After each host provisioned, query `{hostname="<host>"}` | Gate for next step |
+| 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | Medium — remove promtail service block, remove handler, remove Write Promtail config task, remove Promtail config content block |
+| 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | Medium — remove `promtail:` service; remove `/var/run/docker.sock` mount from compose |
+| 9 | Remove `promtail` role from systemd-Promtail stacks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | Medium — role removal; handler for Restart Promtail must also be removed |
+| 10 | Uninstall Promtail systemd service (idempotent) | Add task to above playbooks: `apt: name=promtail state=absent`, disable+stop systemd unit | Low — cleanup only |
+| 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: replace `{stack=~"$stack", host=~"$host"}` with `{hostname=~"$hostname"} severity=~"$severity"`; update variables | Medium — test all panel queries before deploy |
+| 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: replace `{job="varlogs"}` with `{facility="auth"}`; update host variable to use `hostname` field | Medium — verify SSH/sudo events appear under `facility=auth` after cutover |
+| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: after provision, query VictoriaLogs for recent entries from at least one host | Low — additive check |
+| 14 | Provision all stacks on pve-test | Run full provision; verify ingestion, dashboards, severity filter | Gate for promotion |
+| 15 | Full teardown + redeploy on pve-test | Promotion gate for `baseline/teardown-validated` | Required for promotion |
 
-1. **rsyslog module availability on Debian 12**: confirm `rsyslog-module-imtcp`, `mmjsonparse`, `omfwd` are in standard packages
-2. **Docker syslog driver tag format**: confirm `tag` option (`{{.Name}}`) is available; test that rsyslog receives container name as `APPNAME` in RFC 5424
-3. **Stack-name mapping in rsyslog**: container names include replica suffixes (e.g. `authentik-worker-1`). Decide: use container name as-is as `appname`, or add a property-replace rule to strip suffixes and set a custom `stack` property forwarded as structured data
-4. **Native syslog per app**: audit each service in each stack for syslog output support (nginx ✓, postgres ✓, redis ✓, authentik — Python SysLogHandler, traefik — unknown)
-5. **VictoriaLogs syslog listener config**: confirm flag names for enabling syslog TCP input and verify RFC 5424 parsing (not just RFC 3164)
-6. **Auth Logs dashboard**: currently queries `job="varlogs"` (Promtail scraping `/var/log`). With rsyslog, auth events arrive via syslog with `facility=auth` — dashboard query becomes `{facility="auth"}`, which is cleaner
-7. **Promtail removal ordering**: decide whether to cut over per-stack or all at once; consider a brief parallel-run period
+### rsyslog_forward role outline
 
-### Tasks
+The role needs to:
+1. Install `rsyslog` package
+2. Write `/etc/rsyslog.d/90-victorialogs.conf` using Ansible template, parameterised by `rsyslog_forward_target` (defaults to `LAB_IP_MONITORING:5140`)
+3. Enable and start rsyslog service
+4. Handler: restart rsyslog on config change
 
-| # | Task | Notes |
-|---|------|-------|
-| 1 | Research rsyslog module availability on Debian 12 | `apt-cache show rsyslog-*`; confirm imtcp, mmjsonparse, omfwd |
-| 2 | Enable VictoriaLogs syslog TCP input | Add `-syslog.listenAddr.tcp=:5140` flag to compose; open port in network docs |
-| 3 | Create `rsyslog_forward` Ansible role | Install rsyslog config to forward all logs to VictoriaLogs :5140 via RFC 5424; parameterised by host label |
-| 4 | Configure Docker `syslog` logging driver per stack | Add `logging:` block to each service in each compose file; set `tag` to container name |
-| 5 | Configure app-native syslog where supported | nginx, postgres, redis; test per-message severity is preserved |
-| 6 | Add `rsyslog_forward` role to all LXC provision playbooks | Runs before docker stack deploy |
-| 7 | Remove Promtail from all stacks | Remove from compose files; remove `deploy-*` playbook Promtail config blocks |
-| 8 | Rebuild Grafana dashboards using syslog fields | Filter by `severity`, `facility`, `hostname`, `appname`; replace LogsQL stream selectors |
-| 9 | Smoke test on pve-test | Full provision; verify `{severity="err"}` and `{facility="auth"}` return results |
-| 10 | Promotion gate | Full teardown + redeploy on pve-test; confirm log ingestion resumes cleanly |
+Forwarding config (RFC 5424, TCP, queue for resilience):
+
+```
+# Forward all messages to VictoriaLogs syslog input
+$WorkDirectory /var/spool/rsyslog
+$ActionQueueFileName fwdVL
+$ActionQueueMaxDiskSpace 64m
+$ActionQueueSaveOnShutdown on
+$ActionQueueType LinkedList
+$ActionResumeRetryCount -1
+*.* action(type="omfwd"
+     target="{{ rsyslog_forward_target_host }}"
+     port="{{ rsyslog_forward_target_port }}"
+     protocol="tcp"
+     Template="RSYSLOG_SyslogProtocol23Format")
+```
+
+`RSYSLOG_SyslogProtocol23Format` is the built-in rsyslog template for RFC 5424 (syslog protocol version 2.3) format.
+
+### Docker daemon logging config
+
+To be added to `docker_base` role (in `daemon.json`):
+
+```json
+{
+  "log-driver": "syslog",
+  "log-opts": {
+    "syslog-address": "unixgram:///dev/log",
+    "syslog-format": "rfc5424",
+    "tag": "docker/{{.Name}}"
+  }
+}
+```
+
+The `tag` value `docker/{{.Name}}` sets the syslog `APPNAME` to e.g. `docker/authentik-worker-1`. The `docker/` prefix makes it easy to identify Docker container entries vs. native system processes in rsyslog rules or LogsQL queries.
+
+> **Note**: This requires a Docker daemon restart. The `docker_base` role already has a `Restart Docker` handler — the daemon.json write task should notify it.
+
+### Branch
+
+`work/victorialogs` (current) — Phase 7 planning complete. Implementation begins on a new branch cut from this one once design decisions are confirmed.
