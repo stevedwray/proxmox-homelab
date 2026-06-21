@@ -23,7 +23,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\"} |~ \"$search\"",
+          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -51,7 +51,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\"} |~ \"$search\" | stats by (hostname) count() as logs",
+          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\" | stats by (hostname) count() as logs",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
@@ -81,7 +81,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\"} |~ \"$search\"",
+          "expr": "{hostname=~\"$hostname\"} _msg:~\"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -132,5 +132,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 3
+  "version": 4
 }

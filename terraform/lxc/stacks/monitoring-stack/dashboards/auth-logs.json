@@ -24,7 +24,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Accepted\" | stats count() by (hostname)",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Accepted\" | stats by (hostname) count()",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
@@ -47,7 +47,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Failed\" | stats count() by (hostname)",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Failed\" | stats by (hostname) count()",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
@@ -70,7 +70,7 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sudo\" | stats count() by (hostname)",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sudo\" | stats by (hostname) count()",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
@@ -92,7 +92,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sshd\" |~ \"Accepted|Failed|session opened\"",
+          "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sshd\" _msg:~\"Accepted|Failed|session opened\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -157,5 +157,5 @@
   "timezone": "browser",
   "title": "Auth Logs",
   "uid": "auth-logs",
-  "version": 3
+  "version": 4
 }
