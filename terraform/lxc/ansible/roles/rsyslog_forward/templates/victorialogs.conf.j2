@@ -1,7 +1,8 @@
 # Custom template uses %programname% (not %syslogtag%) for the RFC 5424 APPNAME.
 # %syslogtag% appends [PID] and is truncated to 32 chars, which loses long
 # container names and can break VictoriaLogs field extraction.
-# %programname% gives a clean APPNAME: "sshd", "docker/grafana", etc.
+# %programname% gives a clean APPNAME: "sshd", "docker-grafana", etc.
+# Note: %programname% truncates at '/', so Docker tags use '-' not '/' as separator.
 template(name="VictoriaLogsForward" type="string"
   string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - - %msg%\n")
 
