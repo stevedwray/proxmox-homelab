@@ -2,7 +2,7 @@
 
 ## Overview
 
-The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, VictoriaLogs, Grafana, and Promtail via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and VictoriaLogs are internal-only data stores.
+The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, VictoriaLogs, Grafana, cAdvisor, and the Harbor findings exporter via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and VictoriaLogs are internal-only data stores.
 
 ---
 
@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9.**
+**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, and confirmed the old step-ca scrape warning is no longer emitted.**
 
 ### Running services
 
@@ -30,7 +30,9 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
 | VictoriaLogs | `:9428`, `:5140` | `--retentionPeriod=30d`; syslog TCP input on `:5140`; named Docker volume on `/var/lib/docker` mount; `v1.51.0` (tag format changed — no `-victorialogs` suffix from v1.25.0+) |
 | Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
-| Promtail (self) | — | Removed in Phase 7C (commit `b12db11`) — monitoring-stack compose no longer includes it |
+| cAdvisor | `:8080` | Container resource metrics for monitoring-stack |
+| Harbor findings exporter | `:9414` internal | Harbor CVE/findings metrics scraped from the compose network |
+| Promtail | — | Deprecated by syslog/VictoriaLogs forwarding. Some legacy runtime services/containers still need cleanup; see Syslog Health Findings. |
 
 ### Active scrape targets
 
@@ -49,7 +51,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | harbor-findings-exporter | monitoring-stack internal | ✅ up |
 | netbox | 192.168.40.12:8080 | ✅ up |
 | victoriametrics | 192.168.20.12:8428 | ✅ up |
-| victorialogs | 192.168.20.12:9428 | ⏳ pending smoke test |
+| victorialogs | 192.168.20.12:9428 | ✅ up |
 | grafana | 192.168.20.12:3000 | ✅ up |
 | step-ca | 192.168.20.11:9443 | ✅ native metrics |
 
@@ -86,34 +88,37 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | node_exporter and cadvisor scrape jobs had no stack labels | d884991, 9cc83dc |
 | `notify: Restart VictoriaMetrics` placed inside `content: \|` block | 9cc83dc |
 | `docker-containers.json` and `node-detail.json` used `instance` variable | d884991, 9cc83dc |
+| Proxmox host `node_exporter` target rendered as `http://:9100/metrics` | 2daaa8f |
+| Removed inactive step-ca HTTPS scrape while confirming no real endpoint existed | 3513682 |
+| Enabled native step-ca metrics on HTTP `:9443` and restored a healthy scrape | 6414d37 |
 
 ---
 
 ## Architecture
 
 ```
-                          mgmt_seg (192.168.20.0/24)
+                         mgmt_seg (192.168.20.0/24)
                          ┌──────────────────────────────────────────────────┐
                          │  monitoring-stack (192.168.20.12)                │
                          │  ┌─────────────────┐  ┌──────────────────────┐  │
-                         │  │ VictoriaMetrics │  │       Loki           │  │
- ┌──────────────┐  scrape │  │   :8428         │  │       :3100          │  │
- │ node_exporter│◄────────┤  │  (pull metrics) │  │  (receive log push)  │  │
+                         │  │ VictoriaMetrics │  │   VictoriaLogs       │  │
+ ┌──────────────┐  scrape │  │   :8428         │  │   :9428 / :5140     │  │
+ │ node_exporter│◄────────┤  │  (pull metrics) │  │  (syslog ingest)    │  │
  │    :9100     │         │  └────────┬────────┘  └──────────┬───────────┘  │
  └──────────────┘         │           │                       │              │
  ┌──────────────┐  scrape │           │           ┌──────────▼───────────┐  │
  │   cAdvisor   │◄────────┤           │           │      Grafana         │  │
  │    :8080     │         │           └──────────►│      :3000           │  │
- └──────────────┘  push   │                       │  (queries both)      │  │
+ └──────────────┘ syslog  │                       │  (queries both)      │  │
  ┌──────────────┐ ────────►                       └──────────────────────┘  │
- │   Promtail   │         │                                                  │
+ │   rsyslog    │         │                                                  │
  │  (per stack) │         └──────────────────────────────────────────────────┘
  └──────────────┘
 ```
 
-**Metrics flow**: VictoriaMetrics scrapes node_exporter (:9100) and cAdvisor (:8080) on each LXC, plus application metrics endpoints directly. Pull model — VictoriaMetrics initiates all scrapes.
+**Metrics flow**: VictoriaMetrics scrapes node_exporter (:9100) on managed LXCs, cAdvisor (:8080/:8081) on Docker stacks, and application metrics endpoints directly. Pull model — VictoriaMetrics initiates all scrapes. The bare-metal Proxmox host is intentionally not scraped. Step CA exposes native Prometheus metrics over HTTP on `:9443`; its CA service and health endpoint remain HTTPS on `:443`.
 
-**Log flow**: Promtail on each LXC pushes to Loki at `http://192.168.20.12:3100/loki/api/v1/push`. Docker stacks run Promtail as a Docker container; non-Docker stacks run it as a systemd service.
+**Log flow**: rsyslog on each LXC forwards RFC 5424 syslog to VictoriaLogs on `192.168.20.12:5140`. Docker stacks use the Docker `syslog` logging driver to send container stdout/stderr to local rsyslog on `127.0.0.1:10514`, which then forwards to VictoriaLogs. Promtail is deprecated and should not be part of the steady-state logging path.
 
 ---
 
@@ -131,7 +136,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | 9090 | Harbor metrics | harbor-stack |
 | 9300 | Authentik metrics | authentik-stack |
 | 9443 | step-ca native metrics (HTTP) | step-ca-stack |
-| 3100 | Loki ingest | monitoring-stack receives from Promtail agents |
+| 9428 | VictoriaLogs HTTP and metrics | monitoring-stack |
 | 5140 | VictoriaLogs syslog TCP | monitoring-stack receives RFC 5424 from rsyslog on all LXCs |
 
 ---
@@ -140,18 +145,18 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 
 ### Platform stacks
 
-| Stack | Zone | node_exporter | cAdvisor | App metrics | Promtail |
+| Stack | Zone | node_exporter | cAdvisor | App metrics | Logs |
 |-------|------|:---:|:---:|---|:---:|
-| dns-stack | mgmt_seg | ✓ | — | CoreDNS :9153 | ✓ (systemd) |
-| step-ca-stack | mgmt_seg | ✓ | — | step-ca :9443/metrics | ✓ (systemd) |
-| monitoring-stack | mgmt_seg | ✓ | ✓ | VM :8428, Loki :3100, Grafana :3000 | ✓ |
-| portainer-stack | mgmt_seg | ✓ | ✓ | — | ✓ (Docker) |
-| authentik-stack | mgmt_seg | ✓ | ✓ | Authentik :9300/metrics | ✓ (Docker) |
-| proxy-stack | edge_seg | ✓ | ✓ | Traefik :8082/metrics | ✓ (Docker) |
-| harbor-stack | infra_seg | ✓ | ✓ | Harbor :9090/metrics | ✓ (Docker) |
-| apt-cacher-stack | infra_seg | ✓ | — | — | ✓ (systemd) |
-| netbox-stack | infra_seg | ✓ | ✓ | NetBox :8080/metrics | ✓ (Docker) |
-| ci-runner-01 | build_seg | ✓ | — | — | ✓ (systemd) |
+| dns-stack | mgmt_seg | ✓ | — | CoreDNS :9153 | rsyslog → VictoriaLogs |
+| step-ca-stack | mgmt_seg | ✓ | — | step-ca :9443/metrics | rsyslog → VictoriaLogs |
+| monitoring-stack | mgmt_seg | ✓ | ✓ | VM :8428, VictoriaLogs :9428, Grafana :3000 | rsyslog → VictoriaLogs |
+| portainer-stack | mgmt_seg | ✓ | ✓ | — | Docker syslog → rsyslog → VictoriaLogs |
+| authentik-stack | mgmt_seg | ✓ | ✓ | Authentik :9300/metrics | Docker syslog → rsyslog → VictoriaLogs |
+| proxy-stack | edge_seg | ✓ | ✓ | Traefik :8082/metrics | Docker syslog → rsyslog → VictoriaLogs |
+| harbor-stack | infra_seg | ✓ | ✓ | Harbor :9090/metrics | Docker/syslog mix; Harbor internal logs handled by Harbor |
+| apt-cacher-stack | infra_seg | ✓ | — | — | rsyslog → VictoriaLogs |
+| netbox-stack | infra_seg | ✓ | ✓ | NetBox :8080/metrics | Docker syslog → rsyslog → VictoriaLogs |
+| ci-runner-01 | build_seg | ✓ | — | — | rsyslog → VictoriaLogs |
 
 **Proxmox host** (`$PROXMOX_HOST`): host performance metrics are intentionally not scraped. Proxmox host logs should be forwarded separately via remote syslog when needed, rather than by installing monitoring agents on the host.
 
@@ -166,7 +171,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | NetBox | `:8080/metrics` | ✓ | |
 | step-ca | `:9443/metrics` | ✓ | Native Step CA metrics listener; HTTP, separate from HTTPS CA service on `:443` |
 | VictoriaMetrics | `:8428/metrics` | ✓ | |
-| Loki | `:3100/metrics` | ✓ | |
+| VictoriaLogs | `:9428/metrics` | ✓ | |
 | Grafana | `:3000/metrics` | ✓ | |
 
 ---
@@ -486,11 +491,11 @@ Each LXC host
 | Docker daemon restart | Changing `daemon.json` requires Docker restart, causing brief container outage on each host | Schedule during maintenance; restart Docker before provisioning compose stacks |
 | Harbor containers | Harbor's own compose is managed by Harbor installer; Docker daemon default covers this without touching Harbor config | Verify Harbor log ingestion after daemon restart |
 | VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `appname`, `facility`, `severity`. | Dashboard queries need to handle both, OR accept that pre-cutover logs require different query fields. Dashboards will be rebuilt for the new field set; historic data remains queryable via LogsQL explore. |
-| Auth Logs dashboard | Currently queries `{job="varlogs"}` to find auth events. This label is set by Promtail. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Rebuild Auth Logs dashboard to use `{facility="auth"}` — cleaner and correct |
+| Auth Logs dashboard | Earlier Promtail-era queries used `{job="varlogs"}`. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Resolved in Phase 7D; keep historic queries in mind when exploring pre-cutover logs |
 | Teardown test smoke test | The teardown test checks `curl http://...:9428/health` but does not verify log ingestion. A broken syslog config would pass the health gate. | Add a log ingestion verification step to the smoke test: after provision, query `{hostname=~".+"} \| limit 1` and assert non-empty |
-| Port 5140 not documented | The network reachability table in this doc lists port 9428 for VictoriaLogs. Port 5140 needs to be added. | Update network docs as part of Phase 7 |
+| Port 5140 documentation | The network reachability table must include VictoriaLogs syslog TCP on `:5140`. | Resolved in Phase 7; keep the port documented because it is the active log ingest path |
 | authentik static compose file | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` is a static file in the repo. If daemon-level logging driver is used (Decision 3 Option C), no changes needed there. If per-service logging blocks are needed, this file must be edited — unlike other stacks where the compose is written inline by Ansible. | Decision 3 Option C eliminates the need to touch this file |
-| monitoring-stack self-monitoring | monitoring-stack runs its own Promtail container. Removing it means monitoring-stack's own Docker logs go via rsyslog+Docker daemon syslog driver like every other host. | No special handling needed — same pattern applies |
+| monitoring-stack self-monitoring | monitoring-stack previously ran its own Promtail container. Desired state is Docker syslog → local rsyslog → VictoriaLogs like every other Docker host. | Source compose no longer includes Promtail; runtime cleanup should still verify no orphan remains |
 
 ### Sub-phases
 
@@ -515,7 +520,7 @@ Each LXC host
 | 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ✅ done (commit `b12db11`) |
 | 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ✅ done (commit `b12db11`) |
 | 9 | Remove `promtail` include_role from remaining playbooks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ✅ done (commit `b12db11`) |
-| 10 | Uninstall Promtail systemd service (idempotent) | Not implemented — Promtail was never a package install on these hosts; removal was include_role only | ✅ N/A |
+| 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | Add cleanup for systemd services/packages/config and Docker compose orphans across affected stacks | ⚠️ open — source role includes were removed, but runtime Promtail services/containers still exist |
 | 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
 | 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
 | 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
@@ -832,18 +837,20 @@ Prerequisite: Phase 7E must be complete before this becomes a teardown-gate conc
 
 Systematic analysis of the VictoriaLogs dataset on 2026-06-22, querying across all 10 hosts over the last 24 hours (~185k log entries at the time). These are the distinct problems found, ranked by priority.
 
+Current status after the follow-up fixes in this branch: Findings 1 and 2 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. The next active log-noise problem is legacy Promtail cleanup.
+
 The same query patterns used here would be encoded as MCP tools in Phase 8, making this kind of investigation reusable across sessions.
 
 ### Summary
 
-| # | Issue | Scope | Priority | Fix location |
-|---|---|---|---|---|
-| 1 | VictoriaMetrics cannot scrape `http://:9100/metrics` (empty host) | monitoring-stack | High | scrape config in `deploy-monitoring-stack.yml` |
-| 2 | VictoriaMetrics cannot scrape `https://192.168.20.11:9443/metrics` (step-ca) | monitoring-stack | High | step-ca scrape job in same file |
-| 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | `rsyslog_forward` role config |
-| 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | `rsyslog_forward` role `omfwd` keepalive |
-| 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | cAdvisor container config or LXC template |
-| 6 | Promtail still running on portainer-stack | portainer-stack | Low | re-run `provision.sh --stack portainer-stack` |
+| # | Issue | Scope | Priority | Status | Fix location |
+|---|---|---|---|---|---|
+| 1 | VictoriaMetrics cannot scrape `http://:9100/metrics` (empty host) | monitoring-stack | High | Resolved (`2daaa8f`) | scrape config in `deploy-monitoring-stack.yml` |
+| 2 | VictoriaMetrics cannot scrape `https://192.168.20.11:9443/metrics` (step-ca) | monitoring-stack | High | Resolved (`3513682`, `6414d37`) | `deploy-step-ca.yml` and scrape config in `deploy-monitoring-stack.yml` |
+| 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | Open/latent; quiet in fresh window unless rsyslog restarts | `rsyslog_forward` role config |
+| 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | Open/latent; quiet in fresh window | `rsyslog_forward` role `omfwd` keepalive |
+| 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Open | cAdvisor container config or LXC template |
+| 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Open | Promtail cleanup/removal role or stack reconciliation |
 
 ### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
 
@@ -858,6 +865,8 @@ The instance label is `":9100"` — the IP is blank.
 
 **Fix**: Remove the bare-metal Proxmox host from the `node_exporter` scrape job. The Proxmox host should not run node_exporter as part of this architecture; when Proxmox host logs are needed, configure remote syslog forwarding to the monitoring stack instead.
 
+**Verification**: After deploying monitoring-stack, the rendered scrape config contains only managed LXC `node_exporter` targets and VictoriaLogs shows zero fresh `http://:9100/metrics` scrape failures.
+
 ### Finding 2 — VictoriaMetrics scraping `https://192.168.20.11:9443/metrics` (step-ca)
 
 **Observed**: ~2,880 warn messages per day:
@@ -869,6 +878,8 @@ Every 30 seconds, continuously.
 **Cause**: The step-ca deployment listens on `:443`, not `:9443`. Live probes also showed `/health` returns `200` on `:443`, while `/metrics` returns `404`; `:9443` refuses connections. The VictoriaMetrics container already had the homelab root CA mounted, so this was an endpoint/configuration mismatch rather than a CA trust failure.
 
 **Fix**: First removed the bad HTTPS scrape to stop the warning storm, then enabled Step CA's native `metricsAddress` on HTTP `:9443` and restored the scrape against that real endpoint.
+
+**Verification**: `step-ca` now listens on both `:443` and `:9443`; `http://192.168.20.11:9443/metrics` returns `step_ca_*` metrics; VictoriaMetrics reports `step-ca 192.168.20.11:9443` as `up`; `step_ca_uptime_seconds` is queryable; VictoriaLogs shows zero fresh entries for the old bad HTTPS scrape signature.
 
 ### Finding 3 — rsyslogd `imklog` permission denied on all LXC hosts
 
@@ -939,15 +950,17 @@ This works if the LXC container can see the LXC host's `/etc/machine-id`, but ma
 
 Option A is cleaner: gives each LXC a stable, unique UUID, which is also useful for other purposes. File: `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml`.
 
-### Finding 6 — Promtail still running on portainer-stack
+### Finding 6 — Legacy Promtail still running
 
-**Observed**: `docker-promtail` generates 29 error-level log entries per day on portainer-stack. The Promtail container is still running even though it was removed from the playbook in Phase 7C.
+**Observed**: Fresh VictoriaLogs queries after the syslog cutover show Promtail still emitting repeated tailer permission errors. In a 10-minute window, each of `ci-runner-01`, `dns-stack`, `apt-cacher-stack`, and `harbor-stack` emitted roughly 240 `failed to start tailer` events from `promtail`, usually for files such as `/var/log/auth.log`, `/var/log/cron.log`, `/var/log/user.log`, and `/var/log/apt/term.log`.
 
-**Cause**: `deploy-portainer-stack.yml` no longer includes the Promtail container in its compose definition (commit `b12db11`), but the playbook has not been re-run since. The running Promtail container predates the removal.
+Runtime checks also found legacy Promtail still active in more than one form:
+- systemd `promtail` on systemd-managed stacks such as `harbor-stack`, `dns-stack`, `apt-cacher-stack`, `step-ca`, and `ci-runner-01`
+- Docker Promtail containers on Docker stacks such as `portainer-stack`, `proxy-stack`, `authentik-stack`, and `netbox-stack`
 
-**Fix**: Re-run `provision.sh --stack portainer-stack`. The compose reconciliation will remove the container. Verify with `{hostname="portainer-stack"} app_name:~"docker-promtail"` returning no results in VictoriaLogs after the run.
+**Cause**: The intended logging path is now rsyslog/VictoriaLogs. Promtail was removed from the desired architecture, but pre-existing runtime services and compose orphans were not fully cleaned up across all stacks.
 
-Also check harbor-stack — it had Promtail as a systemd service (`docker/promtail` entries visible in Promtail-era stream labels). Task 10 in the Phase 7 implementation table marked this as N/A, but the service may still be installed. Verify: `ssh root@$LAB_IP_HARBOR systemctl status promtail` and stop/disable if present.
+**Fix plan**: Add an idempotent cleanup/removal path before manual one-off removal. It should stop/disable systemd `promtail`, remove or mask the package/config if appropriate, remove Docker Promtail orphans from compose-managed stacks, and verify that fresh VictoriaLogs queries for `failed to start tailer` and `app_name="promtail"` return no new entries.
 
 ### Known behaviours (not bugs)
 
