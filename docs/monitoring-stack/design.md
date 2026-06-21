@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) in progress — additive infrastructure deployed on pve (2026-06-21), Promtail removal and dashboard rebuild pending.**
+**Phases 1–6 complete on pve. Phase 7 (syslog-based log collection) in progress — 7A/7B/7C/7D complete on pve (2026-06-21). Phase 7E (pve-test provision + teardown gate) pending. One open dashboard issue: "Log Volume by Host" timeseries panel shows "Data is missing a number field" — see §7.**
 
 ### Running services
 
@@ -30,7 +30,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
 | VictoriaLogs | `:9428`, `:5140` | `--retentionPeriod=30d`; syslog TCP input on `:5140`; named Docker volume on `/var/lib/docker` mount; `v1.51.0` (tag format changed — no `-victorialogs` suffix from v1.25.0+) |
 | Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
-| Promtail (self) | — | Still running pending Phase 7C removal; will be removed once syslog collection is verified |
+| Promtail (self) | — | Removed in Phase 7C (commit `b12db11`) — monitoring-stack compose no longer includes it |
 
 ### Active scrape targets
 
@@ -503,15 +503,15 @@ Each LXC host
 | 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=["hostname","appname","facility","severity"]`, port 5140 | ✅ deployed on pve |
 | 2 | Update network docs | `docs/monitoring-stack/design.md` port table | ✅ done |
 | 3 | Create `rsyslog_forward` Ansible role | `terraform/lxc/ansible/roles/rsyslog_forward/` — installs rsyslog, writes `/etc/rsyslog.d/90-victorialogs.conf`, imtcp listener on `127.0.0.1:10514`, forwards all to VictoriaLogs:5140 | ✅ role created and running on all provisioned stacks |
-| 4 | Configure Docker daemon syslog default | `docker_base` role `daemon.json`: `log-driver=syslog`, `syslog-address=tcp://127.0.0.1:10514`, `syslog-format=rfc5424`, `tag=docker/{{.Name}}`; conditional `recreate: always` when daemon config changes | ✅ deployed; pending re-provision after §3 APPNAME fix |
+| 4 | Configure Docker daemon syslog default | `docker_base` role `daemon.json`: `log-driver=syslog`, `syslog-address=tcp://127.0.0.1:10514`, `syslog-format=rfc5424`, `tag=docker-{{.Name}}`; conditional `recreate: always` when daemon config changes | ✅ deployed on pve |
 | 5 | Add `rsyslog_forward` role to `lxc_base` | `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml` | ✅ done |
-| 6 | Verify syslog ingestion per host | Query `{hostname="<host>"}` after each provision | ⏳ system logs confirmed working; Docker container logs pending re-provision with TCP fix |
-| 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ⏳ Phase 7C — after Docker container log verification |
-| 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ⏳ Phase 7C |
-| 9 | Remove `promtail` role from systemd-Promtail stacks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ⏳ Phase 7C |
-| 10 | Uninstall Promtail systemd service (idempotent) | `apt: name=promtail state=absent`, disable+stop systemd unit | ⏳ Phase 7C |
-| 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: `{hostname=~"$hostname"}`, severity variable | ⏳ Phase 7D |
-| 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="auth"}` | ⏳ Phase 7D |
+| 6 | Verify syslog ingestion per host | Query `{hostname="<host>"}` after each provision | ✅ system and Docker container logs confirmed in VictoriaLogs on pve |
+| 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ✅ done (commit `b12db11`) |
+| 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ✅ done (commit `b12db11`) |
+| 9 | Remove `promtail` include_role from remaining playbooks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ✅ done (commit `b12db11`) |
+| 10 | Uninstall Promtail systemd service (idempotent) | Not implemented — Promtail was never a package install on these hosts; removal was include_role only | ✅ N/A |
+| 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
+| 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
 | 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
 | 14 | Provision all stacks on pve-test | Full provision; verify ingestion, dashboards, severity filter | ⏳ Phase 7E |
 | 15 | Full teardown + redeploy on pve-test | Promotion gate for `baseline/teardown-validated` | ⏳ Phase 7E |
@@ -553,9 +553,55 @@ command:
 - rsyslog's `imtcp` module correctly parses the full RFC 5424 message including APPNAME with `/` characters
 - System logs (non-Docker) continue to flow via journald → rsyslog `imuxsock` as before — no change there
 **Files changed**: `roles/rsyslog_forward/templates/victorialogs.conf.j2`, `roles/docker_base/templates/daemon.json.j2`, and inline daemon.json in all 9 stack playbooks
-**Status**: Fix implemented (2026-06-21), pending re-provision of all stacks
+**Commit**: `ae51036` (rsyslog RFC 5424 ruleset), `334809a` (Docker tag separator change)
 
-#### §4 — Harbor containers use per-service log config (not overridable via daemon default)
+#### §4b — APPNAME still truncated at `/` even on imtcp path: `%programname%` behaviour
+
+**Symptom**: After the TCP bypass fix (§3), Docker container entries still arrived in VictoriaLogs as `app_name: "docker"` instead of `app_name: "docker-authentik-worker"`.
+**Root cause**: rsyslog's `%programname%` property truncates at `/`, `[`, and `:` by design — this is not parser-dependent, it is how the property works. `docker/{{.Name}}` → `%programname%` = `"docker"`.
+**Fix**: Change the Docker syslog `tag` separator from `/` to `-` everywhere:
+- `docker_base` role `daemon.json.j2`: `"tag": "{% raw %}docker-{{.Name}}{% endraw %}"`
+- All 9 inline daemon.json blocks in stack playbooks: same change
+- Now `docker-authentik-worker` → `%programname%` = `"docker-authentik-worker"` (no truncation)
+**Files changed**: `roles/docker_base/templates/daemon.json.j2` + all 9 deploy playbooks
+**Commit**: `334809a`
+**Consequence**: LogsQL queries for Docker containers use `app_name=~"docker-.*"` (hyphen), not `docker/.*`.
+
+#### §5 — `app_name=1` from rsyslog default parser on imtcp
+
+**Symptom**: Docker container entries received via imtcp port 10514 showed `app_name: "1"` in VictoriaLogs.
+**Root cause**: rsyslog's default imtcp parser is `pmrfc3164` (BSD syslog). RFC 5424 messages begin with a version field `1` (the literal character `1` after the PRI). `pmrfc3164` interprets this as the syslog TAG, so APPNAME becomes `"1"`.
+**Fix**: Bind an explicit RFC 5424 ruleset to the imtcp input in `victorialogs.conf.j2`:
+```
+ruleset(name="docker-tcp" parser="rsyslog.rfc5424") {
+    *.* action(type="omfwd" ...)
+}
+input(type="imtcp" port="10514" address="127.0.0.1" ruleset="docker-tcp")
+```
+Also uses a custom template with `%programname%` (clean APPNAME) instead of the default `RSYSLOG_SyslogProtocol23Format` (which uses `%syslogtag%` — appends PID and truncates to 32 chars).
+**Commit**: `ae51036`
+
+#### §7 — VictoriaLogs v1.51.0 LogsQL syntax quirks (dashboard-breaking)
+
+These were discovered during Phase 7D dashboard work. All three affect dashboard queries.
+
+**7a — `|~` pipe operator returns no results**
+The `|~` pipe (regex filter on message) silently returns ~1 result regardless of pattern. `{hostname=~".*"} |~ ".*"` → 1 line. This appears to be a v1.51.0 bug.
+**Fix**: Use the field-filter form instead: `_msg:~"pattern"`. `{hostname=~".*"} _msg:~".*"` → full result set.
+Example: `{hostname=~"$hostname", facility="4"} "sshd" _msg:~"Accepted|Failed|session opened"`
+
+**7b — `stats count() by (field)` is invalid syntax in v1.51.0**
+The `by` keyword after a stats function is parsed as an alias name, not a grouping clause.
+`| stats count() by (hostname)` → error: `unexpected token "(" after [count(*) as "by"]`
+**Fix**: The `by` clause must precede the function: `| stats by (hostname) count()`.
+With an alias: `| stats by (hostname) count() as cnt`
+
+**7c — stats_query_range returns count values as strings; timeseries panel rejects them**
+The `stats_query_range` endpoint returns Prometheus matrix format where values are JSON strings (`"42"`, not `42`). The victoriametrics-logs-datasource v0.28.0 plugin does not convert these to numbers before handing them to timeseries panels. Result: "Data is missing a number field".
+**Attempted fix**: Added `convertFieldType` transformation targeting field `"Value"` (the plugin's internal field name). As of 2026-06-21 this is applied to all timeseries panels in both dashboards but the error persists — the transformation does not appear to be resolving it. **This is the one open issue going into Phase 7E.**
+To resume: investigate whether the plugin uses a different data frame structure for `stats_query_range` vs standard Prometheus matrix. Check the Grafana query inspector (panel → "Query inspector" → "Data") to see the actual field names and types returned by the plugin. May need to switch the panel type or use a different query approach. Grafana URL: `https://grafana.lab.gibbsgreatly.xyz`.
+
+#### §8 — Harbor containers use per-service log config (not overridable via daemon default)
 
 **Symptom**: After deploying Harbor and enabling the syslog daemon default, Harbor containers continued using their original log driver.
 **Root cause**: Harbor's installer-managed `docker-compose.yml` (at `/opt/harbor/`) contains per-service `logging:` blocks that send to `tcp://localhost:1514` (Harbor's built-in log aggregator). Per-service config takes precedence over the daemon default. We do not control this file.
@@ -571,32 +617,49 @@ Role at `terraform/lxc/ansible/roles/rsyslog_forward/`. What it does:
 3. Enables and starts rsyslog service
 4. Handler: restart rsyslog on config change
 
-Forwarding config (actual deployed template):
+Forwarding config (actual deployed template — `roles/rsyslog_forward/templates/victorialogs.conf.j2`):
 
 ```
-# Accept Docker container logs directly via TCP on localhost, bypassing journald.
-# journald mangles RFC 5424 APPNAME on the /dev/log path (truncates at '/'),
-# which would lose the container name from docker/<name> tags.
-module(load="imtcp")
-input(type="imtcp" port="10514" address="127.0.0.1")
+# Custom template uses %programname% (not %syslogtag%) for clean APPNAME.
+# %syslogtag% appends [PID] and truncates at 32 chars; %programname% does not.
+# Note: %programname% truncates at '/', so Docker tags use '-' not '/' as separator.
+template(name="VictoriaLogsForward" type="string"
+  string="<%PRI%>1 %TIMESTAMP:::date-rfc3339% %HOSTNAME% %programname% %PROCID% - - %msg%\n")
 
-# Forward all syslog messages to VictoriaLogs TCP syslog input.
-# Queue persists to disk so messages survive a brief VictoriaLogs outage.
 $WorkDirectory /var/spool/rsyslog
 
+# Forward system logs (journald → imuxsock) to VictoriaLogs.
 *.* action(type="omfwd"
            target="{{ rsyslog_forward_target_host }}"
            port="{{ rsyslog_forward_target_port }}"
            protocol="tcp"
-           Template="RSYSLOG_SyslogProtocol23Format"
+           Template="VictoriaLogsForward"
            queue.type="LinkedList"
            queue.filename="victorialogs-fwd"
            queue.maxDiskSpace="64m"
            queue.saveOnShutdown="on"
            action.resumeRetryCount="-1")
-```
 
-`RSYSLOG_SyslogProtocol23Format` is the built-in rsyslog template for RFC 5424 (syslog protocol version 2.3) format.
+# Accept Docker container logs via TCP on localhost with explicit RFC 5424 ruleset.
+# Without the explicit ruleset, rsyslog's default pmrfc3164 parser reads the RFC 5424
+# version field '1' as the syslog TAG, causing app_name="1" in VictoriaLogs (see §5).
+module(load="imtcp")
+
+ruleset(name="docker-tcp" parser="rsyslog.rfc5424") {
+    *.* action(type="omfwd"
+               target="{{ rsyslog_forward_target_host }}"
+               port="{{ rsyslog_forward_target_port }}"
+               protocol="tcp"
+               Template="VictoriaLogsForward"
+               queue.type="LinkedList"
+               queue.filename="victorialogs-fwd-docker"
+               queue.maxDiskSpace="32m"
+               queue.saveOnShutdown="on"
+               action.resumeRetryCount="-1")
+}
+
+input(type="imtcp" port="10514" address="127.0.0.1" ruleset="docker-tcp")
+```
 
 ### Docker daemon logging config
 
@@ -608,12 +671,14 @@ Deployed in `docker_base` role (`daemon.json`):
   "log-opts": {
     "syslog-address": "tcp://127.0.0.1:10514",
     "syslog-format": "rfc5424",
-    "tag": "docker/{{.Name}}"
+    "tag": "docker-{{.Name}}"
   }
 }
 ```
 
-The `tag` value `docker/{{.Name}}` sets the syslog APPNAME to e.g. `docker/authentik-worker-1`. The `docker/` prefix distinguishes Docker container entries from native system processes (`sshd`, `cron`, `rsyslogd`) in the same syslog stream. In LogsQL, `{appname=~"docker/.*"}` selects all Docker container logs; `{appname="docker/traefik"}` selects a specific container.
+The `tag` value `docker-{{.Name}}` sets the syslog APPNAME to e.g. `docker-authentik-worker-1`. The `docker-` prefix (hyphen, not slash) distinguishes Docker container entries from native system processes (`sshd`, `cron`, `rsyslogd`) in the same syslog stream. In LogsQL, `app_name:~"docker-.*"` selects all Docker container logs; `{app_name="docker-traefik"}` selects a specific container.
+
+> **Why hyphen not slash**: `%programname%` in rsyslog truncates at `/` by design. `docker/traefik` → `docker`. Hyphen is not a separator character so the full name passes through. See §4b.
 
 `tcp://127.0.0.1:10514` sends directly to rsyslog's imtcp listener on the same host. This bypasses journald and preserves the full APPNAME including the `/container-name` portion (see Implementation notes §3).
 
@@ -621,4 +686,4 @@ The `tag` value `docker/{{.Name}}` sets the syslog APPNAME to e.g. `docker/authe
 
 ### Branch
 
-`work/victorialogs` (current) — Phase 7 planning complete, design decisions confirmed. Implementation begins on a new branch cut from this one.
+`work/syslog-collection` (current) — Phase 7A/7B/7C/7D complete on pve. One open issue: Lab Logs "Log Volume by Host" timeseries panel shows "Data is missing a number field" despite `convertFieldType` transformation (see §7c). Resume with Phase 7E (pve-test provision + teardown gate) once the dashboard issue is resolved or accepted.
