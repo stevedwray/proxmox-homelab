@@ -336,13 +336,6 @@
       changed_when: false
       when: not ansible_check_mode
 
-    - name: Install and configure Promtail
-      ansible.builtin.include_role:
-        name: promtail
-      vars:
-        promtail_loki_url: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}:9428"
-        promtail_stack_name: ci-runner-01
-
   handlers:
     - name: Restart Docker
       ansible.builtin.systemd:

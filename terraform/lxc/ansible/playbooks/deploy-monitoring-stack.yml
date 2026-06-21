@@ -72,13 +72,11 @@
     vm_version: "v1.102.1"
     grafana_version: "11.6.0"
     victorialogs_version: "v1.51.0"
-    promtail_version: "3.0.0"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
     victorialogs_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-logs:{{ victorialogs_version }}"
-    promtail_image: "{{ monitoring_registry_host }}/dockerhub/grafana/promtail:{{ promtail_version }}"
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.49.1"
     cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
@@ -294,46 +292,6 @@
                     stack: step-ca-stack
       notify: Restart VictoriaMetrics
 
-    - name: Write Promtail configuration
-      ansible.builtin.copy:
-        dest: "{{ monitoring_compose_dir }}/promtail-config.yml"
-        mode: "0644"
-        content: |
-          server:
-            http_listen_port: 9080
-            grpc_listen_port: 0
-
-          positions:
-            filename: /tmp/positions.yaml
-
-          clients:
-            - url: http://victorialogs:9428/insert/loki/api/v1/push  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
-
-          scrape_configs:
-            - job_name: varlogs
-              static_configs:
-                - targets:
-                    - localhost
-                  labels:
-                    job: varlogs
-                    host: monitoring-stack
-                    stack: monitoring-stack
-                    __path__: /var/log/**/*.log
-            - job_name: docker
-              docker_sd_configs:
-                - host: unix:///var/run/docker.sock
-                  refresh_interval: 15s
-              relabel_configs:
-                - source_labels: [__meta_docker_container_name]
-                  regex: '/(.*)'
-                  target_label: container
-                - source_labels: [__meta_docker_container_log_stream]
-                  target_label: logstream
-                - target_label: host
-                  replacement: monitoring-stack
-                - target_label: stack
-                  replacement: monitoring-stack
-
     - name: Write Grafana datasource provisioning
       ansible.builtin.copy:
         dest: "{{ monitoring_compose_dir }}/grafana/provisioning/datasources/datasources.yml"
@@ -475,18 +433,6 @@
                 - -retentionPeriod=30d
                 - -syslog.listenAddr.tcp=:5140
                 - '-syslog.streamFields.tcp=["hostname","appname","facility","severity"]'
-
-            promtail:
-              image: {{ promtail_image }}
-              container_name: promtail
-              restart: unless-stopped
-              command: -config.file=/etc/promtail/config.yml
-              volumes:
-                - /var/log:/var/log:ro
-                - /var/run/docker.sock:/var/run/docker.sock:ro
-                - ./promtail-config.yml:/etc/promtail/config.yml:ro
-              depends_on:
-                - victorialogs
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}

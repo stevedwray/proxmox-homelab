@@ -55,13 +55,6 @@
           - "3142/tcp"
       when: "ufw_status.stdout is search('Status: active')"
 
-    - name: Install and configure Promtail
-      ansible.builtin.include_role:
-        name: promtail
-      vars:
-        promtail_loki_url: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}:9428"
-        promtail_stack_name: apt-cacher-stack
-
   handlers:
     - name: Restart apt-cacher-ng
       ansible.builtin.systemd:

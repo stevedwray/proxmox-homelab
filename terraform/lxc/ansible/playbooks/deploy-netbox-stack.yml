@@ -23,12 +23,6 @@
     netbox_network_env: "{{ lookup('env', 'PVE_ENV') | default('pve-test', true) }}"
     netbox_lab_ip_monitoring: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}"
 
-  handlers:
-    - name: Restart Promtail
-      ansible.builtin.command:
-        cmd: docker compose -f "{{ compose_file }}" restart promtail
-      changed_when: true
-
   tasks:
     - name: Ensure NetBox compose directory exists
       ansible.builtin.file:
@@ -53,47 +47,6 @@
         owner: root
         group: root
         mode: "0644"
-
-    - name: Write Promtail configuration
-      ansible.builtin.copy:
-        dest: "{{ compose_dir }}/promtail-config.yml"
-        mode: "0644"
-        content: |
-          server:
-            http_listen_port: 9080
-            grpc_listen_port: 0
-
-          positions:
-            filename: /tmp/positions.yaml
-
-          clients:
-            - url: http://{{ netbox_lab_ip_monitoring }}:9428/insert/loki/api/v1/push  # nosonar: ansible:S5332 — private SDN, VictoriaLogs ingest endpoint
-
-          scrape_configs:
-            - job_name: varlogs
-              static_configs:
-                - targets:
-                    - localhost
-                  labels:
-                    job: varlogs
-                    host: netbox-stack
-                    stack: netbox-stack
-                    __path__: /var/log/**/*.log
-            - job_name: docker
-              docker_sd_configs:
-                - host: unix:///var/run/docker.sock
-                  refresh_interval: 15s
-              relabel_configs:
-                - source_labels: [__meta_docker_container_name]
-                  regex: '/(.*)'
-                  target_label: container
-                - source_labels: [__meta_docker_container_log_stream]
-                  target_label: logstream
-                - target_label: host
-                  replacement: netbox-stack
-                - target_label: stack
-                  replacement: netbox-stack
-      notify: Restart Promtail
 
     - name: Debug netbox vars (sanity)
       ansible.builtin.debug:
