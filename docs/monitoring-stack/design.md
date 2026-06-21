@@ -387,127 +387,46 @@ There are three distinct Promtail patterns in use, each requiring a different re
 
 ---
 
-### Design decisions required
+### How Docker container logging via syslog works
 
-These are choices that cannot be resolved from the code or infrastructure alone. Each needs an answer before implementation begins.
+Docker has a pluggable logging driver. The default `json-file` writes each log line to a file on the host (what Promtail was scraping). With the `syslog` driver, Docker intercepts stdout/stderr at the daemon level and formats each line as a syslog message:
+
+```
+container process writes to stdout/stderr
+        ↓
+Docker daemon captures it (this always happens internally)
+        ↓  syslog driver
+Formats as RFC 5424 message:
+  HOSTNAME = LXC hostname        e.g. authentik-stack
+  APPNAME  = tag option          e.g. docker/authentik-worker-1
+  FACILITY = configurable        e.g. daemon
+  SEVERITY = stdout→info, stderr→err
+  MSG      = the log line
+        ↓
+Sends to unixgram:///dev/log (local rsyslog socket)
+        ↓
+rsyslog receives, queues, forwards → VictoriaLogs :5140
+```
+
+The stdout→`info` / stderr→`err` mapping is real signal: many services write normal output to stdout and error conditions to stderr. It is not perfectly reliable (some apps write everything to stderr) but it is genuine severity rather than a regex heuristic.
+
+**Important operational caveat**: with the `syslog` driver, `docker logs <container>` does not work — there is no local JSON file. Logs exist only in VictoriaLogs. Bear this in mind when debugging container startup issues before VictoriaLogs is available.
 
 ---
 
-**Decision 1: Docker syslog driver routing — local rsyslog or direct to VictoriaLogs?**
+### Confirmed design decisions
 
-Option A: Docker `syslog` driver → local rsyslog (`unix:///dev/log`) → rsyslog forwards to VictoriaLogs TCP
-
-```
-container stdout → Docker syslog driver → /dev/log → rsyslog → VictoriaLogs :5140
-```
-
-- Pro: rsyslog buffers locally if VictoriaLogs is briefly unavailable; system logs and Docker logs share a single forwarding config; rsyslog rules can enrich or filter before forwarding
-- Con: Adds a hop; rsyslog must be running or Docker syslog driver will block/fail on container start
-
-Option B: Docker `syslog` driver → VictoriaLogs TCP directly (`tcp://192.168.20.12:5140`)
-
-```
-container stdout → Docker syslog driver → VictoriaLogs :5140 (direct TCP)
-system logs → rsyslog → VictoriaLogs :5140 (separate path)
-```
-
-- Pro: Simpler; no dependency on local rsyslog for Docker logs; each container connects independently
-- Con: Two separate pipelines (Docker → VL, rsyslog → VL); no local buffering; rsyslog still needed for system logs; per-service network config rather than a single forwarding rule; if VictoriaLogs is down, container log writes fail silently
-
-**Recommendation**: Option A. Local rsyslog acts as a reliable syslog concentrator (exactly what it was designed for). A single forwarding rule covers both Docker and system logs. If VictoriaLogs is briefly unavailable, rsyslog queues messages on disk. rsyslog startup is fast and reliable — the risk of it not being available is low.
+| # | Decision | Choice | Rationale |
+|---|----------|--------|-----------|
+| 1 | Docker log routing | `unixgram:///dev/log` → local rsyslog → VictoriaLogs TCP | rsyslog is the natural OS syslog concentrator; single forwarding rule covers Docker and system logs; local disk queue if VictoriaLogs is briefly unavailable |
+| 2 | Stack identity in queries | `hostname` field (no synthetic `stack` label) | Each LXC hostname is already the stack name; `hostname` is set by the transport layer, not the application |
+| 2a | Container as metadata | `appname` field carries Docker container name via `tag` option | Grafana can filter by `appname=~"docker/authentik.*"` to drill into individual containers within a host |
+| 3 | Docker logging config scope | Daemon-level default in `docker_base` role (`daemon.json`) | Applies to all containers on every host including Harbor's installer-managed containers; persists through Harbor upgrades; no per-compose `logging:` blocks needed |
+| 4 | Cutover strategy | Parallel — verify syslog per host, then remove Promtail | Safe; brief duplicate logs are acceptable; no risk of losing logs if syslog config is wrong |
 
 ---
 
-**Decision 2: Stack label strategy — hostname or appname?**
-
-With syslog, each LXC host has a unique hostname (e.g. `authentik-stack`, `portainer-stack`). The syslog `hostname` field carries this automatically. The `appname` field carries the Docker container name (e.g. `authentik-worker-1`).
-
-Option A: Use `hostname` as the stack identifier (no `stack` label)
-
-- LogsQL query: `{hostname="authentik-stack"}`
-- The `hostname` field already maps 1:1 to the stack name for Docker stacks
-- Non-Docker hosts (harbor-stack LXC) also have unique hostnames
-- Downside: The concept of "stack" disappears; you filter by hostname only
-
-Option B: Retain a `stack` label, set it via rsyslog structured data
-
-- rsyslog rule maps hostname → stack name and adds it as RFC 5424 SD-ELEMENT
-- VictoriaLogs can be configured to promote SD fields to indexed fields
-- Maintains backward compatibility with existing LogsQL queries that use `stack=~"$stack"`
-- More complexity in rsyslog config
-
-**Recommendation**: Option A — use `hostname` directly. Since each LXC is dedicated to one stack and its hostname is already the stack name, the distinction between "hostname" and "stack" is artificial. The Grafana `host` variable in the dashboard becomes `hostname`. The LogsQL queries become simpler.
-
----
-
-**Decision 3: Harbor container logs**
-
-Harbor installs and manages its own Docker containers via its own installer (`/opt/harbor/docker-compose.yml`). This file is overwritten on Harbor upgrades.
-
-Option A: Configure Docker daemon default logging driver on harbor-stack LXC
-
-```json
-// /etc/docker/daemon.json
-{
-  "log-driver": "syslog",
-  "log-opts": {
-    "syslog-address": "unix:///dev/log",
-    "syslog-format": "rfc5424"
-  }
-}
-```
-
-- All containers on the host (including Harbor's) use syslog automatically
-- Persists through Harbor upgrades (Docker daemon config, not Harbor config)
-- Requires Docker daemon restart on change (brief outage for Harbor)
-- The `docker_base` role already manages `daemon.json` — this would be the natural place to add it
-
-Option B: Leave Harbor containers on default `json-file` logging
-
-- Harbor container logs are not captured in VictoriaLogs
-- The systemd Promtail on harbor-stack, which currently scrapes Docker socket, would be removed
-- Harbor operational logs from its own health checks, push/pull activity etc. would be invisible
-
-Option C: Docker daemon default logging driver for all hosts (not just Harbor)
-
-- Same as Option A but applied universally via `docker_base` role
-- Covers Harbor naturally without Harbor-specific treatment
-- Also means per-compose `logging:` blocks are not needed (daemon-level default applies)
-- Simpler overall — single place to configure, no per-service compose changes
-
-**Note**: If Option C (daemon-level default) is chosen for Decision 3, it substantially simplifies Decision 1 as well — the Docker syslog routing is configured once in daemon.json, not per-service in compose files. It also handles any future new services automatically.
-
-**Recommendation**: Option C — daemon-level default for all Docker hosts. Set in `docker_base` role so it applies everywhere consistently, including Harbor and any future stacks. Per-compose `logging:` blocks can then be omitted. This does require a Docker daemon restart on each host once during the migration.
-
----
-
-**Decision 4: Cutover strategy — per-stack or parallel?**
-
-Option A: Parallel operation (brief overlap)
-
-1. Deploy rsyslog + VictoriaLogs syslog input
-2. Start receiving syslog from all hosts
-3. Verify syslog ingestion is working
-4. Remove Promtail from each stack in sequence
-5. Confirm logs still arriving after Promtail removal
-
-- Pro: Safe; can verify syslog is working before removing Promtail; brief duplicate log entries are acceptable
-- Con: Brief period of duplicate logs in VictoriaLogs
-
-Option B: Big-bang cutover
-
-1. Deploy rsyslog + configure Docker logging driver on all hosts simultaneously
-2. Remove Promtail from all stacks simultaneously
-3. Provision all stacks in one pass
-
-- Pro: Clean; no duplicate logs
-- Con: If syslog is not working for any reason, log ingestion stops with no fallback
-
-**Recommendation**: Option A — parallel operation during migration, removing Promtail stack by stack once syslog ingestion is confirmed per host. Duplicate logs for a brief window are acceptable.
-
----
-
-### Architecture (post-decisions, assuming recommendations accepted)
+### Architecture (confirmed)
 
 ```
 Each LXC host
@@ -635,10 +554,10 @@ To be added to `docker_base` role (in `daemon.json`):
 }
 ```
 
-The `tag` value `docker/{{.Name}}` sets the syslog `APPNAME` to e.g. `docker/authentik-worker-1`. The `docker/` prefix makes it easy to identify Docker container entries vs. native system processes in rsyslog rules or LogsQL queries.
+The `tag` value `docker/{{.Name}}` sets the syslog `APPNAME` to e.g. `docker/authentik-worker-1`. The `docker/` prefix distinguishes Docker container entries from native system processes (`sshd`, `cron`, `rsyslogd`) in the same syslog stream. In Grafana, the `appname` dropdown will show `docker/authentik-worker-1` (container) alongside `sshd` (system) — cleanly separated by prefix.
 
-> **Note**: This requires a Docker daemon restart. The `docker_base` role already has a `Restart Docker` handler — the daemon.json write task should notify it.
+> **Note**: Changing `daemon.json` requires a Docker daemon restart. The `docker_base` role already has a `Restart Docker` handler — the daemon.json write task should notify it. After the restart, `docker logs <container>` will not work for newly started containers. Logs exist in VictoriaLogs only. This is the expected trade-off of the syslog driver.
 
 ### Branch
 
-`work/victorialogs` (current) — Phase 7 planning complete. Implementation begins on a new branch cut from this one once design decisions are confirmed.
+`work/victorialogs` (current) — Phase 7 planning complete, design decisions confirmed. Implementation begins on a new branch cut from this one.
