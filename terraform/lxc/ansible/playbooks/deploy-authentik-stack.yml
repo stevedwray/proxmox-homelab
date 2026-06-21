@@ -310,7 +310,7 @@
             "dns": ["{{ authentik_lab_ip_dns }}"],
             "log-driver": "syslog",
             "log-opts": {
-              "syslog-address": "unixgram:///dev/log",
+              "syslog-address": "tcp://127.0.0.1:10514",
               "syslog-format": "rfc5424",
               "tag": "{% raw %}docker/{{.Name}}{% endraw %}"
             },

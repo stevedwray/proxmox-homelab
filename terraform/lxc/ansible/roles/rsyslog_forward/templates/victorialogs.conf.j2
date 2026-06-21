@@ -1,3 +1,9 @@
+# Accept Docker container logs directly via TCP on localhost, bypassing journald.
+# journald mangles RFC 5424 APPNAME on the /dev/log path (truncates at '/'),
+# which would lose the container name from docker/<name> tags.
+module(load="imtcp")
+input(type="imtcp" port="10514" address="127.0.0.1")
+
 # Forward all syslog messages to VictoriaLogs TCP syslog input.
 # Queue persists to disk so messages survive a brief VictoriaLogs outage.
 $WorkDirectory /var/spool/rsyslog
