@@ -11,6 +11,7 @@
     step_ca_install_dir: /tmp/step-ca-install
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
+    step_ca_metrics_address: ":9443"
     step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
     step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') | trim }}"
     step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') | trim }}"
@@ -215,6 +216,31 @@
       when: not step_ca_config_stat.stat.exists and not ansible_check_mode
       no_log: true
 
+    - name: Read step-ca configuration
+      ansible.builtin.slurp:
+        src: "{{ step_ca_steppath }}/config/ca.json"
+      register: step_ca_config_current
+      when: not ansible_check_mode
+      no_log: true
+
+    - name: Enable step-ca Prometheus metrics listener
+      ansible.builtin.copy:
+        dest: "{{ step_ca_steppath }}/config/ca.json"
+        mode: "0640"
+        content: >-
+          {{
+            (
+              step_ca_config_current.content
+              | b64decode
+              | from_json
+              | combine({'metricsAddress': step_ca_metrics_address}, recursive=True)
+            )
+            | to_nice_json
+          }}
+      register: step_ca_metrics_config
+      when: not ansible_check_mode
+      no_log: true
+
     - name: Install step-ca systemd unit
       ansible.builtin.copy:
         dest: /etc/systemd/system/step-ca.service
@@ -247,6 +273,14 @@
         enabled: true
         state: started
       ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Restart step-ca when metrics config changes
+      ansible.builtin.systemd:
+        name: step-ca
+        state: restarted
+      when:
+        - not ansible_check_mode
+        - step_ca_metrics_config.changed
 
     - name: Wait for step-ca to answer health checks
       ansible.builtin.command:
