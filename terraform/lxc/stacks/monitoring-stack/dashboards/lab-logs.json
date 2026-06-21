@@ -2,7 +2,7 @@
   "__inputs": [],
   "__requires": [],
   "annotations": { "list": [] },
-  "description": "Full-stack log explorer, filterable by hostname, severity, and free-text search",
+  "description": "Full-stack log explorer, filterable by hostname, severity, app/container, and free-text search",
   "editable": true,
   "fiscalYearStartMonth": 0,
   "graphTooltip": 1,
@@ -27,20 +27,14 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\" | stats by (hostname) count() as cnt",
+          "queryType": "statsRange",
+          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} app_name:~\"$appname\" _msg:~\"$search\" | stats by (hostname) count() as cnt",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
       "title": "Log Volume by Host",
-      "transformations": [
-        {
-          "id": "convertFieldType",
-          "options": {
-            "conversions": [{ "targetField": "Value", "destinationType": "number" }]
-          }
-        }
-      ],
+      "transformations": [],
       "type": "timeseries"
     },
     {
@@ -57,7 +51,7 @@
       },
       "targets": [
         {
-          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} _msg:~\"$search\"",
+          "expr": "{hostname=~\"$hostname\", severity=~\"$severity\"} app_name:~\"$appname\" _msg:~\"$search\"",
           "legendFormat": "",
           "refId": "A"
         }
@@ -96,22 +90,33 @@
       {
         "allValue": ".*",
         "current": { "selected": true, "text": "All", "value": "$__all" },
-        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
-        "definition": "fieldValue - severity",
         "hide": 0,
         "includeAll": true,
         "multi": true,
         "name": "severity",
         "options": [],
+        "query": "Emergency : 0,Alert : 1,Critical : 2,Error : 3,Warning : 4,Notice : 5,Info : 6,Debug : 7",
+        "type": "custom"
+      },
+      {
+        "allValue": ".*",
+        "current": { "selected": true, "text": "All", "value": "$__all" },
+        "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
+        "definition": "fieldValue - app_name",
+        "hide": 0,
+        "includeAll": true,
+        "multi": true,
+        "name": "appname",
+        "options": [],
         "query": {
           "refId": "VictoriaLogsVariableQueryEditor-VariableQuery",
           "type": "fieldValue",
-          "field": "severity",
+          "field": "app_name",
           "query": "*",
-          "limit": 100
+          "limit": 1000
         },
         "refresh": 2,
-        "regex": "^[0-7]$",
+        "regex": "",
         "sort": 1,
         "type": "query"
       },
@@ -130,5 +135,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 7
+  "version": 9
 }

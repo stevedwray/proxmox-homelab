@@ -24,15 +24,14 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
+          "queryType": "statsRange",
           "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Accepted\" | stats by (hostname) count() as cnt",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
       "title": "SSH Successful Logins by Host",
-      "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
-      ],
+      "transformations": [],
       "type": "timeseries"
     },
     {
@@ -50,15 +49,14 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
+          "queryType": "statsRange",
           "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"Failed\" | stats by (hostname) count() as cnt",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
       "title": "SSH Failed Logins by Host",
-      "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
-      ],
+      "transformations": [],
       "type": "timeseries"
     },
     {
@@ -76,15 +74,14 @@
       "options": { "legend": { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         {
+          "queryType": "statsRange",
           "expr": "{hostname=~\"$hostname\", facility=\"4\"} \"sudo\" | stats by (hostname) count() as cnt",
           "legendFormat": "{{hostname}}",
           "refId": "A"
         }
       ],
       "title": "Sudo Events by Host",
-      "transformations": [
-        { "id": "convertFieldType", "options": { "conversions": [{ "targetField": "Value", "destinationType": "number" }] } }
-      ],
+      "transformations": [],
       "type": "timeseries"
     },
     {
@@ -166,5 +163,5 @@
   "timezone": "browser",
   "title": "Auth Logs",
   "uid": "auth-logs",
-  "version": 6
+  "version": 7
 }

@@ -432,7 +432,7 @@
                 - -storageDataPath=/vlogs
                 - -retentionPeriod=30d
                 - -syslog.listenAddr.tcp=:5140
-                - '-syslog.streamFields.tcp=["hostname","appname","facility","severity"]'
+                - '-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]'
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}
