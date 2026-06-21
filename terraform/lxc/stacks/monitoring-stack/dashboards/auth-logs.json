@@ -129,6 +129,7 @@
   "templating": {
     "list": [
       {
+        "allValue": ".*",
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
         "definition": "fieldValue - hostname",
@@ -156,5 +157,5 @@
   "timezone": "browser",
   "title": "Auth Logs",
   "uid": "auth-logs",
-  "version": 2
+  "version": 3
 }

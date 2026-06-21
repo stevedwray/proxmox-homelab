@@ -96,6 +96,7 @@
   "templating": {
     "list": [
       {
+        "allValue": ".*",
         "current": { "selected": true, "text": "All", "value": "$__all" },
         "datasource": { "type": "victoriametrics-logs-datasource", "uid": "VictoriaLogs" },
         "definition": "fieldValue - hostname",
@@ -117,11 +118,11 @@
         "type": "query"
       },
       {
-        "current": { "selected": false, "text": "", "value": "" },
+        "current": { "selected": true, "text": ".*", "value": ".*" },
         "hide": 0,
         "name": "search",
-        "options": [{ "selected": false, "text": "", "value": "" }],
-        "query": "",
+        "options": [{ "selected": true, "text": ".*", "value": ".*" }],
+        "query": ".*",
         "type": "textbox"
       }
     ]
@@ -131,5 +132,5 @@
   "timezone": "browser",
   "title": "Lab Logs",
   "uid": "lab-logs",
-  "version": 2
+  "version": 3
 }
