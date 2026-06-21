@@ -51,7 +51,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | victoriametrics | 192.168.20.12:8428 | ✅ up |
 | victorialogs | 192.168.20.12:9428 | ⏳ pending smoke test |
 | grafana | 192.168.20.12:3000 | ✅ up |
-| step-ca | — | ❌ not deployed — TLS complexity deferred (see Remaining Work) |
+| step-ca | — | ❌ not scraped — no metrics endpoint exposed by current step-ca deployment |
 
 ### Deployed dashboards
 
@@ -72,7 +72,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 - **Stack labels**: Both `node_exporter` and `cadvisor` use per-target `static_configs` with `labels: {stack: <name>}` rather than flat IP lists.
 - **Traefik metrics**: Added `metrics: prometheus` block on `:8082` post-deploy when Traefik Ingress dashboard showed no data.
-- **step-ca scrape job**: Deferred — TLS complexity (homelab CA mount into VictoriaMetrics).
+- **step-ca scrape job**: Removed — current step-ca deployment listens on `:443` for CA traffic and health checks, but does not expose `/metrics` on `:443` or `:9443`.
 - **Scrape config written inline**: `deploy-monitoring-stack.yml` writes scrape config via `ansible.builtin.copy` with inline `content:` block, not a separate `.j2` template.
 
 ### Post-deploy fixes
@@ -130,7 +130,6 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | 8082 | Traefik metrics | proxy-stack |
 | 9090 | Harbor metrics | harbor-stack |
 | 9300 | Authentik metrics | authentik-stack |
-| 9443 | step-ca metrics (HTTPS) | step-ca-stack — TLS, needs CA or skip-verify |
 | 3100 | Loki ingest | monitoring-stack receives from Promtail agents |
 | 5140 | VictoriaLogs syslog TCP | monitoring-stack receives RFC 5424 from rsyslog on all LXCs |
 
@@ -143,7 +142,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | Stack | Zone | node_exporter | cAdvisor | App metrics | Promtail |
 |-------|------|:---:|:---:|---|:---:|
 | dns-stack | mgmt_seg | ✓ | — | CoreDNS :9153 | ✓ (systemd) |
-| step-ca-stack | mgmt_seg | ✓ | — | step-ca :9443/metrics | ✓ (systemd) |
+| step-ca-stack | mgmt_seg | ✓ | — | — | ✓ (systemd) |
 | monitoring-stack | mgmt_seg | ✓ | ✓ | VM :8428, Loki :3100, Grafana :3000 | ✓ |
 | portainer-stack | mgmt_seg | ✓ | ✓ | — | ✓ (Docker) |
 | authentik-stack | mgmt_seg | ✓ | ✓ | Authentik :9300/metrics | ✓ (Docker) |
@@ -164,7 +163,7 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | Authentik | `:9300/metrics` | ✓ | |
 | Harbor | `:9090/metrics` | ✓ | |
 | NetBox | `:8080/metrics` | ✓ | |
-| step-ca | `:9443/metrics` | ✗ | HTTPS — needs homelab CA in VictoriaMetrics container |
+| step-ca | — | ✗ | Current deployment exposes CA service and `/health` on `:443`, but no metrics endpoint |
 | VictoriaMetrics | `:8428/metrics` | ✓ | |
 | Loki | `:3100/metrics` | ✓ | |
 | Grafana | `:3000/metrics` | ✓ | |
@@ -196,7 +195,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-i
 | Item | Notes |
 |------|-------|
 | Proxmox host logs | Configure bare-metal Proxmox remote syslog forwarding to VictoriaLogs/syslog listener; do not install node_exporter for host performance metrics |
-| step-ca scrape job | Mount homelab CA into VictoriaMetrics container; add `scheme: https` + `tls_config.ca_file` to scrape config |
+| step-ca metrics | Confirm supported metrics exposure for the installed step-ca version before adding a scrape job; current deployment has no `/metrics` endpoint |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
 | VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*` after Phase 7 syslog collection is in place |
@@ -866,11 +865,9 @@ warn cannot scrape target "https://192.168.20.11:9443/metrics" ({instance="192.1
 ```
 Every 30 seconds, continuously.
 
-**Cause**: The step-ca scrape job is configured with `scheme: https` but either the endpoint does not exist at that port, or VictoriaMetrics cannot verify the TLS certificate (step-ca uses the homelab CA, which is not in VictoriaMetrics's trust store). This was already noted in `Remaining Work` as a deferred item ("Mount homelab CA into VictoriaMetrics container").
+**Cause**: The step-ca deployment listens on `:443`, not `:9443`. Live probes also showed `/health` returns `200` on `:443`, while `/metrics` returns `404`; `:9443` refuses connections. The VictoriaMetrics container already had the homelab root CA mounted, so this was an endpoint/configuration mismatch rather than a CA trust failure.
 
-**Fix (option A — complete the deferred work)**: Mount the homelab CA cert into the VictoriaMetrics container. Add `tls_config.ca_file` to the step-ca scrape job.
-
-**Fix (option B — suppress until ready)**: Remove or comment out the step-ca scrape job entry until the CA mount is implemented. Eliminates ~2,880 warn lines per day with no data loss (step-ca metrics aren't being collected anyway).
+**Fix**: Remove the step-ca scrape job until a real metrics endpoint is intentionally exposed. Eliminates ~2,880 warn lines per day with no data loss because step-ca metrics were not being collected successfully.
 
 ### Finding 3 — rsyslogd `imklog` permission denied on all LXC hosts
 

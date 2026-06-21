@@ -278,16 +278,6 @@
               static_configs:
                 - targets:
                     - "{{ lookup('env', 'LAB_IP_PROXY') }}:8082"
-
-            - job_name: step-ca
-              scheme: https
-              tls_config:
-                ca_file: /etc/ssl/certs/homelab-root.crt
-              static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_STEP_CA') }}:9443"
-                  labels:
-                    stack: step-ca-stack
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning
