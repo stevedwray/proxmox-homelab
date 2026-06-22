@@ -91,9 +91,9 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Proxmox host `node_exporter` target rendered as `http://:9100/metrics` | 2daaa8f |
 | Removed inactive step-ca HTTPS scrape while confirming no real endpoint existed | 3513682 |
 | Enabled native step-ca metrics on HTTP `:9443` and restored a healthy scrape | 6414d37 |
-| NetBox housekeeping container looped because the command is obsolete in current NetBox | this change |
-| OpenIPMI failed on boot inside LXC guests, where IPMI hardware is not exposed | this change |
-| Portainer backup timer retried on reboot before Portainer API was ready | this change |
+| NetBox housekeeping container looped because the command is obsolete in current NetBox | 5c45894 |
+| OpenIPMI failed on boot inside LXC guests, where IPMI hardware is not exposed | 5c45894 |
+| Portainer backup timer retried on reboot before Portainer API was ready | 5c45894 |
 
 ---
 
@@ -231,46 +231,49 @@ Replace Loki with VictoriaLogs for full-text log search and a per-source LLM ana
 
 **Why replace Loki**: Loki indexes only labels, not log content. Full-text search requires a scan query that degrades with volume. VictoriaLogs indexes content and supports fast substring and field-extraction queries via LogsQL. It is from the VictoriaMetrics team (same operational patterns, already in the stack), runs as a single container, and stores data as a Docker volume on the existing 52 GB `/var/lib/docker` mount — no second LXC mount required.
 
-### Design
+### Implemented design
 
 ```
                          monitoring-stack (192.168.20.12)
                          ┌──────────────────────────────────────────┐
                          │  VictoriaMetrics  VictoriaLogs  Grafana  │
- Promtail (per stack) ───►  (metrics)        :9428         :3000    │
+ rsyslog (per stack) ────►  (metrics)        :9428/:5140   :3000    │
                          │                       ▲                  │
                          │              LLM analysis pipeline        │
                          │              (query API → Claude API)     │
                          └──────────────────────────────────────────┘
 ```
 
-VictoriaLogs exposes a Loki-compatible ingest endpoint at `/insert/loki/api/v1/push`, so all existing Promtail agents redirect with a single URL change. LogsQL queries are issued against `/select/logsql/query`.
+VictoriaLogs exposes HTTP query endpoints on `:9428` and accepts RFC 5424 syslog over TCP on `:5140`. LogsQL queries are issued against `/select/logsql/query`. The Loki-compatible ingest endpoint exists, but it is not the active logging path; Promtail has been removed from the steady state.
 
 ### VictoriaLogs container
 
 ```yaml
 victorialogs:
-  image: docker.io/victoriametrics/victoria-logs:v1-victorialogs
+  image: docker.io/victoriametrics/victoria-logs:v1.51.0
   ports:
     - "9428:9428"
+    - "5140:5140"
   volumes:
     - victorialogs-data:/vlogs
   command:
     - -storageDataPath=/vlogs
     - -retentionPeriod=30d
+    - -syslog.listenAddr.tcp=:5140
+    - '-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]'
   restart: unless-stopped
 ```
 
 Data stored in a named Docker volume — lives on the existing `/var/lib/docker` mount. No additional LXC mount point needed.
 
-### Migration path
+### Migration path status
 
-1. Add VictoriaLogs container to monitoring-stack compose (alongside Loki initially)
-2. Add VictoriaLogs Grafana datasource plugin (`victoriametrics-logs-datasource`)
-3. Update all Promtail configs to push to VictoriaLogs: change `url` from `http://192.168.20.12:3100/loki/api/v1/push` to `http://192.168.20.12:9428/insert/loki/api/v1/push`
-4. Rebuild Lab Logs and Auth Logs dashboards using VictoriaLogs datasource + LogsQL
-5. Verify log ingestion and dashboard queries
-6. Remove Loki container and volumes
+1. VictoriaLogs is deployed in the monitoring-stack compose.
+2. Grafana is provisioned with the `victoriametrics-logs-datasource` plugin.
+3. The intermediate Promtail-to-VictoriaLogs Loki-compatible push path was superseded by rsyslog forwarding to VictoriaLogs `:5140`.
+4. Lab Logs and Auth Logs dashboards have been rebuilt using VictoriaLogs datasource + LogsQL.
+5. Log ingestion and dashboard queries were verified on pve.
+6. Loki and Promtail are no longer active services in the monitoring stack.
 
 ### LLM analysis pipeline
 
@@ -279,11 +282,11 @@ A lightweight script (or small service) that fetches recent logs for a named sou
 ```bash
 # Fetch last N lines from a stream and pipe to LLM
 curl -G "http://192.168.20.12:9428/select/logsql/query" \
-  --data-urlencode 'query=_stream:{stack="harbor-stack"} | limit 200' \
+  --data-urlencode 'query={hostname="harbor-stack"} | limit 200' \
   | <send to Claude API>
 ```
 
-LogsQL stream selectors map directly to the `stack` and `job` labels already set by Promtail, so per-source retrieval is precise and fast.
+LogsQL stream selectors map directly to syslog fields such as `hostname`, `app_name`, `facility`, and `severity`, so per-source retrieval is precise and fast for the current syslog-ingested data.
 
 Implementation: a small Python script invoked ad-hoc (or triggered via Grafana panel button). Kept outside the monitoring-stack compose definition — it's a tooling concern, not an infrastructure service.
 
@@ -291,21 +294,21 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 
 | # | Task | Status |
 |---|------|--------|
-| 1 | Pin VictoriaLogs release version | ✅ `v1.24.0-victorialogs` |
+| 1 | Pin VictoriaLogs release version | ✅ `v1.51.0` |
 | 2 | Mirror VictoriaLogs image to Harbor | ✅ via `dockerhub/` proxy cache — no explicit push needed |
 | 3 | Add `victoriametrics-logs-datasource` Grafana plugin | ✅ `GF_INSTALL_PLUGINS` |
 | 4 | Add VictoriaLogs service to compose; remove Loki | ✅ port 9428, 30d retention, named volume |
 | 5 | Add VictoriaLogs datasource to Grafana provisioning | ✅ uid=VictoriaLogs |
-| 6 | Update Promtail push URL across all stacks | ✅ all 9 stacks: `:9428/insert/loki/api/v1/push` |
+| 6 | Replace Promtail push path with rsyslog/syslog forwarding | ✅ all managed stacks forward to VictoriaLogs `:5140` |
 | 7 | Rebuild Lab Logs and Auth Logs dashboards with LogsQL | ✅ `field_values()` vars, `stats count()` timeseries |
-| 8 | Verify ingestion | ⏳ requires pve-test provision |
+| 8 | Verify ingestion | ✅ verified on pve; pve-test teardown gate still pending |
 | 9 | Write LLM analysis script | ✅ `scripts/victorialogs-analyze.py` |
 | 10 | Update teardown health gate | ✅ `:9428/health` added to monitoring-stack check |
 | 11 | Provision + smoke test on pve-test | ⏳ gate for promotion to baseline |
 
-### Known limitations (current Promtail approach)
+### Historical limitations of the Promtail approach
 
-The Promtail-based collection scrapes Docker container stdout/stderr via the Docker socket and ships raw lines to VictoriaLogs. This bypasses the syslog transport layer entirely, meaning:
+The old Promtail-based collection scraped Docker container stdout/stderr via the Docker socket and shipped raw lines to VictoriaLogs. This bypassed the syslog transport layer entirely, meaning:
 
 - **No facilities** — all logs arrive without RFC 5424 facility classification
 - **No reliable severity** — containers write plain text or application-specific JSON to stdout; severity must be inferred by heuristic regex, which silently misfires on services that don't embed level keywords
@@ -314,11 +317,9 @@ The Promtail-based collection scrapes Docker container stdout/stderr via the Doc
 
 These limitations are inherent to scraping stdout rather than using the syslog protocol. Phase 7 addresses this properly.
 
-### Branch
+### Implementation history
 
-`work/victorialogs` — rebased onto PR #384 (portainer-teardown-restore)
-
-Promotion gate: full teardown + redeploy cycle on pve-test confirms log ingestion resumes and all dashboards show data after rebuild.
+The VictoriaLogs and syslog work has been implemented and verified on pve. The remaining promotion gate is a full pve-test teardown + redeploy cycle confirming log ingestion resumes and all dashboards show data after rebuild.
 
 ---
 
@@ -332,22 +333,22 @@ Replacing Promtail with rsyslog-based collection restores this model: the syslog
 
 ### Research findings
 
-These facts were confirmed before writing this plan and should not be re-investigated during implementation.
+These facts were confirmed before writing the Phase 7 plan. Some bullets describe pre-implementation state and are kept here as implementation history.
 
 **rsyslog**
-- rsyslog is **not** currently installed on any LXC host. All hosts show `un rsyslog` (uninstalled, never configured).
+- Before Phase 7, rsyslog was not installed on any LXC host. It is now installed and managed by `lxc_base` via the `rsyslog_forward` role.
 - rsyslog **8.2504.0-1** is available in apt on Debian 12 (very recent, 2025-04). No backports or third-party repos needed.
 - Modules needed: `omfwd` (TCP forwarding — built into the base package), `imuxsock` (receives from `/dev/log` — built in), `imjournal` (reads journald — built in). There is no separate `rsyslog-module-imtcp` package; TCP input is built into the base `rsyslog` package.
 - The `rsyslog-docker` package exists in apt but is for enriching logs with Docker container metadata — not required for our approach since we use the Docker syslog driver.
 
 **VictoriaLogs syslog input**
-- Confirmed present in v1.24.0. Flags verified via `docker run --rm ... -help`.
+- Confirmed present in VictoriaLogs; current deployed version is `v1.51.0`.
 - `-syslog.listenAddr.tcp=:5140` enables TCP listener. UDP also available.
-- `-syslog.streamFields.tcp=hostname,appname,facility` controls which syslog header fields become VictoriaLogs stream labels (indexed for fast filtering).
+- `-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]` controls which syslog header fields become VictoriaLogs stream labels (indexed for fast filtering).
 - `-syslog.extraFields.tcp=...` adds arbitrary static metadata to all ingested messages.
 - Both RFC 3164 and RFC 5424 are parsed. Timezone handling is configurable for RFC 3164.
 - No compression needed for LAN-local traffic.
-- The existing VictoriaLogs container currently runs with only `-storageDataPath=/vlogs -retentionPeriod=30d`. Port 5140 is not yet exposed.
+- VictoriaLogs now exposes port `5140` and runs with `-syslog.listenAddr.tcp=:5140`.
 
 **Network reachability**
 - Port 5140 will work: all stacks already push to monitoring-stack:9428 successfully, which uses the same inter-VLAN routing. No new firewall rules are required.
@@ -388,7 +389,7 @@ There are three distinct Promtail patterns in use, each requiring a different re
 | step-ca | step-ca-stack | ✗ | Logs to stdout only |
 | cadvisor | all Docker stacks | ✗ | Logs to stdout only |
 
-**Conclusion**: native syslog configuration is possible for postgres and nginx but requires mounting config files into containers or env vars. For most services (traefik, portainer, CoreDNS, step-ca, cadvisor, authentik), stdout is the only output. The Docker `syslog` logging driver is the correct mechanism for these — it intercepts stdout/stderr at the Docker daemon level, wrapping each line in a syslog envelope before delivery to rsyslog. The key difference from Promtail is that the **transport layer** (rsyslog header) carries the authoritative hostname and appname, not the message body.
+**Conclusion**: native syslog configuration is possible for postgres and nginx but requires mounting config files into containers or env vars. For most services (traefik, portainer, CoreDNS, step-ca, cadvisor, authentik), stdout is the only output. The Docker `syslog` logging driver is the correct mechanism for these — it intercepts stdout/stderr at the Docker daemon level, wrapping each line in a syslog envelope before delivery to rsyslog. The key difference from Promtail is that the **transport layer** (rsyslog header) carries the authoritative hostname and `app_name`, not the message body.
 
 ---
 
@@ -403,7 +404,7 @@ Docker daemon captures it (this always happens internally)
         ↓  syslog driver
 Formats as RFC 5424 message:
   HOSTNAME = LXC hostname        e.g. authentik-stack
-  APPNAME  = tag option          e.g. docker/authentik-worker-1
+  APPNAME  = tag option          e.g. docker-authentik-worker-1
   FACILITY = configurable        e.g. daemon
   SEVERITY = stdout→info, stderr→err
   MSG      = the log line
@@ -425,7 +426,7 @@ The stdout→`info` / stderr→`err` mapping is real signal: many services write
 |---|----------|--------|-----------|
 | 1 | Docker log routing | `tcp://127.0.0.1:10514` → local rsyslog imtcp → VictoriaLogs TCP | Direct TCP to rsyslog bypasses journald; journald mangles RFC 5424 APPNAME on the `/dev/log` path (see Implementation notes §3). rsyslog `imtcp` correctly parses RFC 5424 — container name preserved in full. System logs (non-Docker) still flow via imuxsock from journald. |
 | 2 | Stack identity in queries | `hostname` field (no synthetic `stack` label) | Each LXC hostname is already the stack name; `hostname` is set by the transport layer, not the application |
-| 2a | Container as metadata | `appname` field carries Docker container name via `tag` option | Grafana can filter by `appname=~"docker/authentik.*"` to drill into individual containers within a host |
+| 2a | Container as metadata | `app_name` field carries Docker container name via `tag` option | Grafana can filter by `app_name:~"docker-authentik.*"` to drill into individual containers within a host |
 | 3 | Docker logging config scope | Daemon-level default in `docker_base` role (`daemon.json`) | Applies to all containers on every host; persists through upgrades; no per-compose `logging:` blocks needed. Harbor exception: Harbor's installer-managed compose has per-service `logging:` blocks pointing to its own log aggregator — these override daemon default and are not overridden by us (accepted). |
 | 4 | Cutover strategy | Parallel — verify syslog per host, then remove Promtail | Safe; brief duplicate logs are acceptable; no risk of losing logs if syslog config is wrong |
 
@@ -455,11 +456,11 @@ Each LXC host
                                                        │ TCP :5140 (RFC 5424)
                                            ┌───────────▼────────────────┐
                                            │  VictoriaLogs              │
-                                           │  :9428 (HTTP/LogsQL/Loki)  │
+                                           │  :9428 (HTTP/LogsQL/API)   │
                                            │  :5140 (syslog TCP input)  │
                                            │                            │
                                            │  Stream labels:            │
-                                           │    hostname, appname,      │
+                                           │    hostname, app_name,     │
                                            │    facility, severity      │
                                            └───────────┬────────────────┘
                                                        │
@@ -467,7 +468,7 @@ Each LXC host
                                            │  Grafana                   │
                                            │  filter by severity,       │
                                            │  facility, hostname,       │
-                                           │  appname (container)       │
+                                           │  app_name (container)      │
                                            └────────────────────────────┘
 ```
 
@@ -476,7 +477,7 @@ Each LXC host
 | Field | Source | Example values | Notes |
 |-------|--------|----------------|-------|
 | `hostname` | syslog RFC 5424 header | `authentik-stack`, `harbor-stack` | Stream label |
-| `app_name` | syslog APPNAME field | `docker/traefik`, `sshd`, `rsyslogd` | Regular field; stream label flag uses `appname` (without underscore) — VictoriaLogs stores it as `app_name` internally |
+| `app_name` | syslog APPNAME field | `docker-traefik`, `sshd`, `rsyslogd` | Stream label and regular field; Docker entries use the `docker-` prefix |
 | `facility` | syslog facility | `3` (daemon), `10` (auth) | Stream label (numeric code) |
 | `severity` | syslog severity | `6` (info), `3` (err) | Stream label (numeric code) |
 | `_msg` | syslog MSG field | the log line | |
@@ -484,7 +485,7 @@ Each LXC host
 
 `severity` and `facility` are first-class LogsQL filter fields. Grafana variable queries against `field_values?field=severity` return real severity values — no regex heuristics.
 
-**Field naming note**: VictoriaLogs stores APPNAME as `app_name` (underscore) in regular fields. The `-syslog.streamFields.tcp` flag references `appname` (no underscore) to index it as a stream label. Testing showed `appname` appeared in the `_stream` label set while `app_name` holds the value in the message fields. Use `{appname=~"docker/.*"}` in LogsQL stream selectors and `app_name` for message-level filtering.
+**Field naming note**: VictoriaLogs stores APPNAME as `app_name` (underscore). The deployed `-syslog.streamFields.tcp` flag uses `app_name`, so new entries carry it in `_stream` and as a regular field. Use message-level filtering such as `app_name:~"docker-.*"` in dashboards so queries continue to work across both post-fix entries and any older entries where `app_name` was not indexed.
 
 ### Regression risks
 
@@ -493,7 +494,7 @@ Each LXC host
 | Log gap during cutover | If Promtail is removed before rsyslog+syslog is confirmed, logs stop flowing | Option A (parallel) cutover — confirm per host before removing Promtail |
 | Docker daemon restart | Changing `daemon.json` requires Docker restart, causing brief container outage on each host | Schedule during maintenance; restart Docker before provisioning compose stacks |
 | Harbor containers | Harbor's own compose is managed by Harbor installer; Docker daemon default covers this without touching Harbor config | Verify Harbor log ingestion after daemon restart |
-| VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `appname`, `facility`, `severity`. | Dashboard queries need to handle both, OR accept that pre-cutover logs require different query fields. Dashboards will be rebuilt for the new field set; historic data remains queryable via LogsQL explore. |
+| VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `app_name`, `facility`, `severity`. | Current dashboards target the new field set; historic data remains queryable via LogsQL explore. |
 | Auth Logs dashboard | Earlier Promtail-era queries used `{job="varlogs"}`. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Resolved in Phase 7D; keep historic queries in mind when exploring pre-cutover logs |
 | Teardown test smoke test | The teardown test checks `curl http://...:9428/health` but does not verify log ingestion. A broken syslog config would pass the health gate. | Add a log ingestion verification step to the smoke test: after provision, query `{hostname=~".+"} \| limit 1` and assert non-empty |
 | Port 5140 documentation | The network reachability table must include VictoriaLogs syslog TCP on `:5140`. | Resolved in Phase 7; keep the port documented because it is the active log ingest path |
@@ -507,14 +508,14 @@ Each LXC host
 | 7A | Enable VictoriaLogs syslog TCP input (`:5140`); create `rsyslog_forward` role; add to `lxc_base` | ✅ complete on pve |
 | 7B | Configure Docker daemon syslog default (`docker_base` role + all playbooks); verify ingestion | ✅ complete on pve |
 | 7C | Remove Promtail from all stacks (10 files: compose blocks, include_roles, vars, handlers) | ✅ complete on pve |
-| 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ complete (2026-06-22) — all panels working, severity labels, appname filter |
+| 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ complete (2026-06-22) — all panels working, severity labels, `app_name` filter |
 | 7E | Provision all stacks on pve-test; add smoke test to teardown harness; full teardown + redeploy cycle (promotion gate for `baseline/teardown-validated`) | ⏳ pending |
 
 ### Implementation tasks
 
-| # | Task | File(s) / Role | Status (2026-06-21) |
+| # | Task | File(s) / Role | Status (2026-06-22) |
 |---|------|----------------|---------------------|
-| 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=["hostname","appname","facility","severity"]`, port 5140 | ✅ deployed on pve |
+| 1 | Enable VictoriaLogs syslog TCP input | `deploy-monitoring-stack.yml` compose block: `-syslog.listenAddr.tcp=:5140`, `-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]`, port 5140 | ✅ deployed on pve |
 | 2 | Update network docs | `docs/monitoring-stack/design.md` port table | ✅ done |
 | 3 | Create `rsyslog_forward` Ansible role | `terraform/lxc/ansible/roles/rsyslog_forward/` — installs rsyslog, writes `/etc/rsyslog.d/90-victorialogs.conf`, imtcp listener on `127.0.0.1:10514`, forwards all to VictoriaLogs:5140 | ✅ role created and running on all provisioned stacks |
 | 4 | Configure Docker daemon syslog default | `docker_base` role `daemon.json`: `log-driver=syslog`, `syslog-address=tcp://127.0.0.1:10514`, `syslog-format=rfc5424`, `tag=docker-{{.Name}}`; conditional `recreate: always` when daemon config changes | ✅ deployed on pve |
@@ -541,11 +542,11 @@ These are issues discovered during live deployment and their resolutions. Read b
 cannot parse -syslog.streamFields.tcp="hostname" for -syslog.listenAddr.tcp=":5140":
 invalid character 'h' looking for beginning of value
 ```
-**Root cause**: The flag expects a JSON array string `["hostname","appname","facility","severity"]`, not a comma-separated list.
+**Root cause**: The flag expects a JSON array string such as `["hostname","app_name","facility","severity"]`, not a comma-separated list.
 **Fix**: Wrap the flag value in single quotes in the YAML compose `command:` block to prevent YAML from interpreting the JSON array:
 ```yaml
 command:
-  - '-syslog.streamFields.tcp=["hostname","appname","facility","severity"]'
+  - '-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]'
 ```
 **Commit**: `fix(monitoring): correct syslog.streamFields.tcp flag to JSON array format`
 
@@ -613,14 +614,13 @@ With an alias: `| stats by (hostname) count() as cnt`
 **7c — stats query panels require explicit `queryType: "statsRange"` — resolved 2026-06-22**
 Without an explicit `queryType`, the victoriametrics-logs-datasource v0.28.0 plugin treats all queries (including `| stats by (...) count() as cnt`) as raw log queries. It returns results as log-panel data frames: a "Time" field and a "Line" field where each value is a JSON string like `{"cnt":"34","hostname":"proxy-stack"}`. There is no numeric field for a timeseries panel to plot, hence "Data is missing a number field".
 **Root cause confirmed via** `/api/ds/query`: querying without `queryType` returns `{name: "Line", type: "string"}` frames; querying with `queryType: "statsRange"` returns `{name: "Value", type: "number", frame: "float64"}` per-series frames — already converted to numbers by the plugin backend, no `convertFieldType` transformation needed.
-**Fix**: Add `"queryType": "statsRange"` to every timeseries panel target that uses a `| stats` query. Remove all `convertFieldType` transformations. Applied to all timeseries panels in `lab-logs.json` (Log Volume by Host) and `auth-logs.json` (SSH Successful, SSH Failed, Sudo Events). Commit: `work/syslog-collection`.
+**Fix**: Add `"queryType": "statsRange"` to every timeseries panel target that uses a `| stats` query. Remove all `convertFieldType` transformations. Applied to all timeseries panels in `lab-logs.json` (Log Volume by Host) and `auth-logs.json` (SSH Successful, SSH Failed, Sudo Events).
 
 #### §9 — `appname` is not the correct stream field name for APPNAME — use `app_name` — resolved 2026-06-22
 
 **Symptom**: The `appname` stream label in VictoriaLogs was always empty string. The `_stream` dict on syslog-ingested entries showed `{facility="3",hostname="...",severity="6"}` — no `appname` field. The Grafana dashboard `appname` variable (querying `field_values?field=appname`) returned only empty string with no real values.
 **Root cause**: VictoriaLogs stores the RFC 5424 APPNAME field internally as `app_name` (underscore). The `-syslog.streamFields.tcp` flag was configured as `["hostname","appname","facility","severity"]`. VictoriaLogs looked for a stream-eligible field named `appname` (no underscore), found nothing, and indexed the stream label as empty. The `app_name` regular field was correctly populated but was not indexed as a stream label.
 **Fix**: Change `-syslog.streamFields.tcp=["hostname","appname","facility","severity"]` to `-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]`. After redeploying VictoriaLogs, new entries carry `app_name` in their `_stream` dict. Dashboard variable updated to `field: "app_name"`. Panel queries use `app_name:~"$appname"` (message-level filter rather than stream selector) so the filter works for both pre-fix entries (where `app_name` is a message field only) and post-fix entries (where it is also a stream label). Pre-fix entries will age out at 30-day retention.
-**Commit**: `work/syslog-collection`
 
 #### §8 — Harbor containers use per-service log config (not overridable via daemon default)
 
@@ -705,9 +705,9 @@ The `tag` value `docker-{{.Name}}` sets the syslog APPNAME to e.g. `docker-authe
 
 > **Operational note**: With the `syslog` driver, `docker logs <container>` does not work — there is no local JSON file. Container logs exist only in VictoriaLogs. This is the expected trade-off. During debugging of container startup issues before VictoriaLogs is available (e.g. fresh provision), temporarily switch back to `json-file` in daemon.json, restart Docker, recreate the container, then switch back.
 
-### Branch
+### Phase 7 status
 
-`work/syslog-collection` (current) — Phase 7A/7B/7C/7D complete on pve (2026-06-22). Dashboard issues resolved. Next: Phase 7E (pve-test provision + teardown gate), then operational fixes documented in §health-findings below.
+Phase 7A/7B/7C/7D are complete on pve (2026-06-22). Dashboard issues are resolved. Next: Phase 7E (pve-test provision + teardown gate), then any remaining operational fixes documented in §health-findings below.
 
 ---
 
@@ -840,7 +840,7 @@ Prerequisite: Phase 7E must be complete before this becomes a teardown-gate conc
 
 Systematic analysis of the VictoriaLogs dataset on 2026-06-22, querying across all 10 hosts over the last 24 hours (~185k log entries at the time). These are the distinct problems found, ranked by priority.
 
-Current status after the follow-up fixes in this branch: Findings 1, 2, and 6 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. Promtail runtime cleanup is complete: no managed host has an active/enabled Promtail systemd service or running Docker Promtail container, and fresh VictoriaLogs queries show no `failed to start tailer` entries. Findings 3, 4, and 5 remain open (low-frequency/latent).
+Current status after the follow-up fixes in this branch: Findings 1, 2, 5, and 6 are resolved on pve. Reboot validation then identified three additional boot/runtime cleanup items — obsolete NetBox housekeeping, OpenIPMI failures in LXCs, and the Portainer backup timer — all resolved in `5c45894`. Fresh VictoriaMetrics checks show no unhealthy scrape targets. Fresh VictoriaLogs queries show no new entries for the old Step CA HTTPS scrape signature, no Promtail tailer errors, no NetBox housekeeping entries, and no Portainer backup entries after the cleanup window. Findings 3 and 4 remain open/latent and are low-frequency transport noise; boot-only rsyslog noise is not being pursued for now.
 
 The same query patterns used here would be encoded as MCP tools in Phase 8, making this kind of investigation reusable across sessions.
 
@@ -854,6 +854,9 @@ The same query patterns used here would be encoded as MCP tools in Phase 8, maki
 | 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | Open/latent; quiet in fresh window | `rsyslog_forward` role `omfwd` keepalive |
 | 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Resolved | `lxc_base` machine-id task + cAdvisor bind mounts |
 | 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Resolved | `lxc_base` cleanup tasks + compose orphan removal |
+| 7 | NetBox housekeeping container restart loop | netbox-stack | Medium | Resolved (`5c45894`) | remove obsolete `netbox-housekeeping` service |
+| 8 | OpenIPMI failed on boot inside LXC guests | all managed LXCs | Medium | Resolved (`5c45894`) | `lxc_base` masks/purges OpenIPMI and clears failed state |
+| 9 | Portainer backup timer ran on normal reboot | portainer-stack | Medium | Resolved (`5c45894`) | backup role disables/removes scheduled units by default |
 
 ### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
 
@@ -960,10 +963,40 @@ Runtime checks also found legacy Promtail still active in more than one form:
 
 **Verification**: A live sweep of all managed hosts showed `promtail` inactive or not found in systemd and no Docker containers with `promtail` in the name. Fresh VictoriaLogs queries showed no `failed to start tailer` entries.
 
+### Finding 7 — NetBox housekeeping container restart loop
+
+**Observed**: After stack reboot validation, `netbox-netbox-housekeeping-1` repeatedly restarted and logged that the housekeeping command is no longer necessary in the current NetBox release.
+
+**Cause**: The compose definition still carried the historical `netbox-housekeeping` service. Current NetBox handles these tasks internally, so the standalone housekeeping container was obsolete.
+
+**Fix**: Removed `netbox-housekeeping` from the NetBox compose source and README.
+
+**Verification**: Reprovisioned `netbox-stack`; `docker ps -a` showed only the expected NetBox, worker, Postgres, Redis, cAdvisor, socket proxy, and Portainer agent containers. The NetBox API returned the expected unauthenticated `403` on `:8080`, and fresh VictoriaLogs queries showed no new `netbox-housekeeping` entries after cleanup.
+
+### Finding 8 — OpenIPMI failed on boot inside LXC guests
+
+**Observed**: Reboot validation showed `openipmi.service` failed across managed LXC guests.
+
+**Cause**: OpenIPMI is hardware/IPMI support that does not belong inside these LXCs. The containers do not expose IPMI hardware, so the service cannot start and only creates boot noise and failed unit state.
+
+**Fix**: Added idempotent cleanup to `lxc_base`: stop/disable/mask OpenIPMI, purge the package when present, and clear stale failed unit state.
+
+**Verification**: Reprovisioned all targeted infra/support stacks. A cross-host sweep showed no failed systemd units; OpenIPMI was inactive/masked and the package was absent everywhere checked.
+
+### Finding 9 — Portainer backup timer ran on normal reboot
+
+**Observed**: Reboot validation showed `portainer-backup.service` failed once when the timer fired before the Portainer API was ready, then succeeded on retry.
+
+**Cause**: The old backup timer used normal scheduled behavior for a workflow that should only run around destructive rebuild/restore operations. Portainer does not need backup/restore on every normal reboot.
+
+**Fix**: Changed `portainer_backup` to default to `portainer_backup_enabled: false`. Normal provisioning now removes the scheduled timer and service units and clears stale failed state. The opt-in path installs a manual `portainer-backup.service` only, with no timer.
+
+**Verification**: Reprovisioned `portainer-stack`; Portainer API returned `200`, `systemctl list-unit-files "portainer-backup.*"` returned zero unit files, and fresh VictoriaLogs queries showed no `portainer-backup` entries after cleanup.
+
 ### Known behaviours (not bugs)
 
 **Docker stderr → severity=3 inflation**: All Docker containers write stderr output as syslog severity `3` (err), regardless of the application's actual log level. This is a Docker syslog driver behaviour — Docker maps stderr→err, stdout→info. The result is that aggregate "error" counts by host and the `severity` stream label are not reliable indicators of real error rates for containerised services. In VictoriaLogs, `severity` is meaningful for journald/systemd service logs (where systemd correctly maps the journal priority to syslog severity) but is a blunt instrument for Docker container logs.
 
 To get the real log level from a Docker container, parse the `_msg` content — most structured loggers (Authentik, NetBox, VictoriaMetrics) embed their level in a JSON field (`"level"`, `"severity"`, or similar). This is a target use case for the MCP server's `schema_overview` tool and for future structured log extraction work.
 
-**cAdvisor machine-info message fragmentation**: cAdvisor logs its complete machine hardware description at startup as a single large structured string. This exceeds the rsyslog message size limit and gets split across multiple syslog frames. The continuation frames lack correct syslog headers, so VictoriaLogs parses them with garbage `hostname` values (`localhost`, `df`, numeric strings like `04886016`). These appear as valid log entries with `facility="1"` (user) and `severity="5"` (notice). They are harmless and will be eliminated by fixing Finding 5 (once cAdvisor has `/etc/machine-id`, the machine-info log line disappears from the output) or by applying rsyslog `$MaxMessageSize` limits.
+**cAdvisor machine-info message fragmentation**: cAdvisor can log a complete machine hardware description at startup as a single large structured string. This can exceed the rsyslog message size limit and get split across multiple syslog frames. The continuation frames may lack correct syslog headers, so VictoriaLogs can parse them with garbage `hostname` values (`localhost`, `df`, numeric strings like `04886016`). These are harmless startup noise; the recurring missing `SystemUUID` error from Finding 5 has been fixed separately.
