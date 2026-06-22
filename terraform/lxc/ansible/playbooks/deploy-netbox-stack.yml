@@ -227,7 +227,7 @@
       ansible.builtin.shell:
         cmd: >-
           docker compose -f {{ compose_file }} pull &&
-          docker compose -f {{ compose_file }} up -d
+          docker compose -f {{ compose_file }} up -d --remove-orphans
           {{ '--force-recreate' if docker_daemon_config.changed else '' }}
 
     - name: Wait for NetBox container to report healthy (best-effort)

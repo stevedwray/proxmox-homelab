@@ -60,3 +60,17 @@
   ansible.builtin.include_role:
     name: rsyslog_forward
   when: monitoring_enabled | default(true) | bool
+
+- name: Stop promtail service if present (replaced by rsyslog/VictoriaLogs)
+  ansible.builtin.systemd:
+    name: promtail
+    state: stopped
+    enabled: false
+  failed_when: false
+
+- name: Remove promtail package if installed
+  ansible.builtin.apt:
+    name: promtail
+    state: absent
+    purge: true
+  failed_when: false
