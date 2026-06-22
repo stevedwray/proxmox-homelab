@@ -6,7 +6,7 @@ metadata:
 spec:
   routes:
     - name: traefik-dashboard
-      host: traefik.lab.gibbsgreatly.xyz
+      host: traefik.${LAB_DOMAIN}
       backend:
         type: traefikService
         service: api@internal

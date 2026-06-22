@@ -101,11 +101,12 @@ Tracked in [sprint-env-isolation.md](sprint-env-isolation.md). Sessions E-1 thro
 
 | Item | File(s) to update | Status |
 |---|---|---|
-| Update container IPs (+100 last octet) | `.env.pve-test-vm.template` | E-1a |
-| Set DNS zone | `.env.pve-test-vm.template` (`LAB_DOMAIN`) | E-1a |
-| Template CoreDNS zone origin and authority | `terraform/lxc/ansible/files/coredns-lab.zone`, CoreDNS renderer/playbook | E-1d |
-| Template edge route hosts and validation suffix | `terraform/lxc/stacks/*/edge.yaml`, `terraform/lxc/edge_manifest.py` | E-1e |
-| Remove hardcoded registry hostnames | stack metadata and generated inventories | E-1e |
+| Update container IPs (+100 last octet) | `.env.pve-test-vm.template` | ✓ done |
+| Set DNS zone + re-derive FQDNs | `.env.pve-test-vm.template` (`LAB_DOMAIN`, `LAB_FQDN_*`) | ✓ done |
+| Update pve-test-vm IP snapshot | `terraform/lxc/network/pve-test-vm.zone-members.yaml` | ✓ done |
+| Document pve-test-vm IP table | `docs/design/network.md` | ✓ done |
+| Template CoreDNS zone origin and authority | `terraform/lxc/ansible/files/coredns-lab.zone`, `deploy-coredns.yml` | ✓ done |
+| Template edge route hosts and validation suffix | `terraform/lxc/stacks/*/edge.yaml`, `terraform/lxc/edge_manifest.py` | ✓ done |
 | Add MikroTik DNS forwarding rule | Manual — MikroTik config | E-2 |
 | Register `test.gibbsgreatly.xyz` | Cloudflare | E-3a |
 | Full rebuild validation | pve-test-vm full reprovision | E-2 |

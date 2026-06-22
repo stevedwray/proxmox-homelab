@@ -1,7 +1,7 @@
-$ORIGIN lab.gibbsgreatly.xyz.
+$ORIGIN ${LAB_DOMAIN}.
 $TTL 5m
 
-@               IN  SOA ns1.lab.gibbsgreatly.xyz. admin.lab.gibbsgreatly.xyz. (
+@               IN  SOA ns1.${LAB_DOMAIN}. admin.${LAB_DOMAIN}. (
 						2026053003 ; serial
 					1h         ; refresh
 					15m        ; retry
@@ -9,7 +9,7 @@ $TTL 5m
 					5m         ; minimum
 )
 
-@               IN  NS  ns1.lab.gibbsgreatly.xyz.
+@               IN  NS  ns1.${LAB_DOMAIN}.
 ns1             IN  A   ${LAB_IP_DNS}
 
 ; Phase 04 core services (mgmt_seg)

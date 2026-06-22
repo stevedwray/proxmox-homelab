@@ -13,7 +13,7 @@ import yaml
 
 API_VERSION = "homelab.gibbsgreatly.xyz/v1alpha1"
 KIND = "EdgeManifest"
-LAB_DOMAIN_SUFFIX = ".lab.gibbsgreatly.xyz"
+LAB_DOMAIN_SUFFIX = "." + os.environ.get("LAB_DOMAIN", "lab.gibbsgreatly.xyz")
 SOURCE_DNS_TARGET = "${LAB_IP_PROXY}"
 ALLOWED_AUTH_MODES = ("none", "forwardAuth", "native", "oidc")
 ALLOWED_BACKEND_TYPES = ("url", "traefikService")

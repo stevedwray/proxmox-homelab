@@ -9,7 +9,7 @@ metadata:
 spec:
   routes:
     - name: harbor
-      host: harbor.lab.gibbsgreatly.xyz
+      host: harbor.${LAB_DOMAIN}
       backend:
         type: url
         url: http://${LAB_IP_HARBOR}

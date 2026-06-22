@@ -9,7 +9,7 @@ metadata:
 spec:
   routes:
     - name: portainer
-      host: portainer.lab.gibbsgreatly.xyz
+      host: portainer.${LAB_DOMAIN}
       backend:
         type: url
         url: http://${LAB_IP_PORTAINER}:9000

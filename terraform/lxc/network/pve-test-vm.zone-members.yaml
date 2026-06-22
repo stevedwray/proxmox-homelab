@@ -4,35 +4,35 @@ generated_from:
 zones:
   infra_seg:
   - stack_name: apt-cacher-stack
-    ip_address: 192.168.40.11
+    ip_address: 192.168.40.111
     description: apt-cacher-stack
   - stack_name: harbor-stack
-    ip_address: 192.168.40.10
+    ip_address: 192.168.40.110
     description: harbor-stack
   - stack_name: netbox-stack
-    ip_address: 192.168.40.12
+    ip_address: 192.168.40.112
     description: netbox-stack
   mgmt_seg:
   - stack_name: authentik-stack
-    ip_address: 192.168.20.10
+    ip_address: 192.168.20.110
     description: authentik-stack
   - stack_name: dns-stack
-    ip_address: 192.168.20.13
+    ip_address: 192.168.20.113
     description: dns-stack
   - stack_name: monitoring-stack
-    ip_address: 192.168.20.12
+    ip_address: 192.168.20.112
     description: monitoring-stack
   - stack_name: portainer-stack
-    ip_address: 192.168.20.20
+    ip_address: 192.168.20.120
     description: portainer-stack
   - stack_name: step-ca-stack
-    ip_address: 192.168.20.11
+    ip_address: 192.168.20.111
     description: step-ca
   edge_seg:
   - stack_name: proxy-stack
-    ip_address: 192.168.30.10
+    ip_address: 192.168.30.110
     description: proxy-stack
   build_seg:
   - stack_name: ci-runner-01
-    ip_address: 192.168.10.63
+    ip_address: 192.168.10.163
     description: ci-runner-01

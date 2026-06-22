@@ -151,6 +151,7 @@
         content: >-
           {{
             lookup('file', coredns_zone_src)
+            | replace('${LAB_DOMAIN}', lab_domain)
             | replace('${LAB_IP_AUTHENTIK}', lab_ip_authentik)
             | replace('${LAB_IP_STEP_CA}', lab_ip_step_ca)
             | replace('${LAB_IP_MONITORING}', lab_ip_monitoring)

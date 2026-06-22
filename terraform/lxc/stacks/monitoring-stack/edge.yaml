@@ -9,7 +9,7 @@ metadata:
 spec:
   routes:
     - name: grafana
-      host: grafana.lab.gibbsgreatly.xyz
+      host: grafana.${LAB_DOMAIN}
       backend:
         type: url
         url: http://${LAB_IP_MONITORING}:3000

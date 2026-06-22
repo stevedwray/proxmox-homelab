@@ -39,6 +39,28 @@ Future zones (Phase 06+): `app_seg`, `game_seg`.
 | apt-cacher-ng | `infra_seg` | `192.168.40.11` | 40011 | 03c |
 | NetBox | `infra_seg` | `192.168.40.12` | 40012 | 03b |
 
+## pve-test-vm IP allocation
+
+pve-test-vm uses the same VLANs and subnets as pve. Container IPs use last-octet +100 to avoid
+collisions when both environments are simultaneously attached to the MikroTik trunk.
+
+| Container | Zone | pve IP | pve-test-vm IP |
+|---|---|---|---|
+| ci-runner-01 | `build_seg` | `192.168.10.63` | `192.168.10.163` |
+| Portainer | `mgmt_seg` | `192.168.20.20` | `192.168.20.120` |
+| Authentik | `mgmt_seg` | `192.168.20.10` | `192.168.20.110` |
+| step-ca | `mgmt_seg` | `192.168.20.11` | `192.168.20.111` |
+| Monitoring | `mgmt_seg` | `192.168.20.12` | `192.168.20.112` |
+| CoreDNS | `mgmt_seg` | `192.168.20.13` | `192.168.20.113` |
+| Traefik | `edge_seg` | `192.168.30.10` | `192.168.30.110` |
+| Harbor | `infra_seg` | `192.168.40.10` | `192.168.40.110` |
+| apt-cacher-ng | `infra_seg` | `192.168.40.11` | `192.168.40.111` |
+| NetBox | `infra_seg` | `192.168.40.12` | `192.168.40.112` |
+
+pve-test-vm CoreDNS holds authority for `test.gibbsgreatly.xyz`. MikroTik must have a
+separate FWD rule forwarding `test.gibbsgreatly.xyz` queries to `192.168.20.113` (the
+pve-test-vm CoreDNS container). This is manual configuration (TM-09).
+
 ## Cross-zone traffic policy
 
 Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test.yaml`.
@@ -72,7 +94,8 @@ Two-tier model:
 | Namespace | Resolver | Used for |
 |---|---|---|
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
-| `lab.gibbsgreatly.xyz` | CoreDNS (authoritative) | Internal platform identity — service-to-service, managed host access |
+| `lab.gibbsgreatly.xyz` | CoreDNS on pve (`192.168.20.13`) | Internal platform identity — service-to-service, managed host access on pve |
+| `test.gibbsgreatly.xyz` | CoreDNS on pve-test-vm (`192.168.20.113`) | Same as above for pve-test-vm environment; separate zone avoids DNS collisions |
 
 ### DNS configuration per LXC
 

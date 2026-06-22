@@ -6,7 +6,7 @@ metadata:
 spec:
   routes:
     - name: authentik
-      host: authentik.lab.gibbsgreatly.xyz
+      host: authentik.${LAB_DOMAIN}
       backend:
         type: url
         url: http://${LAB_IP_AUTHENTIK}:9000

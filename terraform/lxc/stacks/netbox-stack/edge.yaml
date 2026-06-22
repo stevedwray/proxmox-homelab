@@ -6,7 +6,7 @@ metadata:
 spec:
   routes:
     - name: netbox
-      host: netbox.lab.gibbsgreatly.xyz
+      host: netbox.${LAB_DOMAIN}
       backend:
         type: url
         url: http://${LAB_IP_NETBOX}:8080
