@@ -212,6 +212,7 @@
                 - /var/run:/var/run:ro
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
 
     - name: Deploy cAdvisor via compose
       community.docker.docker_compose_v2:

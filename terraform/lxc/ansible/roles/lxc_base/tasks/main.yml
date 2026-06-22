@@ -51,6 +51,11 @@
     - lxc_base_homelab_root_ca_local.stat.exists
     - lxc_base_homelab_root_ca_copy.changed
 
+- name: Ensure machine-id exists for host and cAdvisor identity
+  ansible.builtin.command:
+    cmd: systemd-machine-id-setup
+    creates: /etc/machine-id
+
 - name: Install node_exporter for OS metrics collection
   ansible.builtin.include_role:
     name: node_exporter

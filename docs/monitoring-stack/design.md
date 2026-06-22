@@ -849,7 +849,7 @@ The same query patterns used here would be encoded as MCP tools in Phase 8, maki
 | 2 | VictoriaMetrics cannot scrape `https://192.168.20.11:9443/metrics` (step-ca) | monitoring-stack | High | Resolved (`3513682`, `6414d37`) | `deploy-step-ca.yml` and scrape config in `deploy-monitoring-stack.yml` |
 | 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | Open/latent; quiet in fresh window unless rsyslog restarts | `rsyslog_forward` role config |
 | 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | Open/latent; quiet in fresh window | `rsyslog_forward` role `omfwd` keepalive |
-| 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Open | cAdvisor container config or LXC template |
+| 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Resolved | `lxc_base` machine-id task + cAdvisor bind mounts |
 | 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Resolved | `lxc_base` cleanup tasks + compose orphan removal |
 
 ### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
@@ -931,24 +931,17 @@ This causes rsyslog to send TCP keepalive probes on the idle connection, prevent
 [docker-cadvisor] E info.go:119] Failed to get system UUID: open /etc/machine-id: no such file or directory
 ```
 
-**Cause**: cAdvisor reads `/etc/machine-id` to generate a stable machine UUID for its metrics. LXC containers do not have `/etc/machine-id` by default; it's generated at first boot by `systemd-machine-id-setup` which the LXC template does not run.
+**Cause**: cAdvisor reads `/etc/machine-id` to generate a stable machine UUID for its metrics. The relevant path is inside the cAdvisor container, not just under `/rootfs`, so having `/rootfs/etc/machine-id` available is insufficient.
 
-**Fix (option A — create `/etc/machine-id` in LXC template)**: Add a task to `lxc_base` that creates `/etc/machine-id` if absent:
-```yaml
-- name: Ensure /etc/machine-id exists
-  ansible.builtin.command: systemd-machine-id-setup
-  args:
-    creates: /etc/machine-id
-```
-
-**Fix (option B — bind-mount from host)**: In the cAdvisor Docker service definition, mount the host's `/etc/machine-id`:
+**Fix**: Ensure each LXC has `/etc/machine-id` via `lxc_base`, then bind-mount that file into every cAdvisor container:
 ```yaml
 volumes:
   - /etc/machine-id:/etc/machine-id:ro
 ```
-This works if the LXC container can see the LXC host's `/etc/machine-id`, but may not be correct semantically (it would report the LXC host's UUID, not the container's).
 
-Option A is cleaner: gives each LXC a stable, unique UUID, which is also useful for other purposes. File: `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml`.
+This gives cAdvisor a stable LXC-local machine identity without adding any new service to the host.
+
+**Verification**: Reprovisioned `authentik-stack`, `harbor-stack`, `monitoring-stack`, `netbox-stack`, `portainer-stack`, and `proxy-stack` on 2026-06-22. Direct Docker inspection confirmed each active cAdvisor container had `/etc/machine-id:/etc/machine-id:ro`, and `test -s /etc/machine-id` passed inside each container. VictoriaMetrics reported no unhealthy active targets. VictoriaLogs had no `Failed to get system UUID` events after `2026-06-22T02:55:00Z`, beyond the post-restart window.
 
 ### Finding 6 — Legacy Promtail still running
 

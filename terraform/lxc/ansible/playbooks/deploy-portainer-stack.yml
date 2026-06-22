@@ -118,6 +118,7 @@
                 - /var/run:/var/run:ro
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
 
     - name: Pull Portainer image
       community.docker.docker_image:
