@@ -25,7 +25,7 @@ for the full working practices reference.
 ## Goal
 
 After this sprint:
-- A daily backup of Portainer state runs automatically and lands on the NAS
+- A manual backup of Portainer state can be written to the NAS before destructive rebuild/restore work
 - A destroy + rebuild of the Portainer LXC followed by a restore from backup
   returns Portainer to its pre-destroy state (stacks, endpoints, env vars)
 - The restore path is documented and tested, not theoretical
@@ -133,15 +133,17 @@ export TASK_APPROVAL="portainer-backup-restore"
 The pve NFS mount at `/mnt/nas-backup` is already in fstab with `_netdev` and
 `x-systemd.requires=network-online.target` — it mounts before LXCs start.
 
-### 4. Write backup systemd service and timer
+### 4. Write backup systemd service
 
 Service: authenticates via `POST /api/auth`, then calls `POST /api/backup`,
 writes binary to `/var/backups/portainer/portainer-YYYYMMDD.tar.gz`.
 Retains last 7 backups (rotation: `ls -t | tail -n +8 | xargs -r rm`).
 
-Timer: daily, `Persistent=true`, `RandomizedDelaySec=1800`.
+Scheduled backups are not enabled during normal Portainer deployment. Backup
+support is opt-in for destructive rebuild/restore workflows so a normal reboot
+does not trigger an API backup.
 
-Model on `netbox-populate.timer` (same credential env file pattern):
+Use the same credential env file pattern as other local systemd helpers:
 - Credentials env file: `/etc/portainer-backup/env` (mode 0600, root only)
 - Script: `/opt/portainer-backup/backup.sh`
 
@@ -153,10 +155,12 @@ pattern used by `portainer_api` and `portainer_agent`. Include the role in
 `deploy-portainer-stack.yml` after the Portainer init play.
 
 Role tasks:
+- Default to `portainer_backup_enabled: false`, which removes the scheduled
+  backup units when normal Portainer provisioning runs
 - Write `/etc/portainer-backup/env` (mode 0600, templated from `PORTAINER_ADMIN_PASSWORD`)
 - Write `/opt/portainer-backup/backup.sh`
-- Write systemd service and timer units to `/etc/systemd/system/`
-- `systemctl daemon-reload && systemctl enable --now portainer-backup.timer`
+- When explicitly enabled, write the manual systemd service unit to
+  `/etc/systemd/system/`
 
 After writing the role, run the Ansible validation tier:
 
@@ -170,6 +174,9 @@ export TASK_APPROVAL="portainer-backup-restore"
 ```
 
 ### 6. Test backup
+
+After running the backup-support path with `portainer_backup_enabled=true`, trigger
+one backup explicitly:
 
 ```bash
 ./with-secrets-prod pct exec 20020 -- systemctl start portainer-backup.service
@@ -222,11 +229,11 @@ This is a separate task; do not block sprint 01 promotion on it.
 
 ```bash
 git add -p
-git commit -m "feat(portainer): add NAS backup timer and bind mount"
+git commit -m "feat(portainer): add NAS backup service and bind mount"
 ```
 
 Merge into `baseline/teardown-validated` after a full teardown + redeploy cycle
-confirms backup timer survives rebuild:
+confirms manual backup/restore survives rebuild:
 
 ```bash
 ./with-secrets-prod scripts/teardown-deploy-test.sh --stack all --disposable
@@ -269,14 +276,14 @@ The script sequence:
 4. POSTs the latest NAS backup to `/api/restore` from pve via SSH
 5. Restarts Portainer container to load restored DB
 6. Verifies InstanceID changed (confirms restore applied)
-7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth, bind mount, timer apply idempotently)
+7. Runs `provision.sh --stack portainer-stack` (full — init gets 409 and skips; OAuth and backup support apply idempotently)
 
 ### Critical constraint: restore must happen before init
 
 `POST /api/restore` only works on an **uninitialized** Portainer instance — before
 `POST /api/users/admin/init` has been called. The `pre_restore` tag in
 `deploy-portainer-stack.yml` splits the playbook so only plays 1+2 (Docker base,
-Portainer CE start) run before restore. Plays 3+4 (init, backup timer) run after.
+Portainer CE start) run before restore. Plays 3+4 (init, backup support) run after.
 
 ### Backup file location
 

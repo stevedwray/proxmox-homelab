@@ -29,7 +29,6 @@ Based on [netbox-docker](https://github.com/netbox-community/netbox-docker) rele
 |---------|-------|------|
 | `netbox` | `netboxcommunity/netbox:v4.5-4.0.2` | Web UI + API (port 8080) |
 | `netbox-worker` | same | Background task queue (rqworker) |
-| `netbox-housekeeping` | same | Periodic cleanup (runs, exits, restarts) |
 | `postgres` | `postgres:18-alpine` | Database |
 | `redis` | `valkey/valkey:9.0-alpine` | Task queue broker |
 | `redis-cache` | `valkey/valkey:9.0-alpine` | Cache backend |

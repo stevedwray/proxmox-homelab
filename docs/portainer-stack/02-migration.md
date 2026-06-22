@@ -346,8 +346,9 @@ curl -sf -X DELETE http://192.168.20.20:9000/api/endpoints/<endpoint-id> \
 
 ### 7. Trigger backup
 
-Run `systemctl start portainer-backup.service` on the Portainer LXC to take
-an immediate backup of the migrated state. Verify it lands on the NAS.
+If backup support has been explicitly enabled for this migration, run
+`systemctl start portainer-backup.service` on the Portainer LXC to take an
+immediate backup of the migrated state. Verify it lands on the NAS.
 This is the recovery point from this moment forward.
 
 ### 8. Stop existing Portainer

@@ -56,6 +56,27 @@
     cmd: systemd-machine-id-setup
     creates: /etc/machine-id
 
+- name: Stop and mask OpenIPMI service in LXC guests
+  ansible.builtin.systemd:
+    name: openipmi
+    state: stopped
+    enabled: false
+    masked: true
+  failed_when: false
+
+- name: Remove OpenIPMI package from LXC guests
+  ansible.builtin.apt:
+    name: openipmi
+    state: absent
+    purge: true
+  failed_when: false
+
+- name: Clear stale OpenIPMI failed unit state
+  ansible.builtin.command:
+    cmd: systemctl reset-failed openipmi.service
+  failed_when: false
+  changed_when: false
+
 - name: Install node_exporter for OS metrics collection
   ansible.builtin.include_role:
     name: node_exporter

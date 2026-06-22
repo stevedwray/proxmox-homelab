@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, and confirmed the old step-ca scrape warning is no longer emitted.**
+**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, removed the obsolete NetBox housekeeping container, disabled scheduled Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old step-ca scrape warning is no longer emitted.**
 
 ### Running services
 
@@ -91,6 +91,9 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Proxmox host `node_exporter` target rendered as `http://:9100/metrics` | 2daaa8f |
 | Removed inactive step-ca HTTPS scrape while confirming no real endpoint existed | 3513682 |
 | Enabled native step-ca metrics on HTTP `:9443` and restored a healthy scrape | 6414d37 |
+| NetBox housekeeping container looped because the command is obsolete in current NetBox | this change |
+| OpenIPMI failed on boot inside LXC guests, where IPMI hardware is not exposed | this change |
+| Portainer backup timer retried on reboot before Portainer API was ready | this change |
 
 ---
 
