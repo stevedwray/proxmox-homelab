@@ -7,13 +7,20 @@ ANSIBLE_DIR="${REPO_ROOT}/terraform/lxc/ansible"
 
 usage() {
   cat <<'EOF'
-Usage: scripts/provision.sh [--tier <platform|apps|all>] [--stack <name>] [--check]
+Usage: scripts/provision.sh [--tier <platform|apps|all>] [--stack <name>]
+                            [--target-env <pve-test-vm|pve>] [--check]
 
 Options:
-  --tier   Limit orchestration to a deployment tier (default: all).
-  --stack  Run only the named stack (repeatable).
-  --check  Run ansible-playbook in check mode.
-  -h, --help  Show this help text.
+  --tier        Limit orchestration to a deployment tier (default: all).
+  --stack       Run only the named stack (repeatable).
+  --target-env  Assert that PVE_ENV matches before running (guards against
+                loading secrets for a different environment).
+  --check       Run ansible-playbook in check mode (skips smoke tests).
+  -h, --help    Show this help text.
+
+Environment selection happens before this script runs via the wrapper:
+  PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh --tier platform
+  ./with-secrets-prod scripts/provision.sh --stack monitoring-stack
 EOF
 }
 
@@ -113,13 +120,13 @@ reconcile_all_edge() {
 
     local proxy_extra_vars_file
     proxy_extra_vars_file="$(mktemp "/tmp/proxy-stack.ansible-extra-vars.XXXXXX.yml")"
-    stack_extra_vars_files+=("$proxy_extra_vars_file")
     render_stack_ansible_extra_vars "proxy-stack" "$proxy_extra_vars_file"
 
     log "Push generated Traefik config to proxy-stack"
     ansible-playbook -i "$proxy_inventory" -u root "$proxy_playbook" \
       -e "@${proxy_extra_vars_file}" \
       -e "traefik_generated_source_dir=${generated_traefik_dir}"
+    rm -f "$proxy_extra_vars_file"
   fi
 }
 
@@ -215,11 +222,12 @@ with open(output_file, "w", encoding="utf-8") as handle:
 PY
 }
 
-resolve_stack_order() {
+resolve_stack_layers() {
   local tier_filter="$1"
   local explicit_csv="$2"
 
   python3 - "$STACKS_DIR" "$tier_filter" "$explicit_csv" <<'PY'
+import json
 import os
 import sys
 import yaml
@@ -228,9 +236,10 @@ stacks_dir = sys.argv[1]
 tier_filter = sys.argv[2]
 explicit_csv = sys.argv[3]
 
-APPROVED_PLATFORM_ORDER = [
+# Validation guard only — not used for ordering (layers are computed from depends_on)
+APPROVED_PLATFORM_STACKS = {
     "apt-cacher-stack",
-  "harbor-stack",
+    "harbor-stack",
     "ci-runner-01",
     "dns-stack",
     "step-ca-stack",
@@ -238,8 +247,8 @@ APPROVED_PLATFORM_ORDER = [
     "proxy-stack",
     "monitoring-stack",
     "netbox-stack",
-  "portainer-stack",
-]
+    "portainer-stack",
+}
 
 
 def die(message: str) -> None:
@@ -303,86 +312,167 @@ else:
 if not candidates:
     die("no stacks selected after applying filters")
 
+# Restrict dependency edges to selected candidates only
+deps_map = {
+    name: [dep for dep in stack_meta[name]["depends_on"] if dep in set(candidates)]
+    for name in candidates
+}
 
-def topo_sort(nodes, deps_map, tie_key):
-    incoming = {n: 0 for n in nodes}
-    edges = {n: [] for n in nodes}
-    for node in nodes:
-        for dep in deps_map.get(node, []):
-            if dep in incoming:
-                incoming[node] += 1
-                edges[dep].append(node)
-
-    ready = sorted([n for n, count in incoming.items() if count == 0], key=tie_key)
-    ordered = []
-
-    while ready:
-        current = ready.pop(0)
-        ordered.append(current)
-        for child in edges[current]:
-            incoming[child] -= 1
-            if incoming[child] == 0:
-                ready.append(child)
-        ready.sort(key=tie_key)
-
-    if len(ordered) != len(nodes):
-        cycle_nodes = sorted([n for n, count in incoming.items() if count > 0])
-        die("dependency cycle detected among selected stacks: " + ", ".join(cycle_nodes))
-
-    return ordered
-
-
-def validate_order(order, deps_map):
-    index = {name: idx for idx, name in enumerate(order)}
-    for name in order:
-        for dep in deps_map.get(name, []):
-            if dep in index and index[dep] > index[name]:
-                die(f"invalid order: {name} depends on {dep}, but {dep} is scheduled later")
-
-
-deps_map = {name: stack_meta[name]["depends_on"] for name in candidates}
 platform = [name for name in candidates if stack_meta[name]["tier"] == "platform"]
-apps = [name for name in candidates if stack_meta[name]["tier"] == "apps"]
 
 if not requested and tier_filter in {"platform", "all"}:
-    missing = [name for name in APPROVED_PLATFORM_ORDER if name not in platform]
-    extra = sorted([name for name in platform if name not in APPROVED_PLATFORM_ORDER])
+    extra = sorted(name for name in platform if name not in APPROVED_PLATFORM_STACKS)
+    missing = sorted(s for s in APPROVED_PLATFORM_STACKS if s not in set(platform))
     if missing or extra:
         details = []
         if missing:
             details.append("missing=" + ", ".join(missing))
         if extra:
             details.append("extra=" + ", ".join(extra))
-        die("platform metadata does not match approved bootstrap order: " + " ; ".join(details))
+        die("platform stacks do not match approved set: " + " ; ".join(details))
 
-if requested:
-    # For explicit runs, keep approved sequence for selected platform stacks.
-    platform_order = [name for name in APPROVED_PLATFORM_ORDER if name in platform]
-    for name in platform:
-        if name not in APPROVED_PLATFORM_ORDER:
-            die(f"selected platform stack {name} is missing from approved order list")
-else:
-    platform_order = [name for name in APPROVED_PLATFORM_ORDER if name in platform]
 
-apps_order = topo_sort(apps, deps_map, lambda n: n)
-ordered = platform_order + apps_order
+def compute_layers(nodes, deps):
+    """Kahn's algorithm — returns ordered list of parallel layers."""
+    in_degree = {n: 0 for n in nodes}
+    children = {n: [] for n in nodes}
+    for node in nodes:
+        for dep in deps.get(node, []):
+            if dep in in_degree:
+                in_degree[node] += 1
+                children[dep].append(node)
 
-# If explicit selection includes only unclassified stacks, preserve requested order.
-if requested and not ordered:
-    unclassified = [name for name in candidates if stack_meta[name]["tier"] not in {"platform", "apps"}]
-    if not unclassified:
-        die("no selected stacks mapped to supported deployment tiers")
-    ordered = unclassified
+    layers = []
+    remaining = set(nodes)
+    while remaining:
+        layer = sorted(n for n in remaining if in_degree[n] == 0)
+        if not layer:
+            die("dependency cycle among selected stacks: " + ", ".join(sorted(remaining)))
+        layers.append(layer)
+        for node in layer:
+            remaining.remove(node)
+            for child in children[node]:
+                in_degree[child] -= 1
+    return layers
 
-validate_order(ordered, deps_map)
 
-for name in ordered:
-    print(name)
+def compute_rdeps(nodes, deps):
+    """Reverse dependency map: rdeps[A] = list of stacks that depend on A."""
+    rdeps = {n: [] for n in nodes}
+    for node in nodes:
+        for dep in deps.get(node, []):
+            if dep in rdeps:
+                rdeps[dep].append(node)
+    return rdeps
+
+
+layers = compute_layers(candidates, deps_map)
+rdeps = compute_rdeps(candidates, deps_map)
+
+print(json.dumps({"layers": layers, "rdeps": rdeps}))
 PY
 }
 
+provision_stack() {
+  local stack="$1"
+  local check_mode="$2"
+  local inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
+
+  ensure_portainer_oauth_secret "$stack"
+
+  if [[ ! -f "$inventory_file" ]]; then
+    log "SKIP ${stack}: inventory file not found (${inventory_file})"
+    return 0
+  fi
+
+  local playbook_name
+  playbook_name="$(extract_ansible_playbook "$inventory_file")"
+  if [[ -z "$playbook_name" ]]; then
+    log "SKIP ${stack}: no ansible_playbook in inventory"
+    return 0
+  fi
+
+  local playbook_file
+  if [[ "$playbook_name" == *.yml ]]; then
+    playbook_file="${ANSIBLE_DIR}/playbooks/${playbook_name}"
+  else
+    playbook_file="${ANSIBLE_DIR}/playbooks/${playbook_name}.yml"
+  fi
+  [[ -f "$playbook_file" ]] || fail "${stack}: playbook file not found (${playbook_file})"
+
+  local extra_vars_file
+  extra_vars_file="$(mktemp "/tmp/${stack}.ansible-extra-vars.XXXXXX.yml")"
+  render_stack_ansible_extra_vars "$stack" "$extra_vars_file"
+
+  local cmd=(ansible-playbook -i "$inventory_file" "$playbook_file" -e "@${extra_vars_file}")
+
+  # Always regenerate zone from EdgeManifests before deploying dns-stack so the
+  # live zone is never stale with respect to declared routes.
+  if [[ "$stack" == "dns-stack" ]]; then
+    local generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
+    mkdir -p "$(dirname "$generated_zone")"
+    log "Regenerating CoreDNS zone from EdgeManifests"
+    python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
+      --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
+      --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
+      --output-zone "$generated_zone"
+    cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
+  fi
+
+  [[ "$check_mode" == "true" ]] && cmd+=(--check)
+  [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
+
+  log "RUN ${stack}: ${cmd[*]}"
+  "${cmd[@]}"
+  rm -f "$extra_vars_file"
+
+  # H-1d: run per-stack smoke test if present (skipped in check mode)
+  if [[ "$check_mode" != "true" ]]; then
+    local smoke_script="${STACKS_DIR}/${stack}/smoke-test.sh"
+    if [[ -x "$smoke_script" ]]; then
+      log "Running smoke test for ${stack}"
+      if ! REPO_ROOT="$REPO_ROOT" timeout 60 "$smoke_script"; then
+        fail "Smoke test failed for ${stack}"
+      fi
+      log "Smoke test passed: ${stack}"
+    fi
+  fi
+}
+
+# H-1a: report which downstream stacks are blocked by a failed stack
+report_blocked() {
+  local failed_stack="$1"
+  local layers_json="$2"
+
+  log "ERROR: Stack '${failed_stack}' failed"
+
+  local blocked
+  blocked="$(echo "$layers_json" | python3 -c "
+import json, sys, collections
+d = json.load(sys.stdin)
+rdeps = d['rdeps']
+failed = sys.argv[1]
+seen = set()
+queue = collections.deque(rdeps.get(failed, []))
+while queue:
+    node = queue.popleft()
+    if node not in seen:
+        seen.add(node)
+        queue.extend(rdeps.get(node, []))
+if seen:
+    print(' '.join(sorted(seen)))
+" "$failed_stack")"
+
+  if [[ -n "$blocked" ]]; then
+    log "Skipping downstream stacks (depend on ${failed_stack}): ${blocked}"
+  fi
+}
+
+# --- Argument parsing ---
+
 tier_filter="all"
 check_mode=false
+target_env=""
 declare -a requested_stacks=()
 
 while [[ $# -gt 0 ]]; do
@@ -395,6 +485,11 @@ while [[ $# -gt 0 ]]; do
     --stack)
       [[ $# -ge 2 ]] || fail "--stack requires a value"
       requested_stacks+=("$2")
+      shift 2
+      ;;
+    --target-env)
+      [[ $# -ge 2 ]] || fail "--target-env requires a value"
+      target_env="$2"
       shift 2
       ;;
     --check)
@@ -424,8 +519,19 @@ if (( ${#requested_stacks[@]} > 0 )); then
   explicit_csv="$(IFS=,; echo "${requested_stacks[*]}")"
 fi
 
-mapfile -t ordered_stacks < <(resolve_stack_order "$tier_filter" "$explicit_csv")
-(( ${#ordered_stacks[@]} > 0 )) || fail "no stacks resolved for execution"
+# H-1b: environment guard — assert PVE_ENV matches --target-env if provided;
+# always emit the resolved target so it appears in every run log.
+current_pve_env="${PVE_ENV:-}"
+current_proxmox_node="${TF_VAR_proxmox_node:-}"
+if [[ -n "$target_env" && "$target_env" != "$current_pve_env" ]]; then
+  fail "--target-env ${target_env} does not match PVE_ENV=${current_pve_env:-<unset>}; re-run with the correct wrapper"
+fi
+log "target: ${current_pve_env:-<unset>} (proxmox_node=${current_proxmox_node:-<unset>})"
+
+# Compute dependency-ordered layers from stack metadata
+layers_json="$(resolve_stack_layers "$tier_filter" "$explicit_csv")"
+num_layers="$(echo "$layers_json" | python3 -c "import json,sys; d=json.load(sys.stdin); print(len(d['layers']))")"
+(( num_layers > 0 )) || fail "no stacks resolved for execution"
 
 export ANSIBLE_HOST_KEY_CHECKING="False"
 export ANSIBLE_CONFIG="${ANSIBLE_DIR}/ansible.cfg"
@@ -433,73 +539,63 @@ export ANSIBLE_ROLES_PATH="${ANSIBLE_DIR}/roles"
 export ANSIBLE_LOCAL_TEMP="/tmp/.ansible/tmp"
 export ANSIBLE_SSH_CONTROL_PATH_DIR="/tmp/.ansible/cp"
 
-declare -a stack_extra_vars_files=()
-cleanup_stack_extra_vars_files() {
-  local file
-  for file in "${stack_extra_vars_files[@]:-}"; do
-    [[ -n "$file" && -f "$file" ]] && rm -f "$file"
-  done
-}
-trap cleanup_stack_extra_vars_files EXIT
+# H-1c: execute layers; stacks within each layer run in parallel
+for ((i = 0; i < num_layers; i++)); do
+  mapfile -t layer_stacks < <(echo "$layers_json" | python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+for s in d['layers'][int(sys.argv[1])]: print(s)
+" "$i")
 
-for stack in "${ordered_stacks[@]}"; do
-  inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
+  (( ${#layer_stacks[@]} > 0 )) || continue
+  log "Layer $((i + 1))/${num_layers}: ${layer_stacks[*]}"
 
-  ensure_portainer_oauth_secret "$stack"
-
-  if [[ ! -f "$inventory_file" ]]; then
-    log "SKIP ${stack}: inventory file not found (${inventory_file})"
-    continue
-  fi
-
-  playbook_name="$(extract_ansible_playbook "$inventory_file")"
-  if [[ -z "$playbook_name" ]]; then
-    log "SKIP ${stack}: no ansible_playbook in inventory"
-    continue
-  fi
-
-  if [[ "$playbook_name" == *.yml ]]; then
-    playbook_file="${ANSIBLE_DIR}/playbooks/${playbook_name}"
+  if (( ${#layer_stacks[@]} == 1 )); then
+    # Single stack in layer — run directly; no subshell overhead needed
+    if ! provision_stack "${layer_stacks[0]}" "$check_mode"; then
+      report_blocked "${layer_stacks[0]}" "$layers_json"
+      exit 1
+    fi
   else
-    playbook_file="${ANSIBLE_DIR}/playbooks/${playbook_name}.yml"
+    # Multiple stacks in layer — run in parallel; capture exit via status files
+    status_dir="$(mktemp -d "/tmp/provision-layer-$$.XXXXXX")"
+    declare -a layer_pids=()
+    declare -a pid_stacks=()
+
+    for stack in "${layer_stacks[@]}"; do
+      (
+        if provision_stack "$stack" "$check_mode" 2>&1 | sed -u "s/^/[${stack}] /"; then
+          printf '0' > "${status_dir}/${stack}.exit"
+        else
+          printf '1' > "${status_dir}/${stack}.exit"
+        fi
+      ) &
+      layer_pids+=("$!")
+      pid_stacks+=("$stack")
+    done
+
+    layer_failed=false
+    declare -a failed_in_layer=()
+    for ((j = 0; j < ${#layer_pids[@]}; j++)); do
+      wait "${layer_pids[$j]}" || true
+      exit_code="$(cat "${status_dir}/${pid_stacks[$j]}.exit" 2>/dev/null || echo '1')"
+      if [[ "$exit_code" != "0" ]]; then
+        layer_failed=true
+        failed_in_layer+=("${pid_stacks[$j]}")
+      fi
+    done
+
+    rm -rf "$status_dir"
+    unset layer_pids pid_stacks
+
+    if [[ "$layer_failed" == true ]]; then
+      for failed_stack in "${failed_in_layer[@]}"; do
+        report_blocked "$failed_stack" "$layers_json"
+      done
+      exit 1
+    fi
+    unset failed_in_layer
   fi
-
-  if [[ ! -f "$playbook_file" ]]; then
-    fail "${stack}: playbook file not found (${playbook_file})"
-  fi
-
-  cmd=(ansible-playbook -i "$inventory_file" "$playbook_file")
-
-  stack_extra_vars_file="$(mktemp "/tmp/${stack}.ansible-extra-vars.XXXXXX.yml")"
-  stack_extra_vars_files+=("$stack_extra_vars_file")
-  render_stack_ansible_extra_vars "$stack" "$stack_extra_vars_file"
-  cmd+=(-e "@${stack_extra_vars_file}")
-
-
-  # Always regenerate zone from EdgeManifests before deploying dns-stack so the
-  # live zone is never stale with respect to declared routes.
-  if [[ "$stack" == "dns-stack" ]]; then
-    generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
-    generated_zone_dir="$(dirname "$generated_zone")"
-    mkdir -p "$generated_zone_dir"
-    log "Regenerating CoreDNS zone from EdgeManifests"
-    python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
-      --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
-      --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
-      --output-zone "$generated_zone"
-    cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
-  fi
-
-  if [[ "$check_mode" == "true" ]]; then
-    cmd+=(--check)
-  fi
-
-  if [[ -n "${ANSIBLE_TAGS:-}" ]]; then
-    cmd+=(--tags "$ANSIBLE_TAGS")
-  fi
-
-  log "RUN ${stack}: ${cmd[*]}"
-  "${cmd[@]}"
 done
 
 if [[ -z "$explicit_csv" ]]; then
