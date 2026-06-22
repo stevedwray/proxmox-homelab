@@ -38,7 +38,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 | Job | Instance | Status |
 |-----|----------|--------|
-| node_exporter | all 10 managed LXCs | ✅ up |
+| node_exporter | all 10 managed LXCs | ✅ up (HTTPS + basic auth, TLS cert from step-ca) |
 | node_exporter | Proxmox host | intentionally not scraped — keep bare-metal host services minimal |
 | cadvisor | authentik, monitoring, portainer, proxy, harbor, netbox stacks | ✅ up |
 | coredns | 192.168.20.13:9153 | ✅ up |
@@ -200,7 +200,7 @@ On pve-test, the full stack must already be up (harbor-stack, authentik-stack, p
 
 All `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
 
-No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-internal, no auth).
+No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (both are mgmt_seg-internal). However, `NODE_EXPORTER_SCRAPE_PASSWORD` (in `secrets.enc.yaml`) is required at deploy time — it is written into the VictoriaMetrics `scrape.yml` as the basic auth credential for node_exporter scraping, which now runs over HTTPS. See [node-exporter-tls.md](node-exporter-tls.md) for details.
 
 ---
 
