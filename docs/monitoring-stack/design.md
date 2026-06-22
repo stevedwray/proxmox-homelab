@@ -32,7 +32,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
 | cAdvisor | `:8080` | Container resource metrics for monitoring-stack |
 | Harbor findings exporter | `:9414` internal | Harbor CVE/findings metrics scraped from the compose network |
-| Promtail | — | Deprecated by syslog/VictoriaLogs forwarding. Some legacy runtime services/containers still need cleanup; see Syslog Health Findings. |
+| Promtail | — | Deprecated by syslog/VictoriaLogs forwarding; no active runtime service/container remains after cleanup. |
 
 ### Active scrape targets
 
@@ -520,7 +520,7 @@ Each LXC host
 | 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ✅ done (commit `b12db11`) |
 | 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ✅ done (commit `b12db11`) |
 | 9 | Remove `promtail` include_role from remaining playbooks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ✅ done (commit `b12db11`) |
-| 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | `lxc_base`: stop/disable/purge promtail if present; `deploy-netbox-stack.yml`: `--remove-orphans` | ✅ done (`7c6d683`) — verified zero promtail entries in VictoriaLogs 2 min post-reprovision |
+| 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | `lxc_base`: stop/disable/purge promtail if present; compose deploys use orphan removal for removed services | ✅ done — verified no Promtail systemd services or Docker containers remain running |
 | 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
 | 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
 | 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
@@ -837,7 +837,7 @@ Prerequisite: Phase 7E must be complete before this becomes a teardown-gate conc
 
 Systematic analysis of the VictoriaLogs dataset on 2026-06-22, querying across all 10 hosts over the last 24 hours (~185k log entries at the time). These are the distinct problems found, ranked by priority.
 
-Current status after the follow-up fixes in this branch: Findings 1, 2, and 6 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. Promtail systemd services and Docker orphan containers have been cleaned up — zero promtail entries in VictoriaLogs as of 2026-06-22. Findings 3, 4, and 5 remain open (low-frequency/latent).
+Current status after the follow-up fixes in this branch: Findings 1, 2, and 6 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. Promtail runtime cleanup is complete: no managed host has an active/enabled Promtail systemd service or running Docker Promtail container, and fresh VictoriaLogs queries show no `failed to start tailer` entries. Findings 3, 4, and 5 remain open (low-frequency/latent).
 
 The same query patterns used here would be encoded as MCP tools in Phase 8, making this kind of investigation reusable across sessions.
 
@@ -850,7 +850,7 @@ The same query patterns used here would be encoded as MCP tools in Phase 8, maki
 | 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | Open/latent; quiet in fresh window unless rsyslog restarts | `rsyslog_forward` role config |
 | 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | Open/latent; quiet in fresh window | `rsyslog_forward` role `omfwd` keepalive |
 | 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Open | cAdvisor container config or LXC template |
-| 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Resolved (`7c6d683`) | `lxc_base` cleanup tasks + `--remove-orphans` on netbox compose |
+| 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Resolved | `lxc_base` cleanup tasks + compose orphan removal |
 
 ### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
 
@@ -960,7 +960,9 @@ Runtime checks also found legacy Promtail still active in more than one form:
 
 **Cause**: The intended logging path is now rsyslog/VictoriaLogs. Promtail was removed from the desired architecture, but pre-existing runtime services and compose orphans were not fully cleaned up across all stacks.
 
-**Fix plan**: Add an idempotent cleanup/removal path before manual one-off removal. It should stop/disable systemd `promtail`, remove or mask the package/config if appropriate, remove Docker Promtail orphans from compose-managed stacks, and verify that fresh VictoriaLogs queries for `failed to start tailer` and `app_name="promtail"` return no new entries.
+**Fix**: Added idempotent systemd/package cleanup to `lxc_base` and enabled compose orphan removal for stacks that had stale Docker Promtail containers. Reprovisioned the affected stacks.
+
+**Verification**: A live sweep of all managed hosts showed `promtail` inactive or not found in systemd and no Docker containers with `promtail` in the name. Fresh VictoriaLogs queries showed no `failed to start tailer` entries.
 
 ### Known behaviours (not bugs)
 

@@ -300,4 +300,5 @@
         project_src: "{{ proxy_compose_dir }}"
         state: present
         recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"
+        remove_orphans: true
       when: not ansible_check_mode

@@ -129,6 +129,7 @@
         project_src: "{{ portainer_compose_dir }}"
         state: present
         recreate: "{{ 'always' if portainer_docker_daemon_config.changed else 'auto' }}"
+        remove_orphans: true
 
 - name: Initialise Portainer admin account
   hosts: all
