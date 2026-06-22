@@ -70,6 +70,11 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Lab Logs | Full-stack log explorer (VictoriaLogs / LogsQL) |
 | Auth Logs | SSH/sudo/auth.log across all hosts (VictoriaLogs / LogsQL) |
 
+### Dashboard conventions
+
+- **Host identity**: Grafana dashboard legends, labels, variables, and panel titles should display hostnames or stack names, not IP addresses. IP addresses are acceptable in scrape targets and drill-down details, but the normal operator-facing view should use labels such as `stack`, `hostname`, or a derived host label instead of raw `instance` values like `192.168.20.12:9100`.
+- **Known cleanup item**: Lab Overview currently has graphs labelled with scrape `instance` IPs. Update those panels to use stack/hostname labels so they match the rest of the monitoring model.
+
 ### Notable deviations from original plan
 
 - **Stack labels**: Both `node_exporter` and `cadvisor` use per-target `static_configs` with `labels: {stack: <name>}` rather than flat IP lists.
@@ -207,6 +212,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics (both are mgmt_seg-i
 | step-ca metrics dashboard | Native metrics are scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
+| Dashboard host labels | Lab Overview still labels some graphs with scrape `instance` IPs; switch legends and labels to stack/hostname identity |
 | VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*` after Phase 7 syslog collection is in place |
 
 ---
