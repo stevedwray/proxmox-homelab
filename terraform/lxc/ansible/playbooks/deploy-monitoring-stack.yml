@@ -111,6 +111,7 @@
     harbor_findings_listen_port: "9414"
     harbor_api_username: "admin"
     harbor_api_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var is not set') }}"
+    node_exporter_scrape_password: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') | mandatory('NODE_EXPORTER_SCRAPE_PASSWORD env var is not set') }}"
 
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
@@ -160,6 +161,12 @@
 
           scrape_configs:
             - job_name: node_exporter
+              scheme: https
+              tls_config:
+                ca_file: /etc/ssl/certs/homelab-root.crt
+              basic_auth:
+                username: prometheus
+                password: "{{ node_exporter_scrape_password }}"
               static_configs:
                 - targets: ["{{ lookup('env', 'LAB_IP_AUTHENTIK') }}:9100"]
                   labels: {stack: authentik-stack}

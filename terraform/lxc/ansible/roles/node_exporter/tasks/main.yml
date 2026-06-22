@@ -11,3 +11,281 @@
     enabled: true
     state: started
     daemon_reload: true
+
+- name: Assert TLS secrets are non-empty
+  ansible.builtin.assert:
+    that:
+      - node_exporter_scrape_password | length > 0
+      - node_exporter_scrape_password_hash | length > 0
+      - node_exporter_step_ca_provisioner_password | length > 0
+      - node_exporter_step_ca_url | length > 0
+    fail_msg: >-
+      NODE_EXPORTER_SCRAPE_PASSWORD, NODE_EXPORTER_SCRAPE_PASSWORD_HASH,
+      STEP_CA_PROVISIONER_PASSWORD, and LAB_IP_STEP_CA must all be set.
+      Run via ./with-secrets to load secrets.enc.yaml.
+    quiet: true
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+
+- name: Create node_exporter config directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: root
+    group: prometheus
+    mode: "0750"
+  loop:
+    - "{{ node_exporter_config_dir }}"
+    - "{{ node_exporter_cert_dir }}"
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Check whether step CLI is installed
+  ansible.builtin.stat:
+    path: /usr/local/bin/step
+  register: node_exporter_step_cli_stat
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Ensure DNS is available for step CLI download
+  ansible.builtin.shell: |
+    if ! nslookup github.com 1>/dev/null 2>&1; then
+      printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+    fi
+  args:
+    executable: /bin/bash
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not node_exporter_step_cli_stat.stat.exists
+    - not ansible_check_mode
+
+- name: Download step CLI release archive
+  ansible.builtin.get_url:
+    url: "https://github.com/smallstep/cli/releases/download/v{{ node_exporter_step_cli_version }}/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+    dest: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+    mode: "0600"
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not node_exporter_step_cli_stat.stat.exists
+    - not ansible_check_mode
+
+- name: Create step CLI extraction directory
+  ansible.builtin.file:
+    path: /tmp/step-cli-install
+    state: directory
+    mode: "0700"
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not node_exporter_step_cli_stat.stat.exists
+    - not ansible_check_mode
+
+- name: Extract step CLI archive
+  ansible.builtin.unarchive:
+    src: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+    dest: /tmp/step-cli-install
+    remote_src: true
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not node_exporter_step_cli_stat.stat.exists
+    - not ansible_check_mode
+
+- name: Install step CLI binary
+  ansible.builtin.copy:
+    src: "/tmp/step-cli-install/step_{{ node_exporter_step_cli_version }}/bin/step"
+    dest: /usr/local/bin/step
+    mode: "0755"  # nosonar: ansible:S2612 — shared system binary in /usr/local/bin
+    remote_src: true
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not node_exporter_step_cli_stat.stat.exists
+    - not ansible_check_mode
+
+- name: Remove step CLI extraction directory
+  ansible.builtin.file:
+    path: /tmp/step-cli-install
+    state: absent
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+
+- name: Remove step CLI archive
+  ansible.builtin.file:
+    path: "/tmp/step_linux_{{ node_exporter_step_cli_version }}_amd64.tar.gz"
+    state: absent
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+
+- name: Write step-ca provisioner password file
+  ansible.builtin.copy:
+    dest: "{{ node_exporter_config_dir }}/provisioner-password.txt"
+    owner: root
+    group: root
+    mode: "0600"
+    content: "{{ node_exporter_step_ca_provisioner_password }}\n"
+  no_log: true
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Issue or renew node_exporter TLS certificate from step-ca
+  ansible.builtin.shell: |
+    set -euo pipefail
+
+    issue_needed=0
+
+    if [[ ! -s "{{ node_exporter_cert_dir }}/tls.crt" || ! -s "{{ node_exporter_cert_dir }}/tls.key" ]]; then
+      issue_needed=1
+    elif ! openssl x509 -checkend 2592000 -noout -in "{{ node_exporter_cert_dir }}/tls.crt" >/dev/null 2>&1; then
+      issue_needed=1
+    fi
+
+    if [[ "${issue_needed}" -eq 1 ]]; then
+      /usr/local/bin/step ca certificate "{{ inventory_hostname }}" \
+        "{{ node_exporter_cert_dir }}/tls.crt" \
+        "{{ node_exporter_cert_dir }}/tls.key" \
+        --san "{{ ansible_host }}" \
+        --san "{{ inventory_hostname }}" \
+        --not-after 2160h \
+        --ca-url "{{ node_exporter_step_ca_url }}" \
+        --root /usr/local/share/ca-certificates/homelab-root.crt \
+        --provisioner "{{ node_exporter_step_ca_provisioner }}" \
+        --provisioner-password-file "{{ node_exporter_config_dir }}/provisioner-password.txt" \
+        --force >/dev/null
+      echo "issued"
+    fi
+  args:
+    executable: /bin/bash
+  register: node_exporter_cert_issue
+  changed_when: "'issued' in node_exporter_cert_issue.stdout"
+  no_log: true
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+
+- name: Enforce TLS certificate and key permissions
+  ansible.builtin.file:
+    path: "{{ item }}"
+    owner: root
+    group: prometheus
+    mode: "0640"
+  loop:
+    - "{{ node_exporter_cert_dir }}/tls.crt"
+    - "{{ node_exporter_cert_dir }}/tls.key"
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+
+- name: Write node_exporter web.config.yaml
+  ansible.builtin.copy:
+    dest: "{{ node_exporter_config_dir }}/web.config.yaml"
+    owner: root
+    group: prometheus
+    mode: "0640"
+    content: |
+      tls_server_config:
+        cert_file: {{ node_exporter_cert_dir }}/tls.crt
+        key_file: {{ node_exporter_cert_dir }}/tls.key
+
+      basic_auth_users:
+        {{ node_exporter_scrape_username }}: {{ node_exporter_scrape_password_hash }}
+  no_log: true
+  when: node_exporter_tls_enabled | default(true) | bool
+  register: node_exporter_web_config
+
+- name: Create node_exporter systemd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/prometheus-node-exporter.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"  # nosonar: ansible:S2612 — systemd requires world-traversable drop-in directory
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Write node_exporter systemd drop-in for web.config
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/prometheus-node-exporter.service.d/web-config.conf
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — systemd unit drop-in must be world-readable
+    content: |
+      [Service]
+      ExecStart=
+      ExecStart=/usr/bin/prometheus-node-exporter --web.config.file={{ node_exporter_config_dir }}/web.config.yaml
+  when: node_exporter_tls_enabled | default(true) | bool
+  register: node_exporter_dropin
+
+- name: Restart node_exporter when TLS config changes
+  ansible.builtin.systemd:
+    name: prometheus-node-exporter
+    state: restarted
+    daemon_reload: true
+  when:
+    - node_exporter_tls_enabled | default(true) | bool
+    - not ansible_check_mode
+    - node_exporter_web_config.changed or node_exporter_dropin.changed
+
+- name: Write node_exporter cert renewal script
+  ansible.builtin.copy:
+    dest: "{{ node_exporter_config_dir }}/renew-cert.sh"
+    owner: root
+    group: root
+    mode: "0750"
+    content: |
+      #!/bin/bash
+      set -euo pipefail
+
+      CERT={{ node_exporter_cert_dir }}/tls.crt
+      KEY={{ node_exporter_cert_dir }}/tls.key
+
+      if ! openssl x509 -checkend 2592000 -noout -in "$CERT" 2>/dev/null; then
+        /usr/local/bin/step ca renew \
+          --force \
+          --ca-url {{ node_exporter_step_ca_url }} \
+          --root /usr/local/share/ca-certificates/homelab-root.crt \
+          "$CERT" "$KEY"
+        chown root:prometheus "$CERT" "$KEY"
+        chmod 0640 "$CERT" "$KEY"
+        systemctl kill --signal=HUP prometheus-node-exporter.service
+      fi
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Write node_exporter cert renewal systemd service
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node-exporter-cert-renew.service
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
+    content: |
+      [Unit]
+      Description=Renew node_exporter TLS certificate from step-ca
+      After=network.target
+
+      [Service]
+      Type=oneshot
+      ExecStart={{ node_exporter_config_dir }}/renew-cert.sh
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Write node_exporter cert renewal systemd timer
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/node-exporter-cert-renew.timer
+    owner: root
+    group: root
+    mode: "0644"  # nosonar: ansible:S2612 — systemd unit file must be world-readable
+    content: |
+      [Unit]
+      Description=Daily timer for node_exporter TLS cert renewal
+
+      [Timer]
+      OnCalendar=*-*-* 03:00:00
+      RandomizedDelaySec=600
+      Persistent=true
+
+      [Install]
+      WantedBy=timers.target
+  when: node_exporter_tls_enabled | default(true) | bool
+
+- name: Enable and start node_exporter cert renewal timer
+  ansible.builtin.systemd:
+    name: node-exporter-cert-renew.timer
+    enabled: true
+    state: started
+    daemon_reload: true
+  when: node_exporter_tls_enabled | default(true) | bool

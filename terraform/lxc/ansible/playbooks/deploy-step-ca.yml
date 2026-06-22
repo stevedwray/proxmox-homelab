@@ -12,6 +12,9 @@
     step_cli_install_dir: /tmp/step-cli-install
     step_ca_steppath: /etc/step-ca
     step_ca_metrics_address: ":9443"
+    step_ca_homelab_admin_claims:
+      maxTLSCertDuration: "2160h"
+      defaultTLSCertDuration: "720h"
     step_ca_root_cert_local: "{{ playbook_dir }}/../../../../certs/homelab-root.crt"
     step_ca_password: "{{ lookup('env', 'STEP_CA_PASSWORD') | mandatory('STEP_CA_PASSWORD env var is not set') | trim }}"
     step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') | trim }}"
@@ -223,20 +226,32 @@
       when: not ansible_check_mode
       no_log: true
 
-    - name: Enable step-ca Prometheus metrics listener
+    - name: Build updated step-ca config with metrics address and provisioner claims
+      ansible.builtin.set_fact:
+        step_ca_config_updated: >-
+          {{
+            step_ca_config_current.content | b64decode | from_json
+            | combine({'metricsAddress': step_ca_metrics_address}, recursive=True)
+            | combine({
+                'authority': {
+                  'provisioners':
+                    [(step_ca_config_current.content | b64decode | from_json).authority.provisioners
+                     | selectattr('name', 'equalto', 'homelab-admin') | first
+                     | combine({'claims': step_ca_homelab_admin_claims}, recursive=True)
+                    ] + (
+                      (step_ca_config_current.content | b64decode | from_json).authority.provisioners
+                      | rejectattr('name', 'equalto', 'homelab-admin') | list
+                    )
+                }
+              }, recursive=True)
+          }}
+      when: not ansible_check_mode
+
+    - name: Write updated step-ca configuration
       ansible.builtin.copy:
         dest: "{{ step_ca_steppath }}/config/ca.json"
         mode: "0640"
-        content: >-
-          {{
-            (
-              step_ca_config_current.content
-              | b64decode
-              | from_json
-              | combine({'metricsAddress': step_ca_metrics_address}, recursive=True)
-            )
-            | to_nice_json
-          }}
+        content: "{{ step_ca_config_updated | to_nice_json }}"
       register: step_ca_metrics_config
       when: not ansible_check_mode
       no_log: true
