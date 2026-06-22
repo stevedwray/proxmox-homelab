@@ -107,6 +107,6 @@ Tracked in [sprint-env-isolation.md](sprint-env-isolation.md). Sessions E-1 thro
 | Document pve-test-vm IP table | `docs/design/network.md` | ✓ done |
 | Template CoreDNS zone origin and authority | `terraform/lxc/ansible/files/coredns-lab.zone`, `deploy-coredns.yml` | ✓ done |
 | Template edge route hosts and validation suffix | `terraform/lxc/stacks/*/edge.yaml`, `terraform/lxc/edge_manifest.py` | ✓ done |
-| Add MikroTik DNS forwarding rule | Manual — MikroTik config | E-2 |
-| Register `test.gibbsgreatly.xyz` | Cloudflare | E-3a |
-| Full rebuild validation | pve-test-vm full reprovision | E-2 |
+| Add MikroTik DNS forwarding rule | MikroTik REST API — `test-zone-delegate` FWD `(^|\.)test\.gibbsgreatly\.xyz$` → `192.168.20.113` | ✓ done |
+| Cloudflare DNS-01 for `*.test.gibbsgreatly.xyz` | No action — parent zone `gibbsgreatly.xyz` in Cloudflare; existing `CF_DNS_API_TOKEN` handles it | ✓ n/a |
+| Full rebuild validation | pve-test-vm full reprovision + smoke tests green | E-2 pending |
