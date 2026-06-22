@@ -520,7 +520,7 @@ Each LXC host
 | 7 | Remove Promtail from Docker stack playbooks (inline compose) | `deploy-portainer-stack.yml`, `deploy-proxy-stack.yml`, `deploy-netbox-stack.yml`, `deploy-monitoring-stack.yml` | ✅ done (commit `b12db11`) |
 | 8 | Remove Promtail from authentik static compose | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` | ✅ done (commit `b12db11`) |
 | 9 | Remove `promtail` include_role from remaining playbooks | `deploy-harbor-stack.yml`, `deploy-apt-cacher-stack.yml`, `deploy-coredns.yml`, `deploy-step-ca.yml`, `deploy-ci-runner.yml` | ✅ done (commit `b12db11`) |
-| 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | Add cleanup for systemd services/packages/config and Docker compose orphans across affected stacks | ⚠️ open — source role includes were removed, but runtime Promtail services/containers still exist |
+| 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | `lxc_base`: stop/disable/purge promtail if present; `deploy-netbox-stack.yml`: `--remove-orphans` | ✅ done (`7c6d683`) — verified zero promtail entries in VictoriaLogs 2 min post-reprovision |
 | 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
 | 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
 | 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
@@ -837,7 +837,7 @@ Prerequisite: Phase 7E must be complete before this becomes a teardown-gate conc
 
 Systematic analysis of the VictoriaLogs dataset on 2026-06-22, querying across all 10 hosts over the last 24 hours (~185k log entries at the time). These are the distinct problems found, ranked by priority.
 
-Current status after the follow-up fixes in this branch: Findings 1 and 2 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. The next active log-noise problem is legacy Promtail cleanup.
+Current status after the follow-up fixes in this branch: Findings 1, 2, and 6 are resolved on pve. Fresh VictoriaMetrics checks show the Proxmox host scrape is absent, the Step CA scrape target is `up`, and fresh VictoriaLogs queries show zero new entries for the old Step CA `https://192.168.20.11:9443/metrics` failure signature. Promtail systemd services and Docker orphan containers have been cleaned up — zero promtail entries in VictoriaLogs as of 2026-06-22. Findings 3, 4, and 5 remain open (low-frequency/latent).
 
 The same query patterns used here would be encoded as MCP tools in Phase 8, making this kind of investigation reusable across sessions.
 
@@ -850,7 +850,7 @@ The same query patterns used here would be encoded as MCP tools in Phase 8, maki
 | 3 | rsyslogd loads `imklog` on LXC hosts (permission denied) | all 10 hosts | Medium | Open/latent; quiet in fresh window unless rsyslog restarts | `rsyslog_forward` role config |
 | 4 | rsyslog TCP connection drops to VictoriaLogs `:5140` | all 10 hosts | Medium | Open/latent; quiet in fresh window | `rsyslog_forward` role `omfwd` keepalive |
 | 5 | cAdvisor cannot read `/etc/machine-id` (every 5 minutes per host) | all Docker stacks | Medium | Open | cAdvisor container config or LXC template |
-| 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Open | Promtail cleanup/removal role or stack reconciliation |
+| 6 | Legacy Promtail services/containers still running and logging tailer permission errors | multiple hosts | High | Resolved (`7c6d683`) | `lxc_base` cleanup tasks + `--remove-orphans` on netbox compose |
 
 ### Finding 1 — VictoriaMetrics scraping `http://:9100/metrics` (empty host)
 
