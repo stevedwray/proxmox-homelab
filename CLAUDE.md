@@ -4,44 +4,45 @@
 
 ```
 feat/* / fix/* / task/* / work/*   ← active development (temporary)
-       ↓  teardown + redeploy validated
-baseline/teardown-validated        ← known-good state
-       ↓  stable and tested
-main
+       ↓  appropriate validation tier (see below)
+stable                             ← validated on pve-test, ready for pve
+       ↓  incremental deploy on pve + smoke test passes
+main                               ← current production state
 ```
 
 | Branch | Meaning | Promotion gate |
 |---|---|---|
-| `baseline/teardown-validated` | Full infrastructure teardown and redeploy has been validated from this state. | Run and pass a complete teardown + infrastructure redeploy cycle. |
+| `stable` | Validated on pve-test via the appropriate tier for the change class. | See Validation Tiers below. |
+| `main` | Deployed to pve; smoke test passed. | Incremental deploy on pve succeeds with no regressions. |
 
+`baseline/teardown-validated` is frozen as a historical marker (last full-teardown-validated state). Do not use as a development base.
 `dev/pve-test` is retired (archival only — do not use as a PR target).
 
-Do not develop directly in `baseline/teardown-validated`. All active work happens on short-lived `feat/`, `fix/`, `task/`, or `work/*` branches cut from the current working HEAD.
-Promotion merges into `baseline/teardown-validated` require the teardown gate to have been satisfied.
-If the operator explicitly names a merge target, use that exact target and do not silently retarget.
+See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full details.
 
 ## Branching
 
 - All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
 - Validate on the short-lived branch (live runs, tests, populate checks).
-- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms the branch is known-good.
-- `baseline/teardown-validated` is a **promotion target only** — never use it as the base for a new development branch.
+- Promote to `stable` once the appropriate validation tier passes on pve-test.
+- `stable` is a **promotion target only** — never use it as the base for a new development branch.
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
-- PR `baseline/teardown-validated` → `main` only when stable and tested.
+- PR `stable` → `main` only after a successful incremental deploy to pve.
+- If the operator explicitly names a merge target, use that exact target and do not silently retarget.
 
 ## Validation Tiers
 
-The full teardown cycle is the **promotion gate** for `baseline/teardown-validated`. It is not required for every commit during development. Match validation depth to change risk:
+Match validation depth to change risk. A full teardown is required only for high-risk structural changes, not every promotion.
 
 | Change class | Minimum validation |
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
-| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` |
-| Terraform / network / SDN / firewall | Full teardown cycle |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle |
+| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test |
+| Terraform / network / SDN / firewall | Full teardown cycle on pve-test |
+| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test |
 
-Batch related changes during development and run the appropriate tier. Run the full teardown cycle once before promoting to `baseline/teardown-validated`.
+Batch related changes during development and run the appropriate tier.
 
 **Ansible changes are not low-risk even when they appear comment-only.** A `# nosonar` comment placed inside a Jinja `{{ }}` expression block or a `content: |` env file block becomes runtime-evaluated content that can silently break deployments. Always run `--syntax-check` on the affected playbooks after any Ansible edit, no matter how trivial it looks. See `docs/teardown-test/lessons-learned.md` §12–13 for specific failure modes.
 
