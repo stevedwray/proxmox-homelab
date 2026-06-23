@@ -167,7 +167,10 @@ def resolve_placeholders(value):
     if isinstance(value, str):
         def repl(match):
             name = match.group(1)
-            for candidate in (name, name.upper(), f"TF_VAR_{name}"):
+            # Check uppercase and TF_VAR_ before lowercase — env-specific overrides
+            # (LAB_IP_* from .env.pve-test-vm) must win over base lowercase values
+            # from SOPS secrets that carry production IPs.
+            for candidate in (name.upper(), f"TF_VAR_{name}", name):
                 if candidate in os.environ:
                     return os.environ[candidate]
             return match.group(0)
