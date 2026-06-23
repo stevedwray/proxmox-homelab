@@ -130,6 +130,44 @@ reconcile_all_edge() {
   fi
 }
 
+register_portainer_environments() {
+  local check_mode="$1"
+  local stacks_dir="$STACKS_DIR"
+  local playbook="${ANSIBLE_DIR}/playbooks/register-portainer-env.yml"
+
+  local stacks=()
+  for stack_yaml in "${stacks_dir}"/*/stack.yaml; do
+    if python3 -c "
+import yaml, sys
+with open(sys.argv[1]) as f: d = yaml.safe_load(f) or {}
+sys.exit(0 if d.get('register_portainer_env') else 1)
+" "$stack_yaml" 2>/dev/null; then
+      stacks+=("$(basename "$(dirname "$stack_yaml")")")
+    fi
+  done
+
+  if [[ ${#stacks[@]} -eq 0 ]]; then
+    log "SKIP portainer env registration: no stacks with register_portainer_env: true"
+    return 0
+  fi
+
+  log "Portainer env registration: ${stacks[*]}"
+
+  for stack in "${stacks[@]}"; do
+    local inventory="${stacks_dir}/${stack}/inventory.yml"
+    if [[ ! -f "$inventory" ]]; then
+      log "SKIP portainer env registration for ${stack}: inventory not found"
+      continue
+    fi
+    if [[ "$check_mode" == "true" ]]; then
+      log "  dry-run: would register ${stack}"
+    else
+      log "  registering ${stack} with Portainer"
+      ansible-playbook -i "$inventory" -u root "$playbook"
+    fi
+  done
+}
+
 extract_ansible_playbook() {
   local inventory_file="$1"
 
@@ -603,6 +641,7 @@ done
 
 if [[ -z "$explicit_csv" ]]; then
   reconcile_all_edge "$check_mode"
+  register_portainer_environments "$check_mode"
 else
   log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
 fi

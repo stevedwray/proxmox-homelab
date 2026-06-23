@@ -1,0 +1,9 @@
+---
+# Idempotent: registers or updates this host as a Portainer Agent environment.
+# Requires portainer-agent container already running on each target host.
+# For initial agent install use deploy-portainer-agent.yml instead.
+- name: Register host as Portainer environment
+  hosts: all
+  gather_facts: false
+  roles:
+    - portainer_api
