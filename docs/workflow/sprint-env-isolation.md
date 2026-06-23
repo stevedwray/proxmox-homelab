@@ -180,6 +180,80 @@ for the items completed in this session.
 **Branch:** `work/sprint-env-isolation` (continued)
 **Live infra required:** Yes — pve-test-vm must be torn down and rebuilt from scratch
 
+### E-2 current progress (as of 2026-06-23)
+
+MikroTik DNS rule is applied. pve-test-vm containers are live at +100 IPs.
+The full rebuild ran and exposed a series of cold-start bootstrap ordering
+failures. All known failures have been fixed and committed. netbox-stack is
+the last individually-verified stack.
+
+**To resume, run:**
+
+```bash
+# 1. Re-provision harbor-stack so the fixed playbook regenerates core/env
+#    with EXT_ENDPOINT=http://192.168.40.110 (not the manually-patched value).
+PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh --stack harbor-stack
+
+# 2. Run the full platform tier. All stacks must pass.
+PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh --tier platform
+
+# 3. If any stacks fail, fix and re-run until all pass, then promote.
+git checkout stable && git merge --ff-only work/sprint-env-isolation
+git push
+```
+
+**Why harbor-stack must be re-provisioned first:**
+Harbor's `common/config/core/env` was manually patched this session
+(`EXT_ENDPOINT=http://192.168.40.110`). The `harbor_installer` role will
+overwrite that file via `./prepare` whenever `harbor.yml` changes. The
+playbook fix to `harbor_installer_external_url` (using `http://LAB_IP_HARBOR`
+for non-production environments) ensures the NEXT provision generates the
+correct value. Without running harbor-stack first, a full tier run could
+clobber the patch mid-run.
+
+**Stack status (individually verified):**
+
+| Stack | Status | Notes |
+|---|---|---|
+| dns-stack | ✅ passes | CoreDNS two-layer domain fix committed |
+| harbor-stack | ✅ passes | Smoke test fixed; EXT_ENDPOINT manually patched — **must re-provision** |
+| portainer-stack | ✅ passes | |
+| step-ca-stack | ✅ passes | step-ca itself runs; TLS certs not yet issued to other containers |
+| authentik-stack | fixes committed, not re-verified | step-ca depends_on added; docker login added; HTTP nginx fallback added |
+| monitoring-stack | fixes committed, not re-verified | Falls back to direct Docker Hub (no Harbor needed) |
+| netbox-stack | ✅ passes | registry_host fix; docker login added; smoke test fixed |
+| apt-cacher-stack | not re-verified | Passed in earlier runs; no changes since |
+| proxy-stack | not re-verified | Passed in earlier runs; no changes since |
+
+**Cold-start fixes committed on this branch:**
+
+| Commit | What was fixed |
+|---|---|
+| `2aa9e21` | rsyslog imklog disabled in LXC (prevents imtcp bind failure); CoreDNS domain placeholder |
+| `ab2048f` | `meta: flush_handlers` before rsyslog TCP port check |
+| `157a139` | CoreDNS playbook: add `LAB_DOMAIN` substitution (second layer of the domain bug) |
+| `fe5a882` | Harbor: Authentik OIDC health check `failed_when: false` |
+| `88ac3b7` | Harbor: smoke test uses direct HTTP, not Traefik FQDN |
+| `4db5fdd` | Authentik: step-ca `depends_on`; step-ca reachability gate; HTTP nginx fallback when step-ca absent |
+| `5495883` | NetBox: `registry_host` sourced from `LAB_IP_HARBOR` env (not hardcoded production FQDN) |
+| `b8e7af0` | Harbor: `external_url` uses `http://LAB_IP_HARBOR` in non-production; `docker login` in netbox + authentik playbooks |
+| `5d6b8a7` | NetBox: smoke test checks `/login/` (200) instead of `/api/` (403) |
+
+**Harbor token auth — root cause and fix:**
+Harbor's `EXT_ENDPOINT` sets the scheme used in Docker Bearer token auth
+realm URLs. In production, `EXT_ENDPOINT=https://harbor.lab.gibbsgreatly.xyz`
+is correct — Traefik handles HTTPS. In test, there is no Traefik, so token
+auth redirects to port 443 which always fails. The playbook now computes
+`harbor_installer_external_url` as `http://LAB_IP_HARBOR` when
+`TF_VAR_proxmox_node != pve`, so the Harbor prepare script regenerates
+`common/config/core/env` with an HTTP endpoint.
+
+**step-ca TLS note:**
+After step-ca is running, re-provision authentik-stack to issue a real TLS
+cert for the `authentik-int.*` nginx endpoint (currently using the HTTP
+fallback config). Node exporter TLS certs on other containers also need a
+step-ca re-run after step-ca is live.
+
 ### MikroTik manual prerequisite (operator action before session)
 
 The MikroTik has no IaC (TM-09). This change must be applied manually before
