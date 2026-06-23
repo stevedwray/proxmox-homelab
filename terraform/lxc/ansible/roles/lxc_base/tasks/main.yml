@@ -19,6 +19,17 @@
   changed_when: false
   when: dns_server | default('', true) | string | length > 0
 
+- name: Check if apt-cacher-ng is reachable before configuring proxy
+  ansible.builtin.wait_for:
+    host: "{{ apt_cacher_host }}"
+    port: 3142
+    timeout: 3
+  register: lxc_base_apt_cacher_reachable
+  ignore_errors: true
+  when:
+    - apt_cacher_host | default('', true) | string | length > 0
+    - ansible_host | default('', true) | string != apt_cacher_host | string
+
 - name: Configure apt to use apt-cacher-ng proxy
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/01proxy
@@ -30,14 +41,16 @@
   when:
     - apt_cacher_host | default('', true) | string | length > 0
     - ansible_host | default('', true) | string != apt_cacher_host | string
+    - not (lxc_base_apt_cacher_reachable.failed | default(false))
 
-- name: Remove apt-cacher-ng proxy config when disabled
+- name: Remove apt-cacher-ng proxy config when apt-cacher is disabled or unreachable
   ansible.builtin.file:
     path: /etc/apt/apt.conf.d/01proxy
     state: absent
   when: >-
     apt_cacher_host | default('', true) | string | length == 0
     or ansible_host | default('', true) | string == apt_cacher_host | string
+    or (lxc_base_apt_cacher_reachable.failed | default(false))
 
 - name: Check whether homelab root CA exists on the control node
   ansible.builtin.stat:
