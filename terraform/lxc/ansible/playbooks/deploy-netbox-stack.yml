@@ -229,6 +229,16 @@
           NETBOX_REDIS_CACHE_PASSWORD={{ lookup('env', 'NETBOX_REDIS_CACHE_PASSWORD') }}
       no_log: true
 
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ effective_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+
     - name: Pull and start NetBox compose stack
       ansible.builtin.shell:
         cmd: >-

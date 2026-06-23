@@ -385,6 +385,20 @@
           ansible.builtin.command:
             cmd: "docker pull gcr.io/cadvisor/cadvisor:v0.49.1"
 
+    - name: Authenticate Docker to Harbor registry (when Harbor is reachable)
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ authentik_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+      when:
+        - not ansible_check_mode
+        - authentik_harbor_reachable.rc is defined
+        - authentik_harbor_reachable.rc == 0
+
     - name: Start Authentik via compose
       community.docker.docker_compose_v2:
         project_src: "{{ authentik_compose_dir }}"
