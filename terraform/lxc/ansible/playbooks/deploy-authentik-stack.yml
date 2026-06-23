@@ -220,6 +220,7 @@
                 --root "{{ authentik_step_cli_root_cert }}" \
                 --provisioner "{{ authentik_step_ca_provisioner }}" \
                 --provisioner-password-file "{{ authentik_step_cli_password_file }}" \
+                --not-after 720h \
                 --force >/dev/null
               echo "issued"
             fi
@@ -235,6 +236,16 @@
             owner: root
             group: root
             mode: "0600"
+
+    - name: Restart direct_tls nginx container to load renewed cert
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ authentik_compose_path }}" restart direct_tls
+        chdir: "{{ authentik_compose_dir }}"
+      when:
+        - not ansible_check_mode
+        - not (authentik_step_ca_reachable.failed | default(true))
+        - authentik_step_cert_issue is defined
+        - authentik_step_cert_issue.changed
 
     - name: Write Authentik direct TLS nginx config (TLS — step-ca cert issued)
       ansible.builtin.copy:
