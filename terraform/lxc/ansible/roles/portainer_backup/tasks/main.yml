@@ -47,7 +47,9 @@
       changed_when: false
 
     - name: Apply NAS backup bind mount to LXC (requires brief stop/start)
-      when: portainer_backup_mp1_check.rc != 0
+      when:
+        - portainer_backup_use_nas_mount | bool
+        - portainer_backup_mp1_check.rc != 0
       block:
         - name: Stop portainer LXC for bind mount configuration
           ansible.builtin.command:
@@ -85,6 +87,15 @@
           ansible.builtin.wait_for_connection:
             delay: 5
             timeout: 120
+
+    - name: Create local backup directory (when NAS bind mount is not used)
+      ansible.builtin.file:
+        path: "{{ portainer_backup_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      when: not (portainer_backup_use_nas_mount | bool)
 
     - name: Create portainer-backup script directory
       ansible.builtin.file:

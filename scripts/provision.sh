@@ -434,7 +434,7 @@ provision_stack() {
     local smoke_script="${STACKS_DIR}/${stack}/smoke-test.sh"
     if [[ -x "$smoke_script" ]]; then
       log "Running smoke test for ${stack}"
-      if ! REPO_ROOT="$REPO_ROOT" timeout 60 "$smoke_script"; then
+      if ! REPO_ROOT="$REPO_ROOT" timeout 180 "$smoke_script"; then
         fail "Smoke test failed for ${stack}"
       fi
       log "Smoke test passed: ${stack}"

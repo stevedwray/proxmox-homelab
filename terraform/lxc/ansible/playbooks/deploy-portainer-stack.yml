@@ -620,5 +620,8 @@
   become: true
   gather_facts: false
   tags: [post_restore]
+  vars:
+    portainer_backup_enabled: true
+    portainer_backup_use_nas_mount: "{{ lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' }}"
   roles:
     - portainer_backup

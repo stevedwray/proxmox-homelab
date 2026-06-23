@@ -1,5 +1,6 @@
 ---
 portainer_backup_enabled: false
+portainer_backup_use_nas_mount: true
 portainer_backup_portainer_ip: "{{ ansible_host }}"
 portainer_backup_portainer_port: "9000"
 portainer_backup_admin_password: >-
