@@ -5,6 +5,14 @@
     state: present
     update_cache: false
 
+- name: Disable imklog in LXC (no /proc/kmsg — prevents partial init blocking imtcp bind)
+  ansible.builtin.lineinfile:
+    path: /etc/rsyslog.conf
+    regexp: '^module\(load="imklog"\)'
+    line: '#module(load="imklog")   # disabled: LXC containers cannot access /proc/kmsg'
+    backrefs: true
+  notify: Restart rsyslog
+
 - name: Write VictoriaLogs forwarding config
   ansible.builtin.template:
     src: victorialogs.conf.j2
@@ -20,3 +28,9 @@
     enabled: true
     state: started
     daemon_reload: false
+
+- name: Ensure rsyslog is listening on Docker TCP log port 10514
+  ansible.builtin.wait_for:
+    host: 127.0.0.1
+    port: 10514
+    timeout: 15
