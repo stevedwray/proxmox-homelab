@@ -38,6 +38,15 @@
     - name: Gather facts after the guest is reachable
       ansible.builtin.setup:
 
+    - name: Ensure temporary public DNS fallback before lxc_base sets resolv.conf
+      ansible.builtin.shell: |
+        if ! getent hosts github.com >/dev/null 2>&1; then
+          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+        fi
+      args:
+        executable: /bin/bash
+      become: true
+
   roles:
     - role: lxc_base
 
@@ -64,15 +73,6 @@
           - bind9-utils
         state: present
         update_cache: true
-
-    - name: Ensure temporary public DNS fallback so downloads succeed
-      ansible.builtin.shell: |
-        if ! getent hosts github.com >/dev/null 2>&1; then
-          printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
-        fi
-      args:
-        executable: /bin/bash
-      become: true
 
     - name: Download CoreDNS release
       ansible.builtin.get_url:
