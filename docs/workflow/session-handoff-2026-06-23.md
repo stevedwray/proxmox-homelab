@@ -316,6 +316,36 @@ run), production repairs must use an explicit inventory, not provision.sh:
 
 ---
 
+## 2026-06-24 session: additional fixes applied
+
+| Item | Action taken |
+|------|-------------|
+| portainer.lab, grafana.lab, harbor.lab Authentik providers | Reconcile applied — 3 provider updates |
+| `authentik-int` TLS cert expired (24h step-ca cert) | Root cause: `certs/homelab-root.crt` on control node was overwritten by pve-test-vm rebuild with the wrong CA. Fixed by restoring pve's actual root CA from step-ca API. Re-provisioned authentik-stack with explicit `-i "192.168.20.10,"` |
+| Playbook bugs fixed | `deploy-authentik-stack.yml`: added `--not-after 720h` to cert issuance and a `restart direct_tls` task after renewal |
+| netbox.lab, traefik.lab | Both 302 (Authentik redirect) — confirmed working |
+
+**Rule 6: `certs/homelab-root.crt` is environment-sensitive**
+
+`certs/homelab-root.crt` (gitignored) contains the root CA cert of whichever step-ca was most recently bootstrapped. Running a pve-test-vm rebuild overwrites this file with pve-test-vm's root CA. When lxc_base provisions any pve host after that, it installs the wrong root CA, breaking the entire step-ca trust chain on that host.
+
+Before provisioning any pve host that uses step-ca TLS (authentik-stack, monitoring-stack, proxy-stack), verify:
+
+```bash
+# Confirm root CA matches pve's step-ca
+curl -sk "https://192.168.20.11/roots.pem" | openssl x509 -noout -fingerprint
+openssl x509 -noout -fingerprint -in certs/homelab-root.crt
+# Fingerprints must match
+```
+
+If they don't match, restore from pve's step-ca:
+
+```bash
+curl -sk "https://192.168.20.11/roots.pem" > certs/homelab-root.crt
+```
+
+---
+
 ## Outstanding non-blocking items
 
 These are known issues that are not blocking promotion of this sprint but should
