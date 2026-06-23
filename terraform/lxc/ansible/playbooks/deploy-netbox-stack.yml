@@ -238,11 +238,13 @@
           --password-stdin
       no_log: true
       changed_when: false
+      ignore_errors: true
+      register: netbox_docker_login
 
     - name: Pull and start NetBox compose stack
       ansible.builtin.shell:
         cmd: >-
-          docker compose -f {{ compose_file }} pull &&
+          {{ '' if netbox_docker_login.failed else 'docker compose -f ' ~ compose_file ~ ' pull &&' }}
           docker compose -f {{ compose_file }} up -d --remove-orphans
           {{ '--force-recreate' if docker_daemon_config.changed else '' }}
 

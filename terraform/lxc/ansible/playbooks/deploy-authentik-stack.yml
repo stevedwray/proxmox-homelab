@@ -405,6 +405,8 @@
           --password-stdin
       no_log: true
       changed_when: false
+      ignore_errors: true
+      register: authentik_docker_login
       when:
         - not ansible_check_mode
         - authentik_harbor_reachable.rc is defined
@@ -414,7 +416,7 @@
       community.docker.docker_compose_v2:
         project_src: "{{ authentik_compose_dir }}"
         state: present
-        pull: "{{ 'never' if (authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0) else 'policy' }}"
+        pull: "{{ 'never' if (authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0 or (authentik_docker_login is defined and authentik_docker_login.failed)) else 'policy' }}"
         recreate: "{{ 'always' if authentik_docker_daemon_config.changed else 'auto' }}"
         remove_orphans: true
       when: not ansible_check_mode
