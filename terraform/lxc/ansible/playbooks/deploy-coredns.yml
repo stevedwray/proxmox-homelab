@@ -125,6 +125,7 @@
           {{
             lookup('file', playbook_dir ~ '/../files/coredns.conf')
             | replace('${LAB_GW_MGMT}', lab_gw_mgmt)
+            | replace('${LAB_DOMAIN}', lab_domain)
           }}
         dest: "{{ coredns_config_dir }}/coredns.conf"
         mode: "0644"
