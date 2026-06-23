@@ -25,6 +25,7 @@ tags:
   - docker
 depends_on:
   - harbor-stack
+  - step-ca-stack
 provides:
   - service: authentik-http
     port: 9000

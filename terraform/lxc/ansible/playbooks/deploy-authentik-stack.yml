@@ -161,62 +161,82 @@
       register: authentik_step_cli_version_check
       changed_when: false
 
-
-    - name: Write step-ca provisioner password file for Authentik direct cert issuance
-      ansible.builtin.copy:
-        dest: "{{ authentik_step_cli_password_file }}"
-        mode: "0600"
-        content: "{{ authentik_step_ca_provisioner_password }}\n"
-      no_log: true
-
-    - name: Ensure step-ca root cert is present before issuing Authentik direct cert
-      ansible.builtin.stat:
-        path: "{{ authentik_step_cli_root_cert }}"
-      register: authentik_step_cli_root_cert_stat
-
-    - name: Fail when homelab root cert is missing on host
-      ansible.builtin.fail:
-        msg: "Required trust anchor {{ authentik_step_cli_root_cert }} is missing on host. Ensure lxc_base/trust-homelab-ca has run before Authentik direct TLS issuance."
-      when: not authentik_step_cli_root_cert_stat.stat.exists
-
-    - name: Issue or renew Authentik direct TLS certificate from step-ca
-      ansible.builtin.shell: |
-        set -euo pipefail
-
-        issue_needed=0
-
-        if [[ ! -s "{{ authentik_step_cli_cert_file }}" || ! -s "{{ authentik_step_cli_key_file }}" ]]; then
-          issue_needed=1
-        elif ! openssl x509 -checkend 2592000 -noout -in "{{ authentik_step_cli_cert_file }}" >/dev/null 2>&1; then
-          issue_needed=1
-        fi
-
-        if [[ "${issue_needed}" -eq 1 ]]; then
-          /usr/local/bin/step ca certificate "{{ authentik_internal_tls_fqdn }}" "{{ authentik_step_cli_cert_file }}" "{{ authentik_step_cli_key_file }}" \
-            --san "{{ authentik_internal_tls_fqdn }}" \
-            --ca-url "{{ authentik_step_ca_url }}" \
-            --root "{{ authentik_step_cli_root_cert }}" \
-            --provisioner "{{ authentik_step_ca_provisioner }}" \
-            --provisioner-password-file "{{ authentik_step_cli_password_file }}" \
-            --force >/dev/null
-          echo "issued"
-        fi
-      args:
-        executable: /bin/bash
-      register: authentik_step_cert_issue
-      changed_when: "'issued' in authentik_step_cert_issue.stdout"
-      no_log: true
+    - name: Check if step-ca is reachable before Authentik direct TLS cert issuance
+      ansible.builtin.wait_for:
+        host: "{{ lookup('env', 'LAB_IP_STEP_CA') }}"
+        port: 443
+        timeout: 5
+      register: authentik_step_ca_reachable
+      ignore_errors: true
       when: not ansible_check_mode
 
-    - name: Ensure Authentik direct TLS private key permissions are strict
-      ansible.builtin.file:
-        path: "{{ authentik_step_cli_key_file }}"
-        owner: root
-        group: root
-        mode: "0600"
-      when: not ansible_check_mode
+    - name: Warn when step-ca is not yet reachable for Authentik direct TLS
+      ansible.builtin.debug:
+        msg: >-
+          step-ca at {{ lookup('env', 'LAB_IP_STEP_CA') }}:443 is not reachable.
+          Skipping Authentik direct TLS cert issuance — re-run provision after step-ca is deployed.
+      when:
+        - not ansible_check_mode
+        - authentik_step_ca_reachable.failed | default(true)
 
-    - name: Write Authentik direct TLS nginx config
+    - name: Authentik direct TLS cert issuance
+      when:
+        - not ansible_check_mode
+        - not (authentik_step_ca_reachable.failed | default(true))
+      block:
+        - name: Write step-ca provisioner password file for Authentik direct cert issuance
+          ansible.builtin.copy:
+            dest: "{{ authentik_step_cli_password_file }}"
+            mode: "0600"
+            content: "{{ authentik_step_ca_provisioner_password }}\n"
+          no_log: true
+
+        - name: Ensure step-ca root cert is present before issuing Authentik direct cert
+          ansible.builtin.stat:
+            path: "{{ authentik_step_cli_root_cert }}"
+          register: authentik_step_cli_root_cert_stat
+
+        - name: Fail when homelab root cert is missing on host
+          ansible.builtin.fail:
+            msg: "Required trust anchor {{ authentik_step_cli_root_cert }} is missing on host. Ensure lxc_base/trust-homelab-ca has run before Authentik direct TLS issuance."
+          when: not authentik_step_cli_root_cert_stat.stat.exists
+
+        - name: Issue or renew Authentik direct TLS certificate from step-ca
+          ansible.builtin.shell: |
+            set -euo pipefail
+
+            issue_needed=0
+
+            if [[ ! -s "{{ authentik_step_cli_cert_file }}" || ! -s "{{ authentik_step_cli_key_file }}" ]]; then
+              issue_needed=1
+            elif ! openssl x509 -checkend 2592000 -noout -in "{{ authentik_step_cli_cert_file }}" >/dev/null 2>&1; then
+              issue_needed=1
+            fi
+
+            if [[ "${issue_needed}" -eq 1 ]]; then
+              /usr/local/bin/step ca certificate "{{ authentik_internal_tls_fqdn }}" "{{ authentik_step_cli_cert_file }}" "{{ authentik_step_cli_key_file }}" \
+                --san "{{ authentik_internal_tls_fqdn }}" \
+                --ca-url "{{ authentik_step_ca_url }}" \
+                --root "{{ authentik_step_cli_root_cert }}" \
+                --provisioner "{{ authentik_step_ca_provisioner }}" \
+                --provisioner-password-file "{{ authentik_step_cli_password_file }}" \
+                --force >/dev/null
+              echo "issued"
+            fi
+          args:
+            executable: /bin/bash
+          register: authentik_step_cert_issue
+          changed_when: "'issued' in authentik_step_cert_issue.stdout"
+          no_log: true
+
+        - name: Ensure Authentik direct TLS private key permissions are strict
+          ansible.builtin.file:
+            path: "{{ authentik_step_cli_key_file }}"
+            owner: root
+            group: root
+            mode: "0600"
+
+    - name: Write Authentik direct TLS nginx config (TLS — step-ca cert issued)
       ansible.builtin.copy:
         dest: "{{ authentik_compose_dir }}/nginx/direct-tls.conf"
         mode: "0640"
@@ -238,6 +258,27 @@
               proxy_read_timeout 300;
             }
           }
+      when: not (authentik_step_ca_reachable.failed | default(true))
+
+    - name: Write Authentik nginx fallback config (HTTP — step-ca not yet available)
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_dir }}/nginx/direct-tls.conf"
+        mode: "0640"
+        content: |
+          server {
+            listen 9443;
+            server_name {{ authentik_internal_tls_fqdn }};
+
+            location / {
+              proxy_pass http://server:9000;  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+              proxy_http_version 1.1;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_read_timeout 300;
+            }
+          }
+      when: authentik_step_ca_reachable.failed | default(true)
 
     - name: Write Authentik environment file
       ansible.builtin.copy:
