@@ -9,6 +9,16 @@
     mode: "0644"
   when: dns_server | default('', true) | string | length > 0
 
+- name: Fall back to public DNS if configured resolver is not yet reachable
+  ansible.builtin.shell: |
+    if ! getent hosts deb.debian.org >/dev/null 2>&1; then
+      printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' > /etc/resolv.conf
+    fi
+  args:
+    executable: /bin/bash
+  changed_when: false
+  when: dns_server | default('', true) | string | length > 0
+
 - name: Configure apt to use apt-cacher-ng proxy
   ansible.builtin.copy:
     dest: /etc/apt/apt.conf.d/01proxy

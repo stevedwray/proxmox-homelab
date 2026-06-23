@@ -4,6 +4,7 @@ node_exporter_step_cli_version: "0.30.2"
 node_exporter_config_dir: /etc/node_exporter
 node_exporter_cert_dir: /etc/node_exporter/certs
 node_exporter_scrape_username: prometheus
+node_exporter_step_ca_host: "{{ lookup('env', 'LAB_IP_STEP_CA') }}"
 node_exporter_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') }}"
 node_exporter_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
 node_exporter_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') }}"
