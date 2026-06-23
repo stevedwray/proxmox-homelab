@@ -29,6 +29,9 @@
     state: started
     daemon_reload: false
 
+- name: Flush handlers to apply rsyslog config before port availability check
+  ansible.builtin.meta: flush_handlers
+
 - name: Ensure rsyslog is listening on Docker TCP log port 10514
   ansible.builtin.wait_for:
     host: 127.0.0.1
