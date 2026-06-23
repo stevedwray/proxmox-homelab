@@ -44,7 +44,7 @@ DEFAULT_TARGET_PREFLIGHT_EXPECTED = os.environ.get("EDGE_TARGET_PREFLIGHT_EXPECT
 DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
 DEFAULT_TRAEFIK_PROBE_PORT = 443
 DEFAULT_COREDNS_PROBE_SERVER = os.environ.get("LAB_IP_DNS", "")
-DEFAULT_COREDNS_PROBE_NAME = "traefik.lab.gibbsgreatly.xyz"
+DEFAULT_COREDNS_PROBE_NAME = os.environ.get("LAB_FQDN_TRAEFIK") or f"traefik.{os.environ.get('LAB_DOMAIN', 'lab.gibbsgreatly.xyz')}"
 DEFAULT_COREDNS_PROBE_EXPECTED = os.environ["LAB_IP_PROXY"]
 NOT_RUN_DRY_RUN = "not run (dry-run mode)"
 
