@@ -113,19 +113,20 @@ so even login via the FQDN fails without manual trust configuration.
 Made `docker compose pull` conditional on login success (skips pull if login
 failed, uses cached images instead).
 
-**Long-term fix (follow-on sprint):** Choose one:
-- Switch Traefik on pve to LE **production** certs (requires publicly routable
-  domain — already the case for `lab.gibbsgreatly.xyz`). This is the preferred
-  fix.
-- Install LE staging root CA in Docker's `certs.d` for
-  `harbor.lab.gibbsgreatly.xyz` on all docker hosts that need Harbor pull.
-- Change Harbor `external_url` to HTTP on pve (risks breaking OIDC flows that
-  require HTTPS redirect URIs).
+**Resolution (2026-06-24):** Two fixes applied in the same session:
 
-**Impact of workaround:** Harbor-dependent stacks on pve cannot pull updated
-images from Harbor until the long-term fix is applied. They continue to run on
-cached images. New image versions pushed to Harbor will not be picked up on
-next provision.
+1. `deploy-proxy-stack.yml` (`8188b22`): `caServer` made conditional on
+   `proxy_lab_domain` — uses LE production CA when `LAB_DOMAIN` is
+   `lab.gibbsgreatly.xyz`, staging elsewhere. `acme.json` cleared, Traefik
+   restarted; 6 LE production certs obtained (`CN=YR2`, trusted by default OS
+   trust store, expires 2026-09-21).
+
+2. `deploy-authentik-stack.yml` and `deploy-netbox-stack.yml` (`c438882`):
+   `registry_host` on pve now resolves to `LAB_FQDN_HARBOR`
+   (`harbor.lab.gibbsgreatly.xyz`) via Traefik with trusted LE cert. The
+   `insecure-registries` entry still uses the IP so TLS verification is not
+   suppressed for the FQDN. Both stacks re-provisioned on pve; services verified
+   in browser.
 
 ---
 
@@ -236,7 +237,7 @@ prod env first.
 
 | Issue | Priority | Notes |
 |-------|----------|-------|
-| LE staging cert on pve prevents Harbor docker login | High | Workaround in main; see §3 above for fix options |
+| LE staging cert on pve prevents Harbor docker login | High | **Resolved 2026-06-24** — commits `8188b22` + `c438882`; see §3 |
 | Portainer re-registration on standalone portainer-stack provision | Low | Manual API call workaround; full provision auto-registers |
-| Per-environment inventory paths | Medium | See Rule 4 in 2026-06-23 handoff; structural fix eliminates contamination |
+| Per-environment inventory paths | Medium | See Rule 4 in 2026-06-23 handoff; design doc at `docs/workflow/terraform-env-layout.md` |
 | `portainer_agent: false` naming is confusing | Low | Flag means "deploy via Portainer" not "has portainer agent"; should rename to `portainer_managed` |
