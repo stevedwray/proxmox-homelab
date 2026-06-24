@@ -191,6 +191,7 @@ immediate fix (direct API call) is the workaround for this case.
 |--------|------|-------|
 | `main` | `5366b9b` | Current production state |
 | `stable` | `7998022` | Sprint merge point; `main` is ahead by 1 commit |
+| `task/terraform-env-runtime-isolation` | `037c328` | PR #386 open; env isolation code |
 | `work/sprint-env-isolation` | Retired | Complete |
 
 `stable` is one commit behind `main` (`5366b9b` was committed directly to
@@ -201,35 +202,47 @@ pve-test-vm validation dependency.
 
 ## Next: pve-test-vm work
 
-Before starting pve-test-vm work, verify the following pre-conditions:
+**Environment isolation is now structural** (commit `037c328`, PR #386). The
+old procedural mitigations (check certs, verify inventories, check edge routes)
+are replaced by the `environments/<env>/` layout. pve-test-vm runs write only
+to `environments/pve-test-vm/`; pve paths are untouched.
 
-**1. Check `certs/homelab-root.crt` fingerprint (Rule 6)**
+See `docs/workflow/terraform-env-layout.md` for the full design and step status.
 
-Any pve-test-vm rebuild overwrites this file with pve-test-vm's root CA. If the
-fingerprint doesn't match pve's step-ca, restore it before any pve provisioning:
+### What remains before full pve-test-vm work can start
+
+**1. Merge PR #386** (`task/terraform-env-runtime-isolation` → `main`)
+
+Review and merge before starting pve-test-vm applies.
+
+**2. Fresh `terragrunt apply` from env entrypoints**
+
+Run from `terraform/lxc/environments/pve-test-vm/<stack>/` for each stack.
+Generated outputs (inventory, network vars, edge files) will land under
+`environments/pve-test-vm/` and not touch `environments/pve/`.
 
 ```bash
-# Check current cert
-openssl x509 -noout -fingerprint -in certs/homelab-root.crt
-
-# Compare against pve step-ca (expected: C1:D1:77:26:...)
-curl -sk "https://192.168.20.11/roots.pem" | openssl x509 -noout -fingerprint
-
-# Restore if needed
-curl -sk "https://192.168.20.11/roots.pem" > certs/homelab-root.crt
+PVE_ENV=pve-test-vm ./with-secrets terragrunt apply \
+  --terragrunt-working-dir terraform/lxc/environments/pve-test-vm/<stack>
 ```
 
-**2. After any pve-test-vm Terraform apply, regenerate pve inventories**
+**3. Remaining deferred items** (do not block pve-test-vm work)
 
-Verify that `stacks/*/inventory.yml` files still have base-range IPs after any
-pve-test-vm Terraform run. If contaminated, run `terragrunt apply` per stack
-in the pve workspace to regenerate.
+- Root CA scoping: `certs/homelab-root.crt` → `environments/<env>/certs/`
+  (Step 6 in design doc). Until done, pve-test-vm step-ca rebuild still
+  overwrites the global cert. Manual restore from `https://192.168.20.11/roots.pem`
+  if pve provisioning is needed afterward.
+- Legacy script audit (Step 7): `teardown-deploy-test.sh`, phase deploy scripts,
+  and validate scripts may still reference shared paths. Review before running.
 
-**3. Check `.generated/traefik/*.yml` before any proxy-stack provision**
+### Residual contamination risk (until Step 6 and 7 complete)
 
-Confirm routes use `lab.gibbsgreatly.xyz` and base-range IPs. If they show
-`test.gibbsgreatly.xyz` or +100 IPs, run `reconcile-edge.py --apply` with
-prod env first.
+`certs/homelab-root.crt` is still a global file. If pve-test-vm step-ca is
+rebuilt, restore the pve root CA before any pve provision:
+
+```bash
+curl -sk "https://192.168.20.11/roots.pem" > certs/homelab-root.crt
+```
 
 ---
 
