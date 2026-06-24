@@ -55,6 +55,16 @@ override.tf.json
 **/stacks/*/network-*-vars.yml
 terraform/lxc/.generated/
 
+# Per-environment runtime outputs (environments/<env>/<stack>/)
+terraform/lxc/environments/**/terraform.tfstate
+terraform/lxc/environments/**/terraform.tfstate.*
+terraform/lxc/environments/**/terraform.tfstate.d/
+terraform/lxc/environments/**/inventory.yml
+terraform/lxc/environments/**/network-*-vars.yml
+terraform/lxc/environments/**/.generated/
+terraform/lxc/environments/**/certs/
+terraform/lxc/environments/**/.terragrunt-cache/
+
 # Ansible
 *.retry
 .vault_pass

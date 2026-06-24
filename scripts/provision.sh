@@ -4,6 +4,10 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 ANSIBLE_DIR="${REPO_ROOT}/terraform/lxc/ansible"
+# Per-environment runtime root — non-empty when PVE_ENV is set.
+# Generated files (inventory, network vars, edge output) land here when the
+# env-scoped Terragrunt layout is in use; falls back to STACKS_DIR otherwise.
+ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${PVE_ENV:-}"
 
 usage() {
   cat <<'EOF'
@@ -97,9 +101,21 @@ ensure_portainer_oauth_secret() {
 reconcile_all_edge() {
   local check_mode="$1"
   local stacks_dir="$STACKS_DIR"
-  local proxy_inventory="${stacks_dir}/proxy-stack/inventory.yml"
   local proxy_playbook="${ANSIBLE_DIR}/playbooks/deploy-proxy-stack.yml"
-  local generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
+
+  local proxy_inventory
+  if [[ -f "${ENV_ROOT}/proxy-stack/inventory.yml" ]]; then
+    proxy_inventory="${ENV_ROOT}/proxy-stack/inventory.yml"
+  else
+    proxy_inventory="${stacks_dir}/proxy-stack/inventory.yml"
+  fi
+
+  local generated_traefik_dir
+  if [[ -n "${PVE_ENV:-}" ]]; then
+    generated_traefik_dir="${ENV_ROOT}/.generated/traefik"
+  else
+    generated_traefik_dir="${REPO_ROOT}/terraform/lxc/.generated/traefik"
+  fi
 
   [[ -f "$proxy_inventory" ]] || { log "SKIP edge reconcile: proxy-stack inventory not found"; return 0; }
 
@@ -154,7 +170,12 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
   log "Portainer env registration: ${stacks[*]}"
 
   for stack in "${stacks[@]}"; do
-    local inventory="${stacks_dir}/${stack}/inventory.yml"
+    local inventory
+    if [[ -f "${ENV_ROOT}/${stack}/inventory.yml" ]]; then
+      inventory="${ENV_ROOT}/${stack}/inventory.yml"
+    else
+      inventory="${stacks_dir}/${stack}/inventory.yml"
+    fi
     if [[ ! -f "$inventory" ]]; then
       log "SKIP portainer env registration for ${stack}: inventory not found"
       continue
@@ -417,7 +438,12 @@ PY
 provision_stack() {
   local stack="$1"
   local check_mode="$2"
-  local inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
+  local inventory_file
+  if [[ -f "${ENV_ROOT}/${stack}/inventory.yml" ]]; then
+    inventory_file="${ENV_ROOT}/${stack}/inventory.yml"
+  else
+    inventory_file="${STACKS_DIR}/${stack}/inventory.yml"
+  fi
 
   ensure_portainer_oauth_secret "$stack"
 
@@ -450,7 +476,12 @@ provision_stack() {
   # Always regenerate zone from EdgeManifests before deploying dns-stack so the
   # live zone is never stale with respect to declared routes.
   if [[ "$stack" == "dns-stack" ]]; then
-    local generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
+    local generated_zone
+    if [[ -n "${PVE_ENV:-}" ]]; then
+      generated_zone="${ENV_ROOT}/.generated/coredns/coredns-lab.zone"
+    else
+      generated_zone="${REPO_ROOT}/terraform/lxc/.generated/coredns/coredns-lab.zone"
+    fi
     mkdir -p "$(dirname "$generated_zone")"
     log "Regenerating CoreDNS zone from EdgeManifests"
     python3 "${REPO_ROOT}/terraform/lxc/render-edge-coredns.py" \
