@@ -51,6 +51,9 @@ locals {
   ansible_dir        = "${local.lxc_root}/ansible"
   ansible_cfg        = "${local.ansible_dir}/ansible.cfg"
   ansible_roles_path = "${local.ansible_dir}/roles"
+  # When generated_dir is provided (env-scoped Terragrunt entrypoint), write
+  # runtime files there. Falls back to stack_dir for legacy stack/ entrypoints.
+  output_dir = var.generated_dir != "" ? var.generated_dir : local.stack_dir
 
   # Optional declarative network intent. Existing stacks continue to use the
   # current bridge defaults unless they opt in with stack.network.zone.
@@ -508,7 +511,7 @@ check "template_name_allowed_by_profile" {
 resource "local_file" "network_sdn_vars" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" ? 1 : 0
 
-  filename = "${local.stack_dir}/network-sdn-vars.yml"
+  filename = "${local.output_dir}/network-sdn-vars.yml"
   content = yamlencode({
     network_sdn_enable            = true
     network_sdn_target            = local.effective_target_node
@@ -548,7 +551,7 @@ resource "null_resource" "configure_network_sdn_attachment" {
       ansible-playbook \
         -i localhost, \
         playbooks/configure-network-sdn-vnet.yml \
-        -e '@${local.stack_dir}/network-sdn-vars.yml'
+        -e '@${local.output_dir}/network-sdn-vars.yml'
     EOT
     working_dir = local.ansible_dir
 
@@ -640,7 +643,7 @@ module "lxc" {
 # Ansible inventory (always generated)
 # ---------------------------------------------------------------------------
 resource "local_file" "ansible_inventory" {
-  filename = "${local.stack_dir}/inventory.yml"
+  filename = "${local.output_dir}/inventory.yml"
   content = templatefile("${local.lxc_root}/templates/inventory.tpl", {
     stack_name                            = local.stack_name
     hostname                              = module.lxc.hostname
@@ -680,7 +683,7 @@ resource "null_resource" "configure_keyctl" {
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i '${local.stack_dir}/inventory.yml' \
+        -i '${local.output_dir}/inventory.yml' \
         playbooks/configure-keyctl.yml
     EOT
     working_dir = local.ansible_dir
@@ -703,7 +706,7 @@ resource "null_resource" "configure_keyctl" {
 resource "local_file" "network_firewall_vars" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "bridge" && local.effective_firewall == true ? 1 : 0
 
-  filename = "${local.stack_dir}/network-firewall-vars.yml"
+  filename = "${local.output_dir}/network-firewall-vars.yml"
   content = yamlencode({
     network_firewall_enable     = true
     network_firewall_policy_in  = "DROP"
@@ -733,9 +736,9 @@ resource "null_resource" "configure_network_firewall" {
   provisioner "local-exec" {
     command     = <<-EOT
       ansible-playbook \
-        -i '${local.stack_dir}/inventory.yml' \
+        -i '${local.output_dir}/inventory.yml' \
         playbooks/configure-network-firewall.yml \
-        -e '@${local.stack_dir}/network-firewall-vars.yml'
+        -e '@${local.output_dir}/network-firewall-vars.yml'
     EOT
     working_dir = local.ansible_dir
 
@@ -762,7 +765,7 @@ resource "null_resource" "configure_network_firewall" {
 resource "local_file" "network_vnet_firewall_vars" {
   count = local.stack_network_zone != null && local.resolved_attachment_type == "sdn_vnet" && local.effective_firewall == true ? 1 : 0
 
-  filename = "${local.stack_dir}/network-vnet-firewall-vars.yml"
+  filename = "${local.output_dir}/network-vnet-firewall-vars.yml"
   content = yamlencode({
     network_vnet_firewall_enable         = true
     network_vnet_firewall_policy_forward = "DROP"
@@ -790,7 +793,7 @@ resource "null_resource" "configure_network_vnet_firewall" {
       ansible-playbook \
         -i localhost, \
         playbooks/configure-network-vnet-firewall.yml \
-        -e '@${local.stack_dir}/network-vnet-firewall-vars.yml'
+        -e '@${local.output_dir}/network-vnet-firewall-vars.yml'
     EOT
     working_dir = local.ansible_dir
 

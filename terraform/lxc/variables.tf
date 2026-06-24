@@ -11,6 +11,12 @@ variable "stack_yaml_path" {
   type        = string
 }
 
+variable "generated_dir" {
+  description = "Directory where generated runtime files (inventory.yml, network-*-vars.yml) are written. Empty string falls back to the stack source directory for legacy compatibility."
+  type        = string
+  default     = ""
+}
+
 variable "network_intent_path" {
   description = "Optional override path for the shared network intent YAML file"
   type        = string

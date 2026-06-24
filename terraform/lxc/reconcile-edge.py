@@ -39,6 +39,15 @@ RENDER_COREDNS = _load_module("render_edge_coredns", SCRIPT_DIR / "render-edge-c
 DISCOVER_AUTHENTIK = _load_module("discover_authentik_edge", SCRIPT_DIR / "discover-authentik-edge.py")
 RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "reconcile-authentik-edge.py")
 
+# When PVE_ENV is set, write generated output under the env-scoped directory
+# so pve and pve-test-vm outputs never share the same path.
+_pve_env = os.environ.get("PVE_ENV", "")
+_generated_base = (
+    SCRIPT_DIR / "environments" / _pve_env / ".generated"
+    if _pve_env
+    else SCRIPT_DIR / ".generated"
+)
+
 
 DEFAULT_TARGET_PREFLIGHT_EXPECTED = os.environ.get("EDGE_TARGET_PREFLIGHT_EXPECTED") or os.environ.get("PVE_ENV", "pve-test")
 DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
@@ -109,7 +118,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--traefik-output-dir",
         type=Path,
-        default=SCRIPT_DIR / ".generated" / "traefik",
+        default=_generated_base / "traefik",
         help="Output directory for rendered Traefik dynamic files.",
     )
     parser.add_argument(
@@ -121,7 +130,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--coredns-output-zone",
         type=Path,
-        default=SCRIPT_DIR / ".generated" / "coredns" / "coredns-lab.zone",
+        default=_generated_base / "coredns" / "coredns-lab.zone",
         help="Output file for rendered CoreDNS zone.",
     )
     parser.add_argument(

@@ -1,7 +1,34 @@
 # Terraform Environment Runtime Isolation
 
-**Status:** Planned. This is the next structural prerequisite for safe parallel
-work on `pve` and `pve-test-vm`.
+**Status:** In progress — code committed (`037c328`), PR #386 open →
+`main`. Steps 1–5 and 8 complete. Step 9 (pve state migration) partially
+complete. Steps 6, 7, and 10 pending.
+
+| Step | Status |
+|------|--------|
+| 1. Environment path helpers in provision.sh | ✅ Done |
+| 2. Terragrunt entrypoints for pve + pve-test-vm | ✅ Done (24 stacks each) |
+| 3. `generated_dir` variable + `output_dir` local in main.tf | ✅ Done |
+| 4. provision.sh reads env inventories (with fallback) | ✅ Done |
+| 5. Edge generated output scoped to env (reconcile-edge.py) | ✅ Done |
+| 6. Root CA scoping (`certs/homelab-root.crt` → env dir) | ⬜ Deferred |
+| 7. Legacy script audit and updates | ⬜ Deferred |
+| 8. `.gitignore` environment runtime entries | ✅ Done |
+| 9. Migrate pve (inventories pre-populated; state migration deferred) | ⚠️ Partial |
+| 10. Enable pve-test-vm (fresh apply from env entrypoints) | ⬜ Pending |
+
+**Step 9 note:** `environments/pve/<stack>/inventory.yml` files pre-populated by
+direct copy from `stacks/*/inventory.yml` (all confirmed pve base-range IPs). Full
+Terraform state migration is deferred because `null_resource.configure_network_sdn_attachment`
+has `sdn_vars_file = local_file.network_sdn_vars[0].filename` as a trigger — changing
+`output_dir` from `stacks/` to `environments/pve/` would fire the trigger and run
+Ansible SDN playbooks on pve unexpectedly. Migration requires targeted `-target` or
+`terraform state mv` approach, or waiting until the SDN attachment null_resource is
+refactored. The fallback in provision.sh (`stacks/` if env inventory missing) covers
+this gap in the interim.
+
+This is the next structural prerequisite for safe parallel work on `pve` and
+`pve-test-vm`.
 
 **Problem:** `pve` and `pve-test-vm` still share runtime outputs in one working
 tree. A run against one environment can overwrite files later consumed by the
