@@ -1538,7 +1538,7 @@ stack_apply() {
   run_logged "deploy-${stack}" \
     bash -lc "cd '${REPO_ROOT}/terraform/lxc/stacks/${stack}' && '${WITH_SECRETS}' env TF_WORKSPACE='${TERRAGRUNT_WORKSPACE}' terragrunt apply -auto-approve"
   guard_target
-  if [[ "${stack}" == "portainer-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" && "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
     run_logged "restore-${stack}" \
       env PORTAINER_RESTORE_PVE_HOST="${TARGET_PVE_HOST}" \
       "${WITH_SECRETS}" "${REPO_ROOT}/scripts/portainer-restore.sh"
@@ -1557,7 +1557,7 @@ stack_destroy() {
 
   ensure_workspace_dir "${stack}"
 
-  if [[ "${stack}" == "portainer-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" && "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
     run_logged "pre-destroy-backup-${stack}" \
       ssh -F /dev/null "root@${TARGET_PVE_HOST}" \
         "pct exec ${vmid} -- bash -c 'set -a; source /etc/portainer-backup/env; set +a; /opt/portainer-backup/backup.sh'"
