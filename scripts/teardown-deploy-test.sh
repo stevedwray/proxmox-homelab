@@ -2217,6 +2217,21 @@ phase_activate_edge() {
       --authentik-url "${authentik_url}" --json
 }
 
+reconcile_edge_auth_after_platform() {
+  local authentik_url
+  guard_target
+  authentik_url="$(get_authentik_url)" || return 1
+  wait_for_authentik_api_ready "${authentik_url}"
+  run_logged "reconcile-edge-post-platform-apply" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
+      --authentik-url "${authentik_url}" --apply --json
+  run_logged "reconcile-edge-post-platform-dry-run" \
+    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
+      --authentik-url "${authentik_url}" --json
+}
+
 phase_deploy_platform() {
   local spec
   local -a specs
@@ -2229,6 +2244,7 @@ phase_deploy_platform() {
   for spec in "${specs[@]}"; do
     stack_apply "${spec}"
   done
+  reconcile_edge_auth_after_platform
 }
 
 phase_final_validation() {

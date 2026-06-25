@@ -283,17 +283,98 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "name": "authentik Embedded Outpost",
                         "type": "proxy",
                         "providers": [],
+                        "config": {
+                            "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
+                            "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
+                            "log_level": "info",
+                            "authentik_host_insecure": False,
+                        },
                     }
                 ],
             )
 
-            result = reconcile_authentik([manifest], client, apply=False)
+            with patch.dict(MODULE.os.environ, {"LAB_FQDN_AUTHENTIK": "authentik.test.gibbsgreatly.xyz"}, clear=False):
+                result = reconcile_authentik([manifest], client, apply=False)
 
         self.assertTrue(result.ok)
         operations = {(action.object_kind, action.operation) for action in result.actions}
         self.assertIn(("provider", "update"), operations)
         self.assertIn(("application", "update"), operations)
         self.assertIn(("outpost", "update"), operations)
+
+    def test_apply_updates_shared_outpost_browser_host(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "netbox.yaml"
+            _write_manifest(
+                manifest,
+                stack="netbox-stack",
+                route="netbox",
+                host="netbox.lab.gibbsgreatly.xyz",
+                mode="forwardAuth",
+            )
+            client = FakeClient(
+                providers=[
+                    {
+                        "pk": 11,
+                        "name": "edge-netbox-stack-netbox-provider",
+                        "external_host": "https://netbox.lab.gibbsgreatly.xyz",
+                    }
+                ],
+                applications=[
+                    {
+                        "pk": 22,
+                        "name": "edge-netbox-stack-netbox-app",
+                        "slug": "edge-netbox-stack-netbox",
+                        "meta_launch_url": "https://netbox.lab.gibbsgreatly.xyz/",
+                        "provider": 11,
+                    }
+                ],
+                outposts=[
+                    {
+                        "pk": 33,
+                        "name": "authentik Embedded Outpost",
+                        "type": "proxy",
+                        "providers": [11],
+                        "config": {
+                            "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
+                            "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
+                            "log_level": "info",
+                            "authentik_host_insecure": False,
+                        },
+                    }
+                ],
+            )
+
+            with patch.dict(
+                MODULE.os.environ,
+                {
+                    "LAB_FQDN_AUTHENTIK": "authentik.test.gibbsgreatly.xyz",
+                },
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        self.assertGreaterEqual(result.write_count, 1)
+        self.assertEqual(
+            "https://authentik.test.gibbsgreatly.xyz",
+            client.outposts[0]["config"]["authentik_host_browser"],
+        )
+        self.assertIn(
+            (
+                "outpost",
+                "update",
+                {
+                    "config": {
+                        "authentik_host": "https://authentik.test.gibbsgreatly.xyz",
+                        "authentik_host_browser": "https://authentik.test.gibbsgreatly.xyz",
+                        "log_level": "info",
+                        "authentik_host_insecure": False,
+                    }
+                },
+            ),
+            client.writes,
+        )
 
     def test_prefers_embedded_outpost_when_legacy_custom_outpost_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -753,6 +834,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "pk": 302,
                         "name": "edge-harbor-stack-harbor-app",
                         "slug": "edge-harbor-stack-harbor",
+                        "launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
                         "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
                         "provider": 402,
                     }
@@ -782,9 +864,17 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertTrue(result.ok)
         self.assertGreaterEqual(result.write_count, 1)
         self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["launch_url"])
         self.assertEqual(["edge-harbor-stack-harbor"], client.application_update_targets)
         self.assertIn(
-            ("application", "update", {"meta_launch_url": "https://harbor.gibbsgreatly.xyz/"}),
+            (
+                "application",
+                "update",
+                {
+                    "launch_url": "https://harbor.gibbsgreatly.xyz/",
+                    "meta_launch_url": "https://harbor.gibbsgreatly.xyz/",
+                },
+            ),
             client.writes,
         )
 

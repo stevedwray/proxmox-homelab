@@ -16,6 +16,7 @@ from typing import Any
 from urllib.parse import urljoin
 import urllib.error
 import urllib.request
+from urllib.parse import urlparse
 
 
 DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
@@ -36,8 +37,6 @@ DEFAULT_INVALIDATION_FLOW_SLUGS = (
 DEFAULT_OIDC_SCOPE_NAMES = ("openid", "profile", "email")
 # Minimum outpost config — Authentik requires this field on creation.
 OUTPOST_DEFAULT_CONFIG = {
-    "authentik_host": "https://authentik.lab.gibbsgreatly.xyz",
-    "authentik_host_browser": "https://authentik.lab.gibbsgreatly.xyz",
     "log_level": "info",
     "authentik_host_insecure": False,
 }
@@ -402,6 +401,21 @@ def _provider_payload(
     }
 
 
+def _desired_outpost_config() -> dict[str, Any]:
+    browser_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if browser_host:
+        browser_url = f"https://{browser_host}"
+    else:
+        parsed = urlparse(DEFAULT_AUTHENTIK_URL)
+        browser_url = f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else DEFAULT_AUTHENTIK_URL
+
+    return {
+        **OUTPOST_DEFAULT_CONFIG,
+        "authentik_host": browser_url,
+        "authentik_host_browser": browser_url,
+    }
+
+
 def _oidc_provider_secret(intent: RouteIntent) -> tuple[str | None, ReconcileIssue | None]:
     env_name = _DISCOVER._oidc_client_secret_env(intent)
     if not env_name:
@@ -626,10 +640,12 @@ def _resolve_proxy_flow_ids(
 
 
 def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[str, Any]:
+    launch_url = f"{_DISCOVER._oidc_base_url(intent)}/"
     payload: dict[str, Any] = {
         "name": intent.app_name,
         "slug": intent.app_slug,
-        "meta_launch_url": f"{_DISCOVER._oidc_base_url(intent)}/",
+        "launch_url": launch_url,
+        "meta_launch_url": launch_url,
     }
     if provider_id:
         try:
@@ -643,7 +659,7 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     patch: dict[str, Any] = {}
     for key, value in desired.items():
         current = existing.get(key)
-        if key == "meta_launch_url":
+        if key in {"launch_url", "meta_launch_url"}:
             current_host = _DISCOVER._normalize_url_host(current)
             desired_host = _DISCOVER._normalize_url_host(value)
             if current_host != desired_host:
@@ -1118,8 +1134,8 @@ def _build_outpost_update_patch(
     outpost_config = outpost_config if isinstance(outpost_config, dict) else {}
     desired_config = dict(outpost_config)
     config_changed = False
-    for key, value in OUTPOST_DEFAULT_CONFIG.items():
-        if outpost_config.get(key) in (None, ""):
+    for key, value in _desired_outpost_config().items():
+        if outpost_config.get(key) != value:
             desired_config[key] = value
             config_changed = True
     patch: dict[str, Any] = {}
@@ -1158,7 +1174,7 @@ def _reconcile_shared_outpost(
                 "name": SHARED_FORWARD_OUTPOST,
                 "type": SHARED_OUTPOST_TYPE,
                 "providers": sorted(required_provider_ids),
-                "config": OUTPOST_DEFAULT_CONFIG,
+                "config": _desired_outpost_config(),
             })
             write_count += 1
             outposts.append(created)

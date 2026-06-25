@@ -428,10 +428,6 @@ def _oidc_base_url(intent: RouteIntent) -> str:
             if parsed.scheme and parsed.netloc:
                 return f"{parsed.scheme}://{parsed.netloc}"
 
-        hostname = os.environ.get("HARBOR_HOSTNAME", "").strip()
-        if hostname:
-            return f"https://{hostname}"
-
     return f"https://{intent.host}"
 
 
