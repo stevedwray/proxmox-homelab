@@ -1618,6 +1618,8 @@ validate_stack_smoke() {
       ;;
     monitoring-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_GRAFANA}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_GRAFANA}/"
+      run_logged "health-${stack}-victorialogs-ingestion" \
+        check_victorialogs_ingestion "${ip}" "${stack}"
       ;;
     netbox-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_NETBOX}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_NETBOX}/"
@@ -1637,6 +1639,32 @@ run_status_capture() {
     return 0
   fi
   return "${status}"
+}
+
+check_victorialogs_ingestion() {
+  local victorialogs_ip="$1"
+  local hostname_filter="$2"
+
+  curl -fsSG "http://${victorialogs_ip}:9428/select/logsql/query" \
+    --data-urlencode "query={hostname=\"${hostname_filter}\"} | limit 1" \
+    --data-urlencode "limit=1" \
+    | python3 -c '
+import json
+import sys
+
+for raw_line in sys.stdin:
+    line = raw_line.strip()
+    if not line:
+        continue
+    entry = json.loads(line)
+    print(f"_time={entry.get(\"_time\", \"\")}")
+    print(f"hostname={entry.get(\"hostname\", \"\")}")
+    print(f"app_name={entry.get(\"app_name\", \"\")}")
+    print(f"_msg={entry.get(\"_msg\", \"\")}")
+    sys.exit(0)
+
+sys.exit(1)
+'
 }
 
 classify_pct_capture_failure() {
@@ -1756,12 +1784,19 @@ probe_stack_health() {
     monitoring-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
-        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready' && curl -fsS 'http://${ip}:9428/health'"; then  # NOSONAR — unauthenticated health check on private SDN
+        bash -lc "curl -fsS 'http://${ip}:3000/login' >/dev/null && curl -fsS 'http://${ip}:8428/-/ready' >/dev/null && curl -fsS 'http://${ip}:9428/health' >/dev/null && curl -fsSG 'http://${ip}:9428/select/logsql/query' --data-urlencode 'query={hostname=\"${stack}\"} | limit 1' --data-urlencode 'limit=1' | python3 -c 'import json, sys
+for raw_line in sys.stdin:
+    line = raw_line.strip()
+    if not line:
+        continue
+    json.loads(line)
+    sys.exit(0)
+sys.exit(1)'"; then  # NOSONAR — unauthenticated health check on private SDN
         PLATFORM_HEALTH_STATUS="ok"
-        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, and victorialogs ok"
+        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, victorialogs, and log ingestion ok"
       else
         PLATFORM_HEALTH_STATUS="failed"
-        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, or victorialogs failed"
+        PLATFORM_HEALTH_DETAIL="grafana, victoriametrics, victorialogs, or log ingestion failed"
       fi
       ;;
     netbox-stack)

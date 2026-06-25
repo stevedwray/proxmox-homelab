@@ -208,12 +208,14 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 
 | Item | Notes |
 |------|-------|
-| Proxmox host logs | Configure bare-metal Proxmox remote syslog forwarding to VictoriaLogs/syslog listener; do not install node_exporter for host performance metrics |
+| Phase 7E-core | Add VictoriaLogs ingestion smoke test to teardown validation; prove pve-test-vm provision + rebuild preserves log ingestion and dashboard data |
+| Phase 7E-host-syslog | Configure bare-metal Proxmox remote syslog forwarding to VictoriaLogs/syslog listener; do not install node_exporter for host performance metrics |
+| Phase 7E-edge-syslog | Configure MikroTik remote syslog forwarding to VictoriaLogs; document field/query conventions for router-originated logs |
 | step-ca metrics dashboard | Native metrics are scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
 | Dashboard host labels | Lab Overview still labels some graphs with scrape `instance` IPs; switch legends and labels to stack/hostname identity |
-| VictoriaLogs smoke test | Provision pve-test and verify ingestion via `/select/logsql/query?query=*` after Phase 7 syslog collection is in place |
+| VictoriaLogs smoke test | Fold into Phase 7E-core: provision pve-test-vm and verify ingestion via `/select/logsql/query?query=*` after rebuild |
 
 ---
 
@@ -515,7 +517,9 @@ Each LXC host
 | 7B | Configure Docker daemon syslog default (`docker_base` role + all playbooks); verify ingestion | ✅ complete on pve |
 | 7C | Remove Promtail from all stacks (10 files: compose blocks, include_roles, vars, handlers) | ✅ complete on pve |
 | 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ complete (2026-06-22) — all panels working, severity labels, `app_name` filter |
-| 7E | Provision all stacks on pve-test; add smoke test to teardown harness; full teardown + redeploy cycle (promotion gate for `baseline/teardown-validated`) | ⏳ pending |
+| 7E-core | Provision all stacks on pve-test-vm; add VictoriaLogs ingestion smoke test to teardown harness; full teardown + redeploy cycle for the existing LXC/Docker syslog pipeline | ⏳ pending |
+| 7E-host-syslog | Add Proxmox host remote syslog forwarding into VictoriaLogs and validate host-originated entries on pve-test-era monitoring | ⏳ planned |
+| 7E-edge-syslog | Add MikroTik remote syslog forwarding into VictoriaLogs and validate router-originated entries plus query conventions | ⏳ planned |
 
 ### Implementation tasks
 
@@ -533,9 +537,13 @@ Each LXC host
 | 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | `lxc_base`: stop/disable/purge promtail if present; compose deploys use orphan removal for removed services | ✅ done — verified no Promtail systemd services or Docker containers remain running |
 | 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
 | 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
-| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E |
-| 14 | Provision all stacks on pve-test | Full provision; verify ingestion, dashboards, severity filter | ⏳ Phase 7E |
-| 15 | Full teardown + redeploy on pve-test | Promotion gate for `baseline/teardown-validated` | ⏳ Phase 7E |
+| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E-core |
+| 14 | Provision all stacks on pve-test-vm | Full provision; verify ingestion, dashboards, severity filter | ⏳ Phase 7E-core |
+| 15 | Full teardown + redeploy on pve-test-vm | Promotion gate for the current syslog/VictoriaLogs rollout | ⏳ Phase 7E-core |
+| 16 | Configure Proxmox remote syslog forwarding | Proxmox host syslog settings; docs + validation notes | ⏳ Phase 7E-host-syslog |
+| 17 | Validate Proxmox host log queries in VictoriaLogs | LogsQL examples, hostname/app_name expectations, smoke evidence | ⏳ Phase 7E-host-syslog |
+| 18 | Configure MikroTik remote syslog forwarding | MikroTik remote logging action/rules; docs + validation notes | ⏳ Phase 7E-edge-syslog |
+| 19 | Validate MikroTik log queries in VictoriaLogs | LogsQL examples, router field conventions, smoke evidence | ⏳ Phase 7E-edge-syslog |
 
 ### Implementation notes (Phase 7 — live deployment on pve, 2026-06-21)
 
@@ -713,7 +721,7 @@ The `tag` value `docker-{{.Name}}` sets the syslog APPNAME to e.g. `docker-authe
 
 ### Phase 7 status
 
-Phase 7A/7B/7C/7D are complete on pve (2026-06-22). Dashboard issues are resolved. Next: Phase 7E (pve-test provision + teardown gate), then any remaining operational fixes documented in §health-findings below.
+Phase 7A/7B/7C/7D are complete on pve (2026-06-22). Dashboard issues are resolved. Next: Phase 7E-core (pve-test-vm provision + teardown gate for the existing syslog pipeline), then Phase 7E-host-syslog (Proxmox remote syslog) and Phase 7E-edge-syslog (MikroTik remote syslog). After that, any remaining operational fixes documented in §health-findings below can be handled separately.
 
 ---
 
