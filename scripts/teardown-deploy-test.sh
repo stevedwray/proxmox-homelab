@@ -121,6 +121,7 @@ export LAB_IP_STEP_CA="${LAB_IP_STEP_CA:-}"
 export LAB_IP_DNS="${LAB_IP_DNS:-}"
 export LAB_IP_PORTAINER="${LAB_IP_PORTAINER:-}"
 export LAB_IP_PROXY="${LAB_IP_PROXY:-}"
+export LAB_IP_GRAYLOG="${LAB_IP_GRAYLOG:-}"
 export LAB_GW_MGMT="${LAB_GW_MGMT:-}"
 export LAB_DOMAIN="${LAB_DOMAIN:-lab.gibbsgreatly.xyz}"
 export LAB_BASE_DOMAIN="${LAB_BASE_DOMAIN:-${LAB_DOMAIN}}"
@@ -1093,6 +1094,7 @@ hydrate_live_env_contract() {
     LAB_IP_DNS
     LAB_IP_PORTAINER
     LAB_IP_PROXY
+    LAB_IP_GRAYLOG
     LAB_GW_MGMT
   )
 
@@ -1117,6 +1119,7 @@ require_live_env_contract() {
     LAB_IP_DNS
     LAB_IP_PORTAINER
     LAB_IP_PROXY
+    LAB_IP_GRAYLOG
     LAB_GW_MGMT
   )
 
@@ -1308,6 +1311,7 @@ validate_approval_packet() {
     "netbox:netbox"
     "monitoring:monitoring"
     "portainer:portainer"
+    "graylog:graylog"
   )
   local -a recreatable_services=(
     "apt-cacher:apt[- ]?cacher"
@@ -1624,6 +1628,10 @@ validate_stack_smoke() {
     netbox-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_NETBOX}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_NETBOX}/"
       ;;
+    graylog-stack)
+      run_logged "health-${stack}" \
+        bash -lc "curl -fsS 'http://${ip}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"  # NOSONAR — unauthenticated health check on private SDN
+      ;;
   esac
 }
 
@@ -1808,6 +1816,17 @@ sys.exit(1)'"; then  # NOSONAR — unauthenticated health check on private SDN
       else
         PLATFORM_HEALTH_STATUS="failed"
         PLATFORM_HEALTH_DETAIL="netbox http failed"
+      fi
+      ;;
+    graylog-stack)
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "curl -fsS 'http://${ip}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"; then  # NOSONAR — unauthenticated health check on private SDN
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="graylog lbstatus ALIVE"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="graylog lbstatus not ALIVE"
       fi
       ;;
   esac

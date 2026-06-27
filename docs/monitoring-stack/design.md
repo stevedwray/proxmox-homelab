@@ -21,7 +21,7 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) pending. Phase 8 (VictoriaLogs MCP server) in design. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, removed the obsolete NetBox housekeeping container, disabled scheduled Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old step-ca scrape warning is no longer emitted.**
+**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) is now functionally validated on the current branch. The next design direction on `pve-test-vm` is to evaluate Graylog as the central log platform and deprecate VictoriaLogs there if the pilot succeeds. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, removed the obsolete NetBox housekeeping container, disabled scheduled Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old step-ca scrape warning is no longer emitted.**
 
 ### Running services
 
@@ -208,14 +208,16 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 
 | Item | Notes |
 |------|-------|
-| Phase 7E-core | Add VictoriaLogs ingestion smoke test to teardown validation; prove pve-test-vm provision + rebuild preserves log ingestion and dashboard data |
-| Phase 7E-host-syslog | Configure bare-metal Proxmox remote syslog forwarding to VictoriaLogs/syslog listener; do not install node_exporter for host performance metrics |
-| Phase 7E-edge-syslog | Configure MikroTik remote syslog forwarding to VictoriaLogs; document field/query conventions for router-originated logs |
+| Phase 7E closeout | Capture the current VictoriaLogs-based syslog pipeline as the validated baseline on `pve-test-vm` before changing log backends; this is now documented as the rollback baseline on the current branch |
+| Phase 8A Graylog pilot | `graylog-stack` scaffold is live on `pve-test-vm` (VMID `20014`, `192.168.20.114`); G2 plan settled: Graylog 6.x Data Node (MongoDB 7 + DataNode + Graylog, 6144 MB RAM), rsyslog relay on LXC owns port 514, Graylog syslog input on 127.0.0.1:5140; see [graylog-migration-plan.md §Sprint G2](./graylog-migration-plan.md) |
+| Phase 8B Dual-log cutover | Forward selected logs on `pve-test-vm` to Graylog first, keeping VictoriaLogs as fallback during the pilot |
+| Phase 8C VictoriaLogs deprecation on `pve-test-vm` | Remove Grafana log dashboards and VictoriaLogs-specific validation once Graylog covers the required workflows |
+| Phase 8D Host and edge syslog on Graylog | Point Proxmox host and MikroTik remote syslog at the Graylog path chosen by the pilot |
 | step-ca metrics dashboard | Native metrics are scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
 | Dashboard host labels | Lab Overview still labels some graphs with scrape `instance` IPs; switch legends and labels to stack/hostname identity |
-| VictoriaLogs smoke test | Fold into Phase 7E-core: provision pve-test-vm and verify ingestion via `/select/logsql/query?query=*` after rebuild |
+| Graylog operator workflow | Decide whether Graylog becomes the browser-facing log UI while Grafana remains metrics-only |
 
 ---
 
@@ -228,6 +230,110 @@ curl -fsS "http://${ip}:3000/login" && \
 curl -fsS "http://${ip}:8428/-/ready" && \
 curl -fsS "http://${ip}:9428/health"
 ```
+
+---
+
+## Direction Change — Graylog on pve-test-vm
+
+### Why revisit the logging backend
+
+The current VictoriaLogs design has worked as a lightweight syslog sink and query
+store, but it also pushed log exploration into Grafana and LogsQL. That now feels
+misaligned with the desired operator model:
+
+- Grafana is best kept focused on time-series and metrics dashboards.
+- Appliance and infrastructure logging needs a more purpose-built log UI and
+  processing model.
+- Future work on Proxmox host and MikroTik syslog will likely benefit from
+  routing, parsing, streams, and alerting features that are closer to Graylog's
+  operating model than to Grafana + VictoriaLogs.
+
+Detailed phased implementation, sprint planning, and validation gates live in
+[graylog-migration-plan.md](./graylog-migration-plan.md).
+
+### Target direction
+
+On `pve-test-vm`, treat the current VictoriaLogs pipeline as the validated
+baseline, then pilot Graylog as the central log platform.
+
+Target steady-state if the pilot succeeds:
+
+- `VictoriaMetrics` remains the metrics backend.
+- `Grafana` remains the browser-facing metrics dashboard.
+- `Graylog` becomes the primary browser-facing log workflow.
+- `rsyslog` remains the per-host forwarder/collector on managed LXCs.
+- `VictoriaLogs` is removed from `pve-test-vm` after Graylog proves it covers
+  the required workflows.
+
+### Proposed migration stages on pve-test-vm
+
+| Stage | Goal | Exit criteria |
+|---|---|---|
+| 8A | Deploy Graylog alongside the existing monitoring stack on `pve-test-vm` | Graylog UI reachable; inputs and storage healthy |
+| 8B | Feed a subset of syslog traffic to Graylog while preserving the current VictoriaLogs path as rollback | Test logs from one or two stacks visible in Graylog with correct source fields |
+| 8C | Move operational log exploration to Graylog | Equivalent workflows exist for Lab Logs/Auth Logs use cases without relying on Grafana LogsQL dashboards |
+| 8D | Move host and network-device remote syslog to the Graylog path | Proxmox host and MikroTik test logs arrive in Graylog and are easy to filter |
+| 8E | Retire VictoriaLogs on `pve-test-vm` | No required operator workflow depends on VictoriaLogs or Grafana log panels |
+
+### Initial implementation plan
+
+| # | Task | Status |
+|---|---|---|
+| 1 | Record the current VictoriaLogs pipeline as the validated fallback baseline on `pve-test-vm` | ✅ documented on current branch |
+| 2 | Design a Graylog deployment shape for `pve-test-vm` (single-node, storage, auth, ingress) | ✅ direction chosen: separate `graylog-stack`, metrics stay on monitoring-stack |
+| 3 | Decide whether Graylog uses direct syslog inputs or an intermediate rsyslog relay on standard UDP/TCP 514 | ✅ current default is direct Graylog inputs unless appliance behaviour forces a relay |
+| 4 | Deploy Graylog on `pve-test-vm` without removing VictoriaLogs | ⏳ in progress — LXC scaffold live, runtime not yet deployed |
+| 5 | Forward one managed LXC and one Docker-heavy stack into Graylog for comparison | ⏳ pending |
+| 6 | Recreate the operator journeys currently covered by Grafana log dashboards (host auth logs, per-stack filtering, recent errors) | ⏳ pending |
+| 7 | Document the chosen field conventions for Graylog streams, inputs, and source identity | ⏳ pending |
+| 8 | Move Proxmox host and MikroTik test syslog to the Graylog pilot path | ⏳ pending |
+| 9 | Remove VictoriaLogs from `pve-test-vm` only after the Graylog path is accepted | ⏳ pending |
+
+### Current Graylog scaffold state
+
+The current branch now includes a live but intentionally incomplete Graylog
+pilot host on `pve-test-vm`:
+
+- stack: `graylog-stack`
+- VMID: `20014`
+- IP: `192.168.20.114`
+- zone: `mgmt_seg`
+- provisioning status: host bootstrap complete
+- runtime status: no Graylog containers started yet
+- publication status: no Traefik/Auth/DNS route yet by design
+
+Provisioning validated so far:
+
+```bash
+PVE_ENV=pve-test-vm ./with-secrets terragrunt apply \
+  --working-dir terraform/lxc/environments/pve-test-vm/graylog-stack \
+  -auto-approve -no-color
+
+PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh \
+  --stack graylog-stack --target-env pve-test-vm
+```
+
+Result:
+
+- env-scoped inventory and network vars generated
+- LXC created successfully
+- `/opt/graylog-stack/docker-compose.scaffold.yml` written
+- `/opt/graylog-stack/scaffold/graylog.env.example` written
+- `/opt/graylog-stack/scaffold/README.txt` written
+
+Immediate next step: replace the scaffold placeholder with the actual Graylog
+single-node runtime and add a smoke test before any edge route is published.
+
+### Design assumptions for the pilot
+
+- The Graylog change is a `pve-test-vm` experiment first, not a production
+  commitment.
+- Metrics remain on VictoriaMetrics/Grafana regardless of the log backend
+  decision.
+- Existing `rsyslog` host configuration is still useful even if the central sink
+  changes.
+- The old VictoriaLogs MCP-server idea is no longer the preferred next step
+  while this Graylog direction is under evaluation.
 
 ---
 
@@ -327,7 +433,12 @@ These limitations are inherent to scraping stdout rather than using the syslog p
 
 ### Implementation history
 
-The VictoriaLogs and syslog work has been implemented and verified on pve. The remaining promotion gate is a full pve-test teardown + redeploy cycle confirming log ingestion resumes and all dashboards show data after rebuild.
+The VictoriaLogs and syslog work has been implemented on `pve` and functionally
+validated on the current branch for `pve-test-vm`, including the targeted
+reprovision / edge-reconcile follow-up after the June 2026 auth and ingress
+fixes. The next design move on `pve-test-vm` is no longer more VictoriaLogs
+feature work; it is the Graylog pilot and an eventual deprecation path for
+VictoriaLogs there if the pilot succeeds.
 
 ---
 
@@ -504,7 +615,7 @@ Each LXC host
 | Harbor containers | Harbor's own compose is managed by Harbor installer; Docker daemon default covers this without touching Harbor config | Verify Harbor log ingestion after daemon restart |
 | VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `app_name`, `facility`, `severity`. | Current dashboards target the new field set; historic data remains queryable via LogsQL explore. |
 | Auth Logs dashboard | Earlier Promtail-era queries used `{job="varlogs"}`. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Resolved in Phase 7D; keep historic queries in mind when exploring pre-cutover logs |
-| Teardown test smoke test | The teardown test checks `curl http://...:9428/health` but does not verify log ingestion. A broken syslog config would pass the health gate. | Add a log ingestion verification step to the smoke test: after provision, query `{hostname=~".+"} \| limit 1` and assert non-empty |
+| Teardown test smoke test | The teardown test originally checked only `curl http://...:9428/health`, which would not catch a broken syslog pipeline. | Resolved in Phase 7E-core on the current branch by adding VictoriaLogs ingestion validation to the teardown harness; preserve equivalent coverage during the Graylog migration |
 | Port 5140 documentation | The network reachability table must include VictoriaLogs syslog TCP on `:5140`. | Resolved in Phase 7; keep the port documented because it is the active log ingest path |
 | authentik static compose file | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` is a static file in the repo. If daemon-level logging driver is used (Decision 3 Option C), no changes needed there. If per-service logging blocks are needed, this file must be edited — unlike other stacks where the compose is written inline by Ansible. | Decision 3 Option C eliminates the need to touch this file |
 | monitoring-stack self-monitoring | monitoring-stack previously ran its own Promtail container. Desired state is Docker syslog → local rsyslog → VictoriaLogs like every other Docker host. | Source compose no longer includes Promtail; runtime cleanup should still verify no orphan remains |
@@ -517,9 +628,9 @@ Each LXC host
 | 7B | Configure Docker daemon syslog default (`docker_base` role + all playbooks); verify ingestion | ✅ complete on pve |
 | 7C | Remove Promtail from all stacks (10 files: compose blocks, include_roles, vars, handlers) | ✅ complete on pve |
 | 7D | Rebuild Lab Logs and Auth Logs dashboards for VictoriaLogs syslog field model | ✅ complete (2026-06-22) — all panels working, severity labels, `app_name` filter |
-| 7E-core | Provision all stacks on pve-test-vm; add VictoriaLogs ingestion smoke test to teardown harness; full teardown + redeploy cycle for the existing LXC/Docker syslog pipeline | ⏳ pending |
-| 7E-host-syslog | Add Proxmox host remote syslog forwarding into VictoriaLogs and validate host-originated entries on pve-test-era monitoring | ⏳ planned |
-| 7E-edge-syslog | Add MikroTik remote syslog forwarding into VictoriaLogs and validate router-originated entries plus query conventions | ⏳ planned |
+| 7E-core | Provision all stacks on pve-test-vm; add VictoriaLogs ingestion smoke test to teardown harness; validate the existing LXC/Docker syslog pipeline on the current branch | ✅ functionally validated on the current branch |
+| 7E-host-syslog | Add Proxmox host remote syslog forwarding into VictoriaLogs and validate host-originated entries on pve-test-era monitoring | ↷ deferred; superseded on `pve-test-vm` by the Graylog migration direction |
+| 7E-edge-syslog | Add MikroTik remote syslog forwarding into VictoriaLogs and validate router-originated entries plus query conventions | ↷ deferred; superseded on `pve-test-vm` by the Graylog migration direction |
 
 ### Implementation tasks
 
@@ -537,13 +648,13 @@ Each LXC host
 | 10 | Uninstall Promtail systemd service and remove runtime leftovers (idempotent) | `lxc_base`: stop/disable/purge promtail if present; compose deploys use orphan removal for removed services | ✅ done — verified no Promtail systemd services or Docker containers remain running |
 | 11 | Rebuild Lab Logs dashboard | `dashboards/lab-logs.json`: hostname + severity variables, log volume timeseries, logs panel | ✅ done — see §7 for one open rendering issue |
 | 12 | Rebuild Auth Logs dashboard | `dashboards/auth-logs.json`: `{facility="4"}` stream selector, SSH/sudo timeseries + log panels | ✅ done — auth panels show data only when auth events exist in window |
-| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ⏳ Phase 7E-core |
-| 14 | Provision all stacks on pve-test-vm | Full provision; verify ingestion, dashboards, severity filter | ⏳ Phase 7E-core |
-| 15 | Full teardown + redeploy on pve-test-vm | Promotion gate for the current syslog/VictoriaLogs rollout | ⏳ Phase 7E-core |
-| 16 | Configure Proxmox remote syslog forwarding | Proxmox host syslog settings; docs + validation notes | ⏳ Phase 7E-host-syslog |
-| 17 | Validate Proxmox host log queries in VictoriaLogs | LogsQL examples, hostname/app_name expectations, smoke evidence | ⏳ Phase 7E-host-syslog |
-| 18 | Configure MikroTik remote syslog forwarding | MikroTik remote logging action/rules; docs + validation notes | ⏳ Phase 7E-edge-syslog |
-| 19 | Validate MikroTik log queries in VictoriaLogs | LogsQL examples, router field conventions, smoke evidence | ⏳ Phase 7E-edge-syslog |
+| 13 | Add log ingestion smoke test to teardown harness | `scripts/teardown-deploy-test.sh`: query VictoriaLogs for recent entries | ✅ done on current branch (commit `eca9acd`) |
+| 14 | Provision all stacks on pve-test-vm | Full provision; verify ingestion, dashboards, severity filter | ✅ functionally validated on current branch |
+| 15 | Full teardown + redeploy on pve-test-vm | Promotion gate for the current syslog/VictoriaLogs rollout | ✅ current branch treated as validated baseline for Graylog migration planning |
+| 16 | Configure Proxmox remote syslog forwarding | Proxmox host syslog settings; docs + validation notes | ↷ deferred in favor of Graylog Sprint G4 |
+| 17 | Validate Proxmox host log queries in VictoriaLogs | LogsQL examples, hostname/app_name expectations, smoke evidence | ↷ deferred in favor of Graylog Sprint G4 |
+| 18 | Configure MikroTik remote syslog forwarding | MikroTik remote logging action/rules; docs + validation notes | ↷ deferred in favor of Graylog Sprint G4 |
+| 19 | Validate MikroTik log queries in VictoriaLogs | LogsQL examples, router field conventions, smoke evidence | ↷ deferred in favor of Graylog Sprint G4 |
 
 ### Implementation notes (Phase 7 — live deployment on pve, 2026-06-21)
 
@@ -721,17 +832,28 @@ The `tag` value `docker-{{.Name}}` sets the syslog APPNAME to e.g. `docker-authe
 
 ### Phase 7 status
 
-Phase 7A/7B/7C/7D are complete on pve (2026-06-22). Dashboard issues are resolved. Next: Phase 7E-core (pve-test-vm provision + teardown gate for the existing syslog pipeline), then Phase 7E-host-syslog (Proxmox remote syslog) and Phase 7E-edge-syslog (MikroTik remote syslog). After that, any remaining operational fixes documented in §health-findings below can be handled separately.
+Phase 7A/7B/7C/7D are complete on `pve` (2026-06-22). Phase 7E-core is now
+treated as the validated `pve-test-vm` baseline on the current branch, with the
+teardown harness updated to include VictoriaLogs ingestion coverage and the
+post-auth/edge fixes verified. The previously planned Proxmox and MikroTik
+remote-syslog follow-ons are now deferred in favor of the Graylog migration
+track documented above. Any remaining VictoriaLogs-specific operational fixes in
+§health-findings can be handled only if they still matter during that
+transition.
 
 ---
 
-## Phase 8 — VictoriaLogs MCP Server
+## Deferred — VictoriaLogs MCP Server
 
 ### Goal
 
 Expose VictoriaLogs query capabilities to Claude Code (and any MCP client) via the Model Context Protocol, enabling LLM-driven log analysis without ad-hoc shell sessions.
 
 The immediate motivation: systematic log health analysis (§health-findings) required constructing and running multiple API queries by hand. The same patterns, encoded as MCP tools, would make this kind of investigation a natural part of any working session.
+
+This work is now lower priority than the Graylog pilot on `pve-test-vm`. If
+Graylog becomes the preferred log platform, this section should be replaced with
+Graylog-oriented tooling rather than implemented as written.
 
 ### Architecture
 

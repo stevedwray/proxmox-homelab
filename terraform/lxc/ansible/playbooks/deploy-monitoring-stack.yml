@@ -188,6 +188,8 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_CI_RUNNER') }}:9100"]
                   labels: {stack: ci-runner-01}
+                - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
+                  labels: {stack: graylog-stack}
 
             - job_name: cadvisor
               static_configs:
@@ -203,6 +205,8 @@
                   labels: {stack: harbor-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"]
                   labels: {stack: netbox-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:8080"]
+                  labels: {stack: graylog-stack}
 
             - job_name: coredns
               scrape_interval: 15s

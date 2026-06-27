@@ -1,0 +1,502 @@
+---
+- name: Configure Graylog pilot host
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    graylog_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    graylog_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ graylog_lab_domain, true) }}"
+    graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ graylog_lab_domain, true) }}"
+    graylog_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(graylog_lab_fqdn_harbor, true) }}"
+    docker_registry_host: "{{ graylog_registry_host }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "dns": ["{{ graylog_lab_ip_dns }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before writing scaffold
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Graylog runtime (optional)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    graylog_compose_dir: /opt/graylog-stack
+    graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
+    graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
+    graylog_authentik_ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
+    graylog_authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is required') }}"
+
+  tasks:
+    - name: Create Graylog compose directory
+      ansible.builtin.file:
+        path: "{{ graylog_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Include rsyslog_forward with Graylog relay vars
+      ansible.builtin.include_role:
+        name: rsyslog_forward
+      vars:
+        rsyslog_forward_target_host: "127.0.0.1"
+        rsyslog_forward_target_port: "5140"
+        rsyslog_inbound_enabled: "{{ graylog_deploy_runtime | bool }}"
+
+    - name: Write Graylog env file
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/graylog.env"
+        mode: "0640"
+        content: |
+          GRAYLOG_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
+          GRAYLOG_DATANODE_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
+          GRAYLOG_ROOT_PASSWORD_SHA2={{ lookup('env', 'GRAYLOG_ROOT_PASSWORD_SHA2') | mandatory }}
+          GRAYLOG_HTTP_EXTERNAL_URI=https://{{ lookup('env', 'LAB_FQDN_GRAYLOG') }}/
+          GRAYLOG_MONGODB_URI=mongodb://mongodb:27017/graylog
+          GRAYLOG_DATANODE_MONGODB_URI=mongodb://mongodb:27017/graylog
+          GRAYLOG_HTTP_BIND_ADDRESS=0.0.0.0:9000
+      no_log: true
+      when: graylog_deploy_runtime | bool
+      register: graylog_env_file
+      notify: Recreate Graylog
+
+    - name: Write Graylog docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            mongodb:
+              image: {{ graylog_registry_host }}/dockerhub/mongo:7
+              volumes:
+                - mongodb_data:/data/db
+              restart: unless-stopped
+              healthcheck:
+                test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+                interval: 10s
+                timeout: 5s
+                retries: 5
+                start_period: 30s
+
+            datanode:
+              image: {{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:6.1
+              env_file: graylog.env
+              hostname: datanode
+              volumes:
+                - graylog_datanode:/var/lib/graylog-datanode
+              restart: unless-stopped
+              depends_on:
+                mongodb:
+                  condition: service_healthy
+
+            graylog:
+              image: {{ graylog_registry_host }}/dockerhub/graylog/graylog:6.1
+              env_file: graylog.env
+              ports:
+                - "9000:9000"
+                - "127.0.0.1:5140:5140"
+              volumes:
+                - graylog_data:/usr/share/graylog/data
+              restart: unless-stopped
+              depends_on:
+                mongodb:
+                  condition: service_healthy
+                datanode:
+                  condition: service_started
+
+            cadvisor:
+              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+
+          volumes:
+            mongodb_data:
+            graylog_datanode:
+            graylog_data:
+      when: graylog_deploy_runtime | bool
+      register: graylog_compose_file
+      notify: Recreate Graylog
+
+    - name: Bring up Graylog stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ graylog_compose_dir }}"
+        state: present
+        remove_orphans: true
+        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_compose_file.changed) else 'auto' }}"
+      when: graylog_deploy_runtime | bool
+
+    - name: Wait for Graylog web port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9000
+        timeout: 120
+      when: graylog_deploy_runtime | bool
+
+    - name: Check if Graylog is already ALIVE (skip preflight if so)
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/lbstatus"
+        method: GET
+        status_code: [200, 404]
+        return_content: true
+      register: graylog_lbstatus_check
+      until: graylog_lbstatus_check.status in [200, 404]
+      retries: 20
+      delay: 10
+      when: graylog_deploy_runtime | bool
+
+    # Preflight automation: on fresh installs Graylog serves a setup wizard instead of
+    # the normal API. The wizard password is randomly generated and logged to stdout.
+    # API sequence (from bytecode analysis of graylog.jar PreflightResource):
+    #   POST /api/ca/create       → self-signed CA for DataNode internal TLS only (container-to-container,
+    #                               never externally validated — step-ca is not needed here)
+    #   POST /api/renewal_policy  → set cert renewal mode
+    #   POST /api/generate        → provision DataNode with CA-signed cert
+    #   POST /api/status/finish-config → finalize, Graylog restarts into normal mode
+    - name: Extract Graylog preflight password from container logs
+      ansible.builtin.command:
+        cmd: >
+          docker logs graylog-stack-graylog-1
+      register: graylog_container_logs
+      changed_when: false
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Parse preflight password from logs
+      ansible.builtin.set_fact:
+        graylog_preflight_password: >-
+          {{ (graylog_container_logs.stderr + graylog_container_logs.stdout)
+             | regex_search("password '([^']+)'", '\\1') | first }}
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Create Graylog preflight CA
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/ca/create"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          organization: "Graylog CA"
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Set Graylog certificate renewal policy
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/renewal_policy"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          mode: AUTOMATIC
+          certificate_lifetime: P30D
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Provision DataNode certificates
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/generate"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Wait for DataNode to become AVAILABLE
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/data_nodes"
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_datanodes
+      until: >-
+        (graylog_datanodes.json | default([]) | selectattr('data_node_status', 'eq', 'AVAILABLE') | list | length) > 0
+      retries: 30
+      delay: 10
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Finalize Graylog preflight configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/status/finish-config"
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_preflight_password }}"
+        force_basic_auth: true
+        headers:
+          X-Requested-By: ansible
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Wait for Graylog to report ALIVE
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/lbstatus"  # nosonar: ansible:S5332 — unauthenticated health check on private SDN
+        method: GET
+        status_code: 200
+        return_content: true
+      register: graylog_lbstatus
+      until: graylog_lbstatus.content == "ALIVE"
+      retries: 30
+      delay: 10
+      when: graylog_deploy_runtime | bool
+
+    # Post-ALIVE: provision syslog TCP input (idempotent)
+    - name: Check existing Graylog inputs
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/inputs"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_inputs
+      when: graylog_deploy_runtime | bool
+
+    - name: Provision Graylog syslog TCP input on port 5140
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/inputs"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "syslog-tcp-5140"
+          type: "org.graylog2.inputs.syslog.tcp.SyslogTCPInput"
+          global: true
+          configuration:
+            bind_address: "0.0.0.0"
+            port: 5140
+            recv_buffer_size: 1048576
+            number_worker_threads: 2
+            override_source: null
+            force_rdns: false
+            allow_override_date: true
+            store_full_message: false
+            expand_structured_data: false
+        status_code: [200, 201]
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_inputs.json.inputs | default([])
+           | selectattr('title', 'eq', 'syslog-tcp-5140') | list | length) == 0
+
+    # Post-ALIVE: LDAP auth service configuration via Authentik LDAP outpost
+    - name: Check existing Graylog LDAP auth service backends
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/backends"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_auth_backends
+      when: graylog_deploy_runtime | bool
+
+    - name: Provision Graylog LDAP auth service backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/backends"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          title: "authentik-ldap"
+          description: "Authentik LDAP outpost — users authenticate with Authentik credentials"
+          default_roles: []
+          config:
+            type: "ldap"
+            servers:
+              - host: "{{ graylog_authentik_ip }}"
+                port: 3389
+            transport_security: "none"
+            system_user_dn: "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io"
+            system_user_password: "{{ graylog_authentik_superuser_password }}"
+            user_search_base: "ou=users,dc=ldap,dc=goauthentik,dc=io"
+            user_search_pattern: "(cn={0})"
+            user_name_attribute: "cn"
+            user_unique_id_attribute: "uid"
+            user_full_name_attribute: "cn"
+        status_code: [200, 201]
+      register: graylog_ldap_backend_create
+      when:
+        - graylog_deploy_runtime | bool
+        - >-
+          (graylog_auth_backends.json.backends | default([])
+           | selectattr('title', 'eq', 'authentik-ldap') | list | length) == 0
+
+    - name: Resolve Graylog LDAP backend ID
+      ansible.builtin.set_fact:
+        graylog_ldap_backend_id: >-
+          {{
+            (graylog_auth_backends.json.backends | default([])
+             | selectattr('title', 'eq', 'authentik-ldap') | list | first).id
+            if (graylog_auth_backends.json.backends | default([])
+                | selectattr('title', 'eq', 'authentik-ldap') | list | length) > 0
+            else graylog_ldap_backend_create.json.backend.id
+          }}
+      when: graylog_deploy_runtime | bool
+
+    - name: Check Graylog authentication service active configuration
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/configuration"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: graylog_auth_config
+      when: graylog_deploy_runtime | bool
+
+    - name: Activate Graylog LDAP auth service backend
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/system/authentication/services/configuration"  # nosonar: ansible:S5332 — internal API on private SDN
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body:
+          active_backend: "{{ graylog_ldap_backend_id }}"
+        status_code: [200, 204]
+      when:
+        - graylog_deploy_runtime | bool
+        - (graylog_auth_config.json.configuration.active_backend | default('')) != graylog_ldap_backend_id
+
+  handlers:
+    - name: Recreate Graylog
+      community.docker.docker_compose_v2:
+        project_src: "{{ graylog_compose_dir }}"
+        state: present
+        recreate: always
+
+- name: Write Graylog scaffold assets
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    graylog_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ graylog_lab_domain, true) }}"
+    graylog_compose_dir: /opt/graylog-stack
+
+  tasks:
+    - name: Create Graylog scaffold directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ graylog_compose_dir }}"
+        - "{{ graylog_compose_dir }}/scaffold"
+
+    - name: Write Graylog runtime env scaffold
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/scaffold/graylog.env.example"
+        mode: "0640"
+        content: |
+          # Graylog pilot env scaffold
+          GRAYLOG_HTTP_BIND_ADDRESS=0.0.0.0:9000
+          GRAYLOG_HTTP_EXTERNAL_URI=https://{{ graylog_lab_fqdn_graylog }}/
+          GRAYLOG_PASSWORD_SECRET=<generate-secret>
+          GRAYLOG_ROOT_PASSWORD_SHA2=<sha256-of-admin-password>
+          GRAYLOG_DATANODE_PASSWORD_SECRET=<generate-secret>
+          GRAYLOG_MONGODB_URI=mongodb://mongodb:27017/graylog
+          GRAYLOG_OPENSEARCH_HOSTS=http://datanode:9200
+
+    - name: Write Graylog compose placeholder
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/docker-compose.scaffold.yml"
+        mode: "0640"
+        content: |
+          # Graylog scaffold only.
+          # Replace this placeholder with the chosen single-node Graylog compose
+          # during Sprint G2 once the runtime shape is pinned and validated.
+          services: {}
+
+    - name: Write Graylog scaffold README
+      ansible.builtin.copy:
+        dest: "{{ graylog_compose_dir }}/scaffold/README.txt"
+        mode: "0640"
+        content: |
+          graylog-stack scaffold
+
+          This host has been prepared as the dedicated Graylog pilot target.
+          Current scope:
+          - Docker host bootstrap complete
+          - Compose/env placeholders written under /opt/graylog-stack
+          - No live Graylog containers started yet
+          - No Traefik/Auth/DNS publication should occur yet
+
+          Next implementation step:
+          - replace docker-compose.scaffold.yml with the chosen Graylog runtime
+          - add smoke checks
+          - only then add edge publication

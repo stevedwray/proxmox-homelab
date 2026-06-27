@@ -78,6 +78,20 @@ services:
       - authentik-custom-templates:/templates
       - authentik-certs:/certs
 
+  ldap:
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:2024.12.3
+    restart: unless-stopped
+    env_file:
+      - .ldap-outpost.env
+    environment:
+      AUTHENTIK_HOST: http://server:9000  # nosonar: ansible:S5332 — Docker-internal compose network
+      AUTHENTIK_INSECURE: "true"
+    ports:
+      - "3389:3389"
+      - "6636:6636"
+    depends_on:
+      - server
+
   cadvisor:
     image: gcr.io/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped

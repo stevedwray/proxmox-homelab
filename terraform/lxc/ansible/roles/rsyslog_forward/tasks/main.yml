@@ -37,3 +37,32 @@
     host: 127.0.0.1
     port: 10514
     timeout: 15
+
+# Optional Graylog inbound relay: accept appliance/host syslog on :514 and
+# forward to the configured rsyslog_forward_target (typically 127.0.0.1:5140).
+- name: Write Graylog inbound relay config
+  ansible.builtin.template:
+    src: graylog_inbound.conf.j2
+    dest: /etc/rsyslog.d/91-graylog-inbound.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: rsyslog_inbound_enabled | bool
+  notify: Restart rsyslog
+
+- name: Remove Graylog inbound relay config when not enabled
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/91-graylog-inbound.conf
+    state: absent
+  when: not (rsyslog_inbound_enabled | bool)
+  notify: Restart rsyslog
+
+- name: Flush handlers to apply inbound rsyslog config before port check
+  ansible.builtin.meta: flush_handlers
+
+- name: Ensure rsyslog is listening on inbound syslog TCP port
+  ansible.builtin.wait_for:
+    host: 0.0.0.0
+    port: "{{ rsyslog_inbound_tcp_port }}"
+    timeout: 15
+  when: rsyslog_inbound_enabled | bool

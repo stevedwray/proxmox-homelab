@@ -1,0 +1,20 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: graylog-edge
+  stack: graylog-stack
+spec:
+  routes:
+    - name: graylog
+      host: graylog.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_GRAYLOG}:9000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: native

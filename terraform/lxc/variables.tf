@@ -170,6 +170,12 @@ variable "lab_ip_monitoring" {
   default     = ""
 }
 
+variable "lab_ip_graylog" {
+  description = "Graylog service IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_ip_dns" {
   description = "CoreDNS service IPv4 address"
   type        = string
