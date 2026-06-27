@@ -32,9 +32,9 @@ Classification is based on current repo behavior, not a future redesign.
 | `portainer-stack` direct API/UI endpoint | No | No | Yes | Later case-by-case |
 | Portainer agent mTLS endpoints | No | No | Yes | Later, security-driven issuance use case |
 | Internal-only Traefik routes using `step-ca` resolver | No | Yes (selective) | Yes (broader) | Only where route is intentionally internal and clients trust homelab CA |
-| `graylog-stack` DataNode internal TLS | No | Yes | No | **Intermediate CA pattern** — step-ca signs a Graylog intermediate CA; Graylog uses it to sign DataNode certs. See [intermediate-ca-pattern.md](intermediate-ca-pattern.md) |
+| `graylog-stack` DataNode internal TLS | No | No | No | Self-signed internal Graylog preflight CA only; container-to-container on the private compose network, so step-ca is not part of this path |
 | `graylog-stack` host OS | Yes | No | N/A | Host trust via `lxc_base` (already in place) |
-| `graylog-stack` direct Graylog endpoint | No | No | Yes | Browser access via Traefik ACME + direct OIDC to Authentik (G2); direct backend TLS deferred |
+| `graylog-stack` direct Graylog endpoint | No | No | Yes | Browser access via Traefik ACME with Graylog native login backed by the Authentik LDAP outpost; direct backend TLS deferred |
 
 ## 2. Existing step-ca Consumers Today
 

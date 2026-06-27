@@ -27,7 +27,7 @@ services:
       - authentik-redis:/data
 
   server:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
     restart: unless-stopped
     command: server
     env_file:
@@ -64,7 +64,7 @@ services:
       - ./nginx/direct-tls.conf:/etc/nginx/conf.d/default.conf:ro
 
   worker:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
     restart: unless-stopped
     command: worker
     env_file:
@@ -79,12 +79,11 @@ services:
       - authentik-certs:/certs
 
   ldap:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:2024.12.3
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
     restart: unless-stopped
     env_file:
       - .ldap-outpost.env
     environment:
-      AUTHENTIK_HOST: http://server:9000  # nosonar: ansible:S5332 — Docker-internal compose network
       AUTHENTIK_INSECURE: "true"
     ports:
       - "3389:3389"

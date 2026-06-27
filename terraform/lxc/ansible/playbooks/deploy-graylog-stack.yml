@@ -53,6 +53,7 @@
     graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
     graylog_authentik_ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
     graylog_authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is required') }}"
+    graylog_authentik_ldap_service_password: "{{ lookup('env', 'AUTHENTIK_LDAP_SERVICE_PASSWORD') | default(graylog_authentik_superuser_password, true) }}"
 
   tasks:
     - name: Create Graylog compose directory
@@ -376,8 +377,8 @@
               - host: "{{ graylog_authentik_ip }}"
                 port: 3389
             transport_security: "none"
-            system_user_dn: "cn=akadmin,ou=users,dc=ldap,dc=goauthentik,dc=io"
-            system_user_password: "{{ graylog_authentik_superuser_password }}"
+            system_user_dn: "cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io"
+            system_user_password: "{{ graylog_authentik_ldap_service_password }}"
             user_search_base: "ou=users,dc=ldap,dc=goauthentik,dc=io"
             user_search_pattern: "(cn={0})"
             user_name_attribute: "cn"
