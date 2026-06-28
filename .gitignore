@@ -98,8 +98,6 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
-certs/homelab-root.crt
-
 # Logs
 *.log
 
