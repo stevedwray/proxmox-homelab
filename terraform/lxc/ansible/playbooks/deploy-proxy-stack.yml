@@ -58,10 +58,15 @@
     proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
     # Control-node source dir for generated per-stack Traefik files.
-    # Defaults to terraform/lxc/.generated/traefik and can be overridden.
-    # Files are published into /opt/proxy-stack/dynamic/ so the active file
-    # provider always loads router definitions.
-    traefik_generated_source_dir: "{{ playbook_dir }}/../../.generated/traefik"
+    # When PVE_ENV is set, defaults to the env-scoped directory so a
+    # pve-test-vm provision never pollutes the pve deploy path (and vice
+    # versa). reconcile-edge.py writes to the same env-scoped path, so
+    # full-provision and single-stack --stack proxy-stack both use the
+    # same source. Can be overridden explicitly via -e.
+    traefik_generated_source_dir: >-
+      {{ (playbook_dir ~ '/../../environments/' ~ lookup('env', 'PVE_ENV') ~ '/.generated/traefik')
+         if lookup('env', 'PVE_ENV') | length > 0
+         else (playbook_dir ~ '/../../.generated/traefik') }}
 
   tasks:
     - name: Create Traefik directory structure
