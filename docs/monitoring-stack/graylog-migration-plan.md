@@ -1141,37 +1141,19 @@ minimum, the final proof must include:
 
 ### Current next step
 
-Sprint G2 remains in progress. Graylog core is healthy, but the final G2 gate
-for Authentik-backed browser login is still failing.
+**Sprint G2 is complete** (as of 2026-06-28). Sprint G3 is next.
 
-Immediate entry criteria for the remaining G2 work:
-- Graylog at `192.168.20.114:9000` is ALIVE
-- `graylog.test.gibbsgreatly.xyz` resolves and returns HTTPS 200
-- LDAP auth backend is active (id: `6a3f10c5769d7f3a2249dee3`)
-- Authentik LDAP outpost container is running and listening on 3389/6636
-- Authentik LDAP outpost on `192.168.20.110` is healthy and connected
-- Direct LDAP bind is still failing with `Invalid credentials (49)` for both
-  `steve` and `ldapservice`, and must be resolved
+G2 exit criteria all met:
+- ✅ Graylog at `192.168.20.114:9000` is ALIVE
+- ✅ `graylog.test.gibbsgreatly.xyz` resolves and returns HTTPS 200
+- ✅ LDAP auth backend active; steve logs in with Authentik credentials
+- ✅ Authentik 2026.2.4; LDAP outpost healthy on `192.168.20.110:3389`
+- ✅ `reconcile-edge.py --json` returns `issue_count: 0`
 
-Next actions:
-1. On `192.168.20.110`, focus on the Authentik bind/session path rather than
-   Graylog:
-   inspect both the `ak-stage-access-denied` authorization challenge path and
-   the `/api/v3/core/users/me/ -> 403` path seen during experiments.
-2. Treat the current Authentik build (`2024.12.3`) as a specific hypothesis to
-   test:
-   compare the current live behavior against upstream fixes and decide whether
-   to keep iterating config on `2024.12.3` or run a controlled upgrade trial on
-   `pve-test-vm` to a newer Authentik release line.
-3. If config-only experiments continue to reproduce either
-   `Invalid credentials (49)` or `/api/v3/core/users/me/ -> 403`, prepare a
-   version-evaluation test by pinning Authentik server + LDAP outpost together
-   to a newer release and re-running the same direct bind checks first.
-4. Re-run direct LDAP bind after each provider/auth-flow or version change before
-   involving Graylog.
-5. If direct bind succeeds, immediately re-test Graylog backend connection and
-   real browser login.
-6. Only after end-to-end LDAP login works should Sprint G3 begin.
+Sprint G3 entry criteria:
+- Graylog browser login is working (gate met)
+- Choose first pilot log sources (one systemd-heavy stack + one Docker-heavy stack)
+- Confirm existing VictoriaLogs path remains active as rollback
 
 ### Sprint board
 
@@ -1214,7 +1196,7 @@ Next actions:
 
 These are the operator-facing outcomes that must be tested before promotion:
 
-1. Graylog browser access works — user logs in with Authentik credentials via LDAP auth backend, lands in Graylog UI. Current state: not yet passing.
+1. Graylog browser access works — user logs in with Authentik credentials via LDAP auth backend, lands in Graylog UI. ✅ Passing (G2 complete 2026-06-28).
 2. Managed LXC system logs are searchable by host/source.
 3. Docker-container logs are searchable by host/source.
 4. Proxmox host syslog is visible and attributable.
@@ -1253,15 +1235,13 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-G0–G1 are complete. G2 core deployment and LDAP outpost provisioning are now
-healthy, but the remaining practical step is still inside G2:
+G0–G2 are complete. **Start Sprint G3.**
 
-1. On the live Authentik provider at `192.168.20.110`, test provider bind
-   session/auth semantics first:
-   resolve why LDAP bind currently hits either an `ak-stage-access-denied`
-   challenge or, under the experimental path, `/api/v3/core/users/me/` `403`.
-2. After each change, validate direct LDAP bind for both `steve` and
-   `ldapservice`.
-3. Once direct bind is green, re-test Graylog LDAP backend connection and real
-   browser login.
-4. Start G3 only after that gate is green.
+G3 entry point:
+1. Choose pilot sources:
+   - systemd-heavy: `step-ca-stack` or `dns-stack` (one managed LXC)
+   - Docker-heavy: `authentik-stack` (already feeds Graylog-side LXC via rsyslog relay)
+2. Configure rsyslog on the pilot LXC hosts to forward to `192.168.20.114:514`.
+3. Validate that log lines arrive in Graylog with correct `source` and container/process identity.
+4. Confirm equivalent "Lab Logs" and "Auth Logs" query workflows work in Graylog.
+5. VictoriaLogs dual-feed remains active throughout G3 as rollback.
