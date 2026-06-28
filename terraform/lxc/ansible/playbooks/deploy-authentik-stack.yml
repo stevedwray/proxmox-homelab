@@ -6,6 +6,9 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    rsyslog_graylog_enabled: true
+    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
   roles:
     - lxc_base
     - docker_base
@@ -41,7 +44,7 @@
     authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
     authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
     authentik_insecure_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
-    authentik_image_version: "2026.2.4"
+    authentik_image_version: "2024.12.3"
     authentik_nginx_version: "1.27-alpine"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
@@ -946,7 +949,7 @@
         body_format: json
         body:
           permissions:
-            - "search_full_directory"
+            - "authentik_providers_ldap.search_full_directory"
           model: "authentik_providers_ldap.ldapprovider"
           object_pk: "{{ ldap_provider_pk | string }}"
         status_code: [200]
