@@ -114,3 +114,4 @@ cosign.key
 .tmp/
 docs/harbor-stack/artifacts
 !docs/harbor-stack/artifacts/.gitkeep
+certs/homelab-root.pve-test-vm.crt
