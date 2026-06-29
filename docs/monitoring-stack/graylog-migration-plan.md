@@ -147,9 +147,9 @@ These are explicit decisions, not assumptions:
 
 | Decision | Choice | Status |
 |---|---|---|
-| Graylog packaging | Graylog 6.x Data Node — MongoDB 7 + Graylog DataNode + Graylog Server (3 containers) | ✅ settled |
+| Graylog packaging | Graylog 7.1.3 Data Node — MongoDB 7 + Graylog DataNode + Graylog Server (3 containers) | ✅ settled |
 | LXC RAM | 6144 MB (was 4096 MB) | ✅ settled |
-| Browser auth | Authentik LDAP outpost (Option B) — Graylog 6.1 open source has no native OIDC; LDAP outpost (`ghcr.io/goauthentik/ldap:2024.12.3`) on port 3389; Graylog LDAP Auth Service authenticates against it | ✅ settled |
+| Browser auth | Authentik LDAP outpost (Option B) — Graylog Open 7.1.3 still relies on LDAP/AD for open-source SSO; generic OIDC remains an Enterprise feature, so the Authentik LDAP outpost on port 3389 stays the repo path | ✅ settled |
 | FQDN | `graylog.test.gibbsgreatly.xyz` | ✅ settled |
 | Syslog port 514 | rsyslog relay on LXC host — binds 514 as root/systemd, relays to Graylog on 127.0.0.1:5140 | ✅ settled |
 | Host forwarder on managed LXCs | keep current `rsyslog` forwarders; change only the central sink path in G3 | ✅ settled |
@@ -294,11 +294,11 @@ the pilot.
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Graylog version | 6.x (Data Node) | New install; avoids separate OpenSearch container |
+| Graylog version | 7.1.3 (Data Node) | Current dev target; keeps the Data Node architecture and current MongoDB 7 dependency |
 | Compose topology | MongoDB 7 + Graylog Data Node + Graylog Server (3 containers) | Data Node replaces OpenSearch as the search/index backend |
 | Syslog port 514 | rsyslog relay on LXC host (Option A) | rsyslog runs as root via systemd and can bind 514 naturally; no Docker privilege escalation |
 | Syslog internal port | 5140 TCP | rsyslog → Graylog; same convention as VictoriaLogs used; bound to 127.0.0.1 only |
-| Browser auth | **Authentik LDAP outpost (Option B)** | Graylog 6.1 open source has no native OIDC support. Chosen approach: Authentik LDAP outpost (`ghcr.io/goauthentik/ldap:2026.2.4`) exposes LDAP on port 3389; Graylog LDAP Auth Service authenticates against it. Users log in once with Authentik credentials. ✅ Implemented and validated end-to-end in G2. |
+| Browser auth | **Authentik LDAP outpost (Option B)** | Graylog Open 7.1.3 still does not give us a direct Authentik OIDC path in the open-source build. Chosen approach: Authentik LDAP outpost (`ghcr.io/goauthentik/ldap:2026.2.4`) exposes LDAP on port 3389; Graylog LDAP Auth Service authenticates against it. Users log in once with Authentik credentials. ✅ Implemented and validated end-to-end in G2. |
 | FQDN | `graylog.test.gibbsgreatly.xyz` | Matches pve-test-vm domain convention |
 | LXC RAM | 6144 MB (was 4096 MB) | MongoDB + Data Node + Graylog Server require more headroom |
 | DataNode CA | Graylog self-signed (internal only) | DataNode TLS is container-to-container on the private compose network; no external system validates it. Step-ca integration is appropriate for the web endpoint (Traefik upstream) and future syslog TLS, not the internal DataNode CA |
@@ -386,7 +386,7 @@ bound to `127.0.0.1` only. Only port 9000 is published externally.
 #### 1 — `stack.yaml` memory bump
 
 ```yaml
-memory: 6144   # was 4096; Graylog 6.x (MongoDB + DataNode + Graylog) requires headroom
+memory: 6144   # was 4096; Graylog 7.1.3 (MongoDB + DataNode + Graylog) requires headroom
 ```
 
 #### 2 — `.env` additions
@@ -521,7 +521,7 @@ Replace the scaffold tasks with:
           restart: unless-stopped
 
         datanode:
-          image: {{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:6.1
+          image: {{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:7.1.3
           env_file: graylog.env
           hostname: datanode
           volumes:
@@ -531,7 +531,7 @@ Replace the scaffold tasks with:
             - mongodb
 
         graylog:
-          image: {{ graylog_registry_host }}/dockerhub/graylog/graylog:6.1
+          image: {{ graylog_registry_host }}/dockerhub/graylog/graylog:7.1.3
           env_file: graylog.env
           ports:
             - "9000:9000"
@@ -717,7 +717,8 @@ Step 7  Add graylog-stack to monitoring-stack scrape targets
             --stack monitoring-stack --target-env pve-test-vm
 Step 8  Add Graylog gate to teardown-deploy-test.sh
 
-⚠️  AUTH FINDING — Graylog 6.1 open source has no native OIDC:
+⚠️  AUTH FINDING — Graylog Open 7.1.3 still does not provide the direct
+OIDC path we want in the open-source build:
     Verified: no OAuth2 jars in /usr/share/graylog/plugin/, no OIDC/OAuth
     strings in graylog.jar or JS bundle. The direct OIDC approach planned
     for Step 9e cannot be implemented as-is.
@@ -911,6 +912,9 @@ LDAP outpost: ldapservice bind -> search (found) -> steve bind (User has access)
   - browser login with Authentik credentials is also now re-validated on the
     live `graylog-stack`; the last blocker was Graylog-side provisioning, not
     LDAP bind/search itself
+  - additional live dev validation on 2026-06-29 upgraded `graylog-stack`
+    in place from Graylog `6.1` to `7.1.3`; `POST /api/system/sessions`
+    for `steve` still returned HTTP 200 after the upgrade
   - dual-feed rollback remains active
   - remaining G3 work is to document stable operator query patterns and broaden
     validation beyond these first proof points

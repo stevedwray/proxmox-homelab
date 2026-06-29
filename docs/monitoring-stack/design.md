@@ -209,7 +209,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 | Item | Notes |
 |------|-------|
 | Phase 7E closeout | Capture the current VictoriaLogs-based syslog pipeline as the validated baseline on `pve-test-vm` before changing log backends; this is now documented as the rollback baseline on the current branch |
-| Phase 8A Graylog pilot | `graylog-stack` scaffold is live on `pve-test-vm` (VMID `20014`, `192.168.20.114`); G2 plan settled: Graylog 6.x Data Node (MongoDB 7 + DataNode + Graylog, 6144 MB RAM), rsyslog relay on LXC owns port 514, Graylog syslog input on 127.0.0.1:5140; see [graylog-migration-plan.md §Sprint G2](./graylog-migration-plan.md) |
+| Phase 8A Graylog pilot | `graylog-stack` scaffold is live on `pve-test-vm` (VMID `20014`, `192.168.20.114`); G2/G3 runtime target: Graylog 7.1.3 Data Node (MongoDB 7 + DataNode + Graylog, 6144 MB RAM), rsyslog relay on LXC owns port 514, Graylog syslog input on 127.0.0.1:5140; see [graylog-migration-plan.md §Sprint G2](./graylog-migration-plan.md) |
 | Phase 8B Dual-log cutover | Forward selected logs on `pve-test-vm` to Graylog first, keeping VictoriaLogs as fallback during the pilot |
 | Phase 8C VictoriaLogs deprecation on `pve-test-vm` | Remove Grafana log dashboards and VictoriaLogs-specific validation once Graylog covers the required workflows |
 | Phase 8D Host and edge syslog on Graylog | Point Proxmox host and MikroTik remote syslog at the Graylog path chosen by the pilot |

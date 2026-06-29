@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Query Graylog 6.x Search/Messages export API for recent test messages
+# Query Graylog 7.x Search/Messages export API for recent test messages
 # Usage: query-graylog-search.sh [host] [port] [query]
 # Defaults: host=127.0.0.1 port=9000 query="message:graylog-smoke-test"
 
