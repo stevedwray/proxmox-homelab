@@ -48,12 +48,26 @@
   gather_facts: false
   vars:
     graylog_compose_dir: /opt/graylog-stack
+    graylog_datanode_config_dir: /opt/graylog-stack/datanode-config
     graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
     graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
     graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
     graylog_mongodb_image_tag: "7"
     graylog_datanode_image_tag: "7.1.3"
     graylog_server_image_tag: "7.1.3"
+    graylog_datanode_heap_gb: >-
+      {{
+        [
+          1,
+          (
+            (
+              hostvars[inventory_hostname].ansible_memtotal_mb
+              | default(hostvars[inventory_hostname].ansible_memory_mb.real.total)
+              | int
+            ) / 1024 / 2
+          ) | round(0, 'floor') | int
+        ] | max
+      }}
     graylog_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     graylog_lab_admin_password: "{{ lookup('env', 'AUTHENTIK_STEVE_PASSWORD') | mandatory('AUTHENTIK_STEVE_PASSWORD env var is required') }}"
     graylog_authentik_ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
@@ -64,6 +78,12 @@
     - name: Create Graylog compose directory
       ansible.builtin.file:
         path: "{{ graylog_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create Graylog Data Node config directory
+      ansible.builtin.file:
+        path: "{{ graylog_datanode_config_dir }}"
         state: directory
         mode: "0750"
 
@@ -92,6 +112,35 @@
       register: graylog_env_file
       notify: Recreate Graylog
 
+    - name: Write Graylog Data Node JVM options
+      ansible.builtin.copy:
+        dest: "{{ graylog_datanode_config_dir }}/jvm.options"
+        mode: "0644"
+        content: |
+          # JVM Heap Settings
+          #
+          # Size OpenSearch heap against the actual LXC budget, not the nested
+          # Docker container's misleading host-memory view.
+          -Xms{{ graylog_datanode_heap_gb }}g
+          -Xmx{{ graylog_datanode_heap_gb }}g
+
+          # General JVM Settings
+          #
+          # Garbage collector
+          -XX:+UseG1GC
+
+          # Ensure full stack traces for debugging
+          -XX:-OmitStackTraceInFastThrow
+
+          # Allow usage of experimental JVM options
+          -XX:+UnlockExperimentalVMOptions
+
+          # Avoid endless loop with some TLSv1.3 implementations
+          -Djdk.tls.acknowledgeCloseNotify=true
+      when: graylog_deploy_runtime | bool
+      register: graylog_datanode_jvm_options_file
+      notify: Recreate Graylog
+
     - name: Write Graylog docker-compose.yml
       ansible.builtin.copy:
         dest: "{{ graylog_compose_dir }}/docker-compose.yml"
@@ -116,6 +165,7 @@
               hostname: datanode
               volumes:
                 - graylog_datanode:/var/lib/graylog-datanode
+                - {{ graylog_datanode_config_dir }}/jvm.options:/etc/graylog/datanode/jvm.options:ro
               restart: unless-stopped
               depends_on:
                 mongodb:
@@ -162,7 +212,7 @@
         project_src: "{{ graylog_compose_dir }}"
         state: present
         remove_orphans: true
-        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_compose_file.changed) else 'auto' }}"
+        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_datanode_jvm_options_file.changed or graylog_compose_file.changed) else 'auto' }}"
       when: graylog_deploy_runtime | bool
 
     - name: Wait for Graylog web port to accept connections
