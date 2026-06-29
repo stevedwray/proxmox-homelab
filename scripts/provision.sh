@@ -304,6 +304,7 @@ APPROVED_PLATFORM_STACKS = {
     "harbor-stack",
     "ci-runner-01",
     "dns-stack",
+    "graylog-stack",
     "step-ca-stack",
     "authentik-stack",
     "proxy-stack",

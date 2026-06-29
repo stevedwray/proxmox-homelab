@@ -4,3 +4,6 @@ rsyslog_forward_target_port: "5140"
 rsyslog_inbound_enabled: false
 rsyslog_inbound_tcp_port: "514"
 rsyslog_inbound_udp_port: "514"
+rsyslog_graylog_enabled: false
+rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | default('') }}"
+rsyslog_graylog_target_port: "514"

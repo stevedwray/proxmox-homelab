@@ -19,6 +19,20 @@ $WorkDirectory /var/spool/rsyslog
            queue.maxDiskSpace="64m"
            queue.saveOnShutdown="on"
            action.resumeRetryCount="-1")
+{% if rsyslog_graylog_enabled | default(false) | bool and rsyslog_graylog_target_host | default('') | length > 0 %}
+
+# Dual-feed: also forward system logs to Graylog via graylog-stack rsyslog relay.
+*.* action(type="omfwd"
+           target="{{ rsyslog_graylog_target_host }}"
+           port="{{ rsyslog_graylog_target_port }}"
+           protocol="tcp"
+           Template="VictoriaLogsForward"
+           queue.type="LinkedList"
+           queue.filename="graylog-sys-fwd"
+           queue.maxDiskSpace="32m"
+           queue.saveOnShutdown="on"
+           action.resumeRetryCount="-1")
+{% endif %}
 
 # Accept Docker container logs via TCP on localhost, bypassing journald.
 # The imtcp input is bound to an explicit RFC 5424 ruleset — without this,
@@ -37,6 +51,18 @@ ruleset(name="docker-tcp" parser="rsyslog.rfc5424") {
                queue.maxDiskSpace="32m"
                queue.saveOnShutdown="on"
                action.resumeRetryCount="-1")
+{% if rsyslog_graylog_enabled | default(false) | bool and rsyslog_graylog_target_host | default('') | length > 0 %}
+    *.* action(type="omfwd"
+               target="{{ rsyslog_graylog_target_host }}"
+               port="{{ rsyslog_graylog_target_port }}"
+               protocol="tcp"
+               Template="VictoriaLogsForward"
+               queue.type="LinkedList"
+               queue.filename="graylog-fwd-docker"
+               queue.maxDiskSpace="32m"
+               queue.saveOnShutdown="on"
+               action.resumeRetryCount="-1")
+{% endif %}
 }
 
 input(type="imtcp" port="10514" address="127.0.0.1" ruleset="docker-tcp")

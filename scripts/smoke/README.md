@@ -5,8 +5,8 @@ Files:
 - `check-graylog-alive.sh` — checks `/api/system/lbstatus` returns `ALIVE`.
 - `send-graylog-test-message.sh` — emits a RFC5424-like syslog line to the local
   rsyslog TCP input (`127.0.0.1:10514`) which should be forwarded to Graylog.
-- `query-graylog-search.sh` — example script to query Graylog search API; requires
-  valid admin credentials or API token.
+- `query-graylog-search.sh` — example script to query Graylog 6.x Search/Messages
+  API; requires valid admin credentials or API token.
 
 Usage examples:
 
@@ -20,7 +20,9 @@ Usage examples:
 
 Notes:
 
-- `query-graylog-search.sh` includes a placeholder for authentication; adapt to
-  your environment (API token or `admin:password`). Prefer API tokens.
+- `query-graylog-search.sh` uses `GRAYLOG_ROOT_PASSWORD` if present and queries
+  `/api/views/search/messages`, which is compatible with Graylog 6.x.
+- The helper is best for simple Lucene-style query strings without embedded
+  quotes. For more complex searches, use `curl` with a JSON body directly.
 - These scripts are intentionally light-weight and intended for manual or CI
   smoke checks after `./with-secrets scripts/provision.sh --stack graylog-stack`.
