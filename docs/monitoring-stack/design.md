@@ -280,47 +280,21 @@ Target steady-state if the pilot succeeds:
 | 1 | Record the current VictoriaLogs pipeline as the validated fallback baseline on `pve-test-vm` | ✅ documented on current branch |
 | 2 | Design a Graylog deployment shape for `pve-test-vm` (single-node, storage, auth, ingress) | ✅ direction chosen: separate `graylog-stack`, metrics stay on monitoring-stack |
 | 3 | Decide whether Graylog uses direct syslog inputs or an intermediate rsyslog relay on standard UDP/TCP 514 | ✅ current default is direct Graylog inputs unless appliance behaviour forces a relay |
-| 4 | Deploy Graylog on `pve-test-vm` without removing VictoriaLogs | ⏳ in progress — LXC scaffold live, runtime not yet deployed |
-| 5 | Forward one managed LXC and one Docker-heavy stack into Graylog for comparison | ⏳ pending |
-| 6 | Recreate the operator journeys currently covered by Grafana log dashboards (host auth logs, per-stack filtering, recent errors) | ⏳ pending |
-| 7 | Document the chosen field conventions for Graylog streams, inputs, and source identity | ⏳ pending |
-| 8 | Move Proxmox host and MikroTik test syslog to the Graylog pilot path | ⏳ pending |
-| 9 | Remove VictoriaLogs from `pve-test-vm` only after the Graylog path is accepted | ⏳ pending |
+| 4 | Deploy Graylog on `pve-test-vm` without removing VictoriaLogs | ✅ complete (G2, 2026-06-28) — runtime live, Traefik/Auth/DNS published |
+| 5 | Forward one managed LXC and one Docker-heavy stack into Graylog for comparison | ✅ complete (G3, 2026-06-30) — all active stacks dual-feeding Graylog |
+| 6 | Recreate the operator journeys currently covered by Grafana log dashboards (host auth logs, per-stack filtering, recent errors) | ✅ complete (G3) — field conventions and query patterns documented |
+| 7 | Document the chosen field conventions for Graylog streams, inputs, and source identity | ✅ complete (G3) — see graylog-migration-plan.md §G3 |
+| 8 | Move Proxmox host and MikroTik test syslog to the Graylog pilot path | ✅ complete (G4, 2026-06-30) — Proxmox, MikroTik, NAS all ingesting |
+| 9 | Remove VictoriaLogs from `pve-test-vm` only after the Graylog path is accepted | ⏳ G5 — in progress |
 
-### Current Graylog scaffold state
+### Current Graylog deployment state (as of 2026-06-30)
 
-The current branch now includes a live but intentionally incomplete Graylog
-pilot host on `pve-test-vm`:
-
-- stack: `graylog-stack`
-- VMID: `20014`
-- IP: `192.168.20.114`
-- zone: `mgmt_seg`
-- provisioning status: host bootstrap complete
-- runtime status: no Graylog containers started yet
-- publication status: no Traefik/Auth/DNS route yet by design
-
-Provisioning validated so far:
-
-```bash
-PVE_ENV=pve-test-vm ./with-secrets terragrunt apply \
-  --working-dir terraform/lxc/environments/pve-test-vm/graylog-stack \
-  -auto-approve -no-color
-
-PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh \
-  --stack graylog-stack --target-env pve-test-vm
-```
-
-Result:
-
-- env-scoped inventory and network vars generated
-- LXC created successfully
-- `/opt/graylog-stack/docker-compose.scaffold.yml` written
-- `/opt/graylog-stack/scaffold/graylog.env.example` written
-- `/opt/graylog-stack/scaffold/README.txt` written
-
-Immediate next step: replace the scaffold placeholder with the actual Graylog
-single-node runtime and add a smoke test before any edge route is published.
+- stack: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
+- runtime: Graylog 7.1.3 Data Node (MongoDB 7 + DataNode + Graylog Server) — fully operational
+- publication: `https://graylog.lab.gibbsgreatly.xyz` — Traefik/Auth/DNS live
+- auth: LDAP backend configured; Authentik login working
+- ingest: all managed LXCs, Docker stacks, Proxmox host, MikroTik, NAS
+- next: Sprint G5 — remove VictoriaLogs entirely
 
 ### Design assumptions for the pilot
 

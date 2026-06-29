@@ -49,24 +49,17 @@ logging design.
 
 ### Live progress snapshot
 
-Current implementation state on this branch:
+Current implementation state on this branch (as of 2026-06-30):
 
-- `graylog-stack` now exists as a dedicated stack definition and env-scoped
-  Terragrunt entrypoint for both `pve-test-vm` and `pve`
-- `pve-test-vm` LXC created successfully:
-  - hostname: `graylog-stack`
-  - VMID: `20014`
-  - IP: `192.168.20.114`
-  - zone: `mgmt_seg`
-- host bootstrap and scaffold provisioning succeeded on `pve-test-vm`
-- placeholder runtime assets exist under `/opt/graylog-stack`
-- no Graylog containers are running yet
-- no Traefik/Auth/DNS publication has been added yet
-
-Recent repo work (implementation, not provisioned):
-
-- `terraform/lxc/stacks/graylog-stack/stack.yaml` memory bumped to `6144` (commit applied in branch)
-- `.env` / `.env.pve-test-vm` placeholders for `LAB_IP_GRAYLOG` / `LAB_FQDN_GRAYLOG` added/updated
+- `graylog-stack` deployed and fully operational on `pve-test-vm`
+  - hostname: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
+  - Graylog 7.1.3 Data Node running (MongoDB 7 + DataNode + Graylog Server)
+  - Traefik/Auth/DNS published: accessible at `https://graylog.lab.gibbsgreatly.xyz`
+  - LDAP auth backend configured; Authentik login works
+- All active pve-test-vm stacks dual-feeding Graylog (G3 complete)
+- MikroTik and NAS remote syslog feeding Graylog (G4 complete)
+- Proxmox host rsyslog forwarding configured via Ansible (G4 complete)
+- Sprint G5 next: remove VictoriaLogs entirely
 - `terraform/secrets.enc.yaml` now contains `GRAYLOG_PASSWORD_SECRET` and `GRAYLOG_ROOT_PASSWORD_SHA2` (SOPS entry present)
 - `rsyslog_forward` Ansible role extended: new defaults, conditional tasks, and `graylog_inbound.conf.j2` template to accept UDP/TCP 514 and forward to `127.0.0.1:5140`
 - `deploy-graylog-stack.yml` playbook extended with an optional runtime deploy flow (writes `/opt/graylog-stack/graylog.env`, `docker-compose.yml`, brings up compose) guarded by `GRAYLOG_DEPLOY_RUNTIME` (defaults to false)
@@ -1394,7 +1387,7 @@ These are the operator-facing outcomes that must be tested before promotion:
 1. Graylog browser access works — user logs in with Authentik credentials via LDAP auth backend, lands in Graylog UI. ✅ Passing (G2 complete 2026-06-28).
 2. Managed LXC system logs are searchable by host/source. ✅ Passing (G3 complete 2026-06-30).
 3. Docker-container logs are searchable by host/source. ✅ Passing (G3 complete 2026-06-30).
-4. Proxmox host syslog is visible and attributable. ⏳ G4 in progress.
+4. Proxmox host syslog is visible and attributable. ✅ Passing (G4 complete 2026-06-30).
 5. MikroTik syslog is visible and attributable. ✅ Passing (G4, 2026-06-29).
 6. Metrics dashboards in Grafana still work normally.
 7. Existing platform stacks still provision cleanly on `pve-test-vm`.
@@ -1430,12 +1423,13 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-G0–G3 are complete. G4 is active.
+G0–G4 are complete. G5 is the current work item.
 
-Current G4 next steps:
-1. Run `ansible/playbooks/configure-proxmox-syslog.yml` against `pve-test-vm.gibbsgreatly.xyz`.
-2. Verify probe message in Graylog: `source:pve-test-vm AND application_name:ansible-proxmox-syslog-test`.
-3. Confirm steady-state Proxmox host logs (kernel, systemd, cron) appear under `source:pve-test-vm`.
-4. Build Graylog dashboards in the UI; export and commit JSON to `terraform/lxc/stacks/graylog-stack/dashboards/`.
-5. Confirm G4 minimum gate: Proxmox and MikroTik logs both visible and attributable in Graylog.
-6. Plan G5: VictoriaLogs deprecation on `pve-test-vm` and full teardown cycle.
+G5 implementation tasks in order — see the [Sprint G5 section](#sprint-g5--victorialogs-removal-on-pve-test-vm) for full detail:
+
+1. Remove VictoriaLogs service, volume, and datasource from `deploy-monitoring-stack.yml`.
+2. Simplify `rsyslog_forward` role: single unconditional Graylog forward, remove dual-feed vars.
+3. Remove `rsyslog_graylog_enabled: true` from all eight stack playbooks.
+4. Delete `auth-logs.json` and `lab-logs.json` from monitoring-stack Grafana dashboards.
+5. Run syntax checks on affected playbooks.
+6. Full teardown cycle on `pve-test-vm`; confirm no VictoriaLogs container post-rebuild and Graylog ingest healthy.
