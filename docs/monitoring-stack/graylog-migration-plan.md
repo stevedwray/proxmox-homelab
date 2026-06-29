@@ -54,7 +54,7 @@ Current implementation state on this branch (as of 2026-06-30):
 - `graylog-stack` deployed and fully operational on `pve-test-vm`
   - hostname: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
   - Graylog 7.1.3 Data Node running (MongoDB 7 + DataNode + Graylog Server)
-  - Traefik/Auth/DNS published: accessible at `https://graylog.lab.gibbsgreatly.xyz`
+  - Traefik/Auth/DNS published: accessible at `https://graylog.test.gibbsgreatly.xyz`
   - LDAP auth backend configured; Authentik login works
 - All active pve-test-vm stacks dual-feeding Graylog (G3 complete)
 - MikroTik and NAS remote syslog feeding Graylog (G4 complete)
@@ -64,8 +64,6 @@ Current implementation state on this branch (as of 2026-06-30):
 - `rsyslog_forward` Ansible role extended: new defaults, conditional tasks, and `graylog_inbound.conf.j2` template to accept UDP/TCP 514 and forward to `127.0.0.1:5140`
 - `deploy-graylog-stack.yml` playbook extended with an optional runtime deploy flow (writes `/opt/graylog-stack/graylog.env`, `docker-compose.yml`, brings up compose) guarded by `GRAYLOG_DEPLOY_RUNTIME` (defaults to false)
 - smoke-test helpers added under `scripts/smoke/` (`check-graylog-alive.sh`, `send-graylog-test-message.sh`, `query-graylog-search.sh`)
-
-Status: the above code and docs changes are committed to the branch, but **no runtime containers have been started** and no Traefik/DNS/edge publication has been applied. The work has therefore moved past pure planning into implementation (G2 code changes), but the live Graylog runtime deployment (provision + compose up) is still pending and gated by operator action.
 
 ### Baseline evidence
 
@@ -117,7 +115,6 @@ Expected scaffold result:
 - Ansible bootstrap completes successfully
 - `/opt/graylog-stack/scaffold/README.txt` and
   `/opt/graylog-stack/scaffold/graylog.env.example` exist on the guest
-- no public Graylog route exists yet by design
 
 ### Current baseline operator workflows
 
