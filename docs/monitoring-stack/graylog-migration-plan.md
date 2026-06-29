@@ -1058,6 +1058,76 @@ direction change.
 
 ---
 
+#### MikroTik implementation (completed 2026-06-29)
+
+MikroTik was already sending syslog to `192.168.20.114:514` (UDP) before G4
+started — the remote logging action and topic rules were in place from prior lab
+config. The only change needed was the log format.
+
+**Inspect current MikroTik logging config:**
+
+```routeros
+/system logging action print
+/system logging print where action=remote
+```
+
+**Pre-existing state found:**
+
+```
+/system logging action:
+  name="remote"  target=remote  remote=192.168.20.114  remote-port=514
+  src-address=0.0.0.0  remote-log-format=default  remote-protocol=udp
+
+/system logging rules sending to remote:
+  topics=!debug,!packet  action=remote   (two rules, same config)
+```
+
+**Problem with `remote-log-format=default`:**
+
+MikroTik's default format does not consistently use the system identity as the
+syslog HOSTNAME field. Logs arrived in Graylog as two fragmented sources:
+
+- `source=192.168.20.1` — system/DHCP messages (MikroTik used its interface IP)
+- `source=dns` — DNS query/response messages (MikroTik used the topic name)
+
+**Fix — switch to BSD syslog format with ISO 8601 timestamps:**
+
+```routeros
+/system logging action set [find name=remote] remote-log-format=bsd-syslog
+```
+
+When MikroTik prompts for timestamp format, choose **ISO 8601**. BSD syslog
+timestamps (`Jun 29 14:30:00`) carry no year and no timezone; ISO 8601 includes
+both, giving rsyslog an unambiguous timestamp regardless of timezone skew.
+
+**Result after format change:**
+
+All MikroTik messages now arrive in Graylog under a single unified source:
+
+- `source=hAP` (the MikroTik system identity — verify with `/system identity print`)
+- `application_name` = MikroTik topic, e.g. `dhcp,error`, `system,info`, `query`, `done`
+- `facility=user-level`, `level=6` (informational) for most messages
+- 67 messages confirmed within 5 minutes of the format change
+
+**Graylog query conventions for MikroTik:**
+
+| Goal | Query |
+|---|---|
+| All MikroTik traffic | `source:hAP` |
+| DHCP events | `source:hAP AND application_name:dhcp*` |
+| DNS queries | `source:hAP AND application_name:query` |
+| System/config changes | `source:hAP AND application_name:system*` |
+| Errors only | `source:hAP AND application_name:*error*` |
+
+**No infrastructure change required on the Graylog side.** The
+`91-graylog-inbound.conf` on `graylog-stack` already accepts UDP on port 514
+and relays to Graylog on `127.0.0.1:5140`. MikroTik sends RFC 3164 (BSD syslog)
+which the default rsyslog parser handles correctly on the UDP input.
+
+**Proxmox host syslog:** pending — not yet configured.
+
+---
+
 ### Sprint G5 — VictoriaLogs Deprecation on pve-test-vm
 
 **Goal:** Remove VictoriaLogs from the active `pve-test-vm` operator workflow and
