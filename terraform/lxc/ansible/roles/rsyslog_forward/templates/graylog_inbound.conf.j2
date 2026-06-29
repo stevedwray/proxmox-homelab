@@ -14,7 +14,7 @@ ruleset(name="ext-tcp" parser="rsyslog.rfc5424") {
                target="{{ rsyslog_forward_target_host }}"
                port="{{ rsyslog_forward_target_port }}"
                protocol="tcp"
-               Template="VictoriaLogsForward"
+               Template="GraylogForward"
                queue.type="LinkedList"
                queue.filename="graylog-ext-tcp"
                queue.maxDiskSpace="32m"

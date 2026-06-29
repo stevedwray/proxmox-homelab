@@ -4,8 +4,6 @@
   become: true
   gather_facts: true
   vars:
-    rsyslog_graylog_enabled: true
-    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
     docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
   roles:
     - lxc_base

@@ -291,7 +291,7 @@ Target steady-state if the pilot succeeds:
 
 - stack: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
 - runtime: Graylog 7.1.3 Data Node (MongoDB 7 + DataNode + Graylog Server) — fully operational
-- publication: `https://graylog.lab.gibbsgreatly.xyz` — Traefik/Auth/DNS live
+- publication: `https://graylog.test.gibbsgreatly.xyz` — Traefik/Auth/DNS live
 - auth: LDAP backend configured; Authentik login working
 - ingest: all managed LXCs, Docker stacks, Proxmox host, MikroTik, NAS
 - next: Sprint G5 — remove VictoriaLogs entirely

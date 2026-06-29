@@ -5,8 +5,6 @@
   gather_facts: false
 
   vars:
-    rsyslog_graylog_enabled: true
-    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
     step_ca_version: "0.30.2"
     step_cli_version: "0.30.2"
     step_ca_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
