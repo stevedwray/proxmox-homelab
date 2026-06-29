@@ -87,6 +87,12 @@
         state: directory
         mode: "0750"
 
+    - name: Create Graylog Data Node OpenSearch config directory
+      ansible.builtin.file:
+        path: "{{ graylog_datanode_config_dir }}/opensearch"
+        state: directory
+        mode: "0750"
+
     - name: Include rsyslog_forward with Graylog relay vars
       ansible.builtin.include_role:
         name: rsyslog_forward
@@ -141,6 +147,85 @@
       register: graylog_datanode_jvm_options_file
       notify: Recreate Graylog
 
+    - name: Write Graylog Data Node OpenSearch JVM options
+      ansible.builtin.copy:
+        dest: "{{ graylog_datanode_config_dir }}/opensearch/jvm.options"
+        mode: "0644"
+        content: |
+          # OpenSearch JVM Heap Settings
+          #
+          # Graylog's heap warning is about the embedded OpenSearch process, not
+          # the Data Node wrapper JVM. Size this against the LXC budget.
+          -Xms{{ graylog_datanode_heap_gb }}g
+          -Xmx{{ graylog_datanode_heap_gb }}g
+
+          ## JVM configuration
+
+          ################################################################
+          ## IMPORTANT: JVM heap size
+          ################################################################
+          ##
+          ## You should always set the min and max JVM heap
+          ## size to the same value. For example, to set
+          ## the heap to 3 GB, set:
+          ##
+          ## -Xms3g
+          ## -Xmx3g
+          ##
+          ## See https://opensearch.org/docs/latest/install-and-configure/install-opensearch/index/
+          ## for more information
+          ##
+
+          # Turn on JRuby invokedynamic
+          -Djruby.compile.invokedynamic=true
+
+          # Turn on G1GC
+          -XX:+UseG1GC
+
+          # Set the JVM temporary directory
+          -Djava.io.tmpdir=${OPENSEARCH_TMPDIR}
+
+          # Set JVM to headless mode
+          -Djava.awt.headless=true
+
+          # ensure UTF-8 encoding by default (e.g. filenames)
+          -Dfile.encoding=UTF-8
+
+          # use our provided JNA always versus the system one
+          -Djna.nosys=true
+
+          # flags to configure Netty
+          -Dio.netty.noUnsafe=true
+          -Dio.netty.noKeySetOptimization=true
+          -Dio.netty.recycler.maxCapacityPerThread=0
+          -Dio.netty.allocator.numDirectArenas=0
+
+          # log4j 2
+          -Dlog4j.shutdownHookEnabled=false
+          -Dlog4j2.disable.jmx=true
+
+          # turn off JDK 9+ illegal reflective access warnings
+          -Djava.locale.providers=SPI,COMPAT
+
+          # GC tuning
+          -XX:G1ReservePercent=25
+          -XX:InitiatingHeapOccupancyPercent=30
+
+          # heap dumps
+          -XX:+HeapDumpOnOutOfMemoryError
+
+          # disable explicit calls to System.gc()
+          -XX:+DisableExplicitGC
+
+          # OpenSearch security manager
+          -Djava.security.manager=allow
+
+          # reduce direct memory to leave room inside the 6G LXC budget
+          -XX:MaxDirectMemorySize=536870912
+      when: graylog_deploy_runtime | bool
+      register: graylog_datanode_opensearch_jvm_options_file
+      notify: Recreate Graylog
+
     - name: Write Graylog docker-compose.yml
       ansible.builtin.copy:
         dest: "{{ graylog_compose_dir }}/docker-compose.yml"
@@ -166,6 +251,7 @@
               volumes:
                 - graylog_datanode:/var/lib/graylog-datanode
                 - {{ graylog_datanode_config_dir }}/jvm.options:/etc/graylog/datanode/jvm.options:ro
+                - {{ graylog_datanode_config_dir }}/opensearch/jvm.options:/var/lib/graylog-datanode/opensearch/config/opensearch/jvm.options
               restart: unless-stopped
               depends_on:
                 mongodb:
@@ -212,7 +298,7 @@
         project_src: "{{ graylog_compose_dir }}"
         state: present
         remove_orphans: true
-        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_datanode_jvm_options_file.changed or graylog_compose_file.changed) else 'auto' }}"
+        recreate: "{{ 'always' if (graylog_env_file.changed or graylog_datanode_jvm_options_file.changed or graylog_datanode_opensearch_jvm_options_file.changed or graylog_compose_file.changed) else 'auto' }}"
       when: graylog_deploy_runtime | bool
 
     - name: Wait for Graylog web port to accept connections

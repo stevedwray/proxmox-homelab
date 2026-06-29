@@ -919,6 +919,31 @@ LDAP outpost: ldapservice bind -> search (found) -> steve bind (User has access)
   - remaining G3 work is to document stable operator query patterns and broaden
     validation beyond these first proof points
 
+**Data Node heap warning note (2026-06-29)**
+
+- Graylog `7.1.3` remains functionally usable on `graylog-stack`
+  (`192.168.20.114`): UI/API reachability, LDAP-backed `steve` login, and log
+  ingestion are still working.
+- However, the Graylog system notification `data_node_heap_warning` is still
+  active after the upgrade.
+- Live diagnosis showed:
+  - the Data Node wrapper JVM was successfully moved to `-Xms3g -Xmx3g`
+  - but the embedded OpenSearch process still launched with
+    `-Xms1g -Xmx1g`
+  - Graylog's notification API still reported the old effective heap as `1 GB`
+    and recommended `7g` based on a misleading `15 GB` memory view from inside
+    the nested container
+- Repo attempts on 2026-06-29 improved the Data Node wrapper heap and confirmed
+  the warning is specifically about the inner OpenSearch JVM, not the outer
+  Data Node JVM.
+- Remaining issue to come back to:
+  - identify the real Graylog `7.1.3` control path for the embedded
+    OpenSearch heap
+  - avoid relying on manual or file-level `jvm.options` overrides unless they
+    are proven to win over Graylog's generated config path
+  - keep an eye on this warning after future Graylog/Data Node reprovisions and
+    upgrades until the live OpenSearch JVM args no longer show `-Xms1g -Xmx1g`
+
 **Auth-service regression note (2026-06-28)**
 
 - Symptom: Graylog browser/API login returned `503 Authentication service unavailable`

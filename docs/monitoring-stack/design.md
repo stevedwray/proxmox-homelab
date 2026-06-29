@@ -213,6 +213,7 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 | Phase 8B Dual-log cutover | Forward selected logs on `pve-test-vm` to Graylog first, keeping VictoriaLogs as fallback during the pilot |
 | Phase 8C VictoriaLogs deprecation on `pve-test-vm` | Remove Grafana log dashboards and VictoriaLogs-specific validation once Graylog covers the required workflows |
 | Phase 8D Host and edge syslog on Graylog | Point Proxmox host and MikroTik remote syslog at the Graylog path chosen by the pilot |
+| Graylog Data Node heap warning | Keep watching the active `data_node_heap_warning` on `graylog-stack`: wrapper JVM heap was raised, but as of June 29, 2026 the embedded OpenSearch process still reported `-Xms1g/-Xmx1g`; see [graylog-migration-plan.md](./graylog-migration-plan.md) |
 | step-ca metrics dashboard | Native metrics are scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped but no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |

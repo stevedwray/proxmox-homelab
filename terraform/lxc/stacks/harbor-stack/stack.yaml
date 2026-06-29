@@ -64,7 +64,6 @@ docker_socket_proxy_targets:
 ansible_playbook: "deploy-harbor-stack"
 deployment_tier: platform
 portainer_agent: false
-register_portainer_env: true
 
 # Docker socket proxy — read-only Docker API endpoint for NetBox discovery
 enable_docker_socket_proxy: true
