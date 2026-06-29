@@ -1217,30 +1217,93 @@ should return the probe message.
 
 ---
 
-### Sprint G5 — VictoriaLogs Deprecation on pve-test-vm
+### Sprint G5 — VictoriaLogs Removal on pve-test-vm
 
-**Goal:** Remove VictoriaLogs from the active `pve-test-vm` operator workflow and
-prove Graylog is sufficient before promotion.
+**Goal:** Remove VictoriaLogs entirely from `pve-test-vm` and simplify the
+rsyslog pipeline to Graylog-only. Prove the result survives a full teardown.
+
+**Decision:** Remove VictoriaLogs entirely (not kept as rollback).
 
 **Deliverables**
 
-- Graylog is the documented log UI on `pve-test-vm`
-- Grafana log dashboards are deprecated or removed from the active workflow
-- VictoriaLogs either removed from `pve-test-vm` or kept only as explicitly
-  temporary rollback infrastructure
+- VictoriaLogs container and volume removed from monitoring-stack
+- `rsyslog_forward` role simplified to a single unconditional Graylog forward
+  (no dual-feed, no conditional vars)
+- Grafana VictoriaLogs datasource and log dashboards removed
+- Log search workflow is Graylog UI only
 
 **Implementation tasks**
 
-1. Decide whether to:
-   - remove VictoriaLogs entirely, or
-   - keep it temporarily but out of the active workflow
-2. Update the teardown harness and health/validation steps so they reflect the
-   intended log platform.
-3. Update docs to make Graylog the preferred path.
-4. Remove or mark obsolete:
-   - VictoriaLogs-specific smoke checks
-   - Grafana log dashboards that are no longer authoritative
-   - VictoriaLogs MCP-server planning, if still irrelevant
+#### 1. Remove VictoriaLogs from `deploy-monitoring-stack.yml`
+
+- Remove `victorialogs_version` and `victorialogs_image` var declarations
+- Remove the `victorialogs` Docker service block from the inline compose
+- Remove the `victorialogs-data` named volume from the compose
+- Remove the VictoriaLogs Grafana datasource provisioning block
+  (`name: VictoriaLogs`, `uid: VictoriaLogs`, `url: http://victorialogs:9428`)
+- Remove the Prometheus scrape job `job_name: victorialogs`
+- Remove the `Wait for VictoriaLogs health endpoint` task
+
+#### 2. Simplify `rsyslog_forward` role to Graylog-only
+
+File: `terraform/lxc/ansible/roles/rsyslog_forward/defaults/main.yml`
+- Change `rsyslog_forward_target_host` to default to `LAB_IP_GRAYLOG`
+- Change `rsyslog_forward_target_port` to `514`
+- Remove `rsyslog_graylog_enabled`, `rsyslog_graylog_target_host`,
+  `rsyslog_graylog_target_port`
+
+File: `terraform/lxc/ansible/roles/rsyslog_forward/templates/log-forwarding.conf.j2`
+- Rename template `VictoriaLogsForward` → `GraylogForward`
+- Remove the primary VictoriaLogs `omfwd` action
+- Remove the `{% if rsyslog_graylog_enabled %}` dual-feed blocks — Graylog
+  forward becomes the single unconditional action
+- Rename queue files: `victorialogs-fwd` → `graylog-fwd`,
+  `victorialogs-fwd-docker` → `graylog-docker-fwd`
+- Update comment header
+
+#### 3. Update all stack playbooks — remove `rsyslog_graylog_enabled: true`
+
+These vars are no longer meaningful once Graylog is the only target:
+- `deploy-apt-cacher-stack.yml`
+- `deploy-harbor-stack.yml`
+- `deploy-step-ca.yml`
+- `deploy-proxy-stack.yml`
+- `deploy-portainer-stack.yml`
+- `deploy-netbox-stack.yml`
+- `deploy-authentik-stack.yml`
+- `deploy-monitoring-stack.yml`
+
+#### 4. Keep graylog-stack explicit override
+
+`deploy-graylog-stack.yml` must keep:
+```yaml
+rsyslog_forward_target_host: "127.0.0.1"
+rsyslog_forward_target_port: "5140"
+```
+The graylog-stack LXC forwards its own logs directly to the local Graylog
+syslog input on `127.0.0.1:5140`, not to the external relay on :514.
+
+#### 5. Remove VictoriaLogs Grafana dashboards
+
+Delete from `terraform/lxc/stacks/monitoring-stack/dashboards/`:
+- `auth-logs.json` — uses VictoriaLogs datasource
+- `lab-logs.json` — uses VictoriaLogs datasource
+
+Log search is now Graylog UI. The Graylog dashboard equivalents will be
+`auth-security.json` and `lab-logs-overview.json` in the Graylog dashboards
+directory.
+
+#### 6. Run syntax checks
+
+```bash
+ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles \
+  ansible-playbook --syntax-check \
+  terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml
+
+ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles \
+  ansible-playbook --syntax-check \
+  terraform/lxc/ansible/playbooks/deploy-graylog-stack.yml
+```
 
 **Validation tier**
 
@@ -1252,16 +1315,20 @@ prove Graylog is sufficient before promotion.
 Use the appropriate teardown harness flow for the branch at the time. At a
 minimum, the final proof must include:
 
-1. destroy / rebuild of the relevant `pve-test-vm` state
-2. full platform provision
+1. Destroy / rebuild of the relevant `pve-test-vm` state
+2. Full platform provision
 3. Graylog health and ingest validation
-4. Proxmox host and MikroTik log validation
+4. Confirm `source:pve-test-vm`, `source:hAP`, and a managed LXC all appear
+   in Graylog after rebuild
+5. Confirm monitoring-stack is healthy (Prometheus, Grafana, Alertmanager)
+   with no VictoriaLogs references in compose or health checks
 
 **Minimum gate**
 
 - End-to-end rebuild on `pve-test-vm` succeeds
-- Graylog is the validated log workflow
-- No required operator use case depends on VictoriaLogs
+- No VictoriaLogs container or volume exists post-rebuild
+- Graylog is the only log workflow
+- Grafana shows no broken datasource panels
 
 ---
 
@@ -1269,20 +1336,19 @@ minimum, the final proof must include:
 
 ### Current next step
 
-**Sprint G3 is complete** (as of 2026-06-30). Sprint G4 is active.
+**Sprint G4 is complete** (as of 2026-06-30). Sprint G5 is next.
 
-G3 exit criteria all met:
-- ✅ All active pve-test-vm managed stacks dual-feeding Graylog
-- ✅ Managed LXC system logs searchable by host/source
-- ✅ Docker-container logs searchable with correct container identity
-- ✅ Graylog query patterns documented for Lab/Auth/Docker/Network workflows
-- ✅ MikroTik logs visible in Graylog (`source:hAP`)
-- ✅ NAS logs visible in Graylog
-
-Sprint G4 status:
+G4 exit criteria all met:
 - ✅ MikroTik remote syslog — complete (2026-06-29)
 - ✅ NAS remote syslog — complete (2026-06-30)
-- ⏳ Proxmox host syslog via Ansible — playbook and template added to `ansible/`; run to validate
+- ✅ Proxmox host syslog via Ansible — `ansible/00-initial-setup/configure-proxmox-syslog.yml`
+  validated on pve-test-vm; probe message confirmed in Graylog (2026-06-30)
+
+Sprint G5 status:
+- ⏳ Remove VictoriaLogs from monitoring-stack
+- ⏳ Simplify rsyslog_forward role to Graylog-only
+- ⏳ Remove Grafana log dashboards (auth-logs.json, lab-logs.json)
+- ⏳ Full teardown cycle on pve-test-vm
 
 ### Sprint board
 
@@ -1295,7 +1361,7 @@ Sprint G4 status:
 | G2 | deploy Graylog core | UI, ingress, and health are working on `pve-test-vm` |
 | G3 | prove managed-host and Docker log ingestion | Graylog supports current pilot workflows |
 | G4 | prove Proxmox and MikroTik remote syslog | appliance/host motivation is validated |
-| G5 | deprecate VictoriaLogs on `pve-test-vm` | Graylog is the tested primary log workflow |
+| G5 | remove VictoriaLogs from `pve-test-vm` entirely | Graylog is the tested primary log workflow |
 
 #### Definition of done per sprint
 
