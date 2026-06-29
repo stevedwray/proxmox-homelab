@@ -736,6 +736,61 @@
       failed_when: "'Admin' not in (graylog_lab_admin_user_final.json.roles | default([]))"
       when: graylog_deploy_runtime | bool
 
+    # Dashboard provisioning — import JSON files from graylog-stack/dashboards/
+    # Idempotent: checks by title before creating. Add dashboards by building them
+    # in the Graylog UI, exporting via GET /api/views/{id}, and committing JSON to
+    # terraform/lxc/stacks/graylog-stack/dashboards/ (strip id/_version/created_at).
+    - name: Find local Graylog dashboard JSON files
+      ansible.builtin.find:
+        paths: "{{ playbook_dir | dirname }}/../../stacks/graylog-stack/dashboards"
+        patterns: "*.json"
+      delegate_to: localhost
+      become: false
+      register: graylog_dashboard_files
+      when: graylog_deploy_runtime | bool
+
+    - name: List existing Graylog dashboards
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/views?type=DASHBOARD&per_page=100"  # nosonar: ansible:S5332
+        method: GET
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        status_code: [200]
+      register: graylog_existing_dashboards
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_files.files | default([]) | length > 0
+
+    - name: Import Graylog dashboards from JSON files
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:9000/api/views"  # nosonar: ansible:S5332
+        method: POST
+        url_username: admin
+        url_password: "{{ graylog_admin_password }}"
+        force_basic_auth: true
+        headers:
+          Content-Type: application/json
+          X-Requested-By: ansible
+        body_format: json
+        body: >-
+          {{
+            (lookup('file', item) | from_json)
+            | dict2items
+            | rejectattr('key', 'in', ['id', '_version', 'created_at'])
+            | items2dict
+          }}
+        status_code: [200, 201]
+      loop: "{{ graylog_dashboard_files.files | default([]) | map(attribute='path') | list }}"
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_files.files | default([]) | length > 0
+        - >-
+          (graylog_existing_dashboards.json.views | default([])
+           | selectattr('title', 'eq',
+               (lookup('file', item) | from_json).title | default(''))
+           | list | length) == 0
+
   handlers:
     - name: Recreate Graylog
       community.docker.docker_compose_v2:

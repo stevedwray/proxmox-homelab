@@ -208,17 +208,14 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 
 | Item | Notes |
 |------|-------|
-| Phase 7E closeout | Capture the current VictoriaLogs-based syslog pipeline as the validated baseline on `pve-test-vm` before changing log backends; this is now documented as the rollback baseline on the current branch |
-| Phase 8A Graylog pilot | `graylog-stack` scaffold is live on `pve-test-vm` (VMID `20014`, `192.168.20.114`); G2/G3 runtime target: Graylog 7.1.3 Data Node (MongoDB 7 + DataNode + Graylog, 6144 MB RAM), rsyslog relay on LXC owns port 514, Graylog syslog input on 127.0.0.1:5140; see [graylog-migration-plan.md §Sprint G2](./graylog-migration-plan.md) |
-| Phase 8B Dual-log cutover | Forward selected logs on `pve-test-vm` to Graylog first, keeping VictoriaLogs as fallback during the pilot |
-| Phase 8C VictoriaLogs deprecation on `pve-test-vm` | Remove Grafana log dashboards and VictoriaLogs-specific validation once Graylog covers the required workflows |
-| Phase 8D Host and edge syslog on Graylog | Point Proxmox host and MikroTik remote syslog at the Graylog path chosen by the pilot |
-| Graylog Data Node heap warning | Keep watching the active `data_node_heap_warning` on `graylog-stack`: wrapper JVM heap was raised, but as of June 29, 2026 the embedded OpenSearch process still reported `-Xms1g/-Xmx1g`; see [graylog-migration-plan.md](./graylog-migration-plan.md) |
-| step-ca metrics dashboard | Native metrics are scraped; no dedicated Grafana dashboard yet |
-| Authentik dashboard | Metrics scraped but no Grafana dashboard built |
+| Graylog pilot — G4 Proxmox syslog | Run `ansible/playbooks/configure-proxmox-syslog.yml` to wire Proxmox host logs into Graylog; see [graylog-migration-plan.md §G4](./graylog-migration-plan.md) |
+| Graylog pilot — G4 dashboards | Build Graylog dashboards in UI; export and commit JSON to `terraform/lxc/stacks/graylog-stack/dashboards/`; Ansible imports on fresh deploy |
+| Graylog pilot — G5 VictoriaLogs deprecation | Full teardown cycle on `pve-test-vm`; remove VictoriaLogs from active operator workflow once Graylog covers all required workflows |
+| Graylog Data Node heap warning | Embedded OpenSearch still reports `-Xms1g/-Xmx1g` after wrapper JVM bump (as of 2026-06-29); track until live OpenSearch JVM args no longer show 1 GB |
+| step-ca metrics dashboard | Native metrics scraped; no dedicated Grafana dashboard yet |
+| Authentik dashboard | Metrics scraped; no Grafana dashboard built |
 | Harbor alerting | CVE/operations dashboards live; alert rules not defined |
 | Dashboard host labels | Lab Overview still labels some graphs with scrape `instance` IPs; switch legends and labels to stack/hostname identity |
-| Graylog operator workflow | Decide whether Graylog becomes the browser-facing log UI while Grafana remains metrics-only |
 
 ---
 

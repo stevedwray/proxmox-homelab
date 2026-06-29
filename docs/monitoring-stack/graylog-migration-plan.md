@@ -1008,14 +1008,45 @@ without losing source attribution.
 
 **Validation checklist**
 
-- A known system log line arrives in Graylog with correct source identity.
-- A known Docker log line arrives in Graylog with correct container/source identity.
+- ✅ A known system log line arrives in Graylog with correct source identity.
+- ✅ A known Docker log line arrives in Graylog with correct container/source identity.
 - Existing VictoriaLogs path remains available as rollback until Sprint G5.
 
 **Minimum gate**
 
 - Graylog supports at least the current Lab/Auth log investigation workflows for
   pilot sources without requiring Grafana LogsQL panels.
+
+---
+
+**Current status — Sprint G3 COMPLETE (2026-06-30)**
+
+All active pve-test-vm managed stacks are dual-feeding Graylog alongside
+VictoriaLogs. MikroTik and NAS are also feeding Graylog (see Sprint G4 section).
+
+**Graylog field conventions confirmed for managed-LXC sources:**
+
+| Field | Meaning | Example values |
+|---|---|---|
+| `source` | LXC hostname | `step-ca`, `authentik-stack`, `proxy-stack` |
+| `application_name` | Process or container name | `sshd`, `docker-authentik-stack-ldap-1` |
+| `facility` | Syslog facility | `user-level`, `auth` |
+| `level` | Syslog severity | `6` (informational), `3` (error) |
+
+Docker container entries use `application_name` prefixed `docker-<stack>-<service>-<n>`.
+System/journald entries use the process name directly (e.g., `sshd`, `cron`).
+
+**Graylog query patterns for operator workflows:**
+
+| Workflow | Query |
+|---|---|
+| All lab logs, recent | `*` (default, scoped to last 5 min) |
+| Single host | `source:step-ca` |
+| Auth events (all hosts) | `facility:auth` |
+| SSH logins | `facility:auth AND application_name:sshd AND (Accepted OR Failed)` |
+| Docker container logs | `application_name:docker-*` |
+| Specific container | `source:authentik-stack AND application_name:docker-authentik-stack-ldap-1` |
+| Errors only | `level:3` or `level:(0 1 2 3)` |
 
 ---
 
@@ -1124,7 +1155,65 @@ All MikroTik messages now arrive in Graylog under a single unified source:
 and relays to Graylog on `127.0.0.1:5140`. MikroTik sends RFC 3164 (BSD syslog)
 which the default rsyslog parser handles correctly on the UDP input.
 
-**Proxmox host syslog:** pending — not yet configured.
+**Proxmox host syslog:** configured via Ansible — see subsection below.
+
+---
+
+#### NAS implementation (completed 2026-06-30)
+
+NAS configured via its own syslog settings UI to forward to `graylog-stack:514`
+UDP. No Ansible required. Logs arrive in Graylog with the NAS hostname as
+`source`. Filter with `source:<nas-hostname>`.
+
+---
+
+#### Proxmox host syslog implementation (2026-06-30)
+
+**Approach:** A standalone Ansible playbook in the top-level `ansible/` tree,
+targeting the existing `proxmox_testbed` group in `ansible/inventory/dev.yml`.
+The Proxmox host is bare metal — it does not go through the `terraform/lxc`
+stack provisioning path.
+
+**Files:**
+
+| File | Purpose |
+|---|---|
+| `ansible/playbooks/configure-proxmox-syslog.yml` | Playbook — installs and configures rsyslog forwarding to Graylog |
+| `ansible/templates/rsyslog-graylog-forward.conf.j2` | rsyslog config template — RFC 5424, TCP, disk-backed queue |
+
+**Why not reuse the `rsyslog_forward` LXC role:** The LXC role has
+Docker-specific logic (imklog suppression, imtcp Docker listener,
+VictoriaLogs dual-feed) that does not apply to a bare-metal Proxmox host.
+A purpose-built minimal template is cleaner.
+
+**Run command:**
+
+```bash
+PVE_ENV=pve-test-vm ./with-secrets ansible-playbook \
+  -i ansible/inventory/dev.yml \
+  ansible/playbooks/configure-proxmox-syslog.yml \
+  --limit pve-test-vm.gibbsgreatly.xyz
+```
+
+**Graylog query conventions for Proxmox host:**
+
+| Goal | Query |
+|---|---|
+| All Proxmox host logs | `source:pve-test-vm` |
+| Kernel messages | `source:pve-test-vm AND application_name:kernel` |
+| systemd/service events | `source:pve-test-vm AND application_name:systemd` |
+| LXC container starts/stops | `source:pve-test-vm AND pct` |
+| Authentication | `source:pve-test-vm AND facility:auth` |
+
+**Validation:** After running the playbook, verify with:
+
+```bash
+# On the Proxmox host — emits a probe message
+logger -t ansible-proxmox-syslog-test 'G4_PVE_SYSLOG_PROOF'
+```
+
+In Graylog: `source:pve-test-vm AND application_name:ansible-proxmox-syslog-test`
+should return the probe message.
 
 ---
 
@@ -1180,20 +1269,20 @@ minimum, the final proof must include:
 
 ### Current next step
 
-**Sprint G2 is complete** (as of 2026-06-28). Sprint G3 is next.
+**Sprint G3 is complete** (as of 2026-06-30). Sprint G4 is active.
 
-G2 exit criteria all met:
-- ✅ Graylog at `192.168.20.114:9000` is ALIVE
-- ✅ `graylog.test.gibbsgreatly.xyz` resolves and returns HTTPS 200
-- ✅ LDAP auth backend active; steve logs in with Authentik credentials
-- ✅ Authentik 2026.2.4; LDAP outpost healthy on `192.168.20.110:3389`
-- ✅ `reconcile-edge.py --json` returns `issue_count: 0`
+G3 exit criteria all met:
+- ✅ All active pve-test-vm managed stacks dual-feeding Graylog
+- ✅ Managed LXC system logs searchable by host/source
+- ✅ Docker-container logs searchable with correct container identity
+- ✅ Graylog query patterns documented for Lab/Auth/Docker/Network workflows
+- ✅ MikroTik logs visible in Graylog (`source:hAP`)
+- ✅ NAS logs visible in Graylog
 
-Sprint G3 entry criteria:
-- Graylog browser login is working (gate met)
-- Choose first pilot log sources (met: `step-ca-stack` + `authentik-stack`)
-- Confirm existing VictoriaLogs path remains active as rollback (met via live
-  dual-feed config on both pilot hosts)
+Sprint G4 status:
+- ✅ MikroTik remote syslog — complete (2026-06-29)
+- ✅ NAS remote syslog — complete (2026-06-30)
+- ⏳ Proxmox host syslog via Ansible — playbook and template added to `ansible/`; run to validate
 
 ### Sprint board
 
@@ -1237,10 +1326,10 @@ Sprint G3 entry criteria:
 These are the operator-facing outcomes that must be tested before promotion:
 
 1. Graylog browser access works — user logs in with Authentik credentials via LDAP auth backend, lands in Graylog UI. ✅ Passing (G2 complete 2026-06-28).
-2. Managed LXC system logs are searchable by host/source.
-3. Docker-container logs are searchable by host/source.
-4. Proxmox host syslog is visible and attributable.
-5. MikroTik syslog is visible and attributable.
+2. Managed LXC system logs are searchable by host/source. ✅ Passing (G3 complete 2026-06-30).
+3. Docker-container logs are searchable by host/source. ✅ Passing (G3 complete 2026-06-30).
+4. Proxmox host syslog is visible and attributable. ⏳ G4 in progress.
+5. MikroTik syslog is visible and attributable. ✅ Passing (G4, 2026-06-29).
 6. Metrics dashboards in Grafana still work normally.
 7. Existing platform stacks still provision cleanly on `pve-test-vm`.
 
@@ -1275,21 +1364,12 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-G0–G2 are complete and G3 has started.
+G0–G3 are complete. G4 is active.
 
-Current G3 next step:
-1. Keep `step-ca-stack` and `authentik-stack` as the first pilot sources.
-2. Record reusable Graylog query patterns for:
-   - broad lab search
-   - auth-focused search
-   - host-specific system logs
-   - container-specific logs
-3. Capture one browser-auth operator proof alongside the log-ingestion proof:
-   confirm `steve` can log into Graylog with Authentik credentials and land as
-   an Admin-backed external user.
-4. Validate one more operator workflow on top of the raw ingestion proof:
-   confirm that an “Auth Logs” style investigation can be done in Graylog using
-   `source=authentik-stack` and `application_name=docker-authentik-stack-ldap-1`.
-5. If those queries hold up, extend the pilot to one more managed LXC
-   (`dns-stack` is the next best candidate) before declaring G3 complete.
-6. VictoriaLogs dual-feed remains active throughout G3 as rollback.
+Current G4 next steps:
+1. Run `ansible/playbooks/configure-proxmox-syslog.yml` against `pve-test-vm.gibbsgreatly.xyz`.
+2. Verify probe message in Graylog: `source:pve-test-vm AND application_name:ansible-proxmox-syslog-test`.
+3. Confirm steady-state Proxmox host logs (kernel, systemd, cron) appear under `source:pve-test-vm`.
+4. Build Graylog dashboards in the UI; export and commit JSON to `terraform/lxc/stacks/graylog-stack/dashboards/`.
+5. Confirm G4 minimum gate: Proxmox and MikroTik logs both visible and attributable in Graylog.
+6. Plan G5: VictoriaLogs deprecation on `pve-test-vm` and full teardown cycle.
