@@ -10,6 +10,8 @@
   become: true
   gather_facts: true
   vars:
+    rsyslog_graylog_enabled: true
+    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
     harbor_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     harbor_docker_daemon_config:
       dns:

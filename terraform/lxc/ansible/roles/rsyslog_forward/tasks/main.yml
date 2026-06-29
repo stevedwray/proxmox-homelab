@@ -13,10 +13,16 @@
     backrefs: true
   notify: Restart rsyslog
 
-- name: Write VictoriaLogs forwarding config
+- name: Remove stale victorialogs-named config (renamed to log-forwarding)
+  ansible.builtin.file:
+    path: /etc/rsyslog.d/90-victorialogs.conf
+    state: absent
+  notify: Restart rsyslog
+
+- name: Write log forwarding config
   ansible.builtin.template:
-    src: victorialogs.conf.j2
-    dest: /etc/rsyslog.d/90-victorialogs.conf
+    src: log-forwarding.conf.j2
+    dest: /etc/rsyslog.d/90-log-forwarding.conf
     owner: root
     group: root
     mode: "0644"

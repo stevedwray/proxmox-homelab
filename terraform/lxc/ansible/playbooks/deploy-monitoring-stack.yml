@@ -4,6 +4,8 @@
   become: true
   gather_facts: true
   vars:
+    rsyslog_graylog_enabled: true
+    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
     monitoring_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     monitoring_lab_fqdn_harbor: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ monitoring_lab_domain, true) }}"
     monitoring_lab_fqdn_grafana: "{{ lookup('env', 'LAB_FQDN_GRAFANA') | default('grafana.' ~ monitoring_lab_domain, true) }}"

@@ -8,6 +8,8 @@
   gather_facts: true
   tags: [pre_restore]
   vars:
+    rsyslog_graylog_enabled: true
+    rsyslog_graylog_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
     docker_registry_host: "{{ registry_host | default('') | trim }}"
     docker_dns_server: "{{ lookup('env', 'LAB_IP_DNS') | default(dns_server, true) | mandatory('LAB_IP_DNS env var or dns_server inventory var is required') }}"
     docker_daemon_config_base:
