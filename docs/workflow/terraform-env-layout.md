@@ -1,8 +1,9 @@
 # Terraform Environment Runtime Isolation
 
-**Status:** In progress — code committed (`037c328`), PR #386 open →
-`main`. Steps 1–5 and 8 complete. Step 9 (pve state migration) partially
-complete. Steps 6, 7, and 10 pending.
+**Status as of June 29, 2026:** Merged to `main` and `stable` as
+`fe05636` (`feat(infra): per-environment Terragrunt layout for runtime
+isolation (#386)`). Steps 1–5 and 8 are complete. Step 9 (pve state
+migration) is partially complete. Steps 6, 7, and 10 remain pending.
 
 | Step | Status |
 |------|--------|
@@ -30,9 +31,12 @@ this gap in the interim.
 This is the next structural prerequisite for safe parallel work on `pve` and
 `pve-test-vm`.
 
-**Problem:** `pve` and `pve-test-vm` still share runtime outputs in one working
-tree. A run against one environment can overwrite files later consumed by the
-other environment. This has already caused production contamination:
+**Problem:** `pve` and `pve-test-vm` shared runtime outputs in one working
+tree. A run against one environment could overwrite files later consumed by the
+other environment. That was one half of the June 24 production incident; the
+other half was environment processing that allowed stale `TF_VAR_lab_*` values
+to survive across sessions when the selected env's `LAB_*` values should have
+won. This document covers the structural file-path isolation piece:
 
 - `terraform/lxc/stacks/<stack>/terraform.tfstate`
 - `terraform/lxc/stacks/<stack>/inventory.yml`
