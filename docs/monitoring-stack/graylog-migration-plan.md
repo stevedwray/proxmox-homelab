@@ -738,8 +738,9 @@ Step 8  Add Graylog gate to teardown-deploy-test.sh
         - Authentik acts as an LDAP provider (LDAP outpost required)
         - Graylog authenticates users via LDAP → Authentik credentials used
         - Single login; Graylog auto-provisions users from LDAP
-        - Steve can be mapped to Graylog Admin via LDAP group
-        - Requires: Authentik LDAP outpost setup, Graylog LDAP config via API
+        - Steve should be elevated to Graylog Admin after LDAP-backed user provisioning
+        - Requires: Authentik LDAP outpost setup, Graylog LDAP config via API,
+          and a Graylog-side admin role assignment step
         Pro: true SSO — one set of credentials; matches "pattern of all services"
              in spirit (Authentik is the identity source)
         Con: LDAP outpost adds complexity; separate config effort
@@ -853,154 +854,93 @@ LDAP outpost: ldapservice bind -> search (found) -> steve bind (User has access)
   authorization_flow = ldap-authz-flow, bind_mode/search_mode = direct
 - `deploy-graylog-stack.yml`: LDAP system user = ldapservice, host = LAB_IP_AUTHENTIK
 
-**Status: Sprint G2 complete. Sprint G3 (Managed LXC and Docker Log Pilot) is next.**
+**Status: Sprint G2 complete. Sprint G3 (Managed LXC and Docker Log Pilot) is active.**
 
 ---
 
-(Historical LDAP debug notes from this sprint follow for reference.)
+**Current G3 position (repo state)**
 
-- Sprint G2 was blocked on LDAP auth. Confirmed working before the fix:
-- Confirmed working:
-  - Stack IaC scaffold + env-scoped Terragrunt entrypoint
-  - LXC created at VMID 20014 / 192.168.20.114 on `pve-test-vm`
-  - LXC RAM bumped to 6144 MB
-  - GRAYLOG_PASSWORD_SECRET + GRAYLOG_ROOT_PASSWORD_SHA2 + GRAYLOG_ROOT_PASSWORD in secrets.enc.yaml
-  - rsyslog_forward role extended with inbound relay on :514 TCP/UDP (Steps 4)
-  - Real compose + playbook with preflight automation + syslog INPUT + LDAP auth config (Step 5)
-  - Graylog containers deployed and confirmed ALIVE (Step 6)
-  - Monitoring scrape targets added: node_exporter :9100 + cAdvisor :8080 (Step 7)
-  - Teardown gate added to teardown-deploy-test.sh (Step 8)
-  - `edge.yaml` with `auth.mode: native` created; route published via `reconcile-edge.py`
-  - `graylog.test.gibbsgreatly.xyz` resolves via CoreDNS; HTTPS 200 through Traefik
-  - `reconcile-edge.py --json` returns `issue_count: 0` with all manifests passing
-  - Graylog local ingest/search path is proven:
-    - syslog input exists (`syslog-tcp-5140`)
-    - injected smoke messages are searchable in Graylog
-- LDAP/auth integration findings from live validation:
-  - Authentik LDAP outpost was initially not provisioned on the test host even
-    though the repo compose declared it.
-  - Live repair showed the outpost also requires an Authentik application bound
-    to the LDAP provider; without that, `/api/v3/outposts/ldap/` stayed empty
-    and the LDAP container crash-looped with `no ldap provider defined`.
-  - Additional live repair found two more automation bugs:
-    - the outpost lookup API ignored the `?name=` filter, so the playbook could
-      resolve the embedded proxy outpost token instead of the Graylog LDAP
-      outpost token unless the results were filtered locally by name
-    - `docker compose restart ldap` did not reload `.ldap-outpost.env`; the
-      LDAP container had to be recreated to pick up a corrected token
-  - Additional 2026-06-28 live validation on the actual inventory host
-    `192.168.20.110` confirmed more repo automation bugs and fixes:
-    - the LDAP outpost must get `AUTHENTIK_HOST` explicitly via
-      `.ldap-outpost.env`; compose interpolation left it blank on the guest
-      otherwise
-    - the Graylog LDAP flow could not rely on hard-coded stage UUIDs; this
-      Authentik instance has different default password/login stage IDs and the
-      playbook now resolves them dynamically by name
-    - the Graylog LDAP flow patch call had to use the slug endpoint
-      (`/api/v3/flows/instances/graylog-ldap-authentication-flow/`)
-  - After re-provisioning with those fixes, the LDAP outpost is healthy on
-    `192.168.20.110`, connected back to Authentik, and listening on 3389/6636
-    with the correct outpost token and explicit
-    `AUTHENTIK_HOST=http://192.168.20.110:9000`.
-  - Direct LDAP bind is now tested end-to-end over the compose network, not
-    inferred:
-    - `cn=steve,ou=users,dc=ldap,dc=goauthentik,dc=io` returns
-      `invalidCredentials (49)`
-    - `cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io` also returns
-      `invalidCredentials (49)` when tested with the same password fallback the
-      playbook uses
-  - Additional live experiments on 2026-06-28 narrowed the Authentik-side
-    failure further:
-    - alternate bind identifiers (`uid=...`, `mail=...`, bare `steve`) do not
-      work; `cn=<username>,ou=users,...` is still the only DN form that reaches
-      actual credential or provider handling
-    - switching provider `bind_mode` / `search_mode` between `direct` and
-      `cached` does not produce a successful bind
-    - switching the custom LDAP auth flow between `authentication=none` and
-      `authentication=require_outpost` also does not produce a successful bind
-    - the stock implicit-consent authorization flow appears in Authentik server
-      logs during the failed bind path and reports `Flow not applicable to
-      current user`
-    - with temporary outpost debug logging enabled, the default authorization
-      path became clearer:
-      - the LDAP outpost receives an `ak-stage-access-denied` challenge from
-        `default-provider-authorization-implicit-consent`
-      - the client still receives `invalidCredentials (49)`
-      - this points at an Authentik authorization challenge path rather than a
-        simple raw password mismatch
-    - a live-only experimental authorization flow
-      (`graylog-ldap-authorization-flow`, authentication `none`) changes the
-      bind result from `invalidCredentials (49)` to `operationsError (1)` and
-      the outpost logs:
-      - `User has access`
-      - `failed to get user info`
-      - `403 Forbidden` on `/api/v3/core/users/me/`
-    - adding a `user_login` stage into that experimental authorization flow
-      still resulted in an `ak-stage-access-denied` challenge rather than a
-      successful bind
-    - pointing the provider at Authentik's stock
-      `default-authentication-flow` did not resolve the failure either
-  - Upstream Authentik documentation and issue history now suggest the repo is
-    no longer far from the intended LDAP shape; the remaining risk is
-    version-specific behavior:
-    - current and newer Authentik docs still describe the same core LDAP flow
-      shape we now implement: identification stage with username enabled,
-      password-stage linkage, and login stage
-    - upstream issue `#14210` documents the same `Invalid credentials (49)`
-      symptom and multiple operators reporting that the docs lagged newer
-      versions; the winning recipe there matches the current branch closely:
-      `authentication=require_outpost`, username enabled in the identification
-      stage, explicit password-stage binding, and an explicit reachable
-      `AUTHENTIK_HOST`
-    - upstream issue `#17056` on Authentik `2025.8.3` matches the live
-      experimental failure exactly: `User has access`, then
-      `failed to get user info`, then `403` on `/api/v3/core/users/me/`
-    - later Authentik releases include flow/session-binding fixes such as
-      `stages/user_login: log correct user when session binding is broken`
-      (merged for `2025.12.5` / `2026.2.x`), which strengthens the case that
-      this may be an Authentik version bug rather than a remaining repo wiring
-      error
-  - This means the remaining blocker is no longer outpost startup, token
-    wiring, Graylog ingress, or Graylog LDAP backend activation. The blocker is
-    specifically inside Authentik LDAP bind/session semantics on this
-    provider/outpost.
-- Automation updates now staged in the branch:
-  - `deploy-authentik-stack.yml` now also creates:
-    - Graylog LDAP application
-    - dedicated `ldapservice` bind account
-    - `search_full_directory` permission grant
-    - Graylog-specific LDAP authentication flow
-    - explicit password-stage binding for the Graylog LDAP flow
-    - dynamic lookup of the default password/login stages by name
-    - local filtering of outpost lookup results by name before resolving the
-      LDAP outpost token
-    - explicit `AUTHENTIK_HOST` write into `.ldap-outpost.env`
-    - forced LDAP container recreate when `.ldap-outpost.env` changes
-  - `deploy-graylog-stack.yml` now points Graylog LDAP bind to
-    `cn=ldapservice,ou=users,dc=ldap,dc=goauthentik,dc=io`
-- Current next step:
-  - inspect Authentik LDAP provider bind semantics directly on
-    `192.168.20.110`:
-    - compare `bind_mode=direct` / `search_mode=direct` with `cached`
-      alternatives on the live provider
-    - confirm whether the provider expects a different DN shape or bind
-      identifier than `cn=<username>,ou=users,...`
-    - inspect why the outpost can either:
-      - receive an `ak-stage-access-denied` challenge from the implicit-consent
-        authorization flow, or
-      - pass access checks but still fail on `/api/v3/core/users/me/` with
-        `403` under the experimental no-auth authorization flow
-    - determine whether the LDAP provider needs a different authorization-flow
-      model than the stock implicit-consent flow, or whether this is an
-      Authentik LDAP outpost bug/limitation in `2024.12.3`
-  - Live test environment note:
-    - temporary experimental flows and elevated outpost logging used during
-      diagnosis were removed again
-    - the live provider/outpost on `192.168.20.110` was restored to the
-      intended direct/direct + custom-auth-flow + implicit-authorization
-      baseline after testing
-- Status: continue Sprint G2 until end-to-end Graylog ↔ Authentik LDAP login is
-  proven. Sprint G3 should not start yet.
+- The repo now contains early G3 implementation work, not just G3 planning:
+  - `deploy-authentik-stack.yml` enables dual-feed to Graylog via
+    `rsyslog_graylog_enabled: true`
+  - `deploy-step-ca.yml` also enables dual-feed to Graylog via
+    `rsyslog_graylog_enabled: true`
+  - the shared `rsyslog_forward` role supports dual-feed to VictoriaLogs and
+    Graylog at the same time, preserving rollback during the pilot
+- This means pilot-source wiring has started, with the current likely pilot
+  candidates being:
+  - Docker-heavy: `authentik-stack`
+  - systemd-heavy: `step-ca-stack`
+- What is not yet proven in tracked docs is the G3 validation evidence:
+  - no documented operator-equivalent Graylog queries yet for the current
+    “Lab Logs” / “Auth Logs” workflows
+
+**Live G3 validation evidence (2026-06-28)**
+
+- Pilot sources selected:
+  - systemd-heavy: `step-ca-stack` (`192.168.20.111`)
+  - Docker-heavy: `authentik-stack` (`192.168.20.110`)
+- Entry checks passed:
+  - `graylog-stack` (`192.168.20.114`) returns `ALIVE` on
+    `/api/system/lbstatus`
+  - Graylog API login for `steve` with Authentik credentials returns HTTP 200
+    and a valid session
+  - Graylog external-user provisioning for `steve` succeeds after correcting the
+    LDAP auth-service backend
+    `default_roles` value to Graylog's internal Reader role ObjectId rather
+    than the human-readable role name
+  - both `step-ca-stack` and `authentik-stack` have live rsyslog dual-feed
+    config forwarding to VictoriaLogs on `:5140` and Graylog on
+    `192.168.20.114:514`
+- Managed-LXC proof:
+  - emitted test message on `step-ca-stack`:
+    `logger -t g3-stepca-test 'G3_STEPCA_20260628T_STEPCA_SYSLOG_PROOF'`
+  - Graylog search result returned:
+    - `source=step-ca`
+    - `application_name=g3-stepca-test`
+    - `message=G3_STEPCA_20260628T_STEPCA_SYSLOG_PROOF`
+- Docker-heavy proof:
+  - recent Authentik LDAP outpost events triggered by Graylog login are present
+    in Graylog search results with:
+    - `source=authentik-stack`
+    - `application_name=docker-authentik-stack-ldap-1`
+    - message payloads containing JSON events such as `User has access`
+- G3 interpretation:
+  - pilot ingestion is now proven for one managed-LXC/systemd source and one
+    Docker-heavy source
+  - browser login with Authentik credentials is also now re-validated on the
+    live `graylog-stack`; the last blocker was Graylog-side provisioning, not
+    LDAP bind/search itself
+  - dual-feed rollback remains active
+  - remaining G3 work is to document stable operator query patterns and broaden
+    validation beyond these first proof points
+
+**Auth-service regression note (2026-06-28)**
+
+- Symptom: Graylog browser/API login returned `503 Authentication service unavailable`
+  even though the Authentik LDAP outpost logs showed successful bind, search,
+  and user bind for `steve`.
+- Root cause: the Graylog LDAP auth-service backend was provisioned with
+  `default_roles=["Reader"]`. Graylog's external-user provisioner expects role
+  ObjectIds here, not role names, so user creation failed with:
+  `ProvisionerServiceException: Couldn't provision user: steve` and
+  `IllegalArgumentException: hexString has 24 characters`.
+- Fix: resolve the built-in Reader role from Graylog Mongo
+  (`6a3e04d51548b6dc3d9e79ae` on the current test instance) and use that ID in
+  `default_roles`.
+- Validation:
+  - backend document in `auth_service_backends` shows the Reader ObjectId
+  - Graylog restarted cleanly
+  - `POST /api/system/sessions` for `steve` returns HTTP 200 with a session
+  - `/api/users/steve` now shows `external=true` and
+    `auth_service_enabled=true`
+
+**Historical note**
+
+The pre-`2026.2.4` LDAP bind/session debugging above is now superseded by the
+working `ldap-authz-flow` + role-based permission model. Keep those notes only
+as background for why the Authentik implementation changed; they are no longer
+the current blocker.
 
 ---
 
@@ -1152,8 +1092,9 @@ G2 exit criteria all met:
 
 Sprint G3 entry criteria:
 - Graylog browser login is working (gate met)
-- Choose first pilot log sources (one systemd-heavy stack + one Docker-heavy stack)
-- Confirm existing VictoriaLogs path remains active as rollback
+- Choose first pilot log sources (met: `step-ca-stack` + `authentik-stack`)
+- Confirm existing VictoriaLogs path remains active as rollback (met via live
+  dual-feed config on both pilot hosts)
 
 ### Sprint board
 
@@ -1235,13 +1176,21 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-G0–G2 are complete. **Start Sprint G3.**
+G0–G2 are complete and G3 has started.
 
-G3 entry point:
-1. Choose pilot sources:
-   - systemd-heavy: `step-ca-stack` or `dns-stack` (one managed LXC)
-   - Docker-heavy: `authentik-stack` (already feeds Graylog-side LXC via rsyslog relay)
-2. Configure rsyslog on the pilot LXC hosts to forward to `192.168.20.114:514`.
-3. Validate that log lines arrive in Graylog with correct `source` and container/process identity.
-4. Confirm equivalent "Lab Logs" and "Auth Logs" query workflows work in Graylog.
-5. VictoriaLogs dual-feed remains active throughout G3 as rollback.
+Current G3 next step:
+1. Keep `step-ca-stack` and `authentik-stack` as the first pilot sources.
+2. Record reusable Graylog query patterns for:
+   - broad lab search
+   - auth-focused search
+   - host-specific system logs
+   - container-specific logs
+3. Capture one browser-auth operator proof alongside the log-ingestion proof:
+   confirm `steve` can log into Graylog with Authentik credentials and land as
+   an Admin-backed external user.
+4. Validate one more operator workflow on top of the raw ingestion proof:
+   confirm that an “Auth Logs” style investigation can be done in Graylog using
+   `source=authentik-stack` and `application_name=docker-authentik-stack-ldap-1`.
+5. If those queries hold up, extend the pilot to one more managed LXC
+   (`dns-stack` is the next best candidate) before declaring G3 complete.
+6. VictoriaLogs dual-feed remains active throughout G3 as rollback.
