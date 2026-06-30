@@ -6,11 +6,13 @@
 #   NORMAL PATH (HTTP != 200): fresh LXC after terragrunt apply, or Portainer not yet started.
 #     Uses POST /api/restore (only available before admin/init).
 #     Sequence: wipe db → pre_restore provision → POST /api/restore → restart → full provision
+#     The follow-up provision now re-pairs migrated legacy app endpoints with lab Portainer.
 #
 #   EMERGENCY PATH (HTTP 200): Portainer is running and admin is initialized, but database
 #     was wiped while the container was live. POST /api/restore is unavailable.
 #     Uses tar extraction from the NAS bind mount inside the LXC.
-#     Sequence: stop container → move db aside → tar extract → start → restart agents → full provision
+#     Sequence: stop container → move db aside → tar extract → start → full provision
+#     The follow-up provision now re-pairs migrated legacy app endpoints with lab Portainer.
 #
 # Usage:
 #   export TASK_APPROVAL="<task-name>"
@@ -19,9 +21,6 @@
 # Environment (resolved by with-secrets-prod):
 #   LAB_IP_PORTAINER              — Portainer LXC IP (default: 192.168.20.20)
 #   TF_VAR_portainer_admin_password — admin password (used by provision.sh after restore)
-#   PORTAINER_AGENT_IPS           — space-separated list of agent host IPs to restart
-#                                   (default: the six known legacy app hosts)
-
 set -euo pipefail
 
 PORTAINER_IP="${LAB_IP_PORTAINER:-192.168.20.20}"
@@ -31,7 +30,6 @@ PVE_HOST="${PORTAINER_RESTORE_PVE_HOST:-pve.gibbsgreatly.xyz}"
 NAS_BACKUP_DIR="/mnt/nas-backup/portainer-backup"
 CONTAINER_NAME="portainer-portainer-1"
 WAIT_TIMEOUT=180
-AGENT_IPS="${PORTAINER_AGENT_IPS:-192.168.1.4 192.168.1.5 192.168.1.6 192.168.1.7 192.168.1.9 192.168.1.24}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
@@ -125,15 +123,8 @@ if [[ "$HTTP_STATUS" == "200" ]]; then
     wait_for_api "Waiting for Portainer API after tar restore"
     echo ""
 
-    echo "Restarting portainer-agents to re-pair with restored instance keypair..."
-    for ip in $AGENT_IPS; do
-        echo -n "  ${ip}: "
-        ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@"${ip}" \
-            'docker restart portainer-agent' 2>/dev/null && echo "restarted" || echo "FAILED (skipping)"
-    done
-    echo ""
-
     echo "=== Full provision (init gets 409 and skips; OAuth + backup support idempotent) ==="
+    echo "This also re-pairs migrated legacy app endpoints with lab Portainer."
     "${SCRIPT_DIR}/provision.sh" --stack portainer-stack
     exit 0
 fi
@@ -224,15 +215,7 @@ else
 fi
 echo ""
 
-# Step 9: restart portainer-agents to re-pair with restored keypair
-echo "Restarting portainer-agents to re-pair with restored instance keypair..."
-for ip in $AGENT_IPS; do
-    echo -n "  ${ip}: "
-    ssh -o StrictHostKeyChecking=no -o ConnectTimeout=5 root@"${ip}" \
-        'docker restart portainer-agent' 2>/dev/null && echo "restarted" || echo "FAILED (skipping)"
-done
-echo ""
-
-# Step 10: full provision (init gets 409 and skips; OAuth, bind mount, timer all idempotent)
+# Step 9: full provision (init gets 409 and skips; OAuth, bind mount, timer all idempotent)
 echo "=== Phase 2: full provision (init + OAuth + backup timer) ==="
+echo "This also re-pairs migrated legacy app endpoints with lab Portainer."
 "${SCRIPT_DIR}/provision.sh" --stack portainer-stack

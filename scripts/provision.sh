@@ -189,6 +189,62 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
   done
 }
 
+repair_portainer_migrated_app_stacks() {
+  local check_mode="$1"
+  local stacks_dir="$STACKS_DIR"
+  local repair_stacks=()
+
+  for stack_dir in "${stacks_dir}"/*; do
+    [[ -d "$stack_dir" ]] || continue
+
+    local stack
+    stack="$(basename "$stack_dir")"
+
+    local inventory
+    if [[ -f "${ENV_ROOT}/${stack}/inventory.yml" ]]; then
+      inventory="${ENV_ROOT}/${stack}/inventory.yml"
+    else
+      inventory="${stack_dir}/inventory.yml"
+    fi
+    [[ -f "$inventory" ]] || continue
+
+    local playbook_name
+    playbook_name="$(extract_ansible_playbook "$inventory")"
+    if [[ "$playbook_name" == "migrate-portainer-stack" || "$playbook_name" == "migrate-portainer-stack.yml" ]]; then
+      repair_stacks+=("$stack")
+    fi
+  done
+
+  if [[ ${#repair_stacks[@]} -eq 0 ]]; then
+    log "SKIP Portainer app endpoint repair: no stacks use migrate-portainer-stack"
+    return 0
+  fi
+
+  log "Portainer app endpoint repair: ${repair_stacks[*]}"
+
+  if [[ "$check_mode" == "true" ]]; then
+    log "  dry-run: standalone portainer-stack recovery would re-pair migrated app endpoints"
+    return 0
+  fi
+
+  for stack in "${repair_stacks[@]}"; do
+    log "  repairing Portainer-managed app stack: ${stack}"
+    provision_stack "$stack" "false"
+  done
+}
+
+layers_include_stack() {
+  local stack_name="$1"
+  local layers_json="$2"
+
+  python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+target = sys.argv[1]
+sys.exit(0 if any(target in layer for layer in d['layers']) else 1)
+" "$stack_name" <<<"$layers_json"
+}
+
 extract_ansible_playbook() {
   local inventory_file="$1"
 
@@ -676,6 +732,10 @@ if [[ -z "$explicit_csv" ]]; then
   register_portainer_environments "$check_mode"
 else
   log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
+fi
+
+if layers_include_stack "portainer-stack" "$layers_json"; then
+  repair_portainer_migrated_app_stacks "$check_mode"
 fi
 
 log "Completed provision orchestration"
