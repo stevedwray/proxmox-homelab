@@ -220,6 +220,17 @@ repair_portainer_migrated_app_stacks() {
     return 0
   fi
 
+  # These are physical home-LAN hosts with no per-environment inventory. The
+  # ansible controller (operator's machine) is on that LAN and can reach them
+  # regardless of which PVE_ENV is targeted — so the gate must be explicit, not
+  # based on network reachability. Only run repair on pve; on pve-test-vm the
+  # controller would SSH into the real hosts and register them against the wrong
+  # (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP Portainer app endpoint repair: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
   log "Portainer app endpoint repair: ${repair_stacks[*]}"
 
   if [[ "$check_mode" == "true" ]]; then
@@ -228,22 +239,6 @@ repair_portainer_migrated_app_stacks() {
   fi
 
   for stack in "${repair_stacks[@]}"; do
-    local repair_inventory="${ENV_ROOT}/${stack}/inventory.yml"
-    [[ -f "$repair_inventory" ]] || repair_inventory="${stacks_dir}/${stack}/inventory.yml"
-
-    local repair_host
-    repair_host="$(extract_ansible_host "$repair_inventory")"
-
-    # These are physical legacy app-stack hosts, not Terraform-managed compute —
-    # they have no per-environment inventory, so the same static host/IP is
-    # resolved regardless of PVE_ENV. On environments other than the host's own
-    # network (e.g. pve-test-vm), the host is simply unreachable; skip rather
-    # than fail the whole provision run over a host this environment can't see.
-    if [[ -n "$repair_host" ]] && ! timeout 3 bash -c "echo >/dev/tcp/${repair_host}/22" 2>/dev/null; then
-      log "  SKIP repairing ${stack}: host ${repair_host} unreachable from this environment"
-      continue
-    fi
-
     log "  repairing Portainer-managed app stack: ${stack}"
     provision_stack "$stack" "false"
   done
@@ -265,12 +260,6 @@ extract_ansible_playbook() {
   local inventory_file="$1"
 
   python3 -c "import yaml,sys; inv=yaml.safe_load(sys.stdin); grp=next(iter(inv['all']['children'].values())); host=next(iter(grp['hosts'].values())); print(host.get('ansible_playbook',''))" <"${inventory_file}"
-}
-
-extract_ansible_host() {
-  local inventory_file="$1"
-
-  python3 -c "import yaml,sys; inv=yaml.safe_load(sys.stdin); grp=next(iter(inv['all']['children'].values())); host=next(iter(grp['hosts'].values())); print(host.get('ansible_host',''))" <"${inventory_file}"
 }
 
 render_stack_ansible_extra_vars() {
