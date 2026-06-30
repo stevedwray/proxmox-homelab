@@ -53,7 +53,7 @@ This is a planning artifact only. It does not approve destructive execution.
 | `step-ca-stack` | Stage 3a edge foundation | 20011 | `192.168.20.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
 | `authentik-stack` | Stage 3a edge foundation | 20010 | `192.168.20.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
 | `monitoring-stack` | Stage 3b platform | 20012 | `192.168.20.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
-| `graylog-stack` | Stage 3b platform | 20014 | `192.168.20.114/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-graylog-stack` |
+| `graylog-stack` | Stage 3b platform | 20014 | `192.168.20.14/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-graylog-stack` |
 | `netbox-stack` | Stage 3b platform | 40012 | `192.168.40.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
 
 ## Resolver And Zone Contract

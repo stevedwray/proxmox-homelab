@@ -1656,7 +1656,7 @@ validate_stack_smoke() {
       ;;
     graylog-stack)
       run_logged "health-${stack}" \
-        bash -lc "curl -fsS 'http://${ip}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"  # NOSONAR — unauthenticated health check on private SDN
+        bash -lc "curl -fsS 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"  # NOSONAR — unauthenticated health check on private SDN
       ;;
   esac
 }
