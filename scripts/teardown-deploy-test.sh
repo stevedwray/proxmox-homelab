@@ -1110,6 +1110,15 @@ hydrate_live_env_contract() {
     LAB_IP_PROXY
     LAB_IP_GRAYLOG
     LAB_GW_MGMT
+    LAB_DOMAIN
+    LAB_BASE_DOMAIN
+    LAB_FQDN_TRAEFIK
+    LAB_FQDN_GRAFANA
+    LAB_FQDN_NETBOX
+    LAB_FQDN_HARBOR
+    LAB_FQDN_AUTHENTIK
+    LAB_FQDN_AUTHENTIK_INTERNAL
+    LAB_FQDN_PORTAINER
   )
 
   for key in "${vars[@]}"; do
@@ -1135,6 +1144,11 @@ require_live_env_contract() {
     LAB_IP_PROXY
     LAB_IP_GRAYLOG
     LAB_GW_MGMT
+    LAB_DOMAIN
+    LAB_FQDN_TRAEFIK
+    LAB_FQDN_GRAFANA
+    LAB_FQDN_NETBOX
+    LAB_FQDN_HARBOR
   )
 
   hydrate_live_env_contract
@@ -2210,6 +2224,7 @@ phase_deploy_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  require_live_env_contract
   rm -rf "${TERRAFORM_LXC}/.generated/traefik" "${TERRAFORM_LXC}/.generated/coredns"
   run_logged "render-edge-traefik-deploy" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-deploy" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
@@ -2226,6 +2241,7 @@ phase_activate_edge() {
   create_evidence_dirs
   require_execute_approval
   require_clean_tree
+  require_live_env_contract
   guard_target
   authentik_url="$(get_authentik_url)" || return 1
   wait_for_authentik_api_ready "${authentik_url}"
@@ -2252,6 +2268,7 @@ phase_activate_edge() {
 
 reconcile_edge_auth_after_platform() {
   local authentik_url
+  require_live_env_contract
   guard_target
   authentik_url="$(get_authentik_url)" || return 1
   wait_for_authentik_api_ready "${authentik_url}"
