@@ -28,6 +28,7 @@ This is a planning artifact only. It does not approve destructive execution.
 - `step-ca-stack`
 - `authentik-stack`
 - `monitoring-stack`
+- `graylog-stack`
 - `netbox-stack`
 - edge reconciliation activation (non-Terraform handoff)
 
@@ -52,6 +53,7 @@ This is a planning artifact only. It does not approve destructive execution.
 | `step-ca-stack` | Stage 3a edge foundation | 20011 | `192.168.20.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
 | `authentik-stack` | Stage 3a edge foundation | 20010 | `192.168.20.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
 | `monitoring-stack` | Stage 3b platform | 20012 | `192.168.20.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
+| `graylog-stack` | Stage 3b platform | 20014 | `192.168.20.114/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-graylog-stack` |
 | `netbox-stack` | Stage 3b platform | 40012 | `192.168.40.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
 
 ## Resolver And Zone Contract
@@ -88,18 +90,20 @@ corrected in Stage 3a: `step-ca` must precede `proxy-stack`.
 7. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
 8. `harbor-stack`
 9. `monitoring-stack`
-10. `netbox-stack`
-11. `portainer-stack`
+10. `graylog-stack`
+11. `netbox-stack`
+12. `portainer-stack`
 
 ## Approved Destroy Order
 
 1. `portainer-stack`
 2. `netbox-stack`
-3. `monitoring-stack`
-4. `harbor-stack`
-5. `authentik-stack`
-6. `step-ca-stack`
-7. `proxy-stack`
-8. `dns-stack`
-9. `ci-runner-01`
-10. `apt-cacher-stack`
+3. `graylog-stack`
+4. `monitoring-stack`
+5. `harbor-stack`
+6. `authentik-stack`
+7. `step-ca-stack`
+8. `proxy-stack`
+9. `dns-stack`
+10. `ci-runner-01`
+11. `apt-cacher-stack`

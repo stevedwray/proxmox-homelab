@@ -102,6 +102,7 @@ BROWSER_HOSTS=(
   "authentik"
   "harbor"
   "grafana"
+  "graylog"
   "portainer"
   "netbox"
   "traefik"
@@ -1595,7 +1596,7 @@ stack_destroy() {
   fi
 
   guard_target
-  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "graylog-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' REBUILD_GATE_TARGET_HOST='${TARGET_PVE_HOST}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
