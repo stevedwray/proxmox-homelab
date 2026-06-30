@@ -819,6 +819,9 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         )
 
     def test_harbor_oidc_apply_updates_existing_application_launch_url(self):
+        # When HARBOR_EXTERNAL_URL is an internal IP (non-prod), launch_url must still
+        # use the public FQDN (intent.host) — Authentik rejects bare IP launch_urls.
+        # The redirect_uri follows HARBOR_EXTERNAL_URL; launch_url is always intent.host.
         with tempfile.TemporaryDirectory() as tmpdir:
             manifest = Path(tmpdir) / "harbor.yaml"
             _write_manifest(
@@ -834,8 +837,8 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "pk": 302,
                         "name": "edge-harbor-stack-harbor-app",
                         "slug": "edge-harbor-stack-harbor",
-                        "launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
-                        "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                        "launch_url": "http://192.168.40.110/",
+                        "meta_launch_url": "http://192.168.40.110/",
                         "provider": 402,
                     }
                 ],
@@ -845,7 +848,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                         "name": "edge-harbor-stack-harbor-provider",
                         "client_id": "harbor",
                         "redirect_uris": [
-                            {"matching_mode": "strict", "url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
+                            {"matching_mode": "strict", "url": "https://harbor.lab.gibbsgreatly.xyz/c/oidc/callback"}
                         ],
                     }
                 ],
@@ -855,7 +858,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                 MODULE.os.environ,
                 {
                     "HARBOR_OIDC_CLIENT_SECRET": "secret-value",
-                    "HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz",
+                    "HARBOR_EXTERNAL_URL": "http://192.168.40.110",
                 },
                 clear=False,
             ):
@@ -863,16 +866,16 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertGreaterEqual(result.write_count, 1)
-        self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
-        self.assertEqual("https://harbor.gibbsgreatly.xyz/", client.applications[0]["launch_url"])
+        self.assertEqual("https://harbor.lab.gibbsgreatly.xyz/", client.applications[0]["meta_launch_url"])
+        self.assertEqual("https://harbor.lab.gibbsgreatly.xyz/", client.applications[0]["launch_url"])
         self.assertEqual(["edge-harbor-stack-harbor"], client.application_update_targets)
         self.assertIn(
             (
                 "application",
                 "update",
                 {
-                    "launch_url": "https://harbor.gibbsgreatly.xyz/",
-                    "meta_launch_url": "https://harbor.gibbsgreatly.xyz/",
+                    "launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                    "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
                 },
             ),
             client.writes,

@@ -640,7 +640,11 @@ def _resolve_proxy_flow_ids(
 
 
 def _application_payload(intent: RouteIntent, provider_id: str | None) -> dict[str, Any]:
-    launch_url = f"{_DISCOVER._oidc_base_url(intent)}/"
+    # launch_url is the public-facing entry point shown in the Authentik app catalogue.
+    # Always use the edge route hostname (public FQDN), not _oidc_base_url: for some
+    # stacks (Harbor in non-prod) the OIDC redirect_uri uses an internal IP which
+    # Authentik rejects as an application launch_url.
+    launch_url = f"https://{intent.host}/"
     payload: dict[str, Any] = {
         "name": intent.app_name,
         "slug": intent.app_slug,
