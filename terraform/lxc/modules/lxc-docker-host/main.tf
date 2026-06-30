@@ -92,6 +92,12 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     bridge   = var.network_bridge
     firewall = var.network_firewall
   }
+
+  lifecycle {
+    # keyctl is enabled out-of-band via configure-keyctl.yml because the
+    # automation API token cannot manage non-nesting feature flags.
+    ignore_changes = [features[0].keyctl]
+  }
 }
 
 # Produces a new random ID each time the container is replaced (including
