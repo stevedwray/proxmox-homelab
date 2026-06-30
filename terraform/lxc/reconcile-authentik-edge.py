@@ -250,11 +250,17 @@ class AuthentikApiClient:
             if extra_ca:
                 context = ssl.create_default_context()  # nosonar: python:S4423,python:S5527
                 context.load_verify_locations(cafile=extra_ca)
-        with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
-            raw = response.read().decode("utf-8")
-            if not raw:
-                return {}
-            return json.loads(raw)
+        try:
+            with urllib.request.urlopen(request, context=context) as response:  # nosec B310 — internal Authentik API on private SDN
+                raw = response.read().decode("utf-8")
+                if not raw:
+                    return {}
+                return json.loads(raw)
+        except urllib.error.HTTPError as exc:
+            body = exc.read().decode("utf-8", errors="replace")
+            raise urllib.error.HTTPError(
+                exc.url, exc.code, f"{exc.reason} — body: {body}", exc.headers, None
+            ) from None
 
 
 def parse_args() -> argparse.Namespace:
