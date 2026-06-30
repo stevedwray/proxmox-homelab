@@ -167,6 +167,15 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
     return 0
   fi
 
+  # Physical home-LAN stacks (gaming/media/torrent/management) have no
+  # per-environment inventory and are only meaningful on pve. On any other
+  # environment the controller can still reach them (same LAN) but would
+  # register them against the wrong (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP portainer env registration: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
   log "Portainer env registration: ${stacks[*]}"
 
   for stack in "${stacks[@]}"; do
