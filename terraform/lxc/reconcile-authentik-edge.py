@@ -1101,7 +1101,34 @@ def _reconcile_application_for_intent(
             operation="create", reason="owned application is missing",
         ))
         if apply and not route_stops and not stop_conditions:
-            created = client.create_application(app_payload)
+            try:
+                created = client.create_application(app_payload)
+            except urllib.error.HTTPError as exc:
+                if exc.code != 400:
+                    raise
+                # Application already exists (created by a previous partial run or
+                # an inline reconcile in a stack playbook) but wasn't found by the
+                # initial discovery scan. Fetch by slug and fall through to update.
+                existing = next(
+                    (a for a in client.fetch_applications()
+                     if a.get("slug") == app_payload.get("slug")),
+                    None,
+                )
+                if existing is None:
+                    raise
+                app_obj = existing
+                app_id = _as_id(app_obj)
+                app_patch = _patch_from_existing(app_obj, app_payload)
+                if app_patch and app_id:
+                    updated = client.update_application(
+                        app_obj.get("slug") or intent.app_slug, app_patch
+                    )
+                    write_count += 1
+                    existing.update(updated)
+                existing_id = _as_id(existing)
+                if existing_id:
+                    consumed["application"].add(existing_id)
+                return write_count
             write_count += 1
             applications.append(created)
             created_id = _as_id(created)
