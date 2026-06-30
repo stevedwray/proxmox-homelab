@@ -19,7 +19,7 @@ REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 TERRAFORM_LXC="${REPO_ROOT}/terraform/lxc"
 ANSIBLE_DIR="${TERRAFORM_LXC}/ansible"
 EVIDENCE_ROOT="${REPO_ROOT}/docs/teardown-test/artifacts/evidence"
-HOMELAB_ROOT_CA="${REPO_ROOT}/certs/homelab-root.crt"
+HOMELAB_ROOT_CA_DEFAULT="${REPO_ROOT}/certs/homelab-root.crt"
 INVENTORY_FILE="${TEARDOWN_INVENTORY_FILE:-${REPO_ROOT}/docs/teardown-test/inventory.md}"
 TARGET_NODE_EXPECTED="${TEARDOWN_TARGET_NODE_EXPECTED:-${PVE_ENV:-${TF_VAR_proxmox_node:-pve-test}}}"
 if [[ "${TARGET_NODE_EXPECTED}" == "pve" ]]; then
@@ -192,6 +192,20 @@ EOF
 
 now_utc() {
   date -u +%Y-%m-%dT%H:%M:%SZ
+}
+
+resolve_homelab_root_ca() {
+  local env_specific_ca=""
+
+  if [[ -n "${TARGET_NODE_EXPECTED}" ]]; then
+    env_specific_ca="${REPO_ROOT}/certs/homelab-root.${TARGET_NODE_EXPECTED}.crt"
+    if [[ -f "${env_specific_ca}" ]]; then
+      printf '%s\n' "${env_specific_ca}"
+      return 0
+    fi
+  fi
+
+  printf '%s\n' "${HOMELAB_ROOT_CA_DEFAULT}"
 }
 
 git_current_branch() {
@@ -2045,10 +2059,10 @@ run_live_preflight_checks() {
   run_logged "https-route-traefik" \
     bash -lc "curl -skI --resolve '${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}' 'https://${LAB_FQDN_TRAEFIK}/' | grep -Eq '^HTTP/'"
   run_logged "authentik-direct-health" \
-    curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
+    curl --cacert "$(resolve_homelab_root_ca)" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   authentik_url="$(get_authentik_url)" || return 1
   run_logged "reconcile-edge-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -2218,7 +2232,7 @@ phase_activate_edge() {
   run_logged "render-edge-traefik-activate" python3 "${TERRAFORM_LXC}/render-edge-traefik.py" --json
   run_logged "render-edge-coredns-activate" python3 "${TERRAFORM_LXC}/render-edge-coredns.py" --json
   run_logged "reconcile-edge-apply" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
 
@@ -2231,7 +2245,7 @@ phase_activate_edge() {
     bash -lc "cd '${ANSIBLE_DIR}' && '${WITH_SECRETS}' ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml -e traefik_generated_source_dir='${TERRAFORM_LXC}/.generated/traefik'"
 
   run_logged "reconcile-edge-post-activate-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -2242,11 +2256,11 @@ reconcile_edge_auth_after_platform() {
   authentik_url="$(get_authentik_url)" || return 1
   wait_for_authentik_api_ready "${authentik_url}"
   run_logged "reconcile-edge-post-platform-apply" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --apply --json
   run_logged "reconcile-edge-post-platform-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
@@ -2299,9 +2313,9 @@ phase_final_validation() {
 
   run_logged "harbor-registry-auth" curl -skI --resolve "${LAB_FQDN_HARBOR}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_HARBOR}/v2/"
   run_logged "portainer-direct-api" curl -fsS "http://${LAB_IP_PORTAINER}:9000/api/system/status"  # NOSONAR — unauthenticated health check on private SDN
-  run_logged "authentik-direct-health" curl --cacert "${HOMELAB_ROOT_CA}" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
+  run_logged "authentik-direct-health" curl --cacert "$(resolve_homelab_root_ca)" -fsS "https://authentik-int.${LAB_DOMAIN}:9443/-/health/live/"
   run_logged "final-reconcile-edge-dry-run" \
-    env "AUTHENTIK_EXTRA_CA=${HOMELAB_ROOT_CA}" \
+    env "AUTHENTIK_EXTRA_CA=$(resolve_homelab_root_ca)" \
     "${WITH_SECRETS}" python3 "${TERRAFORM_LXC}/reconcile-edge.py" \
       --authentik-url "${authentik_url}" --json
 }
