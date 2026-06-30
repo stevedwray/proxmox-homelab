@@ -1122,10 +1122,6 @@ hydrate_live_env_contract() {
   )
 
   for key in "${vars[@]}"; do
-    if [[ -n "${!key:-}" ]]; then
-      continue
-    fi
-
     value="$("${WITH_SECRETS}" printenv "${key}" || true)"
     if [[ -n "${value}" ]]; then
       printf -v "${key}" '%s' "${value}"
