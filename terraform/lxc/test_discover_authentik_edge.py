@@ -226,7 +226,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "pk": 21,
                         "name": "edge-harbor-stack-harbor-app",
                         "slug": "edge-harbor-stack-harbor",
-                        "meta_launch_url": "https://harbor.gibbsgreatly.xyz/",
+                        "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
                         "provider": 22,
                     }
                 ],
@@ -237,7 +237,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
                         "name": "edge-harbor-stack-harbor-provider",
                         "client_id": "harbor",
                         "redirect_uris": [
-                            {"url": "https://harbor.gibbsgreatly.xyz/c/oidc/callback"}
+                            {"url": "http://192.168.40.110/c/oidc/callback"}
                         ],
                     }
                 ],
@@ -246,7 +246,7 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
 
             with mock.patch.dict(
                 MODULE.os.environ,
-                {"HARBOR_EXTERNAL_URL": "https://harbor.gibbsgreatly.xyz"},
+                {"HARBOR_EXTERNAL_URL": "http://192.168.40.110"},
                 clear=False,
             ):
                 result = discover_authentik_drift([manifest], client)

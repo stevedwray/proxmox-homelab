@@ -851,7 +851,10 @@ def _classify_oidc_route(
     if prov_differing:
         differing = True
 
-    expected_launch_host = _normalize_url_host(_oidc_base_url(intent)) or intent.host.lower()
+    # launch_url is always the public FQDN (intent.host), not _oidc_base_url —
+    # for Harbor in non-prod, _oidc_base_url returns an internal IP used only
+    # for the OIDC redirect_uri, not for the Authentik app catalogue link.
+    expected_launch_host = intent.host.lower()
     app_reasons, app_ids, app_differing = _check_app_match(
         intent,
         app,
