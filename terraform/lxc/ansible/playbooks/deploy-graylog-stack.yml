@@ -74,6 +74,11 @@
     graylog_authentik_ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
     graylog_authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is required') }}"
     graylog_authentik_ldap_service_password: "{{ lookup('env', 'AUTHENTIK_LDAP_SERVICE_PASSWORD') | default(graylog_authentik_superuser_password, true) }}"
+    graylog_runtime_images:
+      - "{{ graylog_registry_host }}/dockerhub/mongo:{{ graylog_mongodb_image_tag }}"
+      - "{{ graylog_registry_host }}/dockerhub/graylog/graylog-datanode:{{ graylog_datanode_image_tag }}"
+      - "{{ graylog_registry_host }}/dockerhub/graylog/graylog:{{ graylog_server_image_tag }}"
+      - "{{ graylog_cadvisor_image }}"
 
   tasks:
     - name: Create Graylog compose directory
@@ -294,10 +299,35 @@
       register: graylog_compose_file
       notify: Recreate Graylog
 
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ graylog_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+      when: graylog_deploy_runtime | bool
+
+    - name: Pre-pull Graylog runtime images from Harbor sequentially
+      ansible.builtin.command:
+        argv:
+          - docker
+          - pull
+          - "{{ item }}"
+      register: graylog_image_pull
+      retries: 5
+      delay: 10
+      until: graylog_image_pull.rc == 0
+      loop: "{{ graylog_runtime_images }}"
+      when: graylog_deploy_runtime | bool
+
     - name: Bring up Graylog stack
       community.docker.docker_compose_v2:
         project_src: "{{ graylog_compose_dir }}"
         state: present
+        pull: never
         remove_orphans: true
         recreate: "{{ 'always' if (graylog_env_file.changed or graylog_datanode_jvm_options_file.changed or graylog_datanode_opensearch_jvm_options_file.changed or graylog_compose_file.changed) else 'auto' }}"
       when: graylog_deploy_runtime | bool
