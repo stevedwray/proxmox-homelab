@@ -52,6 +52,12 @@ cycle on `pve-test-vm`:
 - Because this crosses Ansible, teardown orchestration, Graylog runtime, and
   platform sequencing, the minimum acceptance gate is a full teardown cycle on
   `pve-test-vm`.
+- Container image pull policy should be explicit:
+  - before `harbor-stack` exists in a run, direct upstream pulls are acceptable
+  - once Harbor is up and reachable, Harbor-backed image paths are mandatory
+    wherever a Harbor proxy/cache route exists
+  - direct pulls after Harbor is available should be treated as a contract
+    violation, not just a style issue
 
 ---
 
@@ -249,6 +255,54 @@ Expected outcome:
 
 - Portainer is deployed and healthy in the same teardown run that includes
   Graylog.
+
+---
+
+## Sprint 4A — Enforce Harbor-First Image Pulls
+
+**Goal:** Make Harbor-backed image routing part of the teardown deployment
+contract once `harbor-stack` is available.
+
+### Why
+
+The current stack set is inconsistent:
+
+- `graylog-stack` now pulls via Harbor explicitly
+- `netbox-stack` uses Harbor for primary app images, but not every helper image
+- `portainer-stack` still hardcodes direct upstream image names
+
+That means teardown can still succeed today while silently depending on direct
+access to Docker Hub or `gcr.io`, which conflicts with the intended platform
+contract.
+
+### Deliverables
+
+- Update stack playbooks and generated compose files so Harbor-backed image
+  references are used wherever a Harbor proxy/cache route exists.
+- Route remaining direct `cadvisor` references through Harbor.
+- Route the shared `portainer_agent` role through Harbor-backed image paths.
+- Route `portainer/portainer-ce` through Harbor when Harbor is reachable.
+- Remove legacy `portainer-agent` residue from platform-tier Docker stacks such
+  as `graylog-stack`, where `portainer_agent: false` is already part of the
+  stack contract.
+- Keep a narrowly defined fallback for phases where Harbor is not yet deployed.
+- Add a validation check that flags direct upstream image references once
+  Harbor is available in the run.
+
+### Validation
+
+Verify on `pve-test-vm`:
+
+- generated compose files for Graylog, NetBox, and Portainer reference
+  `harbor.test.gibbsgreatly.xyz/...` for supported images
+- targeted provisions of those stacks still pass
+- a full teardown cycle still passes after Harbor is deployed in the platform
+  phase
+
+### Exit gate
+
+- After `harbor-stack` is up, no supported stack in the teardown platform flow
+  pulls directly from upstream registries.
 
 ---
 

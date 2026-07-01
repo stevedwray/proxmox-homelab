@@ -36,6 +36,19 @@
     - name: Flush handlers to apply Docker daemon config before writing scaffold
       ansible.builtin.meta: flush_handlers
 
+    - name: Stop and mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        state: stopped
+        masked: true
+        enabled: false
+      failed_when: false
+
+    - name: Remove legacy Portainer agent container residue
+      community.docker.docker_container:
+        name: portainer-agent
+        state: absent
+
   handlers:
     - name: Restart Docker
       ansible.builtin.systemd:
@@ -809,6 +822,14 @@
     # Idempotent: checks by title before creating. Add dashboards by building them
     # in the Graylog UI, exporting via GET /api/views/{id}, and committing JSON to
     # terraform/lxc/stacks/graylog-stack/dashboards/ (strip id/_version/created_at).
+    - name: Check whether local Graylog dashboards directory exists
+      ansible.builtin.stat:
+        path: "{{ playbook_dir | dirname }}/../../stacks/graylog-stack/dashboards"
+      delegate_to: localhost
+      become: false
+      register: graylog_dashboard_dir
+      when: graylog_deploy_runtime | bool
+
     - name: Find local Graylog dashboard JSON files
       ansible.builtin.find:
         paths: "{{ playbook_dir | dirname }}/../../stacks/graylog-stack/dashboards"
@@ -816,7 +837,10 @@
       delegate_to: localhost
       become: false
       register: graylog_dashboard_files
-      when: graylog_deploy_runtime | bool
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_dashboard_dir.stat.exists | default(false)
+        - graylog_dashboard_dir.stat.isdir | default(false)
 
     - name: List existing Graylog dashboards
       ansible.builtin.uri:
@@ -875,6 +899,7 @@
     graylog_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ graylog_lab_domain, true) }}"
     graylog_compose_dir: /opt/graylog-stack
+    graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
 
   tasks:
     - name: Create Graylog scaffold directories
@@ -885,6 +910,7 @@
       loop:
         - "{{ graylog_compose_dir }}"
         - "{{ graylog_compose_dir }}/scaffold"
+      when: not (graylog_deploy_runtime | bool)
 
     - name: Write Graylog runtime env scaffold
       ansible.builtin.copy:
@@ -899,6 +925,7 @@
           GRAYLOG_DATANODE_PASSWORD_SECRET=<generate-secret>
           GRAYLOG_MONGODB_URI=mongodb://mongodb:27017/graylog
           GRAYLOG_OPENSEARCH_HOSTS=http://datanode:9200
+      when: not (graylog_deploy_runtime | bool)
 
     - name: Write Graylog compose placeholder
       ansible.builtin.copy:
@@ -909,6 +936,7 @@
           # Replace this placeholder with the chosen single-node Graylog compose
           # during Sprint G2 once the runtime shape is pinned and validated.
           services: {}
+      when: not (graylog_deploy_runtime | bool)
 
     - name: Write Graylog scaffold README
       ansible.builtin.copy:
@@ -928,3 +956,4 @@
           - replace docker-compose.scaffold.yml with the chosen Graylog runtime
           - add smoke checks
           - only then add edge publication
+      when: not (graylog_deploy_runtime | bool)
