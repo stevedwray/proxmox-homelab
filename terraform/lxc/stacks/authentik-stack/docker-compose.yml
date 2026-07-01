@@ -27,7 +27,7 @@ services:
       - authentik-redis:/data
 
   server:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
     restart: unless-stopped
     command: server
     env_file:
@@ -64,7 +64,7 @@ services:
       - ./nginx/direct-tls.conf:/etc/nginx/conf.d/default.conf:ro
 
   worker:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/server:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
     restart: unless-stopped
     command: worker
     env_file:
@@ -79,7 +79,7 @@ services:
       - authentik-certs:/certs
 
   ldap:
-    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:${AUTHENTIK_IMAGE_VERSION:-2024.12.3}
+    image: ${REGISTRY_HOST}/ghcr/goauthentik/ldap:${AUTHENTIK_IMAGE_VERSION:-2026.2.4}
     restart: unless-stopped
     env_file:
       - .ldap-outpost.env

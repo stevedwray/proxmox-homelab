@@ -50,6 +50,7 @@
     graylog_compose_dir: /opt/graylog-stack
     graylog_datanode_config_dir: /opt/graylog-stack/datanode-config
     graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    graylog_cadvisor_image: "{{ graylog_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
     graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
     graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
     graylog_mongodb_image_tag: "7"
@@ -273,7 +274,7 @@
                   condition: service_started
 
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: {{ graylog_cadvisor_image }}
               container_name: cadvisor
               restart: unless-stopped
               ports:
@@ -338,11 +339,30 @@
         - graylog_deploy_runtime | bool
         - graylog_lbstatus_check.content != "ALIVE"
 
+    - name: Collect Graylog preflight password matches from logs
+      ansible.builtin.set_fact:
+        graylog_preflight_password_matches: >-
+          {{ (graylog_container_logs.stderr + graylog_container_logs.stdout)
+             | regex_findall("password '([^']+)'") }}
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
+    - name: Assert Graylog preflight password was present in container logs
+      ansible.builtin.assert:
+        that:
+          - graylog_preflight_password_matches | length > 0
+        fail_msg: >-
+          Graylog preflight password was not found in container logs even though
+          Graylog has not yet reported ALIVE. This usually means the preflight
+          log format changed and the setup automation needs to be updated.
+      when:
+        - graylog_deploy_runtime | bool
+        - graylog_lbstatus_check.content != "ALIVE"
+
     - name: Parse preflight password from logs
       ansible.builtin.set_fact:
-        graylog_preflight_password: >-
-          {{ (graylog_container_logs.stderr + graylog_container_logs.stdout)
-             | regex_search("password '([^']+)'", '\\1') | first }}
+        graylog_preflight_password: "{{ graylog_preflight_password_matches | first }}"
       when:
         - graylog_deploy_runtime | bool
         - graylog_lbstatus_check.content != "ALIVE"
@@ -408,7 +428,7 @@
         return_content: true
       register: graylog_datanodes
       until: >-
-        (graylog_datanodes.json | default([]) | selectattr('data_node_status', 'eq', 'AVAILABLE') | list | length) > 0
+        (graylog_datanodes.json | default([]) | selectattr('datanode_status', 'eq', 'AVAILABLE') | list | length) > 0
       retries: 30
       delay: 10
       when:

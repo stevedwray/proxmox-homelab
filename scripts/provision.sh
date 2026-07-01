@@ -550,6 +550,12 @@ provision_stack() {
 
   local cmd=(ansible-playbook -i "$inventory_file" "$playbook_file" -e "@${extra_vars_file}")
 
+  # Graylog runtime is required for teardown validation on pve-test-vm. Keep
+  # production behavior unchanged until the test-domain path is fully validated.
+  if [[ "$stack" == "graylog-stack" && "${PVE_ENV:-}" == "pve-test-vm" ]]; then
+    cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
+  fi
+
   # Always regenerate zone from EdgeManifests before deploying dns-stack so the
   # live zone is never stale with respect to declared routes.
   if [[ "$stack" == "dns-stack" ]]; then
@@ -572,7 +578,10 @@ provision_stack() {
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
 
   log "RUN ${stack}: ${cmd[*]}"
-  "${cmd[@]}"
+  if ! "${cmd[@]}"; then
+    rm -f "$extra_vars_file"
+    return 1
+  fi
   rm -f "$extra_vars_file"
 
   # H-1d: run per-stack smoke test if present (skipped in check mode)
