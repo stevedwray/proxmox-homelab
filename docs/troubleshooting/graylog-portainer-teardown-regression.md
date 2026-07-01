@@ -1,7 +1,7 @@
 # Graylog and Portainer Not Working After Teardown
 
 **Observed:** 2026-07-01
-**Status:** Unresolved. Investigation stopped; report written for follow-up.
+**Status:** Root cause identified. Persistent fix not yet implemented.
 
 ---
 
@@ -20,48 +20,94 @@ All other services (authentik, harbor, grafana, netbox, traefik) are functional.
 
 ### Why Portainer Is Never Deployed
 
-The teardown harness deploys the platform tier sequentially. Graylog-stack was added to the tier in this session at position 10 (after monitoring, before netbox and portainer). When the graylog health check fails, `phase_deploy_platform` aborts and the remaining stacks — including portainer — are never reached.
+The teardown harness deploys the platform tier sequentially. In the failing
+July 1 teardown run (`20260701-011024`), Graylog was reached after Harbor and
+Monitoring and before NetBox and Portainer. When `health-graylog-stack` fails,
+the platform phase aborts and the remaining stacks — including Portainer — are
+never reached.
 
 Portainer's own code is **not broken**; it simply never runs.
 
 ### Why the Graylog Health Check Fails
 
-The teardown harness health check for graylog-stack is:
+The teardown harness health check for `graylog-stack` is:
 
 ```bash
-curl -fsS 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' | grep -qx 'ALIVE'
+bash -lc "for i in \$(seq 1 24); do
+  code=\$(curl -o /dev/null -s -w '%{http_code}' \
+    'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' || true)
+  body=\$(curl -fsS \
+    'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' 2>/dev/null || true)
+  echo \"attempt=\${i} http_code=\${code} body=\${body}\"
+  [[ \"\${body}\" == 'ALIVE' ]] && exit 0
+  sleep 5
+done; echo 'Graylog did not report ALIVE after 24 attempts' >&2; exit 1"
 ```
 
-This runs immediately after `provision-graylog-stack` completes. The provision playbook waits for Graylog to report ALIVE, but does so via `http://127.0.0.1:9000` **from within the LXC** — not from the external network. The harness health check runs from the **operator's machine** against the external LXC IP.
+This runs after `provision-graylog-stack` completes. In the failing run, the
+provision step did **not** start Graylog runtime at all:
 
-Last observed error:
+- `Write Graylog env file` was skipped
+- `Write Graylog docker-compose.yml` was skipped
+- `Bring up Graylog stack` was skipped
+- `Wait for Graylog to report ALIVE` was skipped
+- the playbook then wrote scaffold assets under `/opt/graylog-stack`
+
+Evidence:
+
+- [provision-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/provision-graylog-stack.log)
+- [health-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/health-graylog-stack.log)
+
+Last observed health result:
 
 ```
-curl: (7) Failed to connect to 192.168.20.114:9000 after 0 ms: Could not connect to server
+attempt=1 http_code=000 body=
+...
+attempt=24 http_code=000 body=
+Graylog did not report ALIVE after 24 attempts
 ```
 
-Immediate connection refused (0 ms) suggests the port is not yet externally bound at the moment the check fires, even though the provision considers Graylog ALIVE via localhost.
+This is not primarily an “external bind timing” failure. The July 1 evidence
+shows a more basic control-path mismatch:
 
-A 2-minute retry loop (24 × 5s) was added in commit `24ddfc5` but this was not validated in a full teardown run before the investigation was halted.
+- the teardown harness treats `graylog-stack` as a required live platform stack
+- `deploy-graylog-stack.yml` still treats the real Graylog runtime as optional
+- the normal `scripts/provision.sh --stack graylog-stack` path does not enable
+  that runtime path
+- the playbook therefore succeeds in scaffold-only mode
+- the later health probe fails because no Graylog service is listening on port
+  `9000`
 
 ### Why Graylog Shows Bad Gateway in Browser
 
-Even when Graylog deploys and the harness health check doesn't abort the run prematurely, the browser shows "Bad Gateway" from Traefik. This was observed in one run where provision passed. Likely cause: Traefik routes to `http://192.168.20.114:9000` but Graylog is either still initialising on the external port, or the Graylog container is not running.
+When the teardown run leaves Graylog in scaffold-only mode, Traefik has
+nothing healthy to route to. In that state, a browser-facing “Bad Gateway” is
+consistent with the direct health failure.
 
-Not yet root-caused definitively. Graylog is a heavy Java application with multiple components (datanode, MongoDB, OpenSearch/datanode). Startup takes longer than lighter stacks and the ordering within the provision may not wait long enough for all components.
+This does not rule out future runtime startup or readiness issues once Graylog
+is brought into the standard provision path, but those are secondary until the
+runtime is actually started in teardown-driven deploys.
 
 ---
 
 ## What Was Tried
 
-1. **Graylog-stack added to teardown inventory** (`151db69`) — correct decision but introduced a cascade failure because of the health check timing issue.
+1. **Graylog-stack added to teardown inventory** (`151db69`) — correct
+   direction, but it exposed that Graylog was not yet provisioned as a standard
+   live runtime in teardown.
 
-2. **Health check retry loop added** (`24ddfc5`) — adds 24 × 5s retries. Not yet confirmed to resolve the issue in a full run.
+2. **Graylog inventory / host targeting fixes** (`44bbddb5`) — corrected the
+   harness inventory and Graylog health host selection so the teardown was
+   checking the real Graylog LXC path.
 
-3. **No investigation into why Graylog itself is not externally reachable** — the teardown was halted before this could be diagnosed. Possible causes:
-   - Docker port binding on `0.0.0.0:9000` takes longer than expected after provision "ALIVE" check
-   - One of the multiple Graylog components (datanode, OpenSearch) is failing post-startup
-   - The compose file has a port binding issue (e.g., bound to LXC-internal interface only)
+3. **Health check retry loop added** (`24ddfc5`) — added 24 × 5s retries.
+   This did not fix the failure because the root problem was not late external
+   binding; the runtime was never started in the failing teardown path.
+
+4. **Live host/container inspection performed after the failing run** —
+   confirmed that the Graylog LXC was running, but Graylog containers were not
+   present and `/opt/graylog-stack` contained scaffold artifacts rather than a
+   live compose project.
 
 ---
 
@@ -69,28 +115,34 @@ Not yet root-caused definitively. Graylog is a heavy Java application with multi
 
 | Stack | Status | Notes |
 |---|---|---|
-| graylog-stack | Provisioned; externally unreachable | Bad gateway; health check fails |
-| portainer-stack | Never deployed | Downstream of graylog failure |
+| graylog-stack | Scaffolded; runtime not started in teardown path | Health probe fails because nothing is listening on `:9000` |
+| portainer-stack | Never deployed | Downstream of Graylog failure in platform phase |
 
 The teardown test fails at the graylog health check, aborting the platform phase.
 
 ---
 
-## Suggested Next Steps (not yet attempted)
+## Evidence Summary
 
-1. **Validate the retry fix**: run the teardown again with the `24ddfc5` retry loop and observe whether Graylog eventually becomes reachable externally or still fails.
+- Full teardown evidence:
+  [20260701-011024](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024)
+- Key logs:
+  - [provision-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/provision-graylog-stack.log)
+  - [health-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/health-graylog-stack.log)
+  - [summary-deploy-platform.md](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/summary-deploy-platform.md)
 
-2. **Check Graylog container state directly** after a provision run:
-   ```bash
-   PVE_ENV=pve-test-vm ./with-secrets ssh root@192.168.20.114 \
-     "docker ps; docker logs graylog-stack-graylog-1 --tail 50"
-   ```
+---
 
-3. **Check if port 9000 is externally bound** after provision:
-   ```bash
-   PVE_ENV=pve-test-vm ./with-secrets ssh root@192.168.20.114 "ss -tlnp | grep 9000"
-   ```
+## Recommended Follow-On Plan
 
-4. **If port is externally bound but Graylog is still unhealthy**: investigate the datanode/OpenSearch startup sequence — Graylog 6.x requires the datanode to complete certificate provisioning before it reports ALIVE from outside.
+Use the dedicated sprint plan here:
 
-5. **If the retry loop is insufficient**: consider moving the graylog health check out of `validate_stack_smoke` into a dedicated post-provision smoke test that can tolerate the full Java startup window (~3–5 minutes).
+[teardown-graylog-portainer/README.md](/home/steve/git/proxmox-homelab/docs/troubleshooting/teardown-graylog-portainer/README.md)
+
+In short, the way forward is:
+
+1. make Graylog runtime part of the standard provision path
+2. add earlier Graylog-specific failure detection
+3. rerun a full teardown cycle and confirm Graylog passes
+4. verify the platform phase continues through NetBox and Portainer
+5. finish with browser/edge validation
