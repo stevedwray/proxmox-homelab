@@ -1,7 +1,8 @@
 # Graylog and Portainer Not Working After Teardown
 
 **Observed:** 2026-07-01
-**Status:** Root cause identified. Persistent fix not yet implemented.
+**Updated:** 2026-07-02
+**Status:** Root cause identified and remediation implemented on the working branch. Full teardown-cycle revalidation on `pve-test-vm` is the remaining gate.
 
 ---
 
@@ -111,14 +112,25 @@ runtime is actually started in teardown-driven deploys.
 
 ---
 
-## Current State (2026-07-01)
+## Current State (2026-07-02)
 
 | Stack | Status | Notes |
 |---|---|---|
-| graylog-stack | Scaffolded; runtime not started in teardown path | Health probe fails because nothing is listening on `:9000` |
-| portainer-stack | Never deployed | Downstream of Graylog failure in platform phase |
+| graylog-stack | Targeted destroy/redeploy path validated | Runtime deploy succeeds, Harbor-backed images are in use, and browser access works |
+| portainer-stack | Downstream teardown status still awaiting full-cycle proof | Portainer was previously skipped only because the platform phase aborted at Graylog |
 
-The teardown test fails at the graylog health check, aborting the platform phase.
+The original failure mode was a scaffold-only Graylog provision path. That is no
+longer the current working state on the branch.
+
+Targeted validation completed after the fix:
+
+- `graylog-stack` destroy/redeploy succeeded on `pve-test-vm`
+- `graylog.test.gibbsgreatly.xyz` loaded successfully in the browser
+- Graylog images pulled via Harbor-backed paths
+- legacy `portainer-agent` residue on the Graylog host was identified as
+  unrelated cleanup, not the root cause of the teardown failure
+- the remaining open validation item is one full teardown cycle proving the
+  platform phase continues through NetBox and Portainer
 
 ---
 
@@ -141,8 +153,7 @@ Use the dedicated sprint plan here:
 
 In short, the way forward is:
 
-1. make Graylog runtime part of the standard provision path
-2. add earlier Graylog-specific failure detection
-3. rerun a full teardown cycle and confirm Graylog passes
-4. verify the platform phase continues through NetBox and Portainer
-5. finish with browser/edge validation
+1. preserve the now-working Graylog runtime path and Harbor-first image routing
+2. rerun a full teardown cycle and confirm Graylog passes in-harness
+3. verify the platform phase continues through NetBox and Portainer
+4. finish with browser/edge validation

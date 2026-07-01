@@ -3,13 +3,14 @@
 **Observed:** 2026-07-01
 **Scope:** `pve-test-vm` teardown/redeploy cycle
 **Primary goal:** Make `graylog-stack` participate correctly in teardown so the platform phase reaches and deploys `portainer-stack` reliably.
+**Updated:** 2026-07-02
 
 ---
 
 ## Problem Summary
 
-The failing teardown runs do not show a Graylog startup timing problem as the
-primary issue. They show a control-path mismatch:
+The original failing teardown runs did not show a Graylog startup timing problem
+as the primary issue. They showed a control-path mismatch:
 
 - the teardown harness now treats `graylog-stack` as a required platform stack
 - `deploy-graylog-stack.yml` still treats the real Graylog runtime as optional
@@ -20,8 +21,9 @@ primary issue. They show a control-path mismatch:
   and fails because no Graylog process is listening
 - the platform phase aborts before `netbox-stack` and `portainer-stack`
 
-This plan is intended to get from that root cause to a persistent, validated
-fix.
+That root cause has now been addressed on the working branch. This plan is now
+primarily a validation and hardening plan to close the loop with full teardown
+evidence.
 
 ---
 
@@ -59,6 +61,22 @@ cycle on `pve-test-vm`:
   - direct pulls after Harbor is available should be treated as a contract
     violation, not just a style issue
 
+## Current Working State
+
+As of 2026-07-02 on the current working branch:
+
+- `graylog-stack` targeted destroy/redeploy succeeds on `pve-test-vm`
+- Graylog is healthy in-browser at `graylog.test.gibbsgreatly.xyz`
+- Graylog runtime images and cAdvisor now resolve through Harbor-backed image
+  paths
+- legacy `portainer-agent` residue on Graylog has been cleaned up in
+  provisioning
+- dashboard import no longer warns when the dashboards directory is absent
+- scaffold assets no longer write during the normal runtime path
+
+The remaining open proof point is a full teardown cycle showing that the
+platform phase now proceeds through Graylog and on to NetBox and Portainer.
+
 ---
 
 ## Sprint 0 — Correct The Incident Record
@@ -94,27 +112,10 @@ work starts from the right root cause.
 **Goal:** Remove the gap between manual Graylog validation and teardown-driven
 Graylog provisioning.
 
-### Hypothesis
+### Result
 
-Graylog works when provisioned with `GRAYLOG_DEPLOY_RUNTIME=true`, but the
-normal teardown/provision path does not set that condition.
-
-### Implementation options
-
-Option A — preferred:
-- Make `graylog-stack` always deploy runtime in
-  `deploy-graylog-stack.yml`.
-- Remove the optional runtime guard for normal stack deployment.
-
-Option B — acceptable fallback:
-- Keep scaffold support in the playbook.
-- Have `scripts/provision.sh` explicitly enable runtime mode for
-  `graylog-stack`.
-
-### Decision rule
-
-Choose Option A unless scaffold-only mode still has an explicit operational use
-case that must be preserved.
+Completed on the working branch. Graylog now follows the normal provision path
+correctly enough to pass targeted destroy/redeploy validation on `pve-test-vm`.
 
 ### Deliverables
 
@@ -139,8 +140,7 @@ Then verify:
 
 ### Exit gate
 
-- Graylog no longer needs a hidden/manual runtime override to become a real
-  service.
+- Satisfied on the branch through targeted Graylog redeploy validation.
 
 ---
 
@@ -151,8 +151,9 @@ the stack did not actually come up.
 
 ### Why
 
-The current flow allows a scaffold-only Graylog provision to report success and
-only fails at the teardown smoke step.
+The original flow allowed a scaffold-only Graylog provision to report success
+and only fail at the teardown smoke step. The current remaining concern is
+operator clarity during startup, not silent scaffold success.
 
 ### Deliverables
 
@@ -163,6 +164,7 @@ only fails at the teardown smoke step.
   - containers absent
   - containers present but not healthy
   - `lbstatus` failing
+  - expected cold-start retries versus final failure
 
 ### Validation
 
@@ -179,8 +181,8 @@ Expected behavior:
 
 ### Exit gate
 
-- It is no longer possible for Graylog scaffold-only output to be mistaken for
-  a successful live provision.
+- Partially satisfied. Silent scaffold success has been removed from the normal
+  path; remaining work is mostly log/smoke-test clarity.
 
 ---
 
@@ -386,9 +388,10 @@ For the fixing sprint, keep one evidence packet that includes:
 
 ## Open Questions
 
-1. Does scaffold-only Graylog deployment still serve a real workflow, or can it
-   be retired entirely?
-2. Should Graylog’s direct smoke test check localhost inside the LXC, external
+1. Should Graylog’s direct smoke test check localhost inside the LXC, external
    LXC IP reachability, or both?
-3. Once Graylog is made mandatory in live provision, should the stack contract
-   be updated to remove its “pilot scaffold” framing?
+2. Should the smoke test wording distinguish normal cold-start retries from
+   actual failure more clearly?
+3. Once the full teardown cycle passes, which branch should become the promotion
+   source for `stable` given that the current working branch name no longer
+   matches the active scope?

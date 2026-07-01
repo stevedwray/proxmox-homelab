@@ -49,20 +49,24 @@ logging design.
 
 ### Live progress snapshot
 
-Current implementation state on this branch (as of 2026-06-30):
+Current implementation state on this branch (as of 2026-07-02):
 
 - `graylog-stack` deployed and fully operational on `pve-test-vm`
   - hostname: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
   - Graylog 7.1.3 Data Node running (MongoDB 7 + DataNode + Graylog Server)
   - Traefik/Auth/DNS published: accessible at `https://graylog.test.gibbsgreatly.xyz`
   - LDAP auth backend configured; Authentik login works
+- targeted Graylog destroy/redeploy validation succeeded after the teardown RCA fixes
+  - Harbor-backed Graylog, MongoDB, and cAdvisor images confirmed in live runtime
+  - browser validation succeeded after targeted redeploy
+  - startup may require several smoke-test retries before `ALIVE`, but the current targeted path is healthy
 - All active pve-test-vm stacks dual-feeding Graylog (G3 complete)
 - MikroTik and NAS remote syslog feeding Graylog (G4 complete)
 - Proxmox host rsyslog forwarding configured via Ansible (G4 complete)
-- Sprint G5 next: remove VictoriaLogs entirely
+- Full teardown-cycle revalidation remains the next gate before promotion
 - `terraform/secrets.enc.yaml` now contains `GRAYLOG_PASSWORD_SECRET` and `GRAYLOG_ROOT_PASSWORD_SHA2` (SOPS entry present)
 - `rsyslog_forward` Ansible role extended: new defaults, conditional tasks, and `graylog_inbound.conf.j2` template to accept UDP/TCP 514 and forward to `127.0.0.1:5140`
-- `deploy-graylog-stack.yml` playbook extended with an optional runtime deploy flow (writes `/opt/graylog-stack/graylog.env`, `docker-compose.yml`, brings up compose) guarded by `GRAYLOG_DEPLOY_RUNTIME` (defaults to false)
+- `deploy-graylog-stack.yml` now provisions the real runtime path used in targeted redeploy validation, cleans legacy Portainer-agent residue on the Graylog host, skips missing-dashboard warnings cleanly, and no longer writes scaffold assets during normal runtime deploys
 - smoke-test helpers added under `scripts/smoke/` (`check-graylog-alive.sh`, `send-graylog-test-message.sh`, `query-graylog-search.sh`)
 
 ### Baseline evidence
@@ -96,7 +100,7 @@ Expected baseline result:
 - Grafana metrics access works normally
 - the VictoriaLogs-backed Grafana dashboards remain the current fallback log UI
 
-Additional Graylog scaffold validation completed on this branch:
+Additional Graylog validation completed on this branch:
 
 ```bash
 PVE_ENV=pve-test-vm ./with-secrets terragrunt apply \
@@ -107,14 +111,16 @@ PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh \
   --stack graylog-stack --target-env pve-test-vm
 ```
 
-Expected scaffold result:
+Expected current result:
 
 - Terraform creates `graylog-stack` at VMID `20014`
 - env-scoped inventory is written under
   `terraform/lxc/environments/pve-test-vm/graylog-stack/`
-- Ansible bootstrap completes successfully
-- `/opt/graylog-stack/scaffold/README.txt` and
-  `/opt/graylog-stack/scaffold/graylog.env.example` exist on the guest
+- Ansible runtime provision completes successfully
+- `/opt/graylog-stack/graylog.env` and `/opt/graylog-stack/docker-compose.yml`
+  exist on the guest
+- Graylog reports `ALIVE` after startup retries
+- the browser path works at `https://graylog.test.gibbsgreatly.xyz`
 
 ### Current baseline operator workflows
 
@@ -698,7 +704,7 @@ Step 4  Extend rsyslog_forward role (new defaults, task, template)
 Step 5  Update deploy-graylog-stack.yml (real compose + env + health wait)
 
 Step 6  Provision graylog-stack:
-          GRAYLOG_DEPLOY_RUNTIME=true PVE_ENV=pve-test-vm ./with-secrets \
+          PVE_ENV=pve-test-vm ./with-secrets \
             scripts/provision.sh --stack graylog-stack --target-env pve-test-vm
         Gate: Graylog reports ALIVE before proceeding
 
