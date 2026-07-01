@@ -208,10 +208,9 @@
   gather_facts: false
 
   vars:
-    # Prefer LAB_IP_HARBOR from env (set by .env.pve-test-vm with test IP) over the
-    # inventory's registry_host, which is Terraform-generated from the FQDN at apply time
-    # and may carry the production hostname in test environments.
-    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else lookup('env', 'LAB_IP_HARBOR') | default(registry_host, true) | mandatory('LAB_IP_HARBOR env var or registry_host inventory var is required') }}"
+    # Use Harbor's FQDN for registry auth and image pulls so token service redirects stay
+    # on the same host that Docker logged into.
+    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
 
   tasks:
     - name: Write NetBox secrets env file
