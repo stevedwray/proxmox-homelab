@@ -1113,6 +1113,7 @@ hydrate_live_env_contract() {
     LAB_IP_HARBOR
     LAB_IP_MONITORING
     LAB_IP_NETBOX
+    HARBOR_TLS_RESOLVER
     LAB_GW_MGMT
     LAB_DOMAIN
     LAB_BASE_DOMAIN
@@ -1656,7 +1657,13 @@ validate_stack_smoke() {
       ;;
     graylog-stack)
       run_logged "health-${stack}" \
-        bash -lc "curl -fsS 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' | grep -qx 'ALIVE'"  # NOSONAR — unauthenticated health check on private SDN
+        bash -lc "for i in \$(seq 1 24); do
+          code=\$(curl -o /dev/null -s -w '%{http_code}' 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' || true)
+          body=\$(curl -fsS 'http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus' 2>/dev/null || true)
+          echo \"attempt=\${i} http_code=\${code} body=\${body}\"
+          [[ \"\${body}\" == 'ALIVE' ]] && exit 0
+          sleep 5
+        done; echo 'Graylog did not report ALIVE after 24 attempts' >&2; exit 1"  # NOSONAR — unauthenticated health check on private SDN
       ;;
   esac
 }
