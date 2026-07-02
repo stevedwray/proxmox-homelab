@@ -1,5 +1,0 @@
-ERROR: production MikroTik preflight bootstrap did not populate required environment variables
-Missing requirements:
-  - MIKROTIK_PASSWORD
-Expected source: terraform/secrets.pve.enc.yaml and/or .env.pve
-exit status 1

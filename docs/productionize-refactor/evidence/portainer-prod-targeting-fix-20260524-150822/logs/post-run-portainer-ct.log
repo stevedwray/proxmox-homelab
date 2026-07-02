@@ -1,8 +1,0 @@
-=== PRODUCTION MUTATION APPROVED ===
-Task: portainer-prod-targeting-fix-20260524
-Command: ssh -F /dev/null root@pve pct status 20020 && pct config 20020 | egrep "^(hostname|memory|net0):"
-
-status: running
-hostname: portainer-stack
-memory: 512
-net0: name=eth0,bridge=tvmgmt,gw=192.168.20.1,hwaddr=BC:24:11:97:65:A4,ip=192.168.20.20/24,type=veth

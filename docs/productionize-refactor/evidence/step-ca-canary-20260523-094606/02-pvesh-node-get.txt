@@ -1,4 +1,0 @@
-/bin/sh: line 1: pvesh: command not found
-exit status 127
-command=./with-secrets-prod pvesh get /nodes/pve
-rc=127

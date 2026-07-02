@@ -1,3 +1,0 @@
-Evidence path: docs/productionize-refactor/evidence/authentik-canary-20260523-122756
-
-=== PHASE 0: Dispose pve-test Counterpart ===

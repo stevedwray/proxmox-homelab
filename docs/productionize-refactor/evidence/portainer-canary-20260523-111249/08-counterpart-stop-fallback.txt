@@ -1,2 +1,0 @@
-Preflight passed: TF_VAR_proxmox_node=pve-test
-No-op: portainer-stack (vmid=20020) already absent

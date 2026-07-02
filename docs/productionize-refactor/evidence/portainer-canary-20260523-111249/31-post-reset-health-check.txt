@@ -1,6 +1,0 @@
-{"Version":"2.27.3","InstanceID":"8cdfd550-a192-4e8f-af94-2defdc675d6a"}Connection to 192.168.20.20 9000 port [tcp/cslistener] succeeded!
-PASS port 9000 reachable
-Connection to 192.168.20.20 9443 port [tcp/tungsten-https] succeeded!
-PASS port 9443 reachable
-Connection to 192.168.20.20 8000 port [tcp/irdmi] succeeded!
-PASS port 8000 reachable

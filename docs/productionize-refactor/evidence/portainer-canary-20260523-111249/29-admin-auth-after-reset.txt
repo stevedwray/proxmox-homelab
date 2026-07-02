@@ -1,5 +1,0 @@
-=== PRODUCTION MUTATION APPROVED ===
-Task: canary-portainer-pve-20260523
-Command: bash -lc set -a; source .env; source .env.pve; set +a; code=$(curl -sS -o /dev/null -w "%{http_code}" -H "Content-Type: application/json" -d "{\"username\":\"admin\",\"password\":\"${PORTAINER_ADMIN_PASSWORD:-}\"}" "http://${LAB_IP_PORTAINER}:9000/api/auth" || true); printf "auth_status_portainer_admin_password=%s\n" "$code"
-
-auth_status_portainer_admin_password=200

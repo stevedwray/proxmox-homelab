@@ -1,8 +1,0 @@
-[0;90m17:01:37.259[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.network_sdn_vars[0]: Refreshing state... [id=6ae524506dd431d3d673a25968d7268a2aeedb82][0m[0m
-[0;90m17:01:37.262[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mnull_resource.configure_network_sdn_attachment[0]: Refreshing state... [id=4253293608256326467][0m[0m
-[0;90m17:01:37.270[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.proxmox_virtual_environment_container.docker_host: Refreshing state... [id=40011][0m[0m
-[0;90m17:01:37.482[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mmodule.lxc.terraform_data.container_epoch: Refreshing state... [id=443e13af-170f-9378-eb80-c65d869307e9][0m[0m
-[0;90m17:01:37.483[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1mlocal_file.ansible_inventory: Refreshing state... [id=f718ba2e9e47a73d735369a5a0173dd058457997][0m[0m
-[0;90m17:01:37.492[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0m[1m[32mNo changes.[0m[1m Your infrastructure matches the configuration.[0m[0m
-[0;90m17:01:37.492[0m [0;37mSTDOUT[0m [0;36mtofu: [0m[0mOpenTofu has compared your real infrastructure against your configuration and[0m
-[0;90m17:01:37.492[0m [0;37mSTDOUT[0m [0;36mtofu: [0mfound no differences, so no changes are needed.

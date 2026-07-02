@@ -1,4 +1,0 @@
-ERROR: Refusing to run with PVE_ENV=pve (expected pve-test)
-To override intentionally, set ALLOW_PVE=true for that command.
-command=./scripts/dispose-pve-test-counterpart.sh --stack step-ca-stack --plan
-rc=1

@@ -1,8 +1,0 @@
-6:          ansible_host: 192.168.20.12
-10:          ssh_access_mode: direct
-14:          dns_server: 192.168.20.1
-16:          contract_dns_server: 192.168.20.1
-17:          stack_name: monitoring-stack
-18:          ansible_playbook: deploy-monitoring-stack
-19:          vmid: 20012
-20:          app_stack_name: monitoring-stack
