@@ -1,5 +1,13 @@
 # 04-core-services-03 — Deploy Traefik reverse proxy
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` Phase 04 deployment workflow
+> and should not be treated as the current operator runbook.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md),
+> [docs/workflow/environments.md](../../workflow/environments.md), and
+> [docs/teardown-test/README.md](../../teardown-test/README.md).
+
 ## Rebuild confidence
 
 | Criterion | State |
