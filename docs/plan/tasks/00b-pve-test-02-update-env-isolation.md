@@ -1,5 +1,12 @@
 # 00b-pve-test-02 — Update pve-test environment isolation after Portainer bootstrap
 
+> Historical task packet.
+> This document reflects the earlier bare-metal `pve-test` bootstrap path and
+> retired branch workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 COMPLETE

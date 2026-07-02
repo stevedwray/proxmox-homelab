@@ -1,5 +1,9 @@
 # 03-code-quality-03 — MikroTik primary_ip4 bug fix (issue #48)
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 COMPLETE

@@ -1,5 +1,9 @@
 # 01-ci-runner-04 — Pin GitHub Actions workflow versions
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 COMPLETE

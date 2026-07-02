@@ -1,5 +1,11 @@
 # 01-ci-runner-02 — Verify and maintain immutable GitHub Actions pins
 
+> Historical task packet.
+> This document reflects the earlier CI runner and workflow-hardening plan.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 COMPLETE

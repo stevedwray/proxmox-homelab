@@ -1,5 +1,9 @@
 # 03-code-quality-05 — Cognitive complexity refactor (issue #28)
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 COMPLETE

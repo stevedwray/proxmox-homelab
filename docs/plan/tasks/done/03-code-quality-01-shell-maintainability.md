@@ -1,5 +1,9 @@
 # 03-code-quality-01 — Shell script maintainability fixes (issues #23, #26, #31)
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 PENDING
