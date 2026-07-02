@@ -23,6 +23,8 @@ Already completed on this branch:
 - deleted `docs/productionize-refactor/handoffs/`
 - deleted `docs/netbox-stack/artifacts/`
 - deleted `docs/teardown-test/artifacts/`
+- deleted `docs/provisioning-refactor/prompts/`
+- deleted `docs/teardown-test/prompts/`
 
 These removals establish the first repo-wide cleanup rule in practice:
 
@@ -58,11 +60,11 @@ This rule applies repo-wide, not just to one refactor directory.
 | `docs/reference/` | 5 | keep | best candidate for stable operator reference |
 | `docs/design/` | 10 | keep + summarize | durable architecture should stay, but archive references should be clearly separated |
 | `docs/plan/` | 88 | summarize | active roadmap matters, but the area is too large and historically layered |
-| `docs/provisioning-refactor/` | 81 | summarize | may still hold real source-of-truth material, but needs compression and pruning |
+| `docs/provisioning-refactor/` | 57 | summarize | may still hold real source-of-truth material, but needs compression and pruning |
 | `docs/productionize-refactor/` | 223 before cleanup | summarize + selective keep | core strategy docs may still be useful; evidence and handoffs are already removed |
 | `docs/sessions/` | 43 before cleanup | completed archive | raw transcripts and timestamped reports were high-noise and are now removed |
 | `docs/prompts/` | 28 before cleanup | completed archive | agent support material, now removed from tracked docs |
-| `docs/teardown-test/` | 45 | summarize + archive | keep the current runbook, archive execution residue and historical packets |
+| `docs/teardown-test/` | 24 | summarize + archive | keep the current runbook, archive execution residue and historical packets |
 | `docs/netbox-stack/` | 11 | summarize | still relevant, but the README/current-state material is too time-layered |
 | `docs/monitoring-stack/` | 3 | summarize | very small count, but the docs are unusually large and verbose |
 
@@ -116,15 +118,17 @@ Completed first-pass archive/removal work:
 | `docs/productionize-refactor/handoffs/` | 37 |
 | `docs/netbox-stack/artifacts/` | 4 |
 | `docs/teardown-test/artifacts/` | 6 |
-| Subtotal removed | 267 |
+| `docs/provisioning-refactor/prompts/` | 24 |
+| `docs/teardown-test/prompts/` | 15 |
+| Subtotal removed | 306 |
 
 Primary summarize/rewrite candidates now:
 
 | Area | Tracked files |
 | --- | ---: |
 | `docs/plan/` | 88 |
-| `docs/provisioning-refactor/` | 81 |
-| `docs/teardown-test/` | 45 |
+| `docs/provisioning-refactor/` | 57 |
+| `docs/teardown-test/` | 24 |
 | `docs/netbox-stack/` | 11 |
 | `docs/monitoring-stack/` | 3 |
 | `docs/design/` | 10 |
@@ -133,13 +137,13 @@ Primary summarize/rewrite candidates now:
 | `README.md` + `docs/getting-started.md` | 2 |
 | Subtotal | 253 |
 
-Additional high-noise artifact-style material still tracked:
+Second-pass archive work now completed:
 
-| Area | Tracked files | Why it matters |
+| Area | Tracked files | Result |
 | --- | ---: | --- |
-| `docs/provisioning-refactor/prompts/` | 24 | agent packet set embedded inside docs; high context cost and not operator-facing documentation |
-| `docs/teardown-test/prompts/` | 15 | another nested agent packet set; same pattern as deleted top-level `docs/prompts/` |
-| Subtotal | 39 | likely archive candidates, but they still have live references that must be rewritten first |
+| `docs/provisioning-refactor/prompts/` | 24 | removed after rewriting task indexes to rely on task docs instead of prompt packs |
+| `docs/teardown-test/prompts/` | 15 | removed after confirming no active docs needed them |
+| Subtotal | 39 | completed archive |
 
 Interpretation:
 
@@ -214,10 +218,7 @@ The next practical execution order should be:
 4. Reduce `docs/productionize-refactor/` to its durable core only.
 5. Shorten `docs/plan/`, `docs/provisioning-refactor/`, and
    `docs/monitoring-stack/` around a current-state-first structure.
-6. Decide whether nested prompt packs under `docs/provisioning-refactor/` and
-   `docs/teardown-test/` should be archived like the former top-level
-   `docs/prompts/`, then rewrite their task indexes accordingly.
-7. Do a repo-wide stale-link and stale-environment-name pass.
+6. Complete the repo-wide stale-link and stale-environment-name pass.
 
 ## Decision Gates
 
@@ -259,5 +260,6 @@ The next phase should be deliberate and step-by-step:
 
 1. fix entrypoint trust
 2. consolidate workflow truth
-3. compress the large living docs
-4. finish with a stale-reference pass
+3. archive artifact-style prompt material
+4. compress the large living docs
+5. finish with a stale-reference pass

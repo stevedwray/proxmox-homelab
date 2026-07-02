@@ -14,7 +14,6 @@ migration.
 
 - `docs/provisioning-refactor/decisions.md`
 - `docs/provisioning-refactor/tasks/08-coredns-renderer.md`
-- `docs/provisioning-refactor/prompts/08-coredns-renderer.yaml`
 
 ## Preconditions
 
