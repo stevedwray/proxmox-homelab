@@ -69,7 +69,7 @@ not combine migration tasks unless explicitly requested.
 ## Important Decisions
 
 - Browser hostnames on `pve-test-vm` use `*.lab.gibbsgreatly.xyz`.
-- Generated browser DNS records target Traefik at `10.57.2.10`.
+- Generated browser DNS records target Traefik at `192.168.30.10`.
 - CoreDNS is the `lab.gibbsgreatly.xyz` authority; MikroTik remains resolver,
   conditional forwarder, and network policy point.
 - `stack.yaml` remains the LXC metadata contract and does not gain browser edge

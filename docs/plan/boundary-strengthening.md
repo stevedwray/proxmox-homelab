@@ -105,7 +105,7 @@ provides: []
 ## Change 2 — Fix hardcoded registry IP in authentik (pve vs pve-test mismatch)
 
 **Root cause:** `deploy-authentik-stack.yml` and `docker-compose.yml` both hardcode
-`192.168.1.10` (the pve Harbor address). On pve-test, Harbor is at `10.57.3.10`.
+`192.168.1.10` (the pve Harbor address). On pve-test, Harbor is at `192.168.40.10`.
 A pve-test authentik deployment silently uses the wrong registry.
 
 ### 2a. `terraform/lxc/ansible/playbooks/deploy-authentik-stack.yml` — line 23
@@ -115,11 +115,11 @@ A pve-test authentik deployment silently uses the wrong registry.
 authentik_registry_host: "192.168.1.10"
 
 # After:
-authentik_registry_host: "{{ registry_host | default('10.57.3.10') }}"
+authentik_registry_host: "{{ registry_host | default('192.168.40.10') }}"
 ```
 
 `registry_host` is a host var from the generated inventory (see Change 3 below).
-The `default('10.57.3.10')` is a safe fallback that already points to pve-test.
+The `default('192.168.40.10')` is a safe fallback that already points to pve-test.
 
 Also add `REGISTRY_HOST` to the `.env` write task so Docker Compose can expand
 `${REGISTRY_HOST}` in the compose file:
@@ -150,7 +150,7 @@ Update the comment at the top:
 # After:
 # All images are routed through Harbor proxy cache at ${REGISTRY_HOST}.
 # REGISTRY_HOST is written to .env by deploy-authentik-stack.yml.
-# pve-test: 10.57.3.10  pve: 192.168.1.10
+# pve-test: 192.168.40.10  pve: 192.168.1.10
 ```
 
 ---
@@ -165,13 +165,13 @@ Ansible tasks.
 
 ```hcl
 variable "registry_host" {
-  description = "Hostname or IP of the Harbor registry used for Docker image pulls (pve: 192.168.1.10, pve-test: 10.57.3.10)"
+  description = "Hostname or IP of the Harbor registry used for Docker image pulls (pve: 192.168.1.10, pve-test: 192.168.40.10)"
   type        = string
   default     = "192.168.1.10"
 }
 
 variable "apt_cacher_host" {
-  description = "IP of the apt-cacher-ng proxy (pve: 192.168.1.35, pve-test: 10.57.3.11). Empty string skips proxy configuration."
+  description = "IP of the apt-cacher-ng proxy (pve: 192.168.1.35, pve-test: 192.168.40.11). Empty string skips proxy configuration."
   type        = string
   default     = "192.168.1.35"
 }
@@ -195,8 +195,8 @@ apt_cacher_host = try(local.stack.apt_cacher_host, var.apt_cacher_host)
 ### 3d. `.env.pve-test` — add if not already present:
 
 ```sh
-export TF_VAR_registry_host=10.57.3.10
-export TF_VAR_apt_cacher_host=10.57.3.11
+export TF_VAR_registry_host=192.168.40.10
+export TF_VAR_apt_cacher_host=192.168.40.11
 ```
 
 ### 3e. `terraform/lxc/ansible/roles/lxc_base/tasks/main.yml` — parameterize apt proxy:

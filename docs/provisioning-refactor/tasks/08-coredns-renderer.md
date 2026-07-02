@@ -22,7 +22,7 @@ browser manifests.
 
 1. Read the seed zone file and validated manifests.
 2. Preserve SOA, NS, and non-browser records.
-3. Render browser records from manifests to `10.57.2.10`.
+3. Render browser records from manifests to `192.168.30.10`.
 4. Reject duplicate generated records.
 5. Produce dry-run diff output.
 6. Validate MikroTik conditional forwarding only in live validation mode.

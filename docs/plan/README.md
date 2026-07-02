@@ -80,7 +80,7 @@ Storage pool: `infrastructure-containers` on pve-test-vm (ZFS).
 
 **Harbor bootstrap:** On the first pass, Harbor pulls its own images from Docker Hub
 directly. Once Harbor is running, all subsequent containers in all zones pull from
-`10.57.3.10`. This is the designed Stage 1 → Stage 2 transition — it is not a
+`192.168.40.10`. This is the designed Stage 1 → Stage 2 transition — it is not a
 misconfiguration. See [bootstrap.md](../design/bootstrap.md).
 
 Portainer remains in the lab as the management UI for Tier 2 application

@@ -77,7 +77,7 @@ Defines how to reach the upstream service.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `type` | enum | yes | Either `url` or `traefikService`. See [Backend Types](#backend-types). |
-| `url` | string | required if type=url | HTTP or HTTPS URL to the service. Must be accessible from Traefik. Example: `http://10.57.1.20:9000`. |
+| `url` | string | required if type=url | HTTP or HTTPS URL to the service. Must be accessible from Traefik. Example: `http://192.168.20.20:9000`. |
 | `service` | string | required if type=traefikService | Traefik service reference in format `<service>@<provider>`. See [Backend Types](#backend-types). |
 
 ### `dns`
@@ -87,7 +87,7 @@ Configures CoreDNS record generation and browser client discovery.
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
 | `enabled` | boolean | yes | Whether a DNS A record should be generated for this route. Typically `true` for all browser routes. If `false`, route is not discoverable via DNS (rarely used). |
-| `target` | string | yes | IP address that the DNS A record should resolve to. **Must always be `10.57.2.10`** (the Traefik edge entrypoint IP). CoreDNS generates records under `lab.gibbsgreatly.xyz` zone; MikroTik forwards queries for this zone to CoreDNS. |
+| `target` | string | yes | IP address that the DNS A record should resolve to. **Must always be `192.168.30.10`** (the Traefik edge entrypoint IP). CoreDNS generates records under `lab.gibbsgreatly.xyz` zone; MikroTik forwards queries for this zone to CoreDNS. |
 | `ttl` | string | yes | Time-to-live for the DNS record. Examples: `5m`, `1h`, `300s`. Recommend `5m` for frequently changing lab services. |
 
 ### `tls`
@@ -117,7 +117,7 @@ Route requests to an HTTP/HTTPS service by URL.
 ```yaml
 backend:
   type: url
-  url: http://10.57.1.20:9000
+  url: http://192.168.20.20:9000
 ```
 
 **Use cases:**
@@ -239,13 +239,13 @@ auth:
 CoreDNS is the code-managed authority for `lab.gibbsgreatly.xyz` (Decision 2).
 
 For each route with `dns.enabled: true`:
-1. The reconciler generates a CoreDNS zone record: `<host> A 10.57.2.10`
+1. The reconciler generates a CoreDNS zone record: `<host> A 192.168.30.10`
 2. MikroTik forwards queries for `*.lab.gibbsgreatly.xyz` to CoreDNS
-3. Browser clients resolve to `10.57.2.10` (Traefik's edge entrypoint)
+3. Browser clients resolve to `192.168.30.10` (Traefik's edge entrypoint)
 
-**Target IP Must Always Be `10.57.2.10`**
+**Target IP Must Always Be `192.168.30.10`**
 
-The `dns.target` field is **always `10.57.2.10`** per Decision 2.
+The `dns.target` field is **always `192.168.30.10`** per Decision 2.
 This value is explicit in the contract to prevent accidental misrouting.
 
 **TTL Recommendation**
@@ -318,17 +318,17 @@ if not host.endswith(".lab.gibbsgreatly.xyz"):
   raise ValidationError(f"host {host} must end with .lab.gibbsgreatly.xyz")
 ```
 
-### Rule 4: DNS Target Must Be `10.57.2.10`
+### Rule 4: DNS Target Must Be `192.168.30.10`
 
-**Constraint:** `dns.target` must always equal `10.57.2.10`.
+**Constraint:** `dns.target` must always equal `192.168.30.10`.
 
 **Reason:** All browser clients must resolve to the Traefik edge entrypoint.
 Any other value would route traffic away from the ingress layer.
 
 **Validator check:**
 ```
-if dns.target != "10.57.2.10":
-  raise ValidationError(f"dns.target must be 10.57.2.10, not {dns.target}")
+if dns.target != "192.168.30.10":
+  raise ValidationError(f"dns.target must be 192.168.30.10, not {dns.target}")
 ```
 
 ### Rule 5: Auth Mode Must Be Valid
@@ -359,14 +359,14 @@ if backend.type == "traefikService" and not backend.get("service"):
 ### Rule 7: DNS Config Must Be Valid
 
 **Constraint:** If `dns.enabled == true`:
-- `dns.target` must be `10.57.2.10`
+- `dns.target` must be `192.168.30.10`
 - `dns.ttl` must be a valid duration string
 
 **Validator check:**
 ```
 if dns.enabled:
-  if dns.target != "10.57.2.10":
-    raise ValidationError(f"dns.target must be 10.57.2.10")
+  if dns.target != "192.168.30.10":
+    raise ValidationError(f"dns.target must be 192.168.30.10")
   if not is_valid_duration(dns.ttl):
     raise ValidationError(f"dns.ttl {dns.ttl} is not a valid duration (e.g., 5m, 1h)")
 ```

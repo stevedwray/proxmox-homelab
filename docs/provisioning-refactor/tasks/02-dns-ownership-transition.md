@@ -23,7 +23,7 @@ migration.
 
 1. Define seed/non-browser records as bootstrap-owned.
 2. Define generated browser records as manifest-owned.
-3. Require generated browser records to target `10.57.2.10`.
+3. Require generated browser records to target `192.168.30.10`.
 4. Require migration to replace only one hostname at a time.
 
 ## Postconditions
@@ -34,7 +34,7 @@ migration.
 
 ## Validation
 
-- `rg -n "10.57.2.10|seed|generated browser|MikroTik static" docs/provisioning-refactor`
+- `rg -n "192.168.30.10|seed|generated browser|MikroTik static" docs/provisioning-refactor`
 
 ## Stop Conditions
 

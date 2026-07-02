@@ -80,17 +80,17 @@ Stop condition:
 Run from repository root (apply-mode gate probes):
 
 ```bash
-timeout 5 bash -lc '</dev/tcp/10.57.2.10/443'
-dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
+timeout 5 bash -lc '</dev/tcp/192.168.30.10/443'
+dig @192.168.20.13 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short traefik.lab.gibbsgreatly.xyz
 ```
 
 Expected outcome:
-- TCP connect to `10.57.2.10:443` succeeds.
+- TCP connect to `192.168.30.10:443` succeeds.
 - Authoritative CoreDNS answer for `traefik.lab.gibbsgreatly.xyz` includes
-	`10.57.2.10`.
+	`192.168.30.10`.
 - Delegated resolver answer for `traefik.lab.gibbsgreatly.xyz` includes
-	`10.57.2.10`.
+	`192.168.30.10`.
 
 Stop condition:
 - Traefik TCP reachability probe fails.
@@ -151,13 +151,13 @@ mkdir -p "$SNAP_DIR/traefik" "$SNAP_DIR/coredns" "$SNAP_DIR/live"
 cp -a terraform/lxc/.generated/traefik/. "$SNAP_DIR/traefik/" 2>/dev/null || true
 cp -a terraform/lxc/.generated/coredns/coredns-lab.zone "$SNAP_DIR/coredns/" 2>/dev/null || true
 
-./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/authentik.yml dest=$SNAP_DIR/live/ flat=yes" || true
-./with-secrets ansible -i '10.57.2.10,' -u root all -m shell -a "tar -C /opt/proxy-stack/dynamic -cf /tmp/proxy-dynamic.tar ." || true
-./with-secrets ansible -i '10.57.2.10,' -u root all -m fetch -a "src=/tmp/proxy-dynamic.tar dest=$SNAP_DIR/live/ flat=yes" || true
+./with-secrets ansible -i '192.168.30.10,' -u root all -m fetch -a "src=/opt/proxy-stack/dynamic/authentik.yml dest=$SNAP_DIR/live/ flat=yes" || true
+./with-secrets ansible -i '192.168.30.10,' -u root all -m shell -a "tar -C /opt/proxy-stack/dynamic -cf /tmp/proxy-dynamic.tar ." || true
+./with-secrets ansible -i '192.168.30.10,' -u root all -m fetch -a "src=/tmp/proxy-dynamic.tar dest=$SNAP_DIR/live/ flat=yes" || true
 mkdir -p "$SNAP_DIR/live/dynamic"
 tar -xf "$SNAP_DIR/live/proxy-dynamic.tar" -C "$SNAP_DIR/live/dynamic" 2>/dev/null || true
 rm -f "$SNAP_DIR/live/proxy-dynamic.tar"
-./with-secrets ansible -i '10.57.1.13,' -u root all -m fetch -a "src=/etc/coredns/lab.zone dest=$SNAP_DIR/live/coredns-lab.zone flat=yes" || true
+./with-secrets ansible -i '192.168.20.13,' -u root all -m fetch -a "src=/etc/coredns/lab.zone dest=$SNAP_DIR/live/coredns-lab.zone flat=yes" || true
 
 echo "snapshot=$SNAP_DIR"
 ```
@@ -176,7 +176,7 @@ Stop condition:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible -i '10.57.1.13,' -u root all -m ping
+../../../with-secrets ansible -i '192.168.20.13,' -u root all -m ping
 ```
 
 Expected outcome:
@@ -205,17 +205,17 @@ Stop condition:
 Run from repository root:
 
 ```bash
-dig @10.57.1.13 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short traefik.lab.gibbsgreatly.xyz
-dig @10.57.1.1 +short authentik.lab.gibbsgreatly.xyz
+dig @192.168.20.13 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short traefik.lab.gibbsgreatly.xyz
+dig @192.168.20.1 +short authentik.lab.gibbsgreatly.xyz
 ```
 
 Expected outcome:
-- All browser hosts resolve to `10.57.2.10`.
+- All browser hosts resolve to `192.168.30.10`.
 - MikroTik delegated forwarding returns the same answer path as CoreDNS.
 
 Stop condition:
-- Any browser host does not resolve to `10.57.2.10`.
+- Any browser host does not resolve to `192.168.30.10`.
 - Delegated forwarding is inconsistent with CoreDNS answers.
 
 ## 5. Traefik Generated-File Validation and Deploy (Task 13 Wiring)
@@ -237,7 +237,7 @@ Expected outcome:
 Run from `terraform/lxc/ansible`:
 
 ```bash
-../../../with-secrets ansible -i '10.57.2.10,' -u root all -m ping
+../../../with-secrets ansible -i '192.168.30.10,' -u root all -m ping
 ../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root --check playbooks/deploy-proxy-stack.yml \
 	-e traefik_generated_source_dir=/home/steve/git/proxmox-homelab/terraform/lxc/.generated/traefik
 ```
@@ -278,7 +278,7 @@ Run from repository root:
 ```bash
 for h in traefik grafana authentik portainer harbor netbox; do
 	echo "== $h.lab.gibbsgreatly.xyz =="
-	curl -sSI --resolve "$h.lab.gibbsgreatly.xyz:443:10.57.2.10" "https://$h.lab.gibbsgreatly.xyz" | grep -E 'HTTP/|location:|server:'
+	curl -sSI --resolve "$h.lab.gibbsgreatly.xyz:443:192.168.30.10" "https://$h.lab.gibbsgreatly.xyz" | grep -E 'HTTP/|location:|server:'
 done
 ```
 
@@ -293,7 +293,7 @@ Run from repository root:
 ```bash
 for h in traefik grafana authentik portainer harbor netbox; do
 	echo "== cert $h.lab.gibbsgreatly.xyz =="
-	echo | openssl s_client -connect 10.57.2.10:443 -servername "$h.lab.gibbsgreatly.xyz" 2>/dev/null \
+	echo | openssl s_client -connect 192.168.30.10:443 -servername "$h.lab.gibbsgreatly.xyz" 2>/dev/null \
 		| openssl x509 -noout -subject -issuer -ext subjectAltName
 done
 ```
@@ -306,7 +306,7 @@ Expected outcome:
 Run from repository root:
 
 ```bash
-curl -sk -o /dev/null -w '%{http_code}\n' http://10.57.1.10:9000/-/health/live/
+curl -sk -o /dev/null -w '%{http_code}\n' http://192.168.20.10:9000/-/health/live/
 curl -sk -o /dev/null -w '%{http_code}\n' https://authentik.lab.gibbsgreatly.xyz/application/o/
 ```
 
@@ -350,7 +350,7 @@ Run from `terraform/lxc/ansible` (replace snapshot path):
 
 ```bash
 SNAP_DIR=/home/steve/git/proxmox-homelab/docs/provisioning-refactor/snapshots/<timestamp>
-../../../with-secrets ansible-playbook -i '10.57.1.13,' -u root playbooks/deploy-coredns.yml \
+../../../with-secrets ansible-playbook -i '192.168.20.13,' -u root playbooks/deploy-coredns.yml \
 	-e coredns_generated_zone_src="$SNAP_DIR/live/coredns-lab.zone"
 ```
 
@@ -363,7 +363,7 @@ Run from `terraform/lxc/ansible` (replace snapshot path):
 
 ```bash
 SNAP_DIR=/home/steve/git/proxmox-homelab/docs/provisioning-refactor/snapshots/<timestamp>
-../../../with-secrets ansible -i '10.57.2.10,' -u root all -m copy -a "src=$SNAP_DIR/live/dynamic/ dest=/opt/proxy-stack/dynamic/ mode=0640"
+../../../with-secrets ansible -i '192.168.30.10,' -u root all -m copy -a "src=$SNAP_DIR/live/dynamic/ dest=/opt/proxy-stack/dynamic/ mode=0640"
 ../../../with-secrets ansible-playbook -i ../stacks/proxy-stack/inventory.yml -u root playbooks/deploy-proxy-stack.yml
 ```
 

@@ -9,13 +9,13 @@ This phase still follows the platform foundation, but the target is no longer a 
 ## Prerequisites
 
 - Validated stack-owned edge foundation is present and reachable:
-  - CoreDNS at `10.57.1.13`
-  - Authentik at `10.57.1.10`
-  - step-ca at `10.57.1.11`
-  - Traefik at `10.57.2.10`
-  - Monitoring at `10.57.1.12`
+  - CoreDNS at `192.168.20.13`
+  - Authentik at `192.168.20.10`
+  - step-ca at `192.168.20.11`
+  - Traefik at `192.168.30.10`
+  - Monitoring at `192.168.20.12`
 - Phase 05 supply-chain pipeline active: Harbor scanning, SBOM generation, signing, and Harbor-only image policy are in place
-- Harbor at `10.57.3.10` operational with projects and scanning configured
+- Harbor at `192.168.40.10` operational with projects and scanning configured
 - NetBox updated with current IP allocations
 - Current branch workflow from `AGENTS.md` applies: start from the current
   active development HEAD, use a short-lived `feat/`/`task/` branch, validate,
@@ -93,7 +93,7 @@ Migrate Pi-hole **last in the day**, with a rollback plan ready (revert Pi-hole 
 
 | Service | Role | Deployed in |
 |---|---|---|
-| **CoreDNS** | Authority for `lab.gibbsgreatly.xyz`; forwards non-lab queries upstream | Phase 04b, `10.57.1.13` |
+| **CoreDNS** | Authority for `lab.gibbsgreatly.xyz`; forwards non-lab queries upstream | Phase 04b, `192.168.20.13` |
 | **Pi-hole** | Ad-blocking recursive resolver; optional secondary resolver for clients | Phase 06, `10.60.0.10` |
 
 Pi-hole can be the client's default resolver (for ad-blocking), while CoreDNS remains the authority for internal service naming.
@@ -134,8 +134,8 @@ Mirror the Pi-hole image to Harbor before deploying:
 ```bash
 # Pull and retag for Harbor:
 docker pull pihole/pihole:<version>
-docker tag pihole/pihole:<version> 10.57.3.10/homelab/apps/pihole:<version>
-docker push 10.57.3.10/homelab/apps/pihole:<version>
+docker tag pihole/pihole:<version> 192.168.40.10/homelab/apps/pihole:<version>
+docker push 192.168.40.10/homelab/apps/pihole:<version>
 ```
 
 Or use the Harbor replication policy to pull from Docker Hub on a schedule.
@@ -375,11 +375,11 @@ jobs:
     strategy:
       matrix:
         host:
-          - "10.57.3.11"     # apt-cacher-ng
-          - "10.57.1.10"     # Authentik
-          - "10.57.1.11"     # step-ca
-          - "10.57.2.10"     # Traefik
-          - "10.57.1.12"     # Monitoring
+          - "192.168.40.11"     # apt-cacher-ng
+          - "192.168.20.10"     # Authentik
+          - "192.168.20.11"     # step-ca
+          - "192.168.30.10"     # Traefik
+          - "192.168.20.12"     # Monitoring
           # Add Phase 06 app stacks as they are deployed
     steps:
       - uses: actions/checkout@v4
@@ -498,7 +498,7 @@ Follow the repository branch model in `AGENTS.md`:
 - [ ] Media library accessible at `/media` mount
 - [ ] Download client connected and processing
 - [ ] UIs accessible via Traefik at `*.lab.gibbsgreatly.xyz` with Authentik gate
-- [ ] All images sourced from `10.57.3.10/homelab/apps/`
+- [ ] All images sourced from `192.168.40.10/homelab/apps/`
 - [ ] Old containers destroyed
 
 ### Jellyfin

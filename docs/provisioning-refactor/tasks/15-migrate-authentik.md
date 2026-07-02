@@ -40,7 +40,7 @@ Move `authentik.lab.gibbsgreatly.xyz` to stack-owned provisioning with
 
 ## Validation
 
-- DNS resolves to `10.57.2.10`.
+- DNS resolves to `192.168.30.10`.
 - HTTPS returns Authentik response via Traefik.
 - No `authentik` middleware is attached to the Authentik route.
 
