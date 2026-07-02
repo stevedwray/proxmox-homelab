@@ -1,6 +1,16 @@
 # Phase 04: Core Shared Services — Deployment Guide
 
-This guide covers the deployment sequence for Phase 04 services on pve-test. Before starting,
+> Historical deployment guide.
+> This document reflects the earlier `pve-test` era, old IP allocations
+> (`10.57.x.x`), and the retired `baseline/teardown-validated` workflow.
+> Keep it as implementation history only.
+> For current environment, workflow, and stack order guidance, use
+> [docs/plan/README.md](../README.md),
+> [docs/teardown-test/README.md](../../teardown-test/README.md), and
+> [docs/workflow/branch-model.md](../../workflow/branch-model.md).
+
+This guide covers the deployment sequence for Phase 04 services on the earlier
+`pve-test` environment. Before starting,
 read [development-status.md](../development-status.md) to understand which components are
 rebuild-safe and which have known gaps requiring manual steps.
 
