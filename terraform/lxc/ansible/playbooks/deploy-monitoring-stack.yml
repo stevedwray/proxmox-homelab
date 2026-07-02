@@ -71,12 +71,10 @@
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
     grafana_version: "11.6.0"
-    victorialogs_version: "v1.51.0"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
-    victorialogs_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-logs:{{ victorialogs_version }}"
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.49.1"
     cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
@@ -188,6 +186,8 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_CI_RUNNER') }}:9100"]
                   labels: {stack: ci-runner-01}
+                - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
+                  labels: {stack: graylog-stack}
 
             - job_name: cadvisor
               static_configs:
@@ -203,6 +203,8 @@
                   labels: {stack: harbor-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_NETBOX') }}:8081"]
                   labels: {stack: netbox-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:8080"]
+                  labels: {stack: graylog-stack}
 
             - job_name: coredns
               scrape_interval: 15s
@@ -271,11 +273,6 @@
                 - targets:
                     - "{{ lookup('env', 'LAB_IP_MONITORING') }}:8428"
 
-            - job_name: victorialogs
-              static_configs:
-                - targets:
-                    - "{{ lookup('env', 'LAB_IP_MONITORING') }}:9428"
-
             - job_name: grafana
               static_configs:
                 - targets:
@@ -307,12 +304,6 @@
               access: proxy
               url: http://victoriametrics:8428  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               isDefault: true
-              editable: true
-            - name: VictoriaLogs
-              type: victoriametrics-logs-datasource
-              uid: VictoriaLogs
-              access: proxy
-              url: http://victorialogs:9428  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
               editable: true
             - name: Harbor Findings
               type: yesoreyeram-infinity-datasource
@@ -397,7 +388,7 @@
               environment:
                 GF_SERVER_ROOT_URL: "{{ grafana_public_url }}"
                 GF_AUTH_GENERIC_OAUTH_ENABLED: "{{ 'true' if grafana_oauth_enabled else 'false' }}"
-                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource,victoriametrics-logs-datasource"
+                GF_INSTALL_PLUGINS: "yesoreyeram-infinity-datasource"
                 GF_AUTH_GENERIC_OAUTH_NAME: "{{ grafana_oauth_name }}"
                 GF_AUTH_GENERIC_OAUTH_SCOPES: "{{ grafana_oauth_scopes }}"
                 GF_AUTH_GENERIC_OAUTH_AUTH_URL: "{{ grafana_oauth_auth_url }}"
@@ -420,22 +411,6 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
               depends_on:
                 - victoriametrics
-                - victorialogs
-
-            victorialogs:
-              image: {{ victorialogs_image }}
-              container_name: victorialogs
-              restart: unless-stopped
-              ports:
-                - "9428:9428"
-                - "5140:5140"
-              volumes:
-                - victorialogs-data:/vlogs
-              command:
-                - -storageDataPath=/vlogs
-                - -retentionPeriod=30d
-                - -syslog.listenAddr.tcp=:5140
-                - '-syslog.streamFields.tcp=["hostname","app_name","facility","severity"]'
 
             harbor-findings-exporter:
               image: {{ harbor_findings_exporter_image }}
@@ -476,7 +451,6 @@
           volumes:
             vm-data: {}
             grafana-data: {}
-            victorialogs-data: {}
       no_log: true
       register: monitoring_compose_definition
 
@@ -597,17 +571,6 @@
       retries: 30
       delay: 10
       until: vm_health.status == 200
-      when: not ansible_check_mode
-
-    - name: Wait for VictoriaLogs health endpoint
-      ansible.builtin.uri:
-        url: "http://{{ ansible_host }}:9428/health"  # nosonar: ansible:S5332 — VictoriaLogs health check on private SDN
-        method: GET
-        status_code: 200
-      register: victorialogs_health
-      retries: 30
-      delay: 10
-      until: victorialogs_health.status == 200
       when: not ansible_check_mode
 
     - name: Wait for Harbor findings exporter metrics endpoint

@@ -2,6 +2,7 @@ hostname: torrent-stack
 ip_address: "192.168.1.5"
 vmid: 100
 portainer_agent: true
+register_portainer_env: true
 
 portainer_stacks:
   - name: torrent-stack

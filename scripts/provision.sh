@@ -167,6 +167,15 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
     return 0
   fi
 
+  # Physical home-LAN stacks (gaming/media/torrent/management) have no
+  # per-environment inventory and are only meaningful on pve. On any other
+  # environment the controller can still reach them (same LAN) but would
+  # register them against the wrong (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP portainer env registration: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
   log "Portainer env registration: ${stacks[*]}"
 
   for stack in "${stacks[@]}"; do
@@ -187,6 +196,73 @@ sys.exit(0 if d.get('register_portainer_env') else 1)
       ansible-playbook -i "$inventory" -u root "$playbook"
     fi
   done
+}
+
+repair_portainer_migrated_app_stacks() {
+  local check_mode="$1"
+  local stacks_dir="$STACKS_DIR"
+  local repair_stacks=()
+
+  for stack_dir in "${stacks_dir}"/*; do
+    [[ -d "$stack_dir" ]] || continue
+
+    local stack
+    stack="$(basename "$stack_dir")"
+
+    local inventory
+    if [[ -f "${ENV_ROOT}/${stack}/inventory.yml" ]]; then
+      inventory="${ENV_ROOT}/${stack}/inventory.yml"
+    else
+      inventory="${stack_dir}/inventory.yml"
+    fi
+    [[ -f "$inventory" ]] || continue
+
+    local playbook_name
+    playbook_name="$(extract_ansible_playbook "$inventory")"
+    if [[ "$playbook_name" == "migrate-portainer-stack" || "$playbook_name" == "migrate-portainer-stack.yml" ]]; then
+      repair_stacks+=("$stack")
+    fi
+  done
+
+  if [[ ${#repair_stacks[@]} -eq 0 ]]; then
+    log "SKIP Portainer app endpoint repair: no stacks use migrate-portainer-stack"
+    return 0
+  fi
+
+  # These are physical home-LAN hosts with no per-environment inventory. The
+  # ansible controller (operator's machine) is on that LAN and can reach them
+  # regardless of which PVE_ENV is targeted — so the gate must be explicit, not
+  # based on network reachability. Only run repair on pve; on pve-test-vm the
+  # controller would SSH into the real hosts and register them against the wrong
+  # (test) Portainer instance.
+  if [[ "${PVE_ENV:-}" != "pve" ]]; then
+    log "SKIP Portainer app endpoint repair: only runs on pve (PVE_ENV=${PVE_ENV:-unset})"
+    return 0
+  fi
+
+  log "Portainer app endpoint repair: ${repair_stacks[*]}"
+
+  if [[ "$check_mode" == "true" ]]; then
+    log "  dry-run: standalone portainer-stack recovery would re-pair migrated app endpoints"
+    return 0
+  fi
+
+  for stack in "${repair_stacks[@]}"; do
+    log "  repairing Portainer-managed app stack: ${stack}"
+    provision_stack "$stack" "false"
+  done
+}
+
+layers_include_stack() {
+  local stack_name="$1"
+  local layers_json="$2"
+
+  python3 -c "
+import json, sys
+d = json.load(sys.stdin)
+target = sys.argv[1]
+sys.exit(0 if any(target in layer for layer in d['layers']) else 1)
+" "$stack_name" <<<"$layers_json"
 }
 
 extract_ansible_playbook() {
@@ -304,6 +380,7 @@ APPROVED_PLATFORM_STACKS = {
     "harbor-stack",
     "ci-runner-01",
     "dns-stack",
+    "graylog-stack",
     "step-ca-stack",
     "authentik-stack",
     "proxy-stack",
@@ -473,6 +550,12 @@ provision_stack() {
 
   local cmd=(ansible-playbook -i "$inventory_file" "$playbook_file" -e "@${extra_vars_file}")
 
+  # Graylog runtime is required for teardown validation on pve-test-vm. Keep
+  # production behavior unchanged until the test-domain path is fully validated.
+  if [[ "$stack" == "graylog-stack" && "${PVE_ENV:-}" == "pve-test-vm" ]]; then
+    cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
+  fi
+
   # Always regenerate zone from EdgeManifests before deploying dns-stack so the
   # live zone is never stale with respect to declared routes.
   if [[ "$stack" == "dns-stack" ]]; then
@@ -495,7 +578,10 @@ provision_stack() {
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
 
   log "RUN ${stack}: ${cmd[*]}"
-  "${cmd[@]}"
+  if ! "${cmd[@]}"; then
+    rm -f "$extra_vars_file"
+    return 1
+  fi
   rm -f "$extra_vars_file"
 
   # H-1d: run per-stack smoke test if present (skipped in check mode)
@@ -675,6 +761,10 @@ if [[ -z "$explicit_csv" ]]; then
   register_portainer_environments "$check_mode"
 else
   log "SKIP edge reconcile: single-stack mode (activate-edge phase handles this)"
+fi
+
+if layers_include_stack "portainer-stack" "$layers_json"; then
+  repair_portainer_migrated_app_stacks "$check_mode"
 fi
 
 log "Completed provision orchestration"

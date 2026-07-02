@@ -21,6 +21,8 @@ harbor_postconfigure_proxy_project_name: "dockerhub"
 # Additional proxy cache registries (docker-registry type, unauthenticated)
 # Each entry creates one endpoint and one proxy project.
 harbor_postconfigure_proxy_registries:
+  - name: gcr
+    url: https://gcr.io
   - name: ghcr
     url: https://ghcr.io
   - name: quay

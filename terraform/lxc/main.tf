@@ -25,6 +25,7 @@ locals {
     lab_ip_authentik      = var.lab_ip_authentik
     lab_ip_step_ca        = var.lab_ip_step_ca
     lab_ip_monitoring     = var.lab_ip_monitoring
+    lab_ip_graylog        = var.lab_ip_graylog
     lab_ip_dns            = var.lab_ip_dns
     lab_ip_proxy          = var.lab_ip_proxy
     lab_ip_harbor         = var.lab_ip_harbor

@@ -129,7 +129,12 @@
       community.docker.docker_compose_v2:
         project_src: "{{ portainer_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if portainer_docker_daemon_config.changed else 'auto' }}"
+        recreate: >-
+          {{
+            'always'
+            if (portainer_docker_daemon_config.changed or (portainer_force_recreate | default(false) | bool))
+            else 'never'
+          }}
         remove_orphans: true
 
 - name: Initialise Portainer admin account

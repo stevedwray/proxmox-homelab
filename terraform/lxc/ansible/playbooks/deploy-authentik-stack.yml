@@ -41,13 +41,13 @@
     authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
     authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
     authentik_insecure_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
-    # Keep in sync with image tags in stacks/authentik-stack/docker-compose.yml
-    authentik_image_version: "2024.12.3"
+    authentik_image_version: "2026.2.4"
     authentik_nginx_version: "1.27-alpine"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
     authentik_superuser_password: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_PASSWORD') | mandatory('AUTHENTIK_SUPERUSER_PASSWORD env var is not set') }}"
     authentik_superuser_api_token: "{{ lookup('env', 'AUTHENTIK_SUPERUSER_API_TOKEN') | mandatory('AUTHENTIK_SUPERUSER_API_TOKEN env var is not set') }}"
+    authentik_ldap_service_password: "{{ lookup('env', 'AUTHENTIK_LDAP_SERVICE_PASSWORD') | default(authentik_superuser_password, true) }}"
     lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     lab_admin_email: "{{ lookup('env', 'LAB_ADMIN_EMAIL') | default(lab_admin_username ~ '@' ~ lab_domain, true) }}"
@@ -61,6 +61,15 @@
         path: "{{ authentik_compose_dir }}"
         state: directory
         mode: "0750"
+
+    - name: Ensure .ldap-outpost.env placeholder exists before any compose command
+      ansible.builtin.file:
+        path: "{{ authentik_compose_dir }}/.ldap-outpost.env"
+        state: touch
+        mode: "0600"
+        modification_time: preserve
+        access_time: preserve
+      changed_when: false
 
     - name: Write docker-compose.yml
       ansible.builtin.copy:
@@ -238,16 +247,6 @@
             group: root
             mode: "0600"
 
-    - name: Restart direct_tls nginx container to load renewed cert
-      ansible.builtin.command:
-        cmd: docker compose -f "{{ authentik_compose_path }}" restart direct_tls
-        chdir: "{{ authentik_compose_dir }}"
-      when:
-        - not ansible_check_mode
-        - not (authentik_step_ca_reachable.failed | default(true))
-        - authentik_step_cert_issue is defined
-        - authentik_step_cert_issue.changed
-
     - name: Write Authentik direct TLS nginx config (TLS — step-ca cert issued)
       ansible.builtin.copy:
         dest: "{{ authentik_compose_dir }}/nginx/direct-tls.conf"
@@ -302,8 +301,19 @@
           AUTHENTIK_SUPERUSER_PASSWORD={{ authentik_superuser_password }}
           AUTHENTIK_BOOTSTRAP_PASSWORD={{ authentik_superuser_password }}
           AUTHENTIK_BOOTSTRAP_TOKEN={{ authentik_superuser_api_token }}
+          AUTHENTIK_IMAGE_VERSION={{ authentik_image_version }}
           REGISTRY_HOST={{ authentik_registry_host }}
       no_log: true
+
+    - name: Restart direct_tls nginx container to load renewed cert
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ authentik_compose_path }}" restart direct_tls
+        chdir: "{{ authentik_compose_dir }}"
+      when:
+        - not ansible_check_mode
+        - not (authentik_step_ca_reachable.failed | default(true))
+        - authentik_step_cert_issue is defined
+        - authentik_step_cert_issue.changed
 
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
@@ -396,6 +406,56 @@
         - name: Pull cadvisor image from gcr.io
           ansible.builtin.command:
             cmd: "docker pull gcr.io/cadvisor/cadvisor:v0.49.1"
+
+        - name: Pull Authentik LDAP outpost image from ghcr.io
+          ansible.builtin.command:
+            cmd: "docker pull ghcr.io/goauthentik/ldap:{{ authentik_image_version }}"
+
+        - name: Tag Authentik LDAP outpost image with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag ghcr.io/goauthentik/ldap:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
+
+    - name: Check if Authentik LDAP image is available locally
+      ansible.builtin.command:
+        cmd: "docker image inspect {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
+      register: authentik_ldap_image_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Check if Authentik server image is available locally
+      ansible.builtin.command:
+        cmd: "docker image inspect {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
+      register: authentik_server_image_check
+      failed_when: false
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Pull and tag Authentik server image when not locally cached
+      when:
+        - not ansible_check_mode
+        - authentik_server_image_check.rc != 0
+      block:
+        - name: Pull goauthentik server image from ghcr.io
+          ansible.builtin.command:
+            cmd: "docker pull ghcr.io/goauthentik/server:{{ authentik_image_version }}"
+
+        - name: Tag goauthentik server with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag ghcr.io/goauthentik/server:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
+
+    - name: Pull and tag Authentik LDAP outpost image when not locally cached
+      when:
+        - not ansible_check_mode
+        - authentik_ldap_image_check.rc != 0
+      block:
+        - name: Pull Authentik LDAP outpost image from ghcr.io
+          ansible.builtin.command:
+            cmd: "docker pull ghcr.io/goauthentik/ldap:{{ authentik_image_version }}"
+
+        - name: Tag Authentik LDAP outpost image with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag ghcr.io/goauthentik/ldap:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
 
     - name: Authenticate Docker to Harbor registry (when Harbor is reachable)
       ansible.builtin.shell:
@@ -614,4 +674,564 @@
     - name: Confirm homelab-admins group provisioned with lab admin user
       ansible.builtin.debug:
         msg: "Authentik group 'homelab-admins' is present (pk={{ homelab_admins_pk }}) and {{ lab_admin_username }} (pk={{ steve_pk }}) is a member."
+      when: not ansible_check_mode
+
+    # LDAP outpost — needed for Graylog LDAP auth service.
+    # The ldap container in docker-compose reads AUTHENTIK_TOKEN from .ldap-outpost.env.
+    # We create the provider + outpost idempotently and write the token before restarting the container.
+
+    - name: Ensure .ldap-outpost.env placeholder exists before compose starts
+      ansible.builtin.file:
+        path: "{{ authentik_compose_dir }}/.ldap-outpost.env"
+        state: touch
+        mode: "0600"
+        modification_time: preserve
+        access_time: preserve
+      changed_when: false
+
+    - name: Resolve invalidation flow for LDAP provider
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/instances/?slug=default-provider-invalidation-flow"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_invalidation_flow
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Resolve default password stage for Graylog LDAP flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/stages/password/?name=default-authentication-password"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_default_password_stage
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Resolve default login stage for Graylog LDAP flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/stages/user_login/?name=default-authentication-login"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_default_login_stage
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Resolve stage PKs for Graylog LDAP flow
+      ansible.builtin.set_fact:
+        authentik_default_password_stage_pk: "{{ authentik_default_password_stage.json.results[0].pk }}"
+        authentik_default_login_stage_pk: "{{ authentik_default_login_stage.json.results[0].pk }}"
+      when: not ansible_check_mode
+
+    # In Authentik 2026.x, the LDAP outpost calls the authorization flow directly
+    # (not a separate authentication flow). The authorization flow must have
+    # authentication: none and contain identification + password + user_login stages.
+    - name: Check if ldap-authz-flow exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/instances/?slug=ldap-authz-flow"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_authz_flow_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create ldap-authz-flow authorization flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/instances/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "ldap-authz-flow"
+          slug: "ldap-authz-flow"
+          title: "LDAP Authorization Flow"
+          designation: "authorization"
+          authentication: "none"
+          policy_engine_mode: "any"
+          compatibility_mode: false
+          layout: "stacked"
+          denied_action: "message_continue"
+        status_code: [201]
+      register: authentik_ldap_authz_flow_create
+      when:
+        - not ansible_check_mode
+        - (authentik_ldap_authz_flow_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve ldap-authz-flow PK
+      ansible.builtin.set_fact:
+        authentik_ldap_authz_flow_pk: >-
+          {{
+            (authentik_ldap_authz_flow_check.json.results[0].pk
+            if (authentik_ldap_authz_flow_check.json.pagination.count | int) > 0
+            else authentik_ldap_authz_flow_create.json.pk)
+          }}
+      when: not ansible_check_mode
+
+    - name: Check if Authentik LDAP provider exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/providers/ldap/?name=edge-graylog-ldap-provider"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_provider_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create Authentik LDAP provider
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/providers/ldap/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "edge-graylog-ldap-provider"
+          base_dn: "dc=ldap,dc=goauthentik,dc=io"
+          search_mode: "direct"
+          bind_mode: "direct"
+          authorization_flow: "{{ authentik_ldap_authz_flow_pk }}"
+          invalidation_flow: "{{ authentik_ldap_invalidation_flow.json.results[0].pk }}"
+        status_code: [201]
+      register: authentik_ldap_provider_create
+      when:
+        - not ansible_check_mode
+        - (authentik_ldap_provider_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve LDAP provider PK
+      ansible.builtin.set_fact:
+        ldap_provider_pk: >-
+          {{
+            (authentik_ldap_provider_check.json.results[0].pk
+            if (authentik_ldap_provider_check.json.pagination.count | int) > 0
+            else authentik_ldap_provider_create.json.pk) | int
+          }}
+      when: not ansible_check_mode
+
+    - name: Check if Graylog LDAP application exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/applications/?slug=edge-graylog-ldap"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_graylog_ldap_app_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create Graylog LDAP application
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/applications/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "edge-graylog-ldap-app"
+          slug: "edge-graylog-ldap"
+          provider: "{{ ldap_provider_pk }}"
+        status_code: [201]
+      register: authentik_graylog_ldap_app_create
+      when:
+        - not ansible_check_mode
+        - (authentik_graylog_ldap_app_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve Graylog LDAP application PK
+      ansible.builtin.set_fact:
+        authentik_graylog_ldap_app_pk: >-
+          {{
+            (authentik_graylog_ldap_app_check.json.results[0].pk
+            if (authentik_graylog_ldap_app_check.json.pagination.count | int) > 0
+            else authentik_graylog_ldap_app_create.json.pk)
+          }}
+      when: not ansible_check_mode
+
+    - name: Check if LDAP service user exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/?username=ldapservice"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_service_user_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create LDAP service user
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          username: "ldapservice"
+          name: "LDAP Service"
+          email: "ldapservice@{{ lab_domain }}"
+          is_active: true
+          groups: []
+        status_code: [201]
+      register: authentik_ldap_service_user_create
+      when:
+        - not ansible_check_mode
+        - (authentik_ldap_service_user_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve LDAP service user PK
+      ansible.builtin.set_fact:
+        authentik_ldap_service_user_pk: >-
+          {{
+            (authentik_ldap_service_user_check.json.results[0].pk
+            if (authentik_ldap_service_user_check.json.pagination.count | int) > 0
+            else authentik_ldap_service_user_create.json.pk) | int
+          }}
+      when: not ansible_check_mode
+
+    - name: Set LDAP service user password
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ authentik_ldap_service_user_pk }}/set_password/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          password: "{{ authentik_ldap_service_password }}"
+        status_code: [204]
+      no_log: true
+      when: not ansible_check_mode
+
+    # In Authentik 2026.x, object-level permissions must be granted via roles.
+    # The assigned_by_users endpoint was removed. We create a dedicated role and
+    # assign it to the ldapservice user so it can search the full LDAP directory.
+    - name: Check if ldap-search-full-directory role exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/rbac/roles/?name=ldap-search-full-directory"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_search_role_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create ldap-search-full-directory role
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/rbac/roles/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "ldap-search-full-directory"
+        status_code: [201]
+      register: authentik_ldap_search_role_create
+      when:
+        - not ansible_check_mode
+        - (authentik_ldap_search_role_check.json.pagination.count | default(0) | int) == 0
+      no_log: true
+
+    - name: Resolve ldap-search-full-directory role PK
+      ansible.builtin.set_fact:
+        authentik_ldap_search_role_pk: >-
+          {{
+            (authentik_ldap_search_role_check.json.results[0].pk
+            if (authentik_ldap_search_role_check.json.pagination.count | default(0) | int) > 0
+            else authentik_ldap_search_role_create.json.pk)
+          }}
+      when: not ansible_check_mode
+
+    - name: Grant search_full_directory permission to ldap-search-full-directory role on LDAP provider
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/rbac/permissions/assigned_by_roles/{{ authentik_ldap_search_role_pk }}/assign/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          permissions:
+            - "authentik_providers_ldap.search_full_directory"
+          model: "authentik_providers_ldap.ldapprovider"
+          object_pk: "{{ ldap_provider_pk | string }}"
+        status_code: [200]
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Assign ldap-search-full-directory role to ldapservice user
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/users/{{ authentik_ldap_service_user_pk }}/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          roles:
+            - "{{ authentik_ldap_search_role_pk }}"
+        status_code: [200]
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Check if Graylog LDAP identification stage exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/stages/identification/?name=graylog-ldap-identification"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_graylog_ldap_ident_stage_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create Graylog LDAP identification stage
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/stages/identification/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "graylog-ldap-identification"
+          user_fields:
+            - "username"
+            - "email"
+          password_stage: "{{ authentik_default_password_stage_pk }}"
+          case_insensitive_matching: true
+          show_matched_user: true
+          sources: []
+          show_source_labels: false
+          pretend_user_exists: true
+        status_code: [201]
+      register: authentik_graylog_ldap_ident_stage_create
+      when:
+        - not ansible_check_mode
+        - (authentik_graylog_ldap_ident_stage_check.json.pagination.count | int) == 0
+      no_log: true
+
+    - name: Resolve Graylog LDAP identification stage PK
+      ansible.builtin.set_fact:
+        authentik_graylog_ldap_ident_stage_pk: >-
+          {{
+            (authentik_graylog_ldap_ident_stage_check.json.results[0].pk
+            if (authentik_graylog_ldap_ident_stage_check.json.pagination.count | int) > 0
+            else authentik_graylog_ldap_ident_stage_create.json.pk)
+          }}
+      when: not ansible_check_mode
+
+    - name: Check stage bindings for ldap-authz-flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/bindings/?target={{ authentik_ldap_authz_flow_pk }}"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_authz_flow_bindings
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Bind identification stage into ldap-authz-flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/bindings/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ authentik_ldap_authz_flow_pk }}"
+          stage: "{{ authentik_graylog_ldap_ident_stage_pk }}"
+          order: 10
+          policy_engine_mode: "any"
+          evaluate_on_plan: false
+          re_evaluate_policies: true
+          invalid_response_action: "retry"
+        status_code: [201]
+      when:
+        - not ansible_check_mode
+        - >-
+          (authentik_ldap_authz_flow_bindings.json.pagination.count | int) == 0 or
+          ((authentik_ldap_authz_flow_bindings.json.results | default([])
+            | selectattr('stage', 'eq', authentik_graylog_ldap_ident_stage_pk) | list | length) == 0)
+      no_log: true
+
+    - name: Bind password stage into ldap-authz-flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/bindings/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ authentik_ldap_authz_flow_pk }}"
+          stage: "{{ authentik_default_password_stage_pk }}"
+          order: 20
+          policy_engine_mode: "any"
+          evaluate_on_plan: false
+          re_evaluate_policies: true
+          invalid_response_action: "retry"
+        status_code: [201]
+      when:
+        - not ansible_check_mode
+        - >-
+          (authentik_ldap_authz_flow_bindings.json.pagination.count | int) == 0 or
+          ((authentik_ldap_authz_flow_bindings.json.results | default([])
+            | selectattr('stage', 'eq', authentik_default_password_stage_pk) | list | length) == 0)
+      no_log: true
+
+    - name: Bind user login stage into ldap-authz-flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/flows/bindings/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          target: "{{ authentik_ldap_authz_flow_pk }}"
+          stage: "{{ authentik_default_login_stage_pk }}"
+          order: 30
+          policy_engine_mode: "any"
+          evaluate_on_plan: false
+          re_evaluate_policies: true
+          invalid_response_action: "retry"
+        status_code: [201]
+      when:
+        - not ansible_check_mode
+        - >-
+          (authentik_ldap_authz_flow_bindings.json.pagination.count | int) == 0 or
+          ((authentik_ldap_authz_flow_bindings.json.results | default([])
+            | selectattr('stage', 'eq', authentik_default_login_stage_pk) | list | length) == 0)
+      no_log: true
+
+    - name: Ensure LDAP provider uses ldap-authz-flow as authorization flow
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/providers/ldap/{{ ldap_provider_pk }}/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: PATCH
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          authorization_flow: "{{ authentik_ldap_authz_flow_pk }}"
+        status_code: [200]
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Check if Authentik LDAP outpost exists
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/outposts/instances/?name=edge-graylog-ldap-outpost"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_outpost_check
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Resolve matching LDAP outpost records by name
+      ansible.builtin.set_fact:
+        authentik_ldap_outpost_matches: >-
+          {{
+            authentik_ldap_outpost_check.json.results | default([])
+            | selectattr('name', 'eq', 'edge-graylog-ldap-outpost')
+            | list
+          }}
+      when: not ansible_check_mode
+
+    - name: Fetch Authentik default outpost config
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/outposts/instances/default_settings/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_default_outpost_config
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Create Authentik LDAP outpost
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/outposts/instances/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: POST
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+          Content-Type: "application/json"
+        body_format: json
+        body:
+          name: "edge-graylog-ldap-outpost"
+          type: "ldap"
+          providers: ["{{ ldap_provider_pk }}"]
+          service_connection: null
+          config: "{{ authentik_default_outpost_config.json.config }}"
+        status_code: [201]
+      register: authentik_ldap_outpost_create
+      when:
+        - not ansible_check_mode
+        - (authentik_ldap_outpost_matches | default([]) | length) == 0
+      no_log: true
+
+    - name: Resolve LDAP outpost token identifier
+      ansible.builtin.set_fact:
+        ldap_outpost_token_id: >-
+          {{
+            (authentik_ldap_outpost_matches[0].token_identifier
+            if (authentik_ldap_outpost_matches | default([]) | length) > 0
+            else authentik_ldap_outpost_create.json.token_identifier)
+          }}
+      when: not ansible_check_mode
+
+    - name: Fetch LDAP outpost service token key
+      ansible.builtin.uri:
+        url: "http://{{ ansible_host }}:9000/api/v3/core/tokens/{{ ldap_outpost_token_id }}/view_key/"  # nosonar: ansible:S5332 — internal Authentik API on private SDN
+        method: GET
+        headers:
+          Authorization: "Bearer {{ authentik_superuser_api_token }}"
+        status_code: [200]
+      register: authentik_ldap_token_key
+      no_log: true
+      when: not ansible_check_mode
+
+    - name: Write .ldap-outpost.env with LDAP outpost token
+      ansible.builtin.copy:
+        dest: "{{ authentik_compose_dir }}/.ldap-outpost.env"
+        mode: "0600"
+        content: |
+          AUTHENTIK_HOST=http://{{ ansible_host }}:9000
+          AUTHENTIK_TOKEN={{ authentik_ldap_token_key.json.key }}
+      no_log: true
+      register: authentik_ldap_env_write
+      when: not ansible_check_mode
+
+    - name: Recreate LDAP outpost container to pick up token
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ authentik_compose_path }}" up -d --no-deps --force-recreate ldap
+        chdir: "{{ authentik_compose_dir }}"
+      when:
+        - not ansible_check_mode
+        - authentik_ldap_env_write.changed
+
+    - name: Wait for Authentik LDAP outpost to become healthy
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 3389
+        timeout: 60
       when: not ansible_check_mode

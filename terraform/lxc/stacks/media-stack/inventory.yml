@@ -1,0 +1,14 @@
+all:
+  children:
+    media_stack:
+      hosts:
+        media-stack:
+          ansible_host: 192.168.1.6
+          ansible_user: root
+          ansible_ssh_private_key_file: ~/.ssh/id_ed25519
+          ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+          stack_name: media-stack
+          ansible_playbook: migrate-portainer-stack
+          vmid: 102
+          pve_host: pve.gibbsgreatly.xyz
+          app_stack_name: media-stack

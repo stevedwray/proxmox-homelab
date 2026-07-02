@@ -332,13 +332,28 @@
       changed_when: false
       ignore_errors: "{{ ansible_check_mode }}"
 
-    - name: Fetch root CA certificate to the repository
+    # certs/homelab-root.crt is the canonical production trust anchor used by
+    # lxc_base to provision all managed hosts. Only update it when running
+    # against the production step-ca (PVE_ENV=pve or unset). Any other
+    # environment writes to a separate certs/homelab-root.<env>.crt file so
+    # that a pve-test-vm step-ca run cannot silently replace the production cert.
+    - name: Fetch root CA certificate to the repository (production)
       ansible.builtin.fetch:
         src: /tmp/homelab-root.crt
         dest: "{{ step_ca_root_cert_local }}"
         flat: true
       run_once: true
       ignore_errors: "{{ ansible_check_mode }}"
+      when: lookup('env', 'PVE_ENV') in ('', 'pve')
+
+    - name: Fetch root CA certificate to environment-specific path (non-production)
+      ansible.builtin.fetch:
+        src: /tmp/homelab-root.crt
+        dest: "{{ playbook_dir }}/../../../../certs/homelab-root.{{ lookup('env', 'PVE_ENV') }}.crt"
+        flat: true
+      run_once: true
+      ignore_errors: "{{ ansible_check_mode }}"
+      when: lookup('env', 'PVE_ENV') not in ('', 'pve')
 
     - name: Restore host resolver to internal DNS after bootstrap fallback
       ansible.builtin.copy:

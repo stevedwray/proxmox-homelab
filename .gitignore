@@ -98,8 +98,6 @@ id_rsa.pub
 *.pem
 *.key
 cosign.key
-certs/homelab-root.crt
-
 # Logs
 *.log
 
@@ -116,3 +114,4 @@ certs/homelab-root.crt
 .tmp/
 docs/harbor-stack/artifacts
 !docs/harbor-stack/artifacts/.gitkeep
+certs/homelab-root.pve-test-vm.crt

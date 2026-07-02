@@ -56,16 +56,12 @@
   gather_facts: false
   vars:
     harbor_installer_hostname: "{{ lookup('env', 'HARBOR_HOSTNAME') | mandatory('HARBOR_HOSTNAME env var not set') }}"
-    harbor_installer_external_url: >-
-      {{
-        lookup('env', 'HARBOR_EXTERNAL_URL') |
-        default(
-          'https://' ~ harbor_installer_hostname
-          if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve'
-          else 'http://' ~ (lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var required for non-production Harbor')),
-          true
-        )
-      }}
+    # external_url must match what discover-authentik-edge.py registers as the OIDC
+    # redirect_uri (always the public FQDN, from HARBOR_EXTERNAL_URL / HARBOR_HOSTNAME).
+    # Same value in every environment, matching production's validated model — a
+    # prod/non-prod branch here previously diverged from the OIDC registration and
+    # broke browser login in non-prod.
+    harbor_installer_external_url: "{{ lookup('env', 'HARBOR_EXTERNAL_URL') | default('https://' ~ harbor_installer_hostname, true) }}"
   roles:
     - harbor_installer
 
