@@ -30,16 +30,16 @@ cp .env.template .env
 # Edit .env — set PROXMOX_HOST, TF_WORKSPACE, etc. for your target environment
 ```
 
-`.env` is gitignored and never committed. For pve-test, the key overrides from the default are:
+`.env` is gitignored and never committed. For `pve-test-vm`, the key overrides from the default are:
 
 ```bash
-export PROXMOX_HOST='pve-test.gibbsgreatly.xyz'
-export TF_VAR_proxmox_node=pve-test
+export PROXMOX_HOST='pve-test-vm.gibbsgreatly.xyz'
+export TF_VAR_proxmox_node=pve-test-vm
 export TF_VAR_proxmox_host="${PROXMOX_HOST}"
-export TF_WORKSPACE=pve-test
-export TF_VAR_portainer_server_ip=10.57.1.20
-export TF_VAR_registry_host=10.57.3.10
-export TF_VAR_apt_cacher_host=10.57.3.11
+export TF_WORKSPACE=pve-test-vm
+export TF_VAR_portainer_server_ip=192.168.20.20
+export TF_VAR_registry_host=192.168.40.10
+export TF_VAR_apt_cacher_host=192.168.40.11
 ```
 
 ## Secrets (SOPS + age)

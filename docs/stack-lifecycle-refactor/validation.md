@@ -51,7 +51,7 @@ Recommended mandatory checks:
 Use this execution order for bounded stack validation before Stage 9:
 
 1. Target guard (required before infra/apply or reconcile commands):
-	- `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` must return `pve-test`.
+	- `./with-secrets bash -c 'echo "$TF_VAR_proxmox_node"'` must return `pve-test-vm`.
 2. Check mode reconcile (post-infra when inventory exists):
 	- `./with-secrets ./scripts/provision.sh --stack <stack-name> --check`
 3. Live reconcile:
@@ -73,7 +73,7 @@ For each bounded stack validation slice, capture at least:
 - optional infra logs (`terraform-plan.log`, `terraform-apply.log`) when infra apply is in-scope
 - optional summary file (`EVIDENCE.md`) when multiple logs need a concise findings index
 
-Evidence should be stored in a dedicated directory under `docs/sessions/evidence/<slice-name>/`.
+Evidence should be stored in an ignored evidence directory, not in tracked docs.
 
 ## Accepted Non-Idempotent Baseline Behavior (Carry Forward)
 

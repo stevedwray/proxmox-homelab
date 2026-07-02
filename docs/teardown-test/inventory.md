@@ -1,7 +1,7 @@
 # Teardown Test Inventory (OP-02)
 
 This document freezes the in-scope stack inventory, dependencies, and execution
-order for the `pve-test` teardown/deploy rehearsal.
+order for the `pve-test-vm` teardown/deploy rehearsal.
 
 This is a planning artifact only. It does not approve destructive execution.
 
@@ -9,9 +9,9 @@ This is a planning artifact only. It does not approve destructive execution.
 
 | Item | Value |
 |---|---|
-| Target environment | `pve-test` only |
+| Target environment | `pve-test-vm` only |
 | Planning branch | REQUIRES_OPERATOR_INPUT |
-| Baseline source branch | `baseline/teardown-validated` |
+| Baseline source branch | REQUIRES_OPERATOR_INPUT |
 | Baseline commit (from OP-00) | REQUIRES_OPERATOR_INPUT |
 | Inventory freeze date | REQUIRES_OPERATOR_INPUT |
 
