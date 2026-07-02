@@ -7,12 +7,18 @@ The purpose is simple: prove the platform can be destroyed and rebuilt from
 repository state, in the documented order, without hidden second-pass behavior
 or manual drift.
 
+This is the operator-facing authority for the repo's hardest validation path:
+teardown, redeploy, reprovision, reconcile, and end-to-end verification of the
+integrated infrastructure stacks on `pve-test-vm`.
+
 ## What This Covers
 
 - destructive rebuild planning for `pve-test-vm`
 - stack order, rollback gates, and operator approvals
 - reusable harness guidance for preflight, live validation, and full cycle runs
 - durable lessons learned from rehearsal passes
+- the integrated proof that provisioning and edge-reconciliation assumptions
+  actually hold on a fresh rebuild
 
 Production `pve` is out of scope.
 
@@ -61,15 +67,18 @@ enabled in [variables.md](variables.md).
 
 1. [variables.md](variables.md)
 2. [decisions.md](decisions.md)
-3. [task-sequence.md](task-sequence.md)
-4. [operations-plan.md](operations-plan.md)
-5. [runbook.md](runbook.md)
-6. [repeatable-test.md](repeatable-test.md)
-7. [lessons-learned.md](lessons-learned.md)
+3. [validation-model.md](validation-model.md)
+4. [task-sequence.md](task-sequence.md)
+5. [operations-plan.md](operations-plan.md)
+6. [runbook.md](runbook.md)
+7. [repeatable-test.md](repeatable-test.md)
+8. [lessons-learned.md](lessons-learned.md)
 
 ## File Roles
 
 - [variables.md](variables.md): destructive-gate answers and execution metadata
+- [validation-model.md](validation-model.md): the trusted overview of the full
+  hard-validation path and where provisioning-refactor fits into it
 - [task-sequence.md](task-sequence.md): atomic test plan index
 - [operations-plan.md](operations-plan.md): stack order and execution components
 - [runbook.md](runbook.md): operator command flow
@@ -77,12 +86,28 @@ enabled in [variables.md](variables.md).
 - [harness-roadmap.md](harness-roadmap.md): remaining harness hardening work
 - [lessons-learned.md](lessons-learned.md): durable findings only
 
+## Relationship To Provisioning Refactor
+
+The edge bootstrap and reconciliation mechanics live in:
+
+- [../provisioning-refactor/README.md](../provisioning-refactor/README.md)
+- [../provisioning-refactor/task-sequence.md](../provisioning-refactor/task-sequence.md)
+- [../provisioning-refactor/runbook.md](../provisioning-refactor/runbook.md)
+
+That directory is the source of truth for how stack-owned edge state should be
+rendered and reconciled.
+
+This directory is the source of truth for proving those mechanics work inside a
+fresh integrated rebuild of `pve-test-vm`.
+
 ## Agent Use
 
 1. Read this README, [variables.md](variables.md), and [decisions.md](decisions.md).
-2. Use [operations-plan.md](operations-plan.md) to find the next atomic component.
-3. Open the matching task in [tasks/](tasks/).
-4. Stop at destructive gates unless the task explicitly includes approved execution.
+2. Read [validation-model.md](validation-model.md) before making assumptions
+   about what counts as "hard validation".
+3. Use [operations-plan.md](operations-plan.md) to find the next atomic component.
+4. Open the matching task in [tasks/](tasks/).
+5. Stop at destructive gates unless the task explicitly includes approved execution.
 
 ## Workflow Note
 

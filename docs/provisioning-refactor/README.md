@@ -8,6 +8,13 @@ The objective is to move browser-facing DNS, Traefik, and Authentik intent out
 of central runbooks and into stack-owned manifests while preserving a safe
 bootstrap path for a fresh `pve-test-vm` rebuild.
 
+For the full integrated rebuild proof, do not treat this directory as the only
+authority. The hard-validation authority for teardown, redeploy, reprovision,
+reconcile, and end-to-end stack verification is:
+
+- [../teardown-test/README.md](../teardown-test/README.md)
+- [../teardown-test/validation-model.md](../teardown-test/validation-model.md)
+
 ## Target Model
 
 Terraform provisions LXCs from `stack.yaml`. Browser edge intent lives in one
@@ -52,6 +59,10 @@ their browser routes are reconciled.
 The plan is `pve-test-vm` only. Production `pve` targeting is out of scope
 until the validation model is proven.
 
+This directory defines edge-bootstrap and edge-reconciliation behavior. It does
+not replace the teardown-test execution order, approval gates, or full
+rebuild-validation flow.
+
 Each task is intentionally small enough for one short-lived branch/session. Do
 not combine migration tasks unless explicitly requested.
 
@@ -76,6 +87,8 @@ See [decisions.md](decisions.md) for details.
 - [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
 - [runbook.md](runbook.md) is the shared validation and rollback contract for
    Task 15 through Task 21 route migrations.
+- [../teardown-test/validation-model.md](../teardown-test/validation-model.md)
+  explains how this refactor fits into the full hard-validation path.
 
 ## How Agents Should Use This
 
