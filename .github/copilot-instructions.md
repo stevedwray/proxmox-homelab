@@ -72,4 +72,7 @@ If a scan returns new issues, **stop and present options** — do not merge unti
 - GitHub Actions secrets are for CI-only values and CI SOPS decryption. Local infrastructure automation should prefer SOPS plus `with-secrets`.
 - Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
 - Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
+- For planning and refactor work under `docs/`, keep transient handoffs, prompts, transcripts, logs, approval packets, and scratch notes under a local ignored `docs/<workspace>/artifacts/` directory. Do not create new tracked `handoffs/`, `evidence/`, `reports/`, or `prompts/` trees under `docs/`.
 - Keep runtime evidence, logs, backups, and large snapshots under ignored timestamped evidence directories; summarize results in tracked docs instead of committing bulky artifacts or secrets.
+- When temporary material becomes durable, fold the conclusion back into tracked docs such as `README.md`, `current-state.md`, `plan.md`, or `runbook.md`, then clean up stale artifact contents.
+- See `docs/workflow/documentation-workspaces.md` for the canonical workspace pattern.

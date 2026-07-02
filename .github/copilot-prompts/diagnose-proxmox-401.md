@@ -1,7 +1,7 @@
 # Copilot Task: Diagnose Proxmox API 401 on netbox-populate service
 
 **Model:** GPT-4o mini
-**Output:** Write your findings to `artifacts/proxmox-401-diagnosis.md` and stop. Do not fix anything.
+**Output:** Write your findings to `docs/netbox-stack/artifacts/proxmox-401-diagnosis.md` and stop. Do not fix anything.
 
 ---
 
@@ -82,7 +82,7 @@ do not modify any files or run any commands that change state.**
 
 ## Output format
 
-Write `artifacts/proxmox-401-diagnosis.md` with exactly these sections:
+Write `docs/netbox-stack/artifacts/proxmox-401-diagnosis.md` with exactly these sections:
 
 ```markdown
 # Proxmox 401 Diagnosis
@@ -108,4 +108,4 @@ as a dedicated key in secrets.enc.yaml")
 (anything you could not determine from static analysis alone)
 ```
 
-Do not modify any files other than creating `artifacts/proxmox-401-diagnosis.md`.
+Do not modify any files other than creating `docs/netbox-stack/artifacts/proxmox-401-diagnosis.md`.

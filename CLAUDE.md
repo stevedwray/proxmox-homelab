@@ -58,6 +58,18 @@ Batch related changes during development and run the appropriate tier.
 - **snyk**: `/home/steve/.local/bin/snyk iac test terraform/` — Terraform IaC only, not Ansible
 - **sonar-scanner**: `source .env && sonar-scanner` — config in `sonar-project.properties`
 
+## Documentation Workspace Pattern
+
+- For planning or refactor work under `docs/`, keep transient handoffs, prompts,
+  transcripts, logs, approval packets, and scratch notes under a local ignored
+  `docs/<workspace>/artifacts/` directory.
+- Do not create new tracked `handoffs/`, `evidence/`, `reports/`, or `prompts/`
+  directories under `docs/`.
+- Summarize durable conclusions back into tracked docs such as `README.md`,
+  `current-state.md`, `plan.md`, or `runbook.md`.
+- Clean up stale `artifacts/` contents as the plan progresses and at closeout.
+- See `docs/workflow/documentation-workspaces.md` for the canonical rule.
+
 ## Production Credential Controls
 
 Production (`pve`) access is strictly controlled and defaults to read-only.
