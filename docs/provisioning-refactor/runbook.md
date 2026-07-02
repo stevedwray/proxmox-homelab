@@ -8,7 +8,7 @@ outcomes, and stop conditions documented here.
 
 ## Scope and Safety
 
-- Scope is pve-test only.
+- Scope is pve-test-vm only.
 - Dry-run is the default for edge reconciliation.
 - Do not run apply/mutation commands until all preflight checks pass.
 - Stop immediately and present options if a validation command would mutate live
@@ -21,7 +21,7 @@ Use these exact terms in task notes, PR comments, and operator handoff.
 - Preflight: non-mutating target and health checks before apply.
 - Dry-run: manifest validation, render output, and reconciliation planning with
 	no live mutation.
-- Apply gate: explicit operator intent (`--apply`) plus healthy pve-test,
+- Apply gate: explicit operator intent (`--apply`) plus healthy pve-test-vm,
 	Traefik, and CoreDNS preflight state.
 - Pending changes: generated output or reconciliation actions still not
 	converged.
@@ -40,10 +40,10 @@ Run from repository root:
 ```
 
 Expected outcome:
-- Output is exactly `pve-test`.
+- Output is exactly `pve-test-vm`.
 
 Stop condition:
-- Any output other than `pve-test`.
+- Any output other than `pve-test-vm`.
 
 Run from repository root:
 
@@ -382,7 +382,7 @@ Stop condition:
 
 Stop and present options (do not continue) when any of the following occur:
 
-- pve-test preflight fails.
+- pve-test-vm preflight fails.
 - A command labeled as validation is discovered to be mutating.
 - Reconciler reports failed status or collision issues.
 - Apply-mode Traefik/CoreDNS health preflight checks fail.

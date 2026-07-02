@@ -1,6 +1,6 @@
 # Backup And Restore Policy (OP-03)
 
-This file records persistent-data policy for the pve-test teardown rehearsal.
+This file records persistent-data policy for the pve-test-vm teardown rehearsal.
 
 This step does not approve destructive execution. It determines whether the
 rehearsal can later proceed to a destructive approval packet.
@@ -13,13 +13,13 @@ publish. Those remain gated by OP-04/OP-05 completion and explicit operator
 approval at the destructive window.
 
 Rule for all services:
-Backup evidence is advisory for pve-test teardown rehearsals. The environment
+Backup evidence is advisory for pve-test-vm teardown rehearsals. The environment
 must remain fully destructible and redeployable from source. Missing backup
 artifacts should be recorded in evidence and remediation tracked, but they do
 not block destroy/redeploy execution.
 
 Expected evidence root during live window:
-`docs/teardown-test/evidence/${STAMP}/backups/`
+`docs/teardown-test/artifacts/evidence/${STAMP}/backups/`
 
 ## Portainer
 
@@ -41,7 +41,7 @@ Data-Loss Policy:
   preferred for faster recovery.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/portainer/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/portainer/`
 
 Post-Restore Validation:
 - Portainer service starts and API/UI login works
@@ -73,7 +73,7 @@ Data-Loss Policy:
 - Accepted data loss: yes for Trivy cache only.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/harbor/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/harbor/`
 
 Post-Restore Validation:
 - Harbor starts successfully
@@ -107,7 +107,7 @@ Data-Loss Policy:
 - Rationale: identity state loss has high blast radius across browser routes.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/authentik/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/authentik/`
 
 Post-Restore Validation:
 - Authentik health endpoint returns healthy
@@ -137,7 +137,7 @@ Data-Loss Policy:
 - Accepted data loss: no.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/netbox/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/netbox/`
 
 Post-Restore Validation:
 - NetBox service starts and responds
@@ -171,7 +171,7 @@ Data-Loss Policy:
   platform observability.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/monitoring/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/monitoring/`
 
 Post-Restore Validation:
 - Grafana login path works
@@ -202,7 +202,7 @@ Data-Loss Policy:
 - Accepted data loss: no for inability to restore TLS on required routes.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/traefik-certs/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/traefik-certs/`
 
 Post-Restore Validation:
 - Certificate store is present after restore
@@ -231,7 +231,7 @@ Data-Loss Policy:
 - Rationale: CA authority loss is high blast radius and not acceptable.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/step-ca/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/step-ca/`
 
 Post-Restore Validation:
 - step-ca starts and serves expected endpoints
@@ -263,7 +263,7 @@ Data-Loss Policy:
   is documented and tested.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/ci-runner/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/ci-runner/`
 
 Post-Restore Validation:
 - Runner registers or re-registers successfully
@@ -291,7 +291,7 @@ Data-Loss Policy:
 - Rationale: cache content is disposable and repopulates naturally.
 
 Pre-Destroy Evidence:
-- `docs/teardown-test/evidence/${STAMP}/backups/apt-cacher/`
+- `docs/teardown-test/artifacts/evidence/${STAMP}/backups/apt-cacher/`
 
 Post-Restore Validation:
 - apt-cacher service starts
