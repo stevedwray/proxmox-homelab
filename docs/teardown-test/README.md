@@ -1,63 +1,47 @@
 # Teardown/Deploy Test Plan
 
-This directory is the source of truth for planning, executing, and repeating a
-controlled `pve-test` teardown/deploy rehearsal after the stack-owned edge
-provisioning refactor.
+This directory is the current source of truth for the controlled
+`pve-test-vm` teardown/deploy rehearsal after the stack-owned edge refactor.
 
-The goal is to prove that the platform can be destroyed and rebuilt from source
-in the documented Mode 2 order, including CoreDNS, Traefik, Authentik, and the
-stack-owned edge reconciliation path.
+The purpose is simple: prove the platform can be destroyed and rebuilt from
+repository state, in the documented order, without hidden second-pass behavior
+or manual drift.
 
-This is not a casual validation cycle. It is a destructive platform rehearsal.
-Do not execute teardown or deploy commands until the variables in
-[variables.md](variables.md) are answered, backups are verified, and the
-operator has explicitly approved the destructive window.
+## What This Covers
 
-## Current Status
+- destructive rebuild planning for `pve-test-vm`
+- stack order, rollback gates, and operator approvals
+- reusable harness guidance for preflight, live validation, and full cycle runs
+- durable lessons learned from rehearsal passes
 
-The teardown harness remains part of the current repo workflow, but this README
-should not be treated as the source of truth for branch promotion rules.
+Production `pve` is out of scope.
 
-Historical teardown cycles completed successfully, including:
+## Current Position
 
-- Initial rehearsal (2026-04-22)
-- Storage-refactor gate (2026-05-17)
-- Multi-source inventory gate (2026-06-13)
+- the harness remains an active part of repo workflow
+- historical rehearsal cycles completed successfully, including the 2026-06-13
+  `pve-test-vm` cycle
+- durable takeaways belong in tracked docs such as
+  [lessons-learned.md](lessons-learned.md), not raw evidence
 
-The June 2026 cycle was run against **pve-test-vm** (`192.168.1.41`), a
-VM-hosted Proxmox instance that replaced the retired bare-metal `pve-test`
-laptop. All cold-start failures discovered during that cycle were fixed in the
-same branch and merged. Durable takeaways are in [lessons-learned.md](lessons-learned.md).
+## Safety Rules
 
-The repeatable harness is documented in [repeatable-test.md](repeatable-test.md)
-and implemented at `scripts/teardown-deploy-test.sh`.
+- confirm the target before any deploy, destroy, or validation step:
 
-The harness is safe by default: non-destructive validation phases can run during
-development, while destroy/apply/publish phases require explicit execution
-approval.
+  ```bash
+  PVE_ENV=pve-test-vm ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
+  ```
 
-## Target Outcome
+- do not proceed unless the command returns `pve-test-vm`
+- require explicit backup verification and operator approval before destructive work
+- run from a clean working tree and known commit
+- regenerate ignored `.generated/` edge artifacts immediately before publish
+- stop on any failed target guard, failed backup, failed restore dry-run, failed
+  edge preflight, or unexpected production target
 
-At the end of the test:
+## Default Stack Scope
 
-- `pve-test-vm` is rebuilt from repository state.
-- All selected platform LXCs are running at their expected VMIDs and IPs.
-- Stage 3a edge foundation is rebuilt without hidden Terraform second-pass
-  behavior.
-- Generated CoreDNS and Traefik state is regenerated from current manifests and
-  published from fresh generated state.
-- Authentik discovery/reconciliation is converged without automatic deletes.
-- All six browser routes resolve to Traefik at `${lab_ip_proxy}` and show expected
-  auth behavior.
-- The final edge reconciler dry-run is a no-op.
-- Destroy, deploy, validation, and rollback results are recorded in durable docs
-  where needed.
-
-## Scope
-
-Default scope is pve-test-vm only.
-
-The default platform stack set is:
+The normal rehearsal scope is:
 
 - `portainer-stack`
 - `harbor-stack`
@@ -70,61 +54,39 @@ The default platform stack set is:
 - `monitoring-stack`
 - `netbox-stack`
 
-Disposable network validation stacks, `test-*` stacks, and `.hold/` stacks are
-out of scope unless explicitly enabled in [variables.md](variables.md).
-`headscale-stack` currently has inventory/state but no active `stack.yaml`; it
-is out of scope until it is restored as an active stack or explicitly cleaned up.
+Disposable test stacks and `.hold/` stacks are out of scope unless explicitly
+enabled in [variables.md](variables.md).
 
-Production `pve` is out of scope.
+## Read In This Order
 
-## Safety Rules
+1. [variables.md](variables.md)
+2. [decisions.md](decisions.md)
+3. [task-sequence.md](task-sequence.md)
+4. [operations-plan.md](operations-plan.md)
+5. [runbook.md](runbook.md)
+6. [repeatable-test.md](repeatable-test.md)
+7. [lessons-learned.md](lessons-learned.md)
 
-- The target guard must confirm the expected non-production node before any
-  apply, destroy, or deployment validation command. The active test target is
-  `pve-test-vm`; set `PVE_ENV=pve-test-vm` and confirm with:
+## File Roles
 
-  ```bash
-  PVE_ENV=pve-test-vm ./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
-  ```
+- [variables.md](variables.md): destructive-gate answers and execution metadata
+- [task-sequence.md](task-sequence.md): atomic test plan index
+- [operations-plan.md](operations-plan.md): stack order and execution components
+- [runbook.md](runbook.md): operator command flow
+- [repeatable-test.md](repeatable-test.md): reusable harness behavior
+- [harness-roadmap.md](harness-roadmap.md): remaining harness hardening work
+- [lessons-learned.md](lessons-learned.md): durable findings only
 
-  Any result other than the intended non-production node must stop execution.
+## Agent Use
 
-- Teardown requires explicit human approval after backups are verified.
-- Run from a clean working tree and a known commit.
-- Regenerate ignored `.generated/` edge artifacts immediately before publish.
-- Do not trust existing ignored `.generated/` files from previous sessions.
-- Stop on any failed backup, failed target guard, failed restore dry-run, failed
-  edge preflight, or unexpected production target.
-
-## Files
-
-- [decisions.md](decisions.md) records decisions that govern the test.
-- [variables.md](variables.md) lists answers required before execution.
-- [task-sequence.md](task-sequence.md) lists the atomic test plan.
-- [operations-plan.md](operations-plan.md) breaks the test into single-stack
-  and single-handoff execution components with file touch sets.
-- [lessons-learned.md](lessons-learned.md) captures durable findings that
-  should stay current as the rehearsal process evolves.
-- [repeatable-test.md](repeatable-test.md) describes the reusable harness for
-  repeated preflight, live validation, and approved teardown/deploy cycles.
-- [harness-roadmap.md](harness-roadmap.md) lists the remaining work needed to
-  turn the current harness prototype into a robust reusable playbook.
-- [runbook.md](runbook.md) contains the operator command flow.
-
-## How Agents Should Use This
-
-1. Read this README, [decisions.md](decisions.md), and
-   [variables.md](variables.md).
-2. Use [operations-plan.md](operations-plan.md) to identify the next atomic
-   component and its allowed file touch set.
-3. Select the matching task from [task-sequence.md](task-sequence.md).
-4. Keep changes inside that task's declared scope.
-5. Stop when a task reaches a destructive gate unless the task explicitly
-   includes operator-approved execution.
+1. Read this README, [variables.md](variables.md), and [decisions.md](decisions.md).
+2. Use [operations-plan.md](operations-plan.md) to find the next atomic component.
+3. Open the matching task in [tasks/](tasks/).
+4. Stop at destructive gates unless the task explicitly includes approved execution.
 
 ## Workflow Note
 
-For the current branch model and promotion rules, use:
+Branch and promotion rules live in:
 
 - [docs/workflow/branch-model.md](../workflow/branch-model.md)
 - [docs/workflow/environments.md](../workflow/environments.md)

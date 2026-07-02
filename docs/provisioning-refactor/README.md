@@ -6,7 +6,7 @@ legacy context only when they conflict with this directory.
 
 The objective is to move browser-facing DNS, Traefik, and Authentik intent out
 of central runbooks and into stack-owned manifests while preserving a safe
-bootstrap path for a fresh pve-test rebuild.
+bootstrap path for a fresh `pve-test-vm` rebuild.
 
 ## Target Model
 
@@ -49,15 +49,15 @@ their browser routes are reconciled.
 
 ## Scope Boundaries
 
-The plan is pve-test only. Production `pve` targeting is out of scope until the
-pve-test model is proven.
+The plan is `pve-test-vm` only. Production `pve` targeting is out of scope
+until the validation model is proven.
 
 Each task is intentionally small enough for one short-lived branch/session. Do
 not combine migration tasks unless explicitly requested.
 
 ## Important Decisions
 
-- Browser hostnames on pve-test use `*.lab.gibbsgreatly.xyz`.
+- Browser hostnames on `pve-test-vm` use `*.lab.gibbsgreatly.xyz`.
 - Generated browser DNS records target Traefik at `10.57.2.10`.
 - CoreDNS is the `lab.gibbsgreatly.xyz` authority; MikroTik remains resolver,
   conditional forwarder, and network policy point.
