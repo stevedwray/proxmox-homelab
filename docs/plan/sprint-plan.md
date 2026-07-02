@@ -1,5 +1,13 @@
 # Sprint Plan — Post-Multi-Source Inventory Merge
 
+> Historical sprint snapshot.
+> This document captures a bounded June 2026 work plan and still references the
+> retired `baseline/teardown-validated` and `dev/pve-test` branch model.
+> It should not be used as the source of truth for current workflow rules.
+> Use [README.md](README.md), [docs/workflow/branch-model.md](../workflow/branch-model.md),
+> and [docs/workflow/environments.md](../workflow/environments.md) for the
+> current model.
+
 **Sprint start:** 2026-06-13, `baseline/teardown-validated` @ `b7e20ba`
 **Sprint scope:** CI hygiene, TLS hardening, step-ca metrics, monitoring
   enhancements, harness improvements, NetBox static hosts.
@@ -268,7 +276,8 @@ After each phase completes, write a `summary.md` under the evidence stamp
 directory summarising: branch, commit, phase results, log paths, and any
 deviations. Keep it secrets-clean (no credentials in output).
 
-The summary should be safe to copy into `docs/teardown-test/artifacts/reports/`
+The summary should be safe to copy into a tracked teardown summary doc if one
+is still needed
 without scrubbing.
 
 ### Handoff state

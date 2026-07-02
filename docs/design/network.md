@@ -63,7 +63,7 @@ pve-test-vm CoreDNS container). This is manual configuration (TM-09).
 
 ## Cross-zone traffic policy
 
-Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test.yaml`.
+Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test-vm.yaml`.
 
 | From | To | Allowed | Purpose |
 |---|---|---|---|
@@ -75,7 +75,7 @@ Enforced at MikroTik. Defined in `terraform/lxc/network/pve-test.yaml`.
 | All other cross-zone | — | Deny | Default deny east-west |
 
 **Note:** MikroTik ACL rules are currently applied manually. There is no IaC for MikroTik
-configuration (TM-09). A full pve-test rebuild requires manual MikroTik reconfiguration.
+configuration (TM-09). A full `pve-test-vm` rebuild requires manual MikroTik reconfiguration.
 
 ## DNS
 
@@ -132,7 +132,7 @@ The staging issuer shows `(STAGING) Let's Encrypt` in browsers — this is expec
 
 | Gap | Ref | Description |
 |---|---|---|
-| MikroTik has no IaC | TM-09 | All ACL rules, VLAN config, and DNS forwarding rules are applied manually. A pve-test rebuild requires manual MikroTik reconfiguration. |
+| MikroTik has no IaC | TM-09 | All ACL rules, VLAN config, and DNS forwarding rules are applied manually. A `pve-test-vm` rebuild requires manual MikroTik reconfiguration. |
 | VNet firewall cross-zone rule bug | — | `vnet_policy_candidates` in `terraform/lxc/main.tf:86-95` requires both `from` and `to` to match the current container's VNet, making cross-zone ACCEPT rules impossible to generate. Proxmox VNet firewall is disabled for dev passes. |
-| MikroTik remains out of band | TM-09 | SDN VLAN attachment creation for `pve-test` is automated in `configure-network-sdn-vnet.yml`, but MikroTik VLAN interfaces, gateway IPs, DNS forwarding, and firewall ACLs are still manual prerequisites. |
+| MikroTik remains out of band | TM-09 | SDN VLAN attachment creation for `pve-test-vm` is automated in `configure-network-sdn-vnet.yml`, but MikroTik VLAN interfaces, gateway IPs, DNS forwarding, and firewall ACLs are still manual prerequisites. |
 | `dns_server` contract coverage | — | Explicit `dns_server` is now set in stack metadata and validated from generated inventories; future stacks should continue to use the zone or bridge gateway explicitly. |

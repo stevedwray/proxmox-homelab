@@ -1,8 +1,15 @@
 # Phase Document Review — Staleness and Relevance Assessment
 
+> Historical review snapshot from 2026-05-22.
+> This document predates the current `pve-test-vm`-first workflow and still
+> refers to retired branch names and earlier environment assumptions.
+> Use [README.md](README.md), [docs/workflow/branch-model.md](../workflow/branch-model.md),
+> and [docs/workflow/environments.md](../workflow/environments.md) for current
+> guidance.
+
 **Date:** 2026-05-22
 **Reviewed by:** Copilot Analysis
-**Baseline:** `baseline/teardown-validated` with recent VMID schema and storage refactor
+**Baseline at review time:** `baseline/teardown-validated` with recent VMID schema and storage refactor
 
 ---
 
