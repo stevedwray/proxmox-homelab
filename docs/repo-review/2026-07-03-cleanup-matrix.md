@@ -25,6 +25,8 @@ Already completed on this branch:
 - deleted `docs/teardown-test/artifacts/`
 - deleted `docs/provisioning-refactor/prompts/`
 - deleted `docs/teardown-test/prompts/`
+- archived `docs/baseline-merge/`
+- archived `docs/platform-hardening/`
 
 These removals establish the first repo-wide cleanup rule in practice:
 
@@ -136,6 +138,8 @@ Important nuance:
 
 - `docs/sessions/` completed
 - `docs/prompts/` completed
+- `docs/baseline-merge/` completed
+- `docs/platform-hardening/` completed
 - tracked `evidence/`, `handoffs/`, and `artifacts/` directories completed where identified
 - remaining historical material should be removed opportunistically when found in future passes
 - future planning work should default to a local `artifacts/` subdirectory

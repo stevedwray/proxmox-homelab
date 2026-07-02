@@ -22,7 +22,7 @@ Status labels used below:
 | --- | ---: | --- | --- | --- | --- | --- |
 | `docs/agent-design/` | 3 | Medium | Medium | Medium | Medium | historical reference |
 | `docs/application-migration/` | 6 | Medium | High | Low | Low | active |
-| `docs/baseline-merge/` | 3 | Low | Low | High | Medium | candidate archive |
+| `docs/baseline-merge/` | 3 before archive | Low | Low | High | Medium | archived on `docs/repo-review` |
 | `docs/code-cleanup/` | 3 | Medium | Medium | Medium | Low | active |
 | `docs/design/` | 10 | High | Medium | Medium | Medium | active |
 | `docs/docker-refactor/` | 2 | Medium | Medium | Medium | Low | active |
@@ -31,7 +31,7 @@ Status labels used below:
 | `docs/netbox-stack/` | 7 | High | High | Medium | Medium | active |
 | `docs/network-refactor/` | 12 | Medium | Medium | High | Medium | historical reference |
 | `docs/plan/` | 88 | High | High | High | High | active but bloated |
-| `docs/platform-hardening/` | 2 | Low | Low | High | Medium | candidate archive |
+| `docs/platform-hardening/` | 2 before archive | Low | Low | High | Medium | archived on `docs/repo-review` |
 | `docs/portainer-stack/` | 3 | Medium | Medium | Medium | Low | active |
 | `docs/productionize-refactor/` | 37 | Medium | Low to Medium | High | High | historical reference |
 | `docs/provisioning-refactor/` | 173 | High | High | Medium | High | active but bloated |
@@ -72,7 +72,7 @@ Status labels used below:
 - Planned / unfinished signals: weak relative to the current workflow.
 - Completed / historical load: high; this is tied to a superseded promotion model.
 - Redundancy: overlaps with current workflow docs and older merge planning.
-- Recommendation: archive once any still-useful conclusions are captured elsewhere.
+- Recommendation: archived on this branch; recover from git history if needed.
 
 ### `docs/code-cleanup/`
 
@@ -153,7 +153,7 @@ Status labels used below:
 - Planned / unfinished signals: weak compared with newer provisioning-refactor and teardown-test docs.
 - Completed / historical load: high.
 - Redundancy: overlaps with `docs/docker-refactor/`, `docs/netbox-stack/`, and `docs/provisioning-refactor/`.
-- Recommendation: candidate archive.
+- Recommendation: archived on this branch; recover from git history if needed.
 
 ### `docs/portainer-stack/`
 
@@ -262,6 +262,18 @@ One structural direction now looks justified:
 That does **not** imply moving content immediately. It means future cleanup
 should be careful to preserve the hard-validation narrative and, if needed,
 re-home it deliberately rather than fragmenting it further.
+
+## Archive Decisions Applied
+
+The following directories have now been removed from the tracked default docs
+surface on branch `docs/repo-review`:
+
+- `docs/baseline-merge/`
+- `docs/platform-hardening/`
+
+Both were judged to be branch-era convergence packages with low forward value
+relative to the current `stable`-based workflow and newer validation /
+provisioning documentation.
 
 ### `docs/threat-model/`
 
