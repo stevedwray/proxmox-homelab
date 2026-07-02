@@ -92,7 +92,7 @@ Expected behavior:
 | `docs/productionize-refactor/` | 223 before cleanup | summarize + selective keep | core strategy docs may still be useful; evidence and handoffs are already removed |
 | `docs/sessions/` | 43 before cleanup | completed archive | raw transcripts and timestamped reports were high-noise and are now removed |
 | `docs/prompts/` | 28 before cleanup | completed archive | agent support material, now removed from tracked docs |
-| `docs/teardown-test/` | 24 | summarize + archive | keep the current runbook, archive execution residue and historical packets |
+| `docs/teardown-test/` | 24 | keep + summarize | critical hard-validation documentation; keep authoritative runbooks and validation mechanics, archive only residue/history |
 | `docs/netbox-stack/` | 11 | summarize | still relevant, but the README/current-state material is too time-layered |
 | `docs/monitoring-stack/` | 3 | summarize | very small count, but the docs are unusually large and verbose |
 
@@ -102,6 +102,7 @@ Expected behavior:
 
 - `docs/workflow/`
 - `docs/reference/`
+- `docs/teardown-test/` as the core hard-validation authority
 
 These are the best foundations for a canonical docs surface and should be made
 more authoritative, not more sprawling.
@@ -113,7 +114,6 @@ more authoritative, not more sprawling.
 - `docs/design/`
 - `docs/plan/`
 - `docs/provisioning-refactor/`
-- `docs/teardown-test/`
 - `docs/netbox-stack/`
 - `docs/monitoring-stack/`
 
@@ -122,6 +122,15 @@ The pattern for these areas should be:
 1. short current-state summary
 2. durable guidance only
 3. links out to archived detail when needed
+
+Important nuance:
+
+- `docs/teardown-test/` is not just another bloated planning area; it is where
+  the repo should document the hardest proof that the infrastructure actually
+  works after teardown, redeploy, reprovision, and integrated validation
+- `docs/provisioning-refactor/` is partly coupled to that same proof path and
+  should be compressed with that validation role in mind rather than treated as
+  a standalone historical refactor dump
 
 ### Archive out of the default docs path
 
@@ -212,7 +221,6 @@ Goal:
 - `docs/productionize-refactor/`
 - `docs/plan/`
 - `docs/provisioning-refactor/`
-- `docs/teardown-test/`
 - `docs/netbox-stack/`
 - `docs/monitoring-stack/`
 
@@ -221,6 +229,13 @@ Goal:
 - preserve durable current-state guidance
 - rewrite or shrink oversized living docs
 - avoid carrying historical narrative inline
+
+Special handling:
+
+- keep `docs/teardown-test/` authoritative and easy to navigate, because it
+  captures the hard validation path
+- trim only redundant or historical layers there; do not flatten away critical
+  teardown / redeploy / reprovision / integrated validation guidance
 
 ### Step 4: architecture cleanup
 
@@ -251,6 +266,9 @@ The next practical execution order should be:
 6. Complete the repo-wide stale-link and stale-environment-name pass.
 7. Enforce the documentation-workspace rule: durable docs tracked, transient
    material local under `artifacts/`, cleanup included in plan closeout.
+8. Evaluate whether the teardown / deploy / provision / integrated validation
+   story eventually deserves a more deliberate dedicated docs namespace, while
+   keeping `docs/teardown-test/` as the current authority in the meantime.
 
 ## Decision Gates
 
