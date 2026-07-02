@@ -2,20 +2,20 @@
 
 **Scope:** Move the logging function of `monitoring-stack` on `pve-test-vm`
 toward Graylog, while keeping `VictoriaMetrics` and `Grafana` focused on
-metrics. The existing VictoriaLogs pipeline is the rollback baseline until the
-Graylog path is validated.
+metrics. The VictoriaLogs path is now historical baseline context rather than
+an active dependency on the validated `pve-test-vm` source path.
 
 **Goal:** End with a logging design that has been implemented, tested, and
-validated on `pve-test-vm`, and is ready for promotion to `stable` and then
-incremental deployment on `pve`.
+validated on `pve-test-vm`, promoted to `stable`, and ready for incremental
+deployment on `pve`.
 
 **Branch model:** Follow [docs/workflow/branch-model.md](../workflow/branch-model.md).
 Because this work spans Ansible, Docker Compose, cross-stack logging, and
 remote syslog integration, every sprint should validate on `pve-test-vm`, and
 the later integration sprints should expect a full teardown-cycle validation.
 
-**Promotion target:** `stable` only after the full Graylog path is validated on
-`pve-test-vm`. `main` is only updated after incremental deployment on `pve`
+**Promotion target:** The `pve-test-vm` validation and `stable` promotion gate
+have now been met. `main` is only updated after incremental deployment on `pve`
 passes and the operator confirms no regressions.
 
 ---
@@ -49,7 +49,7 @@ logging design.
 
 ### Live progress snapshot
 
-Current implementation state on this branch (as of 2026-07-02):
+Current implementation state on the validated `stable` path (as of 2026-07-02):
 
 - `graylog-stack` deployed and fully operational on `pve-test-vm`
   - hostname: `graylog-stack`, VMID: `20014`, IP: `192.168.20.114`, zone: `mgmt_seg`
@@ -60,13 +60,15 @@ Current implementation state on this branch (as of 2026-07-02):
   - Harbor-backed Graylog, MongoDB, and cAdvisor images confirmed in live runtime
   - browser validation succeeded after targeted redeploy
   - startup may require several smoke-test retries before `ALIVE`, but the current targeted path is healthy
-- latest teardown RCA narrowed the remaining gap to Graylog first-boot preflight sequencing on a truly blank stack
-  - full teardown reproduces this more reliably than follow-up reprovision work because it exercises Graylog cold start from empty container volumes
-  - working-branch remediation now finalizes Graylog preflight before requiring DataNode `AVAILABLE`
+- latest teardown RCA narrowed the last `pve-test-vm` blocker to Graylog first-boot preflight sequencing on a truly blank stack
+  - full teardown reproduced this more reliably than follow-up reprovision work because it exercised Graylog cold start from empty container volumes
+  - the validated remediation finalizes Graylog preflight before requiring later post-ALIVE provisioning
 - All active pve-test-vm stacks dual-feeding Graylog (G3 complete)
 - MikroTik and NAS remote syslog feeding Graylog (G4 complete)
 - Proxmox host rsyslog forwarding configured via Ansible (G4 complete)
-- Full teardown-cycle revalidation remains the next gate before promotion
+- targeted Graylog cold-start destroy/redeploy validation passed
+- full teardown-cycle revalidation passed on `pve-test-vm`
+- the Graylog teardown recovery chain has been merged to `stable`
 - `terraform/secrets.enc.yaml` now contains `GRAYLOG_PASSWORD_SECRET` and `GRAYLOG_ROOT_PASSWORD_SHA2` (SOPS entry present)
 - `rsyslog_forward` Ansible role extended: new defaults, conditional tasks, and `graylog_inbound.conf.j2` template to accept UDP/TCP 514 and forward to `127.0.0.1:5140`
 - `deploy-graylog-stack.yml` now provisions the real runtime path used in targeted redeploy validation, cleans legacy Portainer-agent residue on the Graylog host, skips missing-dashboard warnings cleanly, and no longer writes scaffold assets during normal runtime deploys
@@ -101,7 +103,7 @@ Expected baseline result:
 - `issue_count: 0`
 - six edge manifests validate cleanly
 - Grafana metrics access works normally
-- the VictoriaLogs-backed Grafana dashboards remain the current fallback log UI
+- the metrics dashboards in Grafana remain healthy while Graylog owns the log workflow
 
 Additional Graylog validation completed on this branch:
 
@@ -774,7 +776,7 @@ Step 9  Edge publication + auth wiring — PARTIALLY DONE (Option B):
               reconcile-edge.py --json returns issue_count: 0 ✅
               graylog.test.gibbsgreatly.xyz → DNS resolves → HTTPS 200 ✅
               Graylog LDAP auth backend active (id: 6a3f10c5769d7f3a2249dee3) ✅
-              End-to-end LDAP login from Graylog to Authentik ❌ not yet validated
+              End-to-end LDAP login from Graylog to Authentik ✅ validated
 ```
 
 ---
@@ -786,7 +788,7 @@ Step 9  Edge publication + auth wiring — PARTIALLY DONE (Option B):
 - rsyslog on graylog-stack LXC listens on TCP/UDP :514 (confirmed by `ss -lntu`) ✅ confirmed
 - VictoriaMetrics shows `graylog-stack` node_exporter as up ✅ scrape targets added (Step 7)
 - Graylog teardown gate passes in `teardown-deploy-test.sh` ✅ added (Step 8)
-- Graylog web UI accessible at `graylog.test.gibbsgreatly.xyz` — route and page load confirmed; LDAP auth via Authentik outpost ❌ not yet validated end-to-end
+- Graylog web UI accessible at `graylog.test.gibbsgreatly.xyz` — route, page load, and LDAP auth via Authentik outpost ✅ validated end-to-end
 - Grafana, Traefik, and existing platform auth show no regressions ✅ reconcile-edge `issue_count: 0` (Step 9)
 
 ---
@@ -1072,7 +1074,8 @@ direction change.
 **Validation tier**
 
 - This is network / remote syslog / cross-stack integration work.
-- Expect a full `pve-test-vm` teardown-cycle validation before promotion.
+- The `pve-test-vm` teardown-cycle validation gate has been satisfied; the next
+  promotion gate is incremental deployment on `pve`.
 
 **Validation checklist**
 
@@ -1335,7 +1338,9 @@ minimum, the final proof must include:
 
 ### Current next step
 
-**Sprint G4 is complete** (as of 2026-06-30). Sprint G5 is next.
+**Sprints G0-G5 are complete on the active source path, and the `stable`
+promotion gate has been met.** The next promotion step is incremental
+deployment on `pve`.
 
 G4 exit criteria all met:
 - ✅ MikroTik remote syslog — complete (2026-06-29)
@@ -1344,10 +1349,10 @@ G4 exit criteria all met:
   validated on pve-test-vm; probe message confirmed in Graylog (2026-06-30)
 
 Sprint G5 status:
-- ⏳ Remove VictoriaLogs from monitoring-stack
-- ⏳ Simplify rsyslog_forward role to Graylog-only
-- ⏳ Remove Grafana log dashboards (auth-logs.json, lab-logs.json)
-- ⏳ Full teardown cycle on pve-test-vm
+- ✅ VictoriaLogs removed from the active monitoring-stack source path
+- ✅ `rsyslog_forward` source path is Graylog-only
+- ✅ Grafana VictoriaLogs log dashboards removed from monitoring-stack source
+- ✅ Full teardown cycle on `pve-test-vm` validated the active source path
 
 ### Sprint board
 
@@ -1400,20 +1405,19 @@ These are the operator-facing outcomes that must be tested before promotion:
 
 ### Rollback rule
 
-Until Sprint G5 completes, VictoriaLogs remains the fallback. Any sprint that
-breaks the current logging path without establishing the Graylog replacement
-must be rolled back or fixed before promotion.
+The Graylog replacement path is now the active validated logging path on
+`pve-test-vm`. Any sprint that breaks it must be rolled back or fixed before
+promotion to `main`.
 
 ---
 
 ## Definition of ready for pve
 
-This work is ready to promote from the development branch to `stable` only when:
+The `stable` promotion gate for the current Graylog path has been achieved:
 
-- Sprint G5 is complete.
-- The final `pve-test-vm` teardown-cycle validation is green.
-- The Graylog operator workflow is documented and no longer ambiguous.
-- The fallback/rollback story for `pve` is documented.
+- the final `pve-test-vm` teardown-cycle validation is green
+- the Graylog operator workflow is documented well enough for test-domain use
+- the validated `pve-test-vm` source path is Graylog-first and monitoring-stack remains metrics-focused
 
 This work is ready to promote from `stable` to `main` only when:
 
@@ -1429,13 +1433,9 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-G0–G4 are complete. G5 is the current work item.
+Two viable next steps remain:
 
-G5 implementation tasks in order — see the [Sprint G5 section](#sprint-g5--victorialogs-removal-on-pve-test-vm) for full detail:
-
-1. Remove VictoriaLogs service, volume, and datasource from `deploy-monitoring-stack.yml`.
-2. Simplify `rsyslog_forward` role: single unconditional Graylog forward, remove dual-feed vars.
-3. Remove `rsyslog_graylog_enabled: true` from all eight stack playbooks.
-4. Delete `auth-logs.json` and `lab-logs.json` from monitoring-stack Grafana dashboards.
-5. Run syntax checks on affected playbooks.
-6. Full teardown cycle on `pve-test-vm`; confirm no VictoriaLogs container post-rebuild and Graylog ingest healthy.
+1. Incrementally deploy the validated Graylog path on `pve` and prove the
+   `stable` → `main` promotion gate.
+2. Continue cleanup of historical VictoriaLogs-only documentation/tooling where
+   it no longer reflects the active source path.

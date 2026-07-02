@@ -190,7 +190,7 @@ The following scrape jobs were **not** changed:
 | authentik | Already on verified internal TLS via nginx direct-TLS |
 | harbor-* | Harbor metrics; separate effort |
 | step-ca | Native HTTP metrics on :9443; different lifecycle |
-| victoriametrics, victorialogs, grafana | monitoring-stack-internal; localhost equivalent |
+| victoriametrics, grafana | monitoring-stack-internal; localhost equivalent |
 | netbox | Application metrics; separate effort |
 
 VictoriaMetrics itself (`:8428`) remains unauthenticated and mgmt_seg-internal.

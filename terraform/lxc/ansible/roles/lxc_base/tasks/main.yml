@@ -122,12 +122,12 @@
     name: node_exporter
   when: monitoring_enabled | default(true) | bool
 
-- name: Install rsyslog and configure forwarding to VictoriaLogs
+- name: Install rsyslog and configure forwarding to Graylog
   ansible.builtin.include_role:
     name: rsyslog_forward
   when: monitoring_enabled | default(true) | bool
 
-- name: Stop promtail service if present (replaced by rsyslog/VictoriaLogs)
+- name: Stop promtail service if present (replaced by rsyslog/Graylog)
   ansible.builtin.systemd:
     name: promtail
     state: stopped

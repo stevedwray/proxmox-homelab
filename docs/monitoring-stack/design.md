@@ -2,7 +2,11 @@
 
 ## Overview
 
-The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, VictoriaLogs, Grafana, cAdvisor, and the Harbor findings exporter via Docker Compose. Grafana is the sole browser-facing service (via Traefik + Authentik). VictoriaMetrics and VictoriaLogs are internal-only data stores.
+The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics,
+Grafana, cAdvisor, and the Harbor findings exporter via Docker Compose.
+Grafana is the sole browser-facing service (via Traefik + Authentik).
+VictoriaMetrics is the metrics data store; Graylog is now the active log
+platform direction on `pve-test-vm`.
 
 ---
 
@@ -21,18 +25,26 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 
 ## Current State
 
-**Phases 1–7D complete on pve. Phase 7E (pve-test provision + teardown gate) is now functionally validated on the current branch. The next design direction on `pve-test-vm` is to evaluate Graylog as the central log platform and deprecate VictoriaLogs there if the pilot succeeds. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics, removed the obsolete NetBox housekeeping container, disabled scheduled Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old step-ca scrape warning is no longer emitted.**
+**Phases 1–7D are complete on `pve`, and the Graylog migration path on
+`pve-test-vm` has now been validated through targeted rebuilds and a full
+teardown cycle. Monitoring-stack is metrics-focused on the active source path;
+VictoriaLogs should be treated as historical design context rather than an
+active `pve-test-vm` dependency. Dashboard issues from Phase 7D resolved
+2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host
+scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics,
+removed the obsolete NetBox housekeeping container, disabled scheduled
+Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old
+step-ca scrape warning is no longer emitted.**
 
 ### Running services
 
 | Service | Port | Notes |
 |---------|------|-------|
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
-| VictoriaLogs | `:9428`, `:5140` | `--retentionPeriod=30d`; syslog TCP input on `:5140`; named Docker volume on `/var/lib/docker` mount; `v1.51.0` (tag format changed — no `-victorialogs` suffix from v1.25.0+) |
 | Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
 | cAdvisor | `:8080` | Container resource metrics for monitoring-stack |
 | Harbor findings exporter | `:9414` internal | Harbor CVE/findings metrics scraped from the compose network |
-| Promtail | — | Deprecated by syslog/VictoriaLogs forwarding; no active runtime service/container remains after cleanup. |
+| Promtail | — | Deprecated by the rsyslog/Graylog path; no active runtime service/container remains after cleanup. |
 
 ### Active scrape targets
 
@@ -51,7 +63,6 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | harbor-findings-exporter | monitoring-stack internal | ✅ up |
 | netbox | 192.168.40.12:8080 | ✅ up |
 | victoriametrics | 192.168.20.12:8428 | ✅ up |
-| victorialogs | 192.168.20.12:9428 | ✅ up |
 | grafana | 192.168.20.12:3000 | ✅ up |
 | step-ca | 192.168.20.11:9443 | ✅ native metrics |
 
@@ -67,8 +78,8 @@ The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics, Victo
 | Harbor Operations | Component health, queue state, proxy-cache activity |
 | Harbor Scan Coverage | Findings exporter health, scan coverage, severity totals |
 | Harbor CVE Inventory | Detailed CVE rows from the live Harbor findings feed |
-| Lab Logs | Full-stack log explorer (VictoriaLogs / LogsQL) |
-| Auth Logs | SSH/sudo/auth.log across all hosts (VictoriaLogs / LogsQL) |
+| Lab Logs | Historical Grafana log explorer retained only as design context |
+| Auth Logs | Historical Grafana auth log explorer retained only as design context |
 
 ### Dashboard conventions
 
@@ -208,9 +219,8 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 
 | Item | Notes |
 |------|-------|
-| Graylog pilot — G4 Proxmox syslog | Run `ansible/playbooks/configure-proxmox-syslog.yml` to wire Proxmox host logs into Graylog; see [graylog-migration-plan.md §G4](./graylog-migration-plan.md) |
 | Graylog pilot — G4 dashboards | Build Graylog dashboards in UI; export and commit JSON to `terraform/lxc/stacks/graylog-stack/dashboards/`; Ansible imports on fresh deploy |
-| Graylog pilot — G5 VictoriaLogs deprecation | Full teardown cycle on `pve-test-vm`; remove VictoriaLogs from active operator workflow once Graylog covers all required workflows |
+| Graylog pilot — G5 VictoriaLogs deprecation | Optional next simplification step on `pve-test-vm`: remove VictoriaLogs from the active operator workflow once Graylog covers all required workflows end-to-end |
 | Graylog Data Node heap warning | Embedded OpenSearch still reports `-Xms1g/-Xmx1g` after wrapper JVM bump (as of 2026-06-29); track until live OpenSearch JVM args no longer show 1 GB |
 | step-ca metrics dashboard | Native metrics scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped; no Grafana dashboard built |
@@ -221,12 +231,12 @@ No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (bot
 
 ## Teardown Health Gate
 
-The monitoring-stack health check in `teardown-deploy-test.sh` asserts Grafana, VictoriaMetrics, and VictoriaLogs are all responding:
+The monitoring-stack health check in `teardown-deploy-test.sh` now asserts only
+Grafana and VictoriaMetrics are responding:
 
 ```bash
 curl -fsS "http://${ip}:3000/login" && \
-curl -fsS "http://${ip}:8428/-/ready" && \
-curl -fsS "http://${ip}:9428/health"
+curl -fsS "http://${ip}:8428/-/ready"
 ```
 
 ---
@@ -285,7 +295,7 @@ Target steady-state if the pilot succeeds:
 | 6 | Recreate the operator journeys currently covered by Grafana log dashboards (host auth logs, per-stack filtering, recent errors) | ✅ complete (G3) — field conventions and query patterns documented |
 | 7 | Document the chosen field conventions for Graylog streams, inputs, and source identity | ✅ complete (G3) — see graylog-migration-plan.md §G3 |
 | 8 | Move Proxmox host and MikroTik test syslog to the Graylog pilot path | ✅ complete (G4, 2026-06-30) — Proxmox, MikroTik, NAS all ingesting |
-| 9 | Remove VictoriaLogs from `pve-test-vm` only after the Graylog path is accepted | ⏳ G5 — in progress |
+| 9 | Remove VictoriaLogs from `pve-test-vm` only after the Graylog path is accepted | ✅ source path now metrics-focused; remaining references are historical/docs-only |
 
 ### Current Graylog deployment state (as of 2026-06-30)
 
@@ -294,7 +304,7 @@ Target steady-state if the pilot succeeds:
 - publication: `https://graylog.test.gibbsgreatly.xyz` — Traefik/Auth/DNS live
 - auth: LDAP backend configured; Authentik login working
 - ingest: all managed LXCs, Docker stacks, Proxmox host, MikroTik, NAS
-- next: Sprint G5 — remove VictoriaLogs entirely
+- next: incrementally deploy the validated Graylog path on `pve`, or continue documentation cleanup around the retired VictoriaLogs path
 
 ### Design assumptions for the pilot
 
@@ -357,7 +367,7 @@ Data stored in a named Docker volume — lives on the existing `/var/lib/docker`
 1. VictoriaLogs is deployed in the monitoring-stack compose.
 2. Grafana is provisioned with the `victoriametrics-logs-datasource` plugin.
 3. The intermediate Promtail-to-VictoriaLogs Loki-compatible push path was superseded by rsyslog forwarding to VictoriaLogs `:5140`.
-4. Lab Logs and Auth Logs dashboards have been rebuilt using VictoriaLogs datasource + LogsQL.
+4. Lab Logs and Auth Logs dashboards were rebuilt using VictoriaLogs datasource + LogsQL during the historical Phase 6/7 path.
 5. Log ingestion and dashboard queries were verified on pve.
 6. Loki and Promtail are no longer active services in the monitoring stack.
 
@@ -374,7 +384,9 @@ curl -G "http://192.168.20.12:9428/select/logsql/query" \
 
 LogsQL stream selectors map directly to syslog fields such as `hostname`, `app_name`, `facility`, and `severity`, so per-source retrieval is precise and fast for the current syslog-ingested data.
 
-Implementation: a small Python script invoked ad-hoc (or triggered via Grafana panel button). Kept outside the monitoring-stack compose definition — it's a tooling concern, not an infrastructure service.
+Implementation was intentionally kept outside the monitoring-stack compose
+definition because it was always tooling rather than infrastructure. That
+VictoriaLogs-specific helper is now retired from the active source path.
 
 ### Tasks
 
@@ -388,8 +400,8 @@ Implementation: a small Python script invoked ad-hoc (or triggered via Grafana p
 | 6 | Replace Promtail push path with rsyslog/syslog forwarding | ✅ all managed stacks forward to VictoriaLogs `:5140` |
 | 7 | Rebuild Lab Logs and Auth Logs dashboards with LogsQL | ✅ `field_values()` vars, `stats count()` timeseries |
 | 8 | Verify ingestion | ✅ verified on pve; pve-test teardown gate still pending |
-| 9 | Write LLM analysis script | ✅ `scripts/victorialogs-analyze.py` |
-| 10 | Update teardown health gate | ✅ `:9428/health` added to monitoring-stack check |
+| 9 | Write LLM analysis script | historical only — retired from the active Graylog-first source path |
+| 10 | Update teardown health gate | historical only — later superseded by the current Grafana/VictoriaMetrics-only monitoring gate |
 | 11 | Provision + smoke test on pve-test | ⏳ gate for promotion to baseline |
 
 ### Historical limitations of the Promtail approach
@@ -587,7 +599,7 @@ Each LXC host
 | Harbor containers | Harbor's own compose is managed by Harbor installer; Docker daemon default covers this without touching Harbor config | Verify Harbor log ingestion after daemon restart |
 | VictoriaLogs data continuity | Existing logs ingested via Loki-push (Promtail) use different stream fields than syslog-ingested logs. Both live in the same VictoriaLogs storage. Historic Promtail-era logs have `stack`, `host` fields; new syslog logs have `hostname`, `app_name`, `facility`, `severity`. | Current dashboards target the new field set; historic data remains queryable via LogsQL explore. |
 | Auth Logs dashboard | Earlier Promtail-era queries used `{job="varlogs"}`. Post-cutover, auth events arrive via rsyslog with `facility=auth`. | Resolved in Phase 7D; keep historic queries in mind when exploring pre-cutover logs |
-| Teardown test smoke test | The teardown test originally checked only `curl http://...:9428/health`, which would not catch a broken syslog pipeline. | Resolved in Phase 7E-core on the current branch by adding VictoriaLogs ingestion validation to the teardown harness; preserve equivalent coverage during the Graylog migration |
+| Teardown test smoke test | The teardown test originally checked only `curl http://...:9428/health`, which would not catch a broken syslog pipeline. | Historical Phase 7 concern; the active monitoring-stack gate now checks Grafana and VictoriaMetrics while Graylog has its own dedicated health gate |
 | Port 5140 documentation | The network reachability table must include VictoriaLogs syslog TCP on `:5140`. | Resolved in Phase 7; keep the port documented because it is the active log ingest path |
 | authentik static compose file | `terraform/lxc/stacks/authentik-stack/docker-compose.yml` is a static file in the repo. If daemon-level logging driver is used (Decision 3 Option C), no changes needed there. If per-service logging blocks are needed, this file must be edited — unlike other stacks where the compose is written inline by Ansible. | Decision 3 Option C eliminates the need to touch this file |
 | monitoring-stack self-monitoring | monitoring-stack previously ran its own Promtail container. Desired state is Docker syslog → local rsyslog → VictoriaLogs like every other Docker host. | Source compose no longer includes Promtail; runtime cleanup should still verify no orphan remains |
@@ -815,7 +827,7 @@ transition.
 
 ---
 
-## Deferred — VictoriaLogs MCP Server
+## Archived Idea — VictoriaLogs MCP Server
 
 ### Goal
 
@@ -823,9 +835,9 @@ Expose VictoriaLogs query capabilities to Claude Code (and any MCP client) via t
 
 The immediate motivation: systematic log health analysis (§health-findings) required constructing and running multiple API queries by hand. The same patterns, encoded as MCP tools, would make this kind of investigation a natural part of any working session.
 
-This work is now lower priority than the Graylog pilot on `pve-test-vm`. If
-Graylog becomes the preferred log platform, this section should be replaced with
-Graylog-oriented tooling rather than implemented as written.
+This work should be treated as archived. Graylog is now the preferred log
+platform direction, so any future MCP/tooling work should target Graylog rather
+than implementing this VictoriaLogs-specific design.
 
 ### Architecture
 
@@ -933,8 +945,8 @@ app_name:~"docker-netbox-.*"                    # regex
 
 | # | Task | File | Status |
 |---|---|---|---|
-| 1 | Create `tools/victorialogs-mcp/server.py` | Python, `mcp` SDK or `fastmcp` | ⏳ pending |
-| 2 | Create `tools/victorialogs-mcp/requirements.txt` | `mcp`, `httpx` | ⏳ pending |
+| 1 | Create `tools/victorialogs-mcp/server.py` | Python, `mcp` SDK or `fastmcp` | archived |
+| 2 | Create `tools/victorialogs-mcp/requirements.txt` | `mcp`, `httpx` | archived |
 | 3 | Register in `~/.claude/claude_code_config.json` | Non-repo config | ⏳ pending |
 | 4 | Implement `schema_overview` tool | Static doc of field model | ⏳ pending |
 | 5 | Implement `search_logs`, `count_logs`, `log_volume` | Core query tools | ⏳ pending |
