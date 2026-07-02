@@ -60,6 +60,9 @@ Current implementation state on this branch (as of 2026-07-02):
   - Harbor-backed Graylog, MongoDB, and cAdvisor images confirmed in live runtime
   - browser validation succeeded after targeted redeploy
   - startup may require several smoke-test retries before `ALIVE`, but the current targeted path is healthy
+- latest teardown RCA narrowed the remaining gap to Graylog first-boot preflight sequencing on a truly blank stack
+  - full teardown reproduces this more reliably than follow-up reprovision work because it exercises Graylog cold start from empty container volumes
+  - working-branch remediation now finalizes Graylog preflight before requiring DataNode `AVAILABLE`
 - All active pve-test-vm stacks dual-feeding Graylog (G3 complete)
 - MikroTik and NAS remote syslog feeding Graylog (G4 complete)
 - Proxmox host rsyslog forwarding configured via Ansible (G4 complete)

@@ -366,12 +366,13 @@
 
     # Preflight automation: on fresh installs Graylog serves a setup wizard instead of
     # the normal API. The wizard password is randomly generated and logged to stdout.
-    # API sequence (from bytecode analysis of graylog.jar PreflightResource):
-    #   POST /api/ca/create       → self-signed CA for DataNode internal TLS only (container-to-container,
-    #                               never externally validated — step-ca is not needed here)
-    #   POST /api/renewal_policy  → set cert renewal mode
-    #   POST /api/generate        → provision DataNode with CA-signed cert
+    # API sequence for a true cold start:
+    #   POST /api/ca/create            → self-signed CA for DataNode internal TLS only
+    #   POST /api/renewal_policy       → set cert renewal mode
+    #   POST /api/generate             → provision DataNode with CA-signed cert
+    #   GET  /api/data_nodes           → DataNode appears but can remain UNCONFIGURED
     #   POST /api/status/finish-config → finalize, Graylog restarts into normal mode
+    #   GET  /api/data_nodes           → DataNode transitions to AVAILABLE after normal mode
     - name: Extract Graylog preflight password from container logs
       ansible.builtin.command:
         cmd: >
@@ -461,7 +462,7 @@
         - graylog_deploy_runtime | bool
         - graylog_lbstatus_check.content != "ALIVE"
 
-    - name: Wait for DataNode to become AVAILABLE
+    - name: Wait for DataNode to register in preflight
       ansible.builtin.uri:
         url: "http://127.0.0.1:9000/api/data_nodes"
         method: GET
@@ -469,9 +470,9 @@
         url_password: "{{ graylog_preflight_password }}"
         force_basic_auth: true
         return_content: true
-      register: graylog_datanodes
+      register: graylog_datanodes_preflight
       until: >-
-        (graylog_datanodes.json | default([]) | selectattr('datanode_status', 'eq', 'AVAILABLE') | list | length) > 0
+        (graylog_datanodes_preflight.json | default([]) | length) > 0
       retries: 30
       delay: 10
       when:
@@ -496,10 +497,11 @@
       ansible.builtin.uri:
         url: "http://127.0.0.1:9000/api/system/lbstatus"  # nosonar: ansible:S5332 — unauthenticated health check on private SDN
         method: GET
-        status_code: 200
+        status_code: [200, 404]
         return_content: true
       register: graylog_lbstatus
-      until: graylog_lbstatus.content == "ALIVE"
+      failed_when: false
+      until: graylog_lbstatus.status == 200 and graylog_lbstatus.content == "ALIVE"
       retries: 30
       delay: 10
       when: graylog_deploy_runtime | bool

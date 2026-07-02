@@ -75,7 +75,8 @@ As of 2026-07-02 on the current working branch:
 - scaffold assets no longer write during the normal runtime path
 
 The remaining open proof point is a full teardown cycle showing that the
-platform phase now proceeds through Graylog and on to NetBox and Portainer.
+platform phase now proceeds through Graylog and on to NetBox and Portainer
+from a true cold-start Graylog state.
 
 ---
 
@@ -144,16 +145,66 @@ Then verify:
 
 ---
 
-## Sprint 2 — Add Earlier Graylog Failure Detection
+## Sprint 2 — Fix Cold-Start Graylog Preflight Sequencing
+
+**Goal:** Make the Graylog first-boot path behave correctly on a fully rebuilt
+stack.
+
+### Why
+
+The later July 1 teardown evidence showed a different regression from the
+original scaffold-only bug:
+
+- Graylog runtime came up
+- preflight API calls succeeded through certificate generation
+- `/api/data_nodes` returned a DataNode in `UNCONFIGURED`
+- the playbook waited for `AVAILABLE` before calling
+  `/api/status/finish-config`
+- the stack never transitioned into normal mode
+
+That exact sequencing bug only shows up on a true cold start, which is why the
+full teardown reproduced it more reliably than follow-up reprovision work.
+
+### Deliverables
+
+- Update the Graylog preflight automation so `finish-config` happens before the
+  playbook requires DataNode `AVAILABLE`.
+- Treat `UNCONFIGURED` as an expected transient state immediately after
+  certificate generation on a blank stack.
+- Keep a post-finalization wait that still proves the DataNode reaches
+  `AVAILABLE` before the playbook continues.
+
+### Validation
+
+Run:
+
+```bash
+PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh --stack graylog-stack
+```
+
+Expected behavior:
+
+- success only if Graylog runtime is present, reaches `ALIVE`, and the DataNode
+  becomes `AVAILABLE`
+- immediate failure if Graylog remains stuck in preflight
+
+### Exit gate
+
+- Code fix applied on the working branch; targeted and full-cycle validation
+  still pending.
+
+---
+
+## Sprint 3 — Add Earlier Graylog Failure Detection
 
 **Goal:** Fail at Graylog provision time, not later in the platform phase, if
 the stack did not actually come up.
 
 ### Why
 
-The original flow allowed a scaffold-only Graylog provision to report success
-and only fail at the teardown smoke step. The current remaining concern is
-operator clarity during startup, not silent scaffold success.
+The original scaffold-only issue has been fixed, but operator clarity still
+matters when Graylog is doing a slow first boot. The logs should make it easy
+to distinguish an expected warm-up from a real stuck-preflight condition.
 
 ### Deliverables
 
@@ -186,7 +237,7 @@ Expected behavior:
 
 ---
 
-## Sprint 3 — Revalidate Graylog In The Teardown Harness
+## Sprint 4 — Revalidate Graylog In The Teardown Harness
 
 **Goal:** Prove the teardown harness can destroy, recreate, provision, and
 health-check Graylog correctly.
@@ -222,7 +273,7 @@ Expected outcome:
 
 ---
 
-## Sprint 4 — Verify Downstream Platform Progression To Portainer
+## Sprint 5 — Verify Downstream Platform Progression To Portainer
 
 **Goal:** Confirm that once Graylog passes, the harness reaches and deploys the
 downstream platform stacks.

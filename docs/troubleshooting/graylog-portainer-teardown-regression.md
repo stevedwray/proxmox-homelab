@@ -2,18 +2,18 @@
 
 **Observed:** 2026-07-01
 **Updated:** 2026-07-02
-**Status:** Root cause identified and remediation implemented on the working branch. Full teardown-cycle revalidation on `pve-test-vm` is the remaining gate.
+**Status:** Root cause identified and remediation updated on the working branch. Full teardown-cycle revalidation on `pve-test-vm` is the remaining gate.
 
 ---
 
 ## Symptom
 
-After a full teardown/redeploy cycle on pve-test-vm:
+After a full teardown/redeploy cycle on `pve-test-vm`:
 
 - `graylog.test.gibbsgreatly.xyz` — Bad Gateway in browser; graylog health check fails in the teardown harness.
 - `portainer.test.gibbsgreatly.xyz` — Not deployed at all; Portainer is never reached in the teardown platform phase.
 
-All other services (authentik, harbor, grafana, netbox, traefik) are functional.
+All other services (`authentik`, `harbor`, `grafana`, `netbox`, `traefik`) are functional.
 
 ---
 
@@ -31,6 +31,15 @@ Portainer's own code is **not broken**; it simply never runs.
 
 ### Why the Graylog Health Check Fails
 
+There have been two distinct failure modes across the July 1 teardown work:
+
+1. the earlier scaffold-only provision-path bug
+2. the newer cold-start preflight sequencing bug
+
+The scaffold-only bug was real and has already been fixed on the branch. The
+current regression exposed by the later full teardown evidence is the second
+one.
+
 The teardown harness health check for `graylog-stack` is:
 
 ```bash
@@ -45,8 +54,8 @@ bash -lc "for i in \$(seq 1 24); do
 done; echo 'Graylog did not report ALIVE after 24 attempts' >&2; exit 1"
 ```
 
-This runs after `provision-graylog-stack` completes. In the failing run, the
-provision step did **not** start Graylog runtime at all:
+In the earlier failing run, the provision step did **not** start Graylog runtime
+at all:
 
 - `Write Graylog env file` was skipped
 - `Write Graylog docker-compose.yml` was skipped
@@ -68,8 +77,8 @@ attempt=24 http_code=000 body=
 Graylog did not report ALIVE after 24 attempts
 ```
 
-This is not primarily an “external bind timing” failure. The July 1 evidence
-shows a more basic control-path mismatch:
+That earlier failure was not primarily an “external bind timing” failure. It was
+a control-path mismatch:
 
 - the teardown harness treats `graylog-stack` as a required live platform stack
 - `deploy-graylog-stack.yml` still treats the real Graylog runtime as optional
@@ -79,15 +88,29 @@ shows a more basic control-path mismatch:
 - the later health probe fails because no Graylog service is listening on port
   `9000`
 
-### Why Graylog Shows Bad Gateway in Browser
+In the later failing teardown run (`20260701-213902`), the runtime *did* start,
+but `provision-graylog-stack` failed inside the Graylog preflight automation:
 
-When the teardown run leaves Graylog in scaffold-only mode, Traefik has
-nothing healthy to route to. In that state, a browser-facing “Bad Gateway” is
-consistent with the direct health failure.
+- `Create Graylog preflight CA` passed
+- `Set Graylog certificate renewal policy` passed
+- `Provision DataNode certificates` passed
+- `Wait for DataNode to become AVAILABLE` retried for 30 attempts and failed
+- `/api/data_nodes` kept returning a node with `status=UNCONFIGURED` and
+  `datanode_status=UNCONFIGURED`
 
-This does not rule out future runtime startup or readiness issues once Graylog
-is brought into the standard provision path, but those are secondary until the
-runtime is actually started in teardown-driven deploys.
+That means the playbook was waiting for `AVAILABLE` too early in the first-boot
+sequence. On a brand-new Graylog stack, the DataNode is registered but stays
+`UNCONFIGURED` until Graylog finishes preflight and restarts into normal mode.
+
+### Why Graylog Shows Bad Gateway or The Wrong Login Prompt In Browser
+
+When the teardown run leaves Graylog in scaffold-only mode, Traefik has nothing
+healthy to route to, so a browser-facing “Bad Gateway” is expected.
+
+When the teardown run reaches the newer preflight sequencing failure, Graylog is
+up but still serving its setup wizard. That can surface as a direct basic-auth
+dialog instead of the normal Graylog login flow backed by Authentik-configured
+credentials, because post-ALIVE LDAP configuration never runs.
 
 ---
 
@@ -116,11 +139,22 @@ runtime is actually started in teardown-driven deploys.
 
 | Stack | Status | Notes |
 |---|---|---|
-| graylog-stack | Targeted destroy/redeploy path validated | Runtime deploy succeeds, Harbor-backed images are in use, and browser access works |
-| portainer-stack | Downstream teardown status still awaiting full-cycle proof | Portainer was previously skipped only because the platform phase aborted at Graylog |
+| graylog-stack | Targeted reprovision/redeploy path validated; full cold-start teardown path still needs revalidation | Runtime deploy succeeds, Harbor-backed images are in use, and browser access works once Graylog reaches normal mode |
+| portainer-stack | Downstream teardown status still awaiting full-cycle proof | Portainer is skipped whenever the platform phase aborts at Graylog |
 
-The original failure mode was a scaffold-only Graylog provision path. That is no
-longer the current working state on the branch.
+The original scaffold-only Graylog provision-path bug is no longer the current
+working state on the branch.
+
+The remaining teardown-specific regression was narrowed to first-boot Graylog
+preflight sequencing:
+
+- full teardown creates a truly blank Graylog LXC and blank container volumes
+- targeted follow-up reprovisions do not always reproduce that exact cold-start
+  state
+- the failing path is therefore the one full teardown exercises: first boot of
+  Graylog + DataNode on a fresh stack
+- the remediation on the branch is to finalize Graylog preflight before
+  requiring the DataNode to report `AVAILABLE`
 
 Targeted validation completed after the fix:
 
@@ -130,7 +164,8 @@ Targeted validation completed after the fix:
 - legacy `portainer-agent` residue on the Graylog host was identified as
   unrelated cleanup, not the root cause of the teardown failure
 - the remaining open validation item is one full teardown cycle proving the
-  platform phase continues through NetBox and Portainer
+  platform phase continues through NetBox and Portainer after Graylog completes
+  first-boot preflight correctly
 
 ---
 
@@ -138,10 +173,14 @@ Targeted validation completed after the fix:
 
 - Full teardown evidence:
   [20260701-011024](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024)
+  and
+  [20260701-213902](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-213902)
 - Key logs:
   - [provision-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/provision-graylog-stack.log)
   - [health-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/logs/health-graylog-stack.log)
   - [summary-deploy-platform.md](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-011024/summary-deploy-platform.md)
+  - [provision-graylog-stack.log](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-213902/logs/provision-graylog-stack.log)
+  - [summary-deploy-platform.md](/home/steve/git/proxmox-homelab/docs/teardown-test/artifacts/evidence/20260701-213902/summary-deploy-platform.md)
 
 ---
 
@@ -154,6 +193,7 @@ Use the dedicated sprint plan here:
 In short, the way forward is:
 
 1. preserve the now-working Graylog runtime path and Harbor-first image routing
-2. rerun a full teardown cycle and confirm Graylog passes in-harness
-3. verify the platform phase continues through NetBox and Portainer
-4. finish with browser/edge validation
+2. validate the new cold-start preflight sequencing fix on `pve-test-vm`
+3. rerun a full teardown cycle and confirm Graylog passes in-harness
+4. verify the platform phase continues through NetBox and Portainer
+5. finish with browser/edge validation
