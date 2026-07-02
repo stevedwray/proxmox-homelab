@@ -19,12 +19,13 @@ If you are new to the repository, read these in order:
 1. [`docs/getting-started.md`](./docs/getting-started.md)
 2. [`docs/workflow/branch-model.md`](./docs/workflow/branch-model.md)
 3. [`docs/workflow/environments.md`](./docs/workflow/environments.md)
-4. [`docs/reference/secrets-management.md`](./docs/reference/secrets-management.md)
-5. [`docs/plan/README.md`](./docs/plan/README.md)
-6. [`docs/design/architecture.md`](./docs/design/architecture.md)
-7. [`docs/design/network.md`](./docs/design/network.md)
-8. [`terraform/README.md`](./terraform/README.md)
-9. [`terraform/lxc/README.md`](./terraform/lxc/README.md)
+4. [`docs/workflow/documentation-workspaces.md`](./docs/workflow/documentation-workspaces.md)
+5. [`docs/reference/secrets-management.md`](./docs/reference/secrets-management.md)
+6. [`docs/plan/README.md`](./docs/plan/README.md)
+7. [`docs/design/architecture.md`](./docs/design/architecture.md)
+8. [`docs/design/network.md`](./docs/design/network.md)
+9. [`terraform/README.md`](./terraform/README.md)
+10. [`terraform/lxc/README.md`](./terraform/lxc/README.md)
 
 ## Repository layout
 
@@ -86,6 +87,7 @@ stack-owned edge route tasks, see
 - Workflow:
   - [`docs/workflow/branch-model.md`](./docs/workflow/branch-model.md)
   - [`docs/workflow/environments.md`](./docs/workflow/environments.md)
+  - [`docs/workflow/documentation-workspaces.md`](./docs/workflow/documentation-workspaces.md)
 - Architecture:
   - [`docs/design/architecture.md`](./docs/design/architecture.md)
   - [`docs/design/network.md`](./docs/design/network.md)

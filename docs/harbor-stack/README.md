@@ -18,9 +18,9 @@ The immediate goals are:
 
 Working note:
 
-- hand-off and hand-back documents for this workstream belong under
-  `docs/harbor-stack/artifacts/`
-- that directory is intentionally git-ignored except for a tracked `.gitkeep`
+- transient handoff, handback, evidence, and scratch material for this
+  workstream belongs under `docs/harbor-stack/artifacts/`
+- that directory is local-only and git-ignored
 
 ## Verified Current State
 

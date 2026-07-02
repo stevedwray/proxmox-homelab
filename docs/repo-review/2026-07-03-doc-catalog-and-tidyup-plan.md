@@ -319,7 +319,7 @@ Priority candidates for summarization:
 - `docs/monitoring-stack/design.md`
 - `docs/monitoring-stack/graylog-migration-plan.md`
 - `docs/netbox-stack/README.md`
-- `docs/stack-lifecycle-refactor/handoff.md`
+- `docs/stack-lifecycle-refactor/current-state.md`
 - `docs/storage-refactor/plan.md`
 - `docs/plan/phase-04-core-shared-services.md`
 

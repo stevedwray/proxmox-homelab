@@ -124,6 +124,14 @@ The authoritative workflow and branch model live in:
 
 Use those docs instead of repeating branch/process rules here.
 
+For planning-workspace hygiene, also use:
+
+- [docs/workflow/documentation-workspaces.md](../workflow/documentation-workspaces.md)
+
+Transient handoffs, prompts, transcripts, evidence, and scratch notes should
+live in a local `artifacts/` directory inside the relevant docs workspace, not
+as tracked documentation.
+
 ### Security scanning (run before merging any branch)
 
 | Change type | Command |

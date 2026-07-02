@@ -1,4 +1,4 @@
-# Handoff
+# Current State
 
 ## Current State
 
@@ -390,7 +390,7 @@ Stage 6 scope definition for the ci-runner-01 branch:
 ## Session Closeout Checklist
 
 - ✓ identified step-ca-stack as the next Stage 6 rollout target
-- ✓ documented rationale and scope in plan.md and handoff.md
+- ✓ documented rationale and scope in plan.md and current-state.md
 - ✓ defined expected changes, validation evidence, risks, and non-goals
 - ✓ commit docs to preserve scope definition
 

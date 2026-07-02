@@ -31,6 +31,15 @@ These removals establish the first repo-wide cleanup rule in practice:
 - tracked `evidence/`, `handoffs/`, and `artifacts/` material should be treated
   as temporary unless there is a strong, explicit reason to keep it
 
+Documentation workspace rule now adopted for future planning work:
+
+- each `docs/<workspace>/` area should use a local ignored `artifacts/`
+  directory for temporary session material
+- durable summaries stay tracked as `README.md`, `current-state.md`, `plan.md`,
+  `runbook.md`, or task docs
+- new tracked `handoffs/`, `evidence/`, `reports/`, `prompts/`, or transcript
+  directories should be treated as a process regression
+
 ## Working Meanings
 
 - `keep`: retain in the default docs surface as current/canonical
@@ -49,6 +58,25 @@ The cleanup review now has a stronger default rule:
 - git history is the recovery path if the raw material is ever needed again
 
 This rule applies repo-wide, not just to one refactor directory.
+
+## Workspace Pattern
+
+Standard pattern for active documentation workspaces:
+
+```text
+docs/<workspace>/
+├── README.md or current-state.md
+├── plan.md / tasks/ / runbook.md
+└── artifacts/   # local-only, git-ignored
+```
+
+Expected behavior:
+
+1. put temporary handoffs, evidence, prompts, transcripts, and logs in
+   `artifacts/`
+2. summarize durable conclusions back into tracked docs as work progresses
+3. include an artifact cleanup/checkpoint step in the plan itself
+4. delete stale artifact contents at sprint or phase closeout
 
 ## Priority Matrix
 
@@ -101,6 +129,8 @@ The pattern for these areas should be:
 - `docs/prompts/` completed
 - tracked `evidence/`, `handoffs/`, and `artifacts/` directories completed where identified
 - remaining historical material should be removed opportunistically when found in future passes
+- future planning work should default to a local `artifacts/` subdirectory
+  rather than inventing tracked transient doc trees
 
 These are the clearest “context reduction” wins because they contribute a large
 number of tracked files while offering comparatively low value as first-line
@@ -219,6 +249,8 @@ The next practical execution order should be:
 5. Shorten `docs/plan/`, `docs/provisioning-refactor/`, and
    `docs/monitoring-stack/` around a current-state-first structure.
 6. Complete the repo-wide stale-link and stale-environment-name pass.
+7. Enforce the documentation-workspace rule: durable docs tracked, transient
+   material local under `artifacts/`, cleanup included in plan closeout.
 
 ## Decision Gates
 

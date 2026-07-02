@@ -441,7 +441,7 @@ Goal:
 Tasks:
 
 1. Remove stale migration notes and temporary flags.
-2. Update `handoff.md` with what remains for production canary work.
+2. Update `current-state.md` with what remains for production canary work.
 3. Run required scanners for changed file types before merge.
 4. Promote according to `AGENTS.md` branch rules only after validation is
    complete.

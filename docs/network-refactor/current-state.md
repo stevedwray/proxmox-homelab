@@ -1,4 +1,4 @@
-# Network Refactor Handoff
+# Network Refactor Current State
 
 ## Session Goal
 
