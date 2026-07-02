@@ -2,7 +2,11 @@
 
 **Observed:** 2026-07-01
 **Updated:** 2026-07-02
-**Status:** Root cause identified and remediation updated on the working branch. Full teardown-cycle revalidation on `pve-test-vm` is the remaining gate.
+**Status:** Resolved. Full teardown-cycle revalidation on `pve-test-vm` passed (confirmed in
+[graylog-migration-plan.md](../monitoring-stack/graylog-migration-plan.md)'s live progress
+snapshot and commit `8e62e417 fix(graylog): complete cold-start teardown provisioning`,
+merged via PR #387 on 2026-07-02). Kept as a troubleshooting reference for the root-cause
+chain below, which remains useful if a similar cold-start regression recurs.
 
 ---
 
@@ -184,16 +188,14 @@ Targeted validation completed after the fix:
 
 ---
 
-## Recommended Follow-On Plan
+## Follow-On Plan (completed)
 
-Use the dedicated sprint plan here:
+The dedicated sprint plan is at
+[teardown-graylog-portainer/README.md](/home/steve/git/proxmox-homelab/docs/troubleshooting/teardown-graylog-portainer/README.md).
+All steps below were completed and validated by full teardown cycle on 2026-07-02:
 
-[teardown-graylog-portainer/README.md](/home/steve/git/proxmox-homelab/docs/troubleshooting/teardown-graylog-portainer/README.md)
-
-In short, the way forward is:
-
-1. preserve the now-working Graylog runtime path and Harbor-first image routing
-2. validate the new cold-start preflight sequencing fix on `pve-test-vm`
-3. rerun a full teardown cycle and confirm Graylog passes in-harness
-4. verify the platform phase continues through NetBox and Portainer
-5. finish with browser/edge validation
+1. ✅ preserve the now-working Graylog runtime path and Harbor-first image routing
+2. ✅ validate the new cold-start preflight sequencing fix on `pve-test-vm`
+3. ✅ rerun a full teardown cycle and confirm Graylog passes in-harness
+4. ✅ verify the platform phase continues through NetBox and Portainer
+5. ✅ finish with browser/edge validation

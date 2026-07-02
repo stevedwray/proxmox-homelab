@@ -152,14 +152,15 @@ See also [network.md — Known gaps](../design/network.md#known-gaps) for networ
 
 ## Active issues
 
+Tables like this go stale the moment an issue closes. Verify before relying
+on it: `gh issue list --state open --search "Phase 06"`.
+
+As of 2026-07-03, Phase 04 (#106, #125, #107) and Phase 05 (#108, #109, #110)
+issues below are all **closed** — those phases are implemented. Only Phase 06
+work remains open:
+
 | Issue | Description | Phase |
 | --- | --- | --- |
-| #106 | Traefik deployment | 04-03 |
-| #125 | step-ca deployment | 04-04 |
-| #107 | Monitoring deployment | 04-05 |
-| #108 | Trivy CI scan | 05-01 |
-| #109 | Syft SBOM | 05-02 |
-| #110 | Cosign signing | 05-03 |
 | #113 | Discover and document application workloads | 06-01 |
 | #114 | Create app_seg and game_seg SDN zones | 06-02 |
 | #115 | Migrate Pi-hole to app_seg | 06-03 |

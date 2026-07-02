@@ -31,7 +31,7 @@ Brownfield homelab infrastructure rebuild — a deliberate greenfield redesign o
 | FR-07 | Artifact proxying for apt packages (apt-cacher-ng) and Terraform providers (local mirror) |
 | FR-08 | IPAM and network documentation via NetBox |
 | FR-09 | CI/CD pipeline via GitHub Actions with self-hosted runner on `build_seg` |
-| FR-10 | Observability stack: VictoriaMetrics + Grafana + Loki |
+| FR-10 | Observability stack: VictoriaMetrics + Grafana (metrics) and Graylog (logs) — see ADR-07 |
 | FR-11 | Supply chain: Trivy (scan), Syft (SBOM), Cosign (sign), Harbor (policy gate) |
 | FR-12 | Application stack migration: arr stack, Jellyfin, Pi-hole, game services |
 | FR-13 | Secrets management with Bitwarden and environment variable injection |
@@ -116,7 +116,7 @@ The following constraints were identified through adversarial analysis and must 
 ### ADR-03: Metrics Stack
 
 **Status:** Decided
-**Context:** Phase 04 specifies VictoriaMetrics + Grafana + Loki without documented rationale.
+**Context:** Phase 04 specifies VictoriaMetrics + Grafana without documented rationale. (Logging is a separate concern — see ADR-07.)
 
 **Options considered:**
 
@@ -125,7 +125,7 @@ The following constraints were identified through adversarial analysis and must 
 | VictoriaMetrics | Lower memory footprint; drop-in Prometheus-compatible API; better long-term storage performance; single binary | Smaller community than Prometheus |
 | Prometheus | Industry standard; extensive documentation and dashboard ecosystem | Higher memory use; Alertmanager is a separate component; long retention needs Thanos/Cortex |
 
-**Decision:** VictoriaMetrics + Grafana + Loki (confirmed).
+**Decision:** VictoriaMetrics + Grafana (confirmed) for metrics.
 
 **Rationale:** `pve-test-vm` is still resource-constrained enough that VictoriaMetrics' lower memory footprint is a material advantage. Prometheus-compatible API means all Grafana dashboards, Ansible exporters, and Terraform monitoring integrations work unchanged.
 
@@ -189,6 +189,25 @@ The following constraints were identified through adversarial analysis and must 
 
 ---
 
+### ADR-07: Logging Stack
+
+**Status:** Decided — supersedes the Loki reference in the original FR-10
+**Context:** Phase 04 originally specified Loki (fed by Promtail) as part of the observability stack. Loki was later planned to be replaced by VictoriaLogs. The operator subsequently chose Graylog instead, for a fuller log-management UI with native syslog ingestion. See [docs/monitoring-stack/graylog-migration-plan.md](../monitoring-stack/graylog-migration-plan.md) for the full sprint-by-sprint migration record.
+
+**Options considered:**
+
+| Option | Pros | Cons |
+|---|---|---|
+| Loki + Promtail | Grafana-native, lightweight | Limited query ergonomics; superseded on this path |
+| VictoriaLogs | Prometheus-stack-compatible, low footprint | Superseded before reaching steady-state operator use |
+| Graylog | Full log-management UI; LDAP/Authentik-integrated search and dashboards; native syslog ingestion for Proxmox host, MikroTik, and NAS | Heavier footprint (MongoDB + OpenSearch Data Node); another service to operate |
+
+**Decision:** Graylog is the log platform (`graylog-stack`, `mgmt_seg`). VictoriaMetrics + Grafana (ADR-03) remain metrics-only. Loki and VictoriaLogs are both retired from the active `pve-test-vm` source path — no Loki or VictoriaLogs container, volume, or Grafana log panel remains.
+
+**Rationale:** Sprints G0-G5 validated Graylog for managed-LXC logs, Docker-container logs, Proxmox host syslog, and MikroTik syslog. A full teardown-cycle revalidation passed on `pve-test-vm` (2026-07-02) and the `stable` promotion gate has been met; incremental deployment to `pve` is the remaining step.
+
+---
+
 ## Threat Model
 
 **Method:** STRIDE, per asset class.
@@ -225,7 +244,7 @@ The following constraints were identified through adversarial analysis and must 
 | TM-24 | SDN / Proxmox | Elevation | All zones share a single Proxmox host. A container escape (LXC privilege escalation via kernel vulnerability) reaches the hypervisor and all other zones. No hardware boundary exists between zones. | **High** |
 | TM-25 | SDN / Proxmox | Tampering | VLAN tagging is enforced at the Linux bridge. A misconfigured LXC with trunk mode or incorrect VLAN tag may receive traffic from unintended zones. No documented audit of per-LXC VLAN assignments. | **Medium** |
 | TM-26 | SDN / DNS | Info Disclosure | Internal service names resolving via public Cloudflare DNS expose internal topology (service names, IP ranges) to external actors. DNS split-horizon is not documented. | **Medium** |
-| TM-27 | Observability / Loki | Repudiation | Loki is in mgmt_seg. If mgmt_seg is compromised, an attacker can delete or corrupt logs before detection. No immutable log destination (external syslog, S3 with object lock) is documented. | **High** |
+| TM-27 | Observability / Graylog | Repudiation | Graylog is in mgmt_seg. If mgmt_seg is compromised, an attacker can delete or corrupt logs before detection. No immutable log destination (external syslog, S3 with object lock) is documented. | **High** |
 | TM-28 | Grafana | Info Disclosure | Grafana authentication mechanism (Authentik SSO vs. local accounts) is not confirmed in the architecture. Local accounts bypass the SSO revocation path. | **Medium** |
 
 ### Deferred Threats (Phase 07 gap)

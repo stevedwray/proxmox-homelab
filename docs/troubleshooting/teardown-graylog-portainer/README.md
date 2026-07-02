@@ -4,6 +4,10 @@
 **Scope:** `pve-test-vm` teardown/redeploy cycle
 **Primary goal:** Make `graylog-stack` participate correctly in teardown so the platform phase reaches and deploys `portainer-stack` reliably.
 **Updated:** 2026-07-02
+**Status:** Resolved — all success criteria below were met by full teardown cycle on
+2026-07-02 (commit `8e62e417`, PR #387). See
+[../graylog-portainer-teardown-regression.md](../graylog-portainer-teardown-regression.md)
+for the current status summary; this document is kept as the sprint-plan record.
 
 ---
 

@@ -805,7 +805,7 @@ Prove the refactor branch is operationally sound and ready for merge.
 - the dedicated storage-validation LXC proved the primitive without requiring
   interconnected infrastructure-stack mutation testing
 - required scans pass or are explicitly accepted
-- the branch is ready for promotion back to `baseline/teardown-validated`
+- the branch is ready for promotion to `stable`
 - any intentional out-of-scope follow-up is written down clearly
 
 ## Phase Completion Checklist

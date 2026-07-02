@@ -68,7 +68,7 @@ deployments — use `./with-secrets` as the sole secret delivery mechanism.
 
 For the full three-stage model including entry and exit conditions, security control
 progression, and the relationship between Phase 03d and Phase 00c, see
-[docs/design/bootstrap-stages.md](../design/bootstrap-stages.md).
+[docs/design/bootstrap.md](../design/bootstrap.md).
 
 ## How `sops exec-env` works
 

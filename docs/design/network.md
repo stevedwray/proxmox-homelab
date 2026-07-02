@@ -13,6 +13,21 @@ enforced by MikroTik firewall ACLs, not by Proxmox. The Proxmox VNet firewall is
 for per-container inbound filtering but has a known cross-zone rule generation bug (see
 [Known gaps](#known-gaps)).
 
+## Administrative access
+
+The operator workstation on LAN `192.168.1.0/24` reaches SDN-attached guests directly
+through MikroTik routing — Proxmox is not an SSH/Ansible jump host in the target model.
+This is the default: `terraform/lxc/main.tf`'s `effective_network_access_path` resolves to
+`direct` for any stack attached to an SDN VNet (`terraform/lxc/main.tf:184`).
+
+`ProxyJump=root@<pve_host>` through Proxmox (`terraform/lxc/templates/inventory.tpl:10`)
+remains only as the `proxyjump_compat` fallback for non-SDN-attached (legacy/bridge)
+resources, gated by `stack.network.access_path`. It is not part of the target model for
+SDN-attached stacks and should not be extended to new ones. See
+`docs/network-refactor/target-model.md` for the refactor that established this contract and
+`docs/network-refactor/session-8-summary.md` for the validation record (final gate passed
+2026-05-22).
+
 ## Zones
 
 | Zone | Internal name | VLAN ID | Subnet | Gateway | Purpose |

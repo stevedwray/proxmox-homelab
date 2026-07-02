@@ -63,7 +63,7 @@ can begin.
 ## Inputs
 
 - [docs/plan/phase-00c-bootstrap-sequence.md](../phase-00c-bootstrap-sequence.md)
-- [docs/design/bootstrap-stages.md](../../design/bootstrap-stages.md)
+- [docs/design/bootstrap.md](../../design/bootstrap.md)
 - `terraform/lxc/stacks/portainer-stack/`
 - `terraform/lxc/stacks/harbor-stack/`
 - `terraform/lxc/stacks/ci-runner-01/`
@@ -131,7 +131,7 @@ This task makes NO changes to source code, Terraform, Ansible, or shell scripts.
 
 READ THESE FILES FIRST (before running any command):
   docs/plan/phase-00c-bootstrap-sequence.md
-  docs/design/bootstrap-stages.md
+  docs/design/bootstrap.md
   docs/plan/tasks/00c-bootstrap-02-stage2-production.md
 
 ---
