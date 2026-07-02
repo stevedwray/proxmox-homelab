@@ -75,7 +75,7 @@ See [decisions.md](decisions.md) for details.
 - [tasks/](tasks/) contains detailed task documents.
 - [prompts/](prompts/) contains matching agent prompts.
 - [prompts/index.yaml](prompts/index.yaml) is the ordered prompt registry for
-   the full 22-task sequence.
+  the full 22-task sequence.
 - [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
 - [runbook.md](runbook.md) is the shared validation and rollback contract for
    Task 15 through Task 21 route migrations.
@@ -84,6 +84,6 @@ See [decisions.md](decisions.md) for details.
 
 1. Read this README and [decisions.md](decisions.md).
 2. Select exactly one task from [task-sequence.md](task-sequence.md).
-3. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
+3. Use the matching prompt from `prompts/` when a task packet is helpful.
 4. Keep changes inside that task's declared scope.
 5. Stop if validation reveals a new issue outside the task boundary.

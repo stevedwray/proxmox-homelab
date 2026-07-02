@@ -41,7 +41,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 - [Lessons learned](../design/lessons-learned.md) — non-obvious facts from development passes
 
 For the full SDN zone definitions and MikroTik setup commands, see
-[terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
+[terraform/lxc/network/pve-test-vm.yaml](../../terraform/lxc/network/pve-test-vm.yaml).
 
 ## Environment summary
 
@@ -84,7 +84,7 @@ directly. Once Harbor is running, all subsequent containers in all zones pull fr
 misconfiguration. See [bootstrap.md](../design/bootstrap.md).
 
 Portainer remains in the lab as the management UI for Tier 2 application
-stacks. Tier 1 platform stacks on `pve-test` are provisioned by Terraform and
+stacks. Tier 1 platform stacks on `pve-test-vm` are provisioned by Terraform and
 configured explicitly via `scripts/provision.sh`; they do not use Portainer
 agents.
 
@@ -117,23 +117,19 @@ service is currently running.
 
 ## Repository conventions
 
-See `CLAUDE.md` for the authoritative branch model. Summary:
+The authoritative workflow and branch model live in:
 
-- Cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD
-- Short-lived branches: `feat/<name>`, `fix/<name>`, `task/<name>`, `work/<name>`
-- Validate on the short-lived branch (live runs, tests, populate checks)
-- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms known-good
-- PR `baseline/teardown-validated` → `main` only when stable and tested
-- `dev/pve-test` is **retired** (archival only) — do not branch from it or merge to it
-- Close GitHub issues with `Closes #N` in the commit message
-- Run `gh issue close N --comment "Fixed in commit <sha>"` after committing
+- [docs/workflow/branch-model.md](../workflow/branch-model.md)
+- [docs/workflow/environments.md](../workflow/environments.md)
+
+Use those docs instead of repeating branch/process rules here.
 
 ### Security scanning (run before merging any branch)
 
 | Change type | Command |
 | --- | --- |
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
-| Code files modified (Python, shell, YAML) | `./with-secrets sonar-scanner` |
+| Code files modified (Python, shell, YAML) | `./with-secrets /home/steve/.local/bin/sonar-scanner` |
 
 If a scan returns new issues, stop and present options — do not merge until resolved or explicitly accepted.
 

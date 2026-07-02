@@ -2,7 +2,7 @@
 
 ## Overview
 
-pve-test uses **Proxmox SDN VLAN zones** for network segmentation. Each zone is a
+`pve-test-vm` uses **Proxmox SDN VLAN zones** for network segmentation. Each zone is a
 VLAN-tagged sub-bridge; containers attach to a zone and receive an IP in that zone's
 subnet. The **MikroTik router** owns all gateway IPs and performs all L3 routing
 between zones. Proxmox does not route or NAT — it is a pure L2 switch.
@@ -24,7 +24,7 @@ adding a new segment.
     ├── VLAN 30: 192.168.30.1/24  (edge_seg)
     └── VLAN 40: 192.168.40.1/24  (infra_seg)
          |
-    pve-test (trunk port — all VLANs tagged)
+    pve-test-vm (trunk port — all VLANs tagged)
     ├── vmbr0 (VLAN-aware bridge)
     ├── tvnetc   → VLAN 10 → containers in build_seg
     ├── tvmgmt   → VLAN 20 → containers in mgmt_seg
@@ -169,7 +169,7 @@ dig @192.168.20.1 +short github.com
 ### Step 1 — Assign VLAN ID and subnet
 
 Choose a VLAN ID and subnet that does not conflict with existing zones. Update
-`terraform/lxc/network/pve-test.yaml` with the new attachment:
+`terraform/lxc/network/pve-test-vm.yaml` with the new attachment:
 
 ```yaml
   new_seg:
@@ -182,10 +182,10 @@ Choose a VLAN ID and subnet that does not conflict with existing zones. Update
       zone_type: vlan
       bridge: vmbr0
       nodes:
-        - pve-test
+        - pve-test-vm
       vnet: tvnew
       vlan_tag: 50          # ← new VLAN ID
-      alias: pve-test new segment
+      alias: pve-test-vm new segment
       subnet: "192.168.50.0/24"
       gateway: "192.168.50.1"
       snat: false           # ← always false — MikroTik handles routing
@@ -202,7 +202,7 @@ In the MikroTik terminal:
 
 ```text
 /interface vlan add interface=<trunk-iface> name=vlan50-new vlan-id=50
-/ip address add address=192.168.50.1/24 interface=vlan50-new comment="pve-test new_seg gw"
+/ip address add address=192.168.50.1/24 interface=vlan50-new comment="pve-test-vm new_seg gw"
 ```
 
 Verify the new VLAN interface is up and reachable:
@@ -215,11 +215,11 @@ ping -c 3 192.168.50.1
 ### Step 3 — Apply SDN zone through the current automation path
 
 The current `configure-network-sdn-vnet.yml` playbook handles `zone_type: vlan`
-for `pve-test`. The remaining out-of-band prerequisite is the MikroTik side.
+for `pve-test-vm`. The remaining out-of-band prerequisite is the MikroTik side.
 
 ```bash
 # Create the SDN zone
-pvesh create /cluster/sdn/zones --type vlan --zone tvnew --bridge vmbr0 --nodes pve-test
+pvesh create /cluster/sdn/zones --type vlan --zone tvnew --bridge vmbr0 --nodes pve-test-vm
 
 # Create the VNet
 pvesh create /cluster/sdn/vnets --vnet tvnew --zone tvnew --tag 50
@@ -234,7 +234,7 @@ pvesh set /cluster/sdn
 Verify the zone appears in Proxmox:
 
 ```bash
-pvesh get /nodes/pve-test/sdn/zones
+pvesh get /nodes/pve-test-vm/sdn/zones
 # Expected: tvnew listed
 ```
 
@@ -246,7 +246,7 @@ Once the zone is created and a container is deployed:
 # From a workstation — container should be reachable
 ping -c 3 192.168.50.<host>
 
-# From pve-test — internet egress via MikroTik
+# From pve-test-vm — internet egress via MikroTik
 pct exec <vmid> -- ping -c 3 8.8.8.8
 
 # Inter-zone routing — e.g. from a container in build_seg to new_seg
@@ -283,17 +283,17 @@ all traffic leaving the home network. Adding a second SNAT layer at Proxmox
 would:
 
 - Double NAT all traffic (MikroTik + Proxmox)
-- Break LAN → container ingress (source IP becomes pve-test, not the client)
+- Break LAN → container ingress (source IP becomes `pve-test-vm`, not the client)
 - Mask container IPs in logs
 
-Do not set `snat: true` on any zone in `pve-test.yaml`.
+Do not set `snat: true` on any zone in `pve-test-vm.yaml`.
 
 ---
 
 ## Related
 
-- `terraform/lxc/network/pve-test.yaml` — declarative zone/VNet/subnet intent
+- `terraform/lxc/network/pve-test-vm.yaml` — declarative zone/VNet/subnet intent
 - `terraform/lxc/ansible/playbooks/configure-network-sdn-vnet.yml` — SDN
   provisioner (Simple zones only; VLAN support pending)
-- `docs/design/NetworkPlanning.md` — zone design rationale
+- `docs/design/network.md` — zone design rationale
 - `docs/plan/README.md` — Phase 04 bring-up sequence, known code gaps

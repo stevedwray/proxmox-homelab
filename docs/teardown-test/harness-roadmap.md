@@ -20,14 +20,14 @@ The finished harness should provide three layers:
    - Produces evidence without requiring a clean tree unless requested.
 
 2. **Read-only live validation**
-   - Non-mutating checks against the current `pve-test` platform.
+   - Non-mutating checks against the current `pve-test-vm` platform.
    - Verifies VMID/IP inventory, DNS, HTTPS routes, direct service health, auth
      behavior, and final reconciler no-op status.
    - Safe to run while normal development is happening.
 
 3. **Approved destructive cycle**
    - Destroys and rebuilds the platform in the documented order.
-   - Re-runs the `pve-test` target guard before every live operation.
+   - Re-runs the `pve-test-vm` target guard before every live operation.
    - Requires backup evidence, outage/rollback window approval, clean source,
      and explicit operator approval.
    - Can stop and resume from phase boundaries using the same evidence stamp.
@@ -123,8 +123,8 @@ summary.
 Next step:
 
 - Generate `summary.md` under the evidence stamp.
-- Generate an optional tracked report skeleton under
-  `docs/teardown-test/artifacts/reports/<stamp>.md`.
+- Generate an optional tracked report skeleton under `docs/teardown-test/` if a
+  durable summary still needs to live in git.
 - Include:
   - branch and commit
   - phase results
@@ -142,7 +142,7 @@ Acceptance:
 
 ### 4. Add A Test Layer For The Harness Itself
 
-Shell parsing and safety gates should be tested without touching `pve-test`.
+Shell parsing and safety gates should be tested without touching `pve-test-vm`.
 
 Next step:
 
@@ -169,7 +169,7 @@ The harness should prevent overlapping destructive runs.
 Next step:
 
 - Add a local lock file under the evidence root.
-- Optionally add a remote `pve-test` lock marker for live destructive cycles.
+- Optionally add a remote `pve-test-vm` lock marker for live destructive cycles.
 - Include the evidence stamp, operator, PID, branch, and commit in the lock.
 - Provide explicit unlock guidance for stale locks.
 
@@ -193,7 +193,7 @@ Next step:
 
 Acceptance:
 
-- Pull requests can run source-only checks without pve-test access.
+- Pull requests can run source-only checks without `pve-test-vm` access.
 - Manual live checks are documented and easy to run before merging
   infrastructure-sensitive changes.
 - Destructive actions are never triggered by an ordinary push.

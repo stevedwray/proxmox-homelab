@@ -15,13 +15,14 @@ operator has explicitly approved the destructive window.
 
 ## Current Status
 
-On `baseline/teardown-validated` (commit `f4d1f25`).
+The teardown harness remains part of the current repo workflow, but this README
+should not be treated as the source of truth for branch promotion rules.
 
-Two full teardown/rebuild cycles have completed successfully:
+Historical teardown cycles completed successfully, including:
 
-- Initial rehearsal (2026-04-22): [artifacts/reports/20260422-044416.md](artifacts/reports/20260422-044416.md)
-- Storage-refactor gate (2026-05-17): [artifacts/reports/20260517-033905-storage-refactor-gate.md](artifacts/reports/20260517-033905-storage-refactor-gate.md)
-- Multi-source inventory gate (2026-06-13): [artifacts/reports/20260613-pve-test-vm-teardown.md](artifacts/reports/20260613-pve-test-vm-teardown.md)
+- Initial rehearsal (2026-04-22)
+- Storage-refactor gate (2026-05-17)
+- Multi-source inventory gate (2026-06-13)
 
 The June 2026 cycle was run against **pve-test-vm** (`192.168.1.41`), a
 VM-hosted Proxmox instance that replaced the retired bare-metal `pve-test`
@@ -31,11 +32,6 @@ same branch and merged. Durable takeaways are in [lessons-learned.md](lessons-le
 The repeatable harness is documented in [repeatable-test.md](repeatable-test.md)
 and implemented at `scripts/teardown-deploy-test.sh`.
 
-**Next action:** cut `fix/ci-pipeline-cleanup` from `baseline/teardown-validated`
-and work through CI pipeline items (workflow trigger cleanup, ShellCheck
-directives, Harbor image policy, Ansible lint). No teardown gate required for
-that branch.
-
 The harness is safe by default: non-destructive validation phases can run during
 development, while destroy/apply/publish phases require explicit execution
 approval.
@@ -44,21 +40,22 @@ approval.
 
 At the end of the test:
 
-- `pve-test` is rebuilt from repository state.
+- `pve-test-vm` is rebuilt from repository state.
 - All selected platform LXCs are running at their expected VMIDs and IPs.
 - Stage 3a edge foundation is rebuilt without hidden Terraform second-pass
   behavior.
 - Generated CoreDNS and Traefik state is regenerated from current manifests and
-  published from fresh artifacts.
+  published from fresh generated state.
 - Authentik discovery/reconciliation is converged without automatic deletes.
 - All six browser routes resolve to Traefik at `${lab_ip_proxy}` and show expected
   auth behavior.
 - The final edge reconciler dry-run is a no-op.
-- Destroy, deploy, validation, and rollback evidence are captured.
+- Destroy, deploy, validation, and rollback results are recorded in durable docs
+  where needed.
 
 ## Scope
 
-Default scope is pve-test only.
+Default scope is pve-test-vm only.
 
 The default platform stack set is:
 
@@ -113,9 +110,6 @@ Production `pve` is out of scope.
 - [harness-roadmap.md](harness-roadmap.md) lists the remaining work needed to
   turn the current harness prototype into a robust reusable playbook.
 - [runbook.md](runbook.md) contains the operator command flow.
-- [tasks/](tasks/) contains detailed task documents.
-- [prompts/](prompts/) contains matching AI-agent prompts.
-- [prompts/index.yaml](prompts/index.yaml) is the ordered prompt registry.
 
 ## How Agents Should Use This
 
@@ -124,7 +118,13 @@ Production `pve` is out of scope.
 2. Use [operations-plan.md](operations-plan.md) to identify the next atomic
    component and its allowed file touch set.
 3. Select the matching task from [task-sequence.md](task-sequence.md).
-4. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
-5. Keep changes inside that task's declared scope.
-6. Stop when a task reaches a destructive gate unless the task explicitly
+4. Keep changes inside that task's declared scope.
+5. Stop when a task reaches a destructive gate unless the task explicitly
    includes operator-approved execution.
+
+## Workflow Note
+
+For the current branch model and promotion rules, use:
+
+- [docs/workflow/branch-model.md](../workflow/branch-model.md)
+- [docs/workflow/environments.md](../workflow/environments.md)

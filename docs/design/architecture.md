@@ -16,7 +16,7 @@ See also:
 
 ### Project Nature
 
-Brownfield homelab infrastructure rebuild — a deliberate greenfield redesign of an existing personal lab, built progressively on `pve-test` (bare-metal Proxmox laptop) before being promoted to the production node `pve`. Architecture is **infrastructure-as-code first**: all provisioning in Terraform (Terragrunt), all configuration in Ansible, all operations gated through CI.
+Brownfield homelab infrastructure rebuild — a deliberate greenfield redesign of an existing personal lab, built progressively on `pve-test-vm` before being promoted to the production node `pve`. Architecture is **infrastructure-as-code first**: all provisioning in Terraform (Terragrunt), all configuration in Ansible, all operations gated through CI.
 
 ### Functional Requirements
 
@@ -41,14 +41,14 @@ Brownfield homelab infrastructure rebuild — a deliberate greenfield redesign o
 
 | Ref | NFR | Source |
 |---|---|---|
-| NFR-01 | **Rebuild-safe** — pve-test is ephemeral; all state is in code, not in running containers | Phase plan conventions |
+| NFR-01 | **Rebuild-safe** — `pve-test-vm` is ephemeral; all state is in code, not in running containers | Phase plan conventions |
 | NFR-02 | **One service per LXC** — no co-location of unrelated services | Observations §00b |
 | NFR-03 | **Default-deny east-west** — all inter-zone traffic is explicit | GreenField §2, NetworkPlanning |
 | NFR-04 | **Management access via VPN/tailnet** — no management ports exposed to internet *(target state; deferred to Phase 07 per ADR-05; bridge: MikroTik ACL restricts mgmt interface access to operator IPs per SEC-05)* | GreenField §2 |
 | NFR-05 | **Images must source from Harbor** — no direct Docker Hub pulls at runtime | Phase 06 |
 | NFR-06 | **Phased gating** — no phase starts until prerequisites from the prior phase are met | Plan README |
 | NFR-07 | **IaC policy compliance** — Snyk IaC clean before merging Terraform changes | CLAUDE.md |
-| NFR-08 | **Reproducibility** — pve-test wipe-and-rebuild must produce an identical result from code | Phase conventions |
+| NFR-08 | **Reproducibility** — `pve-test-vm` wipe-and-rebuild must produce an identical result from code | Phase conventions |
 
 ### Security Hardening Constraints (Red Team Analysis — 2026-04-15)
 
@@ -88,7 +88,7 @@ The following constraints were identified through adversarial analysis and must 
 | GitHub Actions + self-hosted runner | Works today; SHA-pinned actions; native VS Code/Copilot integration | GitHub is external trust root; outage stops all CI; no air-gap path |
 | Forgejo (self-hosted) | Full sovereignty; mirrors self-hosted philosophy; enables offline builds | Another service to deploy and operate before the platform is stable |
 
-**Decision:** GitHub Actions + self-hosted runner for all current phases. Forgejo evaluated as a Phase 07 candidate once the platform has proven stability through at least one full pve-test rebuild cycle.
+**Decision:** GitHub Actions + self-hosted runner for all current phases. Forgejo evaluated as a Phase 07 candidate once the platform has proven stability through at least one full `pve-test-vm` rebuild cycle.
 
 **Rationale:** The intended runner location is `build_seg`, not `mgmt_seg`, so build execution stays outside the management plane. GitHub-hosted jobs already cover repo-level checks such as Trivy filesystem scanning, Snyk IaC, TruffleHog, SonarCloud, Terraform format, Harbor image policy, and SOPS decryption. Self-hosted jobs are reserved for runner-dependent validation and later image pipeline work. Adding Forgejo before core shared services are stable still inverts operational priorities. SEC-01 (runner egress restriction) mitigates the primary supply chain risk of the external CI platform.
 
@@ -127,7 +127,7 @@ The following constraints were identified through adversarial analysis and must 
 
 **Decision:** VictoriaMetrics + Grafana + Loki (confirmed).
 
-**Rationale:** pve-test is a single bare-metal node with 32 GB RAM shared across all services. VictoriaMetrics' lower memory footprint is a material advantage. Prometheus-compatible API means all Grafana dashboards, Ansible exporters, and Terraform monitoring integrations work unchanged.
+**Rationale:** `pve-test-vm` is still resource-constrained enough that VictoriaMetrics' lower memory footprint is a material advantage. Prometheus-compatible API means all Grafana dashboards, Ansible exporters, and Terraform monitoring integrations work unchanged.
 
 ---
 
@@ -153,7 +153,7 @@ The following constraints were identified through adversarial analysis and must 
 ### ADR-05: Remote Operator Access
 
 **Status:** Deferred (Phase 07)
-**Context:** GreenField §2 specifies management access behind a VPN or tailnet. SEC-05 flags MikroTik management on the flat LAN as a risk. Neither a VPN service nor a formal access policy is part of the active pve-test plan.
+**Context:** The design docs specify management access behind a VPN or tailnet. SEC-05 flags MikroTik management on the flat LAN as a risk. Neither a VPN service nor a formal access policy is part of the active `pve-test-vm` plan.
 
 **Options considered:**
 
@@ -163,7 +163,7 @@ The following constraints were identified through adversarial analysis and must 
 | WireGuard (self-hosted) | Full sovereignty; no external control plane | Requires public endpoint or DDNS; operational complexity |
 | LAN-only (current) | No overhead while building locally | MikroTik management exposed on flat LAN; no remote access path |
 
-**Decision:** LAN-only is acceptable during active pve-test development (operator is always on LAN). Tailscale is the Phase 07 target for production remote access. MikroTik ACL restriction (SEC-05) applies immediately regardless of VPN decision.
+**Decision:** LAN-only is acceptable during active `pve-test-vm` development (operator is always on LAN). Tailscale is the Phase 07 target for production remote access. MikroTik ACL restriction (SEC-05) applies immediately regardless of VPN decision.
 
 **Rationale:** Adding a VPN service before Phase 04 core services are stable adds unnecessary failure domains. The immediate mitigation (SEC-05 MikroTik ACL) eliminates the most critical exposure without adding infrastructure.
 
@@ -185,7 +185,7 @@ The following constraints were identified through adversarial analysis and must 
 
 **Decision:** `./with-secrets` wrapping `sops exec-env` for all operator secret delivery. Docker environment variable injection for running containers. OpenBao evaluated as Phase 07 candidate for runtime rotation.
 
-**Rationale:** Phase 03d supersedes the original `.env` approach. SEC-03 (manual `.env` deletion) relied on operator discipline rather than a technical control — `with-secrets` makes it unnecessary by eliminating the file entirely. The `docker inspect` exposure for running containers remains an accepted limitation until Phase 07. See [docs/design/bootstrap-stages.md](bootstrap-stages.md) (Stage 0) and [docs/plan/phase-03d-secrets-hardening.md](../plan/phase-03d-secrets-hardening.md) for the implementation detail and migration rationale.
+**Rationale:** Phase 03d supersedes the original `.env` approach. SEC-03 (manual `.env` deletion) relied on operator discipline rather than a technical control — `with-secrets` makes it unnecessary by eliminating the file entirely. The `docker inspect` exposure for running containers remains an accepted limitation until Phase 07. See [Bootstrap sequence](bootstrap.md) and [docs/plan/phase-03d-secrets-hardening.md](../plan/phase-03d-secrets-hardening.md) for the implementation detail and migration rationale.
 
 ---
 

@@ -17,9 +17,9 @@ subsequent container deployments source images from Harbor at `10.57.3.10`. No c
 deployed from Phase 04 onwards pulls directly from Docker Hub or any external registry at
 runtime.
 
-The design rationale for the two-stage model — including the Linux From Scratch parallel,
-the security control progression by stage, and the relationship between Phase 03d and this
-phase — is documented in [docs/design/bootstrap-stages.md](../design/bootstrap-stages.md).
+The design rationale for the two-stage model — including the bootstrap ordering
+and the relationship between Phase 03d and this phase — is documented in
+[docs/design/bootstrap.md](../design/bootstrap.md).
 
 ## Live task docs
 
@@ -198,7 +198,7 @@ cd /home/steve/git/proxmox-homelab
 # Repository → Settings → Actions → Runners → ci-runner-01 must show "Idle"
 
 # Trigger a self-hosted workflow job and confirm it completes:
-gh workflow run validate.yml --ref baseline/teardown-validated
+gh workflow run validate.yml --ref docs/repo-review
 gh run list --workflow=validate.yml --limit 1
 ```
 
@@ -398,7 +398,7 @@ cd /home/steve/git/proxmox-homelab
 ```bash
 # Confirm runner appears as online: GitHub → Repository → Settings → Actions → Runners
 # Run a self-hosted pipeline job and confirm completion:
-gh workflow run validate.yml --ref baseline/teardown-validated
+gh workflow run validate.yml --ref docs/repo-review
 gh run list --workflow=validate.yml --limit 1
 ```
 

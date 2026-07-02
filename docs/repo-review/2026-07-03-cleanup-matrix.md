@@ -9,6 +9,26 @@ The goal here is to turn the earlier review into a practical `keep /
 summarize / archive` matrix for the main documentation clusters contributing to
 LLM context bloat.
 
+## Current Status
+
+Current working branch for the cleanup:
+
+- `docs/repo-review`
+
+Already completed on this branch:
+
+- deleted `docs/prompts/`
+- deleted `docs/sessions/`
+- deleted `docs/productionize-refactor/evidence/`
+- deleted `docs/productionize-refactor/handoffs/`
+- deleted `docs/netbox-stack/artifacts/`
+- deleted `docs/teardown-test/artifacts/`
+
+These removals establish the first repo-wide cleanup rule in practice:
+
+- tracked `evidence/`, `handoffs/`, and `artifacts/` material should be treated
+  as temporary unless there is a strong, explicit reason to keep it
+
 ## Working Meanings
 
 - `keep`: retain in the default docs surface as current/canonical
@@ -39,9 +59,9 @@ This rule applies repo-wide, not just to one refactor directory.
 | `docs/design/` | 10 | keep + summarize | durable architecture should stay, but archive references should be clearly separated |
 | `docs/plan/` | 88 | summarize | active roadmap matters, but the area is too large and historically layered |
 | `docs/provisioning-refactor/` | 81 | summarize | may still hold real source-of-truth material, but needs compression and pruning |
-| `docs/productionize-refactor/` | 223 | archive | largest historical residue cluster; heavy handoffs/evidence and stale branch context |
-| `docs/sessions/` | 43 | archive | raw transcripts and timestamped reports are high-noise |
-| `docs/prompts/` | 28 | archive | useful for agents, not good default human/LLM docs surface |
+| `docs/productionize-refactor/` | 223 before cleanup | summarize + selective keep | core strategy docs may still be useful; evidence and handoffs are already removed |
+| `docs/sessions/` | 43 before cleanup | completed archive | raw transcripts and timestamped reports were high-noise and are now removed |
+| `docs/prompts/` | 28 before cleanup | completed archive | agent support material, now removed from tracked docs |
 | `docs/teardown-test/` | 45 | summarize + archive | keep the current runbook, archive execution residue and historical packets |
 | `docs/netbox-stack/` | 11 | summarize | still relevant, but the README/current-state material is too time-layered |
 | `docs/monitoring-stack/` | 3 | summarize | very small count, but the docs are unusually large and verbose |
@@ -75,9 +95,10 @@ The pattern for these areas should be:
 
 ### Archive out of the default docs path
 
-- `docs/productionize-refactor/`
-- `docs/sessions/`
-- `docs/prompts/`
+- `docs/sessions/` completed
+- `docs/prompts/` completed
+- tracked `evidence/`, `handoffs/`, and `artifacts/` directories completed where identified
+- remaining historical material should be removed opportunistically when found in future passes
 
 These are the clearest “context reduction” wins because they contribute a large
 number of tracked files while offering comparatively low value as first-line
@@ -85,16 +106,19 @@ documentation.
 
 ## Estimated Cleanup Size
 
-Reasonable first-pass archive candidates:
+Completed first-pass archive/removal work:
 
 | Area | Tracked files |
 | --- | ---: |
-| `docs/productionize-refactor/` | 223 |
-| `docs/sessions/` | 43 |
 | `docs/prompts/` | 28 |
-| Subtotal | 294 |
+| `docs/sessions/` | 43 |
+| `docs/productionize-refactor/evidence/` | 149 |
+| `docs/productionize-refactor/handoffs/` | 37 |
+| `docs/netbox-stack/artifacts/` | 4 |
+| `docs/teardown-test/artifacts/` | 6 |
+| Subtotal removed | 267 |
 
-Reasonable first-pass summarize candidates:
+Primary summarize/rewrite candidates now:
 
 | Area | Tracked files |
 | --- | ---: |
@@ -109,15 +133,25 @@ Reasonable first-pass summarize candidates:
 | `README.md` + `docs/getting-started.md` | 2 |
 | Subtotal | 253 |
 
+Additional high-noise artifact-style material still tracked:
+
+| Area | Tracked files | Why it matters |
+| --- | ---: | --- |
+| `docs/provisioning-refactor/prompts/` | 24 | agent packet set embedded inside docs; high context cost and not operator-facing documentation |
+| `docs/teardown-test/prompts/` | 15 | another nested agent packet set; same pattern as deleted top-level `docs/prompts/` |
+| Subtotal | 39 | likely archive candidates, but they still have live references that must be rewritten first |
+
 Interpretation:
 
-- around `294` tracked docs are strong archive candidates immediately
-- another `250+` docs sit in areas that should be reduced or reorganized, even
-  if many individual files remain
+- the highest-noise doc classes have already been removed in this branch
+- the next phase is less about deletion and more about trust, consolidation,
+  and shortening
+- another `250+` docs still sit in areas that should be reduced or reorganized,
+  even if many individual files remain
 
 ## Recommended Cleanup Order
 
-### Wave 1: trust and navigation
+### Step 1: trust and navigation
 
 - `README.md`
 - `docs/getting-started.md`
@@ -126,32 +160,81 @@ Interpretation:
 
 This makes the repo safer to browse before any big moves happen.
 
-### Wave 2: move obvious historical residue
+### Step 2: consolidate workflow truth
 
-- `docs/sessions/`
-- `docs/prompts/`
+- trim duplicated branch/process guidance outside `docs/workflow/`
+- especially review:
+  - `docs/plan/README.md`
+  - `docs/productionize-refactor/README.md`
+  - any docs still pointing at retired branches or deleted artifact paths
+
+Goal:
+
+- one authoritative workflow path
+- no stale branch-model prose in secondary docs
+
+### Step 3: compress active but bloated areas
+
 - `docs/productionize-refactor/`
-
-This gives the largest context reduction quickly.
-
-### Wave 3: compress active but bloated areas
-
 - `docs/plan/`
 - `docs/provisioning-refactor/`
 - `docs/teardown-test/`
 - `docs/netbox-stack/`
 - `docs/monitoring-stack/`
 
-### Wave 4: architecture cleanup
+Goal:
+
+- preserve durable current-state guidance
+- rewrite or shrink oversized living docs
+- avoid carrying historical narrative inline
+
+### Step 4: architecture cleanup
 
 - `docs/design/`
 
 Mainly to separate active design docs from archive-era references and fix any
 remaining moved/broken links.
 
+### Step 5: repo-wide stale reference pass
+
+- old environment naming: `pve-test` vs `pve-test-vm`
+- retired branch references
+- moved or missing design docs
+- links into deleted artifact directories
+
+## Detailed Next Sequence
+
+The next practical execution order should be:
+
+1. Complete the entrypoint updates in `README.md` and `docs/getting-started.md`.
+2. Finish consolidating workflow guidance into `docs/workflow/` and remove stale
+   branch-model duplication elsewhere.
+3. Remove or rewrite references to deleted `evidence/`, `handoffs/`, and
+   `artifacts/` paths in active docs.
+4. Reduce `docs/productionize-refactor/` to its durable core only.
+5. Shorten `docs/plan/`, `docs/provisioning-refactor/`, and
+   `docs/monitoring-stack/` around a current-state-first structure.
+6. Decide whether nested prompt packs under `docs/provisioning-refactor/` and
+   `docs/teardown-test/` should be archived like the former top-level
+   `docs/prompts/`, then rewrite their task indexes accordingly.
+7. Do a repo-wide stale-link and stale-environment-name pass.
+
+## Decision Gates
+
+Before each major cleanup wave:
+
+1. Confirm whether the target area is canonical, active-but-bloated, or purely
+   historical.
+2. If it is canonical, rewrite rather than delete.
+3. If it is active-but-bloated, summarize and trim.
+4. If it is historical or artifact-only, delete and rely on git history.
+
+This keeps the cleanup consistent and avoids turning a docs reduction effort
+into accidental knowledge loss.
+
 ## Suggested Keep Surface After Cleanup
 
-Ideal default docs surface after tidyup:
+Ideal default docs surface after the next cleanup waves:
 
 - `README.md`
 - `docs/getting-started.md`
@@ -169,14 +252,12 @@ Everything else should either be:
 
 ## Bottom Line
 
-The most effective first cut is to archive the three obvious historical/agent
-clusters:
+The most effective first cut has already happened on this branch: the obvious
+artifact-heavy material is gone.
 
-- `docs/productionize-refactor/`
-- `docs/sessions/`
-- `docs/prompts/`
+The next phase should be deliberate and step-by-step:
 
-That alone represents about `294` tracked files.
-
-After that, the biggest quality improvement comes from compressing current but
-verbose areas rather than deleting them outright.
+1. fix entrypoint trust
+2. consolidate workflow truth
+3. compress the large living docs
+4. finish with a stale-reference pass

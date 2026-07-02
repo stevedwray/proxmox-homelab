@@ -17,8 +17,8 @@ The current project model is different:
 
 See the revised architecture and planning documents for the current target state:
 
-- [docs/design/GreenField.md](../design/GreenField.md)
-- [docs/design/NetworkPlanning.md](../design/NetworkPlanning.md)
+- [docs/design/architecture.md](../design/architecture.md)
+- [docs/design/network.md](../design/network.md)
 - [docs/plan/README.md](./README.md)
 
 ## Historical summary

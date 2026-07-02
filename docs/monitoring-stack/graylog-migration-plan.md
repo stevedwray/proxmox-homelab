@@ -76,8 +76,11 @@ Current implementation state on the validated `stable` path (as of 2026-07-02):
 
 ### Baseline evidence
 
-- Full teardown/redeploy reference:
-  [docs/teardown-test/artifacts/reports/20260613-pve-test-vm-teardown.md](../teardown-test/artifacts/reports/20260613-pve-test-vm-teardown.md)
+- Full teardown/redeploy reference was previously recorded in a tracked
+  teardown report that has now been removed as transient artifact material.
+  Use `docs/teardown-test/README.md`, `docs/teardown-test/lessons-learned.md`,
+  the relevant commits, and git history for recovery if the raw report is ever
+  needed again.
 - Recent `pve-test-vm` edge/auth follow-up after the June 2026 test-domain fixes:
   - `ceaf95a` `fix(authentik): converge test-domain edge config`
   - user-confirmed browser path healthy for Authentik, Grafana, Traefik, NetBox, Harbor, and Portainer after reprovision / reconcile
@@ -200,7 +203,8 @@ regression came from Graylog itself or from the existing host logging path.
 **Suggested capture checklist**
 
 - Evidence/report reference:
-  - [20260613-pve-test-vm-teardown.md](../teardown-test/artifacts/reports/20260613-pve-test-vm-teardown.md)
+  - use `docs/teardown-test/README.md`, `docs/teardown-test/lessons-learned.md`,
+    and the associated June 2026 commits as the durable baseline summary
 - Current branch commits to cite:
   - `eca9acd`
   - `ceaf95a`
