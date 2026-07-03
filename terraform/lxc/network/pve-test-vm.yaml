@@ -206,6 +206,11 @@ policies:
     protocol: tcp
     ports: [9000, 9443]
     description: Traefik forward-auth to Authentik (9000 HTTP, 9443 HTTPS)
+  - from: edge_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [5380]
+    description: Traefik to Technitium admin console/API (docs/dns-refactor Decision 4)
   - from: mgmt_seg
     to: edge_seg
     protocol: tcp

@@ -1,0 +1,271 @@
+# technitium-stack lifecycle: Docker base -> compose deploy -> zone bootstrap via REST API
+#
+# Parity-window stack — see docs/dns-refactor/plan.md. This does NOT touch
+# the MikroTik FWD rule and is not authoritative for any zone until the
+# Phase 3 cutover rehearsal passes. All probes here query technitium-stack's
+# own IP directly, never through the resolver path CoreDNS currently owns.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
+    - name: Mask portainer-agent service (platform tier — no agent on this host)
+      ansible.builtin.systemd:
+        name: portainer-agent.service
+        masked: true
+        enabled: false
+      failed_when: false
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Technitium DNS Server compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    technitium_compose_dir: /opt/technitium-stack
+    # v15.0+ required for native OIDC SSO (see docs/dns-refactor/decisions.md
+    # Decision 4); 15.2.0 is current latest as of the Phase 0 research pass.
+    technitium_image_tag: "15.2.0"
+    effective_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | mandatory('LAB_FQDN_HARBOR env var or registry_host inventory var is required') }}"
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    technitium_bootstrap_zone: "{{ lookup('env', 'TECHNITIUM_BOOTSTRAP_ZONE') | default('tech.' ~ lab_domain, true) }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address, true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+
+  tasks:
+    - name: Create Technitium compose directory
+      ansible.builtin.file:
+        path: "{{ technitium_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write compose secrets env file
+      ansible.builtin.copy:
+        dest: "{{ technitium_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          REGISTRY_HOST={{ effective_registry_host }}
+          DNS_SERVER_ADMIN_PASSWORD={{ technitium_admin_password }}
+      no_log: true
+
+    - name: Write Technitium compose definition
+      ansible.builtin.copy:
+        dest: "{{ technitium_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            technitium:
+              image: ${REGISTRY_HOST}/dockerhub/technitium/dns-server:{{ technitium_image_tag }}
+              container_name: technitium
+              restart: unless-stopped
+              env_file: .env
+              environment:
+                DNS_SERVER_DOMAIN: "{{ technitium_bootstrap_zone }}"
+                DNS_SERVER_ADMIN_USERNAME: admin
+                DNS_SERVER_PREFER_IPV6: "false"
+              ports:
+                - "53:53/udp"
+                - "53:53/tcp"
+                - "5380:5380/tcp"
+              volumes:
+                - technitium-config:/etc/dns
+
+          volumes:
+            technitium-config:
+
+    - name: Validate Technitium compose configuration
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ technitium_compose_dir }}/docker-compose.yml" config -q
+        chdir: "{{ technitium_compose_dir }}"
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start Technitium via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ technitium_compose_dir }}"
+        state: present
+        recreate: "{{ 'always' if docker_daemon_config.changed | default(false) else 'auto' }}"
+        remove_orphans: true
+      when: not ansible_check_mode
+
+    - name: Wait for Technitium web console to respond
+      ansible.builtin.uri:
+        url: "http://{{ technitium_ip }}:5380/api/user/session/get"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+        method: GET
+        status_code: [200, 401, 400]
+      register: technitium_console_ready
+      retries: 30
+      delay: 3
+      until: technitium_console_ready is success or technitium_console_ready.status in [401, 400]
+      when: not ansible_check_mode
+
+- name: Bootstrap Technitium zone (equivalent to CoreDNS stage -> validate -> assert -> promote)
+  hosts: all
+  become: false
+  gather_facts: false
+
+  vars:
+    lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    technitium_bootstrap_zone: "{{ lookup('env', 'TECHNITIUM_BOOTSTRAP_ZONE') | default('tech.' ~ lab_domain, true) }}"
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address, true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+    technitium_generated_zone_src: "{{ lookup('env', 'TECHNITIUM_GENERATED_ZONE_SRC') | default('', true) }}"
+    # Seed record set for the short-lived Technitium bootstrap zone. This
+    # intentionally mirrors CoreDNS's current browser-routed vs breakglass
+    # split so we can validate Technitium independently before it owns the
+    # live LAB_DOMAIN zone.
+    technitium_seed_records:
+      - { name: "dns", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}" }
+      - { name: "ns1", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}" }
+      - { name: "traefik", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "authentik", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "step-ca", ip: "{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}" }
+      - { name: "monitoring", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}" }
+      - { name: "grafana", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "portainer", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "harbor", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "netbox", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "authentik-int", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}" }
+      - { name: "authentik-bg", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}" }
+      - { name: "harbor-bg", ip: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}" }
+      - { name: "monitoring-bg", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}" }
+      - { name: "netbox-bg", ip: "{{ lookup('env', 'LAB_IP_NETBOX') | mandatory('LAB_IP_NETBOX env var is required') }}" }
+      - { name: "portainer-bg", ip: "{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var is required') }}" }
+      - { name: "proxy-bg", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+
+  tasks:
+    # NOTE: request/response shapes below are a first-draft mapping of
+    # Technitium's documented REST API (login -> token -> zones/create ->
+    # zones/records/add) and have not yet been verified against a live
+    # instance. Confirm and correct during Phase 1 execution — see
+    # STACK_CONTRACT.md's Generated Artifacts section and
+    # docs/dns-refactor/plan.md Phase 0 task 2 / Phase 2.
+    - name: Log in to Technitium API and obtain session token
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: technitium_login
+      retries: 10
+      delay: 3
+      until: technitium_login.status == 200
+      no_log: true
+
+    - name: Extract Technitium API token
+      ansible.builtin.set_fact:
+        technitium_token: "{{ (technitium_login.content | from_json).token }}"
+      no_log: true
+
+    - name: Check whether the lab zone already exists
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_zone_list
+      no_log: true
+
+    - name: Create Technitium bootstrap zone if absent
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ technitium_bootstrap_zone }}&type=Primary&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: technitium_bootstrap_zone not in (technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list
+      no_log: true
+
+    - name: Determine effective record source (generated reconciler output vs. seed list)
+      ansible.builtin.set_fact:
+        technitium_records: >-
+          {{ (lookup('file', technitium_generated_zone_src) | from_json)
+             if (technitium_generated_zone_src | trim | length > 0)
+             else technitium_seed_records }}
+
+    - name: Assert effective record set preserves bootstrap authority records
+      ansible.builtin.assert:
+        that:
+          - technitium_records | selectattr('name', 'equalto', 'dns') | list | length > 0
+          - technitium_records | selectattr('name', 'equalto', 'ns1') | list | length > 0
+        fail_msg: >-
+          Effective Technitium record set is missing bootstrap A records
+          required for the short-lived Technitium authority zone (`dns`
+          and `ns1`). Refusing to publish.
+
+    - name: Publish A records to the lab zone
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.ip }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      loop: "{{ technitium_records }}"
+      loop_control:
+        label: "{{ item.name }}.{{ technitium_bootstrap_zone }} -> {{ item.ip }}"
+      no_log: true
+
+    - name: Verify authority query returns expected address in bootstrap zone
+      ansible.builtin.shell: >
+        dig @{{ technitium_ip }} +short traefik.{{ technitium_bootstrap_zone }}
+      register: technitium_authority_test
+      args:
+        executable: /bin/bash
+      check_mode: false
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: (technitium_authority_test.stdout | default('')) | length > 0
+
+    - name: Assert authority query returns expected IP
+      ansible.builtin.assert:
+        that:
+          - (technitium_authority_test.stdout | trim) == (lookup('env', 'LAB_IP_PROXY'))
+        fail_msg: "Authority query did not return expected IP {{ lookup('env', 'LAB_IP_PROXY') }}"
+      when: not ansible_check_mode
+
+    - name: Verify recursive query for github.com
+      ansible.builtin.shell: >
+        dig @{{ technitium_ip }} +short github.com
+      register: technitium_recursion_test
+      args:
+        executable: /bin/bash
+      check_mode: false
+      changed_when: false
+
+    - name: Assert recursive query returns records
+      ansible.builtin.assert:
+        that:
+          - (technitium_recursion_test.stdout | default('')) | length > 0
+        fail_msg: "Recursive query for github.com returned no records"
+      when: not ansible_check_mode
