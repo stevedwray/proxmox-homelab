@@ -1,5 +1,6 @@
 hostname: analysis-stack
 ip_address: "192.168.1.16"
+dns_server: "192.168.1.1"
 vmid: 110
 portainer_agent: true
 # No portainer_stacks — agent registration only
