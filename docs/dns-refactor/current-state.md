@@ -7,6 +7,37 @@ This is the baseline a Technitium replacement must account for. Sourced from
 [docs/teardown-test/inventory.md](../teardown-test/inventory.md) — treat
 `STACK_CONTRACT.md` as the most authoritative of these if anything drifts.
 
+## Progress of the replacement as of 2026-07-03
+
+The baseline below is still the authoritative current production-like DNS path
+for `test.gibbsgreatly.xyz`: CoreDNS at `192.168.20.113` remains the zone
+authority behind the MikroTik FWD rule.
+
+Alongside it, the replacement stack is now live in `pve-test-vm`:
+
+| Field | Value |
+|---|---|
+| Replacement stack | `technitium-stack` |
+| Zone | `mgmt_seg` |
+| IP (`pve-test-vm`) | `192.168.20.115/24` |
+| Bootstrap zone | `tech.test.gibbsgreatly.xyz` |
+| Browser route | `https://technitium.test.gibbsgreatly.xyz` |
+| Auth model | Native OIDC against Authentik |
+
+What is proven:
+- Technitium answers authoritatively for the bootstrap zone.
+- Technitium performs recursive lookups for external names.
+- Traefik routes the admin UI/API successfully.
+- Authentik-backed login works end-to-end.
+- Technitium also serves a direct-query parity view of
+  `test.gibbsgreatly.xyz`, with browser-routed names resolving to Traefik
+  and authority records (`dns`, `ns1`) resolving to `192.168.20.115`.
+
+What is not yet true:
+- Technitium is **not** yet authoritative for `test.gibbsgreatly.xyz`.
+- MikroTik still forwards the live lab zone to CoreDNS, not Technitium.
+- No cutover rehearsal has been executed yet.
+
 ## What it is
 
 Internal authoritative nameserver and recursive resolver for the `mgmt_seg`

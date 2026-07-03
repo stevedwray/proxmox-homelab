@@ -131,14 +131,22 @@ Decision:
   resolver, matching every other internal admin route in this repo
   (`authentik.${LAB_DOMAIN}`, etc.).
 - `auth.mode: none` in `edge.yaml` (no `forwardAuth` middleware on the
-  primary route) — Technitium's native OIDC login is the auth gate;
-  stacking Authentik forward-auth on top would double-authenticate for no
-  benefit. If the fallback above is ever exercised, that's when
-  `auth.mode` flips to `forwardAuth`.
+  primary route was the initial design intent, but after implementing the
+  OIDC provider/application ownership in the edge reconciler the effective
+  manifest now uses `auth.mode: oidc`, matching the same Authentik-owned
+  OIDC route model used by other native-OIDC stacks. This remains the
+  single auth gate; we still do **not** layer Traefik `forwardAuth` on top.
+  If the fallback above is ever exercised, that's when `auth.mode` would
+  flip to `forwardAuth`.
 - **New firewall policy required:** `edge_seg → mgmt_seg tcp/5380`
   (Traefik → Technitium), mirroring the existing `edge_seg → mgmt_seg
   tcp/9000,9443` entry that exists for Authentik forward-auth callbacks.
   Added to `network/pve-test-vm.yaml` and `network/pve.yaml` `policies:`.
+- **Authentik direct TLS also needs standard `443` on the internal
+  `authentik-int.${LAB_DOMAIN}` host**, not just `:9443`. During live bring-up
+  Technitium successfully fetched metadata from `:9443`, but the metadata
+  itself advertised follow-up endpoints on `443`; exposing the direct TLS
+  sidecar on `443` resolved that mismatch cleanly.
 
 Rationale: native OIDC is a first-class, actively-maintained upstream
 feature with a vendor-published Authentik guide — building custom
@@ -181,7 +189,8 @@ Rationale: why this option over the alternatives considered.
   takeover" section), not a Phase 0-6 task here**
 - The MikroTik FWD-rule cutover procedure (Phase 0 task 5) — see plan.md,
   designed but not yet rehearsed.
-- Technitium's zone-import/bootstrap REST API calls in
-  `deploy-technitium-stack.yml` are a first draft (syntax-checked only, not
-  run against a live instance) — confirm against upstream API docs and a
-  real deploy during Phase 1 execution.
+- Technitium's bootstrap REST API calls in `deploy-technitium-stack.yml`
+  have now been exercised successfully against a live instance for login,
+  zone creation, record publication, and SSO configuration. What remains
+  unconfirmed is the fuller zone-import/parity workflow for replacing
+  `coredns_generated_zone_src`.

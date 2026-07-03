@@ -1,9 +1,64 @@
 # DNS Refactor — Plan
 
-Status: **Phase 0 decisions made 2026-07-03; Phase 1 scaffold in progress.**
+Status: **Phase 0 decisions made and Phase 1 bring-up completed on 2026-07-03.**
+Technitium is live on `pve-test-vm` at `192.168.20.115`, serving the bootstrap
+zone `tech.test.gibbsgreatly.xyz`, answering recursive queries, exposed
+through Traefik at `technitium.test.gibbsgreatly.xyz`, and using native OIDC
+against Authentik. CoreDNS remains authoritative for `test.gibbsgreatly.xyz`;
+no MikroTik cutover has been attempted.
+
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
 below.
+
+## Progress snapshot — 2026-07-03
+
+Completed:
+- `technitium-stack` scaffolded and deployed independently of `dns-stack`.
+- Permanent `LAB_IP_TECHNITIUM` identity chosen and exercised on
+  `pve-test-vm`: `192.168.20.115`.
+- Bootstrap zone chosen and working: `tech.test.gibbsgreatly.xyz`.
+- Direct smoke tests green against Technitium:
+  `step-ca.tech.test.gibbsgreatly.xyz` resolves internally and external-name
+  recursion (`github.com`) succeeds.
+- Traefik/CoreDNS edge integration working for
+  `technitium.test.gibbsgreatly.xyz`.
+- Native OIDC SSO against Authentik working end-to-end.
+
+Not yet done:
+- No via-MikroTik parity/cutover rehearsal for the live `test.gibbsgreatly.xyz` zone yet.
+- No MikroTik FWD-rule cutover rehearsal yet.
+- No full teardown/redeploy gate yet.
+
+## Issues encountered during Phase 1 and how they were resolved
+
+1. Harbor image pull targeted the wrong protocol/path and failed during the
+   first compose start.
+   Resolution: corrected Harbor environment targeting so Technitium pulled
+   successfully in `pve-test-vm`.
+2. Authentik edge discovery/reconcile defaulted to the lab URL instead of the
+   environment-specific Authentik FQDN.
+   Resolution: patched the Authentik edge tooling to derive its default URL
+   from `LAB_FQDN_AUTHENTIK`.
+3. Technitium could not validate or reach the OIDC provider reliably at first.
+   Resolution: built a combined CA bundle for the Technitium container and
+   mounted it as `SSL_CERT_FILE`.
+4. Technitium could not resolve `authentik-int.test.gibbsgreatly.xyz` while it
+   only owned the bootstrap zone.
+   Resolution: created a conditional forwarder for `${LAB_DOMAIN}` back to the
+   current CoreDNS authority during bootstrap.
+5. Authentik internal direct TLS was only available on `:9443`, while the OIDC
+   metadata led Technitium to `443`.
+   Resolution: exposed Authentik direct TLS on standard `443` as well and
+   moved Technitium's default OIDC authority to the standard HTTPS URL.
+6. Technitium record publication was not idempotent: re-adding existing A
+   records returned API-level errors.
+   Resolution: query current records first and only add missing A records.
+7. The first parity-zone renderer draft preserved CoreDNS authority identity
+   (`ns1 -> LAB_IP_DNS`) instead of re-pointing the zone at Technitium.
+   Resolution: the Technitium renderer now injects `dns` and `ns1` records
+   for `LAB_IP_TECHNITIUM`, so direct queries exercise Technitium as the
+   authoritative server for the parity zone.
 
 ## Phase 0 — Requirements and design capture
 
@@ -112,13 +167,13 @@ Tasks:
 - Admin console/API exposure and auth (see
   [decisions.md](./decisions.md) Decision 4, added 2026-07-03):
   `technitium-stack/edge.yaml` and the `edge_seg → mgmt_seg tcp/5380`
-  firewall policy are scaffolded, but **not yet applied/rehearsed** —
-  confirm `reconcile-edge.py`/`render-edge-traefik.py` render the
-  `step-ca`-resolved route correctly once Technitium is actually deployed.
-  Configure native OIDC SSO against Authentik through automation:
+  firewall policy are now applied and validated in `pve-test-vm`.
+  Native OIDC SSO against Authentik is also automated:
   `reconcile-edge.py` should own the Authentik provider/application, and
   `deploy-technitium-stack.yml` should push the Technitium-side SSO
   settings through the admin API.
+
+Phase 1 status as of 2026-07-03: **complete for bootstrap bring-up**.
 
 ## Phase 2 — Parity validation
 
@@ -132,6 +187,33 @@ Tasks:
   equivalent guard) so a bad zone push can't silently drop SOA/NS records,
   matching the safety property the current stage→validate→assert→promote
   flow provides.
+
+Phase 2 progress as of 2026-07-03:
+- `scripts/provision.sh --stack technitium-stack` now regenerates a
+  Technitium-specific parity-zone payload from the same seed zone and
+  validated EdgeManifests used by the CoreDNS renderer.
+- `deploy-technitium-stack.yml` now keeps the bootstrap zone and, in
+  parallel, publishes a direct-query parity zone for `test.gibbsgreatly.xyz`.
+- Direct queries against `192.168.20.115` now return expected answers for:
+  `traefik.test.gibbsgreatly.xyz -> 192.168.30.110`,
+  `ns1.test.gibbsgreatly.xyz -> 192.168.20.115`,
+  `github.com -> non-empty recursive answer`,
+  plus additional spot checks for `authentik`, `harbor`, `netbox`,
+  `portainer`, `step-ca`, and `authentik-int`.
+
+Phase 2 status: **direct-query parity working; resolver-path parity not yet
+tested.**
+
+Immediate next practical steps:
+1. Design the `coredns_generated_zone_src` replacement so the existing
+   provisioning-refactor DNS ownership flow can target Technitium.
+2. Decide whether parity is achieved by importing the live
+   `test.gibbsgreatly.xyz` zone into Technitium directly or by generating it
+   from the same source-of-truth path that currently feeds CoreDNS.
+3. Add an explicit guard for Technitium zone publication equivalent to the
+   current CoreDNS authority-record safety check.
+4. Once the above is working, validate that explicit dependents still resolve
+   correctly when querying Technitium directly.
 
 ## Phase 3 — Cutover rehearsal on `pve-test-vm`
 
@@ -235,8 +317,8 @@ All Phase 0 questions are resolved — see [decisions.md](./decisions.md).
 Remaining open items now live in Phase 1+:
 
 - Technitium's zone-import API shape (`/api/zones/import` or equivalent) —
-  needs confirming against upstream docs while building the deploy playbook
-  (task 2 above).
+  still needs confirming against upstream docs while building the parity
+  workflow (task 2 above).
 - Whether Technitium's zone-authority guard needs to be a custom script
   (diff proposed records against required bootstrap records pre-import) or
   whether Technitium has a native equivalent — Phase 2 task.

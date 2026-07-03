@@ -177,7 +177,7 @@
     technitium_oidc_admin_group: "{{ lookup('env', 'TECHNITIUM_OIDC_ADMIN_GROUP') | default('homelab-admins', true) }}"
     technitium_oidc_enabled: "{{ (technitium_oidc_client_secret | length) > 0 }}"
     technitium_needs_lab_forwarder: "{{ technitium_bootstrap_zone != lab_domain }}"
-    technitium_generated_zone_src: "{{ lookup('env', 'TECHNITIUM_GENERATED_ZONE_SRC') | default('', true) }}"
+    technitium_generated_zone_src_env: "{{ lookup('env', 'TECHNITIUM_GENERATED_ZONE_SRC') | default('', true) }}"
     # Seed record set for the short-lived Technitium bootstrap zone. This
     # intentionally mirrors CoreDNS's current browser-routed vs breakglass
     # split so we can validate Technitium independently before it owns the
@@ -239,6 +239,7 @@
         status_code: [200]
       when:
         - technitium_needs_lab_forwarder | bool
+        - not (technitium_generated_zone_enabled | default(false) | bool and technitium_generated_zone_name | default('') == lab_domain)
         - lab_domain not in (technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list
       no_log: true
 
@@ -315,12 +316,61 @@
       when: technitium_bootstrap_zone not in (technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list
       no_log: true
 
-    - name: Determine effective record source (generated reconciler output vs. seed list)
+    - name: Determine effective generated-zone source path
       ansible.builtin.set_fact:
-        technitium_records: >-
-          {{ (lookup('file', technitium_generated_zone_src) | from_json)
-             if (technitium_generated_zone_src | trim | length > 0)
-             else technitium_seed_records }}
+        technitium_generated_zone_src_effective: "{{ technitium_generated_zone_src | default(technitium_generated_zone_src_env, true) }}"
+
+    - name: Parse generated Technitium zone payload when provided
+      ansible.builtin.set_fact:
+        technitium_generated_zone_enabled: "{{ (technitium_generated_zone_src_effective | trim | length) > 0 }}"
+        technitium_generated_zone_payload: >-
+          {{ (lookup('file', technitium_generated_zone_src_effective) | from_json)
+             if (technitium_generated_zone_src_effective | trim | length > 0)
+             else {} }}
+
+    - name: Normalize generated Technitium zone payload
+      ansible.builtin.set_fact:
+        technitium_generated_zone_name: >-
+          {{
+            technitium_generated_zone_payload.zone
+            if (technitium_generated_zone_payload is mapping
+                and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
+            else technitium_bootstrap_zone
+          }}
+        technitium_generated_zone_records: >-
+          {{
+            technitium_generated_zone_payload.records
+            if (technitium_generated_zone_payload is mapping)
+            else technitium_generated_zone_payload
+          }}
+        technitium_parity_zone_enabled: >-
+          {{
+            (technitium_generated_zone_src_effective | trim | length > 0)
+            and (
+              (
+                technitium_generated_zone_payload.zone
+                if (technitium_generated_zone_payload is mapping
+                    and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
+                else technitium_bootstrap_zone
+              ) != technitium_bootstrap_zone
+            )
+          }}
+
+    - name: Assert generated Technitium zone payload shape
+      ansible.builtin.assert:
+        that:
+          - technitium_generated_zone_payload is mapping or technitium_generated_zone_payload is sequence
+          - technitium_generated_zone_payload is not string
+          - technitium_generated_zone_records is sequence
+          - technitium_generated_zone_records is not string
+        fail_msg: >-
+          technitium_generated_zone_src must contain either a JSON array of
+          `{name, ip}` records or an object with `zone` and `records`.
+      when: technitium_generated_zone_enabled | bool
+
+    - name: Determine bootstrap record source
+      ansible.builtin.set_fact:
+        technitium_records: "{{ technitium_seed_records }}"
 
     - name: Assert effective record set preserves bootstrap authority records
       ansible.builtin.assert:
@@ -332,7 +382,7 @@
           required for the short-lived Technitium authority zone (`dns`
           and `ns1`). Refusing to publish.
 
-    - name: Query current A records in the lab zone
+    - name: Query current A records in the bootstrap zone
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_bootstrap_zone }}&domain={{ item.name }}.{{ technitium_bootstrap_zone }}&listZone=false&token={{ technitium_token }}"
         method: GET
@@ -346,7 +396,7 @@
       until: technitium_existing_record_queries is not failed
       no_log: true
 
-    - name: Publish A records to the lab zone
+    - name: Publish A records to the bootstrap zone
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.ip }}&token={{ technitium_token }}"
         method: POST
@@ -404,3 +454,118 @@
           - (technitium_recursion_test.stdout | default('')) | length > 0
         fail_msg: "Recursive query for github.com returned no records"
       when: not ansible_check_mode
+
+    - name: Resolve current parity-zone definition
+      ansible.builtin.set_fact:
+        technitium_existing_parity_zone: >-
+          {{
+            (
+              (technitium_zone_list.content | from_json).response.zones
+              | selectattr('name', 'equalto', technitium_generated_zone_name)
+              | list
+              | first
+            ) | default({})
+          }}
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Remove existing non-primary parity zone before replacing it
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/delete?zone={{ technitium_generated_zone_name }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when:
+        - technitium_parity_zone_enabled | bool
+        - technitium_existing_parity_zone | length > 0
+        - (technitium_existing_parity_zone.type | default('')) != 'Primary'
+      no_log: true
+
+    - name: Refresh zone list after parity-zone replacement check
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_zone_list_after_parity_reconcile
+      when: technitium_parity_zone_enabled | bool
+      no_log: true
+
+    - name: Create Technitium parity zone if absent
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ technitium_generated_zone_name }}&type=Primary&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when:
+        - technitium_parity_zone_enabled | bool
+        - technitium_generated_zone_name not in (technitium_zone_list_after_parity_reconcile.content | from_json).response.zones | map(attribute='name') | list
+      no_log: true
+
+    - name: Assert parity-zone record set preserves authority records
+      ansible.builtin.assert:
+        that:
+          - technitium_generated_zone_records | selectattr('name', 'equalto', 'dns') | list | length > 0
+          - technitium_generated_zone_records | selectattr('name', 'equalto', 'ns1') | list | length > 0
+        fail_msg: >-
+          Generated Technitium parity record set is missing authority
+          bootstrap A records (`dns` and `ns1`). Refusing to publish.
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Query current A records in the parity zone
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_generated_zone_name }}&domain={{ item.name }}.{{ technitium_generated_zone_name }}&listZone=false&token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      loop: "{{ technitium_generated_zone_records }}"
+      loop_control:
+        label: "{{ item.name }}.{{ technitium_generated_zone_name }}"
+      register: technitium_existing_parity_record_queries
+      retries: 10
+      delay: 2
+      until: technitium_existing_parity_record_queries is not failed
+      when: technitium_parity_zone_enabled | bool
+      no_log: true
+
+    - name: Publish A records to the parity zone
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.item.name }}.{{ technitium_generated_zone_name }}&zone={{ technitium_generated_zone_name }}&type=A&ipAddress={{ item.item.ip }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+        return_content: true
+      loop: "{{ technitium_existing_parity_record_queries.results | default([]) }}"
+      loop_control:
+        label: "{{ item.item.name }}.{{ technitium_generated_zone_name }} -> {{ item.item.ip }}"
+      when: >-
+        technitium_parity_zone_enabled | bool and
+        (
+          (item.content | from_json).response.records
+          | selectattr('type', 'equalto', 'A')
+          | selectattr('rData.ipAddress', 'equalto', item.item.ip)
+          | list
+          | length == 0
+        )
+      failed_when: >-
+        (
+          publish_parity_record_response.content | from_json
+        ).status != 'ok'
+      register: publish_parity_record_response
+      no_log: true
+
+    - name: Verify authority query returns expected address in parity zone
+      ansible.builtin.shell: >
+        dig @{{ technitium_ip }} +short traefik.{{ technitium_generated_zone_name }}
+      register: technitium_parity_authority_test
+      args:
+        executable: /bin/bash
+      check_mode: false
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: (technitium_parity_authority_test.stdout | default('')) | length > 0
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Assert parity-zone authority query returns expected IP
+      ansible.builtin.assert:
+        that:
+          - (technitium_parity_authority_test.stdout | trim) == (lookup('env', 'LAB_IP_PROXY'))
+        fail_msg: "Parity-zone authority query did not return expected IP {{ lookup('env', 'LAB_IP_PROXY') }}"
+      when:
+        - technitium_parity_zone_enabled | bool
+        - not ansible_check_mode
