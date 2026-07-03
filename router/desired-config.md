@@ -2,13 +2,12 @@
 
 **This is the live, current router configuration**, not a future target —
 the hAP ac → hAP ax3 migration this document originally planned is complete.
-The VLAN addressing, hardware identity, and RouterOS version below were
-confirmed directly against the running device on 2026-07-03 (see
-[README.md](./README.md)'s "Verified Live State" section for how). The DHCP,
-WiFi, and firewall sections further down were **not** independently
-re-verified in that pass — treat them as accurate-as-of-last-edit rather
-than freshly confirmed, pending a working REST scrape (see README.md's
-"Re-scraping" section for the current credential blocker).
+The VLAN addressing, hardware identity, RouterOS version, DHCP, DNS, and
+firewall/WiFi run-state below were all confirmed directly against the
+running device on 2026-07-03 via a working REST scrape (see
+[README.md](./README.md)'s "Verified Live State" and "Re-scraping" sections).
+The firewall rule *contents* (as opposed to counts) and WiFi security-profile
+details were not independently re-diffed line-by-line in this pass.
 
 ---
 
@@ -68,7 +67,8 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 - **Fallback servers:** 8.8.8.8, 8.8.4.4
 - **Allow remote requests:** yes (router acts as local resolver on 192.168.1.1)
 - **Verify DoH cert:** no
-- **Static entries:** 80 host entries (copied from hAP ac)
+- **Static entries:** 72 host entries (was 80 when copied from the hAP ac —
+  some dropped during or after migration)
 - **DHCP hands out:** 192.168.1.22, 192.168.1.23 (Pi-holes) ✅
 - **ULA address on router:** fd00::1/64 on bridgeLocal (stable IPv6 for DNS)
 
@@ -76,9 +76,11 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 
 ## DHCP
 
-**Server:** `lan` on bridgeLocal, lease-time=10m
-**Pool:** dhcp-pool (192.168.1.100–192.168.1.199)
+**Server:** `lan` on bridgeLocal, lease-time=30m (was documented as 10m —
+corrected against live scrape)
+**Pool:** `dhcp_pool0` (192.168.1.100–192.168.1.200)
 **Network:** 192.168.1.0/24, gateway=192.168.1.1
+**Leases:** 13 total (5 static, 8 dynamic) as of 2026-07-03
 
 ### Static Leases
 
@@ -88,6 +90,7 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | argon-02 | E4:5F:01:F4:A4:88 | 192.168.1.23 | Pi-hole secondary |
 | garuda | 10:7C:61:B6:A4:91 | 192.168.1.104 | Workstation |
 | RBR350 | 34:98:B5:9D:56:0D | 192.168.1.110 | |
+| *(unlabeled)* | 88:A2:9E:57:E6:24 | 192.168.1.28 | Found in live scrape 2026-07-03 — no hostname/comment set on the router; identify this device and label it on the router and here |
 
 ---
 
@@ -185,5 +188,12 @@ Mirrors IPv4 forward chain exactly:
 
 ## Outstanding Issues
 
-1. **wifi1 stability** — confirm T5 survives reboot and client reconnects before consolidating security into shared profile
+1. **wifi1 stability** — likely resolved: live scrape (2026-07-03) shows
+   both `wifi1` and `wifi2` running with the router at ~3 weeks uptime, so
+   T5 has survived at least one long run without a security-profile
+   consolidation. Still hasn't been through an explicit, deliberate reboot
+   test — do that before finally consolidating into the shared profile.
 2. **IPv6 pool short lease (~10 min)** — ISP behaviour, not a config issue; prefix appears stable across renewals
+3. **Unlabeled static DHCP lease** (`192.168.1.28`, MAC `88:A2:9E:57:E6:24`)
+   — found in the 2026-07-03 scrape, not in the static-leases table above
+   until now. Identify the device and add a hostname/comment on the router.
