@@ -19,7 +19,16 @@ import urllib.request
 from urllib.parse import urlparse
 
 
-DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
+def _default_authentik_url() -> str:
+    configured_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if configured_host:
+        if "://" in configured_host:
+            return configured_host.rstrip("/")
+        return f"https://{configured_host}"
+    return "https://authentik.lab.gibbsgreatly.xyz"
+
+
+DEFAULT_AUTHENTIK_URL = _default_authentik_url()
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
 INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"

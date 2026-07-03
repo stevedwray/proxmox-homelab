@@ -3,6 +3,9 @@ kind: EdgeManifest
 metadata:
   name: technitium-edge
   stack: technitium-stack
+  annotations:
+    repo.auth.oidc.client_id_env: TECHNITIUM_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: TECHNITIUM_OIDC_CLIENT_SECRET
 spec:
   routes:
     - name: technitium
@@ -17,4 +20,4 @@ spec:
       tls:
         resolver: step-ca
       auth:
-        mode: none
+        mode: oidc

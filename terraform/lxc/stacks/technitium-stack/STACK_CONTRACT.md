@@ -56,7 +56,7 @@ No secret values are committed here. All sensitive values must come from the env
 |---|---|---|---|
 | DNS authority (bootstrap zone) | 53 | UDP + TCP | Authoritative for `TECHNITIUM_BOOTSTRAP_ZONE` during early bring-up; the live `LAB_DOMAIN` zone remains on CoreDNS until cutover |
 | DNS recursion | 53 | UDP + TCP | Recursive resolution for external names via upstream forwarder |
-| Web console / REST API | 5380 | TCP | Zone/record management and native OIDC-authenticated admin UI; used by the deploy playbook's zone-bootstrap step. Also routed through Traefik at `technitium.${LAB_DOMAIN}` via `edge.yaml` (`step-ca` certResolver, `auth.mode: none` — Technitium's own OIDC login is the gate), internal-`${LAB_DOMAIN}`-only, never the public `gibbsgreatly.xyz` zone. Requires the `edge_seg → mgmt_seg tcp/5380` firewall policy (see `network/<env>.yaml`). |
+| Web console / REST API | 5380 | TCP | Zone/record management and native OIDC-authenticated admin UI; used by the deploy playbook's zone-bootstrap step and API-driven SSO configuration step. Also routed through Traefik at `technitium.${LAB_DOMAIN}` via `edge.yaml` (`step-ca` certResolver, `auth.mode: oidc` — Technitium's own OIDC login is the gate), internal-`${LAB_DOMAIN}`-only, never the public `gibbsgreatly.xyz` zone. Requires the `edge_seg → mgmt_seg tcp/5380` firewall policy (see `network/<env>.yaml`). |
 
 `stack.yaml` service identifiers: `dns-authority` (tcp/53), `dns-authority-udp` (udp/53).
 
@@ -140,10 +140,9 @@ deploy + REST API zone bootstrap — no `direct_stack`)
   `docs/dns-refactor/decisions.md` Decision 4.
 - Admin console auth is native Technitium OIDC against Authentik (per the
   [authentik integration guide](https://integrations.goauthentik.io/networking/technitium/)),
-  **not yet automated** — the OIDC provider/application on the Authentik
-  side and the SSO settings on the Technitium side are both manual Phase
-  1/2 setup steps today, unlike e.g. `deploy-authentik-stack.yml`'s
-  scripted LDAP provider automation for Graylog. Technitium has no native
-  LDAP client, so that automation pattern doesn't transfer here — if OIDC
-  setup ever needs a fallback, it's Traefik `forwardAuth` (`auth.mode:
-  forwardAuth` in `edge.yaml`), not LDAP.
+  is automated through the existing Authentik edge reconciler plus
+  `deploy-technitium-stack.yml` calling Technitium's
+  `api/admin/sso/get` / `api/admin/sso/set` endpoints. Technitium has no
+  native LDAP client, so that automation pattern doesn't transfer here —
+  if OIDC setup ever needs a fallback, it's Traefik `forwardAuth`
+  (`auth.mode: forwardAuth` in `edge.yaml`), not LDAP.

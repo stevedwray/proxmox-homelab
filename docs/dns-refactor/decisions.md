@@ -106,9 +106,10 @@ admin UIs.
 
 Decision:
 - **Primary auth: native OIDC SSO against Authentik**, configured per the
-  authentik integration guide above, once `technitium-stack` is deployed
-  and Phase 2 parity validation has a live instance to configure against.
-  This is Phase 1/2 follow-up work, not yet implemented in the playbook.
+  authentik integration guide above, with the Authentik
+  provider/application created by `reconcile-authentik-edge.py` and the
+  Technitium-side settings pushed by `deploy-technitium-stack.yml` through
+  `api/admin/sso/get` / `api/admin/sso/set`.
 - **Fallback (if OIDC setup fails or regresses): Traefik `forwardAuth`
   via the existing `authentik` middleware** (session-gate the browser
   route, Technitium's own local admin account stays behind it) — **not**

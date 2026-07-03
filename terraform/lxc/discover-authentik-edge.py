@@ -21,7 +21,16 @@ if str(SCRIPT_DIR) not in sys.path:
 from edge_manifest import discover_edge_manifests, load_manifest, validate_manifests  # noqa: E402
 
 
-DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
+def _default_authentik_url() -> str:
+    configured_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if configured_host:
+        if "://" in configured_host:
+            return configured_host.rstrip("/")
+        return f"https://{configured_host}"
+    return "https://authentik.lab.gibbsgreatly.xyz"
+
+
+DEFAULT_AUTHENTIK_URL = _default_authentik_url()
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 OWNED_NAME_PREFIX = "edge-"
 LEGACY_MANAGED_SHARED_FORWARD_OUTPOST = "edge-forwardauth-outpost"
@@ -34,11 +43,13 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("harbor-stack", "harbor"): ("HARBOR_OIDC_CLIENT_ID", "harbor"),
     ("monitoring-stack", "grafana"): ("GRAFANA_OAUTH_CLIENT_ID", "grafana"),
     ("portainer-stack", "portainer"): ("PORTAINER_OAUTH_CLIENT_ID", "portainer"),
+    ("technitium-stack", "technitium"): ("TECHNITIUM_OIDC_CLIENT_ID", "technitium"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
     ("monitoring-stack", "grafana"): "GRAFANA_OAUTH_CLIENT_SECRET",
     ("portainer-stack", "portainer"): "PORTAINER_OAUTH_CLIENT_SECRET",
+    ("technitium-stack", "technitium"): "TECHNITIUM_OIDC_CLIENT_SECRET",
 }
 
 
@@ -439,6 +450,8 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (f"{base_url}/login/generic_oauth",)
     if _oidc_route_key(intent) == ("portainer-stack", "portainer"):
         return (base_url,)
+    if _oidc_route_key(intent) == ("technitium-stack", "technitium"):
+        return (f"{base_url}/sso/callback",)
     return ()
 
 

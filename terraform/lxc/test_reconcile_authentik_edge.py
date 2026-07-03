@@ -932,6 +932,36 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
         self.assertEqual([], client.writes)
         self.assertTrue(any(issue.code == "AKR007" for issue in result.issues))
 
+    def test_technitium_oidc_apply_writes_expected_provider_payload(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "technitium.yaml"
+            _write_manifest(
+                manifest,
+                stack="technitium-stack",
+                route="technitium",
+                host="technitium.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+            client = FakeClient()
+
+            with patch.dict(
+                MODULE.os.environ,
+                {"TECHNITIUM_OIDC_CLIENT_SECRET": "secret-value"},
+                clear=False,
+            ):
+                result = reconcile_authentik([manifest], client, apply=True)
+
+        self.assertTrue(result.ok)
+        provider_writes = [entry for entry in client.writes if entry[0] == "provider" and entry[1] == "create"]
+        self.assertEqual(1, len(provider_writes))
+        payload = provider_writes[0][2]
+        self.assertEqual("technitium", payload["client_id"])
+        self.assertEqual("secret-value", payload["client_secret"])
+        self.assertEqual(
+            [{"matching_mode": "strict", "url": "https://technitium.lab.gibbsgreatly.xyz/sso/callback"}],
+            payload["redirect_uris"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,6 +58,8 @@
 
   vars:
     technitium_compose_dir: /opt/technitium-stack
+    technitium_certs_dir: /opt/technitium-stack/certs
+    technitium_combined_ca_bundle: /opt/technitium-stack/certs/combined-ca.crt
     # v15.0+ required for native OIDC SSO (see docs/dns-refactor/decisions.md
     # Decision 4); 15.2.0 is current latest as of the Phase 0 research pass.
     technitium_image_tag: "15.2.0"
@@ -83,6 +85,23 @@
           DNS_SERVER_ADMIN_PASSWORD={{ technitium_admin_password }}
       no_log: true
 
+    - name: Create Technitium certs directory
+      ansible.builtin.file:
+        path: "{{ technitium_certs_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Build Technitium combined CA bundle
+      ansible.builtin.shell: |
+        set -euo pipefail
+        cat /etc/ssl/certs/ca-certificates.crt > {{ technitium_combined_ca_bundle }}
+        if [[ -f /usr/local/share/ca-certificates/homelab-root.crt ]]; then
+          cat /usr/local/share/ca-certificates/homelab-root.crt >> {{ technitium_combined_ca_bundle }}
+        fi
+      args:
+        executable: /bin/bash
+      changed_when: true
+
     - name: Write Technitium compose definition
       ansible.builtin.copy:
         dest: "{{ technitium_compose_dir }}/docker-compose.yml"
@@ -98,12 +117,14 @@
                 DNS_SERVER_DOMAIN: "{{ technitium_bootstrap_zone }}"
                 DNS_SERVER_ADMIN_USERNAME: admin
                 DNS_SERVER_PREFER_IPV6: "false"
+                SSL_CERT_FILE: /etc/ssl/certs/combined-ca.crt
               ports:
                 - "53:53/udp"
                 - "53:53/tcp"
                 - "5380:5380/tcp"
               volumes:
                 - technitium-config:/etc/dns
+                - ./certs/combined-ca.crt:/etc/ssl/certs/combined-ca.crt:ro
 
           volumes:
             technitium-config:
@@ -141,10 +162,21 @@
 
   vars:
     lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ lab_domain, true) }}"
+    lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ lab_domain, true) }}"
+    lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     technitium_bootstrap_zone: "{{ lookup('env', 'TECHNITIUM_BOOTSTRAP_ZONE') | default('tech.' ~ lab_domain, true) }}"
     technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default(ip_address, true) | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
     technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 — Technitium admin API, private mgmt_seg only
+    technitium_oidc_authority: "{{ lookup('env', 'TECHNITIUM_OIDC_AUTHORITY') | default('https://' ~ lab_fqdn_authentik_internal ~ '/application/o/edge-technitium-stack-technitium/', true) }}"
+    technitium_oidc_client_id: "{{ lookup('env', 'TECHNITIUM_OIDC_CLIENT_ID') | default('technitium', true) }}"
+    technitium_oidc_client_secret: "{{ lookup('env', 'TECHNITIUM_OIDC_CLIENT_SECRET') | default('', true) }}"
+    technitium_oidc_metadata_address: "{{ lookup('env', 'TECHNITIUM_OIDC_METADATA_ADDRESS') | default(technitium_oidc_authority ~ '.well-known/openid-configuration', true) }}"
+    technitium_oidc_scopes_csv: "{{ lookup('env', 'TECHNITIUM_OIDC_SCOPES') | default('openid|profile|email|roles', true) }}"
+    technitium_oidc_admin_group: "{{ lookup('env', 'TECHNITIUM_OIDC_ADMIN_GROUP') | default('homelab-admins', true) }}"
+    technitium_oidc_enabled: "{{ (technitium_oidc_client_secret | length) > 0 }}"
+    technitium_needs_lab_forwarder: "{{ technitium_bootstrap_zone != lab_domain }}"
     technitium_generated_zone_src: "{{ lookup('env', 'TECHNITIUM_GENERATED_ZONE_SRC') | default('', true) }}"
     # Seed record set for the short-lived Technitium bootstrap zone. This
     # intentionally mirrors CoreDNS's current browser-routed vs breakglass
@@ -200,6 +232,81 @@
       register: technitium_zone_list
       no_log: true
 
+    - name: Create conditional forwarder for live lab domain during bootstrap phase
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ lab_domain }}&type=Forwarder&protocol=Udp&forwarder={{ lab_ip_dns }}&dnssecValidation=false&proxyType=DefaultProxy&initializeForwarder=true&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when:
+        - technitium_needs_lab_forwarder | bool
+        - lab_domain not in (technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list
+      no_log: true
+
+    - name: Fetch current Technitium SSO config
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/admin/sso/get?includeGroups=true&token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_sso_get
+      no_log: true
+
+    - name: Derive desired Technitium SSO values
+      ansible.builtin.set_fact:
+        technitium_oidc_desired_authority: "{{ technitium_oidc_enabled | ternary(technitium_oidc_authority, '') }}"
+        technitium_oidc_desired_client_id: "{{ technitium_oidc_enabled | ternary(technitium_oidc_client_id, '') }}"
+        technitium_oidc_desired_client_secret: "{{ technitium_oidc_enabled | ternary(technitium_oidc_client_secret, '') }}"
+        technitium_oidc_desired_metadata_address: "{{ technitium_oidc_enabled | ternary(technitium_oidc_metadata_address, '') }}"
+        technitium_oidc_desired_scopes_list: "{{ technitium_oidc_enabled | ternary(technitium_oidc_scopes_csv.split('|'), []) }}"
+        technitium_oidc_desired_group_map: "{{ technitium_oidc_enabled | ternary([{'remoteGroup': technitium_oidc_admin_group, 'localGroup': 'Administrators'}], []) }}"
+        technitium_oidc_desired_group_map_string: "{{ technitium_oidc_enabled | ternary(technitium_oidc_admin_group ~ '|Administrators', '') }}"
+
+    - name: Determine whether Technitium SSO config needs update
+      ansible.builtin.set_fact:
+        technitium_sso_update_required: >-
+          {{
+            (technitium_sso_get.content | from_json).response.ssoEnabled != technitium_oidc_enabled
+            or ((technitium_sso_get.content | from_json).response.ssoAuthority | default('')) != technitium_oidc_desired_authority
+            or ((technitium_sso_get.content | from_json).response.ssoClientId | default('')) != technitium_oidc_desired_client_id
+            or ((technitium_sso_get.content | from_json).response.ssoClientSecret | default('')) != technitium_oidc_desired_client_secret
+            or ((technitium_sso_get.content | from_json).response.ssoMetadataAddress | default('')) != technitium_oidc_desired_metadata_address
+            or ((technitium_sso_get.content | from_json).response.ssoScopes | default([])) != technitium_oidc_desired_scopes_list
+            or ((technitium_sso_get.content | from_json).response.ssoAllowSignup | default(false)) != technitium_oidc_enabled
+            or ((technitium_sso_get.content | from_json).response.ssoAllowSignupOnlyForMappedUsers | default(false)) != technitium_oidc_enabled
+            or ((technitium_sso_get.content | from_json).response.ssoGroupMap | default([])) != technitium_oidc_desired_group_map
+          }}
+
+    - name: Configure Technitium native OIDC SSO
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/admin/sso/set?token={{ technitium_token }}"
+        method: POST
+        body_format: form-urlencoded
+        body:
+          ssoEnabled: "{{ technitium_oidc_enabled | ternary('true', 'false') }}"
+          ssoAuthority: "{{ technitium_oidc_desired_authority }}"
+          ssoClientId: "{{ technitium_oidc_desired_client_id }}"
+          ssoClientSecret: "{{ technitium_oidc_desired_client_secret }}"
+          ssoMetadataAddress: "{{ technitium_oidc_desired_metadata_address }}"
+          ssoScopes: "{{ technitium_oidc_desired_scopes_list | join('|') }}"
+          ssoAllowSignup: "{{ technitium_oidc_enabled | ternary('true', 'false') }}"
+          ssoAllowSignupOnlyForMappedUsers: "{{ technitium_oidc_enabled | ternary('true', 'false') }}"
+          ssoGroupMap: "{{ technitium_oidc_desired_group_map_string }}"
+        status_code: [200]
+        return_content: true
+      when: technitium_sso_update_required | bool
+      register: technitium_sso_set
+      no_log: true
+
+    - name: Wait for Technitium API after SSO config change
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/session/get"
+        method: GET
+        status_code: [200, 401, 400]
+      register: technitium_api_ready_post_sso
+      retries: 20
+      delay: 3
+      until: technitium_api_ready_post_sso is success or technitium_api_ready_post_sso.status in [401, 400]
+      when: technitium_sso_set is changed
+
     - name: Create Technitium bootstrap zone if absent
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/zones/create?zone={{ technitium_bootstrap_zone }}&type=Primary&token={{ technitium_token }}"
@@ -225,14 +332,42 @@
           required for the short-lived Technitium authority zone (`dns`
           and `ns1`). Refusing to publish.
 
+    - name: Query current A records in the lab zone
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_bootstrap_zone }}&domain={{ item.name }}.{{ technitium_bootstrap_zone }}&listZone=false&token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      loop: "{{ technitium_records }}"
+      loop_control:
+        label: "{{ item.name }}.{{ technitium_bootstrap_zone }}"
+      register: technitium_existing_record_queries
+      retries: 10
+      delay: 2
+      until: technitium_existing_record_queries is not failed
+      no_log: true
+
     - name: Publish A records to the lab zone
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.ip }}&token={{ technitium_token }}"
         method: POST
         status_code: [200]
-      loop: "{{ technitium_records }}"
+        return_content: true
+      loop: "{{ technitium_existing_record_queries.results }}"
       loop_control:
-        label: "{{ item.name }}.{{ technitium_bootstrap_zone }} -> {{ item.ip }}"
+        label: "{{ item.item.name }}.{{ technitium_bootstrap_zone }} -> {{ item.item.ip }}"
+      when: >-
+        (
+          item.content | from_json
+        ).response.records
+        | selectattr('type', 'equalto', 'A')
+        | selectattr('rData.ipAddress', 'equalto', item.item.ip)
+        | list
+        | length == 0
+      failed_when: >-
+        (
+          publish_record_response.content | from_json
+        ).status != 'ok'
+      register: publish_record_response
       no_log: true
 
     - name: Verify authority query returns expected address in bootstrap zone

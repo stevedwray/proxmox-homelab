@@ -115,11 +115,10 @@ Tasks:
   firewall policy are scaffolded, but **not yet applied/rehearsed** —
   confirm `reconcile-edge.py`/`render-edge-traefik.py` render the
   `step-ca`-resolved route correctly once Technitium is actually deployed.
-  Configure native OIDC SSO against Authentik manually per the
-  [authentik integration guide](https://integrations.goauthentik.io/networking/technitium/)
-  (create the OAuth2/OIDC provider+application in Authentik, then the SSO
-  settings in Technitium's own console) — this is manual setup, not yet
-  scripted like `deploy-authentik-stack.yml`'s Graylog LDAP automation.
+  Configure native OIDC SSO against Authentik through automation:
+  `reconcile-edge.py` should own the Authentik provider/application, and
+  `deploy-technitium-stack.yml` should push the Technitium-side SSO
+  settings through the admin API.
 
 ## Phase 2 — Parity validation
 

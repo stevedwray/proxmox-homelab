@@ -36,13 +36,15 @@ Harbor addresses.
 | Service            | Port | Protocol | Notes |
 |--------------------|------|----------|-------|
 | Authentik server   | 9000 | HTTP     | Forward-auth endpoint, UI |
+| Authentik server   | 443  | HTTPS    | Standard direct TLS endpoint for OIDC consumers |
 | Authentik server   | 9443 | HTTPS    | TLS endpoint |
 
 `stack.yaml` service identifiers: `authentik-http`, `authentik-https`.
 
 These ports must be reachable from `edge_seg` (Traefik forward-auth) and from the
 LAN for admin access. See `pve-test.yaml` policies:
-`edge_seg → mgmt_seg tcp/9000,9443`.
+`edge_seg → mgmt_seg tcp/9000,9443`. Port `443` is additionally used for direct
+OIDC clients such as Technitium on the management segment.
 
 ## Dependencies
 
