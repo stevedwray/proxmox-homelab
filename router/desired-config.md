@@ -1,6 +1,14 @@
-# hAP ax3 Desired Configuration
+# hAP ax3 Configuration
 
-Replacement for the hAP ac. Source of truth for reprovisioning.
+**This is the live, current router configuration**, not a future target —
+the hAP ac → hAP ax3 migration this document originally planned is complete.
+The VLAN addressing, hardware identity, and RouterOS version below were
+confirmed directly against the running device on 2026-07-03 (see
+[README.md](./README.md)'s "Verified Live State" section for how). The DHCP,
+WiFi, and firewall sections further down were **not** independently
+re-verified in that pass — treat them as accurate-as-of-last-edit rather
+than freshly confirmed, pending a working REST scrape (see README.md's
+"Re-scraping" section for the current credential blocker).
 
 ---
 
@@ -9,7 +17,7 @@ Replacement for the hAP ac. Source of truth for reprovisioning.
 | Field | Value |
 |-------|-------|
 | Model | MikroTik hAP ax3 (RBD53G-5HacD2HnD+TC) |
-| RouterOS | 7.22.2 stable |
+| RouterOS | 7.23.1 stable (confirmed live 2026-07-03; was 7.22.2 at authoring) |
 | Timezone | Pacific/Auckland (UTC+12/+13 DST) |
 | 2.5G port | ether1 → bridgeLocal (switch uplink) |
 | 1G ports | ether2 = WAN, ether3/4/5 = bridgeLocal |
@@ -24,10 +32,10 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | Interface | VLAN ID | Purpose |
 |-----------|---------|---------|
 | vlan1-wan | 10 | WAN uplink — tagged on ether2, DHCP client |
-| vlan10-build | 10 | build_seg gateway (10.57.0.1/24) |
-| vlan20-mgmt | 20 | mgmt_seg gateway (10.57.1.1/24) |
-| vlan30-edge | 30 | edge_seg gateway (10.57.2.1/24) |
-| vlan40-infra | 40 | infra_seg gateway (10.57.3.1/24) |
+| vlan10-build | 10 | build_seg gateway (192.168.10.1/24) |
+| vlan20-mgmt | 20 | mgmt_seg gateway (192.168.20.1/24) |
+| vlan30-edge | 30 | edge_seg gateway (192.168.30.1/24) |
+| vlan40-infra | 40 | infra_seg gateway (192.168.40.1/24) |
 
 ---
 
@@ -38,10 +46,10 @@ Members: ether1, ether3, ether4, ether5, wifi1, wifi2
 | bridgeLocal | 192.168.1.1/24 | LAN gateway |
 | bridgeLocal | 192.168.1.251/24 | Management (permanent, kept for API access) |
 | vlan1-wan | ISP-assigned | DHCP client, add-default-route=yes, use-peer-dns=no |
-| vlan10-build | 10.57.0.1/24 | |
-| vlan20-mgmt | 10.57.1.1/24 | |
-| vlan30-edge | 10.57.2.1/24 | |
-| vlan40-infra | 10.57.3.1/24 | |
+| vlan10-build | 192.168.10.1/24 | |
+| vlan20-mgmt | 192.168.20.1/24 | |
+| vlan30-edge | 192.168.30.1/24 | |
+| vlan40-infra | 192.168.40.1/24 | |
 | bridgeLocal | 2404:440c:234f:f00::/64 | IPv6 LAN — from-pool, advertise=yes |
 
 ---
