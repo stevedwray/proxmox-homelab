@@ -7,11 +7,13 @@ This is the baseline a Technitium replacement must account for. Sourced from
 [docs/teardown-test/inventory.md](../teardown-test/inventory.md) — treat
 `STACK_CONTRACT.md` as the most authoritative of these if anything drifts.
 
-## Progress of the replacement as of 2026-07-03
+## Progress of the replacement as of 2026-07-04
 
-The baseline below is still the authoritative current production-like DNS path
-for `test.gibbsgreatly.xyz`: CoreDNS at `192.168.20.113` remains the zone
-authority behind the MikroTik FWD rule.
+The baseline below still describes the original `dns-stack` contract, but in
+`pve-test-vm` the active resolver path for `test.gibbsgreatly.xyz` has now
+been rehearsed through Technitium: the MikroTik test-zone delegate points to
+`192.168.20.115` rather than CoreDNS `192.168.20.113`. CoreDNS remains live
+as the previous authority and rollback target.
 
 Alongside it, the replacement stack is now live in `pve-test-vm`:
 
@@ -32,11 +34,19 @@ What is proven:
 - Technitium also serves a direct-query parity view of
   `test.gibbsgreatly.xyz`, with browser-routed names resolving to Traefik
   and authority records (`dns`, `ns1`) resolving to `192.168.20.115`.
+- That parity view is now covered by a checked-in direct-query verification
+  matrix (`terraform/lxc/stacks/technitium-stack/verify-parity.sh`) instead
+  of ad hoc manual `dig` spot checks.
+- The MikroTik resolver path on `pve-test-vm` now also resolves
+  `test.gibbsgreatly.xyz` through Technitium successfully:
+  browser-routed names still land on Traefik, direct/internal names still
+  land on their service IPs, and external recursion still works.
 
 What is not yet true:
-- Technitium is **not** yet authoritative for `test.gibbsgreatly.xyz`.
-- MikroTik still forwards the live lab zone to CoreDNS, not Technitium.
-- No cutover rehearsal has been executed yet.
+- This has only been rehearsed in `pve-test-vm`, not validated through the
+  required full teardown/redeploy gate.
+- Production (`pve`) still uses the existing CoreDNS-backed path.
+- No production cutover has been attempted.
 
 ## What it is
 
@@ -89,7 +99,7 @@ Namespaces:
 |---|---|---|
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
 | `lab.gibbsgreatly.xyz` | CoreDNS on `pve` (`192.168.20.13`) | Internal platform identity |
-| `test.gibbsgreatly.xyz` | CoreDNS on `pve-test-vm` (`192.168.20.113`) | Same, for the validation environment |
+| `test.gibbsgreatly.xyz` | Technitium on `pve-test-vm` (`192.168.20.115`) after the 2026-07-04 rehearsal; CoreDNS `192.168.20.113` remains rollback target | Same, for the validation environment |
 
 ## Inputs (from `STACK_CONTRACT.md`)
 
@@ -152,6 +162,11 @@ in `plan.md` before attempting a full teardown validation run.
 
 ## Known gaps in the current implementation
 
-- MikroTik FWD-rule configuration is manual, not IaC (TM-09).
-- No IaC/documented process for the MikroTik side of a DNS-provider cutover
-  either — this will need to be designed, not just assumed away.
+- MikroTik FWD-rule configuration is still manual, not IaC (TM-09), even
+  though the `pve-test-vm` rehearsal is now documented.
+- The 2026-07-04 rehearsal showed an important RouterOS nuance: the
+  existing `test-zone-delegate` entry had to be updated in place
+  (`/ip dns static set *53 forward-to=192.168.20.115`) rather than adding a
+  second FWD rule with the same regexp.
+- No automated/full teardown gate has exercised the Technitium-backed router
+  path yet.

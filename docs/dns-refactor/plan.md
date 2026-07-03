@@ -1,17 +1,19 @@
 # DNS Refactor — Plan
 
-Status: **Phase 0 decisions made and Phase 1 bring-up completed on 2026-07-03.**
-Technitium is live on `pve-test-vm` at `192.168.20.115`, serving the bootstrap
-zone `tech.test.gibbsgreatly.xyz`, answering recursive queries, exposed
-through Traefik at `technitium.test.gibbsgreatly.xyz`, and using native OIDC
-against Authentik. CoreDNS remains authoritative for `test.gibbsgreatly.xyz`;
-no MikroTik cutover has been attempted.
+Status: **Phase 0 decisions made, Phase 1 bring-up completed, Phase 2
+direct-query parity completed, and Phase 3 router-path rehearsal completed on
+2026-07-04.** Technitium is live on `pve-test-vm` at `192.168.20.115`,
+serving the bootstrap zone `tech.test.gibbsgreatly.xyz`, answering recursive
+queries, exposed through Traefik at `technitium.test.gibbsgreatly.xyz`, using
+native OIDC against Authentik, and now serving the live `test.gibbsgreatly.xyz`
+router path in `pve-test-vm` via the MikroTik delegate rule. CoreDNS remains
+live as the rollback target; no production cutover has been attempted.
 
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
 below.
 
-## Progress snapshot — 2026-07-03
+## Progress snapshot — 2026-07-04
 
 Completed:
 - `technitium-stack` scaffolded and deployed independently of `dns-stack`.
@@ -24,11 +26,12 @@ Completed:
 - Traefik/CoreDNS edge integration working for
   `technitium.test.gibbsgreatly.xyz`.
 - Native OIDC SSO against Authentik working end-to-end.
+- MikroTik `test-zone-delegate` rehearsal completed successfully on
+  `pve-test-vm`: router-path queries now resolve through Technitium.
 
 Not yet done:
-- No via-MikroTik parity/cutover rehearsal for the live `test.gibbsgreatly.xyz` zone yet.
-- No MikroTik FWD-rule cutover rehearsal yet.
 - No full teardown/redeploy gate yet.
+- No production (`pve`) cutover.
 
 ## Issues encountered during Phase 1 and how they were resolved
 
@@ -112,11 +115,13 @@ Tasks:
       `/ip dns static print detail where type=fwd`.
 
    **Cutover:**
-   3. On the MikroTik, disable (do not remove) the existing CoreDNS FWD
-      rule: `/ip dns static disable [find where type=fwd && forward-to=192.168.20.113]`.
-   4. Add the new FWD rule pointing at Technitium:
-      `/ip dns static add name=test.gibbsgreatly.xyz match-subdomain=yes type=fwd forward-to=<technitium-ip> comment="technitium cutover 2026-07-03"`.
-   5. Flush the MikroTik's DNS cache so stale CoreDNS answers don't mask a
+   3. On the MikroTik, repoint the existing CoreDNS FWD rule in place. In the
+      live `pve-test-vm` rehearsal, the delegate already existed as `.id *53`,
+      so `add` failed with "entry already exists" and the correct command was:
+      `/ip dns static set *53 forward-to=<technitium-ip>`.
+      If a future environment does not already have a matching delegate, add a
+      new rule instead.
+   4. Flush the MikroTik's DNS cache so stale CoreDNS answers don't mask a
       broken cutover: `/ip dns cache flush`.
 
    **Post-cutover validation (must all pass before calling this rehearsal
@@ -131,20 +136,21 @@ Tasks:
       MikroTik → Technitium path (`dig <client-resolver> github.com`).
 
    **Rollback (if any post-cutover check fails):**
-   9. Remove the new FWD rule:
-      `/ip dns static remove [find where forward-to=<technitium-ip>]`.
-   10. Re-enable the original CoreDNS rule:
-       `/ip dns static enable [find where type=fwd && forward-to=192.168.20.113]`.
-   11. Flush the DNS cache again (`/ip dns cache flush`) and re-run step 6-8
+   9. Restore the original delegate target. In the 2026-07-04 rehearsal that
+      meant:
+      `/ip dns static set *53 forward-to=192.168.20.113`.
+      If a future environment used an added temporary rule instead of an
+      in-place change, remove that temporary rule and restore the original.
+   10. Flush the DNS cache again (`/ip dns cache flush`) and re-run step 6-8
        against CoreDNS to confirm rollback actually restored service before
        declaring the rehearsal failed.
 
    This procedure is written from the RouterOS command syntax documented
    elsewhere in this repo (`docs/design/network.md`'s TM-09 note) but has
-   **not been executed or verified against the live hAP ax3** — MikroTik DNS
-   forwarding config is manual/out-of-IaC (TM-09), so treat command syntax
-   as a draft to confirm interactively during Phase 3, not a copy-paste
-   script.
+   was verified against the live hAP ax3 on 2026-07-04 for `pve-test-vm`.
+   MikroTik DNS forwarding config remains manual/out-of-IaC (TM-09), so the
+   exact rule ID and whether `set` vs `add` is required still needs checking
+   interactively per environment.
 
 ## Phase 1 — Build `technitium-stack` (scaffold, no cutover)
 
@@ -200,20 +206,25 @@ Phase 2 progress as of 2026-07-03:
   `github.com -> non-empty recursive answer`,
   plus additional spot checks for `authentik`, `harbor`, `netbox`,
   `portainer`, `step-ca`, and `authentik-int`.
+- `technitium-stack/smoke-test.sh` now delegates to a checked-in
+  `verify-parity.sh` matrix so every provision pass asserts the same direct
+  parity set before any MikroTik rehearsal: browser-routed names must return
+  `LAB_IP_PROXY`, direct/internal names must return their service IPs, the
+  bootstrap zone still answers, and public recursion stays live.
 
-Phase 2 status: **direct-query parity working; resolver-path parity not yet
-tested.**
+Phase 2 status: **complete.**
 
 Immediate next practical steps:
-1. Design the `coredns_generated_zone_src` replacement so the existing
-   provisioning-refactor DNS ownership flow can target Technitium.
-2. Decide whether parity is achieved by importing the live
-   `test.gibbsgreatly.xyz` zone into Technitium directly or by generating it
-   from the same source-of-truth path that currently feeds CoreDNS.
-3. Add an explicit guard for Technitium zone publication equivalent to the
-   current CoreDNS authority-record safety check.
-4. Once the above is working, validate that explicit dependents still resolve
-   correctly when querying Technitium directly.
+1. Preserve the checked-in direct-query parity verifier and rerun it on each
+   reprovision so the direct authority view stays boringly stable.
+2. Capture the successful router-path rehearsal in docs and treat the next
+   validation bar as the full teardown/redeploy gate, not more exploratory
+   parity work.
+3. During the full gate, validate resolver-path parity again through the
+   router and run the explicit dependent smoke checks (`proxy-stack`,
+   `authentik-stack`, and any other FQDN-based check).
+4. Only after the full gate passes should we prepare a production (`pve`)
+   cutover packet.
 
 ## Phase 3 — Cutover rehearsal on `pve-test-vm`
 
@@ -222,6 +233,31 @@ Immediate next practical steps:
   any FQDN-based smoke test) resolves correctly through Technitium.
 - Confirm rollback (repoint back to CoreDNS) actually works before
   considering this validated.
+
+Phase 3 status as of 2026-07-04: **successful resolver-path rehearsal**.
+
+Observed live results through MikroTik `192.168.1.1` after repointing
+`test-zone-delegate` from CoreDNS to Technitium:
+- `ns1.test.gibbsgreatly.xyz -> 192.168.20.115`
+- `traefik.test.gibbsgreatly.xyz -> 192.168.30.110`
+- `authentik.test.gibbsgreatly.xyz -> 192.168.30.110`
+- `harbor.test.gibbsgreatly.xyz -> 192.168.30.110`
+- `netbox.test.gibbsgreatly.xyz -> 192.168.30.110`
+- `portainer.test.gibbsgreatly.xyz -> 192.168.30.110`
+- `step-ca.test.gibbsgreatly.xyz -> 192.168.20.111`
+- `authentik-int.test.gibbsgreatly.xyz -> 192.168.20.110`
+- `github.com -> non-empty recursive answer`
+
+Important operator note from the rehearsal:
+- The existing RouterOS FWD rule already owned the regexp
+  `(^|\\.)test\\.gibbsgreatly\\.xyz$`, so adding a second rule failed with
+  `failure: entry already exists`.
+- The correct live mutation was:
+  `/ip dns static set *53 forward-to=192.168.20.115`
+  followed by `/ip dns cache flush`.
+- Rollback is the inverse:
+  `/ip dns static set *53 forward-to=192.168.20.113`
+  followed by `/ip dns cache flush`.
 
 ## Phase 4 — Full teardown/redeploy validation (required gate)
 

@@ -7,23 +7,31 @@ Plan and track migrating the internal authoritative DNS service (currently
 
 ## Status
 
-**Phase 0 complete, Phase 1 scaffold in progress (2026-07-03).** All Phase 0
-decisions are recorded in [decisions.md](./decisions.md): Technitium over
-CoreDNS (unified DNS+DHCP path, web UI, DoH/DoT/DNSSEC), Docker Compose
-deployment shape, and a new-VMID parity window (not an in-place swap).
-`terraform/lxc/stacks/technitium-stack/` now exists with a
-`STACK_CONTRACT.md`, `stack.yaml` (VMID `20015`), `terragrunt.hcl`,
-`smoke-test.sh`, and a `deploy-technitium-stack` Ansible playbook
-(syntax-checked, not yet run against a live host). `LAB_IP_TECHNITIUM` /
-`TF_VAR_lab_ip_technitium` are wired through `variables.tf`, `main.tf`, and
-the `.env*.template` files — **the real gitignored `.env` /
-`.env.pve-test-vm` files still need the operator to copy the new
-`LAB_IP_TECHNITIUM` line in before a `terragrunt plan/apply` will pick it
-up.** Initial bring-up now uses a separate Technitium-only bootstrap zone
-(`TECHNITIUM_BOOTSTRAP_ZONE`, default `tech.${LAB_DOMAIN}`; on
-`pve-test-vm`, `tech.test.gibbsgreatly.xyz`) for direct queries only.
-Nothing has been deployed or applied yet; this stack does not touch
-`dns-stack` or the MikroTik FWD rule.
+**Phase 0 complete, Phase 1 complete, Phase 2 complete, Phase 3 rehearsal
+complete on `pve-test-vm` (2026-07-04).**
+All Phase 0 decisions are recorded in [decisions.md](./decisions.md):
+Technitium over CoreDNS (unified DNS+DHCP path, web UI, DoH/DoT/DNSSEC),
+Docker Compose deployment shape, and a new-VMID parity window (not an
+in-place swap). `terraform/lxc/stacks/technitium-stack/` is deployed on
+`pve-test-vm` at `192.168.20.115`, served through
+`https://technitium.test.gibbsgreatly.xyz`, and integrated with Authentik
+via native OIDC. Initial bring-up uses a separate Technitium-only bootstrap
+zone (`TECHNITIUM_BOOTSTRAP_ZONE`, default `tech.${LAB_DOMAIN}`; on
+`pve-test-vm`, `tech.test.gibbsgreatly.xyz`) while CoreDNS remains live for
+the router path.
+
+Phase 2 added a formal direct-query parity verifier:
+`terraform/lxc/stacks/technitium-stack/verify-parity.sh`. It checks the
+important `test.gibbsgreatly.xyz` names directly against Technitium,
+including browser-routed names, direct/internal names, bootstrap-zone
+resolution, and public recursion.
+
+Phase 3 rehearsal is now also complete on `pve-test-vm`: the MikroTik
+`test-zone-delegate` rule was repointed from CoreDNS (`192.168.20.113`) to
+Technitium (`192.168.20.115`), and resolver-path checks through
+`192.168.1.1` succeeded for browser-routed names, direct/internal names,
+and public recursion. The next gate is no longer ad hoc parity work; it is
+the full teardown/redeploy validation required before promotion.
 
 **Stated program end goal:** Technitium eventually replaces MikroTik as DHCP
 server too, not just DNS authority. That's out of scope for this workspace
