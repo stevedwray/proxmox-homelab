@@ -1,8 +1,9 @@
 # DNS Refactor — Plan
 
 Status: **Phase 0 decisions made, Phase 1 bring-up completed, Phase 2
-direct-query parity completed, and Phase 3 router-path rehearsal completed on
-2026-07-04.** Technitium is live on `pve-test-vm` at `192.168.20.115`,
+direct-query parity completed, Phase 3 router-path rehearsal completed, and
+Phase 4 teardown/redeploy validation completed on 2026-07-04.** Technitium is
+live on `pve-test-vm` at `192.168.20.115`,
 serving the bootstrap zone `tech.test.gibbsgreatly.xyz`, answering recursive
 queries, exposed through Traefik at `technitium.test.gibbsgreatly.xyz`, using
 native OIDC against Authentik, and now serving the live `test.gibbsgreatly.xyz`
@@ -30,7 +31,6 @@ Completed:
   `pve-test-vm`: router-path queries now resolve through Technitium.
 
 Not yet done:
-- No full teardown/redeploy gate yet.
 - No production (`pve`) cutover.
 
 ## Issues encountered during Phase 1 and how they were resolved
@@ -267,13 +267,117 @@ targeted `scripts/provision.sh --stack` pass. Use the harness described in
 [docs/teardown-test/repeatable-test.md](../teardown-test/repeatable-test.md).
 Do not promote to `stable` without this passing.
 
+Phase 4 status as of 2026-07-04: **passed**.
+
+Evidence:
+- Harness stamp: `20260703-220525`
+- Final summary:
+  [docs/teardown-test/artifacts/evidence/20260703-220525/summary-final-validation.md](../teardown-test/artifacts/evidence/20260703-220525/summary-final-validation.md)
+
+Observed outcome:
+- Full destroy/recreate and reprovision completed successfully.
+- Delegated and authoritative DNS checks passed for the routed services.
+- `final-reconcile-edge-dry-run` passed.
+- Browser validation after the gate confirmed the main routed services were
+  healthy.
+
 ## Phase 5 — Promotion
 
-- Promote `work/* → stable` once Phase 4 passes.
+- Promote `work/* → stable` now that Phase 4 has passed.
 - `pve` (production) rollout only after explicit operator approval, per
   `CLAUDE.md`'s Production Credential Controls — this is a mutating,
   network-affecting production change and needs a preflight summary +
   approval before any `./with-secrets-prod` command runs.
+
+Immediate next practical work in this phase:
+1. Update the tracked docs that still describe `dns-stack` / CoreDNS as the
+   only active `pve-test-vm` path where needed.
+2. Prepare the production cutover packet:
+   exact MikroTik delegate mutation for `lab.gibbsgreatly.xyz`,
+   rollback command, expected resolver checks, and explicit smoke list.
+3. Decide whether the existing `pve-test-vm` router delegate should remain
+   pointed at Technitium while production prep continues, or be reverted to
+   CoreDNS for a stricter rollback posture.
+
+### Incremental `pve` integration plan (no full platform teardown)
+
+The production move should be an additive deploy plus a controlled router
+delegate switch, not a rebuild of the whole platform.
+
+1. Deploy `technitium-stack` into `pve` alongside the existing
+   `dns-stack`, using its permanent `mgmt_seg` identity.
+2. Bring up the same bootstrap capabilities already proven in
+   `pve-test-vm`: Traefik route, Authentik integration, recursion, and
+   direct authority for the Technitium bootstrap zone.
+3. Load the real `lab.gibbsgreatly.xyz` records into Technitium while
+   CoreDNS remains the active authority for clients.
+4. Run a formal parity verification pass by direct query against both
+   CoreDNS and Technitium for:
+   - browser-routed names (`authentik`, `grafana`, `harbor`, `netbox`,
+     `portainer`, `traefik`)
+   - direct/internal names (`authentik-int`, `step-ca`, `ns1`)
+   - public recursion
+   - SOA / NS / authority identity
+5. Prepare a manually reviewed MikroTik cutover packet for
+   `lab.gibbsgreatly.xyz`:
+   - exact `set` or `add` command for the delegate rule
+   - cache flush command
+   - immediate rollback command back to CoreDNS
+   - post-cutover validation command list
+   - clear abort / rollback criteria
+6. Execute a short cutover window:
+   repoint MikroTik from CoreDNS to Technitium, flush cache, then run the
+   smoke list and browser checks immediately.
+7. Leave `dns-stack` deployed as warm rollback state for a defined soak
+   period before decommission planning begins.
+
+Current conclusion:
+- `pve-test-vm` has already proven the technical pattern.
+- The next production prerequisite is a formal `lab.gibbsgreatly.xyz`
+  parity-verification packet, not another destructive environment rebuild.
+
+### Production parallel bring-up checklist
+
+Goal: deploy `technitium-stack` into `pve` as a parallel service only. This
+step must not mutate the MikroTik delegate rule for `lab.gibbsgreatly.xyz`.
+
+Identity and sizing baseline:
+- IP: `192.168.20.15` (`LAB_IP_TECHNITIUM` in `.env.pve`)
+- VMID: `20015`
+- CPU / memory / storage:
+  1 core / 2048 MB RAM / 1024 MB swap / 12 GB rootfs / 6 GB Docker storage
+
+Preflight:
+1. Confirm `.env.pve` still carries the intended Technitium IP
+   (`LAB_IP_TECHNITIUM=192.168.20.15`).
+2. Confirm required secrets exist in SOPS for the production environment:
+   `TECHNITIUM_ADMIN_PASSWORD` and `TECHNITIUM_OIDC_CLIENT_SECRET`.
+3. Confirm no MikroTik DNS delegate change is included in this step.
+
+Bring-up:
+4. Deploy `technitium-stack` into `pve` alongside `dns-stack`.
+5. Provision the stack and let the playbook configure:
+   - bootstrap zone
+   - recursive resolution
+   - Traefik route
+   - native OIDC against Authentik
+
+Immediate validation:
+6. Query Technitium directly by IP for:
+   - bootstrap-zone authority
+   - external recursion
+7. Confirm browser/API reachability for
+   `https://technitium.lab.gibbsgreatly.xyz`.
+8. Confirm Authentik-backed login works.
+9. Confirm the existing `lab.gibbsgreatly.xyz` client path is still served by
+   CoreDNS via MikroTik and has not changed.
+
+Exit criteria for this step:
+- `technitium-stack` is healthy in `pve`
+- direct queries against Technitium pass
+- browser route and OIDC login pass
+- no MikroTik mutation has been performed
+- production clients are still on the CoreDNS-backed resolver path
 
 ## Phase 6 — Decommission and doc closeout
 
@@ -316,6 +420,11 @@ work. That means:
 - Don't shrink `technitium-stack`'s sizing below `dns-stack`'s current
   allocation (1 core / 1024 MB RAM / 8 GB rootfs) — a DHCP lease DB and scope
   config need at least as much headroom.
+- Live observation in `pve-test-vm` showed Technitium already running well
+  into swap on the smaller baseline and consuming close to 1 GB of boot-disk
+  space. Before `pve` bring-up, the default stack sizing was raised to
+  1 core / 2048 MB RAM / 1024 MB swap / 12 GB rootfs with 6 GB Docker
+  storage so production starts with more breathing room.
 - Keep `STACK_CONTRACT.md`/`stack.yaml` inputs extensible — don't hardcode a
   DNS-only shape that would need a rewrite to add `dhcp_scopes` /
   `dhcp_static_leases` later.

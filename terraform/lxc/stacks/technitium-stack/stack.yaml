@@ -7,11 +7,11 @@ gateway: "${lab_gw_mgmt}"
 dns_server: "${lab_gw_mgmt}"
 vmid: 20015
 cores: 1
-memory: 1024
-swap: 512
-rootfs_size: 8
+memory: 2048
+swap: 1024
+rootfs_size: 12
 storage_profile: platform-default
-docker_storage_size: "4G"
+docker_storage_size: "6G"
 template_name: "debian-13.1-2-docker-template.tar.gz"
 tags:
   - technitium-stack

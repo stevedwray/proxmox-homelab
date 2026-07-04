@@ -41,10 +41,13 @@ What is proven:
   `test.gibbsgreatly.xyz` through Technitium successfully:
   browser-routed names still land on Traefik, direct/internal names still
   land on their service IPs, and external recursion still works.
+- The full teardown/redeploy gate has now exercised that resolver path
+  successfully end-to-end on `pve-test-vm` (stamp `20260703-220525`),
+  including final delegated/authoritative DNS checks and edge reconciliation.
+- Browser validation after the gate confirmed the main routed services were
+  healthy through the usual UI path.
 
 What is not yet true:
-- This has only been rehearsed in `pve-test-vm`, not validated through the
-  required full teardown/redeploy gate.
 - Production (`pve`) still uses the existing CoreDNS-backed path.
 - No production cutover has been attempted.
 
@@ -100,6 +103,17 @@ Namespaces:
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
 | `lab.gibbsgreatly.xyz` | CoreDNS on `pve` (`192.168.20.13`) | Internal platform identity |
 | `test.gibbsgreatly.xyz` | Technitium on `pve-test-vm` (`192.168.20.115`) after the 2026-07-04 rehearsal; CoreDNS `192.168.20.113` remains rollback target | Same, for the validation environment |
+
+Operationally in `pve-test-vm` today:
+- Clients still point at the MikroTik resolver (`192.168.1.1`), not directly
+  at Technitium.
+- For the `test.gibbsgreatly.xyz` zone, MikroTik now delegates to
+  Technitium, so service-to-service and browser-path resolution for that
+  zone depends on Technitium.
+- Public recursion still depends on MikroTik's resolver behavior.
+- CoreDNS is still deployed in `pve-test-vm`, but as the previous authority
+  and rollback target rather than the active delegate target for the `test`
+  zone.
 
 ## Inputs (from `STACK_CONTRACT.md`)
 
@@ -168,5 +182,5 @@ in `plan.md` before attempting a full teardown validation run.
   existing `test-zone-delegate` entry had to be updated in place
   (`/ip dns static set *53 forward-to=192.168.20.115`) rather than adding a
   second FWD rule with the same regexp.
-- No automated/full teardown gate has exercised the Technitium-backed router
-  path yet.
+- The full teardown gate has now exercised the Technitium-backed router
+  path successfully on `pve-test-vm`.

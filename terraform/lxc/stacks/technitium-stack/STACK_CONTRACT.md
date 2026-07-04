@@ -27,6 +27,16 @@ workspace.
 | Gateway | `${lab_gw_mgmt}` |
 | VMID | 20015 |
 
+## Resources
+
+| Field | Value |
+|---|---|
+| CPU | 1 core |
+| Memory | 2048 MB |
+| Swap | 1024 MB |
+| Rootfs | 12 GB |
+| Docker storage | 6 GB |
+
 ## Inputs
 
 | Input | Source | Notes |
@@ -127,6 +137,11 @@ deploy + REST API zone bootstrap — no `direct_stack`)
   `docs/dns-refactor/decisions.md` Decision 3 for why (deploy/destroy
   ordering makes an in-place swap unsafe; a parity window with independent
   validation and cheap rollback is required).
+- The original scaffold matched `dns-stack`'s smaller footprint, but live
+  observation in `pve-test-vm` showed Technitium spending meaningful time in
+  swap and consuming close to 1 GB of boot-disk space early in the run. The
+  default stack sizing was therefore raised before `pve` bring-up so
+  production does not inherit the tighter test baseline.
 - The playbook performs a post-deploy authority probe
   (`dig @<technitium-ip> traefik.<technitium_bootstrap_zone>`) and a
   recursive probe (`dig @<technitium-ip> github.com`) directly against the

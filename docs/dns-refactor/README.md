@@ -8,7 +8,8 @@ Plan and track migrating the internal authoritative DNS service (currently
 ## Status
 
 **Phase 0 complete, Phase 1 complete, Phase 2 complete, Phase 3 rehearsal
-complete on `pve-test-vm` (2026-07-04).**
+complete, and Phase 4 teardown/redeploy validation complete on
+`pve-test-vm` (2026-07-04).**
 All Phase 0 decisions are recorded in [decisions.md](./decisions.md):
 Technitium over CoreDNS (unified DNS+DHCP path, web UI, DoH/DoT/DNSSEC),
 Docker Compose deployment shape, and a new-VMID parity window (not an
@@ -30,8 +31,14 @@ Phase 3 rehearsal is now also complete on `pve-test-vm`: the MikroTik
 `test-zone-delegate` rule was repointed from CoreDNS (`192.168.20.113`) to
 Technitium (`192.168.20.115`), and resolver-path checks through
 `192.168.1.1` succeeded for browser-routed names, direct/internal names,
-and public recursion. The next gate is no longer ad hoc parity work; it is
-the full teardown/redeploy validation required before promotion.
+and public recursion.
+
+Phase 4 is now also complete: the full teardown/redeploy harness passed on
+stamp `20260703-220525`, including platform destroy/recreate, stack
+provisioning, delegated/authoritative DNS checks, Harbor/Portainer/Authentik
+smokes, and a final `reconcile-edge.py` dry-run. Browser validation also
+confirmed the main routed services were healthy after the harness pass. The
+next gate is promotion prep, not more test-environment discovery work.
 
 **Stated program end goal:** Technitium eventually replaces MikroTik as DHCP
 server too, not just DNS authority. That's out of scope for this workspace
@@ -69,8 +76,9 @@ Before planning, a session should read, in order:
 - Branch: cut `work/dns-refactor-<topic>` (or `feat/`/`fix/` as appropriate) from current HEAD per
   [docs/workflow/branch-model.md](../workflow/branch-model.md).
 - This is a Terraform / network-class change. Per `CLAUDE.md`'s Validation Tiers
-  table, that means a **full teardown cycle on `pve-test-vm`** is the minimum
-  validation before promoting to `stable`, not a lighter tier.
+  table, a **full teardown cycle on `pve-test-vm`** was the minimum
+  validation before promoting to `stable`; that gate is now satisfied by the
+  successful `20260703-220525` evidence set.
 - DNS is deployed 3rd in the platform deploy order and destroyed 9th of 11 (see
   current-state.md) — nearly everything else depends on it. Cutover sequencing
   needs explicit design in `plan.md` before any destructive validation run.
