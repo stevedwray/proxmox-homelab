@@ -1,14 +1,17 @@
 # Production Cutover Packet — `lab.gibbsgreatly.xyz`
 
 Status: `technitium-stack` is live in parallel on `pve` at `192.168.20.15`,
-but production clients still resolve `lab.gibbsgreatly.xyz` through the
-existing CoreDNS-backed MikroTik path (`192.168.20.13`). This packet covers
-the next two production steps:
+and direct parity verification against CoreDNS passed on 2026-07-04.
+Production clients still resolve `lab.gibbsgreatly.xyz` through the existing
+CoreDNS-backed MikroTik path (`192.168.20.13`). This packet now covers the
+remaining production move:
 
-1. direct parity verification between CoreDNS and Technitium
-2. the manual MikroTik delegate cutover and rollback procedure
+1. the manual MikroTik delegate cutover and rollback procedure
 
 ## Direct parity verification
+
+Completed successfully on 2026-07-04. Keep this command as the pre-cutover
+recheck if the cutover is not performed in the same session:
 
 Run the checked-in direct parity script against the two production DNS
 servers:

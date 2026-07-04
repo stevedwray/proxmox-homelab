@@ -53,11 +53,13 @@ What is not yet true:
 - Production Technitium is now live in parallel at `192.168.20.15`,
   serving direct-query parity answers for `lab.gibbsgreatly.xyz`, but no
   production delegate cutover has been attempted.
-- The first formal production parity pass exposed a root-authority mismatch
-  in Technitium's parity zone (`NS`/`SOA.primaryNameServer` defaulting to
-  `tech.lab.gibbsgreatly.xyz`). The publisher fix is now validated on
-  `pve-test-vm`, but production still needs a reprovision plus parity rerun
-  before cutover can be considered.
+- Production direct parity verification now passes: shared A/NS/SOA answers
+  match CoreDNS, Technitium serves `dns.lab.gibbsgreatly.xyz` and
+  `ns1.lab.gibbsgreatly.xyz` from `192.168.20.15`, and recursive resolution
+  still matches for `github.com`.
+- The remaining production move is the manual MikroTik delegate repoint from
+  CoreDNS `192.168.20.13` to Technitium `192.168.20.15`, followed by the
+  same resolver-path/browser-path checks rehearsed in `pve-test-vm`.
 
 ## What it is
 

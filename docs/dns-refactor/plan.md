@@ -3,8 +3,8 @@
 Status: **Phase 0 decisions made, Phase 1 bring-up completed, Phase 2
 direct-query parity completed, Phase 3 router-path rehearsal completed, and
 Phase 4 teardown/redeploy validation completed on 2026-07-04. Production
-parallel bring-up on `pve` is also now complete.** Technitium is live on
-`pve-test-vm` at `192.168.20.115`,
+parallel bring-up and direct parity verification on `pve` are also now
+complete.** Technitium is live on `pve-test-vm` at `192.168.20.115`,
 serving the bootstrap zone `tech.test.gibbsgreatly.xyz`, answering recursive
 queries, exposed through Traefik at `technitium.test.gibbsgreatly.xyz`, using
 native OIDC against Authentik, and now serving the live `test.gibbsgreatly.xyz`
@@ -12,7 +12,7 @@ router path in `pve-test-vm` via the MikroTik delegate rule. CoreDNS remains
 live as the rollback target. On `pve`, `technitium-stack` is now deployed at
 `192.168.20.15`, serving direct-query parity for `lab.gibbsgreatly.xyz`,
 while production clients still resolve through the CoreDNS-backed MikroTik
-path. No production cutover has been attempted.
+path. No production cutover has been attempted yet.
 
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
@@ -39,10 +39,12 @@ Completed:
   `technitium.lab.gibbsgreatly.xyz` is reachable, OIDC login works, and the
   production provision smoke test now verifies direct-query parity for the
   key `lab.gibbsgreatly.xyz` names while leaving the active delegate alone.
+- Formal production parity verification now passes for
+  `lab.gibbsgreatly.xyz`: shared A/NS/SOA answers match CoreDNS, Technitium
+  serves `dns.lab.gibbsgreatly.xyz` and `ns1.lab.gibbsgreatly.xyz` from
+  `192.168.20.15`, and recursive resolution still matches for `github.com`.
 
 Not yet done:
-- Final successful production parity packet comparing CoreDNS and
-  Technitium answer sets record-by-record.
 - Manual production MikroTik cutover packet and execution window.
 
 ## Issues encountered during Phase 1 and how they were resolved
@@ -87,8 +89,9 @@ Not yet done:
    instead of matching CoreDNS's `ns1.lab.gibbsgreatly.xyz`.
    Resolution: update the Technitium parity-zone publisher to reconcile the
    root `NS` and `SOA` records explicitly, not just the A records. This fix
-   is now validated on `pve-test-vm`; production still needs reprovision +
-   parity rerun.
+   was validated on `pve-test-vm`, then confirmed on `pve` by a successful
+   production reprovision plus a clean direct parity run against
+   `192.168.20.13` and `192.168.20.15`.
 
 ## Phase 0 — Requirements and design capture
 
