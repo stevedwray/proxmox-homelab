@@ -695,6 +695,37 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     return patch
 
 
+def _resolve_existing_application_after_duplicate(
+    *,
+    intent: RouteIntent,
+    applications: list[dict[str, Any]],
+    app_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected_slug = str(app_payload.get("slug", "")).strip()
+    expected_provider = _DISCOVER._as_id(app_payload.get("provider"))
+    expected_host = _DISCOVER._normalize_url_host(
+        app_payload.get("meta_launch_url") or app_payload.get("launch_url")
+    )
+
+    matches = _DISCOVER._pick_candidates(
+        applications,
+        [
+            lambda item, expected_slug=expected_slug: bool(expected_slug)
+            and str(item.get("slug", "")).strip() == expected_slug,
+            lambda item, expected_provider=expected_provider: bool(expected_provider)
+            and _DISCOVER._as_id(item.get("provider")) == expected_provider,
+            lambda item, expected_host=expected_host: bool(expected_host)
+            and _DISCOVER._normalize_url_host(
+                item.get("meta_launch_url") or item.get("launch_url")
+            ) == expected_host,
+            lambda item, expected_name=intent.app_name: _DISCOVER._get_name(item) == expected_name,
+        ],
+    )
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
 def _resolve_forwardauth_candidates(
     intent: RouteIntent,
     applications: list[dict[str, Any]],
@@ -1118,10 +1149,10 @@ def _reconcile_application_for_intent(
                 # Application already exists (created by a previous partial run or
                 # an inline reconcile in a stack playbook) but wasn't found by the
                 # initial discovery scan. Fetch by slug and fall through to update.
-                existing = next(
-                    (a for a in client.fetch_applications()
-                     if a.get("slug") == app_payload.get("slug")),
-                    None,
+                existing = _resolve_existing_application_after_duplicate(
+                    intent=intent,
+                    applications=client.fetch_applications(),
+                    app_payload=app_payload,
                 )
                 if existing is None:
                     raise
