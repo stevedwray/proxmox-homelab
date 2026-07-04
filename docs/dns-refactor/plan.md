@@ -423,6 +423,8 @@ Status: **complete**.
    - direct/internal names
    - authority identity (`SOA`, `NS`, `dns`, `ns1`)
    - recursive external lookups
+   Packet path:
+   [docs/dns-refactor/production-cutover-packet.md](./production-cutover-packet.md)
 2. Prepare a manually reviewed MikroTik cutover packet for
    `lab.gibbsgreatly.xyz`:
    - exact existing delegate inspection command

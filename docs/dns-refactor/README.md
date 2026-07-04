@@ -68,6 +68,7 @@ This follows the repo-wide pattern in
 | `current-state.md` | accurate baseline of the *current* CoreDNS `dns-stack` — what a replacement must account for |
 | `plan.md` | phased migration plan |
 | `decisions.md` | ADR-style log of Technitium-specific design decisions, as they're made |
+| `production-cutover-packet.md` | direct parity verification command set plus the manually reviewed production MikroTik cutover and rollback steps |
 | `artifacts/` | local-only, git-ignored (`docs/**/artifacts/`) — put transient session handoffs, scratch notes, and evidence here, not in tracked docs |
 
 ## Read these first
