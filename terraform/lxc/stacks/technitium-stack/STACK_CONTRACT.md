@@ -11,10 +11,12 @@ separate bootstrap/dev zone (`TECHNITIUM_BOOTSTRAP_ZONE`, default
 The live `LAB_DOMAIN` zone stays on CoreDNS until later parity/cutover
 phases.
 
-**Status: not yet cut over.** This stack runs alongside `dns-stack` during
-Phases 1-4 of `docs/dns-refactor/plan.md`. MikroTik's FWD rule continues to
-point at CoreDNS until the Phase 3 cutover rehearsal passes. Do not treat
-this stack as authoritative for any zone until that cutover is executed and
+**Status: production parallel live, not yet production-cut over.** This
+stack runs alongside `dns-stack` during the migration. The Phase 3 MikroTik
+delegate rehearsal has passed on `pve-test-vm`, and production `pve`
+parallel bring-up is now complete, but the production MikroTik FWD rule
+still points at CoreDNS. Do not treat this stack as the active production
+client path for `LAB_DOMAIN` until that delegate change is executed and
 validated. See `docs/dns-refactor/README.md` for the full migration
 workspace.
 
@@ -101,10 +103,10 @@ No secret values are committed here. All sensitive values must come from the env
 - A pre-publish guard (equivalent to CoreDNS's stage → `named-checkzone` →
   assert bootstrap records → promote flow) must confirm SOA/NS/admin
   bootstrap records exist in the proposed record set before it is applied
-  via the API — **first-draft implementation in the deploy playbook; not
-  yet validated against a live Technitium instance. Confirm the exact API
-  request/response shape during Phase 1 execution and harden this guard in
-  Phase 2** (see `docs/dns-refactor/plan.md` Phase 0 task 2 and Phase 2).
+  via the API. This guard has now been exercised against live Technitium
+  instances in both `pve-test-vm` and `pve`; keep hardening idempotence and
+  parity checks in the deploy playbook as the production cutover packet is
+  prepared (see `docs/dns-refactor/plan.md`).
 
 ## What May Depend on This Stack
 
@@ -124,7 +126,8 @@ No secret values are committed here. All sensitive values must come from the env
   (see `docs/dns-refactor/decisions.md` Decision 2).
 - Do not point the MikroTik FWD rule at this stack's IP until the Phase 3
   cutover rehearsal in `docs/dns-refactor/plan.md` has passed on
-  `pve-test-vm`.
+  `pve-test-vm`, and do not mutate the production delegate until the
+  manually reviewed cutover packet is approved.
 
 ## Playbook
 

@@ -9,7 +9,8 @@ Plan and track migrating the internal authoritative DNS service (currently
 
 **Phase 0 complete, Phase 1 complete, Phase 2 complete, Phase 3 rehearsal
 complete, and Phase 4 teardown/redeploy validation complete on
-`pve-test-vm` (2026-07-04).**
+`pve-test-vm` (2026-07-04). Production (`pve`) parallel bring-up is now
+also complete, with cutover still pending.**
 All Phase 0 decisions are recorded in [decisions.md](./decisions.md):
 Technitium over CoreDNS (unified DNS+DHCP path, web UI, DoH/DoT/DNSSEC),
 Docker Compose deployment shape, and a new-VMID parity window (not an
@@ -38,7 +39,16 @@ stamp `20260703-220525`, including platform destroy/recreate, stack
 provisioning, delegated/authoritative DNS checks, Harbor/Portainer/Authentik
 smokes, and a final `reconcile-edge.py` dry-run. Browser validation also
 confirmed the main routed services were healthy after the harness pass. The
-next gate is promotion prep, not more test-environment discovery work.
+next gate is production parity/cutover prep, not more test-environment
+discovery work.
+
+Production parallel bring-up is now complete as well: `technitium-stack`
+is live on `pve` at `192.168.20.15`, provisioned successfully, reachable at
+`https://technitium.lab.gibbsgreatly.xyz`, and serving direct-query parity
+answers for `lab.gibbsgreatly.xyz` while the live client path remains on
+CoreDNS via MikroTik. This means the stack now stands independently in both
+environments; what remains is production-path validation and the manually
+reviewed delegate cutover.
 
 **Stated program end goal:** Technitium eventually replaces MikroTik as DHCP
 server too, not just DNS authority. That's out of scope for this workspace
@@ -82,8 +92,9 @@ Before planning, a session should read, in order:
 - DNS is deployed 3rd in the platform deploy order and destroyed 9th of 11 (see
   current-state.md) — nearly everything else depends on it. Cutover sequencing
   needs explicit design in `plan.md` before any destructive validation run.
-- `pve` (production) is out of scope until the `pve-test-vm` teardown gate passes
-  and the operator explicitly approves a production migration task.
+- `pve` production parallel bring-up has now been exercised successfully.
+  The remaining production work is parity verification plus an explicitly
+  approved MikroTik delegate change, not more stack scaffolding.
 
 ## Closeout
 

@@ -48,8 +48,11 @@ What is proven:
   healthy through the usual UI path.
 
 What is not yet true:
-- Production (`pve`) still uses the existing CoreDNS-backed path.
-- No production cutover has been attempted.
+- Production (`pve`) still uses the existing CoreDNS-backed client path via
+  MikroTik.
+- Production Technitium is now live in parallel at `192.168.20.15`,
+  serving direct-query parity answers for `lab.gibbsgreatly.xyz`, but no
+  production delegate cutover has been attempted.
 
 ## What it is
 
@@ -103,6 +106,19 @@ Namespaces:
 | `gibbsgreatly.xyz` | Cloudflare public DNS | Public ingress — browser-facing Traefik routes |
 | `lab.gibbsgreatly.xyz` | CoreDNS on `pve` (`192.168.20.13`) | Internal platform identity |
 | `test.gibbsgreatly.xyz` | Technitium on `pve-test-vm` (`192.168.20.115`) after the 2026-07-04 rehearsal; CoreDNS `192.168.20.113` remains rollback target | Same, for the validation environment |
+
+Operationally in `pve` today:
+- Clients still resolve `lab.gibbsgreatly.xyz` through the MikroTik-backed
+  CoreDNS path.
+- `technitium-stack` is now deployed in parallel at `192.168.20.15`.
+- Direct queries against production Technitium return the expected parity
+  set, including browser-routed names via `192.168.30.10`, direct/internal
+  names (`authentik-int`, `step-ca`), authority records (`dns`, `ns1`),
+  and public recursion.
+- `https://technitium.lab.gibbsgreatly.xyz` is reachable and OIDC-backed
+  admin login is working.
+- CoreDNS remains the active production authority only because the
+  MikroTik delegate has not yet been repointed.
 
 Operationally in `pve-test-vm` today:
 - Clients still point at the MikroTik resolver (`192.168.1.1`), not directly

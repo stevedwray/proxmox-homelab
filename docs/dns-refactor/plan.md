@@ -2,13 +2,17 @@
 
 Status: **Phase 0 decisions made, Phase 1 bring-up completed, Phase 2
 direct-query parity completed, Phase 3 router-path rehearsal completed, and
-Phase 4 teardown/redeploy validation completed on 2026-07-04.** Technitium is
-live on `pve-test-vm` at `192.168.20.115`,
+Phase 4 teardown/redeploy validation completed on 2026-07-04. Production
+parallel bring-up on `pve` is also now complete.** Technitium is live on
+`pve-test-vm` at `192.168.20.115`,
 serving the bootstrap zone `tech.test.gibbsgreatly.xyz`, answering recursive
 queries, exposed through Traefik at `technitium.test.gibbsgreatly.xyz`, using
 native OIDC against Authentik, and now serving the live `test.gibbsgreatly.xyz`
 router path in `pve-test-vm` via the MikroTik delegate rule. CoreDNS remains
-live as the rollback target; no production cutover has been attempted.
+live as the rollback target. On `pve`, `technitium-stack` is now deployed at
+`192.168.20.15`, serving direct-query parity for `lab.gibbsgreatly.xyz`,
+while production clients still resolve through the CoreDNS-backed MikroTik
+path. No production cutover has been attempted.
 
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
@@ -20,6 +24,8 @@ Completed:
 - `technitium-stack` scaffolded and deployed independently of `dns-stack`.
 - Permanent `LAB_IP_TECHNITIUM` identity chosen and exercised on
   `pve-test-vm`: `192.168.20.115`.
+- Permanent `LAB_IP_TECHNITIUM` identity also exercised on `pve`:
+  `192.168.20.15`.
 - Bootstrap zone chosen and working: `tech.test.gibbsgreatly.xyz`.
 - Direct smoke tests green against Technitium:
   `step-ca.tech.test.gibbsgreatly.xyz` resolves internally and external-name
@@ -29,9 +35,15 @@ Completed:
 - Native OIDC SSO against Authentik working end-to-end.
 - MikroTik `test-zone-delegate` rehearsal completed successfully on
   `pve-test-vm`: router-path queries now resolve through Technitium.
+- Production parallel bring-up completed successfully:
+  `technitium.lab.gibbsgreatly.xyz` is reachable, OIDC login works, and the
+  production provision smoke test now verifies direct-query parity for the
+  key `lab.gibbsgreatly.xyz` names while leaving the active delegate alone.
 
 Not yet done:
-- No production (`pve`) cutover.
+- Formal production parity packet comparing CoreDNS and Technitium answer
+  sets record-by-record.
+- Manual production MikroTik cutover packet and execution window.
 
 ## Issues encountered during Phase 1 and how they were resolved
 
@@ -62,6 +74,13 @@ Not yet done:
    Resolution: the Technitium renderer now injects `dns` and `ns1` records
    for `LAB_IP_TECHNITIUM`, so direct queries exercise Technitium as the
    authoritative server for the parity zone.
+8. The first production parity-zone publish pass failed in Ansible because
+   the bootstrap-zone publication loop iterated over registered query result
+   objects, but the URI template still referenced `item.name` / `item.ip`
+   instead of `item.item.name` / `item.item.ip`.
+   Resolution: corrected the loop variable references so production
+   bootstrap/parity publication is now idempotent and provision passes on
+   `pve`.
 
 ## Phase 0 — Requirements and design capture
 
@@ -332,9 +351,13 @@ delegate switch, not a rebuild of the whole platform.
    period before decommission planning begins.
 
 Current conclusion:
-- `pve-test-vm` has already proven the technical pattern.
+- `pve-test-vm` has already proven the full technical pattern, including the
+  router-path rehearsal and teardown/redeploy gate.
+- `pve` now has a healthy parallel Technitium deployment serving direct-query
+  parity answers.
 - The next production prerequisite is a formal `lab.gibbsgreatly.xyz`
-  parity-verification packet, not another destructive environment rebuild.
+  parity-verification packet plus a manually reviewed MikroTik cutover
+  packet, not another destructive environment rebuild.
 
 ### Production parallel bring-up checklist
 
@@ -372,12 +395,43 @@ Immediate validation:
 9. Confirm the existing `lab.gibbsgreatly.xyz` client path is still served by
    CoreDNS via MikroTik and has not changed.
 
+Observed outcome:
+- `ALLOW_PVE=true ./with-secrets-prod scripts/provision.sh --stack technitium-stack --target-env pve`
+  now passes.
+- Production smoke tests verify direct-query parity for:
+  `technitium`, `traefik`, `authentik`, `harbor`, `netbox`, `portainer`,
+  `dns`, `ns1`, `authentik-int`, `step-ca`, `step-ca.tech.lab.gibbsgreatly.xyz`,
+  and public recursion (`github.com`).
+- Browser reachability and OIDC-backed login for
+  `https://technitium.lab.gibbsgreatly.xyz` were confirmed manually.
+
 Exit criteria for this step:
 - `technitium-stack` is healthy in `pve`
 - direct queries against Technitium pass
 - browser route and OIDC login pass
 - no MikroTik mutation has been performed
 - production clients are still on the CoreDNS-backed resolver path
+
+Status: **complete**.
+
+### Immediate next production work
+
+1. Produce a formal parity-verification packet for `lab.gibbsgreatly.xyz`
+   comparing direct answers from CoreDNS (`192.168.20.13`) and Technitium
+   (`192.168.20.15`) for:
+   - browser-routed names
+   - direct/internal names
+   - authority identity (`SOA`, `NS`, `dns`, `ns1`)
+   - recursive external lookups
+2. Prepare a manually reviewed MikroTik cutover packet for
+   `lab.gibbsgreatly.xyz`:
+   - exact existing delegate inspection command
+   - exact `set` or `add` command
+   - cache flush command
+   - immediate rollback command
+   - post-cutover validation sequence
+3. Execute the production delegate cutover only after the parity packet is
+   green and the router mutation is explicitly approved.
 
 ## Phase 6 — Decommission and doc closeout
 
