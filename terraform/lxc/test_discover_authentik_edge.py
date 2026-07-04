@@ -60,24 +60,34 @@ class FakeClient:
         providers: list[dict],
         oauth2_providers: list[dict],
         outposts: list[dict],
+        application_search_results: dict[str, list[dict]] | None = None,
     ) -> None:
         self._applications = applications
         self._providers = providers
         self._oauth2_providers = oauth2_providers
         self._outposts = outposts
-        self.request_methods = ["GET", "GET", "GET", "GET"]
+        self._application_search_results = application_search_results or {}
+        self.request_methods: list[str] = []
 
     def fetch_applications(self):
+        self.request_methods.append("GET")
         return self._applications
 
     def fetch_proxy_providers(self):
+        self.request_methods.append("GET")
         return self._providers
 
     def fetch_oauth2_providers(self):
+        self.request_methods.append("GET")
         return self._oauth2_providers
 
     def fetch_outposts(self):
+        self.request_methods.append("GET")
         return self._outposts
+
+    def search_applications(self, query: str):
+        self.request_methods.append("GET")
+        return list(self._application_search_results.get(query, []))
 
 
 class TestDiscoverAuthentikDrift(unittest.TestCase):
@@ -255,6 +265,55 @@ class TestDiscoverAuthentikDrift(unittest.TestCase):
         self.assertEqual("matching", result.route_results[0].classification)
         self.assertEqual(2, len(result.route_results[0].identifiers))
 
+    def test_oidc_route_uses_targeted_application_search_when_bulk_listing_is_incomplete(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            manifest = Path(tmpdir) / "harbor.yaml"
+            _write_manifest(
+                manifest,
+                stack="harbor-stack",
+                route="harbor",
+                host="harbor.lab.gibbsgreatly.xyz",
+                mode="oidc",
+            )
+
+            client = FakeClient(
+                applications=[],
+                providers=[],
+                oauth2_providers=[
+                    {
+                        "pk": 22,
+                        "name": "edge-harbor-stack-harbor-provider",
+                        "client_id": "harbor",
+                        "redirect_uris": [
+                            {"url": "http://192.168.40.110/c/oidc/callback"}
+                        ],
+                    }
+                ],
+                outposts=[],
+                application_search_results={
+                    "edge-harbor-stack-harbor": [
+                        {
+                            "pk": 21,
+                            "name": "edge-harbor-stack-harbor-app",
+                            "slug": "edge-harbor-stack-harbor",
+                            "meta_launch_url": "https://harbor.lab.gibbsgreatly.xyz/",
+                            "provider": 22,
+                        }
+                    ]
+                },
+            )
+
+            with mock.patch.dict(
+                MODULE.os.environ,
+                {"HARBOR_EXTERNAL_URL": "http://192.168.40.110"},
+                clear=False,
+            ):
+                result = discover_authentik_drift([manifest], client)
+
+        self.assertTrue(result.ok)
+        self.assertEqual("matching", result.route_results[0].classification)
+        self.assertGreaterEqual(client.request_methods.count("GET"), 5)
+
 
 class TestReadOnlyApiClient(unittest.TestCase):
     def test_client_uses_get_only_and_follows_pagination(self):
@@ -294,6 +353,10 @@ class TestReadOnlyApiClient(unittest.TestCase):
                 "results": [],
                 "next": None,
             },
+            "https://example.local/api/v3/core/applications/?search=harbor&page_size=200": {
+                "results": [{"pk": 3, "name": "app-c"}],
+                "next": None,
+            },
         }
 
         def fake_urlopen(request, context=None):
@@ -306,11 +369,13 @@ class TestReadOnlyApiClient(unittest.TestCase):
             providers = client.fetch_proxy_providers()
             oauth2_providers = client.fetch_oauth2_providers()
             outposts = client.fetch_outposts()
+            searched = client.search_applications("harbor")
 
         self.assertEqual(2, len(apps))
         self.assertEqual([], providers)
         self.assertEqual([], oauth2_providers)
         self.assertEqual([], outposts)
+        self.assertEqual(1, len(searched))
         self.assertTrue(all(method == "GET" for method in calls))
         self.assertEqual(calls, client.request_methods)
 

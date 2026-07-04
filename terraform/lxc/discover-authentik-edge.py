@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import sys
 from typing import Any
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urlencode, urljoin, urlparse
 import ssl
 import urllib.request
 
@@ -188,6 +188,10 @@ class AuthentikApiClient:
     def fetch_applications(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/core/applications/")
 
+    def search_applications(self, query: str) -> list[dict[str, Any]]:
+        params = urlencode({"search": query})
+        return self._get_paginated(f"/api/v3/core/applications/?{params}")
+
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
@@ -199,7 +203,8 @@ class AuthentikApiClient:
 
     def _get_paginated(self, path: str) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        next_url: str | None = f"{self.base_url}{path}?page_size=200"
+        separator = "&" if "?" in path else "?"
+        next_url: str | None = f"{self.base_url}{path}{separator}page_size=200"
 
         while next_url:
             payload = self._request_json(next_url, "GET")
@@ -487,6 +492,49 @@ def _dedupe_provider_records(providers: list[dict[str, Any]]) -> list[dict[str, 
         seen.add(key)
         deduped.append(provider)
     return deduped
+
+
+def _dedupe_application_records(applications: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    deduped: list[dict[str, Any]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for application in applications:
+        app_id = _as_id(application.get("pk") or application.get("id"))
+        app_name = _get_name(application)
+        app_slug = str(application.get("slug", "")).strip()
+        key = (app_id or "", app_name, app_slug)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(application)
+    return deduped
+
+
+def _application_search_queries(intent: RouteIntent) -> list[str]:
+    host = _normalize_url_host(_oidc_base_url(intent)) if intent.auth_mode == "oidc" else intent.host.lower()
+    return [intent.app_slug, intent.app_name, host]
+
+
+def _augment_inventory_with_targeted_application_searches(
+    client: AuthentikApiClient,
+    intents: list[RouteIntent],
+    inventory: AuthentikInventory,
+) -> DiscoveryIssue | None:
+    seen_queries: set[str] = set()
+    augmented = list(inventory.applications)
+    try:
+        for intent in intents:
+            for query in _application_search_queries(intent):
+                if not query or query in seen_queries:
+                    continue
+                seen_queries.add(query)
+                augmented.extend(client.search_applications(query))
+    except Exception as exc:
+        return DiscoveryIssue(
+            code="AKD101",
+            message=f"failed to query Authentik application search endpoint: {exc}",
+        )
+    inventory.applications = _dedupe_application_records(augmented)
+    return None
 
 
 def _fetch_authentik_inventory(
@@ -1035,6 +1083,16 @@ def discover_authentik_drift(
             route_results=(),
             unmanaged=(),
             issues=(fetch_issue,),
+            stop_conditions=(),
+            request_methods=tuple(client.request_methods),
+        )
+
+    search_issue = _augment_inventory_with_targeted_application_searches(client, intents, inventory)
+    if search_issue:
+        return DiscoveryResult(
+            route_results=(),
+            unmanaged=(),
+            issues=(search_issue,),
             stop_conditions=(),
             request_methods=tuple(client.request_methods),
         )
