@@ -178,6 +178,10 @@
     technitium_oidc_enabled: "{{ (technitium_oidc_client_secret | length) > 0 }}"
     technitium_needs_lab_forwarder: "{{ technitium_bootstrap_zone != lab_domain }}"
     technitium_generated_zone_src_env: "{{ lookup('env', 'TECHNITIUM_GENERATED_ZONE_SRC') | default('', true) }}"
+    technitium_seed_soa_refresh: 3600
+    technitium_seed_soa_retry: 900
+    technitium_seed_soa_expire: 2592000
+    technitium_seed_soa_minimum: 300
     # Seed record set for the short-lived Technitium bootstrap zone. This
     # intentionally mirrors CoreDNS's current browser-routed vs breakglass
     # split so we can validate Technitium independently before it owns the
@@ -496,6 +500,125 @@
       when:
         - technitium_parity_zone_enabled | bool
         - technitium_generated_zone_name not in (technitium_zone_list_after_parity_reconcile.content | from_json).response.zones | map(attribute='name') | list
+      no_log: true
+
+    - name: Derive desired parity-zone root authority records
+      ansible.builtin.set_fact:
+        technitium_parity_zone_name_server: "ns1.{{ technitium_generated_zone_name }}"
+        technitium_parity_zone_responsible_person: "admin@{{ technitium_generated_zone_name }}"
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Query current root records in the parity zone
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_generated_zone_name }}&domain={{ technitium_generated_zone_name }}&listZone=false&token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_existing_parity_root_record_query
+      retries: 10
+      delay: 2
+      until: technitium_existing_parity_root_record_query is not failed
+      when: technitium_parity_zone_enabled | bool
+      no_log: true
+
+    - name: Normalize current parity-zone root authority records
+      ansible.builtin.set_fact:
+        technitium_existing_parity_ns_records: >-
+          {{
+            (
+              technitium_existing_parity_root_record_query.content | from_json
+            ).response.records | selectattr('type', 'equalto', 'NS') | list
+          }}
+        technitium_existing_parity_soa_records: >-
+          {{
+            (
+              technitium_existing_parity_root_record_query.content | from_json
+            ).response.records | selectattr('type', 'equalto', 'SOA') | list
+          }}
+      when: technitium_parity_zone_enabled | bool
+      no_log: true
+
+    - name: Remove unexpected NS records from the parity zone root
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/delete?domain={{ technitium_generated_zone_name | urlencode }}&zone={{ technitium_generated_zone_name | urlencode }}&type=NS&nameServer={{ item.rData.nameServer | urlencode }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+        return_content: true
+      loop: "{{ technitium_existing_parity_ns_records | default([]) }}"
+      loop_control:
+        label: "{{ item.rData.nameServer }}"
+      when:
+        - technitium_parity_zone_enabled | bool
+        - (item.rData.nameServer | default('')) != technitium_parity_zone_name_server
+      failed_when: >-
+        (
+          delete_parity_ns_response.content | from_json
+        ).status != 'ok'
+      register: delete_parity_ns_response
+      no_log: true
+
+    - name: Publish expected NS record at the parity zone root
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/add?domain={{ technitium_generated_zone_name | urlencode }}&zone={{ technitium_generated_zone_name | urlencode }}&type=NS&nameServer={{ technitium_parity_zone_name_server | urlencode }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+        return_content: true
+      when: >-
+        technitium_parity_zone_enabled | bool and
+        (
+          technitium_existing_parity_ns_records | default([])
+          | selectattr('rData.nameServer', 'equalto', technitium_parity_zone_name_server)
+          | list
+          | length == 0
+        )
+      failed_when: >-
+        (
+          publish_parity_ns_response.content | from_json
+        ).status != 'ok'
+      register: publish_parity_ns_response
+      no_log: true
+
+    - name: Derive desired SOA serial for the parity zone
+      ansible.builtin.set_fact:
+        technitium_parity_zone_soa_serial: >-
+          {{
+            (
+              (
+                technitium_existing_parity_soa_records | first | default({})
+              ).rData.serial | default(1) | int
+            ) + 1
+          }}
+      when: technitium_parity_zone_enabled | bool
+      no_log: true
+
+    - name: Assert parity zone has an SOA record to update
+      ansible.builtin.assert:
+        that:
+          - technitium_existing_parity_soa_records | default([]) | length > 0
+        fail_msg: >-
+          Technitium parity zone {{ technitium_generated_zone_name }} is
+          missing its root SOA record unexpectedly. Refusing to continue.
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Update SOA record at the parity zone root when authority identity differs
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/records/update?zone={{ technitium_generated_zone_name | urlencode }}&type=SOA&domain={{ technitium_generated_zone_name | urlencode }}&ttl={{ (technitium_existing_parity_soa_records | first).ttl | default(900) }}&disable={{ ((technitium_existing_parity_soa_records | first).disabled | default(false)) | ternary('true', 'false') }}&comments={{ ((technitium_existing_parity_soa_records | first).comments | default('')) | urlencode }}&expiryTtl={{ (technitium_existing_parity_soa_records | first).expiryTtl | default(0) }}&primaryNameServer={{ technitium_parity_zone_name_server | urlencode }}&responsiblePerson={{ technitium_parity_zone_responsible_person | urlencode }}&serial={{ technitium_parity_zone_soa_serial }}&refresh={{ technitium_seed_soa_refresh }}&retry={{ technitium_seed_soa_retry }}&expire={{ technitium_seed_soa_expire }}&minimum={{ technitium_seed_soa_minimum }}&useSerialDateScheme=false&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+        return_content: true
+      when: >-
+        technitium_parity_zone_enabled | bool and
+        (
+          technitium_existing_parity_soa_records | default([])
+          | selectattr('rData.primaryNameServer', 'equalto', technitium_parity_zone_name_server)
+          | selectattr('rData.responsiblePerson', 'equalto', technitium_parity_zone_responsible_person)
+          | list
+          | length == 0
+        )
+      failed_when: >-
+        (
+          update_parity_soa_response.content | from_json
+        ).status != 'ok'
+      register: update_parity_soa_response
       no_log: true
 
     - name: Assert parity-zone record set preserves authority records

@@ -41,8 +41,8 @@ Completed:
   key `lab.gibbsgreatly.xyz` names while leaving the active delegate alone.
 
 Not yet done:
-- Formal production parity packet comparing CoreDNS and Technitium answer
-  sets record-by-record.
+- Final successful production parity packet comparing CoreDNS and
+  Technitium answer sets record-by-record.
 - Manual production MikroTik cutover packet and execution window.
 
 ## Issues encountered during Phase 1 and how they were resolved
@@ -81,6 +81,14 @@ Not yet done:
    Resolution: corrected the loop variable references so production
    bootstrap/parity publication is now idempotent and provision passes on
    `pve`.
+9. The first formal production parity pass showed that Technitium's parity
+   zone kept its default root authority metadata
+   (`NS=tech.lab.gibbsgreatly.xyz`, `SOA.primaryNameServer=tech.lab...`)
+   instead of matching CoreDNS's `ns1.lab.gibbsgreatly.xyz`.
+   Resolution: update the Technitium parity-zone publisher to reconcile the
+   root `NS` and `SOA` records explicitly, not just the A records. This fix
+   is now validated on `pve-test-vm`; production still needs reprovision +
+   parity rerun.
 
 ## Phase 0 — Requirements and design capture
 

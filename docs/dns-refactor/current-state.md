@@ -53,6 +53,11 @@ What is not yet true:
 - Production Technitium is now live in parallel at `192.168.20.15`,
   serving direct-query parity answers for `lab.gibbsgreatly.xyz`, but no
   production delegate cutover has been attempted.
+- The first formal production parity pass exposed a root-authority mismatch
+  in Technitium's parity zone (`NS`/`SOA.primaryNameServer` defaulting to
+  `tech.lab.gibbsgreatly.xyz`). The publisher fix is now validated on
+  `pve-test-vm`, but production still needs a reprovision plus parity rerun
+  before cutover can be considered.
 
 ## What it is
 
