@@ -9,8 +9,8 @@ Plan and track migrating the internal authoritative DNS service (currently
 
 **Phase 0 complete, Phase 1 complete, Phase 2 complete, Phase 3 rehearsal
 complete, and Phase 4 teardown/redeploy validation complete on
-`pve-test-vm` (2026-07-04). Production (`pve`) parallel bring-up is now
-also complete, with cutover still pending.**
+`pve-test-vm` (2026-07-04). Production (`pve`) parallel bring-up and DNS
+delegate cutover are now complete.**
 All Phase 0 decisions are recorded in [decisions.md](./decisions.md):
 Technitium over CoreDNS (unified DNS+DHCP path, web UI, DoH/DoT/DNSSEC),
 Docker Compose deployment shape, and a new-VMID parity window (not an
@@ -43,12 +43,31 @@ next gate is production parity/cutover prep, not more test-environment
 discovery work.
 
 Production parallel bring-up is now complete as well: `technitium-stack`
-is live on `pve` at `192.168.20.15`, provisioned successfully, reachable at
-`https://technitium.lab.gibbsgreatly.xyz`, and serving direct-query parity
-answers for `lab.gibbsgreatly.xyz` while the live client path remains on
-CoreDNS via MikroTik. This means the stack now stands independently in both
-environments; what remains is production-path validation and the manually
-reviewed delegate cutover.
+is live on `pve` at `192.168.20.15`, provisioned successfully, and serving
+direct-query parity answers for `lab.gibbsgreatly.xyz`.
+
+Production cutover was then completed by repointing the MikroTik
+`lab-zone-delegate` rule (`*45`) from CoreDNS `192.168.20.13` to
+Technitium `192.168.20.15` and flushing the router DNS cache. Post-cutover
+resolver-path checks through `192.168.1.1` succeeded for:
+
+- browser-routed names: `traefik`, `authentik`, `harbor`, `netbox`,
+  `portainer` -> `192.168.30.10`
+- authority records: `dns`, `ns1` -> `192.168.20.15`
+- direct/internal names: `authentik-int` -> `192.168.20.10`,
+  `step-ca` -> `192.168.20.11`
+- public recursion: `github.com` -> non-empty answer
+
+CoreDNS is no longer the active production delegate target; it remains
+deployed only as the old parallel authority/rollback point. One follow-up
+was identified immediately after cutover: the Technitium browser route
+returned a Traefik `404`, which traced back to unpublished production edge
+output for `technitium-stack`. Republishing the generated Traefik config to
+`proxy-stack` restored `https://technitium.lab.gibbsgreatly.xyz`
+successfully. A follow-up read-only `reconcile-edge.py` dry-run still
+reports Authentik metadata drift for the Technitium app's launch host
+(`test` vs `lab`), but the live DNS cutover and browser route are both
+healthy.
 
 **Stated program end goal:** Technitium eventually replaces MikroTik as DHCP
 server too, not just DNS authority. That's out of scope for this workspace
@@ -68,7 +87,7 @@ This follows the repo-wide pattern in
 | `current-state.md` | accurate baseline of the *current* CoreDNS `dns-stack` — what a replacement must account for |
 | `plan.md` | phased migration plan |
 | `decisions.md` | ADR-style log of Technitium-specific design decisions, as they're made |
-| `production-cutover-packet.md` | direct parity verification command set plus the manually reviewed production MikroTik cutover and rollback steps |
+| `production-cutover-packet.md` | direct parity verification command set, executed production MikroTik cutover record, and rollback steps |
 | `artifacts/` | local-only, git-ignored (`docs/**/artifacts/`) — put transient session handoffs, scratch notes, and evidence here, not in tracked docs |
 
 ## Read these first
@@ -93,9 +112,10 @@ Before planning, a session should read, in order:
 - DNS is deployed 3rd in the platform deploy order and destroyed 9th of 11 (see
   current-state.md) — nearly everything else depends on it. Cutover sequencing
   needs explicit design in `plan.md` before any destructive validation run.
-- `pve` production parallel bring-up has now been exercised successfully.
-  The remaining production work is parity verification plus an explicitly
-  approved MikroTik delegate change, not more stack scaffolding.
+- `pve` production parallel bring-up and the MikroTik delegate cutover have
+  now both been exercised successfully.
+- The remaining production work is limited to post-cutover Authentik edge
+  metadata cleanup for Technitium, not more DNS-stack scaffolding.
 
 ## Closeout
 

@@ -1,12 +1,18 @@
 # Production Cutover Packet — `lab.gibbsgreatly.xyz`
 
-Status: `technitium-stack` is live in parallel on `pve` at `192.168.20.15`,
-and direct parity verification against CoreDNS passed on 2026-07-04.
-Production clients still resolve `lab.gibbsgreatly.xyz` through the existing
-CoreDNS-backed MikroTik path (`192.168.20.13`). This packet now covers the
-remaining production move:
+Status: direct parity verification passed on 2026-07-04, and the production
+MikroTik delegate cutover was then executed successfully. The live
+`lab-zone-delegate` rule is now `*45 -> 192.168.20.15`, so production
+clients resolve `lab.gibbsgreatly.xyz` through Technitium rather than
+CoreDNS. This packet now serves as the execution record plus rollback
+procedure.
 
-1. the manual MikroTik delegate cutover and rollback procedure
+Post-cutover note: the Technitium browser route initially returned Traefik
+`404` until the generated production Traefik config was republished to
+`proxy-stack`. That republish restored
+`https://technitium.lab.gibbsgreatly.xyz` successfully. A later dry-run
+still reports Authentik metadata drift for the Technitium app's launch host,
+but the live routed service is healthy.
 
 ## Direct parity verification
 
@@ -63,16 +69,21 @@ before proceeding.
 
 ## Cutover
 
-Use the actual rule id discovered above in place of `<rule-id>`:
+Executed production command set on 2026-07-04:
 
 ```routeros
-/ip dns static set <rule-id> forward-to=192.168.20.15
+/ip dns static set *45 forward-to=192.168.20.15
 /ip dns cache flush
 ```
 
-If there is no existing `lab.gibbsgreatly.xyz` delegate rule, stop and review
-before adding one manually. The expected production move is an in-place
-mutation of the existing delegate, mirroring the `pve-test-vm` rehearsal.
+Observed post-cutover resolver-path answers through `192.168.1.1`:
+
+- `traefik`, `authentik`, `harbor`, `netbox`, `portainer` ->
+  `192.168.30.10`
+- `dns`, `ns1` -> `192.168.20.15`
+- `authentik-int` -> `192.168.20.10`
+- `step-ca` -> `192.168.20.11`
+- `github.com` -> non-empty answer (`4.237.22.38` in the captured check)
 
 ## Immediate post-cutover validation
 
@@ -111,11 +122,11 @@ curl -kI https://portainer.lab.gibbsgreatly.xyz
 
 ## Rollback
 
-If any resolver-path or browser-path check fails, restore the delegate to
-CoreDNS immediately:
+If any later resolver-path or browser-path check fails, restore the delegate
+to CoreDNS immediately:
 
 ```routeros
-/ip dns static set <rule-id> forward-to=192.168.20.13
+/ip dns static set *45 forward-to=192.168.20.13
 /ip dns cache flush
 ```
 

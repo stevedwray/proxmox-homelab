@@ -48,18 +48,11 @@ What is proven:
   healthy through the usual UI path.
 
 What is not yet true:
-- Production (`pve`) still uses the existing CoreDNS-backed client path via
-  MikroTik.
-- Production Technitium is now live in parallel at `192.168.20.15`,
-  serving direct-query parity answers for `lab.gibbsgreatly.xyz`, but no
-  production delegate cutover has been attempted.
-- Production direct parity verification now passes: shared A/NS/SOA answers
-  match CoreDNS, Technitium serves `dns.lab.gibbsgreatly.xyz` and
-  `ns1.lab.gibbsgreatly.xyz` from `192.168.20.15`, and recursive resolution
-  still matches for `github.com`.
-- The remaining production move is the manual MikroTik delegate repoint from
-  CoreDNS `192.168.20.13` to Technitium `192.168.20.15`, followed by the
-  same resolver-path/browser-path checks rehearsed in `pve-test-vm`.
+- CoreDNS is no longer the active production delegate target.
+- Authentik discovery is not yet perfectly converged for Technitium in
+  production: a read-only `reconcile-edge.py` dry-run still reports the
+  Technitium app's launch host as `technitium.test.gibbsgreatly.xyz`
+  instead of `technitium.lab.gibbsgreatly.xyz`.
 
 ## What it is
 
@@ -115,17 +108,26 @@ Namespaces:
 | `test.gibbsgreatly.xyz` | Technitium on `pve-test-vm` (`192.168.20.115`) after the 2026-07-04 rehearsal; CoreDNS `192.168.20.113` remains rollback target | Same, for the validation environment |
 
 Operationally in `pve` today:
-- Clients still resolve `lab.gibbsgreatly.xyz` through the MikroTik-backed
-  CoreDNS path.
-- `technitium-stack` is now deployed in parallel at `192.168.20.15`.
+- Clients now resolve `lab.gibbsgreatly.xyz` through the MikroTik-backed
+  Technitium path.
+- `technitium-stack` is deployed at `192.168.20.15`, and the router's
+  `lab-zone-delegate` rule now forwards to that address.
 - Direct queries against production Technitium return the expected parity
   set, including browser-routed names via `192.168.30.10`, direct/internal
   names (`authentik-int`, `step-ca`), authority records (`dns`, `ns1`),
   and public recursion.
-- `https://technitium.lab.gibbsgreatly.xyz` is reachable and OIDC-backed
-  admin login is working.
-- CoreDNS remains the active production authority only because the
-  MikroTik delegate has not yet been repointed.
+- Resolver-path checks through `192.168.1.1` also return the expected
+  Technitium-backed answers for browser-routed names, authority records,
+  direct/internal names, and public recursion.
+- Browser/API spot checks for `authentik`, `harbor`, `netbox`, and
+  `portainer` succeeded after cutover.
+- `https://technitium.lab.gibbsgreatly.xyz` now resolves and serves the
+  Technitium UI successfully after the generated Traefik config was
+  republished to `proxy-stack`.
+- A follow-up read-only edge dry-run still reports Authentik metadata drift
+  for the Technitium app's launch host, even though the live route works.
+- CoreDNS remains deployed only as the previous parallel authority and
+  rollback target, not the active router delegate target.
 
 Operationally in `pve-test-vm` today:
 - Clients still point at the MikroTik resolver (`192.168.1.1`), not directly

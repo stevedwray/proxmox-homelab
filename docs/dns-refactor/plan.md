@@ -11,8 +11,9 @@ native OIDC against Authentik, and now serving the live `test.gibbsgreatly.xyz`
 router path in `pve-test-vm` via the MikroTik delegate rule. CoreDNS remains
 live as the rollback target. On `pve`, `technitium-stack` is now deployed at
 `192.168.20.15`, serving direct-query parity for `lab.gibbsgreatly.xyz`,
-while production clients still resolve through the CoreDNS-backed MikroTik
-path. No production cutover has been attempted yet.
+while production clients now resolve through the Technitium-backed MikroTik
+path after the production delegate repoint on 2026-07-04. CoreDNS remains
+deployed only as the old authority/rollback target.
 
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
@@ -43,9 +44,20 @@ Completed:
   `lab.gibbsgreatly.xyz`: shared A/NS/SOA answers match CoreDNS, Technitium
   serves `dns.lab.gibbsgreatly.xyz` and `ns1.lab.gibbsgreatly.xyz` from
   `192.168.20.15`, and recursive resolution still matches for `github.com`.
+- Production MikroTik cutover completed successfully:
+  `/ip dns static set *45 forward-to=192.168.20.15` followed by
+  `/ip dns cache flush`. Resolver-path checks through `192.168.1.1`
+  confirmed browser-routed names via `192.168.30.10`, authority records via
+  `192.168.20.15`, direct/internal names via their service IPs, and public
+  recursion still working.
 
 Not yet done:
-- Manual production MikroTik cutover packet and execution window.
+- Post-cutover Authentik metadata cleanup for Technitium:
+  after republishing generated Traefik config to `proxy-stack`,
+  `https://technitium.lab.gibbsgreatly.xyz` is healthy again, but a
+  read-only `reconcile-edge.py` dry-run still reports the Technitium app's
+  Authentik launch host as `technitium.test.gibbsgreatly.xyz` instead of
+  `technitium.lab.gibbsgreatly.xyz`.
 
 ## Issues encountered during Phase 1 and how they were resolved
 
