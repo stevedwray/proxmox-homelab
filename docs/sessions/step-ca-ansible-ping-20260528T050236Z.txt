@@ -1,1 +1,0 @@
-step-ca | SUCCESS => {"ansible_facts": {"discovered_interpreter_python": "/usr/bin/python3.13"},"changed": false,"ping": "pong"}

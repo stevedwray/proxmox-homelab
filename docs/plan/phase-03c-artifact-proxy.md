@@ -25,7 +25,7 @@ upstream availability.
 
 ## Deliverables
 
-- `apt-cacher-ng` at `10.57.3.11` / VMID 142
+- `apt-cacher-ng` at `192.168.40.11` / VMID 40011
 - shared LXC/base-role apt proxy configuration
 - `terraform/terraform-providers/` mirror path defined and usable
 - ci-runner updated to use apt proxy and `.terraformrc`
@@ -44,7 +44,7 @@ upstream availability.
 
 ## Acceptance Criteria
 
-- [ ] apt-cacher-ng is healthy at `10.57.3.11:3142`
+- [ ] apt-cacher-ng is healthy at `192.168.40.11:3142`
 - [ ] new LXCs inherit `/etc/apt/apt.conf.d/01proxy`
 - [ ] Terraform provider mirror exists and is usable locally
 - [ ] ci-runner has both apt proxy config and `.terraformrc`

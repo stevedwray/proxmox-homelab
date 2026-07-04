@@ -72,7 +72,7 @@ fields in `stack.yaml` so `/opt/proxy-stack/certs` is persisted.
 ## Authentik
 
 **Authentik must be in `mgmt_seg` with explicit allow rules from `edge_seg` and any app zone.**
-Traefik (edge_seg) reaches the Authentik forward-auth endpoint at `10.57.1.10:9000`.
+Traefik (edge_seg) reaches the Authentik forward-auth endpoint at `192.168.20.10:9000`.
 Any service that delegates auth to Authentik must also be able to reach it. Verify zone
 reachability before wiring up any protected route.
 

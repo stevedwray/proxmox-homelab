@@ -11,8 +11,6 @@ status metadata and documenting ignored generated artifact handling.
 
 ## Files
 
-- `docs/provisioning-refactor/prompts/index.yaml`
-- `docs/provisioning-refactor/prompts/*.yaml`
 - `docs/teardown-test/README.md`
 - `docs/teardown-test/variables.md`
 
@@ -35,7 +33,6 @@ status metadata and documenting ignored generated artifact handling.
 
 ## Validation
 
-- `python3 -c 'import yaml; yaml.safe_load(open("docs/provisioning-refactor/prompts/index.yaml"))'`
 - `git diff --check`
 
 ## Stop Conditions

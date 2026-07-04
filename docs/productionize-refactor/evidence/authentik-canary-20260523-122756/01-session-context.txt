@@ -1,4 +1,0 @@
-Evidence path: docs/productionize-refactor/evidence/authentik-canary-20260523-122756
-Stack: authentik-stack
-Target: pve (production)
-Date: Sat 23 May 2026 00:27:56 UTC

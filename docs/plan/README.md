@@ -26,7 +26,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | Phase 00b complete |
 | 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | None — workstation only |
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | Phase 00c, 03c, 03d complete |
-| 04b | [Internal DNS Authority (CoreDNS)](phase-04b-internal-dns.md) | Phase 04 complete |
+| 04b | [Internal DNS Authority (Technitium)](phase-04b-internal-dns.md) | Phase 04 complete |
 | 04c | [Stack-Owned Ingress/Auth/DNS Refactor](phase-04c-stack-owned-ingress-auth-dns.md) | Phase 04 complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | Phase 04, 05 complete |
@@ -41,7 +41,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 - [Lessons learned](../design/lessons-learned.md) — non-obvious facts from development passes
 
 For the full SDN zone definitions and MikroTik setup commands, see
-[terraform/lxc/network/pve-test.yaml](../../terraform/lxc/network/pve-test.yaml).
+[terraform/lxc/network/pve-test-vm.yaml](../../terraform/lxc/network/pve-test-vm.yaml).
 
 ## Environment summary
 
@@ -70,6 +70,7 @@ Current stack zones and IP segments (IPs resolved from `.env.pve-test-vm`):
 | step-ca-stack | `mgmt_seg` | 192.168.20.x | 20011 |
 | monitoring-stack | `mgmt_seg` | 192.168.20.x | 20012 |
 | dns-stack | `mgmt_seg` | 192.168.20.x | 20013 |
+| technitium-stack | `mgmt_seg` | 192.168.20.x | 20015 |
 | proxy-stack | `edge_seg` | 192.168.30.x | 30010 |
 | harbor-stack | `infra_seg` | 192.168.40.x | 40010 |
 | apt-cacher-stack | `infra_seg` | 192.168.40.x | 40011 |
@@ -80,11 +81,11 @@ Storage pool: `infrastructure-containers` on pve-test-vm (ZFS).
 
 **Harbor bootstrap:** On the first pass, Harbor pulls its own images from Docker Hub
 directly. Once Harbor is running, all subsequent containers in all zones pull from
-`10.57.3.10`. This is the designed Stage 1 → Stage 2 transition — it is not a
+`192.168.40.10`. This is the designed Stage 1 → Stage 2 transition — it is not a
 misconfiguration. See [bootstrap.md](../design/bootstrap.md).
 
 Portainer remains in the lab as the management UI for Tier 2 application
-stacks. Tier 1 platform stacks on `pve-test` are provisioned by Terraform and
+stacks. Tier 1 platform stacks on `pve-test-vm` are provisioned by Terraform and
 configured explicitly via `scripts/provision.sh`; they do not use Portainer
 agents.
 
@@ -117,23 +118,27 @@ service is currently running.
 
 ## Repository conventions
 
-See `CLAUDE.md` for the authoritative branch model. Summary:
+The authoritative workflow and branch model live in:
 
-- Cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD
-- Short-lived branches: `feat/<name>`, `fix/<name>`, `task/<name>`, `work/<name>`
-- Validate on the short-lived branch (live runs, tests, populate checks)
-- Promote to `baseline/teardown-validated` once a full teardown + redeploy cycle confirms known-good
-- PR `baseline/teardown-validated` → `main` only when stable and tested
-- `dev/pve-test` is **retired** (archival only) — do not branch from it or merge to it
-- Close GitHub issues with `Closes #N` in the commit message
-- Run `gh issue close N --comment "Fixed in commit <sha>"` after committing
+- [docs/workflow/branch-model.md](../workflow/branch-model.md)
+- [docs/workflow/environments.md](../workflow/environments.md)
+
+Use those docs instead of repeating branch/process rules here.
+
+For planning-workspace hygiene, also use:
+
+- [docs/workflow/documentation-workspaces.md](../workflow/documentation-workspaces.md)
+
+Transient handoffs, prompts, transcripts, evidence, and scratch notes should
+live in a local `artifacts/` directory inside the relevant docs workspace, not
+as tracked documentation.
 
 ### Security scanning (run before merging any branch)
 
 | Change type | Command |
 | --- | --- |
 | Terraform files modified | `/home/steve/.local/bin/snyk iac test terraform/` |
-| Code files modified (Python, shell, YAML) | `./with-secrets sonar-scanner` |
+| Code files modified (Python, shell, YAML) | `./with-secrets /home/steve/.local/bin/sonar-scanner` |
 
 If a scan returns new issues, stop and present options — do not merge until resolved or explicitly accepted.
 
@@ -148,14 +153,15 @@ See also [network.md — Known gaps](../design/network.md#known-gaps) for networ
 
 ## Active issues
 
+Tables like this go stale the moment an issue closes. Verify before relying
+on it: `gh issue list --state open --search "Phase 06"`.
+
+As of 2026-07-03, Phase 04 (#106, #125, #107) and Phase 05 (#108, #109, #110)
+issues below are all **closed** — those phases are implemented. Only Phase 06
+work remains open:
+
 | Issue | Description | Phase |
 | --- | --- | --- |
-| #106 | Traefik deployment | 04-03 |
-| #125 | step-ca deployment | 04-04 |
-| #107 | Monitoring deployment | 04-05 |
-| #108 | Trivy CI scan | 05-01 |
-| #109 | Syft SBOM | 05-02 |
-| #110 | Cosign signing | 05-03 |
 | #113 | Discover and document application workloads | 06-01 |
 | #114 | Create app_seg and game_seg SDN zones | 06-02 |
 | #115 | Migrate Pi-hole to app_seg | 06-03 |

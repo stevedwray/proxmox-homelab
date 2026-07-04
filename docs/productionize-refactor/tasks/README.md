@@ -3,17 +3,16 @@
 ## Purpose
 
 This task set breaks the productionization refactor into focused slices that
-can be implemented, reviewed, and validated incrementally on
-`refactor/productionize`.
+can be implemented, reviewed, and validated incrementally on short-lived work
+branches.
 
 Use these tasks as the working backlog for the refactor. The main strategy doc
 remains:
 
 - [pve-production-readiness.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/pve-production-readiness.md:1)
 
-Copilot-ready session packets live at:
-
-- [../handoffs/README.md](/home/steve/git/proxmox-homelab/docs/productionize-refactor/handoffs/README.md:1)
+The earlier handoff packet set has been intentionally removed as transient
+working material. Use the retained strategy and task docs here instead.
 
 ## Task Order
 
@@ -48,6 +47,6 @@ Suggested implementation branches:
 
 - production credential access is non-default and tightly gated
 - `pve` storage and network manifests are tracked and validated
-- active stacks are no longer hardcoded to `pve-test`
+- active stacks are no longer hardcoded to the validation environment
 - one low-risk canary has been proven on `pve`
 - there is a documented, dependency-aware order for migrating real services

@@ -1,5 +1,12 @@
 # 06-app-stacks-06 — Migrate game services to new LXC
 
+> Historical task packet.
+> This document reflects the earlier Phase 06 migration planning workflow and
+> retired branch model.
+> Keep it as migration-planning history only. For current workflow and
+> environment rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

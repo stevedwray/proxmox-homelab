@@ -1,5 +1,6 @@
 hostname: security-stack
 ip_address: "192.168.1.11"
+dns_server: "192.168.1.1"
 vmid: 109
 portainer_agent: true
 # No portainer_stacks — agent registration only

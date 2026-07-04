@@ -7,7 +7,7 @@ Evidence: .git/ai/sessions/evidence/session-01/contract-surface.txt
 Summary: the following implemented contract surfaces were discovered under `terraform/lxc/`. For each item I list where the docs reference it and a short recommended action (coverage / gap).
 
 - [terraform/lxc/PLATFORM_CONTRACT.md](terraform/lxc/PLATFORM_CONTRACT.md)
-  - Referenced in: [docs/stack-lifecycle-refactor/plan.md](docs/stack-lifecycle-refactor/plan.md), [docs/stack-lifecycle-refactor/inventory-model.md](docs/stack-lifecycle-refactor/inventory-model.md), [docs/stack-lifecycle-refactor/decisions.md](docs/stack-lifecycle-refactor/decisions.md), [docs/stack-lifecycle-refactor/handoff.md](docs/stack-lifecycle-refactor/handoff.md)
+  - Referenced in: [docs/stack-lifecycle-refactor/plan.md](docs/stack-lifecycle-refactor/plan.md), [docs/stack-lifecycle-refactor/inventory-model.md](docs/stack-lifecycle-refactor/inventory-model.md), [docs/stack-lifecycle-refactor/decisions.md](docs/stack-lifecycle-refactor/decisions.md), [docs/stack-lifecycle-refactor/current-state.md](docs/stack-lifecycle-refactor/current-state.md)
   - Notes: central platform contract exists and is documented in the SLR docs. Action: verify the contract fields map to examples in `terraform/lxc/main.tf` and add cross-links in `PLATFORM_CONTRACT.md` to those examples.
 
 - Per-stack contract files: (exist)
@@ -17,7 +17,7 @@ Summary: the following implemented contract surfaces were discovered under `terr
   - [terraform/lxc/stacks/harbor-stack/STACK_CONTRACT.md](terraform/lxc/stacks/harbor-stack/STACK_CONTRACT.md)
   - [terraform/lxc/stacks/portainer-stack/STACK_CONTRACT.md](terraform/lxc/stacks/portainer-stack/STACK_CONTRACT.md)
   - [terraform/lxc/stacks/step-ca-stack/STACK_CONTRACT.md](terraform/lxc/stacks/step-ca-stack/STACK_CONTRACT.md)
-  - Referenced in: [docs/stack-lifecycle-refactor/plan.md](docs/stack-lifecycle-refactor/plan.md), [docs/stack-lifecycle-refactor/handoff.md](docs/stack-lifecycle-refactor/handoff.md)
+  - Referenced in: [docs/stack-lifecycle-refactor/plan.md](docs/stack-lifecycle-refactor/plan.md), [docs/stack-lifecycle-refactor/current-state.md](docs/stack-lifecycle-refactor/current-state.md)
   - Notes: per-stack contracts are present. Action: verify each `STACK_CONTRACT.md` includes a short example of how the stack is consumed by the platform contract and add links from SLR docs to each stack contract.
 
 - Implementation / generation surfaces

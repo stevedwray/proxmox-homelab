@@ -1,5 +1,12 @@
 # 04b-core-services-02 — Deploy internal authoritative DNS server (CoreDNS)
 
+> Historical task packet.
+> This document reflects the earlier `pve-test` Phase 04b deployment workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md),
+> [docs/workflow/environments.md](../../workflow/environments.md), and
+> [docs/teardown-test/README.md](../../teardown-test/README.md).
+
 ## Overview
 
 Deploy CoreDNS as the authoritative server for `lab.gibbsgreatly.xyz`. This service acts as the target for MikroTik's conditional forwarding rule, enabling all SDN clients to resolve Phase 04 and Phase 06 internal service names.

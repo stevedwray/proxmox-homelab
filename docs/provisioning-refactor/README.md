@@ -6,7 +6,14 @@ legacy context only when they conflict with this directory.
 
 The objective is to move browser-facing DNS, Traefik, and Authentik intent out
 of central runbooks and into stack-owned manifests while preserving a safe
-bootstrap path for a fresh pve-test rebuild.
+bootstrap path for a fresh `pve-test-vm` rebuild.
+
+For the full integrated rebuild proof, do not treat this directory as the only
+authority. The hard-validation authority for teardown, redeploy, reprovision,
+reconcile, and end-to-end stack verification is:
+
+- [../teardown-test/README.md](../teardown-test/README.md)
+- [../teardown-test/validation-model.md](../teardown-test/validation-model.md)
 
 ## Target Model
 
@@ -49,16 +56,20 @@ their browser routes are reconciled.
 
 ## Scope Boundaries
 
-The plan is pve-test only. Production `pve` targeting is out of scope until the
-pve-test model is proven.
+The plan is `pve-test-vm` only. Production `pve` targeting is out of scope
+until the validation model is proven.
+
+This directory defines edge-bootstrap and edge-reconciliation behavior. It does
+not replace the teardown-test execution order, approval gates, or full
+rebuild-validation flow.
 
 Each task is intentionally small enough for one short-lived branch/session. Do
 not combine migration tasks unless explicitly requested.
 
 ## Important Decisions
 
-- Browser hostnames on pve-test use `*.lab.gibbsgreatly.xyz`.
-- Generated browser DNS records target Traefik at `10.57.2.10`.
+- Browser hostnames on `pve-test-vm` use `*.lab.gibbsgreatly.xyz`.
+- Generated browser DNS records target Traefik at `192.168.30.10`.
 - CoreDNS is the `lab.gibbsgreatly.xyz` authority; MikroTik remains resolver,
   conditional forwarder, and network policy point.
 - `stack.yaml` remains the LXC metadata contract and does not gain browser edge
@@ -73,17 +84,16 @@ See [decisions.md](decisions.md) for details.
 - [decisions.md](decisions.md) records design decisions agents must follow.
 - [task-sequence.md](task-sequence.md) lists the complete 22-task atomic sequence.
 - [tasks/](tasks/) contains detailed task documents.
-- [prompts/](prompts/) contains matching agent prompts.
-- [prompts/index.yaml](prompts/index.yaml) is the ordered prompt registry for
-   the full 22-task sequence.
 - [fixtures/](fixtures/) is reserved for EdgeManifest contract fixtures.
 - [runbook.md](runbook.md) is the shared validation and rollback contract for
    Task 15 through Task 21 route migrations.
+- [../teardown-test/validation-model.md](../teardown-test/validation-model.md)
+  explains how this refactor fits into the full hard-validation path.
 
 ## How Agents Should Use This
 
 1. Read this README and [decisions.md](decisions.md).
 2. Select exactly one task from [task-sequence.md](task-sequence.md).
-3. Use the matching prompt from [prompts/index.yaml](prompts/index.yaml).
+3. Use the matching task document in [tasks/](tasks/) as the working packet.
 4. Keep changes inside that task's declared scope.
 5. Stop if validation reveals a new issue outside the task boundary.

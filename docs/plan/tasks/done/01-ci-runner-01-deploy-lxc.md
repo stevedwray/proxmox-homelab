@@ -1,5 +1,9 @@
 # 01-ci-runner-01 — Deploy ci-runner-01 LXC via Terragrunt
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 COMPLETE

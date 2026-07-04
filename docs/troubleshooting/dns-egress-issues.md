@@ -31,7 +31,7 @@ systemd-resolved stub vs the LAN gateway directly), causing split behaviour.
 ### Required fix
 
 1. Confirm that `pve-test.gibbsgreatly.xyz` has a local DNS entry on the MikroTik
-   (`10.57.x.x` or `192.168.1.40`) in the MikroTik static DNS table.
+   (`192.168.X0.x` zone address or `192.168.1.40`) in the MikroTik static DNS table.
 2. Ensure the workstation's resolver is consistently `192.168.1.1` (MikroTik LAN gateway)
    and that no fallback resolver is configured.
 3. Do not rely on public DNS for `gibbsgreatly.xyz` resolution — the MikroTik must answer
@@ -45,7 +45,7 @@ systemd-resolved stub vs the LAN gateway directly), causing split behaviour.
 
 ### Observed behaviour
 
-With `nameserver 10.57.0.1`, the `ci-runner-01` container could not reliably resolve
+With `nameserver 192.168.10.1`, the `ci-runner-01` container could not reliably resolve
 external names such as `deb.debian.org`. This blocked `apt` during the runner bootstrap.
 
 A temporary override to `nameserver 1.1.1.1` was applied to unblock the dependency
@@ -55,7 +55,7 @@ install. This is **not acceptable** as a steady state.
 
 The MikroTik firewall input chain was missing rules for `build_seg`. The `mgmt_seg`,
 `edge_seg`, and `infra_seg` VLANs all had explicit ICMP and DNS accept rules; `vlan10-build`
-had none, so all traffic from `10.57.0.0/24` to the router hit the default drop rule.
+had none, so all traffic from `192.168.10.0/24` to the router hit the default drop rule.
 
 The three missing rules were added:
 
@@ -65,15 +65,15 @@ The three missing rules were added:
 /ip firewall filter add chain=input action=accept protocol=tcp in-interface=vlan10-build dst-port=53 comment="allow build_seg DNS TCP to router" place-before=8
 ```
 
-After adding these, `nslookup github.com 10.57.0.1` from inside `ci-runner-01` succeeded,
+After adding these, `nslookup github.com 192.168.10.1` from inside `ci-runner-01` succeeded,
 `apt` unblocked, the runner installed and registered, and `validate-zone-dns.yml` passed
-all assertions (resolver `10.57.0.1` confirmed, external resolution confirmed via MikroTik).
+all assertions (resolver `192.168.10.1` confirmed, external resolution confirmed via MikroTik).
 
 ### Fix checklist for future rebuilds
 
 1. Verify the MikroTik DNS service is enabled: `/ip dns print` should show `allow-remote-requests: yes`.
 2. Confirm the MikroTik firewall input chain has ICMP + DNS (UDP/TCP 53) accept rules for **all four** VLAN interfaces before deploying any LXC.
-3. Pre-flight test from the workstation: `dig @10.57.0.1 github.com +short` — must answer before the bootstrap playbook runs.
+3. Pre-flight test from the workstation: `dig @192.168.10.1 github.com +short` — must answer before the bootstrap playbook runs.
 4. Do not accept a public resolver (`1.1.1.1`) as a workaround — fix the MikroTik.
 
 ### Persistence note
@@ -81,7 +81,7 @@ all assertions (resolver `10.57.0.1` confirmed, external resolution confirmed vi
 Proxmox overwrites `/etc/resolv.conf` on container boot from its internal config. A
 post-provision file copy is not enough. The current `deploy-ci-runner.yml` installs
 `homelab-runner-resolver.service` to restore the correct resolver before the runner starts.
-Ensure that service sets `nameserver 10.57.0.1`, not a public resolver.
+Ensure that service sets `nameserver 192.168.10.1`, not a public resolver.
 
 ---
 
@@ -118,13 +118,13 @@ being reachable but not yet returning answers.
 
 ### Required fix
 
-1. Fix Issue 2 first. Once `10.57.0.1` can resolve external names reliably, the broker
+1. Fix Issue 2 first. Once `192.168.10.1` can resolve external names reliably, the broker
    FQDN (`*.actions.githubusercontent.com`) should resolve successfully and the runner
    should come online.
 2. Verify that `homelab-runner-resolver.service` has `Before=actions.runner.*.service`
    (or equivalent) in its unit ordering so the resolver is fully restored before the
    runner attempts its first broker connection.
-3. Confirm the MikroTik does not block HTTPS egress from `10.57.0.0/24` to the internet
+3. Confirm the MikroTik does not block HTTPS egress from `192.168.10.0/24` to the internet
    on TCP 443. The runner's broker connection is outbound HTTPS only — no inbound ports
    are needed.
 4. Add a post-reboot smoke test: after the LXC reboots, SSH in and run
@@ -140,9 +140,9 @@ as a blocking defect, not a workaround:
 | Requirement | Detail |
 |---|---|
 | No public DNS resolvers in any container | All SDN workloads use their zone's MikroTik gateway IP as resolver |
-| `build_seg` resolver | `10.57.0.1` |
-| `mgmt_seg` resolver | `10.57.1.1` |
-| `infra_seg` resolver | `10.57.3.1` |
+| `build_seg` resolver | `192.168.10.1` |
+| `mgmt_seg` resolver | `192.168.20.1` |
+| `infra_seg` resolver | `192.168.40.1` |
 | MikroTik forwards public names via DoH | Configured on the MikroTik WAN path, not bypassed |
 | Split DNS for `gibbsgreatly.xyz` | `pve-test` and homelab hostnames resolve locally via MikroTik static DNS |
 | No workstation fallback to public resolver | `192.168.1.1` is the sole resolver entry on the workstation |
@@ -154,7 +154,7 @@ as a blocking defect, not a workaround:
 Run these checks before starting a destroy/redeploy pass:
 
 1. `nslookup pve-test.gibbsgreatly.xyz 192.168.1.1` — must return `192.168.1.40`
-2. `nslookup deb.debian.org 10.57.0.1` — must return a valid IP (test from a host on `build_seg`)
-3. `nslookup api.github.com 10.57.0.1` — must return a valid IP
+2. `nslookup deb.debian.org 192.168.10.1` — must return a valid IP (test from a host on `build_seg`)
+3. `nslookup api.github.com 192.168.10.1` — must return a valid IP
 4. `ssh pve-test.gibbsgreatly.xyz` and `scp /dev/null pve-test.gibbsgreatly.xyz:/tmp/` — both must succeed from the workstation
 5. After `ci-runner-01` redeploy and LXC reboot: `curl -s https://api.github.com` from inside the container, then confirm runner online in GitHub

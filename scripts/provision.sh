@@ -574,6 +574,22 @@ provision_stack() {
     cmd+=(-e "coredns_generated_zone_src=${generated_zone}")
   fi
 
+  if [[ "$stack" == "technitium-stack" ]]; then
+    local generated_records
+    if [[ -n "${PVE_ENV:-}" ]]; then
+      generated_records="${ENV_ROOT}/.generated/technitium/zone-records.json"
+    else
+      generated_records="${REPO_ROOT}/terraform/lxc/.generated/technitium/zone-records.json"
+    fi
+    mkdir -p "$(dirname "$generated_records")"
+    log "Regenerating Technitium parity-zone records from EdgeManifests"
+    python3 "${REPO_ROOT}/terraform/lxc/render-edge-technitium.py" \
+      --stacks-dir "${REPO_ROOT}/terraform/lxc/stacks" \
+      --seed-zone "${REPO_ROOT}/terraform/lxc/ansible/files/coredns-lab.zone" \
+      --output-records "$generated_records"
+    cmd+=(-e "technitium_generated_zone_src=${generated_records}")
+  fi
+
   [[ "$check_mode" == "true" ]] && cmd+=(--check)
   [[ -n "${ANSIBLE_TAGS:-}" ]] && cmd+=(--tags "$ANSIBLE_TAGS")
 

@@ -3,7 +3,7 @@
 ## Purpose
 
 This gate defines the minimum validation required before the network refactor
-can be considered complete on `pve-test`.
+can be considered complete on `pve-test-vm`.
 
 ## Preflight Script
 
@@ -31,7 +31,7 @@ deployed):
 
 ```sh
 ./with-secrets scripts/preflight-network-refactor.sh \
-    --save-evidence docs/sessions/ 192.168.40.11
+    --save-evidence /tmp/ 192.168.40.11
 ```
 
 Exit code 0 means all required checks passed. Exit code 1 means one or more
@@ -46,9 +46,9 @@ an ignored directory; summarize results in tracked docs only.
 Before any apply or teardown/redeploy validation:
 
 1. Run `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` and confirm it
-   returns `pve-test`. The preflight script performs this check automatically.
+   returns `pve-test-vm`. The preflight script performs this check automatically.
 2. Confirm the intended branch is a short-lived work branch, not
-   `baseline/teardown-validated` or `baseline/teardown-validated`.
+   a promotion branch such as `stable` or `main`.
 3. Confirm the manual MikroTik prerequisites for the SDN zones are present
    (VLAN interfaces, gateway IPs, DNS rules). The preflight script tests the
    observable outcomes; it does not configure the router.
@@ -61,7 +61,7 @@ The preflight script runs these four checks in order:
 
 ### Check 1 — Targeting guard
 
-Verifies `TF_VAR_proxmox_node == pve-test` in the injected environment.
+Verifies `TF_VAR_proxmox_node == pve-test-vm` in the injected environment.
 
 Required because:
 
@@ -123,11 +123,11 @@ pass explicit IPs on the command line to convert this to a hard check.
 
 Capture evidence for each of these before changing live state. The preflight
 script produces a structured summary suitable for pasting into a session doc.
-To save a copy automatically, use `--save-evidence docs/sessions/`.
+To save a copy automatically, use `--save-evidence` with an ignored location.
 
 Required evidence items (produced by the script):
 
-1. Targeting guard result (`TF_VAR_proxmox_node = pve-test`)
+1. Targeting guard result (`TF_VAR_proxmox_node = pve-test-vm`)
 2. Gateway ping results for all four SDN zones
 3. DNS resolution results via `192.168.20.1` for both internal and public names
 4. Representative guest TCP:22 probe result
@@ -151,13 +151,13 @@ For each stack, capture:
 
 ## Teardown And Redeploy Cycle
 
-Run at least one full validation cycle on `pve-test` after the representative
+Run at least one full validation cycle on `pve-test-vm` after the representative
 live checks succeed.
 
 Required sequence:
 
 1. ensure preflight evidence is current
-2. run the teardown/redeploy workflow for `pve-test`
+2. run the teardown/redeploy workflow for `pve-test-vm`
 3. recreate or confirm SDN zone and VNet attachments
 4. reprovision representative stacks
 5. rerun DNS and service-health checks

@@ -30,11 +30,11 @@ Expected:
 - clean working tree
 - branch is the approved branch from `variables.md`
 - commit SHA matches the approved commit
-- target output is exactly `pve-test`
+- target output is exactly `pve-test-vm`
 
 Stop if any expected value does not match.
 
-For a read-only inventory snapshot of the current `pve-test` containers before
+For a read-only inventory snapshot of the current `pve-test-vm` containers before
 or after a cycle, run:
 
 ```bash
@@ -43,11 +43,11 @@ scripts/teardown-deploy-test.sh platform-status
 
 Expected:
 
-- the target guard reports `pve-test`
+- the target guard reports `pve-test-vm`
 - every in-scope stack is listed with VMID, IP, `pct` state, direct health
   status, and evidence log paths
 - SSH collection failures (for example operator-host DNS resolution failures for
-	`pve-test.gibbsgreatly.xyz`) are reported as `overall=blocked` with explicit
+	`pve-test-vm.gibbsgreatly.xyz`) are reported as `overall=blocked` with explicit
 	blocker detail, not as stopped stacks
 - the generated `platform-status.tsv` and `platform-status.json` files are kept
   under the command's evidence stamp
@@ -155,7 +155,7 @@ Record:
 - backup IDs/paths for persistent services per `backup-plan.md`
 - restore test evidence or written data-loss approval
 
-For pve-test teardown rehearsals, backup evidence is advisory only: record gaps
+For pve-test-vm teardown rehearsals, backup evidence is advisory only: record gaps
 in evidence and continue. Do not block destroy/redeploy on missing backup
 artifacts.
 
@@ -172,7 +172,7 @@ Before any destroy:
 Expected:
 
 ```text
-pve-test
+pve-test-vm
 ```
 
 Operator must explicitly approve the destructive window after seeing:
@@ -222,7 +222,7 @@ VMID="<vmid>"
 ./scripts/rebuild-gate-destroy.sh --execute --stack "${STACK}" \
 	2>&1 | tee "$LOG_DIR/destroy-${STACK}.log"
 
-ssh -F /dev/null root@pve-test.gibbsgreatly.xyz \
+ssh -F /dev/null root@pve-test-vm.gibbsgreatly.xyz \
   "if pct status '${VMID}' >/dev/null 2>&1; then echo 'VMID still present' >&2; exit 1; fi" \
   2>&1 | tee "$LOG_DIR/verify-destroy-${STACK}.log"
 ```
@@ -401,7 +401,7 @@ checkpoint-era probes that targeted the wrong endpoint.
 
 Stop and present options when:
 
-- target guard is not `pve-test`
+- target guard is not `pve-test-vm`
 - backups are missing or unverified
 - destroy affects an unapproved VMID
 - a required Stage 3a service cannot bootstrap
@@ -421,7 +421,7 @@ Working directory: repository root (`/home/steve/git/proxmox-homelab`).
 
 If failure occurs after destroy has started:
 
-1. Re-run target guard and confirm `pve-test`.
+1. Re-run target guard and confirm `pve-test-vm`.
 2. Stop further destroy operations.
 3. Resume apply from the most recently destroyed required dependency in approved
    deploy order.

@@ -1,5 +1,11 @@
 # 03d-secrets-03 — Create `with-secrets` wrapper and test all consumers
 
+> Historical task packet.
+> This document reflects the earlier secrets-hardening migration workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 COMPLETE

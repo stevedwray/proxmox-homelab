@@ -253,6 +253,7 @@
         mode: "0640"
         content: |
           server {
+            listen 443 ssl;
             listen 9443 ssl;
             server_name {{ authentik_internal_tls_fqdn }};
 
@@ -277,6 +278,7 @@
         mode: "0640"
         content: |
           server {
+            listen 443;
             listen 9443;
             server_name {{ authentik_internal_tls_fqdn }};
 

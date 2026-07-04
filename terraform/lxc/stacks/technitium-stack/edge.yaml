@@ -1,0 +1,23 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: technitium-edge
+  stack: technitium-stack
+  annotations:
+    repo.auth.oidc.client_id_env: TECHNITIUM_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: TECHNITIUM_OIDC_CLIENT_SECRET
+spec:
+  routes:
+    - name: technitium
+      host: technitium.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_TECHNITIUM}:5380
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: step-ca
+      auth:
+        mode: oidc

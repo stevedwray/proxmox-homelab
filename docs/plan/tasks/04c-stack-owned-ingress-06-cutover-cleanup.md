@@ -1,5 +1,11 @@
 # 04c-stack-owned-ingress-06 — Final Cutover and Legacy Central Cleanup
 
+> Historical task packet.
+> This document predates the current provisioning-refactor source of truth.
+> Keep it as implementation history only. For current edge-refactor guidance,
+> use [docs/provisioning-refactor/README.md](../../provisioning-refactor/README.md)
+> and [docs/provisioning-refactor/task-sequence.md](../../provisioning-refactor/task-sequence.md).
+
 ## Phase
 
 Phase 04c — Stack-Owned Ingress, DNS, and Auth Integration

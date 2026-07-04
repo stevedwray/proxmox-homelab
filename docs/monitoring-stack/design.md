@@ -118,26 +118,32 @@ step-ca scrape warning is no longer emitted.**
 ```
                          mgmt_seg (192.168.20.0/24)
                          ┌──────────────────────────────────────────────────┐
-                         │  monitoring-stack (192.168.20.12)                │
-                         │  ┌─────────────────┐  ┌──────────────────────┐  │
-                         │  │ VictoriaMetrics │  │   VictoriaLogs       │  │
- ┌──────────────┐  scrape │  │   :8428         │  │   :9428 / :5140     │  │
- │ node_exporter│◄────────┤  │  (pull metrics) │  │  (syslog ingest)    │  │
- │    :9100     │         │  └────────┬────────┘  └──────────┬───────────┘  │
- └──────────────┘         │           │                       │              │
- ┌──────────────┐  scrape │           │           ┌──────────▼───────────┐  │
- │   cAdvisor   │◄────────┤           │           │      Grafana         │  │
- │    :8080     │         │           └──────────►│      :3000           │  │
- └──────────────┘ syslog  │                       │  (queries both)      │  │
- ┌──────────────┐ ────────►                       └──────────────────────┘  │
- │   rsyslog    │         │                                                  │
- │  (per stack) │         └──────────────────────────────────────────────────┘
+                         │  monitoring-stack (192.168.20.12) — metrics only │
+                         │  ┌─────────────────┐                             │
+ ┌──────────────┐  scrape │  │ VictoriaMetrics │                             │
+ │ node_exporter│◄────────┤  │   :8428         │                             │
+ │    :9100     │         │  │  (pull metrics) │                             │
+ └──────────────┘         │  └────────┬────────┘                             │
+ ┌──────────────┐  scrape │           │             ┌──────────────────────┐ │
+ │   cAdvisor   │◄────────┤           └────────────►│      Grafana         │ │
+ │    :8080     │         │                         │      :3000           │ │
+ └──────────────┘         │                         │  (metrics only)      │ │
+                         │                         └──────────────────────┘ │
+                         └──────────────────────────────────────────────────┘
+
+                         graylog-stack (192.168.20.114) — logs
+                         ┌──────────────────────────────────────────────────┐
+ ┌──────────────┐ syslog  │  Graylog 7.1.3 (MongoDB + OpenSearch Data Node) │
+ │   rsyslog    │ ────────►  syslog TCP/UDP :514, web UI :9000 internal    │
+ │ (per stack,  │         │  https://graylog.test.gibbsgreatly.xyz         │
+ │ Proxmox,     │         │  LDAP auth via Authentik                       │
+ │ MikroTik)    │         └──────────────────────────────────────────────────┘
  └──────────────┘
 ```
 
 **Metrics flow**: VictoriaMetrics scrapes node_exporter (:9100) on managed LXCs, cAdvisor (:8080/:8081) on Docker stacks, and application metrics endpoints directly. Pull model — VictoriaMetrics initiates all scrapes. The bare-metal Proxmox host is intentionally not scraped. Step CA exposes native Prometheus metrics over HTTP on `:9443`; its CA service and health endpoint remain HTTPS on `:443`.
 
-**Log flow**: rsyslog on each LXC forwards RFC 5424 syslog to VictoriaLogs on `192.168.20.12:5140`. Docker stacks use the Docker `syslog` logging driver to send container stdout/stderr to local rsyslog on `127.0.0.1:10514`, which then forwards to VictoriaLogs. Promtail is deprecated and should not be part of the steady-state logging path.
+**Log flow**: rsyslog on each LXC forwards RFC 5424 syslog to Graylog (`graylog-stack`, `192.168.20.114:514`). Docker stacks use the Docker `syslog` logging driver to send container stdout/stderr to local rsyslog on `127.0.0.1:10514`, which then forwards to Graylog. The Proxmox host and MikroTik also forward syslog directly to Graylog. Promtail and VictoriaLogs are both fully retired from the active source path — see [graylog-migration-plan.md](graylog-migration-plan.md) for the migration record.
 
 ---
 
@@ -155,8 +161,8 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | 9090 | Harbor metrics | harbor-stack |
 | 9300 | Authentik metrics | authentik-stack |
 | 9443 | step-ca native metrics (HTTP) | step-ca-stack |
-| 9428 | VictoriaLogs HTTP and metrics | monitoring-stack |
-| 5140 | VictoriaLogs syslog TCP | monitoring-stack receives RFC 5424 from rsyslog on all LXCs |
+| 9000 | Graylog web UI (internal) | graylog-stack; browser access is via Traefik at `https://graylog.test.gibbsgreatly.xyz` |
+| 514 | Graylog syslog TCP/UDP | graylog-stack receives RFC 5424 from rsyslog on all LXCs, plus Proxmox host and MikroTik |
 
 ---
 
@@ -166,16 +172,17 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 
 | Stack | Zone | node_exporter | cAdvisor | App metrics | Logs |
 |-------|------|:---:|:---:|---|:---:|
-| dns-stack | mgmt_seg | ✓ | — | CoreDNS :9153 | rsyslog → VictoriaLogs |
-| step-ca-stack | mgmt_seg | ✓ | — | step-ca :9443/metrics | rsyslog → VictoriaLogs |
-| monitoring-stack | mgmt_seg | ✓ | ✓ | VM :8428, VictoriaLogs :9428, Grafana :3000 | rsyslog → VictoriaLogs |
-| portainer-stack | mgmt_seg | ✓ | ✓ | — | Docker syslog → rsyslog → VictoriaLogs |
-| authentik-stack | mgmt_seg | ✓ | ✓ | Authentik :9300/metrics | Docker syslog → rsyslog → VictoriaLogs |
-| proxy-stack | edge_seg | ✓ | ✓ | Traefik :8082/metrics | Docker syslog → rsyslog → VictoriaLogs |
+| dns-stack | mgmt_seg | ✓ | — | CoreDNS :9153 | rsyslog → Graylog |
+| step-ca-stack | mgmt_seg | ✓ | — | step-ca :9443/metrics | rsyslog → Graylog |
+| monitoring-stack | mgmt_seg | ✓ | ✓ | VM :8428, Grafana :3000 | rsyslog → Graylog |
+| portainer-stack | mgmt_seg | ✓ | ✓ | — | Docker syslog → rsyslog → Graylog |
+| authentik-stack | mgmt_seg | ✓ | ✓ | Authentik :9300/metrics | Docker syslog → rsyslog → Graylog |
+| proxy-stack | edge_seg | ✓ | ✓ | Traefik :8082/metrics | Docker syslog → rsyslog → Graylog |
 | harbor-stack | infra_seg | ✓ | ✓ | Harbor :9090/metrics | Docker/syslog mix; Harbor internal logs handled by Harbor |
-| apt-cacher-stack | infra_seg | ✓ | — | — | rsyslog → VictoriaLogs |
-| netbox-stack | infra_seg | ✓ | ✓ | NetBox :8080/metrics | Docker syslog → rsyslog → VictoriaLogs |
-| ci-runner-01 | build_seg | ✓ | — | — | rsyslog → VictoriaLogs |
+| apt-cacher-stack | infra_seg | ✓ | — | — | rsyslog → Graylog |
+| netbox-stack | infra_seg | ✓ | ✓ | NetBox :8080/metrics | Docker syslog → rsyslog → Graylog |
+| ci-runner-01 | build_seg | ✓ | — | — | rsyslog → Graylog |
+| graylog-stack | mgmt_seg | ✓ | ✓ | — | self (not applicable) |
 
 **Proxmox host** (`$PROXMOX_HOST`): host performance metrics are intentionally not scraped. Proxmox host logs should be forwarded separately via remote syslog when needed, rather than by installing monitoring agents on the host.
 
@@ -190,7 +197,6 @@ Inter-VLAN routing via MikroTik. No firewall changes required — the forward ch
 | NetBox | `:8080/metrics` | ✓ | |
 | step-ca | `:9443/metrics` | ✓ | Native Step CA metrics listener; HTTP, separate from HTTPS CA service on `:443` |
 | VictoriaMetrics | `:8428/metrics` | ✓ | |
-| VictoriaLogs | `:9428/metrics` | ✓ | |
 | Grafana | `:3000/metrics` | ✓ | |
 
 ---
@@ -211,16 +217,19 @@ On pve-test, the full stack must already be up (harbor-stack, authentik-stack, p
 
 All `LAB_IP_*` variables are in `.env`. Secrets (Grafana admin password, OAuth client secret, Harbor admin password, Authentik API token) are in `secrets.enc.yaml` and loaded by `./with-secrets`. See [STACK_CONTRACT.md](../../terraform/lxc/stacks/monitoring-stack/STACK_CONTRACT.md) for the full inputs list.
 
-No secrets are required for VictoriaLogs or VictoriaMetrics query endpoints (both are mgmt_seg-internal). However, `NODE_EXPORTER_SCRAPE_PASSWORD` (in `secrets.enc.yaml`) is required at deploy time — it is written into the VictoriaMetrics `scrape.yml` as the basic auth credential for node_exporter scraping, which now runs over HTTPS. See [node-exporter-tls.md](node-exporter-tls.md) for details.
+No secrets are required for the VictoriaMetrics query endpoint (mgmt_seg-internal). However, `NODE_EXPORTER_SCRAPE_PASSWORD` (in `secrets.enc.yaml`) is required at deploy time — it is written into the VictoriaMetrics `scrape.yml` as the basic auth credential for node_exporter scraping, which now runs over HTTPS. See [node-exporter-tls.md](node-exporter-tls.md) for details. Graylog secrets (`GRAYLOG_PASSWORD_SECRET`, `GRAYLOG_ROOT_PASSWORD_SHA2`) are documented in [graylog-stack/STACK_CONTRACT.md](../../terraform/lxc/stacks/graylog-stack/STACK_CONTRACT.md).
 
 ---
 
 ## Remaining Work
 
+Sprints G0-G5 of the Graylog migration are complete and VictoriaLogs has
+been fully removed from the active `pve-test-vm` source path (see
+[graylog-migration-plan.md](graylog-migration-plan.md)). Remaining items:
+
 | Item | Notes |
 |------|-------|
-| Graylog pilot — G4 dashboards | Build Graylog dashboards in UI; export and commit JSON to `terraform/lxc/stacks/graylog-stack/dashboards/`; Ansible imports on fresh deploy |
-| Graylog pilot — G5 VictoriaLogs deprecation | Optional next simplification step on `pve-test-vm`: remove VictoriaLogs from the active operator workflow once Graylog covers all required workflows end-to-end |
+| Incremental Graylog deployment on `pve` | The `stable` promotion gate has been met on `pve-test-vm`; production deployment is the next step |
 | Graylog Data Node heap warning | Embedded OpenSearch still reports `-Xms1g/-Xmx1g` after wrapper JVM bump (as of 2026-06-29); track until live OpenSearch JVM args no longer show 1 GB |
 | step-ca metrics dashboard | Native metrics scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped; no Grafana dashboard built |

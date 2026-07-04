@@ -1,5 +1,9 @@
 # 01-ci-runner-02 — Register GitHub Actions runner via Ansible playbook
 
+> Historical archived task. Useful for implementation history only.
+> Do not use this as the current deployment procedure.
+> Current workflow and environment rules live under `docs/workflow/`.
+
 ## Status
 
 COMPLETE

@@ -42,7 +42,7 @@ stack-owned model end to end.
 
 ## Validation
 
-- All six browser hosts resolve to `10.57.2.10`.
+- All six browser hosts resolve to `192.168.30.10`.
 - Renderer dry-run output contains NO `intendedReplacement` flags.
 - Renderer dry-run reports NO duplicate hosts between generated and central
   routes.

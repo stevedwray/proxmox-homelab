@@ -1,3 +1,0 @@
-=== PHASE 4: Health Validation Gates ===
-
-Gate 1: Docker compose status on proxy-stack

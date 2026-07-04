@@ -313,7 +313,7 @@ Stage 6 kickoff scope (current session):
   - make only bounded changes needed for check mode and idempotent rerun behavior around GitHub registration token generation, runner configure/remove commands, systemd install/start, and GitHub online verification
   - document evidence locations and pass/fail expectations before implementation work
 - Validation evidence required for this kickoff step:
-  - updated Stage 6 scope in `plan.md` and `handoff.md`
+  - updated Stage 6 scope in `plan.md` and `current-state.md`
   - explicit command/evidence checklist for check mode, live reconcile, and health checks for `ci-runner-01`
   - check-mode expectations that skip or tolerate GitHub-side registration effects while still validating local configuration flow
   - health evidence based on the runner systemd unit (`actions.runner.*.service`) rather than a Docker or HTTP probe
@@ -594,7 +594,7 @@ Promotion-readiness assessment:
 
 - Stage 9 promotion-readiness execution passed from recorded evidence.
 - Promotion-readiness gate requirements are satisfied for the refactor closeout record.
-- NetBox/Auth follow-up is closed: root cause (local NetBox user bootstrap gap), narrow fix, targeted validation, and operator-confirmed browser login success are recorded in `handoff.md`.
+- NetBox/Auth follow-up is closed: root cause (local NetBox user bootstrap gap), narrow fix, targeted validation, and operator-confirmed browser login success are recorded in `current-state.md`.
 - No known blocker remains from NetBox/Auth for promotion consideration to `baseline/teardown-validated`.
 
 ## Proposed First Exemplars

@@ -34,7 +34,7 @@ up.
 
 - `pve-test` is a fresh bare-metal Proxmox laptop rebuild
 - Phase 00a and 00b are already complete
-- Portainer is running locally on `mgmt_seg` at `10.57.1.20`
+- Portainer is running locally on `mgmt_seg` at `192.168.20.20`
 - the SDN VLAN zones, including `build_seg`, are already applied on `pve-test`
 - no higher-phase shared services are assumed to exist yet
 
@@ -47,7 +47,7 @@ up.
 
 ## Deliverables
 
-- `ci-runner-01` running at `10.57.0.63` / VMID 141
+- `ci-runner-01` running at `192.168.10.63` / VMID 10063
 - GitHub Actions runner online with labels `self-hosted`, `pve-test`, `build`
 - workflow action references still pinned to immutable SHAs
 - self-hosted validation jobs re-enabled in `validate.yml`
@@ -64,9 +64,9 @@ As of the 2026-04-16 recovery:
 For a greenfield pass, the verified Phase 01 path is therefore:
 
 1. ensure `build_seg` exists end-to-end, including the MikroTik `vlan10-build`
-  interface and `10.57.0.1/24` gateway
+  interface and `192.168.10.1/24` gateway
 2. deploy or redeploy `ci-runner-01`
-3. if router-local DNS on `10.57.0.1` is still broken during bootstrap, treat any
+3. if router-local DNS on `192.168.10.1` is still broken during bootstrap, treat any
   public resolver override as a temporary recovery step only and record it as debt
 4. verify the runner is online, then use it as the execution target for self-hosted
   validation and future Phase 05 image scan, SBOM, and signing jobs
@@ -87,7 +87,7 @@ For a greenfield pass, the verified Phase 01 path is therefore:
 
 ## Acceptance Criteria
 
-- [x] VMID 141 exists and is reachable at `10.57.0.63`
+- [x] VMID 10063 exists and is reachable at `192.168.10.63`
 - [x] Runner is online in GitHub with the expected labels
 - [x] Self-hosted validation jobs can be scheduled again
 - [x] Runner returns after reboot
@@ -99,10 +99,10 @@ For a greenfield pass, the verified Phase 01 path is therefore:
   task docs under `docs/plan/tasks/done/`
 - The runner lives in `build_seg`, not `mgmt_seg`, by design
 - The 2026-04-16 recovery exposed two greenfield bootstrap requirements that were easy to
-  miss: the MikroTik needed an explicit `vlan10-build` interface with `10.57.0.1/24`,
-  and the runner could not depend on router-local DNS on `10.57.0.1` during initial
+  miss: the MikroTik needed an explicit `vlan10-build` interface with `192.168.10.1/24`,
+  and the runner could not depend on router-local DNS on `192.168.10.1` during initial
   bootstrap. A temporary `1.1.1.1` override was used during recovery, then removed after
-  platform DNS handling was corrected and the runner was revalidated against `10.57.0.1`.
+  platform DNS handling was corrected and the runner was revalidated against `192.168.10.1`.
 - Proxmox rewrites `/etc/resolv.conf` on container boot, so a post-provision file copy was
   not enough for reboot persistence. `deploy-ci-runner.yml` now installs a root-owned
   `homelab-runner-resolver.service` and makes the runner service depend on it so the

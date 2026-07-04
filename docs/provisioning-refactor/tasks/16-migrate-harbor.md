@@ -38,7 +38,7 @@ Harbor auth.
 
 ## Validation
 
-- DNS resolves to `10.57.2.10`.
+- DNS resolves to `192.168.30.10`.
 - No Traefik forward-auth middleware is present.
 
 ## Stop Conditions

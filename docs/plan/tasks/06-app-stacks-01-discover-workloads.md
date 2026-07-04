@@ -1,5 +1,13 @@
 # 06-app-stacks-01 — Discover and document existing application workloads
 
+> Historical task packet.
+> This task still references the retired `baseline/teardown-validated`
+> promotion path and an earlier NetBox / environment model.
+> Keep it as migration-planning history rather than current workflow guidance.
+> For current branch and environment rules, use
+> [docs/workflow/branch-model.md](../../workflow/branch-model.md) and
+> [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

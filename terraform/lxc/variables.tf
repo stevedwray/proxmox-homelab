@@ -182,6 +182,12 @@ variable "lab_ip_dns" {
   default     = ""
 }
 
+variable "lab_ip_technitium" {
+  description = "Technitium DNS service IPv4 address (parity-window dns-stack replacement, see docs/dns-refactor)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_ip_proxy" {
   description = "Traefik service IPv4 address"
   type        = string

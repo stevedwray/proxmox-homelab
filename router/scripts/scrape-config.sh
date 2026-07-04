@@ -14,11 +14,10 @@ OUT_DIR="$(cd "$(dirname "$0")/../config" && pwd)"
 OUT_FILE="${OUT_DIR}/current-config.json"
 
 BASE="https://${HOST}/rest"
-AUTH="-u ${USER}:${PASS}"
 
 get() {
   local path="$1"
-  curl -sf -k "${AUTH}" "${BASE}${path}" 2>/dev/null || echo "null"
+  curl -sf -k -u "${USER}:${PASS}" "${BASE}${path}" 2>/dev/null || echo "null"
 }
 
 echo "Scraping MikroTik config from ${HOST} ..."

@@ -13,13 +13,22 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import ssl
 from typing import Any
-from urllib.parse import urljoin
+from urllib.parse import urlencode, urljoin
 import urllib.error
 import urllib.request
 from urllib.parse import urlparse
 
 
-DEFAULT_AUTHENTIK_URL = "https://authentik.lab.gibbsgreatly.xyz"
+def _default_authentik_url() -> str:
+    configured_host = os.environ.get("LAB_FQDN_AUTHENTIK", "").strip()
+    if configured_host:
+        if "://" in configured_host:
+            return configured_host.rstrip("/")
+        return f"https://{configured_host}"
+    return "https://authentik.lab.gibbsgreatly.xyz"
+
+
+DEFAULT_AUTHENTIK_URL = _default_authentik_url()
 DEFAULT_TOKEN_ENV = "AUTHENTIK_SUPERUSER_API_TOKEN"
 AUTHORIZATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_AUTHORIZATION_FLOW_SLUG"
 INVALIDATION_FLOW_SLUG_ENV = "AUTHENTIK_PROXY_INVALIDATION_FLOW_SLUG"
@@ -145,6 +154,10 @@ class AuthentikApiClient:
     def fetch_applications(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/core/applications/")
 
+    def search_applications(self, query: str) -> list[dict[str, Any]]:
+        params = urlencode({"search": query})
+        return self._get_paginated(f"/api/v3/core/applications/?{params}")
+
     def fetch_proxy_providers(self) -> list[dict[str, Any]]:
         return self._get_paginated("/api/v3/providers/proxy/")
 
@@ -205,7 +218,8 @@ class AuthentikApiClient:
 
     def _get_paginated(self, path: str) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
-        next_url: str | None = f"{self.base_url}{path}?page_size=200"
+        separator = "&" if "?" in path else "?"
+        next_url: str | None = f"{self.base_url}{path}{separator}page_size=200"
         while next_url:
             payload = self._request_json(next_url, "GET")
             if isinstance(payload, dict) and isinstance(payload.get("results"), list):
@@ -686,6 +700,66 @@ def _patch_from_existing(existing: dict[str, Any], desired: dict[str, Any]) -> d
     return patch
 
 
+def _resolve_existing_application_after_duplicate(
+    *,
+    intent: RouteIntent,
+    applications: list[dict[str, Any]],
+    app_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    expected_slug = str(app_payload.get("slug", "")).strip()
+    expected_provider = _DISCOVER._as_id(app_payload.get("provider"))
+    expected_host = _DISCOVER._normalize_url_host(
+        app_payload.get("meta_launch_url") or app_payload.get("launch_url")
+    )
+
+    matches = _DISCOVER._pick_candidates(
+        applications,
+        [
+            lambda item, expected_slug=expected_slug: bool(expected_slug)
+            and str(item.get("slug", "")).strip() == expected_slug,
+            lambda item, expected_provider=expected_provider: bool(expected_provider)
+            and _DISCOVER._as_id(item.get("provider")) == expected_provider,
+            lambda item, expected_host=expected_host: bool(expected_host)
+            and _DISCOVER._normalize_url_host(
+                item.get("meta_launch_url") or item.get("launch_url")
+            ) == expected_host,
+            lambda item, expected_name=intent.app_name: _DISCOVER._get_name(item) == expected_name,
+        ],
+    )
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _search_existing_application(
+    client: Any,
+    *,
+    intent: RouteIntent,
+    app_payload: dict[str, Any],
+) -> dict[str, Any] | None:
+    queries = [
+        str(app_payload.get("slug", "")).strip(),
+        intent.app_name,
+        _DISCOVER._normalize_url_host(
+            app_payload.get("meta_launch_url") or app_payload.get("launch_url")
+        ),
+    ]
+    seen_queries: set[str] = set()
+    for query in queries:
+        if not query or query in seen_queries:
+            continue
+        seen_queries.add(query)
+        matches = client.search_applications(query)
+        existing = _resolve_existing_application_after_duplicate(
+            intent=intent,
+            applications=matches,
+            app_payload=app_payload,
+        )
+        if existing is not None:
+            return existing
+    return None
+
+
 def _resolve_forwardauth_candidates(
     intent: RouteIntent,
     applications: list[dict[str, Any]],
@@ -732,6 +806,7 @@ def _resolve_forwardauth_candidates(
 
 
 def _resolve_oidc_candidates(
+    client: Any,
     intent: RouteIntent,
     applications: list[dict[str, Any]],
     providers: list[dict[str, Any]],
@@ -774,6 +849,13 @@ def _resolve_oidc_candidates(
         stack=intent.stack,
         route=intent.route,
     )
+    if app_obj is None and app_stop is None:
+        provider_id = _as_id(provider_obj) if provider_obj is not None else None
+        app_obj = _search_existing_application(
+            client,
+            intent=intent,
+            app_payload=_application_payload(intent, provider_id or ""),
+        )
 
     stops = [msg for msg in (provider_stop, app_stop) if msg]
     return app_obj, provider_obj, stops
@@ -1109,11 +1191,17 @@ def _reconcile_application_for_intent(
                 # Application already exists (created by a previous partial run or
                 # an inline reconcile in a stack playbook) but wasn't found by the
                 # initial discovery scan. Fetch by slug and fall through to update.
-                existing = next(
-                    (a for a in client.fetch_applications()
-                     if a.get("slug") == app_payload.get("slug")),
-                    None,
+                existing = _resolve_existing_application_after_duplicate(
+                    intent=intent,
+                    applications=client.fetch_applications(),
+                    app_payload=app_payload,
                 )
+                if existing is None:
+                    existing = _search_existing_application(
+                        client,
+                        intent=intent,
+                        app_payload=app_payload,
+                    )
                 if existing is None:
                     raise
                 app_obj = existing
@@ -1311,7 +1399,12 @@ def _process_intent(
                 object_kind="provider", object_name=intent.provider_name,
             ))
             return 0
-        app_obj, provider_obj, route_stops = _resolve_oidc_candidates(intent, applications, providers)
+        app_obj, provider_obj, route_stops = _resolve_oidc_candidates(
+            client,
+            intent,
+            applications,
+            providers,
+        )
     stop_conditions.extend(route_stops)
     provider_payload, payload_issue = _resolve_intent_provider_payload(
         intent, prereqs.auth_pk, prereqs.inval_pk, prereqs.signing_pk, prereqs.scope_ids,

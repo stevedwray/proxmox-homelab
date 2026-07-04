@@ -1,5 +1,11 @@
 # 03-code-quality-07 — Add ShellCheck to CI validate workflow
 
+> Historical task packet.
+> This document reflects the earlier CI and branch workflow.
+> Keep it as implementation history only. For current workflow and environment
+> rules, use [docs/workflow/branch-model.md](../../workflow/branch-model.md)
+> and [docs/workflow/environments.md](../../workflow/environments.md).
+
 ## Status
 
 PENDING

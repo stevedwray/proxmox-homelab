@@ -39,7 +39,7 @@ forward-auth.
 
 ## Validation
 
-- DNS resolves to `10.57.2.10`.
+- DNS resolves to `192.168.30.10`.
 - Unauthenticated browser request redirects to Authentik.
 
 ## Stop Conditions

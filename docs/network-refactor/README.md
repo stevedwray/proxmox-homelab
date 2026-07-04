@@ -48,8 +48,8 @@ See the preserved checkpoint:
    [migration-mechanics.md](/home/steve/git/proxmox-homelab/docs/network-refactor/migration-mechanics.md:1)
 - teardown validation gate:
   [validation-gate.md](/home/steve/git/proxmox-homelab/docs/network-refactor/validation-gate.md:1)
-- session handoff:
-  [handoff.md](/home/steve/git/proxmox-homelab/docs/network-refactor/handoff.md:1)
+- current state:
+  [current-state.md](/home/steve/git/proxmox-homelab/docs/network-refactor/current-state.md:1)
 
 Add focused task docs under this directory as the plan becomes more concrete.
 

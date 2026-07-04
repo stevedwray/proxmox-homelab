@@ -30,6 +30,9 @@ provides:
   - service: authentik-http
     port: 9000
     protocol: tcp
+  - service: authentik-https-standard
+    port: 443
+    protocol: tcp
   - service: authentik-https
     port: 9443
     protocol: tcp

@@ -1,10 +1,10 @@
-# Operational cutover evidence snapshots (local only)
+# Documentation workspace transient material (local only)
+docs/**/artifacts/
+docs/**/evidence/
+docs/**/handoffs/
+docs/**/reports/
 docs/provisioning-refactor/snapshots/
 docs/sessions/evidence/
-docs/**/handoffs/
-docs/**/artifacts/*
-docs/docker-refactor/evidence/
-docs/docker-refactor/reports/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-*/
 docs/productionize-refactor/evidence/pve-infra-teardown-plan-test-scope-check/
 docs/productionize-refactor/evidence/pve-infra-teardown-exec-*/
@@ -109,9 +109,7 @@ cosign.key
 # .github/agents/ and .github/instructions/ are project-owned and tracked
 .genai/
 
-# Local CI artifacts (logs, scan outputs)
+# Local CI artifacts (logs, scan outputs, scratch notes)
 /artifacts/
 .tmp/
-docs/harbor-stack/artifacts
-!docs/harbor-stack/artifacts/.gitkeep
 certs/homelab-root.pve-test-vm.crt

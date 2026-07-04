@@ -1,2 +1,0 @@
-Warning: Permanently added '192.168.20.11' (ED25519) to the list of known hosts.
-client GET https://127.0.0.1/health failed: tls: failed to verify certificate: x509: certificate is valid for 192.168.20.11, not 127.0.0.1

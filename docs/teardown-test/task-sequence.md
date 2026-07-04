@@ -13,7 +13,7 @@ allowed file touch set for each component.
 | 02 | [Inventory scope and dependency order](tasks/02-inventory-scope-and-order.md) | Documentation | 01 | Platform stack list, exclusions, and rebuild order are explicit. |
 | 03 | [Backup and restore readiness](tasks/03-backup-restore-readiness.md) | Operational planning | 02 | Persistent data policy is approved before destroy. |
 | 04 | [Source and edge preflight](tasks/04-source-edge-preflight.md) | Validation | 03 | Clean working tree, known commit, generated edge artifacts refreshed, dry-runs pass. |
-| 05 | [Destroy rehearsal execution](tasks/05-destroy-rehearsal.md) | Destructive execution | 04 and operator approval | Selected pve-test LXCs are destroyed and absence is verified. |
+| 05 | [Destroy rehearsal execution](tasks/05-destroy-rehearsal.md) | Destructive execution | 04 and operator approval | Selected pve-test-vm LXCs are destroyed and absence is verified. |
 | 06 | [Foundation redeploy](tasks/06-foundation-redeploy.md) | Deployment | 05 | Stage 1/2 foundation services are running and validated. |
 | 07 | [Edge foundation redeploy](tasks/07-edge-foundation-redeploy.md) | Deployment | 06 | CoreDNS, Traefik, step-ca, and Authentik direct/API bootstrap are healthy. |
 | 08 | [Edge reconciliation activation](tasks/08-edge-reconciliation-activation.md) | Deployment | 07 | Generated DNS/Traefik/Auth state is published from fresh artifacts. |

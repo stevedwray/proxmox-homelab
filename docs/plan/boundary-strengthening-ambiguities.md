@@ -212,7 +212,7 @@ their current behavior, boundary risk, and the most practical target direction.
 ### 2. NetBox discovery: Portainer endpoint location
 
 - **Current behavior before Session 5:** `discover.py` defaulted Portainer to
-  `10.57.1.20` unless environment variables overrode it, and the synthetic
+  `192.168.20.20` unless environment variables overrode it, and the synthetic
   `portainer-api` node used that same default.
 - **Current risk:** this duplicates environment topology outside the declared
   stack metadata and can drift from the actual `portainer-stack/stack.yaml`.
