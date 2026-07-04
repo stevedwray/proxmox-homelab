@@ -421,7 +421,9 @@ Status: **complete**.
    (`192.168.20.15`) for:
    - browser-routed names
    - direct/internal names
-   - authority identity (`SOA`, `NS`, `dns`, `ns1`)
+   - shared authority identity (`SOA`, `NS`)
+   - Technitium cutover-target authority records (`dns`, `ns1` ->
+     `192.168.20.15`)
    - recursive external lookups
    Packet path:
    [docs/dns-refactor/production-cutover-packet.md](./production-cutover-packet.md)

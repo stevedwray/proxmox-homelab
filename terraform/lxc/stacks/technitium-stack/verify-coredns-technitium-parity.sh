@@ -86,6 +86,35 @@ compare_record() {
   echo "parity ok: ${record_type} ${fqdn} -> ${technitium_answer}"
 }
 
+check_expected_record() {
+  local server_name="$1"
+  local server_ip="$2"
+  local record_type="$3"
+  local fqdn="$4"
+  local expected="$5"
+  local answer
+
+  answer="$(
+    dig @"${server_ip}" "${fqdn}" "${record_type}" +short \
+      | sed '/^$/d' \
+      | sort -u
+  )"
+
+  if [[ -z "${answer}" ]]; then
+    echo "parity fail: ${server_name} returned no ${record_type} answer for ${fqdn}"
+    return 1
+  fi
+
+  if [[ "${answer}" != "${expected}" ]]; then
+    echo "parity fail: ${server_name} ${record_type} ${fqdn}"
+    echo "  expected: ${expected}"
+    echo "  actual:   ${answer}"
+    return 1
+  fi
+
+  echo "parity ok: ${server_name} ${record_type} ${fqdn} -> ${answer}"
+}
+
 compare_soa_identity() {
   local fqdn="$1"
   local coredns_answer
@@ -150,12 +179,14 @@ compare_record A "authentik.${LAB_DOMAIN}"
 compare_record A "harbor.${LAB_DOMAIN}"
 compare_record A "netbox.${LAB_DOMAIN}"
 compare_record A "portainer.${LAB_DOMAIN}"
-compare_record A "dns.${LAB_DOMAIN}"
-compare_record A "ns1.${LAB_DOMAIN}"
 compare_record A "authentik-int.${LAB_DOMAIN}"
 compare_record A "step-ca.${LAB_DOMAIN}"
 compare_record NS "${LAB_DOMAIN}"
 compare_soa_identity "${LAB_DOMAIN}"
 check_recursion "github.com"
+
+echo "Checking Technitium cutover-target authority records"
+check_expected_record "Technitium" "${TECHNITIUM_IP}" A "dns.${LAB_DOMAIN}" "${TECHNITIUM_IP}"
+check_expected_record "Technitium" "${TECHNITIUM_IP}" A "ns1.${LAB_DOMAIN}" "${TECHNITIUM_IP}"
 
 echo "Parity check passed for ${LAB_DOMAIN}"

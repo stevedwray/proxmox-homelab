@@ -26,11 +26,15 @@ What this checks:
 - browser-routed names: `traefik`, `authentik`, `harbor`, `netbox`,
   `portainer`
 - direct/internal names: `authentik-int`, `step-ca`
-- authority identity: `dns`, `ns1`, `NS`, and SOA owner/admin identity
+- shared authority identity: `NS` and SOA owner/admin identity
+- Technitium cutover-target authority records: `dns`, `ns1` -> `192.168.20.15`
 - public recursion: `github.com`
 
 Expected outcome:
-- every authoritative record matches between CoreDNS and Technitium
+- every shared client-visible authoritative record matches between CoreDNS
+  and Technitium
+- Technitium serves `dns.lab.gibbsgreatly.xyz` and `ns1.lab.gibbsgreatly.xyz`
+  as `192.168.20.15`
 - both servers return a non-empty recursive answer for `github.com`
 
 If this step fails, stop here. Do not mutate the MikroTik delegate yet.
