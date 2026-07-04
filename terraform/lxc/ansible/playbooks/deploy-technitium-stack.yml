@@ -398,7 +398,7 @@
 
     - name: Publish A records to the bootstrap zone
       ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.ip }}&token={{ technitium_token }}"
+        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.item.ip }}&token={{ technitium_token }}"
         method: POST
         status_code: [200]
         return_content: true
