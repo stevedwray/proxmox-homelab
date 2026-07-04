@@ -18,7 +18,9 @@ Deploy in this order. Authentik must be running before Traefik (auth middleware 
 - [04-core-services-04 — Deploy step-ca internal certificate authority](tasks/04-core-services-04-deploy-step-ca.md)
 - [04-core-services-05 — Deploy monitoring stack (VictoriaMetrics + Grafana + Loki)](tasks/04-core-services-05-deploy-monitoring.md)
 
-**Next phase:** [Phase 04b — Internal DNS authority](phase-04b-internal-dns.md) (deploys CoreDNS for `lab.gibbsgreatly.xyz` delegation)
+**Next phase:** [Phase 04b — Internal DNS authority](phase-04b-internal-dns.md)
+(now documented as the Technitium-backed internal authority, with CoreDNS
+retained only as rollback context)
 
 ## Current implementation status (2026-04-17)
 
@@ -692,12 +694,15 @@ Deploy `node_exporter` on each LXC (or as a Docker container). Add a scrape conf
 
 ## Commit strategy
 
-Create a short-lived branch for each service (`feat/authentik-stack`, `feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), merge to `baseline/teardown-validated` after each service passes its health checks.
+Create a short-lived branch for each service (`feat/authentik-stack`,
+`feat/proxy-stack`, `feat/step-ca`, `feat/monitoring-stack`), validate there,
+then promote through the current `stable` -> `main` workflow after each
+service passes its health checks.
 
 After all services are deployed and healthy:
 
 ```bash
-git push origin baseline/teardown-validated
+git push origin stable
 ```
 
 Update NetBox to record all new services, IPs, and their relationships.

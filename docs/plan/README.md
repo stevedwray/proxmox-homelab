@@ -26,7 +26,7 @@ Each phase document owns its own prerequisites, acceptance criteria, and task br
 | 03c | [Artifact Proxy (apt-cacher-ng + Terraform mirror)](phase-03c-artifact-proxy.md) | Phase 00b complete |
 | 03d | [Secrets Delivery Hardening (sops exec-env)](phase-03d-secrets-hardening.md) | None — workstation only |
 | 04 | [Core Shared Services](phase-04-core-shared-services.md) | Phase 00c, 03c, 03d complete |
-| 04b | [Internal DNS Authority (CoreDNS)](phase-04b-internal-dns.md) | Phase 04 complete |
+| 04b | [Internal DNS Authority (Technitium)](phase-04b-internal-dns.md) | Phase 04 complete |
 | 04c | [Stack-Owned Ingress/Auth/DNS Refactor](phase-04c-stack-owned-ingress-auth-dns.md) | Phase 04 complete |
 | 05 | [Supply Chain Security](phase-05-supply-chain.md) | Phase 01, 03b, 04 complete |
 | 06 | [Application Stack Migration](phase-06-app-stacks.md) | Phase 04, 05 complete |
@@ -70,6 +70,7 @@ Current stack zones and IP segments (IPs resolved from `.env.pve-test-vm`):
 | step-ca-stack | `mgmt_seg` | 192.168.20.x | 20011 |
 | monitoring-stack | `mgmt_seg` | 192.168.20.x | 20012 |
 | dns-stack | `mgmt_seg` | 192.168.20.x | 20013 |
+| technitium-stack | `mgmt_seg` | 192.168.20.x | 20015 |
 | proxy-stack | `edge_seg` | 192.168.30.x | 30010 |
 | harbor-stack | `infra_seg` | 192.168.40.x | 40010 |
 | apt-cacher-stack | `infra_seg` | 192.168.40.x | 40011 |

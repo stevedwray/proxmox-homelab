@@ -203,16 +203,19 @@ permitted once Stage 2 is complete.
 
 Bring up the DNS, ingress, certificate, and identity services that stack-owned
 browser provisioning depends on. This stage resolves the bootstrap problem for
-the edge reconciler: manifests cannot be applied until CoreDNS, Traefik, and
-Authentik API access exist.
+the edge reconciler: manifests cannot be applied until the internal DNS
+authority, Traefik, and Authentik API access exist.
 
 ### Deployment order
 
 Stage 3a order is load-bearing in Mode 2:
 
-1. **CoreDNS** (`dns-stack`, VMID 20013, `192.168.20.13`) with a seed
-   `lab.gibbsgreatly.xyz` zone. The seed zone contains only bootstrap and
-   non-browser records required before generated browser records exist.
+1. **Internal DNS authority**. Historically this was CoreDNS
+   (`dns-stack`, VMID 20013, `192.168.20.13`). The durable implementation is
+   Technitium (`technitium-stack`, VMID 20015, `192.168.20.15`) with CoreDNS
+   retained only as rollback context during the refactor. The active authority
+   serves a seed internal zone containing only bootstrap and non-browser
+   records required before generated browser records exist.
 2. **Traefik** (`proxy-stack`, VMID 30010, `192.168.30.10`) with static runtime
    configuration: entrypoints, providers, certificate resolvers, default store,
    and shared middleware definitions. Per-service browser routes are not
@@ -228,8 +231,9 @@ Stage 3a order is load-bearing in Mode 2:
 
 The stack-owned edge reconciler is disabled during Stage 3a until:
 
-- CoreDNS answers authoritative queries for `lab.gibbsgreatly.xyz`
-- MikroTik conditionally forwards `lab.gibbsgreatly.xyz` to CoreDNS
+- The active internal DNS authority answers authoritative queries for the
+  internal zone
+- MikroTik conditionally forwards the internal zone to the active authority
 - Traefik is running and can load file-provider dynamic config
 - Authentik is healthy and an API token is available for routes that need
   Authentik objects
@@ -239,7 +243,7 @@ The operator runs the explicit edge reconciler after Stage 3a exits.
 
 ### Exit condition
 
-- CoreDNS, Traefik, step-ca, and Authentik are deployed on pve-test.
+- The internal DNS authority, Traefik, step-ca, and Authentik are deployed on pve-test.
 - Authentik direct first boot is complete and the automation API token is stored.
 - Edge reconciliation can run in dry-run mode and report planned DNS, Traefik,
   and Authentik changes.

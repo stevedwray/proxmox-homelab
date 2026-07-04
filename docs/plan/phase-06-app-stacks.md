@@ -9,7 +9,7 @@ This phase still follows the platform foundation, but the target is no longer a 
 ## Prerequisites
 
 - Validated stack-owned edge foundation is present and reachable:
-  - CoreDNS at `192.168.20.13`
+  - Technitium at `192.168.20.15`
   - Authentik at `192.168.20.10`
   - step-ca at `192.168.20.11`
   - Traefik at `192.168.30.10`
@@ -19,7 +19,7 @@ This phase still follows the platform foundation, but the target is no longer a 
 - NetBox updated with current IP allocations
 - Current branch workflow from `AGENTS.md` applies: start from the current
   active development HEAD, use a short-lived `feat/`/`task/` branch, validate,
-  then merge to `baseline/teardown-validated`
+  then promote through `stable` and `main` per the current branch model
 
 ## Current state of application workloads
 
@@ -85,18 +85,23 @@ Do **not** do a big-bang migration of all services at once. Migrate one service 
 
 ## Service 1 — Pi-hole (Ad-blocking DNS resolver)
 
-Pi-hole is a critical application for ad-blocking and recursive DNS resolution. **Important:** Internal authoritative DNS for `lab.gibbsgreatly.xyz` is provided by CoreDNS (deployed in Phase 04b) — Pi-hole is **not** responsible for that authority. Pi-hole serves as an ad-blocking resolver for client queries.
+Pi-hole is a critical application for ad-blocking and recursive DNS resolution.
+**Important:** Internal authoritative DNS for `lab.gibbsgreatly.xyz` is now
+provided by Technitium (Phase 04b outcome) — Pi-hole is **not** responsible
+for that authority. Pi-hole serves as an ad-blocking resolver for client
+queries.
 
-Migrate Pi-hole **last in the day**, with a rollback plan ready (revert Pi-hole IP in CoreDNS zone if needed).
+Migrate Pi-hole **last in the day**, with a rollback plan ready.
 
 ### Role clarification
 
 | Service | Role | Deployed in |
 |---|---|---|
-| **CoreDNS** | Authority for `lab.gibbsgreatly.xyz`; forwards non-lab queries upstream | Phase 04b, `192.168.20.13` |
+| **Technitium** | Authority for `lab.gibbsgreatly.xyz`; forwards non-lab queries upstream | Phase 04b outcome, `192.168.20.15` |
 | **Pi-hole** | Ad-blocking recursive resolver; optional secondary resolver for clients | Phase 06, `10.60.0.10` |
 
-Pi-hole can be the client's default resolver (for ad-blocking), while CoreDNS remains the authority for internal service naming.
+Pi-hole can be the client's default resolver (for ad-blocking), while
+Technitium remains the authority for internal service naming.
 
 ### Stack file
 
@@ -477,10 +482,11 @@ After each service is migrated and the old container destroyed, update NetBox:
 
 Follow the repository branch model in `AGENTS.md`:
 
-1. Start each slice from `baseline/teardown-validated`.
+1. Start each slice from the current validated development HEAD.
 2. Work on a short-lived `feat/` or `task/` branch.
 3. Validate on that branch before promoting.
-4. Merge to `baseline/teardown-validated` only after the slice is validated and the old instance is retired.
+4. Promote to `stable`, then `main`, only after the slice is validated and the
+   old instance is retired.
 
 ---
 
