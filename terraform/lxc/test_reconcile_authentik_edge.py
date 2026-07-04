@@ -56,6 +56,7 @@ class FakeClient:
         *,
         applications: list[dict] | None = None,
         application_fetch_sequence: list[list[dict]] | None = None,
+        application_search_results: dict[str, list[dict]] | None = None,
         providers: list[dict] | None = None,
         oauth2_providers: list[dict] | None = None,
         outposts: list[dict] | None = None,
@@ -65,6 +66,9 @@ class FakeClient:
     ) -> None:
         self.applications = list(applications or [])
         self.application_fetch_sequence = [list(items) for items in (application_fetch_sequence or [])]
+        self.application_search_results = {
+            key: list(items) for key, items in (application_search_results or {}).items()
+        }
         self.providers = list(providers or [])
         self.oauth2_providers = list(oauth2_providers or [])
         self.outposts = list(outposts or [])
@@ -120,6 +124,10 @@ class FakeClient:
         if self.application_fetch_sequence:
             return self.application_fetch_sequence.pop(0)
         return self.applications
+
+    def search_applications(self, query: str):
+        self.request_methods.append("GET")
+        return list(self.application_search_results.get(query, []))
 
     def fetch_proxy_providers(self):
         self.request_methods.append("GET")
@@ -235,7 +243,10 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                 applications=[],
                 application_fetch_sequence=[
                     [],
-                    [
+                    [],
+                ],
+                application_search_results={
+                    "edge-technitium-stack-technitium": [
                         {
                             "pk": 301,
                             "name": "edge-technitium-stack-technitium-app",
@@ -244,8 +255,8 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
                             "meta_launch_url": "https://technitium.lab.gibbsgreatly.xyz/",
                             "provider": 201,
                         }
-                    ],
-                ],
+                    ]
+                },
                 oauth2_providers=[
                     {
                         "pk": 201,
@@ -271,7 +282,7 @@ class TestReconcileAuthentikEdge(unittest.TestCase):
 
         self.assertTrue(result.ok)
         self.assertGreaterEqual(result.write_count, 0)
-        self.assertIn("POST", client.request_methods)
+        self.assertNotIn("POST", client.request_methods)
         self.assertEqual([], client.application_update_targets)
         self.assertEqual([], client.applications)
 
