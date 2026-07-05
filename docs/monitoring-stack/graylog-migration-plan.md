@@ -1457,7 +1457,10 @@ VictoriaLogs-only documentation/tooling cleanup is folded into Sprint P6.
 log sink for every managed stack; VictoriaLogs and its Grafana artifacts are
 fully removed from production. Remote syslog (Proxmox host, MikroTik, NAS,
 plus Omada Controller as a bonus fourth source) is confirmed flowing and
-correctly attributed. Sprint P6 (cleanup + `stable`→`main` promotion) is not
+correctly attributed. Sprint P7 (index set segmentation: Security / Docker /
+General) is planned but not yet implemented — see below; it's sequenced
+*before* P6 since it's new production Graylog config that should land before
+promotion. Sprint P6 (cleanup + `stable`→`main` promotion) is not
 yet started. (Note: the *DNS*
 refactor — Technitium replacing CoreDNS as the live resolver — already went
 to production on 2026-07-04, independently of this plan; see
@@ -2030,6 +2033,106 @@ at production Graylog — the production equivalent of pve-test-vm G4.
 Sprint P5 is now complete — all three planned remote syslog sources
 (Proxmox, MikroTik, NAS) are live and attributable, plus Omada as an
 unplanned fourth source with a proper identity fixup.
+
+---
+
+## Sprint P7 — Index Set Segmentation (Security / Docker / General)
+
+**Status:** planned, not yet implemented (2026-07-06).
+
+**Goal:** Everything currently lands in one index set (`Default index set`,
+prefix `graylog`). Split it into three, so noisy Docker container chatter
+never shares storage or a retention policy with security-relevant syslog
+data, and each gets independently tuned retention:
+
+- **General** (the existing `Default index set`, unchanged) — Proxmox host,
+  MikroTik, NAS, Omada, systemd services, kernel, cron: everything that
+  isn't Docker or auth-facility.
+- **Security** (new) — auth-facility events from managed-LXC syslog (SSH,
+  sudo, PAM).
+- **Docker Chatter** (new) — all container stdout/stderr, any stack.
+
+**Why this order matters:** this should land *before* the previously-agreed
+"fresh start" log wipe (rotate + delete the current undifferentiated
+`graylog_0`), so the clean slate begins already 3-way segmented from message
+#1, rather than wiping first and re-doing the split against fresh
+undifferentiated data.
+
+**Decisions settled** (verified live against production Graylog on
+2026-07-06, not assumed from prior docs):
+
+| Decision | Choice | Rationale |
+|---|---|---|
+| Split axis | **Content type first** (Docker vs. syslog), security is a filter *within* non-Docker only | The operator's stated reason for separating Docker is that the content shape itself differs (container stdout/JSON vs. structured syslog), not primarily security sensitivity. Consequence: Authentik's LDAP outpost auth events, which arrive as Docker container logs (`application_name=docker-authentik-stack-ldap-1`), land in **Docker Chatter**, not Security, under this model. |
+| Routing mechanism | Graylog Pipeline rules using `route_to_stream()` / `remove_from_stream()` — same mechanism already proven working for the Omada source-rewrite pipeline | By default a message matches *every* stream whose rules match, including Default's catch-all — without explicit `remove_from_stream()`, messages would be double-indexed (both old and new index sets), not actually separated. |
+| Auth-facility match value | `facility:"security/authorization"` | **Correction to existing docs**: `design.md`'s "Dashboard conventions" table and the G3 field-convention table both document the example value as `auth`. Live verification against real `systemd-logind` messages on 2026-07-06 shows the actual value is `security/authorization`. Prior docs were stale/wrong on this specific point — corrected as part of this sprint (task 9 below). |
+| Retention — General (existing, unchanged) | `TimeBasedSizeOptimizingStrategy` `P30D`/`P40D`, `DeletionRetentionStrategy` `max_number_of_indices: 20` | No change — confirmed via live API this is the current config; becomes the catch-all bucket. |
+| Retention — Security | Longer: `P90D`/`P120D`, `max_number_of_indices: 8` | Low-volume, high-value; worth keeping longer at negligible disk cost. |
+| Retention — Docker Chatter | Shorter: `P7D`/`P10D`, `max_number_of_indices: 6` | Highest-volume, lowest-value-per-message source (container health-checks, routine chatter). Adjust after observing real volume if this proves too aggressive or too loose. |
+
+**Manual actions required:** none — this is fully API-automatable via
+Ansible; no physical device configuration involved (unlike P5).
+
+**Implementation tasks** (all added to `deploy-graylog-stack.yml`'s
+post-ALIVE section, idempotent check-then-create, following the exact
+pattern already proven for the syslog input, LDAP auth backend, and the
+Omada pipeline):
+
+1. Create the **Security** index set (`POST /api/system/indices/index_sets`)
+   — idempotent, matched by `title`.
+2. Create the **Docker Chatter** index set — same pattern.
+3. Create the **Security** stream, `index_set_id` pointing at the Security
+   index set, then `POST /api/streams/{id}/resume` — new streams are
+   created disabled by default and won't route anything until resumed.
+4. Create the **Docker Chatter** stream — same pattern, + resume.
+5. Add a new Pipeline `log-segmentation` (kept separate from
+   `source-identity-fixups` — single responsibility, easier to reason about)
+   with two rules:
+   - `route-docker-chatter`: `when to_string($message.application_name)
+     starts_with "docker-" then route_to_stream(id: "<docker-stream-id>");
+     remove_from_stream(id: "000000000000000000000001");`
+   - `route-security-auth`: `when to_string($message.facility) ==
+     "security/authorization" AND NOT (has_field("application_name") AND
+     to_string($message.application_name) starts_with "docker-") then
+     route_to_stream(id: "<security-stream-id>");
+     remove_from_stream(id: "000000000000000000000001");`
+   Both mutually exclusive by construction (no stage-ordering dependency
+   needed). Both get the same `ansible.builtin.assert` on `.json.errors is
+   none` used for the Omada rule, so a GRPL mistake fails the deploy loudly.
+6. Connect `log-segmentation` to the **Default Stream** — reuse the existing
+   `graylog_default_stream_pipeline_ids` merge logic from the Omada task set
+   (append, don't replace, so the Omada pipeline's connection survives).
+7. **Validate live**, same rigor as every other sprint in this plan — not
+   just a clean `PLAY RECAP`:
+   - a `docker-*` message lands only in Docker Chatter (search scoped to
+     that stream's messages; confirm it's absent from Default going
+     forward)
+   - a `security/authorization`, non-Docker message lands only in Security
+   - everything else keeps landing in General/Default
+   - existing documented query conventions (`source:hAP`, `source:pve`,
+     etc.) still return results — Graylog's default Search view spans all
+     streams unless explicitly scoped to one, so this should be unaffected
+8. **Only after step 7 passes**, perform the previously-agreed "fresh
+   start": rotate the General/Default index set
+   (`POST /api/system/deflector/{id}/cycle`) and delete the now-inactive
+   `graylog_0` (`DELETE /api/system/indexer/indices/graylog_0`) — purges the
+   ~30k undifferentiated pre-split messages. Security and Docker Chatter
+   start genuinely empty from their first real message.
+9. Update this plan's and `design.md`'s field-convention/query-pattern
+   tables: correct the stale `facility:auth` references to
+   `facility:"security/authorization"`, and document the new
+   Security/Docker Chatter stream query conventions.
+
+**Validation tier:** Graylog-only config change (no Ansible role/task
+touches any other stack), verified via live API — no full teardown needed,
+matches the tier used for P5's Omada fixup.
+
+**Minimum gate:**
+- Security and Docker Chatter streams/index sets exist, are resumed, and
+  are receiving correctly-routed live traffic
+- No message is double-indexed (present in both Default and a new stream)
+- Fresh-start cleanup completed with the new segmentation already active
+- Docs corrected and query conventions documented
 
 ---
 
