@@ -550,9 +550,9 @@ provision_stack() {
 
   local cmd=(ansible-playbook -i "$inventory_file" "$playbook_file" -e "@${extra_vars_file}")
 
-  # Graylog runtime is required for teardown validation on pve-test-vm. Keep
-  # production behavior unchanged until the test-domain path is fully validated.
-  if [[ "$stack" == "graylog-stack" && "${PVE_ENV:-}" == "pve-test-vm" ]]; then
+  # Graylog runtime is validated (pve-test-vm G0-G5, full teardown cycle) and
+  # is always deployed for real now, on every environment.
+  if [[ "$stack" == "graylog-stack" ]]; then
     cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
   fi
 

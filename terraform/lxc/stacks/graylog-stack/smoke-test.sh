@@ -1,14 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# The teardown regression is specific to the pve-test-vm/test-domain path.
-# Keep this smoke gate advisory-only for other environments until they opt into
-# the same runtime behavior.
-if [[ "${PVE_ENV:-}" != "pve-test-vm" ]]; then
-  echo "Skipping Graylog smoke test outside pve-test-vm (PVE_ENV=${PVE_ENV:-unset})"
-  exit 0
-fi
-
 HOST="${LAB_IP_GRAYLOG:-}"
 PORT="${GRAYLOG_SMOKE_PORT:-9000}"
 

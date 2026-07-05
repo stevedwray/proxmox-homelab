@@ -18,6 +18,12 @@ the later integration sprints should expect a full teardown-cycle validation.
 have now been met. `main` is only updated after incremental deployment on `pve`
 passes and the operator confirms no regressions.
 
+**Everything below this line (through "Definition of ready for pve") is the
+`pve-test-vm` pilot record (Sprints G0–G5), kept as-is for history.** The
+production rollout itself — the actual work now underway — is planned in
+[Part 2 — Production Rollout on `pve`](#part-2--production-rollout-on-pve) at
+the end of this document, in Sprints P0–P6.
+
 ---
 
 ## Desired end state
@@ -1437,9 +1443,568 @@ This work is ready to promote from `stable` to `main` only when:
 
 ## First practical next step
 
-Two viable next steps remain:
+Incrementally deploy the validated Graylog path on `pve` — see
+[Part 2 — Production Rollout on `pve`](#part-2--production-rollout-on-pve)
+below for the full sprint-by-sprint plan (Sprints P0–P6). Historical
+VictoriaLogs-only documentation/tooling cleanup is folded into Sprint P6.
 
-1. Incrementally deploy the validated Graylog path on `pve` and prove the
-   `stable` → `main` promotion gate.
-2. Continue cleanup of historical VictoriaLogs-only documentation/tooling where
-   it no longer reflects the active source path.
+---
+
+# Part 2 — Production Rollout on `pve`
+
+**Status as of 2026-07-06:** Sprints P0–P4 complete and verified on `pve`.
+`graylog-stack` is live, publicly reachable, LDAP-SSO'd, and is now the sole
+log sink for every managed stack; VictoriaLogs and its Grafana artifacts are
+fully removed from production. Sprint P5 (remote syslog: Proxmox host,
+MikroTik, NAS) has been handed off to the operator to run directly. Sprint P6
+(cleanup + `stable`→`main` promotion) is not yet started. (Note: the *DNS*
+refactor — Technitium replacing CoreDNS as the live resolver — already went
+to production on 2026-07-04, independently of this plan; see
+[dns-refactor/current-state.md](../dns-refactor/current-state.md). That
+change was a precondition this plan relied on, not something it repeated.)
+
+**Why this was more than "add one LXC":** production `monitoring-stack` had
+been running the pre-Graylog Phase 6/7 pipeline (rsyslog → VictoriaLogs) up
+until Sprint P4. Every managed stack on `pve` now forwards syslog to Graylog
+instead. Finishing this rollout meant standing up `graylog-stack` on `pve`
+**and** repeating the pve-test-vm G2–G5 cutover — LDAP SSO, per-stack rsyslog
+repoint, VictoriaLogs removal, and remote syslog (Proxmox/MikroTik/NAS) — against the
+real production stacks and the real physical appliances.
+
+**Repo-state findings that shape this plan** (verified 2026-07-06 against the
+live tree, not just prior docs):
+
+| Finding | Detail |
+|---|---|
+| Runtime deploy gate is test-only | `scripts/provision.sh` (~line 555) only sets `GRAYLOG_DEPLOY_RUNTIME=true` when `PVE_ENV=pve-test-vm`. Every real task in `deploy-graylog-stack.yml` is gated on that variable. Deploying to `pve` today would silently run the placeholder/scaffold path only. |
+| No production secrets | `terraform/secrets.pve.enc.yaml` has no `GRAYLOG_*` keys. They exist only in the dev/test `terraform/secrets.enc.yaml`. |
+| No production env vars | `.env.pve` has no `LAB_IP_GRAYLOG` / `LAB_FQDN_GRAYLOG` entries. `.env.pve.template` is also missing `LAB_FQDN_GRAYLOG` (template gap). |
+| VMID/network clear | `20014` is unused on `pve`; `graylog-stack`'s `mgmt_seg` placement has no conflict. |
+| Terraform scaffold present, unapplied | `terraform/lxc/environments/pve/graylog-stack/terragrunt.hcl` exists (committed in G2) but nothing indicates the LXC has actually been created on `pve`. |
+| `edge.yaml` is environment-agnostic | Already uses `${LAB_DOMAIN}` / `${LAB_IP_GRAYLOG}` / `${LAB_IP_PROXY}` — no changes needed for it to render correctly on `pve` once the env vars above exist. |
+| Technitium DNS publish is per-stack-triggered | `render-edge-technitium.py` only runs when `technitium-stack` itself is provisioned. A `graylog-stack` deploy alone will not publish its DNS record. |
+| Authentik LDAP outpost provisioning is environment-agnostic | `deploy-authentik-stack.yml`'s LDAP provider/outpost/app tasks have no test-only gating — a normal `authentik-stack` reprovision on `pve` will provision them. |
+| Proxmox host syslog playbook is hardcoded to the test host | `ansible/00-initial-setup/configure-proxmox-syslog.yml` line 15: `hosts: pve-test-vm.gibbsgreatly.xyz`. Needs to target `pve.gibbsgreatly.xyz` (group `proxmox_production` already exists in `ansible/inventory/production.yml`). |
+| MikroTik / NAS syslog targets are pilot-only, not IaC | Both were pointed at pve-test-vm's Graylog IP by hand (RouterOS CLI / NAS UI) during G4. They must be repointed at the production Graylog IP by hand again — nothing in the repo does this for either environment. |
+| Graylog smoke test is test-only (found during P2 execution) | `terraform/lxc/stacks/graylog-stack/smoke-test.sh` unconditionally exited 0 ("skipping") unless `PVE_ENV=pve-test-vm` — same category of gap as the runtime-deploy gate, added by the same commit (`666e5a70`). Fixed alongside P1: the environment check was removed, so the smoke test now actually runs on every environment. |
+| Harbor `gcr` proxy-cache project missing on production Harbor (found during P2 execution) | `deploy-graylog-stack.yml` pulls `cadvisor` via `{{ registry_host }}/gcr/cadvisor/cadvisor:v0.49.1`. The `gcr` proxy-cache project was added to `harbor_postconfigure`'s defaults in commit `666e5a70` (2026-07-01) — but that commit is on `stable`, not `main`, so production Harbor's post-configure has never created it. `mongo`/`graylog`/`graylog-datanode` pulled fine (routed through the long-standing `dockerhub` project); only the `gcr`-routed `cadvisor` pull failed with `unauthorized: project gcr not found`. Fix: reprovision `harbor-stack` on `pve` (additive/idempotent — only adds the missing project) before retrying `graylog-stack`. See P2 execution log below. |
+
+## Manual actions required (read this first)
+
+These cannot be done by an agent session running under the standard
+production credential controls, or are physical/device actions outside the
+repo entirely. Everything else in Sprints P0–P6 can run through
+`./with-secrets-prod` with normal preflight/approval.
+
+| # | Action | Sprint | Why it's manual |
+|---|---|---|---|
+| 1 | Generate and SOPS-encrypt new **production** Graylog secrets into `terraform/secrets.pve.enc.yaml` (`GRAYLOG_PASSWORD_SECRET`, `GRAYLOG_ROOT_PASSWORD_SHA2`, `GRAYLOG_ROOT_PASSWORD`) | P0 | Production secret material — generate/encrypt yourself, or explicitly supervise the SOPS edit; agents should not be given standing write access to SOPS-encrypted files. Must be **different values** from the dev/test secrets, not copied. |
+| 2 | Pick the actual free `mgmt_seg` IP for `LAB_IP_GRAYLOG` in `.env.pve` | P0 | `.env.pve` is access-controlled outside normal read tooling; you need to check current allocations and pick the next free address yourself (or explicitly hand it over). |
+| 3 | Approve each mutating step (Preflight Summary → say "Proceed" → `export TASK_APPROVAL=...`) | P2, P3, P4, P5 | Standard per-task production approval per `CLAUDE.md` — no standing approval. |
+| 4 | Repoint the physical **MikroTik** router's `remote` syslog action from the pve-test Graylog IP to the new production `LAB_IP_GRAYLOG`, and set `remote-log-format=bsd-syslog` with ISO 8601 timestamps | P5 | No MikroTik IaC exists (tracked separately as TM-09); this is a live RouterOS CLI change on the one physical router shared by both environments. |
+| 5 | Repoint the physical **NAS**'s syslog forwarding target (its own settings UI) to the new production Graylog IP | P5 | NAS has no Ansible/Terraform management; UI-only device config. |
+| 6 | Do the actual browser login test (Authentik credentials → Graylog UI) | P3 | Needs your real credentials; not something a session can validate end-to-end. |
+
+## Sprint P0 — Production Secrets & Config Scaffolding
+
+**Goal:** Stage everything `deploy-graylog-stack.yml` needs to run for real on
+`pve`, without deploying anything yet.
+
+**Implementation tasks**
+
+1. Generate fresh production secrets (do not reuse dev/test values):
+   ```bash
+   openssl rand -base64 72 | tr -d '\n'        # GRAYLOG_PASSWORD_SECRET
+   # choose a new root password, then:
+   echo -n '<new-root-password>' | sha256sum | cut -d' ' -f1   # GRAYLOG_ROOT_PASSWORD_SHA2
+   ```
+   SOPS-encrypt `GRAYLOG_PASSWORD_SECRET`, `GRAYLOG_ROOT_PASSWORD_SHA2`, and
+   `GRAYLOG_ROOT_PASSWORD` (plaintext, needed for post-ALIVE API calls) into
+   `terraform/secrets.pve.enc.yaml` — **manual action #1 above.**
+2. Add to `.env.pve`:
+   ```
+   LAB_IP_GRAYLOG=<next free mgmt_seg address>
+   LAB_FQDN_GRAYLOG=graylog.${LAB_DOMAIN}
+   ```
+   — **manual action #2 above** (IP selection). The `LAB_FQDN_GRAYLOG` line
+   itself is not secret and can be added directly.
+3. Add the missing `LAB_FQDN_GRAYLOG` entry to `.env.pve.template` (currently
+   only has `LAB_IP_GRAYLOG` / `TF_VAR_lab_ip_graylog`) so the template stays
+   in sync — non-secret, can be done directly.
+4. Confirm `20014` is still free on `pve` (already confirmed 2026-07-06 — no
+   conflict found across all `stack.yaml` VMIDs).
+
+**Validation**
+
+```bash
+PVE_ENV=pve ./with-secrets-prod terragrunt plan \
+  --working-dir terraform/lxc/environments/pve/graylog-stack
+```
+Expected: a clean plan to create exactly one new LXC (20014), no errors about
+missing variables/secrets.
+
+**Minimum gate**
+
+- Env vars and secrets present; `terragrunt plan` clean; nothing deployed yet.
+
+---
+
+## Sprint P1 — Flip the Runtime Gate for Production
+
+**Goal:** Make `scripts/provision.sh` run the real Graylog runtime (not the
+scaffold-only placeholder) when targeting `pve`.
+
+**Decision:** Rather than special-casing `pve` alongside `pve-test-vm`, drop
+the environment condition entirely. The scaffold-only path was a temporary
+safety valve for while the pilot was unproven — that condition no longer
+holds for either environment now that G0–G5 passed a full teardown-cycle
+validation. Collapse `deploy-graylog-stack.yml` to always run for real when
+`graylog-stack` is the target stack.
+
+**Implementation tasks**
+
+1. In `scripts/provision.sh`, change:
+   ```bash
+   if [[ "$stack" == "graylog-stack" && "${PVE_ENV:-}" == "pve-test-vm" ]]; then
+     cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
+   fi
+   ```
+   to:
+   ```bash
+   if [[ "$stack" == "graylog-stack" ]]; then
+     cmd=(env GRAYLOG_DEPLOY_RUNTIME=true "${cmd[@]}")
+   fi
+   ```
+   and update the stale comment above it (it currently says "Keep production
+   behavior unchanged until the test-domain path is fully validated" — that
+   milestone has now been reached).
+2. Run the required syntax check per `CLAUDE.md`'s Ansible-change rule:
+   ```bash
+   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles \
+     ansible-playbook --syntax-check \
+     terraform/lxc/ansible/playbooks/deploy-graylog-stack.yml
+   ```
+3. Leave the now-permanently-dead scaffold branch in
+   `deploy-graylog-stack.yml` (the `when: not (graylog_deploy_runtime | bool)`
+   tasks) in place for this sprint — don't delete it mid-rollout. Removing it
+   is a Sprint P6 cleanup item once production is proven stable.
+4. Same fix, same reason, in `terraform/lxc/stacks/graylog-stack/smoke-test.sh`:
+   it unconditionally `exit 0`'d ("skipping") unless `PVE_ENV=pve-test-vm`,
+   which would have silently reported the smoke test as passed on `pve`
+   without checking Graylog actually came up. Removed the environment check
+   entirely — the smoke test now always runs. **Done.**
+
+**Validation**
+
+- `--syntax-check` passes.
+- Code review of the diff — this is a one-line behavioral change with
+  repo-wide effect (any future `graylog-stack` provision anywhere now always
+  deploys for real), so review it as such.
+
+**Minimum gate**
+
+- Change committed on the working branch. No live `pve` mutation yet.
+
+---
+
+## Sprint P2 — Deploy `graylog-stack` to `pve`
+
+**Goal:** Create the LXC and bring up the real Graylog runtime on `pve`, in
+isolation — not yet publicly reachable, not yet receiving logs from other
+stacks.
+
+**This is the first actual production mutation in this plan.** Follow the
+full Preflight Summary → operator "Proceed" → `TASK_APPROVAL` flow from
+`CLAUDE.md` before running anything below.
+
+**Implementation tasks**
+
+1. Create the LXC:
+   ```bash
+   export TASK_APPROVAL="graylog-pve-p2-deploy"
+   PVE_ENV=pve ./with-secrets-prod terragrunt apply \
+     --working-dir terraform/lxc/environments/pve/graylog-stack \
+     -auto-approve -no-color
+   ```
+2. Provision the real runtime (now unconditional after P1):
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod scripts/provision.sh \
+     --stack graylog-stack --target-env pve
+   ```
+3. Confirm ALIVE from a host with `mgmt_seg` reachability:
+   ```bash
+   curl -fsS "http://${LAB_IP_GRAYLOG}:9000/api/system/lbstatus"
+   ```
+
+**Validation**
+
+- Terraform creates `graylog-stack` at VMID `20014` on `pve`.
+- Ansible provision completes; `/opt/graylog-stack/graylog.env` and
+  `docker-compose.yml` exist on the guest.
+- Graylog reports `ALIVE` (may need several retries on first boot, same as
+  the pve-test-vm experience).
+- rsyslog on the `graylog-stack` LXC listens on TCP/UDP `:514`.
+
+**Minimum gate**
+
+- `graylog-stack` fully running on `pve`, containers healthy and
+  auto-restarting. No DNS/Traefik route, no LDAP auth, no external log
+  sources yet — those are P3–P5.
+
+### P2 execution log (2026-07-06)
+
+**Attempt 1** — `terragrunt apply` succeeded (LXC `20014` created). The
+`deploy-graylog-stack.yml` provision run then failed at the "Pre-pull Graylog
+runtime images from Harbor sequentially" task:
+
+```
+changed: [graylog-stack] => (item=harbor.lab.gibbsgreatly.xyz/dockerhub/mongo:7)
+changed: [graylog-stack] => (item=harbor.lab.gibbsgreatly.xyz/dockerhub/graylog/graylog-datanode:7.1.3)
+changed: [graylog-stack] => (item=harbor.lab.gibbsgreatly.xyz/dockerhub/graylog/graylog:7.1.3)
+failed: [graylog-stack] (item=harbor.lab.gibbsgreatly.xyz/gcr/cadvisor/cadvisor:v0.49.1)
+  => stderr: "Error response from daemon: unauthorized: project gcr not found: project gcr not found"
+```
+
+Root cause and fix identified above (Harbor `gcr` proxy-cache project missing
+on production Harbor — see findings table). Since the LXC itself was created
+successfully and only the image pull failed, **do not re-run `terragrunt
+apply`** — go straight to the remediation + retry below.
+
+**Remediation — add task 1a to this sprint:**
+
+```bash
+export TASK_APPROVAL="graylog-pve-p2-harbor-gcr-project"
+PVE_ENV=pve ./with-secrets-prod scripts/provision.sh \
+  --stack harbor-stack --target-env pve
+```
+This re-runs `harbor_postconfigure`, which is additive/idempotent: it creates
+the missing `gcr` proxy-cache project and endpoint. It does not modify or
+remove the existing `dockerhub`/`ghcr`/`quay`/`lscr` projects, robot accounts,
+or any other Harbor config already in production use by other stacks.
+
+**Then retry step 2** (`scripts/provision.sh --stack graylog-stack
+--target-env pve`) — Ansible tasks are idempotent, so this resumes cleanly
+from the beginning rather than needing a `--start-at-task`.
+
+**Second bug found post-deploy (2026-07-06): malformed `GRAYLOG_HTTP_EXTERNAL_URI`.**
+
+`deploy-graylog-stack.yml` has three separate plays, each with its own
+variable scope. Plays 1 (`Configure Graylog pilot host`) and 3 (the
+`graylog_deploy_runtime: false` scaffold play) both define
+`graylog_lab_fqdn_graylog` with a safe fallback
+(`default('graylog.' ~ domain, true)`). Play 2 (`Deploy Graylog runtime
+(optional)`) — the one that actually writes the real `graylog.env` used by
+the running containers — did not define that variable at all, and instead
+used a bare `lookup('env', 'LAB_FQDN_GRAYLOG')` with no fallback. Since
+`LAB_FQDN_GRAYLOG` was never set in `.env` or `.env.pve` (see the findings
+table above), this rendered as `GRAYLOG_HTTP_EXTERNAL_URI=https:///` on the
+first production deploy — invisible to the ALIVE/HTTPS/LDAP checks that all
+passed, since Traefik proxies through regardless and the browser mostly uses
+relative URLs, but a real defect (would surface in email notification links,
+redirect flows, etc).
+
+**Fix:**
+- `deploy-graylog-stack.yml`: added `graylog_lab_fqdn_graylog` (with the same
+  fallback pattern) to play 2's `vars:`, and changed the env-file line to use
+  it instead of the bare lookup.
+- `.env.pve`: added `export LAB_FQDN_GRAYLOG="graylog.${LAB_DOMAIN}"`
+  explicitly (belt-and-suspenders — the playbook fallback alone would now
+  compute the right value, but explicit is better than implicit here).
+- `.env.pve.template`: added the same line, next to `LAB_IP_GRAYLOG`.
+- Redeployed `graylog-stack` (`scripts/provision.sh --stack graylog-stack
+  --target-env pve`) to pick up the corrected `graylog.env` — this recreated
+  the Graylog container (triggered by the `graylog_env_file.changed` handler,
+  as designed). Smoke test passed (first time it actually *ran* on `pve`,
+  since the pve-test-vm-only skip was removed in P1). Re-verified after
+  recreate: `ALIVE`, HTTPS 200 via `graylog.lab.gibbsgreatly.xyz`, same
+  `x-graylog-node-id` (confirms clean recreate, no data loss — node identity
+  persists in the Mongo volume, not the container).
+- `--syntax-check` passed before redeploying.
+
+---
+
+## Sprint P3 — Publish DNS, Traefik Route, and Authentik LDAP SSO
+
+**Goal:** `https://graylog.lab.gibbsgreatly.xyz` resolves, loads over HTTPS,
+and Authentik-credentialed login works — the production equivalent of the
+pve-test-vm G2 gate.
+
+**Implementation tasks**
+
+1. Reprovision `technitium-stack` so it regenerates and republishes zone
+   records, picking up the new `graylog-edge` manifest:
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod scripts/provision.sh \
+     --stack technitium-stack --target-env pve
+   ```
+2. Reconcile edge routing (Traefik + Authentik intents) and apply:
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod python3 terraform/lxc/reconcile-edge.py \
+     --authentik-url https://authentik-int.lab.gibbsgreatly.xyz:9443 \
+     --apply --json
+   ```
+3. Reprovision `authentik-stack` so the LDAP provider/outpost/app are created
+   against production Authentik (idempotent, no test-only gating):
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod scripts/provision.sh \
+     --stack authentik-stack --target-env pve
+   ```
+4. Verify end-to-end, same proof pattern as pve-test-vm G2:
+   - `reconcile-edge.py --json` → `issue_count: 0`
+   - DNS resolves via Technitium → HTTPS 200 through Traefik
+   - Graylog LDAP auth backend active
+   - **Manual action #6**: log in as yourself via Authentik credentials and
+     confirm you land in the Graylog UI.
+
+**Validation**
+
+- Same checklist as "Minimum gate (G2 done)" earlier in this document, run
+  against `pve` identities (`graylog.lab.gibbsgreatly.xyz`,
+  `authentik-int.lab.gibbsgreatly.xyz`) instead of `test.gibbsgreatly.xyz`.
+
+**Minimum gate**
+
+- Browser login works end-to-end on `pve`. `reconcile-edge.py --json` shows
+  `issue_count: 0` across all manifests, including `graylog-edge`.
+
+### P3 status: complete (verified 2026-07-06)
+
+The operator ran the tasks above directly from this doc ahead of the
+step-by-step preflight walkthrough. Verified independently rather than taken
+on trust:
+
+- `dig graylog.lab.gibbsgreatly.xyz @192.168.20.15` (production Technitium) →
+  `192.168.30.10` (`LAB_IP_PROXY`)
+- `curl -D- https://graylog.lab.gibbsgreatly.xyz` → `HTTP/2 200`, body and
+  `x-graylog-node-id` response header confirm it's genuinely Graylog, not a
+  Traefik default/catch-all response
+- `reconcile-edge.py --json` (dry-run) → `issue_count: 0` across all 8
+  manifests, including `graylog-edge`; `terraform_state_mutation: false`
+- Operator confirmed logging in via Authentik credentials and landing in the
+  Graylog UI
+
+**Minimum gate met.** Moving straight to Sprint P4.
+
+---
+
+## Sprint P4 — Cut Over Log Ingestion (Managed LXCs + Docker Stacks)
+
+**Goal:** Repoint every existing production stack's `rsyslog_forward` at
+Graylog, and remove VictoriaLogs from production `monitoring-stack` — the
+production equivalent of pve-test-vm G3 + G5 combined.
+
+**This is the highest blast-radius sprint in this plan** — it touches the
+logging path on every managed LXC in production. The change-set itself was
+already proven end-to-end via a full teardown-cycle validation on
+`pve-test-vm` (G5), so per `CLAUDE.md`'s Validation Tiers this does not need
+another full teardown on `pve` — the required gate is a clean incremental
+deploy plus smoke test. Reprovision in dependency order (mirrors the existing
+`stable` ordering used for `pve-test-vm`):
+
+**Implementation tasks**
+
+1. Reprovision every *other* production stack first, one at a time,
+   confirming each is healthy before moving on — **`monitoring-stack` must be
+   last, not first or in the middle.** `rsyslog_forward`'s defaults are
+   already unconditionally Graylog-only in the current code
+   (`rsyslog_forward_target_host` = `LAB_IP_GRAYLOG`, no VictoriaLogs branch
+   left at all — confirmed 2026-07-06). That means the moment
+   `monitoring-stack` is reprovisioned and its VictoriaLogs container is
+   removed, any stack *not yet* reprovisioned would still be pointed at the
+   old `monitoring-stack:5140` target and would just retry against a dead
+   host until its own turn comes — no data loss (rsyslog's disk-backed queue
+   retries indefinitely), but pointless connection-refused churn for however
+   long the rollout takes. Order:
+   `step-ca-stack`, `portainer-stack`, `authentik-stack`, `proxy-stack`,
+   `harbor-stack`, `apt-cacher-stack`, `netbox-stack`, `ci-runner-01`, then
+   **`monitoring-stack` last**:
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod scripts/provision.sh --stack <name> --target-env pve
+   ```
+2. `monitoring-stack`'s reprovision (last) is expected to remove the
+   VictoriaLogs container/volume, the Grafana VictoriaLogs datasource, and
+   the `auth-logs.json` / `lab-logs.json` dashboards (the G5 diff, confirmed
+   already absent from `deploy-monitoring-stack.yml` in the current code —
+   applying it to `pve` for the first time). By the time this runs, every
+   other stack is already forwarding to Graylog, so nothing is left depending
+   on the VictoriaLogs sink being removed.
+3. After each stack, confirm rsyslog restarted cleanly (handler fired) and
+   send one smoke log line, confirming it lands in Graylog with correct
+   `source` / `application_name`:
+   ```bash
+   logger -t p4-<stack>-smoke-test "P4_${STACK}_SYSLOG_PROOF"
+   ```
+   then search Graylog for it.
+
+**Validation**
+
+- Every reprovisioned stack's smoke-test / health check still passes.
+- No stack shows a broken rsyslog forward (check for queue/connection errors).
+- Grafana shows no orphaned VictoriaLogs datasource panels.
+- Graylog shows fresh log lines from every reprovisioned stack.
+
+**Minimum gate**
+
+- All production stacks dual-sourced to Graylog only (no VictoriaLogs
+  remaining anywhere on `pve`).
+
+### P4 execution log (2026-07-06)
+
+All 9 stacks reprovisioned in the corrected order (`monitoring-stack` last),
+all succeeded, no failures. API-level validation (not just browser/"looked
+fine" checks):
+
+- Graylog search API (`POST /api/views/search/messages`, `range=900`) queried
+  for `source:<hostname>` across all 9 stacks — all 9 returned real, recent,
+  correctly-attributed log lines (e.g. `apt-cacher-stack` →
+  `source=apt-cacher-stack`, `application_name=systemd`/`systemd-logind`).
+  Note: this Graylog version rejects bare `*`/`*:*` match-all query strings
+  (`400: not allowed as first character in WildcardQuery` / `Unrecognized
+  query type: MatchAllDocsQuery`) — query by a specific `source:` value
+  instead.
+- VictoriaMetrics `/api/v1/targets?state=active` — every job 100% up
+  (`node_exporter` 11/11 including the new `graylog-stack`), and the
+  `victorialogs` scrape job is confirmed absent from the live target list.
+
+**Found and fixed: two latent stale-provisioning bugs**, both pre-existing
+(not introduced by this rollout) and only surfaced now because this was the
+first time the G5 diff was ever applied to `pve`:
+
+1. **Grafana datasources** — `/api/datasources` showed a `VictoriaLogs`
+   datasource *and* an even older `Loki` datasource (dead since Phase 7)
+   still registered. Cause: Grafana's file-based datasource provisioning is
+   additive-only — removing a block from `datasources.yml` doesn't delete it
+   from Grafana's persisted DB. Fixed by direct API deletion (`DELETE
+   /api/datasources/uid/<uid>` for both `P8E80F9AEF21F6940` (Loki) and
+   `VictoriaLogs`) since nothing references either anymore. Confirmed clean
+   afterward: only `Harbor Findings` and `VictoriaMetrics` remain.
+2. **Grafana dashboards** — `Auth Logs` and `Lab Logs` were still registered
+   despite their JSON files having been deleted from the repo back in G5.
+   Root cause: `deploy-monitoring-stack.yml`'s dashboard-copy task
+   (`with_fileglob` over the repo's `dashboards/*.json`) only ever adds/updates
+   files — it never removes destination files whose source was deleted, so
+   the stale JSON files were still sitting on the LXC's disk. Grafana's own
+   dashboard provider (`disableDeletion: false`) would have pruned them
+   correctly if the files were actually gone, but only reconciles deletions
+   at Grafana process start, not on its periodic re-scan — so simply fixing
+   the file sync wasn't enough without also restarting Grafana.
+   Direct API deletion doesn't work either: Grafana refuses
+   (`"provisioned dashboard cannot be deleted"`, 400) for any
+   provisioner-managed dashboard.
+   **Fix, applied to `deploy-monitoring-stack.yml`:**
+   - Added a "Clear stale Grafana dashboard JSON files" task
+     (`state: absent` then `state: directory`) immediately before the copy
+     task, so the destination directory is always wiped and rebuilt from
+     the current repo contents on every deploy, instead of only ever
+     growing.
+   - Registered the copy task's result and added a "Restart Grafana after
+     dashboard set changed" task (`docker compose restart grafana`, mirroring
+     the existing Harbor-findings-exporter restart-on-change pattern) gated
+     on that registration's `.changed`. Because the directory is wiped
+     unconditionally first, the copy task's changed-status reliably reflects
+     whether the current dashboard set differs from Grafana's last load —
+     this fires on every future dashboard addition, edit, or removal, not
+     just this one-time cleanup.
+   - Required two reprovisions of `monitoring-stack` to land this: the first
+     applied the file-sync fix (directory correctly cleared on disk) but
+     Grafana still showed the stale dashboards since nothing had restarted
+     it yet; the second (after adding the restart task) confirmed both
+     dashboards gone via `/api/search`, leaving exactly the 8 dashboards
+     `design.md` documents (CoreDNS, Docker Containers, 3× Harbor, Lab
+     Overview, Node Detail, Traefik Ingress).
+   - `--syntax-check` passed both times before each reprovision.
+
+**Both fixes verified via live API queries, not visual inspection alone.**
+Final state: `/api/datasources` → 2 entries (Harbor Findings,
+VictoriaMetrics); `/api/search` → 8 dashboards, none referencing a removed
+datasource.
+
+---
+
+## Sprint P5 — Remote Syslog Cutover: Proxmox Host, MikroTik, NAS
+
+**Status:** handed off to the operator (2026-07-06) — the operator is running
+this sprint directly (Proxmox host playbook fix/run, MikroTik RouterOS CLI,
+NAS UI) rather than through the agent session. Steps below are left as the
+reference checklist; not yet re-verified after hand-off.
+
+**Goal:** Repoint the three non-Ansible-managed / host-level syslog sources
+at production Graylog — the production equivalent of pve-test-vm G4.
+
+**Implementation tasks**
+
+1. Fix the hardcoded host in
+   `ansible/00-initial-setup/configure-proxmox-syslog.yml` (currently
+   `hosts: pve-test-vm.gibbsgreatly.xyz`) — parameterize it (e.g.
+   `hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"`) so
+   it can be aimed at either environment via `--limit` / `-e`, rather than
+   duplicating the playbook.
+2. Run it against production:
+   ```bash
+   PVE_ENV=pve ./with-secrets-prod ansible-playbook \
+     -i ansible/inventory/production.yml \
+     ansible/00-initial-setup/configure-proxmox-syslog.yml \
+     --limit pve.gibbsgreatly.xyz
+   ```
+3. **Manual action #4**: on the physical MikroTik, repoint
+   `/system logging action set [find name=remote] remote=<production LAB_IP_GRAYLOG>`
+   and confirm `remote-log-format=bsd-syslog` with ISO 8601 timestamps (same
+   fix as pve-test-vm G4 — without it, MikroTik logs arrive fragmented across
+   two source identities instead of a single `hAP`-style source).
+4. **Manual action #5**: on the NAS's syslog settings UI, repoint its remote
+   syslog target to the production Graylog IP, port 514.
+5. Validate:
+   ```bash
+   # On the Proxmox host
+   logger -t ansible-proxmox-syslog-test 'P5_PVE_SYSLOG_PROOF'
+   ```
+   Then in Graylog: `source:pve AND application_name:ansible-proxmox-syslog-test`
+   should return the probe. Confirm real MikroTik and NAS traffic is also
+   arriving and searchable by `source`.
+
+**Validation**
+
+- Same checklist as pve-test-vm G4, run against production identities/IPs.
+
+**Minimum gate**
+
+- Proxmox host, MikroTik, and NAS logs are all visible and attributable in
+  production Graylog.
+
+---
+
+## Sprint P6 — Decommission Old Path, Cleanup, Promote to `main`
+
+**Goal:** Close out the cutover.
+
+**Implementation tasks**
+
+1. Confirm no operator workflow still depends on Grafana log panels or
+   VictoriaLogs anywhere in production.
+2. Delete the now-permanently-dead scaffold branch in
+   `deploy-graylog-stack.yml` (the `when: not (graylog_deploy_runtime | bool)`
+   tasks deferred from P1), since every environment now always runs the real
+   runtime.
+3. Update `terraform/lxc/stacks/graylog-stack/STACK_CONTRACT.md` — it still
+   describes the stack as an unpublished "scaffold," which has been stale
+   since G2. Bring it in line with the real, running contract (published
+   route, LDAP auth, syslog inputs).
+4. Update `docs/monitoring-stack/design.md` "Current State" and "Remaining
+   Work" to reflect `pve` completion.
+5. Run the standard smoke test (Grafana + VictoriaMetrics + Graylog `ALIVE`).
+6. PR `stable` → `main` per the branch model, once the incremental deploy and
+   smoke test have passed. Note: this merge will also finally carry forward
+   the already-live Technitium DNS cutover documentation that has been
+   sitting on `stable` unmerged since 2026-07-04 — call this out in the PR
+   description since the *infrastructure* change predates the *merge*.
+
+**Validation**
+
+- Full smoke test passes; no VictoriaLogs references remain in any compose
+  or health check on `pve`.
+
+**Minimum gate**
+
+- `main` reflects the deployed, validated production state: Graylog is the
+  only log workflow, metrics are unaffected, and the branch history matches
+  reality.

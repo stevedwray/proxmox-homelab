@@ -328,6 +328,15 @@
               options:
                 path: /etc/grafana/dashboards
 
+    - name: Clear stale Grafana dashboard JSON files
+      ansible.builtin.file:
+        path: "{{ monitoring_compose_dir }}/grafana/dashboards"
+        state: "{{ item }}"
+        mode: "0750"
+      loop:
+        - absent
+        - directory
+
     - name: Copy Grafana dashboard JSON files
       ansible.builtin.copy:
         src: "{{ item }}"
@@ -335,6 +344,7 @@
         mode: "0640"
       with_fileglob:
         - "{{ playbook_dir }}/../../stacks/monitoring-stack/dashboards/*.json"
+      register: grafana_dashboards_copied
 
     - name: Copy Harbor findings exporter script
       ansible.builtin.copy:
@@ -549,6 +559,21 @@
       when:
         - not ansible_check_mode
         - harbor_findings_exporter_script.changed or monitoring_compose_definition.changed
+
+    - name: Restart Grafana after dashboard set changed
+      ansible.builtin.command:
+        cmd: docker compose -f "{{ monitoring_compose_dir }}/docker-compose.yml" restart grafana
+      when:
+        - not ansible_check_mode
+        - grafana_dashboards_copied.changed
+      # Grafana's file-based dashboard provisioner (disableDeletion: false) only
+      # reconciles removed dashboards against its DB on process start, not on its
+      # periodic re-scan — without this restart a dashboard whose JSON file was
+      # removed keeps showing in Grafana indefinitely, still pointing at a
+      # datasource that may no longer exist. The dashboards directory is wiped
+      # and recreated above on every run, so this fires whenever the current
+      # dashboard set differs from what Grafana last loaded (including the
+      # common case of a dashboard file being deleted).
       changed_when: true
 
     - name: Wait for Grafana health endpoint

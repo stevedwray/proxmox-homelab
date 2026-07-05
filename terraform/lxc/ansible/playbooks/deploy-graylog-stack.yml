@@ -63,6 +63,7 @@
     graylog_compose_dir: /opt/graylog-stack
     graylog_datanode_config_dir: /opt/graylog-stack/datanode-config
     graylog_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    graylog_lab_fqdn_graylog: "{{ lookup('env', 'LAB_FQDN_GRAYLOG') | default('graylog.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
     graylog_cadvisor_image: "{{ graylog_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
     graylog_deploy_runtime: "{{ lookup('env', 'GRAYLOG_DEPLOY_RUNTIME') | default(false) }}"
     graylog_admin_password: "{{ lookup('env', 'GRAYLOG_ROOT_PASSWORD') | mandatory('GRAYLOG_ROOT_PASSWORD env var is required') }}"
@@ -128,7 +129,7 @@
           GRAYLOG_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
           GRAYLOG_DATANODE_PASSWORD_SECRET={{ lookup('env', 'GRAYLOG_PASSWORD_SECRET') | mandatory }}
           GRAYLOG_ROOT_PASSWORD_SHA2={{ lookup('env', 'GRAYLOG_ROOT_PASSWORD_SHA2') | mandatory }}
-          GRAYLOG_HTTP_EXTERNAL_URI=https://{{ lookup('env', 'LAB_FQDN_GRAYLOG') }}/
+          GRAYLOG_HTTP_EXTERNAL_URI=https://{{ graylog_lab_fqdn_graylog }}/
           GRAYLOG_MONGODB_URI=mongodb://mongodb:27017/graylog
           GRAYLOG_DATANODE_MONGODB_URI=mongodb://mongodb:27017/graylog
           GRAYLOG_HTTP_BIND_ADDRESS=0.0.0.0:9000
