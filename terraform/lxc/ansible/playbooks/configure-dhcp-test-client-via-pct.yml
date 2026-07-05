@@ -1,0 +1,133 @@
+---
+# Flip the disposable Stage A DHCP client to DHCP using pct exec on the
+# Proxmox host. This avoids requiring routed SSH reachability into the
+# throwaway VLAN before DHCP behavior has been proven.
+- name: Flip disposable DHCP test client to DHCP via pct exec
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    dhcp_test_target_host: "{{ dhcp_test_target_host | default('dhcp-test-client-01') }}"
+    dhcp_test_target_vars: "{{ hostvars[dhcp_test_target_host] }}"
+    dhcp_test_pve_host: "{{ dhcp_test_target_vars.pve_host }}"
+    dhcp_test_vmid: "{{ dhcp_test_target_vars.vmid }}"
+    dhcp_test_ssh_key: "{{ dhcp_test_target_vars.ansible_ssh_private_key_file }}"
+    dhcp_test_interface: eth0
+    dhcp_test_interfaces_path: /etc/network/interfaces
+    dhcp_test_interfaces_backup: /etc/network/interfaces.stage-a-static-backup
+
+  tasks:
+    - name: Assert inventory exposes the target VMID and Proxmox host
+      ansible.builtin.assert:
+        that:
+          - dhcp_test_vmid is defined
+          - dhcp_test_pve_host is defined
+          - dhcp_test_pve_host | string | length > 0
+        fail_msg: >-
+          Inventory for {{ dhcp_test_target_host }} is missing vmid and/or
+          pve_host. Regenerate the stack inventory before running this playbook.
+
+    - name: Assert guest uses /etc/network/interfaces
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- test -f {{ dhcp_test_interfaces_path }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Back up initial static network config if not already backed up
+      ansible.builtin.command:
+        cmd: >-
+          pct exec {{ dhcp_test_vmid }} -- cp -n
+          {{ dhcp_test_interfaces_path }}
+          {{ dhcp_test_interfaces_backup }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+
+    - name: Replace guest network config with DHCP
+      ansible.builtin.shell: |
+        pct exec {{ dhcp_test_vmid }} -- bash -lc '
+          cat > {{ dhcp_test_interfaces_path }} <<'"'"'EOF'"'"'
+        auto lo
+        iface lo inet loopback
+
+        auto {{ dhcp_test_interface }}
+        iface {{ dhcp_test_interface }} inet dhcp
+        EOF
+        '
+      args:
+        executable: /bin/bash
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: true
+
+    - name: Read current Proxmox-level container config
+      ansible.builtin.command:
+        cmd: pct config {{ dhcp_test_vmid }}
+      register: dhcp_test_pct_config
+      changed_when: false
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+    # Proxmox itself re-templates /etc/network/interfaces from net0's `ip=`/`gw=`
+    # fields on every container start (this happens host-side, before the
+    # guest's own init even runs) whenever `ip=` is a static address rather
+    # than the literal value `dhcp` -- independent of the `host-managed` flag.
+    # Without this step, `pct reboot` below silently reverts the in-guest edit
+    # above back to static on every restart.
+    - name: Compute DHCP-mode net0 line (drop static gw=, set ip=dhcp)
+      ansible.builtin.set_fact:
+        dhcp_test_net0_dhcp: >-
+          {{ (dhcp_test_pct_config.stdout_lines
+              | select('match', '^net0:')
+              | first)[6:]
+             | regex_replace(',?gw=[^,]+', '')
+             | regex_replace('ip=[^,]+', 'ip=dhcp') }}
+
+    - name: Point the guest's Proxmox-level net0 config at DHCP
+      ansible.builtin.command:
+        cmd: pct set {{ dhcp_test_vmid }} -net0 {{ dhcp_test_net0_dhcp }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: >-
+        dhcp_test_net0_dhcp != ((dhcp_test_pct_config.stdout_lines
+          | select('match', '^net0:') | first)[6:])
+
+    - name: Reboot guest to apply DHCP config
+      ansible.builtin.command:
+        cmd: pct reboot {{ dhcp_test_vmid }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: true
+
+    - name: Wait for guest to return after reboot
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- true
+      register: dhcp_test_reboot_probe
+      retries: 30
+      delay: 5
+      until: dhcp_test_reboot_probe.rc == 0
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false

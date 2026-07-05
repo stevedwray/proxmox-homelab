@@ -1,0 +1,323 @@
+# DHCP Refactor — Decisions
+
+Durable design decisions for the MikroTik → Technitium DHCP migration, in the
+format used by [docs/dns-refactor/decisions.md](../dns-refactor/decisions.md):
+one `## Decision N: Title` per settled choice, with context and the actual
+decision. Add entries here as Phase 1 (see [plan.md](./plan.md)) resolves each
+open question — do not record something here until it's actually decided.
+
+## Decision 1: IPv4 model is relay-only, not direct-broadcast
+
+Context: Technitium's DHCP server needs a decision on how it receives client
+DHCP traffic. `technitium-stack` already exists as a Docker container on
+`mgmt_seg` (`192.168.20.x`), a routed, statically-addressed platform VLAN —
+it is not on `bridgeLocal` or any future client VLAN's L2 segment. Native
+DHCP discovery relies on L2 broadcast, which does not cross VLANs/routed
+segments. Upstream Technitium discussion confirms that receiving broadcast
+DHCP inside Docker requires `network_mode: host` (binds to privileged ports,
+loses container network isolation, can't disambiguate multiple host IPs) or
+a macvlan interface (host can no longer reach the container at all) — both a
+significant deployment-shape departure from every other stack in this repo's
+`docker_base`/platform-tier pattern.
+
+Decision: MikroTik remains the on-segment DHCP relay agent for every client
+VLAN (`bridgeLocal` today, future WiFi/IoT VLANs later); it forwards
+(unicasts, via `giaddr`) DHCP requests to Technitium's existing stable
+`mgmt_seg` IP. Technitium never needs a presence on the client L2 segments
+itself, and its container keeps its current bridge networking — no macvlan,
+no host networking mode.
+
+Rationale: this is the same unicast-relay mechanism already proven for the
+DNS FWD-rule cutover (MikroTik forwarding to a single Technitium IP), keeps
+`technitium-stack`'s Docker deployment shape consistent with every other
+platform-tier stack, and matches standard DHCP relay design (relay sets
+`giaddr` to its own on-segment interface address; the server selects the
+scope whose subnet contains that `giaddr` — this is how every DHCP relay
+implementation, including Technitium's, selects the right scope for a
+relayed request). It also means the relay/multi-scope model scales cleanly
+to future client VLANs: one relay rule per VLAN pointed at the same
+Technitium IP, one Technitium scope per VLAN.
+
+### Known cost of this decision, confirmed live (2026-07-05)
+
+Standard Docker bridge networking (kept per this decision) means Technitium
+reports its own **Docker-internal IP** as the DHCP server-identifier
+(confirmed via live testing — see `stage-a-execution.md` Issue 12 — and
+matches a known upstream limitation,
+[DnsServer#1654](https://github.com/TechnitiumSoftware/DnsServer/discussions/1654)),
+not its real, externally-reachable address. Effect: every client's unicast
+RENEW at T1 targets an unreachable address and silently fails, so every
+renewal falls through to broadcast REBIND at T2 instead. This is a real,
+standards-compliant fallback (not a connectivity failure) and was accepted
+as a minor efficiency cost rather than revisiting this decision — fixing it
+properly would mean adopting `network_mode: host` or macvlan, exactly the
+trade-off this decision rejected, for the same reasons.
+
+**Deferred, come back to this (2026-07-05):** there is a third option beyond
+"accept the cost" or "`network_mode: host`/macvlan" that wasn't fully
+explored — running Technitium as a **native service directly on the LXC**
+(no Docker at all), the same way `dns-stack`/CoreDNS runs today (bare
+binary under systemd, per `dns-stack`'s original `STACK_CONTRACT.md`). That
+would remove the Docker bridge/NAT layer entirely, so Technitium's DHCP
+server would see and report the LXC's own real, externally-reachable IP as
+the server-identifier — closing Issue 12 properly instead of just accepting
+it. This wasn't pursued now because it would revisit Decision 2 (Docker
+Compose deployment shape) for the whole stack, not just the DHCP feature,
+which is a bigger change than this workspace's current scope justifies
+mid-Stage-A. Worth a real look once Stage A/B are otherwise done: does
+Technitium ship a supported native Linux install path (some upstream
+mentions suggest yes, distinct from the Docker image), and would it be
+narrower to run *only* the DHCP capability natively while keeping DNS in
+Docker, versus moving the whole stack off Docker.
+
+### Concrete change inventory (2026-07-05, grounded in live repo/router state)
+
+- **`deploy-technitium-stack.yml`'s Compose template** publishes `53:53/udp`,
+  `53:53/tcp`, `5380:5380/tcp` today — add `67:67/udp` the same way. No
+  `network_mode`/macvlan change needed, confirming the reasoning above.
+  `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s Provides table
+  need a new `dhcp-server` (udp/67) entry alongside the existing
+  `dns-authority`/`dns-authority-udp` entries.
+- **New MikroTik firewall requirement, not previously documented anywhere in
+  this repo:** the live filter-chain scrape
+  (`router/config/current-config.json`) shows the router's `input` chain has
+  explicit per-VLAN allow rules for ICMP/DNS-UDP/DNS-TCP from each SDN VLAN
+  to the router itself, ending in a catch-all `input drop`. A relayed DHCP
+  reply from Technitium is addressed back to the router's own interface IP
+  (the relay's `giaddr`) — an input-chain packet, sourced from `vlan20-mgmt`,
+  for which no allow rule exists today. Without a new rule mirroring the
+  existing DNS ones (`input accept in=vlan20-mgmt ... allow mgmt_seg DHCP
+  reply UDP to router`), the reply is silently dropped by the catch-all.
+  This is manual RouterOS config, same TM-09 bucket as the DNS FWD rule.
+- **DHCP relay is exclusive with the local DHCP server per interface** —
+  unlike the DNS FWD-rule cutover (which could dual-run CoreDNS and
+  Technitium indefinitely), `bridgeLocal` can't run both `/ip dhcp-server
+  lan` and `/ip dhcp-relay` for the same clients at once. The cutover step
+  itself is: add the `/ip dhcp-relay` entry (`interface=bridgeLocal
+  dhcp-server=<technitium-ip> local-address=192.168.1.1`) and disable (not
+  delete) the `lan` server in the same change. There is no safe parallel-run
+  window on `bridgeLocal` itself — this is why Phase 2's live smoke test
+  should prove the relay mechanism on a disposable scope/segment first.
+- **New provisioning automation needed**: a scope-create + reservation-create
+  pass against Technitium's REST API (exact endpoint shape still to confirm
+  live — Phase 2 task), reusing the query-then-add-if-missing idempotency
+  pattern the DNS zone-bootstrap flow already had to build (dns-refactor
+  "Issues encountered" #6).
+- **Persistent state**: DHCP scope/reservation/lease data will live in the
+  same `technitium-config` Docker volume as DNS zone data — a volume loss or
+  redeploy now risks both, not just DNS. `STACK_CONTRACT.md`'s Persistent
+  State table needs a note to this effect once implementation starts.
+
+## Decision 2: IPv6 (RA / prefix delegation / DHCPv6) stays on MikroTik indefinitely
+
+Context: Technitium does not implement DHCPv6 today — it's an open, unimplemented
+upstream feature request ([DnsServer#265](https://github.com/TechnitiumSoftware/DnsServer/issues/265)),
+tracked by the Technitium team as "planned for a later major release." MikroTik
+today owns the full IPv6 chain on `bridgeLocal`: DHCPv6-PD client on the WAN
+side, prefix delegation into `default-pool`, router advertisement (ND,
+`advertise-dns=yes`), and its own DHCPv6 server (`LANIPv6DHCP`,
+`address-pool=static-only`).
+
+Decision: RouterOS keeps 100% of the IPv6 role — RA, prefix delegation, and
+DHCPv6 — for as long as Technitium lacks DHCPv6 support. This is not a
+temporary bridge step to be revisited soon; it's a hard capability gate.
+Revisit only if/when Technitium ships DHCPv6, and re-run this decision as a
+new one rather than assuming today's rationale still holds.
+
+Rationale: there is no fallback design to evaluate — Technitium literally
+cannot terminate DHCPv6 or act as a PD relay today. Attempting to split RA
+from DHCPv6 (e.g., RouterOS keeps RA, Technitium takes DHCPv6) is also not
+possible without DHCPv6 support to begin with. IPv4 DHCP migration and IPv6
+ownership are therefore fully decoupled: nothing in the IPv4 relay model above
+requires or blocks any IPv6 change.
+
+## Decision 3: First-slice scope — bridgeLocal now, Pi-holes stay the DHCP-assigned resolver, all 5 static leases migrate
+
+Context: three genuine operator judgment calls, not resolved by research —
+migration sequencing relative to future VLAN segmentation, whether
+DHCP-assigned DNS should move off the Pi-holes now that Technitium is a
+capable DNS+DHCP product, and how much of the static reservation set to
+carry into the first migration slice.
+
+Decision:
+- **Migrate `bridgeLocal` IPv4 DHCP to Technitium now**, before any WiFi/IoT
+  VLAN segmentation exists. Future client VLANs add scopes to an
+  already-proven relay setup rather than deferring all Technitium DHCP
+  experience until segmentation is designed.
+- **DHCP-assigned DNS stays pointed at the Pi-holes** (`192.168.1.22` /
+  `192.168.1.23`). Technitium's DNS role remains scoped to
+  `mgmt_seg`/platform-zone authority (per the DNS refactor workspace) and
+  does not take over client-LAN ad-blocking resolution — that would be new,
+  unevaluated scope (blocklist parity, etc.), not a like-for-like swap.
+- **All 5 current static leases migrate in the first slice**: `argon-01`
+  (`192.168.1.22`), `argon-02` (`192.168.1.23`), `garuda` (`192.168.1.104`),
+  `RBR350` (`192.168.1.110`), and the previously-unlabeled `raspberrypi`
+  lease (`192.168.1.28`) — label it during migration rather than deferring
+  it further.
+
+Rationale: validating the relay model against the simplest real topology
+first (one segment, one scope) mirrors how the DNS cutover validated on a
+bootstrap zone before expanding to full parity. Keeping DNS/DHCP concerns
+separate avoids scope creep into ad-blocking-policy territory this workspace
+never set out to touch. Full reservation parity from day one avoids a
+second migration pass over the same static-lease set later.
+
+## Decision 4: Resiliency approach — single Technitium instance, long lease times, MikroTik kept as a break-glass fallback
+
+Context: relay-based DHCP (Decision 1) introduces a dependency that didn't
+exist before — client-LAN DHCP now depends on the Proxmox host and
+`technitium-stack` being up, not just the router. Two ways to address that
+were explored: (a) run a second, independent Technitium instance off
+Proxmox entirely (e.g. on a Raspberry Pi) for redundancy, or (b) accept a
+single instance and shrink the blast radius of an outage instead.
+
+**Technitium clustering research (2026-07-05):** Technitium does have a real
+clustering feature (introduced 2025) — primary/secondary nodes, automatic
+zone sync via catalog zones, single admin console, manual promotion if the
+primary dies. This works for **DNS**. It explicitly does **not** cover the
+DHCP server — Technitium's own documentation lists DHCP clustering as a
+known gap, "planned for a later major release" alongside a bigger DHCP
+rewrite. A documented community workaround (two independent instances with
+identically-configured scopes, using "Offer Delay Time" to make one
+preferred) exists, but has a known defect: the non-preferred instance can't
+write lease-driven DNS updates back to its own zone copy — meaning the one
+DHCP/DNS-consistency benefit motivating a second node breaks specifically in
+the failover scenario redundancy is meant to cover. A second instance
+physically attached to `bridgeLocal`'s L2 (e.g. a Pi) would also avoid
+needing relay for that specific segment — but that benefit doesn't extend
+to any VLAN the second instance isn't also directly attached to, so it
+doesn't generalize as segmentation grows.
+
+Decision:
+- **Single Technitium instance remains the DHCP authority** for all subnets
+  (relayed via MikroTik per Decision 1). A second, Proxmox-independent
+  Technitium node is not being stood up now — DHCP clustering isn't mature
+  enough yet to make that node actually redundant rather than just a second
+  single point of failure with extra moving parts. Revisit if/when
+  Technitium's DHCP clustering ships.
+- **Lease times move substantially longer than today's 30m** — this
+  network's `/24` is nowhere near address exhaustion (13 leases total), so
+  there's no real cost to long leases, and it directly shrinks the window in
+  which a Technitium/Proxmox outage is visible: already-connected clients
+  keep operating on their existing lease and only need the server again at
+  renewal (~50%/87.5% of lease time), not immediately. This does **not**
+  help a brand-new device joining mid-outage — that's an accepted, narrow
+  residual risk, not something being engineered around.
+- **MikroTik's local `lan` DHCP server stays present but disabled
+  indefinitely** (not removed) as a manual break-glass fallback — if
+  Technitium is ever down when a new device genuinely needs an address
+  immediately, it can be re-enabled by hand for the few minutes that takes,
+  rather than being decommissioned once cutover succeeds.
+
+Rationale: a second Technitium node would add real operational cost (a
+second box to patch/back up, likely outside this repo's Ansible/Terraform
+automation entirely, same category as the router itself) without buying
+real DHCP redundancy today, since clustering doesn't cover DHCP yet — it
+would only relocate the single point of failure, not remove it. Long lease
+times are a well-understood, low-cost mitigation that directly targets the
+actual risk (brief Proxmox unavailability) without adding new
+infrastructure. Keeping MikroTik's DHCP server disabled-but-present costs
+nothing and directly covers the one residual scenario (new device,
+mid-outage) that lease time can't.
+
+### Confirmed benefit: reliable forward + reverse DNS from DHCP leases
+
+Verified via Technitium's own documentation, not assumed: when Technitium
+itself is the DHCP server (true here, since MikroTik only relays) and the
+DHCP domain name option plus a reverse zone are configured, Technitium
+automatically creates **both** the forward (A) and reverse (PTR) DNS record
+for a client the moment it's leased an address — natively, with no separate
+script or DDNS bridge needed. (A third-party MikroTik-to-Technitium bridge
+script exists for people trying to bolt this onto an *external* DHCP server,
+but that's not this design, since Technitium is the DHCP server itself.)
+This makes "every device on the network resolves both ways" a real,
+low-effort property of this design, not aspirational.
+
+## Deferred: multi-instance DHCP resiliency (come back to later)
+
+Not a decision — deliberately parked, so the idea and the supporting
+research aren't lost between now and whenever it's revisited. Decision 4
+above settled on a single Technitium instance for the first migration; this
+section documents a real way to do better, found after Decision 4 was
+written, which changes that trade-off if/when a second box is on the table.
+
+**The mechanism (verified against RouterOS's actual behavior, not assumed):**
+`/ip dhcp-relay`'s `dhcp-server` field accepts a comma-separated list of
+addresses, e.g. `dhcp-server=192.168.20.15,192.168.1.50`. RouterOS does
+**not** pick one as primary — it forwards every DHCP request to **all**
+listed servers simultaneously, and the client uses whichever offer arrives
+first. This means two independent Technitium instances (e.g. the existing
+Proxmox one plus a second instance on a Raspberry Pi, physically on
+`bridgeLocal` or elsewhere) can both be relay targets, giving real
+redundancy — if one is down, the other still answers — without needing
+Technitium's own DHCP clustering at all.
+
+To make behavior deterministic (one instance normally preferred, rather than
+a race that could land DNS updates on either instance unpredictably), pair
+this with Technitium's per-scope **"Offer Delay Time"** setting: give the
+preferred instance a short delay (default) and the standby a longer one, so
+the standby only answers when the preferred instance doesn't.
+
+**Why this is deferred rather than adopted now:**
+- The two scopes still don't sync automatically — Technitium's clustering
+  covers DNS zone data, not DHCP scope/reservation config, so both instances'
+  DHCP config would need to be maintained by hand (or a small sync script).
+- The DNS-consistency gap from Decision 4's clustering research still
+  applies here: if the standby instance is also a DNS-cluster secondary,
+  secondaries are read-only followers of the primary's zone data — exactly
+  why a secondary can't write its own DHCP-driven DNS updates into that zone.
+  So in the specific window the standby is the one issuing leases, the
+  "device joins → DNS just works" property degrades until the preferred
+  instance is back.
+- It's still a second box to patch, back up, and monitor — real ongoing
+  cost, not a one-time setup task.
+
+**Revisit this when:** the single-instance + long-lease-time + break-glass
+MikroTik approach (Decision 4) has been lived with for a while and the
+Proxmox-dependency risk still feels worth addressing, or when Technitium
+ships native DHCP clustering (removing the two caveats above). If revisited,
+this supersedes Decision 4's "single instance" choice — write a new decision
+rather than editing Decision 4 in place.
+
+## Format
+
+```markdown
+## Decision N: Title
+
+Context: why this needed a decision, what constraint or trade-off forced it.
+
+Decision: the actual choice, stated as a fact, not a discussion.
+
+Rationale: why this option over the alternatives considered.
+```
+
+## Pending (tracked in plan.md's Phase 3 stages)
+
+- **DHCP configuration as code** (plan.md Stage B): **partially built and
+  proven (2026-07-05)**, not "not yet built" — `configure-technitium-dhcp-scope-via-api.yml`
+  idempotently creates the scope, forward/reverse zones, and reservation,
+  following the same pattern as DNS's `technitium_generated_zone_src`, and
+  a repeat run correctly reported no changes. Still remaining: fold in the
+  real long-lease-time value (currently uses a short test-only value) and
+  update `STACK_CONTRACT.md`'s Persistent State table — see plan.md Stage B.
+- **Dynamic-lease policy** (plan.md Stage D): `current-state.md` records 13
+  total current leases — 5 static (covered by Decision 3) and **8
+  dynamic**, which this plan hasn't yet addressed. Needs an explicit,
+  reviewed decision on which (if any) of the 8 get promoted to reservations
+  before cutover, and a defined stale-DNS-record cleanup procedure for the
+  rollback case (Technitium may have already registered forward/reverse DNS
+  entries for dynamic clients before a rollback is triggered). Not yet
+  decided — this is a genuine operator call, not something to resolve
+  unilaterally in this doc.
+- Cutover/rollback mechanics for the relay repoint itself (add DHCP relay
+  config item on MikroTik pointed at Technitium vs. disabling the local
+  `lan` server) — now has a concrete stage (plan.md Stage E) with explicit
+  rollback trigger thresholds and a post-rollback cleanup checklist, but the
+  actual packet (`bridgelocal-cutover-packet.md`) isn't written yet — it's
+  a Stage E deliverable, gated on Stages A–D being green.
+- ~~Renewal/rebind behavior across the cutover moment itself~~ — **done.**
+  The simulated-cutover test (plan.md Stage A, `stage-a-execution.md`'s
+  "Stage A's last validation check") rehearsed exactly this: a client with
+  an existing MikroTik-issued lease, after MikroTik is switched to
+  relay-only, gets cleanly `DHCPNAK`'d and immediately re-acquires its
+  correct lease. No hang, no manual intervention required.

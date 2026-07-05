@@ -1,0 +1,195 @@
+---
+# Stage A -- create/update the Technitium DHCP scope + reservation for the
+# isolated throwaway VLAN (test_dhcp_seg, 192.168.90.0/24), via Technitium's
+# REST API. This is the Technitium-side counterpart to
+# configure-dhcp-test-client-via-pct.yml (which flips the disposable client
+# to DHCP) -- until this playbook has run, dhclient on the test client has
+# nothing to negotiate a lease with. See docs/dhcp-refactor/stage-a-execution.md.
+#
+# Idempotency follows the same pattern already proven in
+# deploy-technitium-stack.yml's DNS zone bootstrap: check current state via a
+# `list`/`get` call, then only create/add via a `when:` guard when something
+# is actually missing, rather than re-applying blindly on every run.
+- name: Configure Technitium DHCP scope and reservation for the Stage A throwaway VLAN
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    dhcp_test_target_host: "{{ dhcp_test_target_host | default('dhcp-test-client-01') }}"
+    dhcp_test_target_vars: "{{ hostvars[dhcp_test_target_host] }}"
+    dhcp_test_pve_host: "{{ dhcp_test_target_vars.pve_host }}"
+    dhcp_test_vmid: "{{ dhcp_test_target_vars.vmid }}"
+    dhcp_test_ssh_key: "{{ dhcp_test_target_vars.ansible_ssh_private_key_file }}"
+    dhcp_test_reserved_ip: "{{ dhcp_test_target_vars.ansible_host }}"
+
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | default('192.168.20.115', true) }}"
+    technitium_admin_password: "{{ lookup('env', 'TECHNITIUM_ADMIN_PASSWORD') | mandatory('TECHNITIUM_ADMIN_PASSWORD env var is not set') }}"
+    technitium_api_base: "http://{{ technitium_ip }}:5380/api"  # nosonar: ansible:S5332 -- Technitium admin API, private mgmt_seg only
+
+    dhcp_scope_name: test_dhcp_seg
+    dhcp_scope_subnet_mask: 255.255.255.0
+    dhcp_scope_start: 192.168.90.50
+    dhcp_scope_end: 192.168.90.99
+    dhcp_scope_router: 192.168.90.1
+    dhcp_scope_dns_servers: 192.168.90.1
+    # Deliberately short -- this is the Stage A *test* scope, chosen so the
+    # renew/rebind/outage-recovery checks in plan.md's Stage A validation list
+    # don't require waiting hours. Not a recommendation for the real
+    # bridgeLocal lease time -- that's decisions.md Decision 4 / plan.md
+    # Stage B's separate, deliberately-long value.
+    dhcp_scope_lease_minutes: 10
+    dhcp_scope_domain_name: dhcp-test.test.gibbsgreatly.xyz
+    dhcp_reverse_zone_network: 192.168.90.0/24
+    dhcp_reverse_zone_name: 90.168.192.in-addr.arpa
+
+  tasks:
+    - name: Read the test client's current Proxmox net0 config
+      ansible.builtin.command:
+        cmd: pct config {{ dhcp_test_vmid }}
+      register: dhcp_test_pct_config
+      changed_when: false
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+
+    - name: Extract the test client's MAC address from its net0 line
+      ansible.builtin.set_fact:
+        dhcp_test_mac: >-
+          {{ ((dhcp_test_pct_config.stdout_lines
+              | select('match', '^net0:') | first).split(',')
+              | select('match', '^hwaddr=') | first).split('=')[1] | lower }}
+
+    - name: Log in to Technitium API and obtain session token
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/user/login?user=admin&pass={{ technitium_admin_password | urlencode }}&includeInfo=true"
+        method: GET
+        return_content: true
+      register: technitium_login
+      retries: 10
+      delay: 3
+      until: technitium_login.status == 200
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Extract Technitium API token
+      ansible.builtin.set_fact:
+        technitium_token: "{{ (technitium_login.content | from_json).token }}"
+      no_log: true
+
+    - name: List existing Technitium zones
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_zone_list
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Create the forward test-DHCP zone if missing
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ dhcp_scope_domain_name }}&type=Primary&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: dhcp_scope_domain_name not in ((technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list)
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Create the reverse zone for the throwaway VLAN if missing
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/zones/create?zone={{ dhcp_reverse_zone_network | urlencode }}&type=Primary&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: dhcp_reverse_zone_name not in ((technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list)
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: List existing Technitium DHCP scopes
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/list?token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: technitium_scope_list
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Create the Stage A DHCP scope if missing
+      # leaseTimeDays must be set explicitly to 0 -- Technitium defaults an
+      # unspecified leaseTimeDays to 1 on scope creation, which would make
+      # the real lease time 1 day + leaseTimeMinutes, silently defeating the
+      # short-lease choice above (found by inspecting scopes/get after the
+      # first live run: leaseTimeDays showed 1 even though it was never set).
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/set?name={{ dhcp_scope_name }}&startingAddress={{ dhcp_scope_start }}&endingAddress={{ dhcp_scope_end }}&subnetMask={{ dhcp_scope_subnet_mask }}&leaseTimeDays=0&leaseTimeHours=0&leaseTimeMinutes={{ dhcp_scope_lease_minutes }}&routerAddress={{ dhcp_scope_router }}&dnsServers={{ dhcp_scope_dns_servers }}&domainName={{ dhcp_scope_domain_name }}&dnsUpdates=true&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: dhcp_scope_name not in ((technitium_scope_list.content | from_json).response.scopes | map(attribute='name') | list)
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Read current Stage A scope details (reservations + enabled state)
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/get?name={{ dhcp_scope_name }}&token={{ technitium_token }}"
+        method: GET
+        return_content: true
+      register: dhcp_scope_details
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Add the reserved lease for the test client if missing
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/addReservedLease?name={{ dhcp_scope_name }}&hardwareAddress={{ dhcp_test_mac }}&ipAddress={{ dhcp_test_reserved_ip }}&hostName={{ dhcp_test_target_host }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: >-
+        dhcp_test_mac not in
+        ((dhcp_scope_details.content | from_json).response.reservedLeases | default([])
+          | map(attribute='hardwareAddress') | map('replace', '-', ':') | map('lower') | list)
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Enable the Stage A DHCP scope if not already enabled
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/enable?name={{ dhcp_scope_name }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      when: not ((dhcp_scope_details.content | from_json).response.enabled | default(false))
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true

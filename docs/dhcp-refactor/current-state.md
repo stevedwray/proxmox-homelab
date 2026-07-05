@@ -1,9 +1,10 @@
 # Current State — MikroTik DHCP and IPv6 Baseline
 
 This is the durable baseline the DHCP refactor must account for. It is sourced
-from [router/README.md](../../router/README.md) and
-[router/desired-config.md](../../router/desired-config.md), both refreshed
-against the live hAP ax3 on 2026-07-03.
+from [router/README.md](../../router/README.md),
+[router/desired-config.md](../../router/desired-config.md), and the live REST
+scrape at [router/config/current-config.json](../../router/config/current-config.json),
+all refreshed against the hAP ax3 on 2026-07-03.
 
 ## Summary
 
@@ -26,7 +27,7 @@ against the live hAP ax3 on 2026-07-03.
 | Gateway | `192.168.1.1` |
 | Pool | `192.168.1.100` - `192.168.1.200` |
 | Lease time | `30m` |
-| Static leases | 5 known + 1 unlabeled device noted in router docs |
+| Static leases | 5 total (4 named + 1 previously unlabeled, since identified as `raspberrypi` — see "Live scrape detail" below) |
 
 Known static leases documented in `router/desired-config.md`:
 
@@ -36,7 +37,7 @@ Known static leases documented in `router/desired-config.md`:
 | `argon-02` | `192.168.1.23` | Pi-hole secondary |
 | `garuda` | `192.168.1.104` | workstation |
 | `RBR350` | `192.168.1.110` | network device |
-| unlabeled device | `192.168.1.28` | still needs identification / labeling |
+| `raspberrypi` | `192.168.1.28` | previously unlabeled in router docs; identified via live lease scrape (see "Live scrape detail" below) — still not labeled with a hostname/comment on the router itself |
 
 ## What currently gets DHCP
 
@@ -49,6 +50,35 @@ The current DHCP population is primarily the flat LAN:
 This matches the current operator expectation: most DHCP-managed devices are
 still on the default LAN today, but this is expected to change as WiFi / IoT /
 other client classes move toward their own VLANs.
+
+### Live lease population captured in the 2026-07-03 scrape
+
+Static leases (5):
+
+| Host | Address | Status at scrape |
+|---|---|---|
+| `argon-01` | `192.168.1.22` | `bound` |
+| `argon-02` | `192.168.1.23` | `bound` |
+| `garuda` | `192.168.1.104` | `bound` |
+| `RBR350` | `192.168.1.110` | `waiting` |
+| `raspberrypi` | `192.168.1.28` | `bound` |
+
+Dynamic leases (8):
+
+| Host | Address |
+|---|---|
+| `HarmonyHub` | `192.168.1.106` |
+| `iPhone` | `192.168.1.114` |
+| `Stephen-s-A56` | `192.168.1.108` |
+| `RV30_Max_Plus` | `192.168.1.177` |
+| `BolorErlsiPhone` | `192.168.1.103` |
+| `deb13` | `192.168.1.100` |
+| `LM-GM17D7CY` | `192.168.1.102` |
+| `Compute` | `192.168.1.101` |
+
+Practical implication: Stage D's "dynamic-lease policy" work is not abstract;
+it is specifically reviewing these 8 devices to decide whether any should be
+promoted into the reservation set before the real cutover.
 
 ## SDN VLANs and the non-DHCP platform
 
@@ -110,3 +140,50 @@ Open uncertainties include:
   start rather than retrofitted after segmentation.
 - MikroTik may remain in the path as a relay and/or as the IPv6 control point
   even if Technitium becomes the main IPv4 DHCP server.
+
+## Confirmed Technitium DHCP capability (2026-07-05 research)
+
+Recorded in full, with rationale, in [decisions.md](./decisions.md) (Decisions
+1–2). Summary of the facts that settled those decisions:
+
+- **No DHCPv6 support in Technitium today.** Open upstream feature request
+  ([DnsServer#265](https://github.com/TechnitiumSoftware/DnsServer/issues/265)),
+  "planned for a later major release." This removes any ambiguity about
+  IPv6 scope for this workspace: RouterOS keeps 100% of RA/PD/DHCPv6 for as
+  long as this holds.
+- **IPv4 DHCP relay is supported and is the standard mechanism** for serving
+  multiple networks from one Technitium instance — scopes are matched to a
+  relayed request by the relay's `giaddr`, the same standard mechanism every
+  DHCP relay implementation uses. This fits `technitium-stack`'s existing
+  placement on `mgmt_seg` (routed, not on any client L2 segment).
+- **Direct (non-relayed) broadcast DHCP from the existing container is not a
+  good fit.** Technitium's Docker image needs `network_mode: host` or a
+  macvlan interface to receive L2 broadcast traffic directly, both of which
+  are a deployment-shape departure from `technitium-stack`'s current bridge
+  networking and every other platform-tier stack in this repo. Relay avoids
+  that entirely.
+- **Reservations/static leases are supported per-scope via the REST API**;
+  no built-in bulk MikroTik-lease import tool exists upstream, but
+  third-party scripts already do CSV-based reservation import against the
+  API, confirming the API shape is workable for a migration script.
+
+## Live scrape detail not previously captured
+
+From `router/config/current-config.json` (scraped 2026-07-03, still the
+current baseline as of this review):
+
+- The `lan` DHCP network object hands out DNS via its `dns-server` field
+  (`192.168.1.22`, the primary Pi-hole) — **not** via a generic
+  `dhcp-option` entry; the network's `dhcp-option` field is empty. This
+  question is now settled, not open: decisions.md's Decision 3 keeps
+  DHCP-assigned DNS pointed at the Pi-holes rather than switching it to
+  Technitium — these are functionally different resolvers today, not
+  interchangeable, and this doc previously (incorrectly) described that
+  choice as still pending.
+- `dynamic-lease-identifiers: client-mac,client-id` is set on the `lan`
+  server — relevant if Technitium's dynamic lease matching needs an
+  equivalent setting to avoid duplicate leases for the same client.
+- Lease data confirms the "unlabeled device" from `desired-config.md` is
+  reachable and fingerprints as `host-name: raspberrypi` (`192.168.1.28`,
+  MAC `88:A2:9E:57:E6:24`) — still not identified/labeled on the router
+  itself, but no longer a total unknown.

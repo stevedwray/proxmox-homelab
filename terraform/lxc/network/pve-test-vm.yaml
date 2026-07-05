@@ -42,6 +42,35 @@ attachments:
     firewall: true
 
   # -------------------------------------------------------------------------
+  # test_dhcp_seg — Throwaway DHCP mechanism-test zone (VLAN 90, 192.168.90.0/24)
+  #
+  # Purpose: Isolated Stage A validation zone for the DHCP refactor workspace.
+  # This exists only in pve-test-vm, is not mirrored to pve, and is intended
+  # for one disposable client plus MikroTik relay -> Technitium DHCP testing.
+  # Gateway: MikroTik VLAN 90 interface (192.168.90.1) — manual TM-09 setup.
+  # Container pattern: temporary client boots with a static IP first so the
+  # current Terraform/LXC pipeline can provision it deterministically, then the
+  # guest interface is flipped to DHCP in-guest before the real Stage A tests.
+  # -------------------------------------------------------------------------
+  test_dhcp_seg:
+    description: Throwaway DHCP mechanism-test zone for docs/dhcp-refactor Stage A
+    type: sdn_vnet
+    bridge: tvdhcp
+    firewall: false
+    sdn:
+      zone: tvdhcp
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvdhcp
+      vlan_tag: 90
+      alias: pve-test-vm DHCP mechanism-test segment
+      subnet: "192.168.90.0/24"
+      gateway: "192.168.90.1"
+      snat: false
+
+  # -------------------------------------------------------------------------
   # infra_seg — Infrastructure artifact services (VLAN 40, 192.168.40.0/24)
   #
   # Purpose: Registry, artifact cache, and IPAM. Deployed early in the build
@@ -145,6 +174,11 @@ attachments:
       snat: false
 
 zones:
+  test_dhcp_seg:
+    description: Throwaway DHCP mechanism-test zone for the Technitium relay validation
+    attachment: test_dhcp_seg
+    containers:
+      - "dhcp-test-client-01 (planned VMID 138) — 192.168.90.61 initial static boot, then flipped to DHCP in-guest"
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
     attachment: infra_seg

@@ -122,6 +122,7 @@
                 - "53:53/udp"
                 - "53:53/tcp"
                 - "5380:5380/tcp"
+                - "67:67/udp"
               volumes:
                 - technitium-config:/etc/dns
                 - ./certs/combined-ca.crt:/etc/ssl/certs/combined-ca.crt:ro
