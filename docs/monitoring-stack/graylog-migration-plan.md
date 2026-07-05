@@ -1975,6 +1975,23 @@ at production Graylog — the production equivalent of pve-test-vm G4.
 - Proxmox host, MikroTik, and NAS logs are all visible and attributable in
   production Graylog.
 
+### P5 progress (2026-07-06)
+
+- ✅ **Proxmox host — done and verified.** Operator ran the (now
+  parameterized) playbook against `pve` directly. Verified via live Graylog
+  search API, not just the clean `PLAY RECAP`:
+  ```
+  source=pve, application_name=ansible-proxmox-syslog-test
+  message="G4_PVE_SYSLOG_PROOF host=pve ts=2026-07-05T22:43:27Z"
+  ```
+  Note: the probe message is hardcoded inside the playbook itself as
+  `G4_PVE_SYSLOG_PROOF` — a stale label from when this playbook was first
+  written for the pve-test-vm G4 sprint. Cosmetic only (the task itself is
+  environment-neutral via `ansible_facts["hostname"]`); left as-is pending
+  operator preference.
+- ⏳ **MikroTik** — not yet repointed at production Graylog (manual action #4).
+- ⏳ **NAS** — not yet repointed at production Graylog (manual action #5).
+
 ---
 
 ## Sprint P6 — Decommission Old Path, Cleanup, Promote to `main`
