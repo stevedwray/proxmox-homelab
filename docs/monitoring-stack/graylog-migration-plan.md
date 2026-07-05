@@ -1933,17 +1933,21 @@ at production Graylog — the production equivalent of pve-test-vm G4.
 
 **Implementation tasks**
 
-1. Fix the hardcoded host in
-   `ansible/00-initial-setup/configure-proxmox-syslog.yml` (currently
-   `hosts: pve-test-vm.gibbsgreatly.xyz`) — parameterize it (e.g.
-   `hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"`) so
-   it can be aimed at either environment via `--limit` / `-e`, rather than
-   duplicating the playbook.
+1. ✅ **Done (2026-07-06).** Fixed the hardcoded host in
+   `ansible/00-initial-setup/configure-proxmox-syslog.yml`:
+   `hosts: pve-test-vm.gibbsgreatly.xyz` →
+   `hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"`.
+   Verified with `--list-hosts` against both inventories: default (no
+   `target_host`) still resolves `pve-test-vm.gibbsgreatly.xyz` against
+   `ansible/inventory/dev.yml`; `-e target_host=pve.gibbsgreatly.xyz` resolves
+   `pve.gibbsgreatly.xyz` against `ansible/inventory/production.yml`.
+   `--syntax-check` passed against both inventories.
 2. Run it against production:
    ```bash
    PVE_ENV=pve ./with-secrets-prod ansible-playbook \
      -i ansible/inventory/production.yml \
      ansible/00-initial-setup/configure-proxmox-syslog.yml \
+     -e target_host=pve.gibbsgreatly.xyz \
      --limit pve.gibbsgreatly.xyz
    ```
 3. **Manual action #4**: on the physical MikroTik, repoint
