@@ -1452,12 +1452,13 @@ VictoriaLogs-only documentation/tooling cleanup is folded into Sprint P6.
 
 # Part 2 — Production Rollout on `pve`
 
-**Status as of 2026-07-06:** Sprints P0–P4 complete and verified on `pve`.
+**Status as of 2026-07-06:** Sprints P0–P5 complete and verified on `pve`.
 `graylog-stack` is live, publicly reachable, LDAP-SSO'd, and is now the sole
 log sink for every managed stack; VictoriaLogs and its Grafana artifacts are
-fully removed from production. Sprint P5 (remote syslog: Proxmox host,
-MikroTik, NAS) has been handed off to the operator to run directly. Sprint P6
-(cleanup + `stable`→`main` promotion) is not yet started. (Note: the *DNS*
+fully removed from production. Remote syslog (Proxmox host, MikroTik, NAS,
+plus Omada Controller as a bonus fourth source) is confirmed flowing and
+correctly attributed. Sprint P6 (cleanup + `stable`→`main` promotion) is not
+yet started. (Note: the *DNS*
 refactor — Technitium replacing CoreDNS as the live resolver — already went
 to production on 2026-07-04, independently of this plan; see
 [dns-refactor/current-state.md](../dns-refactor/current-state.md). That
@@ -1501,8 +1502,8 @@ repo entirely. Everything else in Sprints P0–P6 can run through
 | 1 | Generate and SOPS-encrypt new **production** Graylog secrets into `terraform/secrets.pve.enc.yaml` (`GRAYLOG_PASSWORD_SECRET`, `GRAYLOG_ROOT_PASSWORD_SHA2`, `GRAYLOG_ROOT_PASSWORD`) | P0 | Production secret material — generate/encrypt yourself, or explicitly supervise the SOPS edit; agents should not be given standing write access to SOPS-encrypted files. Must be **different values** from the dev/test secrets, not copied. |
 | 2 | Pick the actual free `mgmt_seg` IP for `LAB_IP_GRAYLOG` in `.env.pve` | P0 | `.env.pve` is access-controlled outside normal read tooling; you need to check current allocations and pick the next free address yourself (or explicitly hand it over). |
 | 3 | Approve each mutating step (Preflight Summary → say "Proceed" → `export TASK_APPROVAL=...`) | P2, P3, P4, P5 | Standard per-task production approval per `CLAUDE.md` — no standing approval. |
-| 4 | Repoint the physical **MikroTik** router's `remote` syslog action from the pve-test Graylog IP to the new production `LAB_IP_GRAYLOG`, and set `remote-log-format=bsd-syslog` with ISO 8601 timestamps | P5 | No MikroTik IaC exists (tracked separately as TM-09); this is a live RouterOS CLI change on the one physical router shared by both environments. |
-| 5 | Repoint the physical **NAS**'s syslog forwarding target (its own settings UI) to the new production Graylog IP | P5 | NAS has no Ansible/Terraform management; UI-only device config. |
+| 4 | ✅ Done. Repointed the physical **MikroTik** router's `remote` syslog action to production `LAB_IP_GRAYLOG` | P5 | No MikroTik IaC exists (tracked separately as TM-09); this was a live RouterOS CLI change on the one physical router shared by both environments. |
+| 5 | ✅ Done. Repointed the physical **NAS**'s syslog forwarding target to production Graylog | P5 | NAS has no Ansible/Terraform management; UI-only device config. |
 | 6 | Do the actual browser login test (Authentik credentials → Graylog UI) | P3 | Needs your real credentials; not something a session can validate end-to-end. |
 
 ## Sprint P0 — Production Secrets & Config Scaffolding
@@ -1975,7 +1976,7 @@ at production Graylog — the production equivalent of pve-test-vm G4.
 - Proxmox host, MikroTik, and NAS logs are all visible and attributable in
   production Graylog.
 
-### P5 progress (2026-07-06)
+### P5 progress (2026-07-06) — complete, plus one bonus source
 
 - ✅ **Proxmox host — done and verified.** Operator ran the (now
   parameterized) playbook against `pve` directly. Verified via live Graylog
@@ -1989,8 +1990,46 @@ at production Graylog — the production equivalent of pve-test-vm G4.
   written for the pve-test-vm G4 sprint. Cosmetic only (the task itself is
   environment-neutral via `ansible_facts["hostname"]`); left as-is pending
   operator preference.
-- ⏳ **MikroTik** — not yet repointed at production Graylog (manual action #4).
-- ⏳ **NAS** — not yet repointed at production Graylog (manual action #5).
+- ✅ **MikroTik — done and verified** (operator-configured RouterOS remote
+  logging target). Confirmed via live search: `source=hAP`, 15 messages in a
+  1-hour sample window.
+- ✅ **NAS — done and verified** (operator-configured ASUSTOR remote syslog
+  target). Confirmed via live search: `source=nas`,
+  `message="Test log - this log is send from ASUSTOR NAS"`.
+- ✅ **Bonus: Omada Controller — done and verified**, not originally in this
+  plan's scope. Operator also configured the Omada Controller's remote
+  syslog to production Graylog. Unlike MikroTik/NAS/Proxmox, Omada embeds its
+  identity in the message *body* (`"Omada Controller_AE80E0-homelab"`) rather
+  than the syslog HOSTNAME field, so it initially arrived as
+  `source=192.168.1.252` (its connecting IP) with no controller-side format
+  setting available to fix it (unlike MikroTik's `remote-log-format`).
+  **Fix:** added a Graylog Pipeline (idempotent, Ansible-tracked in
+  `deploy-graylog-stack.yml`, same post-ALIVE pattern as the syslog input and
+  LDAP auth backend):
+  - Pipeline rule `rewrite-omada-source`: `to_string($message.source) ==
+    "192.168.1.252"` → `set_field("source", "omada")`
+  - Pipeline `source-identity-fixups` (stage 0, `match either`), connected to
+    the `Default Stream` (`000000000000000000000001`)
+  - Both include an `ansible.builtin.assert` on `.json.errors is none` so a
+    GRPL syntax mistake fails the deploy loudly instead of silently creating
+    a broken, inert rule.
+  - API payload shapes were validated against the live instance before
+    encoding into Ansible (create/delete cycle on a `-test`-suffixed rule,
+    removed before writing the real automation) — corrected an early mistake
+    where the real-named objects were briefly created via raw `curl` instead
+    of through the tracked playbook; deleted and recreated via
+    `scripts/provision.sh --stack graylog-stack --target-env pve` for clean
+    provenance.
+  - Verified end-to-end on real traffic (not synthetic): after the operator
+    reconfigured Omada's remote logging, a new message arrived as
+    `source=omada` instead of the raw IP. Pipelines only apply to newly
+    ingested messages, not retroactively — the original pre-fix message
+    (`source=192.168.1.252`, "Site Remote Logging configured successfully")
+    remains in the index as historical evidence of the before-state.
+
+Sprint P5 is now complete — all three planned remote syslog sources
+(Proxmox, MikroTik, NAS) are live and attributable, plus Omada as an
+unplanned fourth source with a proper identity fixup.
 
 ---
 
