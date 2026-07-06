@@ -158,6 +158,35 @@ No other `level:(0 1 2 3)` messages for this source over the reboot window.
 
 ---
 
+### harbor-stack (2026-07-06)
+
+**⚠️ Blind spot, not a break — Harbor's own containers are invisible to
+Graylog.** No `level:(0 1 2 3)` messages, and the *only* `application_name`
+values seen for this source across the whole reboot were system-level
+(`systemd`, `dockerd`, `containerd`, `sshd`, `cron`, `postfix`,
+`rsyslogd`, etc.) plus `docker-cadvisor` and generic `docker-compose`
+lines. **No `docker-harbor-*` entries at all** — core, registry,
+jobservice, portal, database, redis, and trivy are all silent here.
+
+This is a known, pre-existing, *accepted* limitation, not a new regression:
+Harbor's own installer (`/opt/harbor/`) writes its own `docker-compose.yml`
+with per-service `logging:` blocks that override the Docker daemon's global
+syslog default the rest of the stacks rely on (documented back in Phase 7
+research — see `design.md`'s "Harbor special case" notes).
+
+**Practical consequence:** this reboot audit **cannot confirm Harbor's
+actual internal services came back up correctly** — Graylog has no
+visibility into them. Verify Harbor itself via Portainer, `docker ps` on
+the host, or Harbor's own UI/health API, not via this log review.
+
+**Status:** no action needed for the audit itself, but flagging the blind
+spot — a real fix (if ever prioritized) would mean overriding Harbor's
+installer-generated compose to route through the shared logging driver,
+which was previously evaluated and explicitly deferred as not worth the
+complexity/risk of touching installer-managed config.
+
+---
+
 ## Query pattern used
 
 ```
