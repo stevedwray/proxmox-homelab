@@ -334,6 +334,56 @@ bypasses that and confirms the cert itself is valid and current.)
 
 ---
 
+### authentik-stack (2026-07-06)
+
+**✅ Clean boot, functionally verified — Authentik is the SSO backbone and
+hosts the LDAP outpost Graylog's login depends on, so checked closely.**
+
+All 7 containers present (`server`, `worker`, `direct_tls`, `cadvisor`,
+`ldap`, `postgresql`, `redis`). Found a genuine `level=error` on the LDAP
+outpost, but it self-healed within seconds — a startup-ordering race, not a
+real failure:
+
+```
+00:58:13  ldap:    error  "Failed to fetch outpost configuration, retrying in 3 seconds" (503)
+00:58:16  ldap:    error  "Failed to fetch outpost configuration, retrying in 3 seconds" (503)
+00:58:22  ldap:    info   "Outpost mode"
+00:58:23  ldap:    info   "Successfully connected websocket"
+00:58:23  ldap:    info   "Starting LDAP SSL server" listen=0.0.0.0:6636
+00:58:23  ldap:    info   "Starting LDAP server" listen=0.0.0.0:3389
+00:58:23  ldap:    info   "Starting Metrics server" listen=0.0.0.0:9300
+00:58:23  ldap:    info   "Starting authentik outpost" version=2026.2.4
+```
+
+The LDAP outpost container started querying Authentik's core API for its
+config before the core `server` container was actually ready to answer
+(503s), retried every 3s as designed, and succeeded once `server` came up.
+Same pattern, smaller scale, on `server` itself:
+
+```
+00:58:17  server:  warning "failed to get upstream metrics" dial unix /dev/shm/authentik-core.sock: no such file or directory
+00:58:20  server:  info    "Listening at: unix:/dev/shm/authentik-core.sock"
+```
+
+The router process tried to reach gunicorn's metrics socket 3 seconds
+before gunicorn actually started listening on it — same startup-race
+shape, resolved automatically.
+
+Didn't stop at "logs look self-healed" — confirmed the LDAP outpost is
+actually listening post-reboot:
+
+```
+nc -z 192.168.20.10 3389  -> succeeded (LDAP)
+nc -z 192.168.20.10 9300  -> succeeded (metrics)
+```
+
+**Status:** verified healthy, no action needed. Both startup-race warnings
+are normal multi-container simultaneous-boot timing noise, not indicative
+of a problem — worth knowing about so a future reboot showing the *same*
+transient pattern isn't mistaken for a new regression.
+
+---
+
 ## Query pattern used
 
 ```
