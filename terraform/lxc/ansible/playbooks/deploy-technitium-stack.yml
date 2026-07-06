@@ -118,11 +118,19 @@
                 DNS_SERVER_ADMIN_USERNAME: admin
                 DNS_SERVER_PREFER_IPV6: "false"
                 SSL_CERT_FILE: /etc/ssl/certs/combined-ca.crt
-              ports:
-                - "53:53/udp"
-                - "53:53/tcp"
-                - "5380:5380/tcp"
-                - "67:67/udp"
+              # network_mode: host — narrow, documented exception (not the
+              # repo default); see docs/dhcp-refactor/decisions.md Decision 5.
+              # Bridge networking + port publish would otherwise cause
+              # Technitium to report its Docker-internal IP as the DHCP
+              # server-identifier, breaking unicast RENEW.
+              #
+              # NOT YET VALIDATED (2026-07-06 incident): a first deploy
+              # attempt landed on production instead of pve-test-vm due to
+              # a stale, non-environment-scoped inventory.yml — see
+              # docs/dhcp-refactor/decisions.md Decision 5's incident note
+              # and plan.md Stage B0. Do not redeploy this anywhere until
+              # that targeting gap is fixed or independently verified.
+              network_mode: host
               volumes:
                 - technitium-config:/etc/dns
                 - ./certs/combined-ca.crt:/etc/ssl/certs/combined-ca.crt:ro

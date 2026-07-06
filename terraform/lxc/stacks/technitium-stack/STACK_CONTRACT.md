@@ -69,8 +69,9 @@ No secret values are committed here. All sensitive values must come from the env
 | DNS authority (bootstrap zone) | 53 | UDP + TCP | Authoritative for `TECHNITIUM_BOOTSTRAP_ZONE` during early bring-up; the live `LAB_DOMAIN` zone remains on CoreDNS until cutover |
 | DNS recursion | 53 | UDP + TCP | Recursive resolution for external names via upstream forwarder |
 | Web console / REST API | 5380 | TCP | Zone/record management and native OIDC-authenticated admin UI; used by the deploy playbook's zone-bootstrap step and API-driven SSO configuration step. Also routed through Traefik at `technitium.${LAB_DOMAIN}` via `edge.yaml` (`step-ca` certResolver, `auth.mode: oidc` — Technitium's own OIDC login is the gate), internal-`${LAB_DOMAIN}`-only, never the public `gibbsgreatly.xyz` zone. Requires the `edge_seg → mgmt_seg tcp/5380` firewall policy (see `network/<env>.yaml`). |
+| DHCP server | 67 | UDP | Serves relayed DHCP requests for client-LAN scopes (e.g. `bridgeLocal`, throwaway test VLANs) — MikroTik relays via `giaddr`-based scope selection, this stack never sits on a client L2 segment directly. See `docs/dhcp-refactor/`. |
 
-`stack.yaml` service identifiers: `dns-authority` (tcp/53), `dns-authority-udp` (udp/53).
+`stack.yaml` service identifiers: `dns-authority` (tcp/53), `dns-authority-udp` (udp/53), `dhcp-server` (udp/67).
 
 ## Dependencies
 
@@ -128,6 +129,17 @@ No secret values are committed here. All sensitive values must come from the env
   cutover rehearsal in `docs/dns-refactor/plan.md` has passed on
   `pve-test-vm`, and do not mutate the production delegate until the
   manually reviewed cutover packet is approved.
+- This container uses `network_mode: host` in its compose definition —
+  unlike every other Docker-based stack in this repo, which uses bridge
+  networking with explicit port publishing. This is a narrow, documented
+  exception (`docs/dhcp-refactor/decisions.md` Decision 5), not a pattern
+  to copy: it exists solely because Technitium's DHCP server otherwise
+  reports its Docker-internal bridge IP as the DHCP server-identifier,
+  breaking client unicast renewal. Do not revert this to bridge networking
+  without re-checking that consequence, and do not copy `network_mode:
+  host` into other stacks without an equivalent documented justification
+  (see `terraform/lxc/PLATFORM_CONTRACT.md`'s Orchestration boundary
+  section).
 
 ## Playbook
 

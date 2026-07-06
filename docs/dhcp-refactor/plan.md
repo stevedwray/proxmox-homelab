@@ -374,14 +374,30 @@ references any of it, so this is cleanup, not incident recovery.
 
 ### Stage B0 — `network_mode: host` for `technitium-stack` (Decision 5)
 
-**Status: decided (2026-07-07), not yet applied.** See
-[decisions.md](./decisions.md) Decision 5 for the full reasoning: this
-closes Issue 12 (Technitium reporting its Docker-internal IP as the DHCP
-server-identifier, so RENEW at T1 always silently fails) with a narrow,
-single-stack exception rather than dropping Docker for the whole stack.
-Sequenced before Stage B's declarative config work because it changes the
-same compose template Stage B's steps already touch — do this first so
-Stage B isn't built against networking that's about to change.
+**Status: decided (2026-07-07); repo-side change (tasks 1-4) applied and
+committed, but the container-level change (tasks 5-6) is NOT validated —
+see the 2026-07-06 incident in decisions.md Decision 5.** A first live
+attempt accidentally deployed to **production** instead of `pve-test-vm`
+(stale, non-environment-scoped `inventory.yml` — see incident note),
+requiring an emergency revert. Production is back to its correct
+pre-incident state (bridge networking, correct env values, verified via
+live DNS queries and a confirmed working OIDC login). `pve-test-vm`'s real
+Stage A container was never touched by any of this and still runs the old
+`ports:`-based config — **Decision 5 remains completely unvalidated in
+practice.**
+
+**Blocking prerequisite, not previously identified**: before attempting
+tasks 5-6 again, fix or manually work around the inventory-targeting gap
+that caused the incident — `scripts/provision.sh --target-env` does not
+verify the inventory file it uses actually matches the named environment.
+Either give `technitium-stack` a proper
+`terraform/lxc/environments/pve-test-vm/technitium-stack/` Terragrunt
+layout, or manually confirm
+`terraform/lxc/stacks/technitium-stack/inventory.yml`'s `ansible_host`/
+`pve_host` fields say `192.168.20.115`/`pve-test-vm.gibbsgreatly.xyz`
+immediately before running provisioning against it again. This is a
+repo-wide gap, not specific to this stack — worth raising outside this
+workspace too.
 
 Tasks:
 1. `deploy-technitium-stack.yml`'s compose template: replace the `ports:`
@@ -673,7 +689,12 @@ cutover — all confirmed live on `pve-test-vm`'s throwaway VLAN). The next
 task is **Stage B0**: apply Decision 5's `network_mode: host` switch and
 empirically re-confirm it fixes the DHCP server-identifier issue (Issue 12)
 before Stage B's declarative-config work is built against a compose
-template that's about to change. After that, **Stage B**: formalize the
+template that's about to change. **This is currently blocked**: a first
+attempt (2026-07-06) hit a stale-inventory bug and deployed to production
+instead of `pve-test-vm`, requiring an emergency revert (see Decision 5's
+incident note and Stage B0's status above) — fix the inventory-targeting
+gap first, then retry tasks 5-6 against the actual `pve-test-vm` instance.
+After that, **Stage B**: formalize the
 DHCP scope/reservation config as a proper declarative source of truth. A
 working first implementation already exists and is proven —
 `terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml`

@@ -321,6 +321,48 @@ applied):
   host networking doesn't change what's listening on that port or from
   where it's reachable.
 
+### Incident (2026-07-06): first deploy attempt landed on production, not `pve-test-vm`
+
+While attempting to apply this decision to `pve-test-vm` via
+`PVE_ENV=pve-test-vm ./with-secrets scripts/provision.sh --stack
+technitium-stack --target-env pve-test-vm`, the deploy actually landed on
+**production** instead. Root cause: `terraform/lxc/stacks/technitium-stack/`
+has never been migrated to the per-environment Terragrunt layout (no
+`terraform/lxc/environments/pve-test-vm/technitium-stack/` directory
+exists), so `scripts/provision.sh` fell back to the single, non-environment-
+scoped `terraform/lxc/stacks/technitium-stack/inventory.yml` — which still
+held connection details (`ansible_host: 192.168.20.15`,
+`pve_host: pve.gibbsgreatly.xyz`) from whenever Terraform was last applied
+for `pve`. Setting `PVE_ENV=pve-test-vm` correctly selected
+`.env.pve-test-vm`'s variable *values*, but did nothing to correct *which
+host* Ansible actually connected to — **`--target-env` does not verify the
+inventory it's about to use actually matches the named environment.**
+
+Consequence: production's Technitium container was recreated with
+`network_mode: host` (undoing that required a proper revert via
+`./with-secrets-prod`, executed with operator approval), and — separately —
+the same run's env-derived values (`DNS_SERVER_DOMAIN=tech.test.gibbsgreatly.xyz`,
+`.env.pve-test-vm`'s dev `TECHNITIUM_ADMIN_PASSWORD`) got baked into
+production's container definition, which correlates with a subsequent
+production incident: Technitium's Authentik OIDC login broke ("Failed to
+reach SSO provider"). Both were fixed by an explicit, approved
+`./with-secrets-prod` redeploy restoring production's correct environment
+and reverting the network mode change. Zone data was never at risk (it
+lives in the `technitium-config` Docker volume, untouched by either
+redeploy), and `pve-test-vm`'s own Technitium container was **never actually
+touched** by any of this — Stage A's real test instance is unaffected, but
+also means Decision 5 is still **completely unvalidated** in practice.
+
+**Before attempting this again**: either give `technitium-stack` a proper
+`environments/pve-test-vm/technitium-stack/` Terragrunt layout (matching
+whatever other stacks already migrated to that pattern use), or manually
+verify `terraform/lxc/stacks/technitium-stack/inventory.yml`'s
+`ansible_host`/`pve_host` fields match the intended target environment
+immediately before running `scripts/provision.sh` — do not trust
+`--target-env` alone to guarantee this. This is a repo-wide gap (affects
+any stack not yet on the per-environment layout), not specific to
+Technitium or DHCP — worth raising separately from this workspace.
+
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
 Not a decision — deliberately parked, so the idea and the supporting
