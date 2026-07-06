@@ -37,6 +37,48 @@ fail() {
   exit 1
 }
 
+expected_pve_host_for_env() {
+  # SDN-VLAN-attached stacks deploy a genuinely separate instance per
+  # environment (see stack.yaml's `network: zone:`), so their inventory
+  # must point at the matching pve_host. Physical/pve-only stacks (no
+  # `network:` section, e.g. gaming-stack) have no such guarantee and are
+  # deliberately exempt — see assert_inventory_matches_env below.
+  case "${PVE_ENV:-}" in
+    pve) printf 'pve.gibbsgreatly.xyz' ;;
+    pve-test-vm|"") printf 'pve-test-vm.gibbsgreatly.xyz' ;;
+    *) printf '' ;;
+  esac
+}
+
+# Guards against the 2026-07-06 incident class: a stack not yet migrated to
+# the per-environment Terragrunt layout falls back to a single, shared
+# inventory.yml that silently carries whichever environment's connection
+# details Terraform last generated — regardless of the PVE_ENV this run
+# actually intends. See docs/dhcp-refactor/decisions.md Decision 5's
+# incident note for the concrete case this caught in review.
+assert_inventory_matches_env() {
+  local stack="$1"
+  local inventory_file="$2"
+  local stack_yaml="${STACKS_DIR}/${stack}/stack.yaml"
+
+  # Only stacks with an SDN `network:` zone are expected to have a distinct
+  # deployment per environment; physical/pve-only stacks are exempt.
+  [[ -f "$stack_yaml" ]] || return 0
+  grep -q '^network:' "$stack_yaml" || return 0
+
+  local expected_pve_host
+  expected_pve_host="$(expected_pve_host_for_env)"
+  [[ -n "$expected_pve_host" ]] || return 0
+
+  local actual_pve_host
+  actual_pve_host="$(grep -m1 'pve_host:' "$inventory_file" 2>/dev/null | awk '{print $2}')"
+  [[ -n "$actual_pve_host" ]] || return 0
+
+  if [[ "$actual_pve_host" != "$expected_pve_host" ]]; then
+    fail "${stack}: inventory (${inventory_file}) targets pve_host=${actual_pve_host}, but PVE_ENV=${PVE_ENV:-<unset>} expects ${expected_pve_host}. This stack is likely not yet on the per-environment Terragrunt layout (terraform/lxc/environments/<env>/${stack}/) and its shared inventory is stale from a different environment's last terraform apply. Regenerate the correct inventory before provisioning — do not proceed."
+  fi
+}
+
 is_truthy() {
   local value
   value="${1,,}"
@@ -528,6 +570,8 @@ provision_stack() {
     log "SKIP ${stack}: inventory file not found (${inventory_file})"
     return 0
   fi
+
+  assert_inventory_matches_env "$stack" "$inventory_file"
 
   local playbook_name
   playbook_name="$(extract_ansible_playbook "$inventory_file")"

@@ -390,14 +390,24 @@ practice.**
 tasks 5-6 again, fix or manually work around the inventory-targeting gap
 that caused the incident — `scripts/provision.sh --target-env` does not
 verify the inventory file it uses actually matches the named environment.
-Either give `technitium-stack` a proper
+
+**Partial mitigation applied (2026-07-06, same session)**:
+`scripts/provision.sh` now hard-fails in `provision_stack()` if a stack's
+resolved inventory's `pve_host` doesn't match the environment `PVE_ENV`
+expects, for any stack with an SDN `network:` zone in its `stack.yaml`
+(physical/pve-only stacks without one, e.g. `gaming-stack`, are
+deliberately exempt — see `assert_inventory_matches_env` and
+`expected_pve_host_for_env`). This would have caught the 2026-07-06
+incident immediately instead of silently deploying to production. It does
+**not** fix the underlying gap — `technitium-stack`'s inventory is still a
+single shared file that a `pve` Terraform apply can overwrite — it only
+converts a silent misdirect into a loud failure. The real fix is still
+either giving `technitium-stack` a proper
 `terraform/lxc/environments/pve-test-vm/technitium-stack/` Terragrunt
-layout, or manually confirm
-`terraform/lxc/stacks/technitium-stack/inventory.yml`'s `ansible_host`/
-`pve_host` fields say `192.168.20.115`/`pve-test-vm.gibbsgreatly.xyz`
-immediately before running provisioning against it again. This is a
-repo-wide gap, not specific to this stack — worth raising outside this
-workspace too.
+layout (matching `dns-stack`'s pattern) or continuing to rely on this
+guardrail catching future attempts. This gap affects 11 stacks total, not
+just this one — see `docs/dhcp-refactor/decisions.md` Decision 5's
+incident note.
 
 Tasks:
 1. `deploy-technitium-stack.yml`'s compose template: replace the `ports:`
