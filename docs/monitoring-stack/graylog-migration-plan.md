@@ -2264,6 +2264,52 @@ indexing, fresh start completed, docs corrected).
 
 ---
 
+## Post-P7 operational fix — MongoDB healthcheck/log noise (2026-07-06)
+
+**Trigger:** operator observed via "Messages per source" that `graylog`
+itself accounted for 79% of all ingested messages — the platform's own
+MongoDB container churning far more log volume than any monitored source.
+
+**Root cause:** `mongodb` service healthcheck ran every `10s` (a leftover
+from initial bring-up, never tuned down), and each healthcheck connection
+logged its full MongoDB connection lifecycle (accept, client metadata,
+auth-skip notice, first-command, end) with no `--quiet` on the `mongod`
+process itself.
+
+**Fix** (`deploy-graylog-stack.yml`, `mongodb` service):
+- Added `command: ["--quiet"]` to the `mongodb` service.
+- Increased healthcheck `interval` from `10s` to `60s` (every-minute
+  freshness is more than sufficient for a healthcheck).
+
+Deployed via `scripts/provision.sh --stack graylog-stack` on `pve`
+(clean recap, smoke test passed on retry once the container came back up).
+
+**Verification (post-deploy):**
+- Healthcheck-driven connection churn dropped from continuous ~10s-spaced
+  bursts to isolated clusters 2+ minutes apart — a large, clearly
+  measurable reduction in raw event frequency, confirming the interval
+  change is effective.
+- `--quiet` removed the two message types MongoDB documents it as covering
+  (`Connection accepted`, `Connection ended`) — neither appears in any
+  post-fix sample, versus both being present pre-fix.
+- `--quiet` does **not** cover three other per-connection message types
+  that still fire on every healthcheck cycle: `client metadata` (NETWORK),
+  `Connection not authenticating` (ACCESS), `Received first command...`
+  (NETWORK). These are separate log components outside `--quiet`'s
+  documented scope; fully silencing them would require
+  `logComponentVerbosity` component-level tuning (`network`/
+  `accessControl`) rather than the legacy `--quiet` flag.
+- Separately identified that some of the log volume attributed to MongoDB
+  is unrelated internal housekeeping (index builds, ident drops during
+  collection maintenance) — legitimate DB activity, not noise, and out of
+  scope for this fix.
+
+**Outcome:** operator confirmed the frequency reduction alone is
+sufficient for now; the remaining three message types are a known,
+accepted residual and not being pursued further at this time.
+
+---
+
 ## Sprint P6 — Decommission Old Path, Cleanup, Promote to `main`
 
 **Goal:** Close out the cutover.

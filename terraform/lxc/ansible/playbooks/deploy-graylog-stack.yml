@@ -254,12 +254,13 @@
           services:
             mongodb:
               image: {{ graylog_registry_host }}/dockerhub/mongo:{{ graylog_mongodb_image_tag }}
+              command: ["--quiet"]
               volumes:
                 - mongodb_data:/data/db
               restart: unless-stopped
               healthcheck:
                 test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
-                interval: 10s
+                interval: 60s
                 timeout: 5s
                 retries: 5
                 start_period: 30s
