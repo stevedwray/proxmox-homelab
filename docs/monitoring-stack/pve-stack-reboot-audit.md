@@ -187,6 +187,41 @@ complexity/risk of touching installer-managed config.
 
 ---
 
+### portainer-stack (2026-07-06)
+
+**✅ Clean boot — but a good real example of the stderr→level:3 false-positive
+pattern.**
+
+`level:(0 1 2 3)` returned a batch of hits from `docker-cadvisor` and
+`docker-portainer-portainer-1`, which looked alarming until the actual
+message content was read:
+
+- `docker-cadvisor`: "Registration of the crio/mesos/podman container
+  factory failed" — expected; cAdvisor probes for multiple container
+  runtimes on startup and only Docker is actually present here. "Could not
+  configure a source for OOM detection... /dev/kmsg: no such file or
+  directory" — expected unprivileged-LXC limitation (same class as the
+  netlink-buffer/BPF restrictions seen on other stacks); cAdvisor degrades
+  gracefully rather than crashing.
+- `docker-portainer-portainer-1`: every line is genuinely `INF`
+  (informational) per Portainer's own log text — DB load, per-environment
+  post-init migrations, HTTPS/HTTP servers starting on `:9443`/`:9000`,
+  Chisel reverse-tunnel service starting. Nothing wrong.
+
+**Root cause of the false positive:** both cAdvisor and Portainer write
+their *entire* log output to stderr regardless of actual severity, and
+Docker's syslog driver maps stderr→`level:3` (err) unconditionally — this
+is the exact "not perfectly reliable" caveat already documented for the
+stdout→info/stderr→err mapping (see `design.md`'s Phase 7 notes), now
+concretely observed. Where ci-runner-01 was a **false negative** (a real
+failure logged at `level:6`), this is the mirror-image **false positive**
+(routine output logged at `level:3`) — reinforcing the same lesson from
+both directions: read actual message content, don't trust severity alone.
+
+**Status:** verified healthy, no action needed.
+
+---
+
 ## Query pattern used
 
 ```
