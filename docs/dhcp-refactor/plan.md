@@ -374,70 +374,58 @@ references any of it, so this is cleanup, not incident recovery.
 
 ### Stage B0 — `network_mode: host` for `technitium-stack` (Decision 5)
 
-**Status: decided (2026-07-07); repo-side change (tasks 1-4) applied and
-committed, but the container-level change (tasks 5-6) is NOT validated —
-see the 2026-07-06 incident in decisions.md Decision 5.** A first live
-attempt accidentally deployed to **production** instead of `pve-test-vm`
-(stale, non-environment-scoped `inventory.yml` — see incident note),
-requiring an emergency revert. Production is back to its correct
-pre-incident state (bridge networking, correct env values, verified via
-live DNS queries and a confirmed working OIDC login). `pve-test-vm`'s real
-Stage A container was never touched by any of this and still runs the old
-`ports:`-based config — **Decision 5 remains completely unvalidated in
-practice.**
+**Status: complete and empirically validated (2026-07-06/07).** All 6
+tasks below are done and confirmed live against `pve-test-vm`'s real
+Stage A container.
 
-**Blocking prerequisite, not previously identified**: before attempting
-tasks 5-6 again, fix or manually work around the inventory-targeting gap
-that caused the incident — `scripts/provision.sh --target-env` does not
-verify the inventory file it uses actually matches the named environment.
-
-**Partial mitigation applied (2026-07-06, same session)**:
-`scripts/provision.sh` now hard-fails in `provision_stack()` if a stack's
-resolved inventory's `pve_host` doesn't match the environment `PVE_ENV`
-expects, for any stack with an SDN `network:` zone in its `stack.yaml`
-(physical/pve-only stacks without one, e.g. `gaming-stack`, are
-deliberately exempt — see `assert_inventory_matches_env` and
-`expected_pve_host_for_env`). This would have caught the 2026-07-06
-incident immediately instead of silently deploying to production. It does
-**not** fix the underlying gap — `technitium-stack`'s inventory is still a
-single shared file that a `pve` Terraform apply can overwrite — it only
-converts a silent misdirect into a loud failure. The real fix is still
-either giving `technitium-stack` a proper
-`terraform/lxc/environments/pve-test-vm/technitium-stack/` Terragrunt
-layout (matching `dns-stack`'s pattern) or continuing to rely on this
-guardrail catching future attempts. This gap affects 11 stacks total, not
-just this one — see `docs/dhcp-refactor/decisions.md` Decision 5's
-incident note.
+**History**: a first live attempt accidentally deployed to **production**
+instead of `pve-test-vm` (stale, non-environment-scoped `inventory.yml`),
+requiring an emergency revert — see decisions.md Decision 5's incident
+note. That was fixed two ways in the same session: (1) a
+`scripts/provision.sh` guardrail (`assert_inventory_matches_env`) that now
+hard-fails on this exact misdirection, and (2) correctly-scoped
+`inventory.yml` files placed under
+`terraform/lxc/environments/{pve,pve-test-vm}/technitium-stack/` as an
+interim stopgap (not Terraform-generated — see
+`docs/environment-isolation/` for the real fix, planned separately). With
+both in place, a `--check` dry run then a real run correctly routed to
+`pve-test-vm` (`192.168.20.115`), confirmed via the smoke test resolving
+`test.gibbsgreatly.xyz` names.
 
 Tasks:
 1. `deploy-technitium-stack.yml`'s compose template: replace the `ports:`
    list (`53:53/udp`, `53:53/tcp`, `5380:5380/tcp`, `67:67/udp`) with
-   `network_mode: host`. Nothing else in the compose file changes.
+   `network_mode: host`. Nothing else in the compose file changes. **Done.**
 2. `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s Provides table:
-   add the `dhcp-server` (udp/67) entry — still needed under host
-   networking, just exposed differently.
+   add the `dhcp-server` (udp/67) entry. **Done.**
 3. `STACK_CONTRACT.md`: add a short note explaining why this one stack uses
-   `network_mode: host` when every other Docker-based stack in the repo
-   uses bridge networking + explicit port publish, linking to Decision 5.
+   `network_mode: host`, linking to Decision 5. **Done.**
 4. `terraform/lxc/PLATFORM_CONTRACT.md`: add the one-line guardrail noting
-   this is a documented per-stack exception, not a default, so it isn't
-   copied into other stacks without its own justification.
+   this is a documented per-stack exception, not a default. **Done.**
 5. Apply against Stage A's existing throwaway instance (VLAN 90 /
-   `test_dhcp_seg`) — no new VLAN or client needed, this is a config change
-   to the already-deployed Technitium container.
-6. **Empirically re-validate**, not just re-assert: trigger a fresh lease on
-   the Stage A test client, confirm via its lease file
-   (`/var/lib/dhcp/dhclient.leases`) that `dhcp-server-identifier` now shows
-   Technitium's real `mgmt_seg` IP (not a `172.19.x.x` Docker-internal
-   address), and confirm a real unicast RENEW at T1 succeeds (not just the
-   already-proven REBIND-at-T2 fallback). This is the specific claim
-   Decision 5 makes — verify it actually holds before treating Issue 12 as
-   closed.
+   `test_dhcp_seg`). **Done (2026-07-06 22:15 UTC)** — confirmed via
+   `docker inspect`: `NetworkMode=host`, correct `StartedAt`.
+6. **Empirically re-validated — confirmed, not just re-asserted:**
+   - Forced a fresh lease on the Stage A test client (CT 138): lease file
+     shows `option dhcp-server-identifier 192.168.20.115` — Technitium's
+     real `mgmt_seg` IP, not the old `172.19.x.x` Docker-internal address.
+   - Confirmed direct reachability: `ping` from the test client to
+     `192.168.20.115` succeeds (previously unreachable when the
+     identifier was Docker-internal).
+   - **Captured the actual T1 renewal packet via `tcpdump`** on the test
+     client's `eth0`:
+     ```
+     192.168.90.61.68 > 192.168.20.115.67: BOOTP/DHCP, Request
+     192.168.20.115.67 > 192.168.90.61.68: BOOTP/DHCP, Reply
+     ```
+     A direct **unicast** exchange (not broadcast to `255.255.255.255`),
+     completing in ~1ms. This is the clean unicast RENEW that was
+     previously impossible — **Issue 12 is genuinely closed**, not just
+     configured differently.
 
 Validation: Stage A's existing lease/DNS checks still pass after the
-compose change (nothing about the scope, relay, or firewall config
-changes — only the container's own networking mode), plus the new
-server-identifier/RENEW check in task 6.
+compose change, plus the new server-identifier/RENEW check above — all
+confirmed.
 
 Rollback: revert the compose template's `network_mode: host` back to the
 explicit `ports:` list; no scope, relay, or firewall changes to undo.
@@ -694,17 +682,16 @@ Deliverable:
 
 ## Immediate next step
 
-**Stage A is done** (mechanism, restart/renew, outage recovery, simulated
-cutover — all confirmed live on `pve-test-vm`'s throwaway VLAN). The next
-task is **Stage B0**: apply Decision 5's `network_mode: host` switch and
-empirically re-confirm it fixes the DHCP server-identifier issue (Issue 12)
-before Stage B's declarative-config work is built against a compose
-template that's about to change. **This is currently blocked**: a first
-attempt (2026-07-06) hit a stale-inventory bug and deployed to production
-instead of `pve-test-vm`, requiring an emergency revert (see Decision 5's
-incident note and Stage B0's status above) — fix the inventory-targeting
-gap first, then retry tasks 5-6 against the actual `pve-test-vm` instance.
-After that, **Stage B**: formalize the
+**Stage A and Stage B0 are both done** (mechanism, restart/renew, outage
+recovery, simulated cutover, and now `network_mode: host` with an
+empirically-confirmed clean unicast RENEW via packet capture — all
+confirmed live on `pve-test-vm`'s throwaway VLAN). Getting Stage B0 applied
+safely required routing around a stale-inventory bug that had earlier sent
+one attempt to production by mistake (see Decision 5's incident note) —
+that's fixed for this stack via a `scripts/provision.sh` guardrail plus
+correctly-scoped manual `inventory.yml` files per environment; the proper
+structural fix is tracked separately in `docs/environment-isolation/`. The
+next task is **Stage B**: formalize the
 DHCP scope/reservation config as a proper declarative source of truth. A
 working first implementation already exists and is proven —
 `terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml`

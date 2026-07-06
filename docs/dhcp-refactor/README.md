@@ -90,8 +90,19 @@ the real two-part cutover (disable local server, enable relay). The
 client's stale lease was cleanly `DHCPNAK`'d and it immediately recovered
 its correct reservation — no hang, no manual fix needed. This was the one
 check that directly rehearses `bridgeLocal`'s real cutover sequence, and it
-passed cleanly. Next up: Stage B (formalizing the DHCP config as declarative
-code) and Stage C (the full teardown/redeploy gate).
+passed cleanly.
+
+**Stage B0 is also now complete (2026-07-06/07)**: `network_mode: host`
+(Decision 5) closes the Docker server-identifier limitation noted above
+properly, rather than just accepting it. Getting there required routing
+around a same-session production-deploy incident (see decisions.md
+Decision 5's incident note; real structural fix tracked separately in
+[docs/environment-isolation/](../environment-isolation/)). Empirically
+confirmed via a `tcpdump` capture of the actual T1 renewal: a direct
+**unicast** exchange with Technitium's real IP
+(`192.168.90.61.68 > 192.168.20.115.67`), not the previous broadcast
+REBIND fallback. Next up: Stage B (formalizing the DHCP config as
+declarative code) and Stage C (the full teardown/redeploy gate).
 
 Current understanding:
 

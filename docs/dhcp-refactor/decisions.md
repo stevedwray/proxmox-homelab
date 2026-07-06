@@ -363,6 +363,31 @@ immediately before running `scripts/provision.sh` — do not trust
 any stack not yet on the per-environment layout), not specific to
 Technitium or DHCP — worth raising separately from this workspace.
 
+**Resolution (2026-07-06/07, same session):** two fixes applied before
+retrying. (1) `scripts/provision.sh` now hard-fails via
+`assert_inventory_matches_env()` if a stack's inventory `pve_host` doesn't
+match `PVE_ENV`, for stacks with an SDN `network:` zone. (2) Correctly-
+scoped `inventory.yml` files were manually placed under
+`terraform/lxc/environments/{pve,pve-test-vm}/technitium-stack/` —
+hand-written, not Terraform-generated, an interim stopgap only. With both
+in place, a `--check` dry run then a real run correctly resolved to
+`environments/pve-test-vm/technitium-stack/inventory.yml` and reached
+`pve-test-vm` (`192.168.20.115`), confirmed via the smoke test resolving
+`test.gibbsgreatly.xyz` names. `network_mode: host` is now live on the
+actual Stage A test container (`docker inspect` confirms
+`NetworkMode=host`), and the fix is empirically validated: a forced lease
+renewal shows `dhcp-server-identifier: 192.168.20.115` (Technitium's real
+IP), and a `tcpdump` capture of the T1 renewal shows a direct **unicast**
+exchange (`192.168.90.61.68 > 192.168.20.115.67`, not broadcast) —
+confirming the clean RENEW that was previously impossible. **Issue 12 is
+genuinely closed for this instance.**
+
+The real structural fix (giving `technitium-stack` a proper per-environment
+Terragrunt layout, replacing both the guardrail and the manual stopgap
+files) is intentionally scoped out as its own task — see
+[docs/environment-isolation/](../environment-isolation/), opened
+2026-07-07.
+
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
 Not a decision — deliberately parked, so the idea and the supporting
