@@ -297,6 +297,43 @@ dig authentik-int.lab.gibbsgreatly.xyz @192.168.20.15  -> 192.168.20.10
 
 ---
 
+### proxy-stack (2026-07-06)
+
+**✅ Clean boot, functionally verified — Traefik is the ingress for every
+browser-facing route, so verified beyond just the logs.**
+
+`level:(0 1 2 3)` returned zero results. Traefik 3.1.6 started and loaded
+every provider cleanly:
+
+```
+Starting provider aggregator, *file.Provider, *traefik.Provider, *docker.Provider,
+  *acme.ChallengeTLSALPN, *acme.Provider (letsencrypt.acme), *acme.Provider (step-ca.acme)
+Renewing certificate from LE: {Main:technitium.lab.gibbsgreatly.xyz} providerName=step-ca.acme
+```
+
+(Traefik's own log wording says "from LE" generically for that line
+regardless of which ACME resolver is actually in use — `providerName`
+correctly shows `step-ca.acme`, not a real Let's Encrypt call.)
+
+Didn't stop at "renewal started" — confirmed the certificate genuinely
+renewed and is being served:
+
+```
+openssl s_client -servername technitium.lab.gibbsgreatly.xyz -connect 192.168.30.10:443
+  notBefore=Jul  6 00:54:24 2026 GMT   (freshly issued right at reboot time)
+  notAfter=Jul  7 00:55:24 2026 GMT
+  issuer=O=Homelab CA, CN=Homelab CA Intermediate CA
+```
+
+(A plain `curl` against the route fails TLS verification from this
+workstation since it doesn't trust the internal step-ca root — that's a
+client-side trust-store gap, not a server problem; `openssl s_client`
+bypasses that and confirms the cert itself is valid and current.)
+
+**Status:** verified healthy, no action needed.
+
+---
+
 ## Query pattern used
 
 ```
