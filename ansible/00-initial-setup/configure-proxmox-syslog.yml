@@ -8,11 +8,18 @@
 #     ansible/00-initial-setup/configure-proxmox-syslog.yml \
 #     --limit pve-test-vm.gibbsgreatly.xyz
 #
+# Run command (pve production):
+#   PVE_ENV=pve ./with-secrets-prod ansible-playbook \
+#     -i ansible/inventory/production.yml \
+#     ansible/00-initial-setup/configure-proxmox-syslog.yml \
+#     -e target_host=pve.gibbsgreatly.xyz \
+#     --limit pve.gibbsgreatly.xyz
+#
 # Validation: after running, check Graylog for:
-#   source:pve-test-vm AND application_name:ansible-proxmox-syslog-test
+#   source:<pve-test-vm|pve> AND application_name:ansible-proxmox-syslog-test
 
 - name: Configure Proxmox host rsyslog forwarding to Graylog
-  hosts: pve-test-vm.gibbsgreatly.xyz
+  hosts: "{{ target_host | default('pve-test-vm.gibbsgreatly.xyz') }}"
   become: true
   gather_facts: true
 

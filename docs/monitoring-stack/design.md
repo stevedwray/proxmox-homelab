@@ -5,8 +5,10 @@
 The monitoring-stack LXC (192.168.20.12, `mgmt_seg`) runs VictoriaMetrics,
 Grafana, cAdvisor, and the Harbor findings exporter via Docker Compose.
 Grafana is the sole browser-facing service (via Traefik + Authentik).
-VictoriaMetrics is the metrics data store; Graylog is now the active log
-platform direction on `pve-test-vm`.
+VictoriaMetrics is the metrics data store; `graylog-stack` (192.168.20.14,
+`https://graylog.lab.gibbsgreatly.xyz`) is the active log platform on both
+`pve-test-vm` and, as of 2026-07-06, production `pve`. Monitoring-stack itself
+carries no logging responsibility anymore.
 
 ---
 
@@ -25,23 +27,29 @@ platform direction on `pve-test-vm`.
 
 ## Current State
 
-**Phases 1–7D are complete on `pve`, and the Graylog migration path on
-`pve-test-vm` has now been validated through targeted rebuilds and a full
-teardown cycle. Monitoring-stack is metrics-focused on the active source path;
-VictoriaLogs should be treated as historical design context rather than an
-active `pve-test-vm` dependency. Dashboard issues from Phase 7D resolved
-2026-06-22 — see §7c, §9. Recent pve fixes removed the invalid Proxmox host
-scrape, replaced the invalid step-ca HTTPS scrape with native step-ca metrics,
-removed the obsolete NetBox housekeeping container, disabled scheduled
-Portainer backups, removed OpenIPMI from managed LXCs, and confirmed the old
-step-ca scrape warning is no longer emitted.**
+**Phases 1–7D are complete on `pve`. The Graylog migration was validated on
+`pve-test-vm` through targeted rebuilds and a full teardown cycle, then
+incrementally deployed to production `pve` (Sprints P0–P5 and P7, completed
+2026-07-06 — see [graylog-migration-plan.md](./graylog-migration-plan.md)).
+Remote syslog (Proxmox host, MikroTik, NAS, Omada) and Docker/managed-LXC
+log ingestion are all cutover to production Graylog; index sets are
+segmented into Security/Docker Chatter/General streams. Only Sprint P6
+(scaffold cleanup and `stable`→`main` promotion) remains open.
+Monitoring-stack is metrics-only on both environments now; VictoriaLogs and
+its Grafana datasource/dashboards have been fully removed from `pve`, not just
+`pve-test-vm`. Dashboard issues from Phase 7D resolved 2026-06-22 — see §7c,
+§9. Recent pve fixes removed the invalid Proxmox host scrape, replaced the
+invalid step-ca HTTPS scrape with native step-ca metrics, removed the obsolete
+NetBox housekeeping container, disabled scheduled Portainer backups, removed
+OpenIPMI from managed LXCs, and confirmed the old step-ca scrape warning is no
+longer emitted.**
 
 ### Running services
 
 | Service | Port | Notes |
 |---------|------|-------|
 | VictoriaMetrics | `:8428` | `--retentionPeriod=90d`; scrape config at `/etc/vm/scrape.yml` |
-| Grafana | `:3000` | OAuth via Authentik; `victoriametrics-logs-datasource` plugin installed |
+| Grafana | `:3000` | OAuth via Authentik; metrics-only datasources (`VictoriaMetrics`, `Harbor Findings`) — the `victoriametrics-logs-datasource` plugin and its datasource were removed in the Graylog cutover (G5 on `pve-test-vm`, P4 on `pve`) |
 | cAdvisor | `:8080` | Container resource metrics for monitoring-stack |
 | Harbor findings exporter | `:9414` internal | Harbor CVE/findings metrics scraped from the compose network |
 | Promtail | — | Deprecated by the rsyslog/Graylog path; no active runtime service/container remains after cleanup. |
@@ -78,8 +86,11 @@ step-ca scrape warning is no longer emitted.**
 | Harbor Operations | Component health, queue state, proxy-cache activity |
 | Harbor Scan Coverage | Findings exporter health, scan coverage, severity totals |
 | Harbor CVE Inventory | Detailed CVE rows from the live Harbor findings feed |
-| Lab Logs | Historical Grafana log explorer retained only as design context |
-| Auth Logs | Historical Grafana auth log explorer retained only as design context |
+
+The former `Lab Logs`/`Auth Logs` VictoriaLogs-backed dashboards are gone
+entirely (not retained) as of the Graylog cutover — G5 on `pve-test-vm`, P4 on
+`pve` (2026-07-06). Log exploration is Graylog-only now; see
+[graylog-migration-plan.md](./graylog-migration-plan.md).
 
 ### Dashboard conventions
 
@@ -229,7 +240,7 @@ been fully removed from the active `pve-test-vm` source path (see
 
 | Item | Notes |
 |------|-------|
-| Incremental Graylog deployment on `pve` | The `stable` promotion gate has been met on `pve-test-vm`; production deployment is the next step |
+| Sprint P6 — cleanup and `stable`→`main` promotion | Remove dead `graylog_deploy_runtime` scaffold branch, update `STACK_CONTRACT.md`, run smoke test, PR `stable`→`main`; see [graylog-migration-plan.md — Sprint P6](./graylog-migration-plan.md#sprint-p6--decommission-old-path-cleanup-promote-to-main) |
 | Graylog Data Node heap warning | Embedded OpenSearch still reports `-Xms1g/-Xmx1g` after wrapper JVM bump (as of 2026-06-29); track until live OpenSearch JVM args no longer show 1 GB |
 | step-ca metrics dashboard | Native metrics scraped; no dedicated Grafana dashboard yet |
 | Authentik dashboard | Metrics scraped; no Grafana dashboard built |
