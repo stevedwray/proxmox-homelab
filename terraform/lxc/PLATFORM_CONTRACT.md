@@ -138,6 +138,12 @@ The generated inventory is the Terraform-to-Ansible handoff artifact.
   role or stack-specific logic.
 - Tier 2 `deployment_tier: apps` stacks continue to use `portainer_agent`,
   `portainer_api`, and `app_stack`.
+- Docker Compose networking: bridge networking + explicit port publishing
+  is the default for every stack. `network_mode: host` is a narrow,
+  per-stack exception requiring its own documented decision (currently only
+  `technitium-stack`, for its DHCP server-identifier requirement — see
+  `docs/dhcp-refactor/decisions.md` Decision 5) — not a pattern to adopt
+  elsewhere without the same level of justification.
 - Tier 1 playbooks must actively mask `portainer-agent.service`.
 
 ## What must not be edited casually

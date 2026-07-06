@@ -53,31 +53,38 @@ as a minor efficiency cost rather than revisiting this decision — fixing it
 properly would mean adopting `network_mode: host` or macvlan, exactly the
 trade-off this decision rejected, for the same reasons.
 
-**Deferred, come back to this (2026-07-05):** there is a third option beyond
-"accept the cost" or "`network_mode: host`/macvlan" that wasn't fully
-explored — running Technitium as a **native service directly on the LXC**
-(no Docker at all), the same way `dns-stack`/CoreDNS runs today (bare
-binary under systemd, per `dns-stack`'s original `STACK_CONTRACT.md`). That
-would remove the Docker bridge/NAT layer entirely, so Technitium's DHCP
-server would see and report the LXC's own real, externally-reachable IP as
-the server-identifier — closing Issue 12 properly instead of just accepting
-it. This wasn't pursued now because it would revisit Decision 2 (Docker
-Compose deployment shape) for the whole stack, not just the DHCP feature,
-which is a bigger change than this workspace's current scope justifies
-mid-Stage-A. Worth a real look once Stage A/B are otherwise done: does
-Technitium ship a supported native Linux install path (some upstream
-mentions suggest yes, distinct from the Docker image), and would it be
-narrower to run *only* the DHCP capability natively while keeping DNS in
-Docker, versus moving the whole stack off Docker.
+**Resolved by Decision 5 (2026-07-07):** the "native service on the LXC"
+option below was explored as one alternative, but the workspace settled on
+a narrower fix — `network_mode: host` for the existing container, scoped
+specifically to `technitium-stack` — rather than dropping Docker for the
+whole stack. See Decision 5 for the reasoning and guardrail. The text below
+is kept as the historical record of what was considered at the time.
 
-### Concrete change inventory (2026-07-05, grounded in live repo/router state)
+There is a third option beyond "accept the cost" or "`network_mode:
+host`/macvlan" that was considered — running Technitium as a **native
+service directly on the LXC** (no Docker at all), the same way
+`dns-stack`/CoreDNS runs today (bare binary under systemd, per
+`dns-stack`'s original `STACK_CONTRACT.md`). That would remove the Docker
+bridge/NAT layer entirely, so Technitium's DHCP server would see and report
+the LXC's own real, externally-reachable IP as the server-identifier —
+closing Issue 12 properly instead of just accepting it. It wasn't chosen:
+it would mean abandoning Docker Compose/Harbor-pull lifecycle for the
+*whole* stack (DNS included), a bigger and harder-to-reverse change than
+Issue 12 justifies, when `network_mode: host` closes the same gap with a
+one-line, easily-reversible compose change. See Decision 5.
+
+### Concrete change inventory (2026-07-05, grounded in live repo/router state; networking line superseded 2026-07-07)
 
 - **`deploy-technitium-stack.yml`'s Compose template** publishes `53:53/udp`,
-  `53:53/tcp`, `5380:5380/tcp` today — add `67:67/udp` the same way. No
-  `network_mode`/macvlan change needed, confirming the reasoning above.
-  `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s Provides table
-  need a new `dhcp-server` (udp/67) entry alongside the existing
-  `dns-authority`/`dns-authority-udp` entries.
+  `53:53/tcp`, `5380:5380/tcp` today — add `67:67/udp` the same way.
+  ~~No `network_mode`/macvlan change needed, confirming the reasoning
+  above.~~ **Superseded by Decision 5**: the container now uses
+  `network_mode: host`, which makes explicit port publishing moot (all
+  ports bind directly on the LXC's real interface) — the `67:67/udp`
+  requirement itself still holds, it's just expressed differently in the
+  compose file. `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s
+  Provides table need a new `dhcp-server` (udp/67) entry alongside the
+  existing `dns-authority`/`dns-authority-udp` entries.
 - **New MikroTik firewall requirement, not previously documented anywhere in
   this repo:** the live filter-chain scrape
   (`router/config/current-config.json`) shows the router's `input` chain has
@@ -233,6 +240,87 @@ but that's not this design, since Technitium is the DHCP server itself.)
 This makes "every device on the network resolves both ways" a real,
 low-effort property of this design, not aspirational.
 
+## Decision 5: `network_mode: host` for `technitium-stack`'s container — narrow, DHCP-only exception
+
+Context: Decision 1 accepted, as a known cost, that Technitium's Docker
+bridge networking means it reports its own Docker-internal IP
+(`172.19.0.2`) as the DHCP server-identifier instead of its real,
+externally-reachable LXC address (confirmed live, `stage-a-execution.md`
+Issue 12). Effect: every client's unicast RENEW at T1 targets an
+unreachable address and silently fails, always falling through to broadcast
+REBIND at T2 instead. Not a connectivity risk (REBIND is proven working),
+but not clean either. Revisiting this cost, two fixes were compared:
+dropping Docker entirely for a native LXC install (Decision 1's "deferred"
+option), versus keeping the container but switching its Docker networking
+mode.
+
+Re-examining Decision 1's original reasons for rejecting `network_mode:
+host` against this stack's *actual* topology (not the general case):
+- "Binds to privileged ports" — ports 53 and 67 are already exposed via
+  explicit `ports:` publishing today; host networking doesn't newly expose
+  anything.
+- "Loses container network isolation" — from what? This LXC runs exactly
+  one container. There is no sibling container on `technitium-stack` for
+  isolation to matter against.
+- "Can't disambiguate multiple host IPs" — doesn't apply; the LXC has
+  exactly one NIC, on `mgmt_seg`.
+
+All three original objections were written as general platform-consistency
+reasoning, not as concrete risks specific to this stack — and they don't
+hold up once checked against `technitium-stack`'s real, single-interface,
+single-container shape.
+
+Decision: `technitium-stack`'s Technitium container switches from bridge
+networking + explicit port publishing to `network_mode: host`. This is a
+**narrow, single-stack exception**, not a new default:
+- Every other Docker-based stack in this repo (`docker_base` /
+  `deployment_tier: platform` and `apps` alike) keeps standard bridge
+  networking with explicit port publishing. `network_mode: host` is not
+  authorized for any other stack without its own documented decision
+  following this same reasoning — a stack needs a concrete, checked
+  justification (like Technitium's DHCP server-identifier requirement), not
+  "it's simpler," to adopt it.
+- `terraform/lxc/PLATFORM_CONTRACT.md` gets a one-line guardrail pointing
+  back here, so a future stack author doesn't copy this as if it were an
+  established pattern.
+- `technitium-stack/STACK_CONTRACT.md` gets an explicit note on *why* this
+  one stack deviates from the rest of the platform-tier convention.
+
+Rationale: this closes Issue 12 properly (Technitium binds directly to the
+LXC's real interface, so it reports its actual reachable IP as
+server-identifier, and RENEW at T1 will succeed instead of always failing
+over to REBIND) with a one-line, easily-reversible compose change —
+`network_mode: host` in place of the `ports:` list — rather than the much
+larger step of dropping Docker/Harbor-pull/Compose lifecycle for the whole
+stack (Decision 1's "native LXC" option). It keeps `technitium-config`'s
+Docker volume, the Harbor image-pull path, and every other stack's
+established Docker Compose lifecycle unchanged. The isolation/multi-IP
+concerns that justified rejecting this option in the abstract (Decision 1)
+don't actually describe a risk this specific stack has.
+
+Concrete implementation (tracked as a plan.md Stage B task, not yet
+applied):
+- `deploy-technitium-stack.yml`'s compose template: replace the `ports:`
+  list (`53:53/udp`, `53:53/tcp`, `5380:5380/tcp`, `67:67/udp`) with
+  `network_mode: host`. No other compose fields change — the
+  `technitium-config` named volume, environment file, and image reference
+  are unaffected.
+- `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s Provides table
+  still need the new `dhcp-server` (udp/67) entry — host networking doesn't
+  remove that requirement, it just changes how the port gets exposed.
+- `STACK_CONTRACT.md` gains a short note explaining the host-networking
+  deviation and linking back to this decision.
+- Re-run Stage A's live validation after this change, specifically
+  re-checking the DHCP lease's `dhcp-server-identifier` value now reports
+  the real `mgmt_seg` IP (not a Docker-internal address) and that a real
+  unicast RENEW at T1 succeeds — this is an empirical claim, not something
+  to assume true just because the network path is now direct.
+- Traefik's route to Technitium's admin UI (`technitium.${LAB_DOMAIN}` via
+  `edge.yaml`) and the `edge_seg → mgmt_seg tcp/5380` firewall policy are
+  both unaffected — they already target the LXC's real IP:5380 directly;
+  host networking doesn't change what's listening on that port or from
+  where it's reachable.
+
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
 Not a decision — deliberately parked, so the idea and the supporting
@@ -293,6 +381,11 @@ Rationale: why this option over the alternatives considered.
 
 ## Pending (tracked in plan.md's Phase 3 stages)
 
+- **`network_mode: host` switch** (Decision 5, plan.md Stage B): **decided,
+  not yet applied.** Compose template change, `stack.yaml`/`STACK_CONTRACT.md`
+  Provides-table update, and re-validation of the DHCP `server-identifier`
+  fix against Stage A's live throwaway instance are all still open tasks —
+  see Decision 5's "Concrete implementation" list.
 - **DHCP configuration as code** (plan.md Stage B): **partially built and
   proven (2026-07-05)**, not "not yet built" — `configure-technitium-dhcp-scope-via-api.yml`
   idempotently creates the scope, forward/reverse zones, and reservation,

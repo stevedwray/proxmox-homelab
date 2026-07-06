@@ -372,6 +372,50 @@ Rollback: trivial — remove the relay entry, the firewall rule, the
 Technitium scope, the SDN VLAN, and the test container. Nothing else
 references any of it, so this is cleanup, not incident recovery.
 
+### Stage B0 — `network_mode: host` for `technitium-stack` (Decision 5)
+
+**Status: decided (2026-07-07), not yet applied.** See
+[decisions.md](./decisions.md) Decision 5 for the full reasoning: this
+closes Issue 12 (Technitium reporting its Docker-internal IP as the DHCP
+server-identifier, so RENEW at T1 always silently fails) with a narrow,
+single-stack exception rather than dropping Docker for the whole stack.
+Sequenced before Stage B's declarative config work because it changes the
+same compose template Stage B's steps already touch — do this first so
+Stage B isn't built against networking that's about to change.
+
+Tasks:
+1. `deploy-technitium-stack.yml`'s compose template: replace the `ports:`
+   list (`53:53/udp`, `53:53/tcp`, `5380:5380/tcp`, `67:67/udp`) with
+   `network_mode: host`. Nothing else in the compose file changes.
+2. `stack.yaml`'s `provides:` list and `STACK_CONTRACT.md`'s Provides table:
+   add the `dhcp-server` (udp/67) entry — still needed under host
+   networking, just exposed differently.
+3. `STACK_CONTRACT.md`: add a short note explaining why this one stack uses
+   `network_mode: host` when every other Docker-based stack in the repo
+   uses bridge networking + explicit port publish, linking to Decision 5.
+4. `terraform/lxc/PLATFORM_CONTRACT.md`: add the one-line guardrail noting
+   this is a documented per-stack exception, not a default, so it isn't
+   copied into other stacks without its own justification.
+5. Apply against Stage A's existing throwaway instance (VLAN 90 /
+   `test_dhcp_seg`) — no new VLAN or client needed, this is a config change
+   to the already-deployed Technitium container.
+6. **Empirically re-validate**, not just re-assert: trigger a fresh lease on
+   the Stage A test client, confirm via its lease file
+   (`/var/lib/dhcp/dhclient.leases`) that `dhcp-server-identifier` now shows
+   Technitium's real `mgmt_seg` IP (not a `172.19.x.x` Docker-internal
+   address), and confirm a real unicast RENEW at T1 succeeds (not just the
+   already-proven REBIND-at-T2 fallback). This is the specific claim
+   Decision 5 makes — verify it actually holds before treating Issue 12 as
+   closed.
+
+Validation: Stage A's existing lease/DNS checks still pass after the
+compose change (nothing about the scope, relay, or firewall config
+changes — only the container's own networking mode), plus the new
+server-identifier/RENEW check in task 6.
+
+Rollback: revert the compose template's `network_mode: host` back to the
+explicit `ports:` list; no scope, relay, or firewall changes to undo.
+
 ### Stage B — DHCP configuration as code (declarative source of truth + backup/restore)
 
 **Status: partially done (2026-07-05).** Steps 1–3 below are implemented and
@@ -626,9 +670,12 @@ Deliverable:
 
 **Stage A is done** (mechanism, restart/renew, outage recovery, simulated
 cutover — all confirmed live on `pve-test-vm`'s throwaway VLAN). The next
-task is **Stage B**: formalize the DHCP scope/reservation config as a
-proper declarative source of truth. A working first implementation already
-exists and is proven —
+task is **Stage B0**: apply Decision 5's `network_mode: host` switch and
+empirically re-confirm it fixes the DHCP server-identifier issue (Issue 12)
+before Stage B's declarative-config work is built against a compose
+template that's about to change. After that, **Stage B**: formalize the
+DHCP scope/reservation config as a proper declarative source of truth. A
+working first implementation already exists and is proven —
 `terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml`
 creates the scope, forward/reverse zones, and reservation idempotently, and
 was run twice live with the second run correctly reporting no changes. What
