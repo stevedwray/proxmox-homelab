@@ -91,6 +91,28 @@ No `level:(0 1 2 3)` messages at all for this source over the reboot window.
 
 ---
 
+### apt-cacher-stack (2026-07-06)
+
+**✅ Clean boot, no issues.**
+
+Same benign unprivileged-LXC warnings as the other stacks (`DOCKER_OPTS`
+unset, netlink buffer size, sysctl BPF — all "ignoring", no impact). Only
+`portainer-agent` shows Docker Compose activity; the actual caching daemon
+is confirmed via systemd's own service-start line:
+
+```
+systemd: Started apt-cacher-ng.service - Apt-Cacher NG software download proxy.
+```
+
+`apt-cacher-ng` doesn't log anything beyond systemd's start confirmation on
+a normal healthy boot, so an `application_name:apt*` search alone came up
+empty — same "quiet native service" pattern as `step-ca`. No `level:(0 1 2
+3)` messages for this source over the reboot window.
+
+**Status:** verified healthy, no action needed.
+
+---
+
 ## Query pattern used
 
 ```
