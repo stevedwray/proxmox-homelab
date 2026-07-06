@@ -2038,7 +2038,8 @@ unplanned fourth source with a proper identity fixup.
 
 ## Sprint P7 — Index Set Segmentation (Security / Docker / General)
 
-**Status:** planned, not yet implemented (2026-07-06).
+**Status:** implemented and verified (2026-07-06). Fresh-start cleanup
+(task 8) still pending.
 
 **Goal:** Everything currently lands in one index set (`Default index set`,
 prefix `graylog`). Split it into three, so noisy Docker container chatter
@@ -2133,6 +2134,77 @@ matches the tier used for P5's Omada fixup.
 - No message is double-indexed (present in both Default and a new stream)
 - Fresh-start cleanup completed with the new segmentation already active
 - Docs corrected and query conventions documented
+
+### P7 execution log (2026-07-06)
+
+**API contract details validated live before encoding into Ansible**
+(create-then-delete prototype cycle on the real instance, same discipline
+used for the Omada fixup):
+
+- Index set creation payload needed `data_tiering` and `use_legacy_rotation:
+  false` explicitly — omitting them silently created a legacy-rotation index
+  set instead of matching the modern behavior the existing index sets use.
+- **Stream creation uses a different request shape than expected**:
+  `POST /api/streams` requires `{"entity": {...fields...}, "share_request":
+  null}`, not a flat body — a newer Graylog entity-sharing API convention.
+  Response is `{"stream_id": "..."}`, not `{"id": "..."}`.
+- New streams are created **disabled**; confirmed a separate
+  `POST /api/streams/{id}/resume` call is required.
+- `starts_with` is a **function call**, not an infix operator: `when
+  starts_with(to_string($message.application_name), "docker-")`, not `when
+  to_string(...) starts_with "docker-"` (the latter is a syntax error:
+  `mismatched input 'starts_with' expecting {Then, End}`).
+- `route_to_stream()` / `remove_from_stream()` confirmed working exactly as
+  designed once the above was corrected.
+
+**Bug found on first live run, affecting this sprint *and* retroactively
+Sprint P5's Omada pipeline**: both new streams stayed `disabled: true` after
+"successful" creation, and the same `PLAY RECAP` had shown 9 changes with no
+failures. Root cause: every follow-up task in both sprints (resume, the
+`.json.errors is none` asserts) was gated on `..._create is changed` —
+`ansible.builtin.uri` is a generic HTTP client and does not compute `changed`
+status for POST requests, so these conditions silently evaluated `false`
+every time, regardless of whether the create actually ran. The Omada
+asserts got lucky (the rule happened to compile cleanly regardless), but the
+stream resume actually mattered and left both streams inert.
+
+**Fix, applied to all 7 affected tasks** (2 in the existing Omada code, 5 new
+in this sprint):
+- The two `assert .json.errors is none` pairs (Omada rule/pipeline, plus the
+  three new ones for Docker/Security rules and the segmentation pipeline):
+  changed the `when` condition to the *same* existing-check used by the
+  paired create task, rather than `is changed` — this correctly skips only
+  when the object already existed (avoiding an undefined-attribute error on
+  a skipped task's result) and correctly runs whenever create actually fired.
+- The two stream resume tasks: removed the conditional entirely, gated only
+  on `graylog_deploy_runtime | bool` — resuming an already-active stream is
+  a harmless no-op, so there's no reason to depend on fragile
+  changed-detection for this one.
+- `--syntax-check` passed; redeployed
+  (`scripts/provision.sh --stack graylog-stack --target-env pve`) — second
+  run's `PLAY RECAP` showed the same clean `changed=9, failed=0`, and both
+  streams confirmed `disabled: false` via direct API check afterward.
+
+**Live traffic verification** (not just the clean recap): queried recent
+messages without a stream filter and inspected the `streams` field directly.
+Clean before/after transition visible at the exact moment the fix landed:
+
+```
+00:02:24  graylog-stack  sshd-session       streams:[000000000000000000000001]  (Default — pre-fix)
+00:02:41  graylog-stack  systemd-logind     streams:[000000000000000000000001]  (Default — pre-fix)
+00:04:06  graylog-stack  sshd-session       streams:[6a4aefe341441e4c86e58b21]  (Security — post-fix)
+00:04:06  graylog-stack  systemd-logind     streams:[6a4aefe341441e4c86e58b21]  (Security — post-fix)
+```
+
+Same pattern confirmed for Docker Chatter (`docker-graylog-stack-mongodb-1`,
+`docker-netbox-netbox-1`, etc. → `streams:[6a4aefe341441e4c86e58b2a]` only).
+A follow-up query scoped to `streams: ["000000000000000000000001"]` filtering
+for `application_name:docker-*` in the last 60 seconds returned zero
+results — confirmed no double-indexing going forward.
+
+**Remaining for this sprint:** task 8 (fresh-start rotate + delete of the
+undifferentiated `graylog_0`) and task 9 (correct `design.md`'s stale
+`facility:auth` reference, document new stream query conventions).
 
 ---
 
