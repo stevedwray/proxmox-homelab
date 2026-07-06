@@ -113,6 +113,51 @@ empty — same "quiet native service" pattern as `step-ca`. No `level:(0 1 2
 
 ---
 
+### netbox-stack (2026-07-06)
+
+**🔴 `netbox-populate.service` failed on boot.**
+
+Docker side came up cleanly (redis, `netbox-worker`, `netbox` app server all
+started normally, granian serving on `:8080`, workers spawned). Correctly
+surfaced at proper severity levels this time (not buried in informational,
+unlike the ci-runner-01 finding):
+
+```
+systemd (level 5): netbox-populate.service: Main process exited, code=exited, status=1/FAILURE
+systemd (level 4): netbox-populate.service: Failed with result 'exit-code'.
+systemd (level 3): Failed to start netbox-populate.service - Populate NetBox with live Proxmox topology.
+```
+
+**Impact:** this one-shot service syncs NetBox's DCIM records with the live
+Proxmox topology (VMs/containers/inventory). It failed after this reboot,
+so NetBox's device/inventory records may be stale relative to actual
+running infrastructure until this is re-run successfully.
+
+**Gap found in the process, not just the target:** the script's own
+stdout/stderr (which would explain *why* it exited 1) never reached
+Graylog — searched `application_name:netbox-populate` and the exact
+timestamp window (`00:40:44`–`00:40:52Z`) with no source filter narrower
+than the whole stack, found nothing beyond the generic systemd
+start/exit/failed lifecycle lines. Unlike `step-ca`/`apt-cacher-ng`
+(oneshot/long-running native services whose own print output *does* reach
+Graylog fine), this particular script's output didn't come through for this
+failure. Root cause not yet investigated — will need `journalctl -u
+netbox-populate.service` directly on the host to see the actual error.
+
+**Fix required (not yet done):** investigate why `netbox-populate.service`
+exited 1 (likely needs direct host access, since Graylog doesn't have the
+detail) and re-run it manually once fixed:
+`systemctl status/restart netbox-populate.service` on `netbox-stack`.
+
+Also noted: `GET /api/ HTTP/1.1" 403` shortly after startup — expected
+behavior (unauthenticated API root request), not an error.
+
+No other `level:(0 1 2 3)` messages for this source over the reboot window.
+
+**Status:** identified, not yet fixed.
+
+---
+
 ## Query pattern used
 
 ```
