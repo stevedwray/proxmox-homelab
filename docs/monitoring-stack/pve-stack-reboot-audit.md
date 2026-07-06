@@ -270,6 +270,33 @@ neither blocking.
 
 ---
 
+### technitium-stack (2026-07-06)
+
+**✅ Clean boot, functionally verified — this is the live production DNS
+resolver for the whole lab, so verified beyond just the logs.**
+
+`level:(0 1 2 3)` returned zero results. Container startup clean:
+
+```
+docker-technitium: Technitium DNS Server was started successfully.
+docker-technitium: Using config folder: /etc/dns
+```
+
+Given this stack's criticality (Technitium is the router-delegated DNS
+resolver as of the 2026-07-04 production cutover — see
+[dns-refactor/current-state.md](../dns-refactor/current-state.md)), didn't
+stop at "logs look clean" — confirmed actual resolution works
+post-reboot:
+
+```
+dig graylog.lab.gibbsgreatly.xyz @192.168.20.15        -> 192.168.30.10
+dig authentik-int.lab.gibbsgreatly.xyz @192.168.20.15  -> 192.168.20.10
+```
+
+**Status:** verified healthy, no action needed.
+
+---
+
 ## Query pattern used
 
 ```
