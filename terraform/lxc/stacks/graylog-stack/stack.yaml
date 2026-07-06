@@ -1,4 +1,4 @@
-# Graylog pilot stack — dedicated log platform candidate on mgmt_seg
+# Graylog stack — production log platform on mgmt_seg (live on pve-test-vm and pve)
 hostname: graylog-stack
 ip_address: "${lab_ip_graylog}/24"
 gateway: "${lab_gw_mgmt}"

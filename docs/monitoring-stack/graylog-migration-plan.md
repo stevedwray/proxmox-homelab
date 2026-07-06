@@ -2316,19 +2316,26 @@ accepted residual and not being pursued further at this time.
 
 **Implementation tasks**
 
-1. Confirm no operator workflow still depends on Grafana log panels or
-   VictoriaLogs anywhere in production.
-2. Delete the now-permanently-dead scaffold branch in
+1. ✅ Confirm no operator workflow still depends on Grafana log panels or
+   VictoriaLogs anywhere in production — confirmed during P4/reboot-audit
+   work; `Lab Logs`/`Auth Logs` dashboards removed, Grafana is
+   metrics-only.
+2. ✅ Delete the now-permanently-dead scaffold branch in
    `deploy-graylog-stack.yml` (the `when: not (graylog_deploy_runtime | bool)`
-   tasks deferred from P1), since every environment now always runs the real
-   runtime.
-3. Update `terraform/lxc/stacks/graylog-stack/STACK_CONTRACT.md` — it still
-   describes the stack as an unpublished "scaffold," which has been stale
-   since G2. Bring it in line with the real, running contract (published
-   route, LDAP auth, syslog inputs).
-4. Update `docs/monitoring-stack/design.md` "Current State" and "Remaining
-   Work" to reflect `pve` completion.
-5. Run the standard smoke test (Grafana + VictoriaMetrics + Graylog `ALIVE`).
+   tasks deferred from P1) — removed the entire "Write Graylog scaffold
+   assets" play (was always skipped since `provision.sh` sets
+   `GRAYLOG_DEPLOY_RUNTIME=true` unconditionally per P1).
+3. ✅ Update `terraform/lxc/stacks/graylog-stack/STACK_CONTRACT.md` — rewritten
+   to describe the real, running contract (production log platform,
+   published route, LDAP auth, live syslog inputs, index-set
+   segmentation). Also fixed the matching stale "pilot" comment in
+   `stack.yaml`.
+4. ✅ Update `docs/monitoring-stack/design.md` "Current State" and "Remaining
+   Work" to reflect `pve` completion (P0–P5, P7 done; only P6 open).
+5. Run the standard smoke test (Grafana + VictoriaMetrics + Graylog `ALIVE`)
+   — in progress: `--syntax-check` passed; `provision.sh --stack
+   graylog-stack` running on `pve-test-vm` per the Ansible task/role
+   validation tier before promoting to `stable`.
 6. PR `stable` → `main` per the branch model, once the incremental deploy and
    smoke test have passed. Note: this merge will also finally carry forward
    the already-live Technitium DNS cutover documentation that has been
