@@ -222,6 +222,54 @@ both directions: read actual message content, don't trust severity alone.
 
 ---
 
+### monitoring-stack (2026-07-06)
+
+**✅ Fundamentally healthy — Grafana and VictoriaMetrics both came up
+cleanly** (`HTTP Server Listen address=[::]:3000`, migrations completed
+`skipped=23` = no pending migrations, VictoriaMetrics `static_configs: added
+targets: 30`, scrape service discovery started). `level:(0 1 2 3)` returned
+zero results for the whole stack. Two minor, non-blocking items surfaced by
+reading actual content, neither a functional break:
+
+1. **Grafana logs genuine `level=error`** (its own structured logging, not a
+   stderr-mapping artifact this time) for two provisioning directories that
+   don't exist:
+   ```
+   logger=provisioning.plugins  error="open /etc/grafana/provisioning/plugins: no such file or directory"
+   logger=provisioning.alerting error="open /etc/grafana/provisioning/alerting: no such file or directory"
+   ```
+   `deploy-monitoring-stack.yml` only creates the `datasources` and
+   `dashboards` provisioning subdirectories — `plugins` and `alerting` were
+   never created, and Grafana logs this as an error even though it's a
+   completely normal, harmless condition (no file-based plugin/alerting
+   provisioning is used here). Third variant of the severity-reliability
+   theme from this audit: unlike ci-runner-01 (real problem, low severity)
+   or portainer-stack (routine output, high severity via stderr-mapping),
+   this is genuinely-tagged `error` for a harmless condition. Optional
+   cosmetic fix: add empty `plugins`/`alerting` directories to the same
+   "Create Grafana directories" task that already creates
+   `datasources`/`dashboards`.
+2. **Leftover `victoriametrics-logs-datasource` plugin binary still loads**
+   (`logger=plugin.victoriametrics-logs-datasource msg="Starting VL
+   datasource"`) even though its datasource instance was deleted in P4 and
+   `GF_INSTALL_PLUGINS` no longer installs it. `GF_INSTALL_PLUGINS` only
+   controls fresh installs — the plugin binary itself persists in Grafana's
+   plugins volume from before P4 and isn't uninstalled by removing it from
+   the env var. Harmless (loaded but unused, no datasource references it),
+   but an incomplete cleanup worth closing out if ever revisited.
+
+Also observed (unrelated, pre-existing, not a regression): VictoriaMetrics
+logs periodic `warn`-level "dropping N labels for
+`container_blkio_device_usage_total`... increase
+`-maxLabelsPerTimeseries=30`" — a well-known cAdvisor high-cardinality
+metric interaction, generic to any Prometheus-compatible store scraping
+cAdvisor, not specific to this reboot or the Graylog work.
+
+**Status:** verified healthy. Two optional cosmetic cleanup items noted,
+neither blocking.
+
+---
+
 ## Query pattern used
 
 ```
