@@ -58,6 +58,39 @@ reading actual message content.
 
 ---
 
+### step-ca-stack (2026-07-06)
+
+**✅ Clean boot, no issues.**
+
+Two benign warnings during systemd-networkd/docker.service startup
+(`Referenced but unset environment variable... DOCKER_OPTS`, `Failed to
+increase receive buffer size for general netlink socket, ignoring:
+Operation not permitted`, `Unable to load sysctl monitor BPF program,
+ignoring`) — all expected in an unprivileged LXC container (no
+`CAP_NET_ADMIN` for those specific kernel tuning operations); explicitly
+"ignoring" in the log, no functional impact.
+
+**Methodology note:** `step-ca` runs as a **native systemd service**
+(`step-ca.service`), not a Docker container — searching
+`application_name:docker-*` for this source found nothing (only
+`portainer-agent`, which *is* Docker), which looked like a missing-service
+red flag until re-checked without that filter. The actual CA process starts
+and logs cleanly:
+
+```
+systemd:  Started step-ca.service - step-ca internal certificate authority.
+step-ca:  badger: All 1 tables opened in 1ms, replay took 12.143µs (no corruption)
+step-ca:  Starting Smallstep CA/0.30.2 (linux/amd64)
+step-ca:  Serving HTTPS on :443 ...
+step-ca:  Serving HTTP on :9443 ...
+```
+
+No `level:(0 1 2 3)` messages at all for this source over the reboot window.
+
+**Status:** verified healthy, no action needed.
+
+---
+
 ## Query pattern used
 
 ```
