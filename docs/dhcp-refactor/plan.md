@@ -501,6 +501,43 @@ not a live network change.
 
 ### Stage C — Full teardown/redeploy validation gate
 
+**Status: prep in progress (2026-07-07); full execution not yet attempted
+— deliberately scoped as a separate, explicitly-approved step.** A full
+`cycle` run is a destroy/rebuild of `pve-test-vm`'s *entire* platform (11
+stacks, foundation → edge → platform tiers), gated by the harness's own
+formal approval-packet mechanism (backup evidence for step-ca, authentik,
+harbor, netbox, monitoring, portainer; explicit outage window). That's a
+materially bigger action than anything else done in the DHCP-refactor
+workspace so far and needs its own deliberate go-ahead, not an implicit
+one.
+
+Prep work completed so far, found while running the harness's read-only
+`plan` phase for the first time with `technitium-stack` in scope:
+- `terraform/lxc/classify-storage-plan.py` had a pre-existing bug (never
+  special-cased Terraform's `no-op` action) that made the harness's
+  `plan` phase fail on the very first stack even with zero real changes
+  proposed — fixed, with regression tests added (none existed before).
+  This was blocking the harness for every stack, not just Technitium.
+- `docs/teardown-test/inventory.md` never included `technitium-stack` at
+  all — added it alongside `dns-stack` (both are actually deployed on
+  `pve-test-vm`) to the in-scope list, stack table, deploy order, and
+  destroy order.
+- `.env` was missing the `lab_ip_technitium`/`TF_VAR_lab_ip_technitium`
+  aliases every other stack has for template expansion — added, matching
+  the existing pattern.
+
+With these fixed, `scripts/teardown-deploy-test.sh plan` now resolves
+cleanly end-to-end including `technitium-stack`. **Not yet done**: the
+harness's smoke-test sweep (`final-validation` phase) doesn't yet have a
+DHCP-specific check — Stage C's validation goal requires one: a DHCP lease
+issued against the Stage A throwaway scope after a full destroy/recreate,
+with scope/reservation config matching Stage B's declarative definition
+exactly (not whatever happened to survive in the volume). Wiring that in,
+and deciding whether `dhcp-test-client-01` also needs adding to the
+teardown inventory so it gets destroyed/recreated as part of the same
+cycle (rather than surviving untouched, which would make the DHCP check
+less meaningful), is the next concrete prep task — not yet started.
+
 Goal: per `CLAUDE.md`'s Validation Tiers table, this is a Terraform/network
 class change — a full teardown cycle on `pve-test-vm` is required before
 promotion to `stable`, not a targeted `--stack` pass. With Stage B's
