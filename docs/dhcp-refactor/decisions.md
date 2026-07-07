@@ -536,6 +536,17 @@ Rationale: why this option over the alternatives considered.
   static leases. `STACK_CONTRACT.md`'s Persistent State table is updated.
   See Decision 6 (production lease time) and Decision 7 (standalone
   playbook) above.
+- ~~Teardown-test harness prep~~ (plan.md Stage C) — **prep done
+  (2026-07-07)**: fixed a pre-existing `classify-storage-plan.py` bug that
+  misclassified every Terraform no-op as blocked (affected every stack, not
+  just this one), added `technitium-stack` to the teardown inventory and
+  `.env` template aliases, and wired both a DHCP scope reconcile (into
+  deploy) and a read-only lease-correctness check (into `final-validation`)
+  into `scripts/teardown-deploy-test.sh`. `dhcp-test-client-01` deliberately
+  stays out of the platform inventory (workspace-local fixture, not a
+  platform dependency). The destructive `cycle` run itself is the only
+  Stage C item left, and needs its own explicit approval, not a routine
+  "continue".
 - **Dynamic-lease policy** (plan.md Stage D): `current-state.md` records 13
   total current leases — 5 static (covered by Decision 3) and **8
   dynamic**, which this plan hasn't yet addressed. Needs an explicit,

@@ -115,8 +115,19 @@ against `pve-test-vm`'s real scope twice (`changed=0` on the second run),
 including 5 fake reservations shaped like the real `bridgeLocal` static
 leases. See decisions.md Decision 6 (settled the real 7-day production
 lease time) and Decision 7 (this playbook stays standalone, doesn't merge
-into `deploy-technitium-stack.yml`, for now). Next up: Stage C (the full
-teardown/redeploy gate).
+into `deploy-technitium-stack.yml`, for now).
+
+**Stage C prep is now fully done (2026-07-07)**: `scripts/teardown-deploy-test.sh`
+fixed a pre-existing bug (every Terraform no-op plan was misclassified
+`blocked`, breaking the harness for every stack), gained `technitium-stack`
+in its stack inventory/deploy/destroy order, and now wires the DHCP
+scope reconcile into deploy and a read-only lease check into
+`final-validation` (see `plan.md`'s Stage C section for the full
+breakdown). `dhcp-test-client-01` was deliberately left out of the
+platform inventory — it's a workspace-local fixture, not a platform
+dependency. **Next up**: the actual destructive teardown/redeploy `cycle`
+run itself — still not attempted, needs its own explicit approval
+separate from routine "continue" instructions.
 
 Current understanding:
 
