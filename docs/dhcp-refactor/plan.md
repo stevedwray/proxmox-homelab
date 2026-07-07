@@ -527,16 +527,42 @@ Prep work completed so far, found while running the harness's read-only
   the existing pattern.
 
 With these fixed, `scripts/teardown-deploy-test.sh plan` now resolves
-cleanly end-to-end including `technitium-stack`. **Not yet done**: the
-harness's smoke-test sweep (`final-validation` phase) doesn't yet have a
-DHCP-specific check — Stage C's validation goal requires one: a DHCP lease
-issued against the Stage A throwaway scope after a full destroy/recreate,
-with scope/reservation config matching Stage B's declarative definition
-exactly (not whatever happened to survive in the volume). Wiring that in,
-and deciding whether `dhcp-test-client-01` also needs adding to the
-teardown inventory so it gets destroyed/recreated as part of the same
-cycle (rather than surviving untouched, which would make the DHCP check
-less meaningful), is the next concrete prep task — not yet started.
+cleanly end-to-end including `technitium-stack`.
+
+**DHCP check wired into the harness (2026-07-07):** `scripts/teardown-deploy-test.sh`
+now closes both remaining Stage C prep gaps:
+- `stack_apply()` gained a `technitium-stack`-only branch (guarded to never
+  fire when `TARGET_NODE_EXPECTED == pve`) that runs
+  `configure-technitium-dhcp-scope-via-api.yml` right after
+  `provision.sh`. This was a real functional gap, not just a missing check:
+  Decision 7 keeps that playbook standalone from
+  `deploy-technitium-stack.yml`, which means a bare destroy/recreate would
+  leave the DHCP scope completely unconfigured — the harness has to call it
+  explicitly, the same way it already special-cases `portainer-stack`'s
+  restore step.
+- `validate_stack_smoke()` gained a `technitium-stack` case that runs the
+  existing `validate-dhcp-test-client-via-pct.yml` against
+  `dhcp-test-client-01`, asserting its IPv4/gateway/nameservers still match
+  Stage B's declared reservation. It's read-only (matching
+  `final-validation`'s contract) — no forced release/renew — relying on
+  the scope's 10-minute test lease time to guarantee a full DORA
+  renegotiation already happened naturally during a multi-stack cycle.
+- Also added `technitium-stack` to the hardcoded stop-first destroy list in
+  `stack_destroy()` (it was missing — every other Stage-3a/3b stack already
+  routes through `rebuild-gate-destroy.sh`; this was an oversight from when
+  `technitium-stack` was first added to the inventory, not a DHCP-specific
+  concern).
+
+**`dhcp-test-client-01` scoping — resolved, not added to the platform
+inventory.** It stays out of `docs/teardown-test/inventory.md`'s Stack
+Inventory table and Approved Deploy/Destroy Order entirely. Reasoning: it
+isn't a platform component other stacks depend on, it lives on the
+disposable `test_dhcp_seg` VLAN used only by this workspace, and forcing
+every future `cycle` run (most of which have nothing to do with DHCP) to
+also destroy/recreate it would be scope creep on a shared regression
+harness. It keeps running continuously across a `technitium-stack`
+destroy/recreate; the smoke check above reads its post-recreate state
+directly instead.
 
 Goal: per `CLAUDE.md`'s Validation Tiers table, this is a Terraform/network
 class change — a full teardown cycle on `pve-test-vm` is required before
