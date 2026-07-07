@@ -17,6 +17,25 @@
     - docker_base
 
   tasks:
+    - name: Ensure a static /etc/hosts fallback for the Docker registry hostname
+      # technitium-stack is itself the DNS authority for the zone
+      # docker_registry_host lives in (test.gibbsgreatly.xyz here; the real
+      # lab zone once cutover happens) -- Technitium's own zone bootstrap
+      # task below is what would normally answer this name, but that can't
+      # run until this stack's image is already pulled and the container is
+      # up. On a from-scratch recreate there is nothing else configured to
+      # resolve it, so the image pull times out (confirmed live 2026-07-07:
+      # the mgmt gateway forwards this zone to Technitium itself, which
+      # isn't listening yet). A static /etc/hosts entry, using the same
+      # LAB_IP_PROXY value already used for the equivalent Technitium-side
+      # "harbor" seed record further down this file, breaks that circular
+      # dependency permanently instead of needing a one-off manual fix.
+      ansible.builtin.lineinfile:
+        path: /etc/hosts
+        regexp: "{{ docker_registry_host }}$"
+        line: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }} {{ docker_registry_host }}"
+        state: present
+
     - name: Trust Harbor HTTP registry in Docker daemon
       ansible.builtin.copy:
         dest: /etc/docker/daemon.json

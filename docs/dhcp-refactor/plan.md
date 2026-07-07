@@ -501,15 +501,59 @@ not a live network change.
 
 ### Stage C — Full teardown/redeploy validation gate
 
-**Status: prep in progress (2026-07-07); full execution not yet attempted
-— deliberately scoped as a separate, explicitly-approved step.** A full
-`cycle` run is a destroy/rebuild of `pve-test-vm`'s *entire* platform (11
-stacks, foundation → edge → platform tiers), gated by the harness's own
-formal approval-packet mechanism (backup evidence for step-ca, authentik,
-harbor, netbox, monitoring, portainer; explicit outage window). That's a
-materially bigger action than anything else done in the DHCP-refactor
-workspace so far and needs its own deliberate go-ahead, not an implicit
-one.
+**Status: prep done, and the core mechanism has now been validated by a
+real, scoped destroy/recreate rehearsal (2026-07-07) — the full 12-stack
+platform `cycle` itself is still not attempted, deliberately, as its own
+explicitly-approved step.** A full `cycle` run is a destroy/rebuild of
+`pve-test-vm`'s *entire* platform (foundation → edge → platform tiers),
+gated by the harness's own formal approval-packet mechanism (backup
+evidence for step-ca, authentik, harbor, netbox, monitoring, portainer;
+explicit outage window). That's a materially bigger action than anything
+else done in the DHCP-refactor workspace so far and needs its own
+deliberate go-ahead, not an implicit one.
+
+**Scoped rehearsal, technitium-stack only (2026-07-07):** rather than
+running the full platform `cycle`, destroyed and recreated *just*
+`technitium-stack` on `pve-test-vm` directly (`rebuild-gate-destroy.sh
+--stack technitium-stack`, then `terragrunt apply` + `provision.sh`),
+followed by the same DHCP scope reconcile + client validation the harness
+now runs automatically. This is the first time this stack has ever
+actually been destroyed and recreated from scratch (every prior Stage
+A/B0/B change was an in-place redeploy) — it surfaced two real bugs
+invisible until now:
+- **Registry-hostname bootstrap chicken-and-egg**: a from-scratch
+  `technitium-stack` recreate failed at "Start Technitium via compose" —
+  Docker couldn't resolve `harbor.test.gibbsgreatly.xyz` to pull its own
+  image. Root cause: the mgmt gateway forwards `test.gibbsgreatly.xyz`
+  (Technitium's own zone) to Technitium itself, which obviously can't
+  answer yet mid-recreate. `dns-stack` resolves it fine (confirming the
+  correct IP, `LAB_IP_PROXY`), so this is not a real outage, just Technitium
+  being unable to bootstrap itself off its own not-yet-running DNS. Fixed
+  in `deploy-technitium-stack.yml` with a static `/etc/hosts` entry for
+  `docker_registry_host`, written before the compose-up task, using the
+  same `LAB_IP_PROXY` value already used for the equivalent Technitium-side
+  `harbor` seed record — breaks the circular dependency permanently rather
+  than needing a one-off manual fix on every future recreate.
+- **DHCP scope "enabled" idempotency false-negative**: found while
+  re-running the scope reconcile playbook a second time — it fired
+  "Enable the Stage A DHCP scope" every single run, even though the scope
+  was already enabled. Root cause: `dhcp/scopes/get` doesn't return an
+  `enabled` field at all (only `dhcp/scopes/list` does), so
+  `dhcp_scope_current.enabled | default(false)` always evaluated `false`
+  regardless of true state. Fixed by sourcing `dhcp_scope_enabled` from the
+  already-fetched `scopes/list` response instead. Also added
+  `changed_when: true` to the playbook's write tasks (they previously
+  always reported `ok`, never `changed`, since `ansible.builtin.uri`
+  doesn't infer change status on its own) — without this, the false-negative
+  above was invisible in the run output.
+
+After both fixes, the full cycle (destroy → recreate → reconcile → validate)
+ran clean and idempotent twice in a row: `dhcp-test-client-01` correctly
+obtained its Stage-B-declared reserved lease (`192.168.90.61`, gateway
+`192.168.90.1`, nameserver `192.168.90.1`) against the freshly recreated
+server, and a second scope-reconcile run showed zero changes. This is the
+first real proof — not just a design argument — that `technitium-stack`'s
+DHCP config genuinely survives a destroy/recreate cycle.
 
 Prep work completed so far, found while running the harness's read-only
 `plan` phase for the first time with `technitium-stack` in scope:

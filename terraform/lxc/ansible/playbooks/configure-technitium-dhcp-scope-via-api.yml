@@ -164,6 +164,7 @@
         method: POST
         status_code: [200]
       when: dhcp_scope_domain_name not in ((technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list)
+      changed_when: true
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -177,6 +178,7 @@
         method: POST
         status_code: [200]
       when: dhcp_reverse_zone_name not in ((technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list)
+      changed_when: true
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -200,6 +202,22 @@
     - name: Determine whether the Stage A scope already exists
       ansible.builtin.set_fact:
         dhcp_scope_exists: "{{ dhcp_scope_name in ((technitium_scope_list.content | from_json).response.scopes | map(attribute='name') | list) }}"
+
+    - name: Read the scope's enabled state from the list response
+      # dhcp/scopes/get (below) does not return an `enabled` field at all --
+      # only dhcp/scopes/list does. Sourcing it from dhcp_scope_current
+      # (which comes from scopes/get) always defaulted to false regardless
+      # of true state, so the "enable if not already enabled" task fired on
+      # every single run even when the scope was already enabled. Confirmed
+      # live 2026-07-07 during the first real destroy/recreate rehearsal.
+      ansible.builtin.set_fact:
+        dhcp_scope_enabled: >-
+          {{
+            (technitium_scope_list.content | from_json).response.scopes
+            | selectattr('name', 'equalto', dhcp_scope_name)
+            | map(attribute='enabled') | first | default(false)
+          }}
+      when: dhcp_scope_exists
 
     - name: Read current Stage A scope details (only if it already exists)
       ansible.builtin.uri:
@@ -246,6 +264,7 @@
         method: POST
         status_code: [200]
       when: dhcp_scope_update_required
+      changed_when: true
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -270,6 +289,7 @@
       loop_control:
         label: "{{ item.hostname }} ({{ item.mac }} -> {{ item.ip }})"
       when: (item.mac | lower) not in dhcp_scope_current_reservations
+      changed_when: true
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -282,7 +302,8 @@
         url: "{{ technitium_api_base }}/dhcp/scopes/enable?name={{ dhcp_scope_name }}&token={{ technitium_token }}"
         method: POST
         status_code: [200]
-      when: not (dhcp_scope_current.enabled | default(false))
+      when: not (dhcp_scope_enabled | default(false) | bool)
+      changed_when: true
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
