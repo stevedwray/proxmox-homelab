@@ -1795,6 +1795,22 @@ probe_stack_health() {
         PLATFORM_HEALTH_DETAIL="authoritative dns failed"
       fi
       ;;
+    technitium-stack)
+      # Not authoritative for the live resolver path yet (parity window --
+      # see deploy-technitium-stack.yml's header comment), so this probes
+      # Technitium's own IP directly for the same parity-zone record
+      # dns-stack serves, the same way validate_stack_smoke() does for
+      # this stack elsewhere in this script.
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "dig '@${ip}' +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns failed"
+      fi
+      ;;
     proxy-stack)
       PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
       if run_status_capture "${PLATFORM_HEALTH_LOG}" \
