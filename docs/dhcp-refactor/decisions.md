@@ -388,6 +388,83 @@ files) is intentionally scoped out as its own task — see
 [docs/environment-isolation/](../environment-isolation/), opened
 2026-07-07.
 
+## Decision 6: Production lease time — 7 days
+
+Context: Decision 4 settled the *strategy* (lease times move "substantially
+longer than today's 30m") but never picked a concrete number. Stage B's
+plan.md step 4 asks for this to be folded in as a declarative config-as-code
+parameter.
+
+Decision: the real `bridgeLocal` scope (Stage E, not yet built) will use
+`leaseTimeDays=7, leaseTimeHours=0, leaseTimeMinutes=0`. Recorded now in
+`configure-technitium-dhcp-scope-via-api.yml` as
+`dhcp_production_lease_days`/`_hours`/`_minutes` — documentary only today,
+since no `bridgeLocal` scope-management task exists before Stage E, but
+this removes an open TBD from that future work.
+
+Rationale: the current network (13 leases total on a `/24`) is nowhere
+near address exhaustion, so there's no cost to a long lease. Seven days is
+long enough that even a multi-hour Proxmox/Technitium outage never affects
+an already-connected client (Decision 4's actual goal), while still being
+short enough that a device that's genuinely gone (replaced, decommissioned)
+frees its address within a human-reasonable timeframe rather than tying it
+up indefinitely. Revisit if real-world experience after Stage E suggests a
+different value; this is a config value, not a structural commitment.
+
+## Decision 7: `configure-technitium-dhcp-scope-via-api.yml` stays a standalone playbook
+
+Context: `docs/dhcp-refactor/README.md`'s "Immediate next step" flagged an
+open question — should this playbook merge into
+`deploy-technitium-stack.yml`'s main flow, or stay separate?
+
+Decision: stays standalone for now.
+
+Rationale: `deploy-technitium-stack.yml` is the stable, already-cut-over-to-
+production DNS deploy path; folding a still-evolving, currently test-VLAN-
+only DHCP concern into it would couple that stable path to work that isn't
+done yet (Stage D's dynamic-lease policy is still undecided, and Stage E's
+real `bridgeLocal` scope doesn't exist). Revisit this once Stage E's real
+scope management is designed — at that point there may be a real argument
+for folding DHCP scope reconciliation into the main deploy flow the same
+way DNS zone bootstrap already is, but that's a decision for Stage E, not
+now.
+
+### Idempotency proof (2026-07-07): scope reconciliation + reservation list, both confirmed live
+
+Rewrote the playbook to close a real gap found while reviewing it for
+Stage B: the original version's scope-create task only fired on absence
+(`when: name not in [...]`), so a declared value change after the scope
+already existed would silently never reach the live scope on a re-run —
+exactly `stage-a-execution.md` Issue 7's bug shape, which had needed a
+one-off manual API call to fix in place. The rewritten version reads the
+scope's current config, diffs it against the declared values (subnet,
+lease time, domain), and calls `scopes/set` whenever any field differs —
+not just on first creation.
+
+Also converted the single hardcoded test-client reservation into a
+declarative `dhcp_reservations` list, and added 5 fake reservations shaped
+like the real `bridgeLocal` static leases (`fake-argon-01`, `fake-argon-02`,
+`fake-garuda`, `fake-rbr350`, `fake-raspberrypi`, using locally-administered
+`02:xx` MACs that can never collide with a real device) — proving the
+list/loop mechanism handles more than one reservation before Stage E ever
+points this shape at a real scope, per plan.md Stage B step 3's explicit
+ask.
+
+Ran live against `pve-test-vm`'s real Stage A scope twice:
+- **First run**: scope config already matched declared values (no drift —
+  `skipping` on the reconcile task), the 5 fake reservations were newly
+  added, the real test client's reservation was already present.
+- **Second run**: `changed=0` across the board — scope reconcile skipped
+  (no drift), all 6 reservations skipped (all already present). Confirmed
+  via direct API read afterward: `scopes/get` shows all 6 reservations with
+  correct hostname/MAC/IP, and `leaseTimeDays/Hours/Minutes: 0 0 10`
+  matching the declared test values exactly.
+
+DNS resolution wasn't checked for the 5 fake reservations — a reservation
+alone doesn't trigger Technitium's dynamic DNS update, only an actual
+issued lease does (already proven separately for the real test client in
+Stage A). That's expected, not a gap.
+
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
 Not a decision — deliberately parked, so the idea and the supporting
@@ -448,18 +525,17 @@ Rationale: why this option over the alternatives considered.
 
 ## Pending (tracked in plan.md's Phase 3 stages)
 
-- **`network_mode: host` switch** (Decision 5, plan.md Stage B): **decided,
-  not yet applied.** Compose template change, `stack.yaml`/`STACK_CONTRACT.md`
-  Provides-table update, and re-validation of the DHCP `server-identifier`
-  fix against Stage A's live throwaway instance are all still open tasks —
-  see Decision 5's "Concrete implementation" list.
-- **DHCP configuration as code** (plan.md Stage B): **partially built and
-  proven (2026-07-05)**, not "not yet built" — `configure-technitium-dhcp-scope-via-api.yml`
-  idempotently creates the scope, forward/reverse zones, and reservation,
-  following the same pattern as DNS's `technitium_generated_zone_src`, and
-  a repeat run correctly reported no changes. Still remaining: fold in the
-  real long-lease-time value (currently uses a short test-only value) and
-  update `STACK_CONTRACT.md`'s Persistent State table — see plan.md Stage B.
+- ~~`network_mode: host` switch~~ (Decision 5, plan.md Stage B0) — **done
+  and empirically validated (2026-07-06/07)**, including a `tcpdump`-
+  confirmed unicast RENEW against the real `pve-test-vm` instance.
+- ~~DHCP configuration as code~~ (plan.md Stage B) — **done (2026-07-07)**:
+  `configure-technitium-dhcp-scope-via-api.yml` now reconciles scope drift
+  (not just existence) and handles a declarative reservation list, proven
+  idempotent (`changed=0` on a second run) against the real `pve-test-vm`
+  scope, including 5 fake reservations shaped like the real `bridgeLocal`
+  static leases. `STACK_CONTRACT.md`'s Persistent State table is updated.
+  See Decision 6 (production lease time) and Decision 7 (standalone
+  playbook) above.
 - **Dynamic-lease policy** (plan.md Stage D): `current-state.md` records 13
   total current leases — 5 static (covered by Decision 3) and **8
   dynamic**, which this plan hasn't yet addressed. Needs an explicit,

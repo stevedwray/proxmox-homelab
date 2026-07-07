@@ -432,12 +432,21 @@ explicit `ports:` list; no scope, relay, or firewall changes to undo.
 
 ### Stage B — DHCP configuration as code (declarative source of truth + backup/restore)
 
-**Status: partially done (2026-07-05).** Steps 1–3 below are implemented and
-proven — `configure-technitium-dhcp-scope-via-api.yml` idempotently creates
-the scope, forward/reverse zones, and reservation, and a repeat run
-correctly reported no changes. Remaining: fold in the real long-lease-time
-value (step 4 — currently uses a deliberately short test-only value), and
-update `STACK_CONTRACT.md`'s Persistent State table (step 5).
+**Status: complete (2026-07-07).** All 5 steps below are done. The
+original (2026-07-05) implementation only handled *existence*
+(create-if-missing); reviewing it for this stage found a real gap —
+`stage-a-execution.md` Issue 7's exact bug shape (a declared value change
+silently never reaching an already-existing scope) could recur, since the
+scope-create task's `when:` guard only fired on absence. Rewrote it to
+diff the scope's live config against the declared values and reconcile
+(`scopes/set`) whenever they differ, not just on first creation, and
+converted the single hardcoded reservation into a declarative
+`dhcp_reservations` list. Proven idempotent live against `pve-test-vm`'s
+real Stage A scope twice (`changed=0` on the second run), including 5 fake
+reservations shaped like the real `bridgeLocal` static leases per step 3.
+See `docs/dhcp-refactor/decisions.md` Decision 6 (production lease time),
+Decision 7 (standalone playbook), and the idempotency-proof note under
+Decision 7 for full detail.
 
 Goal: close the gap between "the container came back" and "the DHCP design
 is reproducible." `STACK_CONTRACT.md` currently documents the
@@ -460,28 +469,32 @@ using the same query-then-add-if-missing idempotency pattern the zone
 bootstrap already had to build (dns-refactor "Issues encountered" #6).
 
 Steps:
-1. Define the declarative scope/options/reverse-zone shape (a checked-in
-   file, analogous to the DNS seed zone template) and the reservation list
-   (this subsumes what was previously a separate "reservation-migration
-   script" task — reservations are just one part of this same
-   config-as-code surface, not a separate concern).
-2. Add the idempotent apply step to the deploy playbook.
-3. Prove idempotency **against Stage A's throwaway scope** first: apply
-   twice, confirm the second run makes no changes and produces no errors,
-   using 5 fake reservations shaped like the real ones before ever pointing
-   this at a real scope.
-4. Fold the Decision-4 lease-time value in here as one of the declarative
-   scope fields — it's a config-as-code parameter like any other, not a
-   separate decision to track independently.
-5. Confirm `STACK_CONTRACT.md`'s Persistent State table is updated to state
-   explicitly that the Docker volume is **not** the source of truth for
-   DHCP (or DNS) config — the declarative definition + idempotent apply is,
-   the same as it already is for zone data.
+1. **Done.** Declarative scope/options shape (`dhcp_scope_*` vars) and a
+   `dhcp_reservations` list in `configure-technitium-dhcp-scope-via-api.yml`
+   — reservations are one part of this same config-as-code surface, not a
+   separate concern.
+2. **Done.** Idempotent apply step exists as its own playbook — see
+   Decision 7 for why it stays standalone rather than merging into
+   `deploy-technitium-stack.yml`.
+3. **Done.** Idempotency proven **against Stage A's throwaway scope**:
+   applied twice, second run `changed=0`, using 5 fake reservations shaped
+   like the real ones (`fake-argon-01` etc.) — confirmed via direct API
+   read afterward, not just the Ansible recap.
+4. **Done.** Decision 6 settles the real value (7 days), recorded as
+   `dhcp_production_lease_days`/`_hours`/`_minutes` in the playbook —
+   documentary only until Stage E builds real `bridgeLocal` scope
+   management.
+5. **Done.** `STACK_CONTRACT.md`'s Persistent State table now states
+   explicitly that the Docker volume is not the source of truth for either
+   DNS or DHCP config.
 
-Validation: idempotent re-run produces no changes on the second pass;
-reservations resolve correctly by both address and hostname; scope config
-(lease time, options, reverse zone) matches the declarative definition
-exactly after a fresh apply.
+Validation: idempotent re-run produces no changes on the second pass —
+**confirmed** (`changed=0`, all 6 reservations and the scope config itself
+all reported no drift). Reservation correctness confirmed via direct API
+read (`scopes/get` shows all 6 with correct hostname/MAC/IP). DNS
+resolution wasn't checked for the 5 fakes — a reservation alone doesn't
+trigger a DNS update, only an actual issued lease does (already proven for
+the real test client in Stage A).
 
 Rollback: n/a — this stage produces config-as-code and playbook changes,
 not a live network change.
@@ -682,26 +695,24 @@ Deliverable:
 
 ## Immediate next step
 
-**Stage A and Stage B0 are both done** (mechanism, restart/renew, outage
-recovery, simulated cutover, and now `network_mode: host` with an
-empirically-confirmed clean unicast RENEW via packet capture — all
-confirmed live on `pve-test-vm`'s throwaway VLAN). Getting Stage B0 applied
-safely required routing around a stale-inventory bug that had earlier sent
-one attempt to production by mistake (see Decision 5's incident note) —
-that's fixed for this stack via a `scripts/provision.sh` guardrail plus
-correctly-scoped manual `inventory.yml` files per environment; the proper
-structural fix is tracked separately in `docs/environment-isolation/`. The
-next task is **Stage B**: formalize the
-DHCP scope/reservation config as a proper declarative source of truth. A
-working first implementation already exists and is proven —
-`terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml`
-creates the scope, forward/reverse zones, and reservation idempotently, and
-was run twice live with the second run correctly reporting no changes. What
-Stage B still needs to finish: fold the real (long) lease-time value in
-instead of the test-only 10-minute value, update
-`STACK_CONTRACT.md`'s Persistent State table per Stage B step 5, and decide
-whether this playbook stays standalone or gets merged into
-`deploy-technitium-stack.yml`'s main flow. After that, Stage C (full
-teardown-gate confirmation) and Stage D (dynamic-lease policy, still
-genuinely undecided) are what stand between here and Stage E's
-production-only `bridgeLocal` cutover packet.
+**Stage A, Stage B0, and Stage B are all done.** Mechanism, restart/renew,
+outage recovery, simulated cutover, `network_mode: host` (empirically
+confirmed via a `tcpdump`-captured unicast RENEW), and now DHCP
+config-as-code with real drift-reconciliation (not just existence-checking)
+— all confirmed live on `pve-test-vm`'s throwaway VLAN, including a
+second-run `changed=0` idempotency proof covering both the scope's own
+config and a 6-entry reservation list. Getting Stage B0 applied safely
+required routing around a stale-inventory bug that had earlier sent one
+attempt to production by mistake (see Decision 5's incident note) — fixed
+for this stack via a `scripts/provision.sh` guardrail plus correctly-scoped
+manual `inventory.yml` files per environment; the proper structural fix is
+tracked separately in `docs/environment-isolation/`.
+
+The next task is **Stage C**: the full teardown/redeploy validation gate.
+With Stage B's declarative config-as-code in place, this stage can now
+actually prove the DHCP design survives a real destroy/recreate — not just
+that the container restarts — using the harness in
+`docs/teardown-test/repeatable-test.md`, still scoped to Stage A's
+throwaway VLAN, not `bridgeLocal`. After that, Stage D (dynamic-lease
+policy, still genuinely undecided — a real operator call) is what stands
+between here and Stage E's production-only `bridgeLocal` cutover packet.

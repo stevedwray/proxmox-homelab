@@ -101,8 +101,22 @@ Decision 5's incident note; real structural fix tracked separately in
 confirmed via a `tcpdump` capture of the actual T1 renewal: a direct
 **unicast** exchange with Technitium's real IP
 (`192.168.90.61.68 > 192.168.20.115.67`), not the previous broadcast
-REBIND fallback. Next up: Stage B (formalizing the DHCP config as
-declarative code) and Stage C (the full teardown/redeploy gate).
+REBIND fallback.
+
+**Stage B is also now complete (2026-07-07)**: DHCP scope/reservation
+config is now genuinely declarative, not just create-once. Reviewing the
+2026-07-05 implementation found it only handled existence (a `when: name
+not in [...]` guard), so a declared value change after the scope already
+existed would never reach the live scope — the same bug shape as
+`stage-a-execution.md` Issue 7. Rewrote it to diff the scope's live config
+against declared values and reconcile on drift, and converted the single
+hardcoded reservation into a declarative list. Proven idempotent live
+against `pve-test-vm`'s real scope twice (`changed=0` on the second run),
+including 5 fake reservations shaped like the real `bridgeLocal` static
+leases. See decisions.md Decision 6 (settled the real 7-day production
+lease time) and Decision 7 (this playbook stays standalone, doesn't merge
+into `deploy-technitium-stack.yml`, for now). Next up: Stage C (the full
+teardown/redeploy gate).
 
 Current understanding:
 

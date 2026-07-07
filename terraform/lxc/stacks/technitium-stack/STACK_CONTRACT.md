@@ -87,7 +87,7 @@ No secret values are committed here. All sensitive values must come from the env
 |---|---|---|
 | `/opt/technitium-stack/docker-compose.yml` | LXC host filesystem | Rendered Docker Compose definition |
 | `/opt/technitium-stack/.env` | LXC host filesystem | Compose secrets (admin password, registry host) |
-| Docker named volume `technitium-config` | Docker volume (`docker_storage_size`) | Technitium's embedded config/zone database (`/etc/dns` in-container) — **this is where zone data lives; it is not a flat file like CoreDNS's `lab.zone`** |
+| Docker named volume `technitium-config` | Docker volume (`docker_storage_size`) | Technitium's embedded config/zone/DHCP database (`/etc/dns` in-container) — **this volume is not the source of truth for either DNS zone data or DHCP scope/reservation config.** A volume loss or fresh redeploy loses both; neither is preserved across a full teardown. The actual sources of truth are the deploy playbook's DNS zone-bootstrap step (`technitium_generated_zone_src`) and `configure-technitium-dhcp-scope-via-api.yml` for DHCP scope/reservation config — both apply idempotently against the live API on every run, the same pattern as CoreDNS's flat zone file, just via REST instead of a file. |
 
 ## Generated Artifacts
 

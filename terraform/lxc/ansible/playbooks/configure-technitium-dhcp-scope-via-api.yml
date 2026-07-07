@@ -1,16 +1,33 @@
 ---
-# Stage A -- create/update the Technitium DHCP scope + reservation for the
+# Stage A -- create/reconcile the Technitium DHCP scope + reservations for the
 # isolated throwaway VLAN (test_dhcp_seg, 192.168.90.0/24), via Technitium's
 # REST API. This is the Technitium-side counterpart to
 # configure-dhcp-test-client-via-pct.yml (which flips the disposable client
 # to DHCP) -- until this playbook has run, dhclient on the test client has
 # nothing to negotiate a lease with. See docs/dhcp-refactor/stage-a-execution.md.
 #
-# Idempotency follows the same pattern already proven in
-# deploy-technitium-stack.yml's DNS zone bootstrap: check current state via a
-# `list`/`get` call, then only create/add via a `when:` guard when something
-# is actually missing, rather than re-applying blindly on every run.
-- name: Configure Technitium DHCP scope and reservation for the Stage A throwaway VLAN
+# Stage B (docs/dhcp-refactor/plan.md): this is the declarative source of
+# truth for DHCP scope/reservation config, mirroring
+# deploy-technitium-stack.yml's DNS zone-bootstrap pattern -- the
+# technitium-config Docker volume is not the source of truth (it doesn't
+# survive a teardown); this playbook reconciling on every run is.
+#
+# Idempotency covers two things, not just one:
+#   - existence (create the scope/zones/reservations if missing -- the
+#     original Stage A behavior)
+#   - drift (reconcile the scope's own config -- lease time, router, DNS,
+#     domain -- if it already exists but doesn't match the declared values
+#     below). The original Stage A version only handled existence: its
+#     scope-create task had a `when: name not in [...]` guard, so a value
+#     changed here after the scope already existed would silently never be
+#     applied on a re-run -- exactly the shape of stage-a-execution.md's
+#     Issue 7 (leaseTimeDays defaulting to 1 and never getting corrected by
+#     a normal playbook run; the fix had to be pushed via a one-off manual
+#     API call). `scopes/set` is confirmed safe to call unconditionally for
+#     both create and update (same call fixed Issue 7 in place), so this
+#     version always reconciles when a diff is detected, not just on
+#     first-ever creation.
+- name: Configure Technitium DHCP scope and reservations for the Stage A throwaway VLAN
   hosts: localhost
   gather_facts: false
 
@@ -34,13 +51,59 @@
     dhcp_scope_dns_servers: 192.168.90.1
     # Deliberately short -- this is the Stage A *test* scope, chosen so the
     # renew/rebind/outage-recovery checks in plan.md's Stage A validation list
-    # don't require waiting hours. Not a recommendation for the real
-    # bridgeLocal lease time -- that's decisions.md Decision 4 / plan.md
-    # Stage B's separate, deliberately-long value.
+    # don't require waiting hours or days. Not the real bridgeLocal lease
+    # time -- see dhcp_production_lease_days below (decisions.md Decision 6)
+    # for the value Stage E's real cutover will use; nothing applies that
+    # value yet since no bridgeLocal scope-management task exists before
+    # Stage E.
+    dhcp_scope_lease_days: 0
+    dhcp_scope_lease_hours: 0
     dhcp_scope_lease_minutes: 10
     dhcp_scope_domain_name: dhcp-test.test.gibbsgreatly.xyz
     dhcp_reverse_zone_network: 192.168.90.0/24
     dhcp_reverse_zone_name: 90.168.192.in-addr.arpa
+
+    # Decision 6's settled real-world value, recorded here as the
+    # config-as-code parameter Stage B step 4 asked for. Purely
+    # documentary in this playbook today -- Stage E is what will actually
+    # create/reconcile a bridgeLocal scope, and it should reference this
+    # same value rather than re-deciding it.
+    dhcp_production_lease_days: 7
+    dhcp_production_lease_hours: 0
+    dhcp_production_lease_minutes: 0
+
+    # Declarative reservation list -- the real test client (resolved
+    # dynamically below) plus 5 fake reservations shaped like the real
+    # bridgeLocal static leases (argon-01, argon-02, garuda, RBR350,
+    # raspberrypi -- see docs/dhcp-refactor/current-state.md), added
+    # specifically to prove the list/loop reconciliation mechanism handles
+    # more than one reservation before Stage E ever points this shape at a
+    # real scope (plan.md Stage B step 3). Fake MACs use the
+    # locally-administered range (02:xx) so they can never collide with a
+    # real device's hardware address. These stay checked in as a permanent
+    # idempotency-proof fixture for the throwaway scope -- they are never
+    # applied anywhere but `test_dhcp_seg`.
+    dhcp_reservations: >-
+      {{
+        [{'hostname': dhcp_test_target_host, 'mac': dhcp_test_mac, 'ip': dhcp_test_reserved_ip}]
+        + dhcp_stage_b_fake_reservations
+      }}
+    dhcp_stage_b_fake_reservations:
+      - hostname: fake-argon-01
+        mac: "02:00:00:00:00:01"
+        ip: 192.168.90.62
+      - hostname: fake-argon-02
+        mac: "02:00:00:00:00:02"
+        ip: 192.168.90.63
+      - hostname: fake-garuda
+        mac: "02:00:00:00:00:03"
+        ip: 192.168.90.64
+      - hostname: fake-rbr350
+        mac: "02:00:00:00:00:04"
+        ip: 192.168.90.65
+      - hostname: fake-raspberrypi
+        mac: "02:00:00:00:00:05"
+        ip: 192.168.90.66
 
   tasks:
     - name: Read the test client's current Proxmox net0 config
@@ -134,30 +197,17 @@
         ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
       no_log: true
 
-    - name: Create the Stage A DHCP scope if missing
-      # leaseTimeDays must be set explicitly to 0 -- Technitium defaults an
-      # unspecified leaseTimeDays to 1 on scope creation, which would make
-      # the real lease time 1 day + leaseTimeMinutes, silently defeating the
-      # short-lease choice above (found by inspecting scopes/get after the
-      # first live run: leaseTimeDays showed 1 even though it was never set).
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/dhcp/scopes/set?name={{ dhcp_scope_name }}&startingAddress={{ dhcp_scope_start }}&endingAddress={{ dhcp_scope_end }}&subnetMask={{ dhcp_scope_subnet_mask }}&leaseTimeDays=0&leaseTimeHours=0&leaseTimeMinutes={{ dhcp_scope_lease_minutes }}&routerAddress={{ dhcp_scope_router }}&dnsServers={{ dhcp_scope_dns_servers }}&domainName={{ dhcp_scope_domain_name }}&dnsUpdates=true&token={{ technitium_token }}"
-        method: POST
-        status_code: [200]
-      when: dhcp_scope_name not in ((technitium_scope_list.content | from_json).response.scopes | map(attribute='name') | list)
-      delegate_to: "{{ dhcp_test_pve_host }}"
-      vars:
-        ansible_user: root
-        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
-        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
-      no_log: true
+    - name: Determine whether the Stage A scope already exists
+      ansible.builtin.set_fact:
+        dhcp_scope_exists: "{{ dhcp_scope_name in ((technitium_scope_list.content | from_json).response.scopes | map(attribute='name') | list) }}"
 
-    - name: Read current Stage A scope details (reservations + enabled state)
+    - name: Read current Stage A scope details (only if it already exists)
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/dhcp/scopes/get?name={{ dhcp_scope_name }}&token={{ technitium_token }}"
         method: GET
         return_content: true
       register: dhcp_scope_details
+      when: dhcp_scope_exists
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -165,15 +215,61 @@
         ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
       no_log: true
 
-    - name: Add the reserved lease for the test client if missing
+    - name: Normalize current scope config for drift comparison
+      ansible.builtin.set_fact:
+        dhcp_scope_current: "{{ (dhcp_scope_details.content | from_json).response if dhcp_scope_exists else {} }}"
+
+    - name: Determine whether the scope needs creating or reconciling
+      ansible.builtin.set_fact:
+        dhcp_scope_update_required: >-
+          {{
+            (not dhcp_scope_exists)
+            or (dhcp_scope_current.startingAddress | default('') != dhcp_scope_start)
+            or (dhcp_scope_current.endingAddress | default('') != dhcp_scope_end)
+            or (dhcp_scope_current.subnetMask | default('') != dhcp_scope_subnet_mask)
+            or ((dhcp_scope_current.leaseTimeDays | default(-1)) != dhcp_scope_lease_days)
+            or ((dhcp_scope_current.leaseTimeHours | default(-1)) != dhcp_scope_lease_hours)
+            or ((dhcp_scope_current.leaseTimeMinutes | default(-1)) != dhcp_scope_lease_minutes)
+            or (dhcp_scope_current.domainName | default('') != dhcp_scope_domain_name)
+          }}
+
+    - name: Create or reconcile the Stage A DHCP scope
+      # leaseTimeDays must be set explicitly to 0 -- Technitium defaults an
+      # unspecified leaseTimeDays to 1 on scope creation, which would make
+      # the real lease time 1 day + leaseTimeMinutes (stage-a-execution.md
+      # Issue 7). Calling scopes/set unconditionally when a diff is
+      # detected (not just on first creation) is what actually closes that
+      # bug class going forward -- a future value change here now reaches
+      # the live scope on the next run instead of silently no-op'ing.
       ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/dhcp/scopes/addReservedLease?name={{ dhcp_scope_name }}&hardwareAddress={{ dhcp_test_mac }}&ipAddress={{ dhcp_test_reserved_ip }}&hostName={{ dhcp_test_target_host }}&token={{ technitium_token }}"
+        url: "{{ technitium_api_base }}/dhcp/scopes/set?name={{ dhcp_scope_name }}&startingAddress={{ dhcp_scope_start }}&endingAddress={{ dhcp_scope_end }}&subnetMask={{ dhcp_scope_subnet_mask }}&leaseTimeDays={{ dhcp_scope_lease_days }}&leaseTimeHours={{ dhcp_scope_lease_hours }}&leaseTimeMinutes={{ dhcp_scope_lease_minutes }}&routerAddress={{ dhcp_scope_router }}&dnsServers={{ dhcp_scope_dns_servers }}&domainName={{ dhcp_scope_domain_name }}&dnsUpdates=true&token={{ technitium_token }}"
         method: POST
         status_code: [200]
-      when: >-
-        dhcp_test_mac not in
-        ((dhcp_scope_details.content | from_json).response.reservedLeases | default([])
-          | map(attribute='hardwareAddress') | map('replace', '-', ':') | map('lower') | list)
+      when: dhcp_scope_update_required
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      no_log: true
+
+    - name: Current reserved leases (from the pre-reconcile read, or empty on first-ever run)
+      ansible.builtin.set_fact:
+        dhcp_scope_current_reservations: >-
+          {{
+            (dhcp_scope_current.reservedLeases | default([]))
+            | map(attribute='hardwareAddress') | map('replace', '-', ':') | map('lower') | list
+          }}
+
+    - name: Add each declared reservation that's missing from the scope
+      ansible.builtin.uri:
+        url: "{{ technitium_api_base }}/dhcp/scopes/addReservedLease?name={{ dhcp_scope_name }}&hardwareAddress={{ item.mac }}&ipAddress={{ item.ip }}&hostName={{ item.hostname }}&token={{ technitium_token }}"
+        method: POST
+        status_code: [200]
+      loop: "{{ dhcp_reservations }}"
+      loop_control:
+        label: "{{ item.hostname }} ({{ item.mac }} -> {{ item.ip }})"
+      when: (item.mac | lower) not in dhcp_scope_current_reservations
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
@@ -186,7 +282,7 @@
         url: "{{ technitium_api_base }}/dhcp/scopes/enable?name={{ dhcp_scope_name }}&token={{ technitium_token }}"
         method: POST
         status_code: [200]
-      when: not ((dhcp_scope_details.content | from_json).response.enabled | default(false))
+      when: not (dhcp_scope_current.enabled | default(false))
       delegate_to: "{{ dhcp_test_pve_host }}"
       vars:
         ansible_user: root
