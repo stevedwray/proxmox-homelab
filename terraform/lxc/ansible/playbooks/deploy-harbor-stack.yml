@@ -179,10 +179,29 @@
         - not (harbor_postconfigure_oidc_ready | default(false) | bool)
       delegate_to: localhost
       run_once: true
+
+    # Resolved here, before the role's own `vars:` block redefines
+    # harbor_postconfigure_oidc_enabled to mean "ready this run" instead of
+    # "desired at all" -- referencing the outer var by the same name from
+    # inside that same vars: block would silently pick up the redefinition
+    # instead (Ansible resolves same-named keys in one vars: dict against
+    # each other, not against the outer scope), making
+    # harbor_postconfigure_oidc_requested collapse to the same value as
+    # "ready this run" and defeating harbor_postconfigure_preserve_oidc_migration
+    # in exactly the case it exists to catch. Confirmed live: this let a
+    # from-scratch run create the breakglass user and CI robot account while
+    # Authentik wasn't ready yet, which then permanently blocked switching
+    # Harbor to OIDC on the next run ("the auth mode cannot be modified as
+    # new users have been inserted into database").
+    - name: Resolve whether Harbor OIDC was requested at all, before role-local shadowing
+      ansible.builtin.set_fact:
+        harbor_postconfigure_oidc_requested_resolved: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+      delegate_to: localhost
+      run_once: true
   roles:
     - role: harbor_postconfigure
       vars:
-        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_enabled | bool }}"
+        harbor_postconfigure_oidc_requested: "{{ harbor_postconfigure_oidc_requested_resolved }}"
         harbor_postconfigure_oidc_enabled: "{{ harbor_postconfigure_oidc_ready | default(false) | bool }}"
 
 - name: Deploy cAdvisor for container metrics on Harbor host
