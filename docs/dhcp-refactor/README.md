@@ -117,17 +117,31 @@ leases. See decisions.md Decision 6 (settled the real 7-day production
 lease time) and Decision 7 (this playbook stays standalone, doesn't merge
 into `deploy-technitium-stack.yml`, for now).
 
-**Stage C prep is now fully done (2026-07-07)**: `scripts/teardown-deploy-test.sh`
-fixed a pre-existing bug (every Terraform no-op plan was misclassified
-`blocked`, breaking the harness for every stack), gained `technitium-stack`
-in its stack inventory/deploy/destroy order, and now wires the DHCP
-scope reconcile into deploy and a read-only lease check into
-`final-validation` (see `plan.md`'s Stage C section for the full
-breakdown). `dhcp-test-client-01` was deliberately left out of the
-platform inventory — it's a workspace-local fixture, not a platform
-dependency. **Next up**: the actual destructive teardown/redeploy `cycle`
-run itself — still not attempted, needs its own explicit approval
-separate from routine "continue" instructions.
+**Stage C is now fully done (2026-07-12)**: after 2026-07-07's prep work
+(fixed the Terraform no-op-plan misclassification bug, added
+`technitium-stack` to the inventory/deploy/destroy order, wired the DHCP
+scope reconcile into deploy and a lease check into the stack's own
+validation), the actual destructive full 12-stack `cycle` was run for
+real against `pve-test-vm` — a genuine from-scratch `destroy` through
+`final-validation`. The first attempt surfaced five real bugs (none
+DHCP-specific — general platform bootstrap-ordering and Ansible
+variable-scoping issues that a true cold full-cycle run was the first
+thing to ever exercise): `technitium-stack`'s image pull routed through
+Harbor before Harbor/Traefik existed yet in the deploy order; the DHCP
+lease check raced `dhclient`'s multi-minute backoff instead of forcing a
+deterministic renewal; the harness's own nameserver-list `-e` argument
+never actually produced a list; `authentik-stack`'s Harbor pre-pull
+gating trusted a bare TCP:80 check that doesn't prove authenticated
+registry access works; and a role-vars variable-shadowing bug in
+`deploy-harbor-stack.yml` silently defeated the guard meant to stop
+Harbor's OIDC auth-mode migration from getting permanently blocked. All
+five fixed and validated live; see `plan.md`'s Stage C section for full
+detail and commit references. A second, completely fresh full cycle then
+passed clean end to end, including the DHCP-specific checks — first time
+ever with `technitium-stack` in the mix. **Next up**: Stage D
+(dynamic-lease policy for the 8 non-static clients) — still not formally
+recorded as a decision, though one operator steer already exists (phones
+excluded from the "keep every address" reservation set).
 
 Current understanding:
 

@@ -536,17 +536,30 @@ Rationale: why this option over the alternatives considered.
   static leases. `STACK_CONTRACT.md`'s Persistent State table is updated.
   See Decision 6 (production lease time) and Decision 7 (standalone
   playbook) above.
-- ~~Teardown-test harness prep~~ (plan.md Stage C) — **prep done
-  (2026-07-07)**: fixed a pre-existing `classify-storage-plan.py` bug that
+- ~~Teardown-test harness prep~~ and ~~the destructive `cycle` run
+  itself~~ (plan.md Stage C) — **fully done (2026-07-12)**. Prep
+  (2026-07-07): fixed a pre-existing `classify-storage-plan.py` bug that
   misclassified every Terraform no-op as blocked (affected every stack, not
   just this one), added `technitium-stack` to the teardown inventory and
   `.env` template aliases, and wired both a DHCP scope reconcile (into
-  deploy) and a read-only lease-correctness check (into `final-validation`)
-  into `scripts/teardown-deploy-test.sh`. `dhcp-test-client-01` deliberately
-  stays out of the platform inventory (workspace-local fixture, not a
-  platform dependency). The destructive `cycle` run itself is the only
-  Stage C item left, and needs its own explicit approval, not a routine
-  "continue".
+  deploy) and a lease-correctness check into the stack's own validation.
+  `dhcp-test-client-01` deliberately stays out of the platform inventory
+  (workspace-local fixture, not a platform dependency). The destructive
+  full 12-stack `cycle` run (2026-07-12, explicit operator approval given)
+  found five real bugs on its first attempt — none DHCP-specific, all
+  platform bootstrap-ordering/Ansible variable-scoping issues a genuine
+  cold full-cycle run was the first thing to ever exercise: `technitium-
+  stack`'s image pull routed through Harbor before Harbor/Traefik existed
+  in the deploy order; the DHCP lease check raced `dhclient`'s backoff
+  instead of forcing a deterministic renewal; the harness's nameserver-list
+  `-e` argument never actually produced a list; `authentik-stack`'s Harbor
+  pre-pull gating trusted a TCP:80 check that doesn't prove authenticated
+  registry access; and a role-vars shadowing bug in `deploy-harbor-
+  stack.yml` defeated the guard against permanently blocking Harbor's OIDC
+  auth-mode migration. All five fixed and validated live (see
+  `plan.md`'s Stage C section for detail and commit references). A second,
+  completely fresh full cycle then passed clean end to end — first time
+  ever with `technitium-stack` included.
 - **Dynamic-lease policy** (plan.md Stage D): `current-state.md` records 13
   total current leases — 5 static (covered by Decision 3) and **8
   dynamic**, which this plan hasn't yet addressed. Needs an explicit,

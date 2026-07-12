@@ -501,12 +501,78 @@ not a live network change.
 
 ### Stage C — Full teardown/redeploy validation gate
 
-**Status: prep done, and the core mechanism has now been validated by a
-real, scoped destroy/recreate rehearsal (2026-07-07) — the full 12-stack
-platform `cycle` itself is still not attempted, deliberately, as its own
-explicitly-approved step.** A full `cycle` run is a destroy/rebuild of
-`pve-test-vm`'s *entire* platform (foundation → edge → platform tiers),
-gated by the harness's own formal approval-packet mechanism (backup
+**Status: complete (2026-07-12).** The full 12-stack platform `cycle` has
+now been run for real against `pve-test-vm` — a genuine from-scratch
+`destroy` through `final-validation`, not the scoped `technitium-stack`-only
+rehearsal from 2026-07-07. The first attempt found five real, previously-
+undiscovered bugs, none specific to DHCP itself but all invisible until a
+true cold full-platform cycle exercised them:
+
+1. `deploy-technitium-stack.yml`'s `docker_registry_host` pulled the
+   Technitium image through Harbor's Docker-Hub proxy-cache project, which
+   requires Traefik (`proxy-stack`) and `harbor-stack` to already be up —
+   neither exists yet at `technitium-stack`'s position (#4) in the Approved
+   Deploy Order. Fixed to pull `technitium/dns-server` directly from Docker
+   Hub, matching `proxy-stack`'s own `traefik_image` pattern (a near-
+   identical bug `proxy-stack` had already hit and fixed on 2026-05-06, that
+   `technitium-stack` never inherited when it was added to the inventory
+   two months later).
+2. `validate-dhcp-test-client-via-pct.yml`'s lease check passively read
+   whatever address the interface had at that instant, assuming a natural
+   DHCP renewal had already happened by the time a full cycle reached it.
+   `dhclient`'s multi-minute backoff between retry bursts made that
+   assumption false in practice — confirmed live twice. Fixed to trigger a
+   single bounded `dhclient -1` renewal before reading interface state,
+   making the check deterministic.
+3. The harness's own `-e 'dhcp_test_validation_expected_nameservers=[...]'`
+   invocation never actually produced a list — `ansible-playbook -e
+   key=value` never JSON-decodes the value, regardless of what it looks
+   like. Fixed to pass a `-e '{...}'` JSON object instead.
+4. `deploy-authentik-stack.yml` decided whether to pre-pull images
+   directly from public registries based on a raw `nc -z <harbor-ip> 80`
+   check — which only proves Harbor's HTTP listener is up, not that an
+   authenticated registry operation will succeed (Harbor's auth-token realm
+   is unconditionally `https`, and Harbor's own nginx never serves `:443`
+   directly). Fixed by moving the `docker login` attempt earlier and gating
+   the pre-pull block on login failure too, not just TCP reachability.
+5. `deploy-harbor-stack.yml` passed `harbor_postconfigure_oidc_requested`
+   and `harbor_postconfigure_oidc_enabled` in the same role `vars:` block,
+   where Ansible resolves same-named keys against each other rather than
+   the outer play scope — silently collapsing the two into the same value
+   and defeating the existing `harbor_postconfigure_preserve_oidc_migration`
+   guard in exactly the case it exists to catch (OIDC wanted, Authentik not
+   ready yet). Consequence: a deferred-OIDC run created Harbor's breakglass
+   user and CI robot account anyway, which then permanently blocked the
+   OIDC auth-mode switch on the next run (a real Harbor guard: "the auth
+   mode cannot be modified as new users have been inserted into database").
+   Fixed by resolving the "requested" flag via `set_fact` before the role's
+   `vars:` block can shadow it.
+
+None of these were DHCP-specific — they were general platform bootstrap-
+ordering and Ansible variable-scoping bugs that this workspace's inclusion
+of `technitium-stack` in the full-cycle inventory happened to be the first
+thing to expose. See the git history on `terraform/lxc/ansible/playbooks/
+deploy-technitium-stack.yml`, `deploy-authentik-stack.yml`,
+`deploy-harbor-stack.yml`, `validate-dhcp-test-client-via-pct.yml`, and
+`scripts/teardown-deploy-test.sh` for the individual commits and full
+reasoning.
+
+After all five fixes, a second, completely fresh full cycle (`destroy`
+through `final-validation`, all real sub-phases, not resumed from a partial
+state) passed clean end to end — including the DHCP-specific checks: the
+scope reconcile survives a from-scratch `technitium-stack` recreate, and
+`dhcp-test-client-01` obtains its declared reserved lease
+(`192.168.90.61`, gateway `192.168.90.1`, nameserver `192.168.90.1`)
+deterministically. This is the first time the full platform cycle has ever
+passed clean with `technitium-stack` included.
+
+Earlier status (superseded, kept for history): "prep done, and the core
+mechanism has now been validated by a real, scoped destroy/recreate
+rehearsal (2026-07-07) — the full 12-stack platform `cycle` itself is
+still not attempted, deliberately, as its own explicitly-approved step." A
+full `cycle` run is a destroy/rebuild of `pve-test-vm`'s *entire* platform
+(foundation → edge → platform tiers), gated by the harness's own formal
+approval-packet mechanism (backup
 evidence for step-ca, authentik, harbor, netbox, monitoring, portainer;
 explicit outage window). That's a materially bigger action than anything
 else done in the DHCP-refactor workspace so far and needs its own
@@ -815,11 +881,21 @@ for this stack via a `scripts/provision.sh` guardrail plus correctly-scoped
 manual `inventory.yml` files per environment; the proper structural fix is
 tracked separately in `docs/environment-isolation/`.
 
-The next task is **Stage C**: the full teardown/redeploy validation gate.
-With Stage B's declarative config-as-code in place, this stage can now
-actually prove the DHCP design survives a real destroy/recreate — not just
-that the container restarts — using the harness in
-`docs/teardown-test/repeatable-test.md`, still scoped to Stage A's
-throwaway VLAN, not `bridgeLocal`. After that, Stage D (dynamic-lease
-policy, still genuinely undecided — a real operator call) is what stands
-between here and Stage E's production-only `bridgeLocal` cutover packet.
+**Stage C is now also done (2026-07-12)**: the full 12-stack platform
+`cycle` passed clean end to end on a genuine from-scratch `pve-test-vm`
+rebuild, after fixing five real platform bootstrap-ordering/Ansible
+variable-scoping bugs the first attempt surfaced (see Stage C's section
+above for the full list). This is the first time the full cycle has ever
+passed with `technitium-stack` included.
+
+The next task is **Stage D**: dynamic-lease policy for the 8 non-static
+clients. Still not formally recorded as a decision. One operator steer
+already given in this workspace's own discussion: phones don't need a
+static/reserved address — narrowing the "promote to reservation" question
+to the non-phone dynamic devices (`HarmonyHub`, `RV30_Max_Plus`, `deb13`,
+`LM-GM17D7CY`, `Compute` are the clear non-phone candidates from
+`current-state.md`'s 8; `iPhone`, `Stephen-s-A56`, and `BolorErlsiPhone`
+are the phones to exclude). This still needs to be written up as an actual
+decisions.md entry, including the stale-DNS-record cleanup procedure Stage
+D's plan.md section calls for, before Stage E's cutover packet can be
+assembled.
