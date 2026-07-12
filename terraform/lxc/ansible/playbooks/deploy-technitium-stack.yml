@@ -256,6 +256,58 @@
         technitium_token: "{{ (technitium_login.content | from_json).token }}"
       no_log: true
 
+    - name: Determine effective generated-zone source path
+      ansible.builtin.set_fact:
+        technitium_generated_zone_src_effective: "{{ technitium_generated_zone_src | default(technitium_generated_zone_src_env, true) }}"
+
+    - name: Parse generated Technitium zone payload when provided
+      ansible.builtin.set_fact:
+        technitium_generated_zone_enabled: "{{ (technitium_generated_zone_src_effective | trim | length) > 0 }}"
+        technitium_generated_zone_payload: >-
+          {{ (lookup('file', technitium_generated_zone_src_effective) | from_json)
+             if (technitium_generated_zone_src_effective | trim | length > 0)
+             else {} }}
+
+    - name: Normalize generated Technitium zone payload
+      ansible.builtin.set_fact:
+        technitium_generated_zone_name: >-
+          {{
+            technitium_generated_zone_payload.zone
+            if (technitium_generated_zone_payload is mapping
+                and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
+            else technitium_bootstrap_zone
+          }}
+        technitium_generated_zone_records: >-
+          {{
+            technitium_generated_zone_payload.records
+            if (technitium_generated_zone_payload is mapping)
+            else technitium_generated_zone_payload
+          }}
+        technitium_parity_zone_enabled: >-
+          {{
+            (technitium_generated_zone_src_effective | trim | length > 0)
+            and (
+              (
+                technitium_generated_zone_payload.zone
+                if (technitium_generated_zone_payload is mapping
+                    and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
+                else technitium_bootstrap_zone
+              ) != technitium_bootstrap_zone
+            )
+          }}
+
+    - name: Assert generated Technitium zone payload shape
+      ansible.builtin.assert:
+        that:
+          - technitium_generated_zone_payload is mapping or technitium_generated_zone_payload is sequence
+          - technitium_generated_zone_payload is not string
+          - technitium_generated_zone_records is sequence
+          - technitium_generated_zone_records is not string
+        fail_msg: >-
+          technitium_generated_zone_src must contain either a JSON array of
+          `{name, ip}` records or an object with `zone` and `records`.
+      when: technitium_generated_zone_enabled | bool
+
     - name: Check whether the lab zone already exists
       ansible.builtin.uri:
         url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
@@ -347,58 +399,6 @@
         status_code: [200]
       when: technitium_bootstrap_zone not in (technitium_zone_list.content | from_json).response.zones | map(attribute='name') | list
       no_log: true
-
-    - name: Determine effective generated-zone source path
-      ansible.builtin.set_fact:
-        technitium_generated_zone_src_effective: "{{ technitium_generated_zone_src | default(technitium_generated_zone_src_env, true) }}"
-
-    - name: Parse generated Technitium zone payload when provided
-      ansible.builtin.set_fact:
-        technitium_generated_zone_enabled: "{{ (technitium_generated_zone_src_effective | trim | length) > 0 }}"
-        technitium_generated_zone_payload: >-
-          {{ (lookup('file', technitium_generated_zone_src_effective) | from_json)
-             if (technitium_generated_zone_src_effective | trim | length > 0)
-             else {} }}
-
-    - name: Normalize generated Technitium zone payload
-      ansible.builtin.set_fact:
-        technitium_generated_zone_name: >-
-          {{
-            technitium_generated_zone_payload.zone
-            if (technitium_generated_zone_payload is mapping
-                and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
-            else technitium_bootstrap_zone
-          }}
-        technitium_generated_zone_records: >-
-          {{
-            technitium_generated_zone_payload.records
-            if (technitium_generated_zone_payload is mapping)
-            else technitium_generated_zone_payload
-          }}
-        technitium_parity_zone_enabled: >-
-          {{
-            (technitium_generated_zone_src_effective | trim | length > 0)
-            and (
-              (
-                technitium_generated_zone_payload.zone
-                if (technitium_generated_zone_payload is mapping
-                    and (technitium_generated_zone_payload.zone | default('') | string | trim | length > 0))
-                else technitium_bootstrap_zone
-              ) != technitium_bootstrap_zone
-            )
-          }}
-
-    - name: Assert generated Technitium zone payload shape
-      ansible.builtin.assert:
-        that:
-          - technitium_generated_zone_payload is mapping or technitium_generated_zone_payload is sequence
-          - technitium_generated_zone_payload is not string
-          - technitium_generated_zone_records is sequence
-          - technitium_generated_zone_records is not string
-        fail_msg: >-
-          technitium_generated_zone_src must contain either a JSON array of
-          `{name, ip}` records or an object with `zone` and `records`.
-      when: technitium_generated_zone_enabled | bool
 
     - name: Determine bootstrap record source
       ansible.builtin.set_fact:

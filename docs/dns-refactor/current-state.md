@@ -238,8 +238,19 @@ in `plan.md` before attempting a full teardown validation run.
   and has its own correct copy of these records, confirmed independently
   working). **Impact for this workspace's own Phase 3 cutover rehearsal:
   real** — once Technitium needs to answer for `lab_domain` directly, this
-  collision would actually matter. Fix before relying on Technitium's own
-  zone for anything beyond parity-comparison: either compute
-  `technitium_generated_zone_name`/`_enabled` before the forwarder task
-  runs, or skip the forwarder task outright whenever `lab_domain` matches
-  the generated zone's target name by construction.
+  collision would actually matter.
+
+  **Fixed 2026-07-12** (found while scoping the DHCP-refactor workspace,
+  fixed here since it's a DNS zone-bootstrap bug): moved the three
+  `set_fact` tasks that compute `technitium_generated_zone_src_effective`
+  / `technitium_generated_zone_enabled` / `technitium_generated_zone_name`
+  / `technitium_parity_zone_enabled` to before the forwarder-creation
+  task — a pure reorder, no logic change, since none of the three tasks
+  depend on anything that previously ran between them and the guard.
+  Validated live against `pve-test-vm`: `test.gibbsgreatly.xyz` is now
+  created as `Primary` (confirmed via `zones/list`), and both
+  `dig @192.168.20.115 harbor.test.gibbsgreatly.xyz` and
+  `traefik.test.gibbsgreatly.xyz` resolve correctly instead of
+  `NXDOMAIN`. Two consecutive `provision.sh --stack technitium-stack`
+  runs against `pve-test-vm` both completed clean (`failed=0`), the
+  second confirming idempotency.
