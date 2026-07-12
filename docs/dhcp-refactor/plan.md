@@ -697,6 +697,12 @@ still confined to the throwaway VLAN.
 
 ### Stage D — Dynamic-lease policy for the 8 non-static clients
 
+**Status: mostly done (2026-07-12) — see decisions.md Decision 8.** 3 of
+the 8 dynamic leases (`deb13`, `LM-GM17D7CY`, `Compute`) are promoted to
+reservations; the other 5 (`HarmonyHub`, `RV30_Max_Plus`, `iPhone`,
+`Stephen-s-A56`, `BolorErlsiPhone`) accept address churn. Task 3 (the
+stale-DNS-record rollback cleanup procedure) is not yet written.
+
 Goal: the plan so far only explicitly migrates the 5 static leases
 (decisions.md Decision 3). `current-state.md` records 13 total current
 leases — 5 static, **8 dynamic** — and nothing yet decides what happens to
@@ -708,29 +714,23 @@ but it needs to be an explicit, reviewed conclusion, not a silent side
 effect discovered after cutover.
 
 Tasks:
-1. Audit the 8 current dynamic leases (`current-state.md`'s lease data —
-   e.g. `HarmonyHub`, `iPhone`, and the other genuinely-dynamic entries;
-   **not** `raspberrypi`, which is already one of the 5 static leases in
-   Decision 3's fixed reservation set, not part of this dynamic-audit
-   population) and decide, per device, whether IP churn is acceptable or
-   whether it should be promoted to a reservation *before* cutover (added
-   to Stage B's declarative reservation list) so it keeps the address
-   anything might depend on.
-2. Document the accepted-churn decision explicitly (even if the answer is
-   "all 8 may freely get new addresses") so it's a reviewed conclusion, not
-   an assumption.
+1. ~~Audit the 8 current dynamic leases...~~ — **done, decisions.md
+   Decision 8.**
+2. ~~Document the accepted-churn decision explicitly...~~ — **done,
+   decisions.md Decision 8.**
 3. Define the stale-record cleanup procedure for the rollback case: if
    Technitium has already issued leases (and, per Decision 4, created
    forward/reverse DNS records) for some dynamic clients before a rollback
    to MikroTik is triggered, those Technitium-side DNS records become
    stale. Define how they get cleaned up — a manual check-and-delete pass
    against Technitium's DNS zone as part of the rollback procedure (feeds
-   into Stage E's rollback steps below), not left to rot.
+   into Stage E's rollback steps below), not left to rot. **Still open.**
 
 Deliverable: a short, explicit dynamic-lease policy (which devices are
 promoted to reservations, confirmation that churn for the rest is
-acceptable, and the stale-DNS-record cleanup procedure) feeding directly
-into Stage E's cutover packet.
+acceptable — **done**, Decision 8 — and the stale-DNS-record cleanup
+procedure — **still open**) feeding directly into Stage E's cutover
+packet.
 
 Rollback: n/a — this stage is a decision/documentation task.
 

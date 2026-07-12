@@ -465,6 +465,56 @@ alone doesn't trigger Technitium's dynamic DNS update, only an actual
 issued lease does (already proven separately for the real test client in
 Stage A). That's expected, not a gap.
 
+## Decision 8: Dynamic-lease policy — 3 of 8 promoted to reservations, phones and smart-home devices accept churn
+
+Context: `current-state.md` records 8 dynamic (non-static) leases on
+`bridgeLocal` that Decision 3's static-lease migration never addressed.
+Nothing yet decided which of these, if any, should be promoted to a
+reservation before the real `bridgeLocal` cutover (Stage E) so they keep
+their current address, versus accepting that Technitium's pool will very
+likely hand them a different address after cutover.
+
+Decision: promote 3 of the 8 to reservations; the remaining 5 accept
+address churn.
+
+Promoted to reservations (keep current address):
+
+| Host | Address | MAC |
+|---|---|---|
+| `deb13` | `192.168.1.100` | `10:66:6A:40:A0:CF` |
+| `LM-GM17D7CY` | `192.168.1.102` | `F4:28:9D:AB:2B:D1` |
+| `Compute` | `192.168.1.101` | `4C:82:A9:BC:6D:CF` |
+
+Accept churn (no reservation):
+
+| Host | Address | Reason |
+|---|---|---|
+| `HarmonyHub` | `192.168.1.106` | operator accepted churn |
+| `RV30_Max_Plus` | `192.168.1.177` | operator accepted churn |
+| `iPhone` | `192.168.1.114` | phone — operator stated phones don't need a static address |
+| `Stephen-s-A56` | `192.168.1.108` | phone |
+| `BolorErlsiPhone` | `192.168.1.103` | phone |
+
+Rationale: operator judgment call, not derived from any technical
+constraint — phones and the two smart-home/IoT-style devices
+(`HarmonyHub`, `RV30_Max_Plus`) don't need a stable address, while the
+three general-purpose machines (`Compute`, `deb13`, and `LM-GM17D7CY`,
+whose exact device type was uncertain but the operator chose to reserve
+anyway) do.
+
+Caveat carried over from the original triage: `iPhone` and
+`Stephen-s-A56` show locally-administered (randomized/private) MAC
+addresses in the current scrape — moot now since neither is being
+reserved, but worth remembering if this decision is ever revisited, since
+a reservation keyed to a private MAC is inherently less stable than one
+keyed to real hardware MACs like the three being promoted here.
+
+Still open: Stage D's plan.md section also calls for a stale-DNS-record
+cleanup procedure for the rollback case (if Technitium has already
+registered forward/reverse DNS for some of the 5 churn-accepted devices
+before a rollback to MikroTik is triggered) — not yet written. Needed
+before Stage E's cutover packet can be assembled in full.
+
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
 Not a decision — deliberately parked, so the idea and the supporting
@@ -560,15 +610,12 @@ Rationale: why this option over the alternatives considered.
   `plan.md`'s Stage C section for detail and commit references). A second,
   completely fresh full cycle then passed clean end to end — first time
   ever with `technitium-stack` included.
-- **Dynamic-lease policy** (plan.md Stage D): `current-state.md` records 13
-  total current leases — 5 static (covered by Decision 3) and **8
-  dynamic**, which this plan hasn't yet addressed. Needs an explicit,
-  reviewed decision on which (if any) of the 8 get promoted to reservations
-  before cutover, and a defined stale-DNS-record cleanup procedure for the
-  rollback case (Technitium may have already registered forward/reverse DNS
-  entries for dynamic clients before a rollback is triggered). Not yet
-  decided — this is a genuine operator call, not something to resolve
-  unilaterally in this doc.
+- ~~Dynamic-lease policy~~ (plan.md Stage D) — **mostly done (2026-07-12),
+  see Decision 8**: 3 of 8 dynamic leases promoted to reservations
+  (`deb13`, `LM-GM17D7CY`, `Compute`), the other 5 accept churn. Still
+  open: the stale-DNS-record cleanup procedure for the rollback case
+  (Technitium may have already registered forward/reverse DNS entries for
+  dynamic clients before a rollback is triggered) — not yet written.
 - Cutover/rollback mechanics for the relay repoint itself (add DHCP relay
   config item on MikroTik pointed at Technitium vs. disabling the local
   `lan` server) — now has a concrete stage (plan.md Stage E) with explicit

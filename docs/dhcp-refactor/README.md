@@ -138,10 +138,14 @@ Harbor's OIDC auth-mode migration from getting permanently blocked. All
 five fixed and validated live; see `plan.md`'s Stage C section for full
 detail and commit references. A second, completely fresh full cycle then
 passed clean end to end, including the DHCP-specific checks — first time
-ever with `technitium-stack` in the mix. **Next up**: Stage D
-(dynamic-lease policy for the 8 non-static clients) — still not formally
-recorded as a decision, though one operator steer already exists (phones
-excluded from the "keep every address" reservation set).
+ever with `technitium-stack` in the mix.
+
+**Stage D is now mostly done too (2026-07-12, see decisions.md Decision
+8)**: 3 of the 8 dynamic leases (`deb13`, `LM-GM17D7CY`, `Compute`) are
+promoted to reservations; the other 5 (phones and two smart-home/IoT-style
+devices) accept address churn after cutover. **Next up**: the one
+remaining Stage D task — a stale-DNS-record cleanup procedure for the
+rollback case — then Stage E's production `bridgeLocal` cutover packet.
 
 Current understanding:
 
