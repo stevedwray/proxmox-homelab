@@ -648,18 +648,22 @@ Rationale: why this option over the alternatives considered.
   `plan.md`'s Stage C section for detail and commit references). A second,
   completely fresh full cycle then passed clean end to end — first time
   ever with `technitium-stack` included.
-- ~~Dynamic-lease policy~~ (plan.md Stage D) — **mostly done (2026-07-12),
+- ~~Dynamic-lease policy~~ (plan.md Stage D) — **fully done (2026-07-12),
   see Decision 8**: 3 of 8 dynamic leases promoted to reservations
-  (`deb13`, `LM-GM17D7CY`, `Compute`), the other 5 accept churn. Still
-  open: the stale-DNS-record cleanup procedure for the rollback case
-  (Technitium may have already registered forward/reverse DNS entries for
-  dynamic clients before a rollback is triggered) — not yet written.
-- Cutover/rollback mechanics for the relay repoint itself (add DHCP relay
-  config item on MikroTik pointed at Technitium vs. disabling the local
-  `lan` server) — now has a concrete stage (plan.md Stage E) with explicit
-  rollback trigger thresholds and a post-rollback cleanup checklist, but the
-  actual packet (`bridgelocal-cutover-packet.md`) isn't written yet — it's
-  a Stage E deliverable, gated on Stages A–D being green.
+  (`deb13`, `LM-GM17D7CY`, `Compute`), the other 5 accept churn, and the
+  stale-DNS-record cleanup procedure for the rollback case is written
+  (Decision 8's own subsection).
+- ~~Cutover/rollback mechanics for the relay repoint itself~~ (plan.md
+  Stage E) — **packet drafted (2026-07-12),
+  [bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md), not
+  yet executed.** The `/ip dhcp-relay` command, the Decision-1 firewall
+  verification, the full 8-reservation set, explicit rollback trigger
+  thresholds, and the post-rollback DNS cleanup checklist are all filled
+  in with real values. Two small scope-setup details (domain-name option
+  and reverse-zone naming for Technitium's new `bridgeLocal` scope) are
+  flagged as still open inside the packet itself. Actual execution is a
+  separate, explicitly-approved production step — see `plan.md`'s
+  "Immediate next step" for the exact sequence.
 - ~~Renewal/rebind behavior across the cutover moment itself~~ — **done.**
   The simulated-cutover test (plan.md Stage A, `stage-a-execution.md`'s
   "Stage A's last validation check") rehearsed exactly this: a client with

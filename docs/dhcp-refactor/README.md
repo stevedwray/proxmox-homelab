@@ -140,12 +140,27 @@ detail and commit references. A second, completely fresh full cycle then
 passed clean end to end, including the DHCP-specific checks — first time
 ever with `technitium-stack` in the mix.
 
-**Stage D is now mostly done too (2026-07-12, see decisions.md Decision
+**Stage D is now fully done too (2026-07-12, see decisions.md Decision
 8)**: 3 of the 8 dynamic leases (`deb13`, `LM-GM17D7CY`, `Compute`) are
 promoted to reservations; the other 5 (phones and two smart-home/IoT-style
-devices) accept address churn after cutover. **Next up**: the one
-remaining Stage D task — a stale-DNS-record cleanup procedure for the
-rollback case — then Stage E's production `bridgeLocal` cutover packet.
+devices) accept address churn after cutover. The stale-DNS-record
+rollback cleanup procedure is also written.
+
+**Stage E's cutover packet is drafted (2026-07-12)**:
+[bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md) has real
+values throughout (relay command, firewall verification, the full
+8-reservation set, lease time, rollback steps with explicit trigger
+thresholds, and the post-rollback DNS cleanup checklist) — **not yet
+executed**. Two small scope-setup details are flagged as still open
+inside the packet itself (the domain-name option and reverse-zone naming
+for Technitium's new `bridgeLocal` scope).
+
+**This workspace's planning is now essentially complete.** What remains
+is real production execution: applying the real scope to Technitium,
+physically preparing the out-of-band admin path, scheduling the window,
+running the cutover, then Stage F's 7-day soak. Per `CLAUDE.md`'s
+Production Credential Controls, that's its own explicitly-approved step —
+see `plan.md`'s "Immediate next step" section for the exact sequence.
 
 Current understanding:
 
@@ -173,6 +188,8 @@ This follows the repo-wide pattern in
 | `current-state.md` | durable baseline of live MikroTik DHCP and IPv6 handling |
 | `plan.md` | phased migration and investigation plan |
 | `decisions.md` | ADR-style log of Technitium-DHCP-specific design decisions, as they're made |
+| `stage-a-execution.md` | detailed issue-by-issue log of Stage A's live mechanism-proof execution |
+| `bridgelocal-cutover-packet.md` | Stage E's production cutover packet — not yet executed |
 | `artifacts/` | local-only, git-ignored scratch notes, command output, evidence |
 
 ## Read these first
@@ -181,10 +198,11 @@ This follows the repo-wide pattern in
 2. [current-state.md](./current-state.md)
 3. [decisions.md](./decisions.md)
 4. [plan.md](./plan.md)
-5. [router/README.md](../../router/README.md)
-6. [router/desired-config.md](../../router/desired-config.md)
-7. [docs/design/network.md](../design/network.md)
-8. [docs/dns-refactor/decisions.md](../dns-refactor/decisions.md)
+5. [bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md) — once ready to execute Stage E
+6. [router/README.md](../../router/README.md)
+7. [router/desired-config.md](../../router/desired-config.md)
+8. [docs/design/network.md](../design/network.md)
+9. [docs/dns-refactor/decisions.md](../dns-refactor/decisions.md)
 
 ## Scope
 
@@ -207,7 +225,17 @@ Out of scope for the first planning pass:
 
 This workspace is complete when it produces:
 
-- a verified current-state baseline
-- a clear target architecture for IPv4 DHCP and client VLAN growth
-- an explicit decision on IPv6 ownership boundaries
-- a staged execution plan with rollback points
+- a verified current-state baseline — **done**, `current-state.md`
+- a clear target architecture for IPv4 DHCP and client VLAN growth —
+  **done**, Decisions 1–4
+- an explicit decision on IPv6 ownership boundaries — **done**, Decision 2
+- a staged execution plan with rollback points — **done**, Stages A–F in
+  `plan.md`, each independently validated except Stage E/F themselves
+
+All four planning-level criteria are now met (2026-07-12) — Stages A
+through D are fully validated live, and Stage E's cutover packet is
+drafted with real values. This workspace's *planning* is effectively
+closed out; what remains is real production execution (Stage E's cutover
+itself, then Stage F's soak period), which is deliberately kept as its
+own explicitly-approved step rather than something this planning
+workspace does on its own — see `plan.md`'s "Immediate next step."

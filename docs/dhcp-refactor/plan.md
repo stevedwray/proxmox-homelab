@@ -780,8 +780,9 @@ shape. It must contain:
   own
 - **explicit rollback trigger thresholds**, stated as concrete conditions
   rather than "if something looks wrong" — for example: the forced-renew
-  test device fails to get a lease within N minutes; any of the 5
-  reservations comes up with the wrong address; DNS resolution breaks for
+  test device fails to get a lease within N minutes; any of the 8
+  reservations (5 static + 3 promoted dynamic, per Decision 8) comes up
+  with the wrong address; DNS resolution breaks for
   any browser-routed or platform-internal name; any static-leased device
   (Pi-holes especially) fails to renew. Any one of these fires the
   rollback, no debugging in place on the live network first.
@@ -811,7 +812,7 @@ Exit criteria (all must hold for a fixed window — at minimum 7 days, and at
 least 2× the Stage B lease-time value so every device has renewed at least
 once under normal conditions, not just received its first lease):
 - zero lease failures observed (every renewal/rebind succeeds)
-- all 5 (or more, per Stage D) reservations have renewed at least once and
+- all 8 reservations (5 static + 3 promoted dynamic, per Decision 8) have renewed at least once and
   kept their assigned address
 - no unexpected address churn beyond what Stage D's dynamic-lease policy
   already accepted as normal
@@ -894,14 +895,35 @@ variable-scoping bugs the first attempt surfaced (see Stage C's section
 above for the full list). This is the first time the full cycle has ever
 passed with `technitium-stack` included.
 
-The next task is **Stage D**: dynamic-lease policy for the 8 non-static
-clients. Still not formally recorded as a decision. One operator steer
-already given in this workspace's own discussion: phones don't need a
-static/reserved address — narrowing the "promote to reservation" question
-to the non-phone dynamic devices (`HarmonyHub`, `RV30_Max_Plus`, `deb13`,
-`LM-GM17D7CY`, `Compute` are the clear non-phone candidates from
-`current-state.md`'s 8; `iPhone`, `Stephen-s-A56`, and `BolorErlsiPhone`
-are the phones to exclude). This still needs to be written up as an actual
-decisions.md entry, including the stale-DNS-record cleanup procedure Stage
-D's plan.md section calls for, before Stage E's cutover packet can be
-assembled.
+**Stage D is now also done (2026-07-12, decisions.md Decision 8)**: 3 of
+the 8 dynamic leases (`deb13`, `LM-GM17D7CY`, `Compute`) promoted to
+reservations, the other 5 (phones plus `HarmonyHub`/`RV30_Max_Plus`)
+accept churn, and the stale-DNS-record rollback cleanup procedure is
+written.
+
+**Stage E's packet is drafted (2026-07-12)**:
+[bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md) has real
+values throughout — relay command, firewall verification, the full
+8-reservation set, lease time, rollback steps and trigger thresholds, and
+the post-rollback DNS cleanup checklist. **Not yet executed.**
+
+Everything from here is planning-complete; what's left is real production
+execution, not more design work:
+
+1. Confirm the two open micro-decisions flagged inside the packet itself
+   (the domain-name option and reverse-zone naming for Technitium's new
+   `bridgeLocal` scope) — small, but genuinely undecided.
+2. Apply the real `bridgeLocal` scope + all 8 reservations to production
+   Technitium *before* opening the cutover window (packet step 2) — this
+   is itself a production mutation and needs its own explicit approval,
+   separate from the router cutover itself.
+3. Physically prepare and verify the out-of-band admin path (packet step
+   3) — not something automatable from here.
+4. Schedule the low-risk window, then execute the packet's cutover steps
+   with an operator physically present.
+5. Stage F's 7-day soak period once the cutover holds clean.
+
+Per `CLAUDE.md`'s Production Credential Controls, step 2 onward requires
+its own preflight summary and explicit "Proceed" in chat before any
+`./with-secrets-prod` command runs — this is not something to do as a
+routine "continue."
