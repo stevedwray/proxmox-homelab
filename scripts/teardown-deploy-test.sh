@@ -1652,15 +1652,23 @@ validate_stack_smoke() {
       run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short "${LAB_FQDN_TRAEFIK}"
       ;;
     technitium-stack)
-      # Read-only by design (final-validation is a read-only phase): confirms
-      # dhcp-test-client-01 (Stage A's disposable fixture on the throwaway
-      # test_dhcp_seg VLAN, never destroyed/recreated by this harness -- see
-      # docs/dhcp-refactor/plan.md Stage C) still holds the exact reserved
-      # lease Stage B declares, proving the scope survived this stack's
-      # destroy/recreate cycle intact. No forced release/renew is issued
-      # here; the scope's 10-minute test lease time means a full DORA
-      # renegotiation has already happened naturally by the time a full
-      # platform cycle reaches this check.
+      # Confirms dhcp-test-client-01 (Stage A's disposable fixture on the
+      # throwaway test_dhcp_seg VLAN, never destroyed/recreated by this
+      # harness -- see docs/dhcp-refactor/plan.md Stage C) still holds the
+      # exact reserved lease Stage B declares, proving the scope survived
+      # this stack's destroy/recreate cycle intact. This runs during
+      # stack_apply (a mutating phase), not final-validation, so it's not
+      # bound by that phase's read-only contract. It used to skip forcing a
+      # renew, assuming the scope's 10-minute test lease time meant a full
+      # DORA renegotiation had already happened naturally by the time a full
+      # platform cycle reached this check -- confirmed live (2026-07-12)
+      # that assumption doesn't hold: dhclient backs off for minutes between
+      # retry bursts, and this check runs immediately after the scope
+      # reconcile, so it can land mid-backoff and see no address at all even
+      # though the reservation is fine. validate-dhcp-test-client-via-pct.yml
+      # now triggers a single bounded `dhclient -1` renewal itself before
+      # reading interface state, instead of waiting on the client's own
+      # retry schedule.
       run_logged "health-${stack}-dhcp-lease" \
         ansible-playbook \
           -i "${REPO_ROOT}/terraform/lxc/stacks/dhcp-test-client-01/inventory.yml" \

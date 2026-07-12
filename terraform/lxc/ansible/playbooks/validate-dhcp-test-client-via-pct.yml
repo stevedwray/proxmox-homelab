@@ -39,6 +39,27 @@
           Current /etc/network/interfaces:
           {{ dhcp_test_interfaces_file.stdout }}
 
+    # dhclient backs off between DISCOVER bursts (observed: ~30-60s active
+    # bursts separated by ~4-5 minute sleeps), so a passive read here can
+    # land mid-sleep and see no address at all even though the reservation
+    # and relay path are both fine -- confirmed live twice: the check failed
+    # on an empty interface, then an on-demand renew immediately succeeded
+    # with the correct reserved address. Trigger a single bounded DHCP
+    # transaction (-1: one DISCOVER/OFFER/REQUEST/ACK cycle, then exit)
+    # instead of waiting on the client's own backoff timer, so this check
+    # measures whether the reservation/relay path works right now, not
+    # whether it happens to line up with dhclient's retry schedule.
+    - name: Trigger a single on-demand DHCP renewal on the test interface
+      ansible.builtin.command:
+        cmd: pct exec {{ dhcp_test_vmid }} -- dhclient -1 {{ dhcp_test_interface }}
+      delegate_to: "{{ dhcp_test_pve_host }}"
+      vars:
+        ansible_user: root
+        ansible_ssh_private_key_file: "{{ dhcp_test_ssh_key }}"
+        ansible_ssh_common_args: "-F /dev/null -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null"
+      changed_when: false
+      failed_when: false
+
     - name: Read IPv4 address on test interface
       ansible.builtin.command:
         cmd: pct exec {{ dhcp_test_vmid }} -- ip -4 -o addr show dev {{ dhcp_test_interface }}
