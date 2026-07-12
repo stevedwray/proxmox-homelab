@@ -1667,7 +1667,7 @@ validate_stack_smoke() {
           -e dhcp_test_target_host=dhcp-test-client-01 \
           -e dhcp_test_validation_expected_ipv4=192.168.90.61 \
           -e dhcp_test_validation_expected_gateway=192.168.90.1 \
-          -e 'dhcp_test_validation_expected_nameservers=["192.168.90.1"]' \
+          -e '{"dhcp_test_validation_expected_nameservers": ["192.168.90.1"]}' \
           "${REPO_ROOT}/terraform/lxc/ansible/playbooks/validate-dhcp-test-client-via-pct.yml"
       ;;
     proxy-stack)
