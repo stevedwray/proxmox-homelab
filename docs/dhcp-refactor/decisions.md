@@ -509,11 +509,49 @@ reserved, but worth remembering if this decision is ever revisited, since
 a reservation keyed to a private MAC is inherently less stable than one
 keyed to real hardware MACs like the three being promoted here.
 
-Still open: Stage D's plan.md section also calls for a stale-DNS-record
-cleanup procedure for the rollback case (if Technitium has already
-registered forward/reverse DNS for some of the 5 churn-accepted devices
-before a rollback to MikroTik is triggered) — not yet written. Needed
-before Stage E's cutover packet can be assembled in full.
+### Stale-DNS-record cleanup procedure (rollback case)
+
+Context: per Decision 4, Technitium auto-creates a forward (A) and reverse
+(PTR) record the moment it issues a lease. If Stage E's cutover is rolled
+back after Technitium has already issued one or more leases — most likely
+for the 5 churn-accepted dynamic devices above, since they'll DISCOVER
+fresh against Technitium rather than carry over a MikroTik-issued lease —
+those DNS records don't get cleaned up automatically. MikroTik resumes
+authority and (for churn-accepted devices) will very likely hand out a
+*different* address than Technitium did, leaving Technitium's zone with
+stale entries: a hostname pointing at an address that device no longer
+holds, and vice versa for the reverse zone.
+
+Procedure:
+1. **Before disabling the Technitium relay** (i.e. as the very first step
+   of the rollback, before MikroTik's local `lan` server is re-enabled),
+   capture Technitium's current lease table for the `bridgeLocal` scope:
+   `GET /api/dhcp/leases/list?scope=<bridgeLocal-scope-name>&token=...`.
+   This snapshot is the authoritative manifest of exactly which
+   hostname/address pairs Technitium created DNS records for during the
+   cutover window — more reliable than trying to diff against a
+   pre-cutover MikroTik lease table, since it reflects what Technitium
+   actually wrote to its own zone, not what should have happened.
+2. Execute the rest of the rollback (re-enable the MikroTik `lan` server,
+   disable/remove the Technitium relay entry) per Stage E's rollback
+   steps.
+3. For each hostname/address pair captured in step 1, delete both records
+   from Technitium's zone via the REST API: the forward record
+   (`POST /api/zones/records/delete?domain=<hostname>.<bridgeLocal client
+   zone>&zone=<bridgeLocal client zone>&type=A&ipAddress=<address>`) and
+   the matching reverse record in the PTR zone. The bridgeLocal client
+   zone name itself is a Stage E scope-setup detail, not yet decided (see
+   Stage E's "declarative scope definition" bullet) — this procedure
+   applies to whatever that zone turns out to be named.
+4. Verify: re-query the zone for each hostname from step 1's manifest and
+   confirm no A or PTR record remains.
+
+This is intentionally a manual, checklist-driven pass for the first
+rollback (matching Stage E's own no-rehearsal-possible nature), not new
+automation — but the exact API calls above should be pre-staged as
+copy-paste-ready commands in Stage E's cutover packet itself, filled in
+with the real scope/zone names once they exist, rather than written from
+scratch under pressure during an actual rollback event.
 
 ## Deferred: multi-instance DHCP resiliency (come back to later)
 
