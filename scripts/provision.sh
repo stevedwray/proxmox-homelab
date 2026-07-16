@@ -94,14 +94,22 @@ is_truthy() {
 
 resolve_secrets_file_hint() {
   local pve_env="${PVE_ENV:-}"
-  local proxmox_node="${TF_VAR_proxmox_node:-}"
+  local repo_root
+  repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-  if [[ "$pve_env" == "pve" || "$proxmox_node" == "pve" ]]; then
-    printf 'terraform/secrets.pve.enc.yaml'
+  # Most per-node secrets are per-node deltas now (see
+  # docs/framework-integration/decisions.md Decision 6) — only a handful of
+  # keys (the Proxmox token family, TF_VAR_lxc_password) actually live in
+  # terraform/secrets.<env>.enc.yaml; everything else is in secrets.common.enc.yaml.
+  # This previously only special-cased "pve" and silently fell back to the
+  # base file for every other env, including pve-test-vm — generalized here
+  # so the hint is correct for any environment with its own delta file.
+  if [[ -n "$pve_env" && -f "${repo_root}/terraform/secrets.${pve_env}.enc.yaml" ]]; then
+    printf 'terraform/secrets.%s.enc.yaml' "$pve_env"
     return 0
   fi
 
-  printf 'terraform/secrets.enc.yaml'
+  printf 'terraform/secrets.common.enc.yaml'
 }
 
 ensure_portainer_oauth_secret() {

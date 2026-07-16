@@ -12,9 +12,11 @@ stack deployment.
 terraform/
 ├── README.md
 ├── lxc/                         # Active Terraform + Ansible pipeline
-├── secrets.enc.yaml             # SOPS-encrypted dev (pve-test) secrets
-├── secrets.pve.enc.yaml         # Operator-managed SOPS-encrypted production secrets
-├── SECRETS_PVE_TEMPLATE.md      # Template structure for prod secrets
+├── PRODUCTION_NODES             # Declared list of production-trust Proxmox nodes
+├── secrets.common.enc.yaml      # SOPS-encrypted secrets shared by every environment
+├── secrets.pve.enc.yaml         # pve-only secrets delta (its own Proxmox tokens etc.)
+├── secrets.pve-test-vm.enc.yaml # pve-test-vm-only secrets delta
+├── SECRETS_PVE_TEMPLATE.md      # Template structure for the pve delta file
 └── terraform-providers/         # Local provider mirror/cache
 ```
 
@@ -83,20 +85,27 @@ Related docs:
 
 ## Secret Management
 
-### Development Secrets (pve-test)
-- **File:** `terraform/secrets.enc.yaml`
-- **Wrapper:** `./with-secrets` (from repo root)
-- **Use:** All normal development and pve-test work
-- **Loading:** Automatically decrypted when using `./with-secrets`
+Secrets are split common-vs-per-node, not dev-vs-prod — see
+`docs/reference/secrets-management.md` for the full model and the rule for
+where a new secret belongs.
 
-### Production Secrets (pve)
-- **File:** `terraform/secrets.pve.enc.yaml` (separate from dev, operator-managed)
-- **Wrapper:** `./with-secrets-prod` (from repo root)
-- **Use:** Only for intentional production workflows
-- **Loading:** Automatically decrypted when using `./with-secrets-prod`
-- **Template:** See `SECRETS_PVE_TEMPLATE.md` for expected structure
-- **Commit policy:** Keep this file encrypted and operator-local; do not commit
-  it casually during production enablement work
+### Common secrets (every environment)
+- **File:** `terraform/secrets.common.enc.yaml`
+- **Use:** Every secret that's genuinely the same everywhere — the large majority
+- **Loading:** Merged in automatically by both `./with-secrets` and every
+  `./with-secrets-prod*` wrapper
+
+### Per-node secrets
+- **File:** `terraform/secrets.<node>.enc.yaml` (e.g. `secrets.pve.enc.yaml`,
+  `secrets.pve-test-vm.enc.yaml`) — operator-managed, separate per node
+- **Use:** Only secrets structurally tied to that node's own Proxmox API
+  identity (its read-only/Terraform tokens, its LXC root password)
+- **Loading:** `./with-secrets` for `pve-test-vm`; the matching
+  `./with-secrets-prod*` wrapper for a production node — always merged on
+  top of `secrets.common.enc.yaml`
+- **Template:** See `SECRETS_PVE_TEMPLATE.md` for the `pve` delta's expected structure
+- **Commit policy:** Keep these files encrypted; do not commit plaintext
+  during production enablement work
 
 ### Separation Rationale
 

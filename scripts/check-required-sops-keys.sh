@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-SECRETS_FILE="${ROOT_DIR}/terraform/secrets.enc.yaml"
+SECRETS_FILE="${ROOT_DIR}/terraform/secrets.common.enc.yaml"
 
 if [[ ! -f "${SECRETS_FILE}" ]]; then
     echo "ERROR: Missing secrets file at ${SECRETS_FILE}" >&2
@@ -28,13 +28,13 @@ done
 
 if [[ ${#missing[@]} -gt 0 ]]; then
     {
-        echo "ERROR: Required SOPS keys are missing from terraform/secrets.enc.yaml"
+        echo "ERROR: Required SOPS keys are missing from terraform/secrets.common.enc.yaml"
         for key in "${missing[@]}"; do
             echo "- ${key}"
         done
-        echo "Repair with: SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.enc.yaml"
+        echo "Repair with: SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml"
     } >&2
     exit 1
 fi
 
-echo "OK: Required SOPS keys are present in terraform/secrets.enc.yaml"
+echo "OK: Required SOPS keys are present in terraform/secrets.common.enc.yaml"

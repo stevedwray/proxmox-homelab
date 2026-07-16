@@ -10,7 +10,7 @@ controlled by env file and secrets file.
 |---|---|---|
 | Hardware | VM (bare-metal laptop host) | Production server |
 | Env file | `.env.pve-test-vm` | `.env.pve` |
-| Secrets file | `terraform/secrets.pve-test-vm.enc.yaml` preferred; `terraform/secrets.enc.yaml` fallback | `terraform/secrets.pve.enc.yaml` |
+| Secrets file | `terraform/secrets.common.enc.yaml` + `terraform/secrets.pve-test-vm.enc.yaml` delta | `terraform/secrets.common.enc.yaml` + `terraform/secrets.pve.enc.yaml` delta |
 | Wrapper | `./with-secrets` | `./with-secrets-prod` |
 | Proxmox node | `pve-test-vm` | `pve` |
 | Purpose | Validation, staging | Production workloads |
@@ -72,15 +72,24 @@ those assumptions before pve-test-vm can safely run as `test.gibbsgreatly.xyz`.
 
 MikroTik requires one new forwarding rule: `test.gibbsgreatly.xyz` → `192.168.20.113`.
 
-### 3. Secrets (already isolated)
+### 3. Secrets (isolated — as of 2026-07-17, actually matches this section's intent)
 
-Separate secrets files already exist:
-- `secrets.pve-test-vm.enc.yaml` — pve-test-vm when `PVE_ENV=pve-test-vm`
-- `secrets.enc.yaml` — shared/fallback test secrets loaded by `./with-secrets`
-- `secrets.pve.enc.yaml` — pve (loaded by `./with-secrets-prod`)
+Three files, common-plus-delta rather than one-per-environment:
+- `secrets.common.enc.yaml` — every secret shared across all environments
+  (the large majority — service passwords, OIDC client secrets, MikroTik
+  creds, CI tokens, etc.)
+- `secrets.pve-test-vm.enc.yaml` — pve-test-vm's delta, merged on top of
+  common when `PVE_ENV=pve-test-vm` (`./with-secrets`)
+- `secrets.pve.enc.yaml` — pve's delta, merged on top of common by
+  `./with-secrets-prod`
 
-Only Proxmox API credentials must differ. Service passwords and OIDC client
-secrets can be identical across both files.
+Only Proxmox API credentials (and, by separate operator choice,
+`TF_VAR_lxc_password`) actually differ per environment — everything else
+lives once in `secrets.common.enc.yaml`. This used to be duplicated
+near-completely across the per-environment files (the exact drift problem
+this section originally flagged); see
+`docs/framework-integration/decisions.md` Decision 6 for the cleanup and
+`docs/reference/secrets-management.md` for the current full inventory.
 
 ---
 

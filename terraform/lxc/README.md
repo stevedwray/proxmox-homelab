@@ -240,7 +240,7 @@ configuration path.
 - Central Portainer CE instance only for stacks that use the Tier 2 app path
   (`deploy-stack.yml` / `app_stack`)
 
-Keep real secrets in `terraform/secrets.enc.yaml` and inject them with
+Keep real secrets in `terraform/secrets.common.enc.yaml` and inject them with
 `./with-secrets`. Treat the repo-root `.env` only as non-secret local config.
 
 ## Commands

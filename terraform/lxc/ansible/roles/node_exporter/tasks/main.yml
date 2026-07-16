@@ -22,7 +22,7 @@
     fail_msg: >-
       NODE_EXPORTER_SCRAPE_PASSWORD, NODE_EXPORTER_SCRAPE_PASSWORD_HASH,
       STEP_CA_PROVISIONER_PASSWORD, and LAB_IP_STEP_CA must all be set.
-      Run via ./with-secrets to load secrets.enc.yaml.
+      Run via ./with-secrets to load secrets.common.enc.yaml.
     quiet: true
   when:
     - node_exporter_tls_enabled | default(true) | bool

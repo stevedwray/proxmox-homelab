@@ -72,25 +72,47 @@ Batch related changes during development and run the appropriate tier.
 
 ## Production Credential Controls
 
-Production (`pve`) access is strictly controlled and defaults to read-only.
+Production access is strictly controlled and defaults to read-only. There
+is more than one production-trust Proxmox node — see Production Nodes below —
+but every node goes through the same controls, not a bespoke copy per node.
+
+### Production Nodes
+
+Declared in `terraform/PRODUCTION_NODES` (one node name per line) — currently
+`pve` and `pve-framework`. This file is the single source of truth for
+"which nodes are production"; both `./with-secrets`'s safety rail and the
+`with-secrets-prod*` wrappers read it. Adding a node here, plus its own
+`.env.<node>` and `terraform/secrets.<node>.enc.yaml`, is what's required to
+bring a new node under production control — never hardcode a node name into
+new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 ### Secrets Storage
 
-- **Dev secrets:** `terraform/secrets.enc.yaml` — loaded by `./with-secrets`
-- **Prod secrets:** `terraform/secrets.pve.enc.yaml` — loaded by `./with-secrets-prod` only
-- Both are encrypted with SOPS (age key at `~/.config/sops/age/keys.txt`)
+- **Common secrets:** `terraform/secrets.common.enc.yaml` — every secret
+  that's genuinely the same everywhere (the large majority); loaded by
+  `./with-secrets` and merged into every `with-secrets-prod*` wrapper too
+- **Per-node secrets:** `terraform/secrets.<node>.enc.yaml` — only secrets
+  structurally tied to that node's own Proxmox API identity (its
+  read-only/Terraform tokens, its LXC root password); loaded only by that
+  node's `with-secrets-prod*` wrapper, merged on top of common
+- All are encrypted with SOPS (age key at `~/.config/sops/age/keys.txt`).
+  See `docs/reference/secrets-management.md` for the full split and where a
+  new secret belongs.
 
 ### Wrappers
 
-- **`./with-secrets`** (development, pve-test default)
+- **`./with-secrets`** (development, pve-test-vm default)
   - Use for all normal infrastructure work
-  - Fails if attempting `pve` without explicit `ALLOW_PVE=true`
-  - Cannot load production secrets (separate file)
+  - Fails if targeting any node listed in `terraform/PRODUCTION_NODES`
+    without explicit `ALLOW_PVE=true`
+  - Cannot load production secrets (separate per-node files)
 
-- **`./with-secrets-prod`** (production, strict controls)
-  - Use only for intentional production workflows
-  - Enforces `TF_VAR_proxmox_node=pve`
-  - Loads production secrets ONLY
+- **`./with-secrets-prod`** / **`./with-secrets-prod-framework`** (production, strict controls)
+  - Thin per-node entrypoints over the shared `scripts/with-secrets-prod-lib.sh`
+    engine — one wrapper file per production node, not duplicated logic
+  - Use only for intentional production workflows against that node
+  - Enforces `TF_VAR_proxmox_node=<that node>`
+  - Loads that node's production secrets ONLY
   - Allows only a narrow read-only command set without approval
   - Blocks mutating or ambiguous commands unless `TASK_APPROVAL` is set
 
@@ -112,7 +134,7 @@ Production (`pve`) access is strictly controlled and defaults to read-only.
 ### Approval Flow For Production Mutations
 
 1. **Preflight Summary** — Session reports to operator:
-   - target environment (pve)
+   - target environment (which production node, e.g. `pve` or `pve-framework`)
    - whether mutating or read-only
    - exact objects to be changed
    - specific commands
@@ -123,7 +145,8 @@ Production (`pve`) access is strictly controlled and defaults to read-only.
 3. **Execute With Approval** — Operator sets and runs:
    ```bash
    export TASK_APPROVAL="task-name-from-docs"
-   ./with-secrets-prod <command>
+   ./with-secrets-prod <command>              # node = pve
+   ./with-secrets-prod-framework <command>    # node = pve-framework
    ```
    This acknowledges an approval already given in chat; the wrapper cannot
    verify chat history by itself.
@@ -140,7 +163,7 @@ Production (`pve`) access is strictly controlled and defaults to read-only.
 - **Per-task:** Each distinct task requires new approval (no standing blanket approval)
 - **Chat-based:** Approval is recorded in the session; no approval packet files
 - **Scoped:** Only run commands required for the named task; forbid unrelated changes
-- **Read-only by default:** Use `./with-secrets-prod` for inspection and planning
+- **Read-only by default:** Use the target node's `with-secrets-prod*` wrapper for inspection and planning
 - **Conservative classifier:** If a command is ambiguous, treat it as mutating
 - **Preflight + summary:** Always report before and after production access to the operator
 
