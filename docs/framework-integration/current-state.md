@@ -1,0 +1,143 @@
+# Current State — Framework Desktop (`fe-pve`)
+
+Facts gathered live via `ssh root@192.168.1.121` on 2026-07-17, plus the
+research already recorded under `docs/framework/`. This doc is the
+as-found baseline the integration plan works from.
+
+## Identity
+
+| | |
+|---|---|
+| Hostname | `fe-pve` |
+| Management IP | `192.168.1.121/24` (flat LAN, static, gateway `192.168.1.1`) |
+| Hardware | Framework Desktop, AMD Ryzen AI Max+ 395 (Strix Halo), 16c/32t |
+| GPU | Radeon 8060S (integrated, gfx1151), unified memory — no discrete VRAM pool |
+| RAM | 125 GiB total |
+| Disk | 1×58GB (`sda`, unused/blank), 1×1.8TB NVMe (`nvme0n1`) |
+| OS | Proxmox VE 9.2.2 / Debian 13 (trixie), kernel `7.0.2-6-pve` |
+
+Not yet in DNS, NetBox, or any repo inventory — it's known only by IP today.
+
+## Storage
+
+Single NVMe, LVM-thin only:
+
+```
+pve-root   96G   (Debian/Proxmox OS)
+pve-data   1.7T  (lvmthin pool "data", thin-provisioned)
+```
+
+`/etc/pve/storage.cfg` only defines `local` (dir) and `local-lvm` (lvmthin).
+**No ZFS pool exists.** This differs from `pve-test-vm`'s storage profile
+set (`terraform/lxc/storage/pve-test-vm.yaml`), which assumes a ZFS backend
+(`infrastructure-containers`) for `platform-zfs`/`durable-zfs` profiles. It
+matches the legacy `pve-test.yaml` shape instead (`platform-default` →
+`local-lvm`). See [decisions.md](./decisions.md) Decision 3.
+
+The 58GB `sda` disk is unused — not part of any pool, no mountpoint.
+
+## Network
+
+- `vmbr0` is a plain (non-VLAN-aware) bridge on `nic0`, static IP on the
+  flat `192.168.1.0/24` LAN. No SDN zones, no VLAN tags, no trunk.
+- `nic1` exists but is unconfigured (`iface nic1 inet manual`, no bridge
+  membership).
+- `wlp192s0` (wifi) present but down — not in use.
+- `/etc/resolv.conf` points at the MikroTik (`192.168.1.1`), not at
+  Technitium — consistent with the box not yet being onboarded into the
+  `lab.gibbsgreatly.xyz` internal DNS model.
+- Not part of any Proxmox cluster; it is a fully standalone node, same as
+  `pve` and `pve-test-vm` are to each other.
+
+## Existing guest state (pre-dates this integration effort)
+
+Two LXCs from the `docs/framework/` AI-OS bake-off project, both created by
+hand (`pct`/manual config edits), not by Terraform:
+
+| VMID | Name | Status | Purpose |
+|---|---|---|---|
+| 9000 | `llamacpp-gpu` | stopped | Docker-based GPU passthrough variant |
+| 9001 | `llamacpp-gpu-native` | running | Native (no-Docker) HIP build, current live target |
+
+Container 9001's actual config (`/etc/pve/lxc/9001.conf`):
+
+```
+arch: amd64
+cores: 8
+memory: 8192
+net0: name=eth0,bridge=vmbr0,hwaddr=...,ip=dhcp,type=veth
+ostype: ubuntu
+rootfs: local-lvm:vm-9001-disk-0,size=132G
+lxc.cgroup2.devices.allow: c 226:* rwm
+lxc.cgroup2.devices.allow: c 511:* rwm
+lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
+lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file
+```
+
+Privileged, flat-LAN, DHCP-addressed, GPU passthrough applied by hand per
+`docs/framework/proxmox-strix-halo-setup-notes.md`. `/data/ai` and
+`/srv/ai-stack` exist on the host per that doc's planned layout.
+
+Host boot config already carries the unified-memory GTT fix from that doc:
+
+```
+GRUB_CMDLINE_LINUX_DEFAULT="quiet ttm.pages_limit=25165824 ttm.page_pool_size=25165824"
+```
+
+(96GB GTT ceiling, confirmed applied.)
+
+Apt repos are already fixed to `pve-no-subscription` (the enterprise-repo
+lockout from the setup notes has already been worked around by hand) —
+this happens to match what `ansible/00-initial-setup/proxmox-initial-setup.yml`
+would apply, but it was not applied by that playbook.
+
+## What `docs/framework/` establishes (research, not yet productized)
+
+Summarized from the four existing docs there — see each for full detail:
+
+- **`project-brief.md`** — original OS bake-off scope: compare Ubuntu/Proxmox/Gentoo
+  for a local LLM stack (`llama.cpp`, OpenWebUI, n8n, SearXNG, Postgres,
+  Redis, Qdrant/Chroma, optionally Caddy/Traefik, Tailscale/WireGuard).
+  Proxmox won.
+- **`proxmox-strix-halo-setup-notes.md`** — the GPU-passthrough-into-LXC
+  recipe (kfd/dri passthrough, AppArmor+cap-drop for nested Docker,
+  ttm.pages_limit, Vulkan batch-size crash workaround). This is the
+  hardware-enablement knowledge the new stack must reuse; none of it is in
+  Ansible/Terraform yet.
+- **`runtime-matrix-checkpoint-2026-07-16.md`** — llama.cpp/Ollama ×
+  Vulkan/ROCm × bare/Docker/Incus all verified working; HIP native ≈ Docker
+  perf; Vulkan ~15-20% faster on Proxmox LXC than Incus.
+- **`llamacpp-router-mode-deployment.md`** — the deployment pattern this
+  plan adopts: one GPU-passthrough container running `llama-server` in
+  router mode (`--models-dir`, one endpoint, model picked per-request),
+  not one container per model. Includes sizing guidance and an
+  as-yet-unbuilt embedding-model plan.
+- **`model-quality-and-vuln-bench-2026-07-17.md`** — model selection
+  evidence: Qwen2.5-Coder-32B is the recommended default generation model
+  (same correctness ceiling as Llama-3.3-70B, ~2.2x faster, half the disk).
+
+None of this research is wired into `terraform/lxc` or `ansible/` yet. The
+box is not reproducible from code today — a re-install would require
+manually replaying every step in `proxmox-strix-halo-setup-notes.md`.
+
+## Gaps versus the platform contract
+
+Things the rest of the fleet has that this box currently lacks:
+
+1. No Terraform/Ansible bootstrap (`ansible/00-initial-setup`,
+   `01-base-system`) has been run — no `automation@pve` user, no
+   Terraform API token, no tracked baseline.
+2. No SDN VLAN zones — flat LAN only, no trunk to the MikroTik.
+3. No entry in `terraform/lxc/network/*.yaml`, `storage/*.yaml`, or
+   `environments/*/`.
+4. No DNS record anywhere (MikroTik static, Technitium, or otherwise).
+5. No NetBox entry (device or IPs).
+6. GPU passthrough (`/dev/kfd`, `/dev/dri`, AppArmor/cap-drop) has no
+   Terraform/Ansible module — `terraform/lxc/modules/lxc-docker-host` has
+   no GPU-passthrough support today (confirmed by grep — no `kfd`/`hostpci`
+   references anywhere in `terraform/lxc/modules` or `main.tf`).
+7. Existing guests (9000/9001) are unmanaged, privileged, flat-LAN,
+   DHCP-addressed — none of that matches how any other stack in the repo
+   is deployed.
+8. No secrets/credential path — `with-secrets` / `with-secrets-prod` only
+   know about `pve-test-vm` and `pve`.
