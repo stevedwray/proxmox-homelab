@@ -1,6 +1,6 @@
 version: 1
 
-# fe-pve has a single 1.8TB NVMe fully committed to LVM-thin (pve-data) —
+# pve-framework has a single 1.8TB NVMe fully committed to LVM-thin (pve-data) —
 # no ZFS pool, no dedicated template storage. Mirrors pve-test.yaml's
 # shape for a host without ZFS (see
 # docs/framework-integration/decisions.md Decision 3): profile names kept

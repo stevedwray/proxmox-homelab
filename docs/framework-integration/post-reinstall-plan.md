@@ -1,13 +1,13 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **planning — the reinstall has not happened yet.** This is the
-concrete, ordered runbook for what happens once the Framework Desktop is
-wiped and reinstalled from scratch under its real name (`pve-framework`,
-not the current exploration-only `fe-pve`), per Decision 7. Everything on
-the box today (containers 9000/9001/9002, all hand-built GPU passthrough
-and ComfyUI setup) is disposable — the value already extracted from it is
-the *knowledge*, captured in `docs/framework/`, not the running state
-itself.
+Status: **in progress — reinstall done, Phase 0 host bootstrap under way.**
+This is the concrete, ordered runbook for what happens once the Framework
+Desktop is wiped and reinstalled from scratch under its real name
+(`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
+Everything that was on the box before this (containers 9000/9001/9002, all
+hand-built GPU passthrough and ComfyUI setup) is gone — the value already
+extracted from it was the *knowledge*, captured in `docs/framework/`, not
+the running state itself.
 
 Read `plan.md` first for the phase-by-phase architecture reasoning; this
 doc is the sequenced "what to actually run, in what order" companion,
@@ -149,31 +149,54 @@ build it after, not as part of the initial reinstall pass.
 
 ## Sequence, once the reinstall actually happens
 
-1. **OS install** (manual, per the existing bootstrap philosophy —
-   automation starts after SSH access exists): Debian 13 + Proxmox VE 9,
-   **hostname set to `pve-framework` from the start** — this is the actual
-   moment the naming cleanup happens, not a follow-up step.
-2. **Host bootstrap** (Ansible, already built):
-   `proxmox-initial-setup.yml` → `proxmox-gpu-unified-memory-tuning.yml`
+1. **OS install — done (2026-07-18).** Debian 13 + Proxmox VE 9
+   (`pve-manager/9.2.2`), hostname set to `pve-framework` from the start,
+   at a new IP (192.168.1.8 — the box's old exploration-phase address,
+   192.168.1.121, does not carry over). DNS (`pve-framework.gibbsgreatly.xyz`)
+   already points at the new IP; SSH key access confirmed. Storage layout
+   matches what `terraform/lxc/storage/pve-framework.yaml` already assumed
+   (single 1.8TB NVMe, `local-lvm` LVM-thin + `local` dir) — no changes
+   needed there. **`pveam list local` is empty** — no container templates
+   exist yet (neither the custom Docker-enhanced Debian template nor the
+   plain Ubuntu 26.04 template survive a reinstall); re-staging both is a
+   real prerequisite for step 4 below, not yet its own numbered step here.
+2. **Host bootstrap — step 1 of 3 done (2026-07-18).**
+   `proxmox-initial-setup.yml` run against `192.168.1.8` (33 ok / 11
+   changed / 0 failed) — repo switch, subscription-nag removal, Terraform
+   automation user + token created. Token captured the same careful way as
+   before: redirected to a local log file (never printed to chat), id/
+   secret extracted and shape-checked (length + regex, not the value
+   itself), written straight into a fresh
+   `terraform/secrets.pve-framework.enc.yaml` via `sops set`, live-verified
+   against the real API (`GET /api2/json/version` → HTTP 200), then the
+   plaintext log shredded. `./with-secrets-prod-framework terragrunt plan`
+   confirmed working end-to-end against the fresh host immediately after;
+   a `terragrunt apply` attempt through the same wrapper (deliberately, to
+   confirm the mutating-command gate survived the token rotation) was
+   blocked before even reaching the wrapper's own `TASK_APPROVAL` check —
+   two independent layers both refuse it, as intended.
+   Still to run: `proxmox-gpu-unified-memory-tuning.yml`
    (`pmx_gpu_gtt_reserved_host_mb=32768`, matching the value already
-   validated) → `proxmox-vlan-aware-bridge.yml`. Capture the new
-   Terraform token the same careful way as before (redirect to a file,
-   never print it, encrypt straight into a fresh
-   `terraform/secrets.pve-framework.enc.yaml`, shred the transient log).
-   **Reboot now** — nothing is running yet, so this is the cheapest
-   possible time to take the GTT change live; no service-interruption
-   tradeoff to weigh this time.
-3. **Network onboarding**: recreate the `tvai` SDN zone/VNet/subnet via
-   `pvesh` (MikroTik/switch side already live, don't touch). Verify with
-   the same `ping 192.168.50.1` + packet-capture discipline used the first
-   time — don't assume it'll work just because it worked once before on
-   the same physical wiring.
-4. **`llm-gpu-stack`, `comfyui-stack`**: `terragrunt apply` both
-   environments, then the `deploy-llm-gpu-stack`/`deploy-comfyui-stack`
-   playbooks (`llm_gpu_stack`/`comfyui_stack` Ansible roles). This should
-   be close to a non-event if the pre-reinstall build-and-test work above
-   was actually finished (including a real, not just planned, apply) before
-   the reinstall happens.
+   validated) → `proxmox-vlan-aware-bridge.yml`, then **reboot** — nothing
+   is running yet on this box, so this is the cheapest possible time to
+   take the GTT change live; no service-interruption tradeoff to weigh
+   this time.
+3. **Network onboarding** (not started): recreate the `tvai` SDN zone/
+   VNet/subnet via `pvesh` (MikroTik/switch side already live, don't
+   touch). Verify with the same `ping 192.168.50.1` + packet-capture
+   discipline used the first time — don't assume it'll work just because
+   it worked once before on the same physical wiring.
+4. **`llm-gpu-stack`, `comfyui-stack`** (not started): re-stage both
+   container templates first (the gap found in step 1 — custom Debian
+   Docker template via `build-debian-13-template.yml`, plain Ubuntu 26.04
+   via `pveam download`), then `terragrunt apply` both environments,
+   then the `deploy-llm-gpu-stack`/`deploy-comfyui-stack` playbooks
+   (`llm_gpu_stack`/`comfyui_stack` Ansible roles). This should be close to
+   a non-event if the pre-reinstall build-and-test work above was actually
+   finished (including a real, not just planned, apply) before the
+   reinstall happened — it wasn't (see "What's still open" above), so
+   treat this as the first real test of that code, not a rerun of
+   something already proven.
 5. **Platform onboarding** (Phase 2, now under the real name): Technitium
    host record for `pve-framework` (not `fe-pve`), NetBox device
    registration, Authentik OIDC wiring per Decision 8 for whichever web

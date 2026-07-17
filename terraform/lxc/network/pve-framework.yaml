@@ -1,5 +1,5 @@
 # Proxmox-only network intent for the pve-framework environment
-# (Framework Desktop, fe-pve, 192.168.1.121).
+# (Framework Desktop, 192.168.1.8).
 #
 # Network model: Proxmox SDN VLAN zones — the MikroTik is the L3 gateway
 # for all zones, same as every other environment. No routing or NAT is
@@ -16,15 +16,20 @@
 # its own — it has no local Authentik/Traefik/Harbor; it reuses pve's
 # existing instances over the cross-node policies below.
 #
-# Physical setup, confirmed live 2026-07-17 (see plan.md Phase 1 step 1
-# for the full bring-up trail, including three bugs found and fixed):
-#   fe-pve NIC (nic0/vmbr0, VLAN-aware) → MikroTik trunk (ether1, the port
-#   fe-pve's traffic actually arrives on — pve/others arrive via ether5;
-#   ai_seg is tagged on both)
+# Physical setup, confirmed live 2026-07-17 against the same hardware
+# under its prior exploration-only name (fe-pve) -- physical NIC/MAC and
+# switch/MikroTik config are hardware-tied, not host-OS state, so this
+# survives the reinstall unchanged (see plan.md Phase 1 step 1 for the
+# full bring-up trail, including three bugs found and fixed):
+#   pve-framework NIC (nic0/vmbr0, VLAN-aware) → MikroTik trunk (ether1,
+#   the port this box's traffic actually arrives on — pve/others arrive
+#   via ether5; ai_seg is tagged on both)
 #     Tagged VLAN 50: ai_seg — 192.168.50.0/24, gw 192.168.50.1
 #
-# ping 192.168.50.1 from fe-pve itself: 0% packet loss, confirmed via
-# ARP/ICMP packet capture, not just a successful ping.
+# ping 192.168.50.1 from this host itself: 0% packet loss, confirmed via
+# ARP/ICMP packet capture, not just a successful ping. Re-verify after the
+# reinstall's own network onboarding step, not assumed to still be live
+# just because it worked once before on the same wiring.
 
 proxmox:
   target_node: pve-framework
@@ -88,7 +93,7 @@ policies:
 inventory:
   proxmox_nodes:
     - host: "${proxmox_host}"
-      host_ip: "192.168.1.121"
+      host_ip: "192.168.1.8"
       # NOTE: PROXMOX_READONLY_TOKEN_ID/SECRET do not exist yet for this
       # node — only the full-privilege Terraform token
       # (TF_VAR_pm_api_token_id/secret) has been created so far. A

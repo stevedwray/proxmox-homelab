@@ -6,10 +6,10 @@
 # proxmox-initial-setup.yml because pve/pve-test-vm have no such GPU
 # workload and must never get this applied.
 #
-# Run (ad-hoc, until fe-pve/pve-framework has its own inventory entry --
+# Run (ad-hoc, until pve-framework has its own inventory entry --
 # see docs/framework-integration/plan.md Phase 1):
 #
-#   ansible-playbook -i "192.168.1.121," -e target_hosts=all -e ansible_user=root \
+#   ansible-playbook -i "192.168.1.8," -e target_hosts=all -e ansible_user=root \
 #     00-initial-setup/proxmox-gpu-unified-memory-tuning.yml \
 #     [-e pmx_gpu_gtt_reserved_host_mb=32768]
 #
