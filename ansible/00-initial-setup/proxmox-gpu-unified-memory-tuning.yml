@@ -1,0 +1,31 @@
+---
+# Applies unified-memory GTT/TTM sizing (tasks/proxmox-gpu-unified-memory-tuning.yml)
+# to a GPU-passthrough host with unified memory (Strix Halo class APUs).
+#
+# This is opt-in, host-specific tuning -- it is not part of
+# proxmox-initial-setup.yml because pve/pve-test-vm have no such GPU
+# workload and must never get this applied.
+#
+# Run (ad-hoc, until fe-pve/pve-framework has its own inventory entry --
+# see docs/framework-integration/plan.md Phase 1):
+#
+#   ansible-playbook -i "192.168.1.121," -e target_hosts=all -e ansible_user=root \
+#     00-initial-setup/proxmox-gpu-unified-memory-tuning.yml \
+#     [-e pmx_gpu_gtt_reserved_host_mb=32768]
+#
+# pmx_gpu_gtt_reserved_host_mb defaults to 16384 (16GB), the "practical
+# floor" from docs/framework/proxmox-strix-halo-setup-notes.md §6 --
+# override per host if a larger margin is wanted.
+
+- name: Tune unified-memory GTT/TTM sizing for a GPU-passthrough host
+  hosts: "{{ target_hosts | default('proxmox_testbed') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    pmx_gpu_unified_memory_tuning_enabled: true
+    pmx_gpu_gtt_reserved_host_mb: 16384
+
+  tasks:
+    - name: Apply unified-memory GTT/TTM tuning
+      ansible.builtin.import_tasks: tasks/proxmox-gpu-unified-memory-tuning.yml

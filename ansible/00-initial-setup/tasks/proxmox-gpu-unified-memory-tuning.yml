@@ -1,0 +1,93 @@
+---
+# Unified-memory GTT/TTM sizing for AMD APUs with unified memory (e.g. Strix
+# Halo / Radeon 8060S), where the GPU driver claims system RAM via the
+# amdgpu/TTM allocator rather than a fixed VRAM pool. Sizes
+# ttm.pages_limit/ttm.page_pool_size from this host's *actual* RAM instead
+# of a hardcoded page count, so the same task works on any size of box and
+# survives a reinstall without hand-editing grub again.
+#
+# Background and the specific gotchas this codifies:
+# docs/framework/proxmox-strix-halo-setup-notes.md §6 — notably that
+# `amdgpu.gttsize=` is deprecated and must not be used; `ttm.pages_limit`/
+# `ttm.page_pool_size` (in 4KiB pages, not MB) are the supported knobs, and
+# the ceiling is a cap, not a reservation (headroom is generous, but keep a
+# real host-side margin — a squeezed host falls back to the general
+# OOM-killer, which can take down anything).
+#
+# Opt-in only — set pmx_gpu_unified_memory_tuning_enabled: true on the
+# specific host(s) that have this GPU class. Do not enable on pve/pve-test-vm.
+#
+# NOTE: writing the new grub cmdline does not apply it — a reboot is
+# required, same as the manual procedure this replaces. This task
+# deliberately does not reboot; it only reports that one is needed.
+
+- name: Assert reserved host margin is sane relative to total RAM
+  ansible.builtin.assert:
+    that:
+      - (pmx_gpu_gtt_reserved_host_mb | int) > 0
+      - (ansible_memtotal_mb | int) > (pmx_gpu_gtt_reserved_host_mb | int)
+    fail_msg: >-
+      pmx_gpu_gtt_reserved_host_mb ({{ pmx_gpu_gtt_reserved_host_mb }} MB) must be
+      positive and less than this host's total RAM ({{ ansible_memtotal_mb }} MB).
+    success_msg: >-
+      Reserving {{ pmx_gpu_gtt_reserved_host_mb }} MB for the host out of
+      {{ ansible_memtotal_mb }} MB total.
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Compute GTT ceiling from actual host RAM
+  ansible.builtin.set_fact:
+    pmx_gpu_gtt_ceiling_mb: "{{ (ansible_memtotal_mb | int) - (pmx_gpu_gtt_reserved_host_mb | int) }}"
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Compute ttm page count (1 page = 4KiB = 1/256 MiB)
+  ansible.builtin.set_fact:
+    pmx_gpu_gtt_pages: "{{ (pmx_gpu_gtt_ceiling_mb | int) * 256 }}"
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Read current GRUB_CMDLINE_LINUX_DEFAULT
+  ansible.builtin.command: >-
+    grep -oP '(?<=^GRUB_CMDLINE_LINUX_DEFAULT=").*(?=")' /etc/default/grub
+  register: _grub_cmdline_current
+  changed_when: false
+  check_mode: false  # read-only; let --check dry-runs see real current state too
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Compute new GRUB_CMDLINE_LINUX_DEFAULT (existing ttm.* tokens replaced, everything else preserved)
+  ansible.builtin.set_fact:
+    pmx_gpu_grub_cmdline_new: >-
+      {{
+        (
+          (_grub_cmdline_current.stdout
+            | regex_replace('\s*ttm\.pages_limit=\S+', '')
+            | regex_replace('\s*ttm\.page_pool_size=\S+', '')
+          ).split() + [
+            'ttm.pages_limit=' ~ pmx_gpu_gtt_pages,
+            'ttm.page_pool_size=' ~ pmx_gpu_gtt_pages
+          ]
+        ) | join(' ')
+      }}
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Set GRUB_CMDLINE_LINUX_DEFAULT with computed ttm sizing
+  ansible.builtin.lineinfile:
+    path: /etc/default/grub
+    regexp: '^GRUB_CMDLINE_LINUX_DEFAULT='
+    line: 'GRUB_CMDLINE_LINUX_DEFAULT="{{ pmx_gpu_grub_cmdline_new }}"'
+    backup: true
+  register: _grub_cmdline_updated
+  when: pmx_gpu_unified_memory_tuning_enabled | bool
+
+- name: Run update-grub after cmdline change
+  ansible.builtin.command: update-grub
+  when:
+    - pmx_gpu_unified_memory_tuning_enabled | bool
+    - _grub_cmdline_updated.changed
+
+- name: Report GTT tuning status
+  ansible.builtin.debug:
+    msg: >-
+      GTT ceiling set to {{ pmx_gpu_gtt_ceiling_mb }} MB
+      ({{ pmx_gpu_gtt_pages }} pages) out of {{ ansible_memtotal_mb }} MB
+      total, reserving {{ pmx_gpu_gtt_reserved_host_mb }} MB for the host.
+      {{ 'A REBOOT IS REQUIRED for this to take effect.' if _grub_cmdline_updated.changed else 'Already up to date -- no reboot needed.' }}
+  when: pmx_gpu_unified_memory_tuning_enabled | bool

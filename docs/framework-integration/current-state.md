@@ -38,14 +38,31 @@ The 58GB `sda` disk is unused — not part of any pool, no mountpoint.
 
 ## Network
 
-- `vmbr0` is a plain (non-VLAN-aware) bridge on `nic0`, static IP on the
-  flat `192.168.1.0/24` LAN. No SDN zones, no VLAN tags, no trunk.
+As found 2026-07-17 (original recon): `vmbr0` was a plain (non-VLAN-aware)
+bridge on `nic0`, static IP on the flat `192.168.1.0/24` LAN, no SDN zones,
+no VLAN tags, no trunk.
+
+**Updated 2026-07-17 (same day, Phase 0/1 work — see plan.md for the full
+narrative):**
+
+- `vmbr0` is now VLAN-aware (`bridge-vlan-aware yes`, `bridge-vids
+  2-4094`), applied via `ansible/00-initial-setup/proxmox-vlan-aware-bridge.yml`.
+- `ai_seg` (VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`) is live and
+  verified end-to-end: MikroTik VLAN interface + gateway, bridge-VLAN
+  tagging on both physical trunk ports (`ether1` — the port `fe-pve`'s
+  traffic actually arrives on — and `ether5`), the physical switch
+  carrying VLAN 50 to `fe-pve`'s port, and a router input-firewall rule
+  permitting ICMP/DNS to the gateway. `ping 192.168.50.1` from `fe-pve`
+  itself: 0% packet loss, confirmed via packet capture, not just a config
+  check. See `plan.md` Phase 1 step 1 for the three distinct bugs hit and
+  fixed getting here (safe-mode rollback, missing `ether1` tagging,
+  missing firewall rule).
 - `nic1` exists but is unconfigured (`iface nic1 inet manual`, no bridge
   membership).
 - `wlp192s0` (wifi) present but down — not in use.
 - `/etc/resolv.conf` points at the MikroTik (`192.168.1.1`), not at
   Technitium — consistent with the box not yet being onboarded into the
-  `lab.gibbsgreatly.xyz` internal DNS model.
+  `lab.gibbsgreatly.xyz` internal DNS model. Not yet revisited.
 - Not part of any Proxmox cluster; it is a fully standalone node, same as
   `pve` and `pve-test-vm` are to each other.
 
@@ -78,18 +95,31 @@ Privileged, flat-LAN, DHCP-addressed, GPU passthrough applied by hand per
 `docs/framework/proxmox-strix-halo-setup-notes.md`. `/data/ai` and
 `/srv/ai-stack` exist on the host per that doc's planned layout.
 
-Host boot config already carries the unified-memory GTT fix from that doc:
+As found 2026-07-17 (original recon): host boot config already carried the
+unified-memory GTT fix from that doc, applied by hand —
+`GRUB_CMDLINE_LINUX_DEFAULT="quiet ttm.pages_limit=25165824 ttm.page_pool_size=25165824"`
+(a flat 96GB ceiling picked by hand). Apt repos were already fixed to
+`pve-no-subscription` by hand too.
 
-```
-GRUB_CMDLINE_LINUX_DEFAULT="quiet ttm.pages_limit=25165824 ttm.page_pool_size=25165824"
-```
+**Updated 2026-07-17 (same day):** both are now real Ansible, not hand
+work:
 
-(96GB GTT ceiling, confirmed applied.)
-
-Apt repos are already fixed to `pve-no-subscription` (the enterprise-repo
-lockout from the setup notes has already been worked around by hand) —
-this happens to match what `ansible/00-initial-setup/proxmox-initial-setup.yml`
-would apply, but it was not applied by that playbook.
+- `ansible/00-initial-setup/proxmox-initial-setup.yml` ran successfully
+  against `fe-pve` (repo fix, subscription-nag removal, `automation@pve` +
+  Terraform token — live-verified against the real Proxmox API before
+  trusting it).
+- `ansible/00-initial-setup/proxmox-gpu-unified-memory-tuning.yml` +
+  matching `tasks/` file replaced the hand-picked flat value with one
+  computed from this host's actual reported RAM
+  (`ansible_memtotal_mb`) minus an operator-set reserved margin
+  (32GB, matching the original manual choice) — now
+  `ttm.pages_limit=24401920 ttm.page_pool_size=24401920` (95320 MB
+  ceiling, slightly more accurate than the old round-number 96GB since
+  it's derived from what Linux actually reports as usable RAM rather
+  than the nominal 128GB spec). `quiet` preserved. Applied for real;
+  `update-grub` run. **A reboot is still required for this to take
+  effect** — deliberately withheld since it would interrupt the running
+  `9001` LXC; needs its own separate approval.
 
 ## What `docs/framework/` establishes (research, not yet productized)
 
@@ -124,14 +154,26 @@ manually replaying every step in `proxmox-strix-halo-setup-notes.md`.
 
 Things the rest of the fleet has that this box currently lacks:
 
-1. No Terraform/Ansible bootstrap (`ansible/00-initial-setup`,
-   `01-base-system`) has been run — no `automation@pve` user, no
-   Terraform API token, no tracked baseline.
-2. No SDN VLAN zones — flat LAN only, no trunk to the MikroTik.
+1. ~~No Terraform/Ansible bootstrap has been run~~ — **closed 2026-07-17**:
+   `ansible/00-initial-setup/proxmox-initial-setup.yml` (repo fix,
+   subscription-nag removal, `automation@pve` + Terraform token, live-
+   verified against the real API), plus
+   `proxmox-gpu-unified-memory-tuning.yml` and
+   `proxmox-vlan-aware-bridge.yml` all ran successfully. Only remaining
+   sub-item: the GTT tuning needs a reboot to actually take effect (staged,
+   not yet applied — see plan.md Phase 0).
+2. ~~No SDN VLAN zones — flat LAN only, no trunk to the MikroTik.~~ —
+   **closed 2026-07-17**: `vmbr0` is VLAN-aware and `ai_seg` (VLAN 50) is
+   live end-to-end, verified with real ping/packet-capture, not just
+   config presence. See plan.md Phase 1 step 1 for the three bugs found
+   and fixed along the way.
 3. No entry in `terraform/lxc/network/*.yaml`, `storage/*.yaml`, or
-   `environments/*/`.
-4. No DNS record anywhere (MikroTik static, Technitium, or otherwise).
-5. No NetBox entry (device or IPs).
+   `environments/*/` yet — this is Phase 1 step 2, next up. The `ai_seg`
+   values to use (VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`) are
+   now confirmed live, not just proposed.
+4. No DNS record anywhere (MikroTik static, Technitium, or otherwise) —
+   still open, Phase 2.
+5. No NetBox entry (device or IPs) — still open, Phase 2.
 6. GPU passthrough (`/dev/kfd`, `/dev/dri`, AppArmor/cap-drop) has no
    Terraform/Ansible module — `terraform/lxc/modules/lxc-docker-host` has
    no GPU-passthrough support today (confirmed by grep — no `kfd`/`hostpci`
@@ -139,5 +181,10 @@ Things the rest of the fleet has that this box currently lacks:
 7. Existing guests (9000/9001) are unmanaged, privileged, flat-LAN,
    DHCP-addressed — none of that matches how any other stack in the repo
    is deployed.
-8. No secrets/credential path — `with-secrets` / `with-secrets-prod` only
-   know about `pve-test-vm` and `pve`.
+8. ~~No secrets/credential path~~ — **closed 2026-07-17**: secrets/env
+   handling generalized (`terraform/PRODUCTION_NODES`,
+   `scripts/with-secrets-prod-lib.sh`), `with-secrets-prod-framework` is
+   live with a real Terraform token in `terraform/secrets.pve-framework.enc.yaml`.
+   Still missing from that file: a dedicated `PROXMOX_READONLY_TOKEN_ID/SECRET`
+   (this node currently only has the full-privilege Terraform token) and
+   `TF_VAR_lxc_password` — needed before Phase 3.

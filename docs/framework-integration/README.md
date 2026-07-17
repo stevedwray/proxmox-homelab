@@ -5,12 +5,26 @@ Planning workspace for bringing the Framework Desktop (`fe-pve`,
 (`pve-framework`), hosting a new AI/LLM application stack behind the existing
 Traefik / Authentik / step-ca / Technitium / Harbor / NetBox platform.
 
-Status: **planning, plus one piece of implemented plumbing.** No
-Terraform, Ansible, or MikroTik changes have been made against `pve` or
-`fe-pve` — but Decision 6's secrets/environment generalization
-(`terraform/PRODUCTION_NODES`, `scripts/with-secrets-prod-lib.sh`,
-`with-secrets-prod-framework`, `.env.pve-framework`) is real, committed-
-ready code, not just a proposal. See Decision 6 for what changed and why.
+Status: **Phase 0 (host bootstrap) and Phase 1 step 1 (network
+onboarding's out-of-band prerequisite) are done and live-verified.**
+This is no longer planning-only — real changes have been applied to
+`fe-pve` and the MikroTik and confirmed working:
+
+- Host bootstrap: repo/subscription-nag fix, Terraform token (live-
+  verified against the real API), unified-memory GTT tuning (computed
+  from actual RAM, not hardcoded), `vmbr0` made VLAN-aware.
+- `ai_seg` (VLAN 50) is live end-to-end — MikroTik, physical switch, and
+  `fe-pve` all confirmed working together via an actual `ping`/packet
+  capture, not just config checks. Three distinct bugs were found and
+  fixed getting here; see Decision 4 and `plan.md` Phase 1 step 1 for the
+  full trail.
+- Secrets/environment handling generalized (Decision 6) and now has real
+  data flowing through it: `terraform/secrets.pve-framework.enc.yaml`
+  holds this node's actual Terraform token.
+
+Not yet done: writing `terraform/lxc/network/pve-framework.yaml` (Phase 1
+step 2 — the values to use are now confirmed-live), DNS/NetBox/registry
+onboarding (Phase 2), and the AI stack itself (Phase 3).
 
 Relationship to `docs/framework/`: that directory is the completed OS
 bake-off and hardware-enablement research (which OS to run, how GPU
@@ -42,16 +56,17 @@ workspace doesn't repeat it.
   Decision 2.
 - New dedicated SDN VLAN zone (`ai_seg`), not reuse of `mgmt_seg`/`edge_seg`
   — matches `docs/design/network.md`'s already-reserved "Future zones:
-  `app_seg`" slot — see Decision 4. **Requires an out-of-band MikroTik/
-  switch trunk change before any container can be deployed.**
+  `app_seg`" slot — see Decision 4. **Live and verified end-to-end as of
+  2026-07-17** — VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`, all
+  confirmed working from `fe-pve` itself.
 - One GPU-passthrough exception LXC (`llm-gpu-stack`, router mode) plus
-  one-LXC-per-service for everything else — see Decision 5.
+  one-LXC-per-service for everything else — see Decision 5. Not yet built.
 - Secrets/environment handling is now generalized rather than
   per-node-hardcoded: `terraform/PRODUCTION_NODES` declares which nodes
-  are production, `with-secrets-prod-framework` is a real (if not yet
-  usable — no secrets file exists until Phase 0) wrapper for this node,
-  and `./with-secrets`'s safety rail now blocks both `pve` and
-  `pve-framework` uniformly — see Decision 6.
+  are production, `./with-secrets`'s safety rail blocks both `pve` and
+  `pve-framework` uniformly, and `with-secrets-prod-framework` is now
+  fully live with a real Terraform token in
+  `terraform/secrets.pve-framework.enc.yaml` — see Decision 6.
 - The box gets rebuilt from Ansible, not automated around its current
   hand-tuned state — see Decision 7.
 

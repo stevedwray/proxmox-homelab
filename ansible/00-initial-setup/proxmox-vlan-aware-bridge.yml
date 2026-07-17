@@ -1,0 +1,33 @@
+---
+# Makes a Proxmox bridge VLAN-aware (tasks/proxmox-vlan-aware-bridge.yml) --
+# the prerequisite for Proxmox SDN VLAN zones. See
+# docs/reference/sdn-segment-routing.md / docs/design/network.md for the
+# zone model this enables.
+#
+# This is a real live-network change on the remote host (ifreload -a
+# reloads the bridge that may carry the Ansible control connection) --
+# treat as a CLAUDE.md-class production network change requiring explicit
+# preflight/approval before running for real (not under --check).
+#
+# Run (ad-hoc, until fe-pve/pve-framework has its own inventory entry --
+# see docs/framework-integration/plan.md Phase 1):
+#
+#   ansible-playbook -i "192.168.1.121," -e target_hosts=all -e ansible_user=root \
+#     00-initial-setup/proxmox-vlan-aware-bridge.yml
+#
+# Override pmx_vlan_aware_bridge_name / pmx_vlan_aware_bridge_vids per host
+# if the trunk bridge isn't vmbr0 or the SDN VLAN range differs.
+
+- name: Make the SDN trunk bridge VLAN-aware
+  hosts: "{{ target_hosts | default('proxmox_testbed') }}"
+  become: true
+  gather_facts: true
+
+  vars:
+    pmx_vlan_aware_bridge_enabled: true
+    pmx_vlan_aware_bridge_name: vmbr0
+    pmx_vlan_aware_bridge_vids: "2-4094"
+
+  tasks:
+    - name: Apply VLAN-aware bridge config
+      ansible.builtin.import_tasks: tasks/proxmox-vlan-aware-bridge.yml

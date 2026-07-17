@@ -69,7 +69,7 @@ Rationale: avoids a destructive repartition for no functional requirement
 profile names on `pve-test-vm`. Revisit only if snapshot/send-receive
 features become a real requirement for this box specifically.
 
-## Decision 4: New dedicated SDN VLAN zone (`ai_seg`), not reuse of existing zones (proposed)
+## Decision 4: New dedicated SDN VLAN zone (`ai_seg`), not reuse of existing zones (implemented and verified live, 2026-07-17)
 
 Context: `fe-pve` is flat-LAN today. To reach it through Traefik/Authentik/
 step-ca/Technitium the way every other stack does, it needs to join the
@@ -103,12 +103,19 @@ Rationale:
   reach `ai_seg`, `ai_seg` gets an explicit policy to reach `mgmt_seg` for
   Authentik forward-auth and step-ca ACME — nothing implicit.
 
-Consequence requiring your action (out-of-band, mandatory first — same
-prerequisite `sdn-segment-routing.md` already documents for any new
-segment): the MikroTik and the physical switch port `fe-pve` is connected
-to both need to carry the new VLAN tag as an 802.1Q trunk before any
-container is deployed. This is physical/router configuration outside what
-I can do over the `fe-pve` SSH session alone.
+Consequence that required operator action (out-of-band, per
+`sdn-segment-routing.md`'s existing prerequisite for any new segment):
+the MikroTik and the physical switch port `fe-pve` is connected to both
+needed to carry the new VLAN tag as an 802.1Q trunk. **Done and verified
+live 2026-07-17** — see `plan.md` Phase 1 step 1 for the full sequence,
+including three distinct bugs found and fixed along the way (a RouterOS
+safe-mode rollback, a missing `ether1` tag on the bridge-VLAN entry since
+`fe-pve`'s traffic arrives via a different physical trunk port than
+originally assumed, and a missing router input-firewall rule). Confirmed
+with a live `ping 192.168.50.1` from `fe-pve` itself, verified via packet
+capture (not just "ping succeeded") that ARP, ICMP, and the router's own
+reply path all genuinely work. `ai_seg`'s values (VLAN 50, subnet, gateway)
+are now confirmed-live facts, not a proposal.
 
 ## Decision 5: GPU-passthrough container topology — one exception LXC, not one-per-service (proposed)
 

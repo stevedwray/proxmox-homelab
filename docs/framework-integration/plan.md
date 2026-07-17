@@ -16,22 +16,69 @@ stack behind that platform.
 Nothing else in this plan is trustworthy until this phase is done, per
 Decision 7.
 
-1. Write/extend `ansible/00-initial-setup` role coverage for `fe-pve`:
-   - apt repo fix (already done by hand — codify it so a reinstall doesn't
-     need the manual step again)
-   - `ttm.pages_limit`/`ttm.page_pool_size` grub cmdline (from
-     `docs/framework/proxmox-strix-halo-setup-notes.md` §6) — new, not
-     covered by any existing role today
-   - `vmbr0` → VLAN-aware bridge (prerequisite for Phase 1)
-2. Run `ansible/01-base-system/proxmox-terraform-setup.yml` +
-   `terraform-token-management.yml` against `fe-pve` — creates
-   `automation@pve` + Terraform API token, matching `pve`/`pve-test-vm`.
-   The resulting token secret goes into a new
-   `terraform/secrets.pve-framework.enc.yaml` (SOPS-encrypted, same shape
-   as `secrets.pve.enc.yaml`) — this is what turns
-   `./with-secrets-prod-framework` (already scaffolded, see Decision 6)
-   from "fails cleanly, file not found" into a working production path.
-3. Validate with `scripts/check-proxmox-status.sh` against `fe-pve`.
+1. **Done (2026-07-17).** Ran `ansible/00-initial-setup/proxmox-initial-setup.yml`
+   against `fe-pve` directly (ad-hoc inventory, root SSH — not yet wired
+   into `ansible/inventory/dev.yml`, since it isn't part of the shared
+   inventory until Phase 1). This single playbook already covers repo
+   fix, subscription-nag removal, and Terraform user/token creation in
+   one pass — the plan originally assumed the `01-base-system` playbooks
+   would do this separately; in practice `00-initial-setup` already had
+   it all. Result: 33 ok / 10 changed / 0 failed. Confirmed via the
+   playbook's own assertions plus a separate read-only
+   `proxmox-initial-tests.yml` run: enterprise repo gone, no-subscription
+   repo active, subscription nag removed, 0 pending package upgrades,
+   Terraform token created and **live-verified** against the real API
+   (`GET /api2/json/version` → HTTP 200 with the new token). The token
+   secret was captured straight from the Ansible run into a new
+   `terraform/secrets.pve-framework.enc.yaml` (`TF_VAR_pm_api_token_id`/
+   `_secret` only so far) without ever being displayed in chat, and the
+   plaintext-containing log file was shredded immediately after. This is
+   what turned `./with-secrets-prod-framework` from "fails cleanly, file
+   not found" into a working production path — verified live, including
+   that its mutating-command approval gate still correctly blocks
+   `terragrunt apply` without `TASK_APPROVAL`.
+   - Firewall backend (nftables) correctly stayed off — no inventory var
+     enabled it, matching the "out of scope for this pass" call.
+   - Not yet added to `terraform/secrets.pve-framework.enc.yaml`:
+     `PROXMOX_READONLY_TOKEN_ID/SECRET` (a separate read-only discovery
+     token — this playbook only creates the full-privilege Terraform
+     token) and `TF_VAR_lxc_password` (no value to capture yet — nothing
+     has generated one for this node). Both needed before any stack
+     deployment (Phase 3).
+2. **Done (2026-07-17).** Both are now real, parameterized, idempotent
+   Ansible tasks, not hand-applied one-offs:
+   - `ansible/00-initial-setup/proxmox-gpu-unified-memory-tuning.yml` +
+     `tasks/proxmox-gpu-unified-memory-tuning.yml` — computes
+     `ttm.pages_limit`/`ttm.page_pool_size` from the host's *actual*
+     reported RAM (`ansible_memtotal_mb`) minus an operator-set reserved
+     margin (`pmx_gpu_gtt_reserved_host_mb`, passed as `32768` for this
+     box to match the 32GB margin already chosen in
+     `proxmox-strix-halo-setup-notes.md` §6), rather than a hardcoded page
+     count baked in for one specific box. Preserves the rest of
+     `GRUB_CMDLINE_LINUX_DEFAULT` (`quiet`, etc.) untouched. Validated via
+     `--check --diff` before applying for real (a real bug was caught
+     this way — a `command` task got silently skipped under `--check`,
+     which would have made the dry-run's preview wrong; fixed with
+     `check_mode: false` on the read-only step). Applied for real:
+     `GRUB_CMDLINE_LINUX_DEFAULT` updated, `update-grub` run. **Reboot
+     still required** for the new GTT ceiling to actually take effect —
+     deliberately not done automatically; needs its own explicit
+     approval since it will interrupt the running `9001` LXC.
+   - `ansible/00-initial-setup/proxmox-vlan-aware-bridge.yml` +
+     `tasks/proxmox-vlan-aware-bridge.yml` — parameterized by bridge name
+     and VID range (defaults `vmbr0` / `2-4094`), idempotently sets
+     `bridge-vlan-aware yes` / `bridge-vids 2-4094` on the trunk bridge
+     and runs `ifreload -a` to apply immediately. Applied for real against
+     `fe-pve` after the operator confirmed the physical switch port was
+     already added to the relevant VLANs. Verified via a **fresh** SSH
+     connection afterward (not just the same Ansible run completing) that
+     the host stayed reachable, `bridge vlan show dev vmbr0` reflects the
+     new config, and both existing LXCs (9000 stopped, 9001 running) were
+     unaffected by the reload.
+   - Both playbooks are currently invoked ad-hoc (`-i "192.168.1.121,"`),
+     same as Phase 0 step 1 — not yet wired into `ansible/inventory/dev.yml`.
+3. Validate with `scripts/check-proxmox-status.sh` against `fe-pve`
+   (not yet run).
 4. Decide fate of guests 9000/9001 (Decision 7 says retire once
    `llm-gpu-stack` replaces them — don't destroy them before that
    replacement is proven, since they're the only currently-working
@@ -43,12 +90,57 @@ cycle proves the bootstrap is real IaC, not another hand-tuned snapshot.
 
 ## Phase 1 — Network onboarding
 
-1. **Out-of-band, mandatory first** (blocks everything below): trunk
-   `fe-pve`'s physical switch port to carry the new `ai_seg` VLAN (and any
-   others it needs — see Phase 3) into the MikroTik, per Decision 4 and
-   the existing "adding a new segment" procedure in
-   `docs/reference/sdn-segment-routing.md`. Verify with
-   `ping 192.168.50.1` from a workstation before touching Proxmox.
+1. **Out-of-band prerequisite — done and fully verified end-to-end
+   (2026-07-17).** This took several rounds to get right; full trail kept
+   here since each round found a genuine, non-obvious bug rather than a
+   repeat of the same mistake:
+   - Clarified mid-Phase-0 that the switch port `fe-pve` is connected to
+     was initially only configured to match `pve`'s *existing* VLAN set
+     (10/20/30/40) — VLAN 50 didn't exist anywhere yet.
+   - Operator added VLAN 50 on the MikroTik via RouterOS CLI (declined the
+     Ansible/REST automation built for this — reasonable given the blast
+     radius of the single router serving the whole network). First
+     attempt silently rolled back: the CLI session was in RouterOS "safe
+     mode" (`<SAFE>` prompt) and was disconnected without an explicit
+     clean exit, so RouterOS reverted the whole session automatically.
+     Caught by re-querying and finding nothing there; redone outside safe
+     mode.
+   - Operator updated the separate physical switch to carry VLAN 50 on
+     `fe-pve`'s port. Live test from `fe-pve` still failed —
+     "Destination Host Unreachable", no ARP reply. Root cause: every
+     existing SDN zone is tagged on **both** `ether1` and `ether5` in the
+     MikroTik's bridge VLAN table — `fe-pve`'s traffic actually arrives
+     via `ether1` (confirmed via the bridge host table), `pve`/others via
+     `ether5`. The VLAN 50 entry only had `ether5` tagged, and `ether1`
+     has `ingress-filtering: true`, so it hard-dropped every VLAN 50
+     frame. Fixed with `tagged=bridgeLocal,ether1,ether5`.
+   - Retested: ARP now resolved and ICMP echo *requests* reached the
+     router correctly (confirmed via `tcpdump` on `fe-pve`'s `nic0`), but
+     no echo *reply* ever came back — a different failure mode than
+     before, and progress, not a repeat. Root cause: the MikroTik's input
+     firewall chain has an explicit `accept icmp` rule per zone
+     (`vlan10-build`, `vlan20-mgmt`, `vlan30-edge`, `vlan40-infra`, even
+     the throwaway `vlan90-test-dhcp`) ending in a catch-all drop —
+     `vlan50-ai` had no such rule, so the router silently dropped its own
+     reply. Fixed by adding matching `accept icmp`/`udp:53`/`tcp:53`
+     rules for `vlan50-ai`, placed before the catch-all drop (rule order
+     matters in RouterOS — a plain append would land after the drop and
+     never fire).
+   - **Final verified state**: `ping 192.168.50.1` from `fe-pve` itself
+     (via a temporary `vmbr0.50` sub-interface + temporary `bridge vlan
+     add vid 50 dev vmbr0 self`, both removed after testing — the host
+     needed its own bridge self-VLAN-membership added for this specific
+     test, which real containers won't need since they attach with their
+     own per-port VLAN tag) — **0% packet loss**. `ai_seg`/VLAN 50 is
+     genuinely live end-to-end: MikroTik interface + gateway + bridge
+     tagging (both trunk ports) + physical switch + router firewall all
+     confirmed working, not just individually present.
+   - `ansible/00-initial-setup/mikrotik-ai-seg-vlan50-reconcile.yml`
+     corrected to tag both `ether1`/`ether5` and to patch an existing
+     bridge-VLAN entry missing a required interface. Still does not cover
+     the firewall-rule gap found in the last round — would need extending
+     before being trusted as a complete reconcile path. Never run by me;
+     operator did every MikroTik step via CLI directly.
 2. Add `terraform/lxc/network/pve-framework.yaml` (new file, mirrors `pve.yaml`
    structure) defining `ai_seg` (and `mgmt_seg`/`edge_seg` *attachments*
    only if Phase 3 needs `fe-pve` to run its own Traefik/Authentik-adjacent

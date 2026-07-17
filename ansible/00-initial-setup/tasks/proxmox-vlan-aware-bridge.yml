@@ -1,0 +1,65 @@
+---
+# Makes a Proxmox bridge VLAN-aware, the prerequisite for Proxmox SDN VLAN
+# zones (docs/reference/sdn-segment-routing.md / docs/design/network.md).
+# Parameterized by bridge name and VID range rather than hardcoding vmbr0 --
+# a host could plausibly use a different bridge name for its SDN trunk.
+#
+# This edits /etc/network/interfaces in place, anchored on the existing
+# `iface <bridge> inet ...` line, and assumes that line appears exactly
+# once in the file (true for every current host in this repo). If a host
+# ever has more than one stanza matching pmx_vlan_aware_bridge_name this
+# task's idempotency check would not be stanza-scoped -- revisit if that
+# ever becomes true.
+#
+# Applying this requires `ifreload -a`, which reloads the live bridge that
+# may carry the Ansible control connection itself. Adding
+# bridge-vlan-aware/bridge-vids does not touch addressing, gateway, or
+# bridge-ports, so it is expected to be non-disruptive, but this is real
+# live-network risk on a remote host, not a no-op -- treat as a
+# CLAUDE.md-class production network change requiring explicit approval
+# before this task's `ifreload -a` step runs for real (not under --check).
+
+- name: Ensure bridge-vlan-aware is set on {{ pmx_vlan_aware_bridge_name }}
+  ansible.builtin.lineinfile:
+    path: /etc/network/interfaces
+    insertafter: '^iface {{ pmx_vlan_aware_bridge_name }} inet '
+    line: "\tbridge-vlan-aware yes"
+    regexp: '^\s*bridge-vlan-aware\s'
+    backup: true
+  register: _vlan_aware_change
+  when: pmx_vlan_aware_bridge_enabled | bool
+
+- name: Ensure bridge-vids is set on {{ pmx_vlan_aware_bridge_name }}
+  ansible.builtin.lineinfile:
+    path: /etc/network/interfaces
+    insertafter: '^iface {{ pmx_vlan_aware_bridge_name }} inet '
+    line: "\tbridge-vids {{ pmx_vlan_aware_bridge_vids }}"
+    regexp: '^\s*bridge-vids\s'
+    backup: true
+  register: _vlan_vids_change
+  when: pmx_vlan_aware_bridge_enabled | bool
+
+- name: Reload networking to apply VLAN-aware bridge config
+  ansible.builtin.command: ifreload -a
+  when:
+    - pmx_vlan_aware_bridge_enabled | bool
+    - _vlan_aware_change.changed or _vlan_vids_change.changed
+  changed_when: true
+
+- name: Verify {{ pmx_vlan_aware_bridge_name }} is VLAN-aware after reload
+  ansible.builtin.command: >-
+    bridge -j vlan show dev {{ pmx_vlan_aware_bridge_name }}
+  register: _vlan_aware_verify
+  changed_when: false
+  failed_when: false
+  check_mode: false  # read-only; let --check dry-runs see real current state too
+  when: pmx_vlan_aware_bridge_enabled | bool
+
+- name: Report VLAN-aware bridge status
+  ansible.builtin.debug:
+    msg: >-
+      {{ pmx_vlan_aware_bridge_name }} configured for bridge-vlan-aware yes /
+      bridge-vids {{ pmx_vlan_aware_bridge_vids }}.
+      {{ 'Config changed and reload applied.' if (_vlan_aware_change.changed or _vlan_vids_change.changed) else 'Already up to date, no reload needed.' }}
+      bridge vlan show: {{ _vlan_aware_verify.stdout | default('n/a') }}
+  when: pmx_vlan_aware_bridge_enabled | bool
