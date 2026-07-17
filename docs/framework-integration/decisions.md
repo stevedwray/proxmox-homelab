@@ -87,6 +87,46 @@ and an isolated ARC cap would contain the memory tradeoff instead of
 letting it compete with GPU workloads host-wide. Not scoped or designed
 yet; flagging so the reasoning doesn't have to be rediscovered.
 
+**Implemented 2026-07-18: single-NVMe split so growable data never shares
+space with root.** Operator raised a real concern separate from the ZFS
+question — even staying on LVM-thin, `/var/lib/vz` (Proxmox's default
+`local` dir storage, holding ISOs/templates/backups) was sharing the
+*root* filesystem (`pve-root`), meaning growable content competed with
+the OS for space. Fixed live, safely, because `pve-data` was confirmed at
+0.00% usage (fresh install, nothing staged yet — this window closes the
+moment anything real is stored). Referenced `pve`'s own live
+`storage.cfg` as the naming/pattern precedent (`dir: storage-iso`,
+`storage-template`, `storage-backup` on a dedicated pool, separate from
+its root dataset) and adapted it to LVM:
+
+- `pve-root` (96G) and `pve-swap` (8G) — untouched.
+- Destroyed the empty `pve-data` thin pool; recreated a new plain ext4 LV
+  `storage` (1000G) mounted at `/storage`, registered as three Proxmox
+  `dir` storages matching `pve`'s naming — `storage-iso`, `storage-template`,
+  `storage-backup` — plus plain (non-Proxmox-storage) bind-mount
+  directories `/storage/models/{llm,comfyui}` (kept separate — llama.cpp
+  wants a flat `.gguf` directory, ComfyUI wants its own structured
+  checkpoints/vae/loras tree) and `/storage/artifacts` for generated
+  output.
+- Recreated the thin pool for container rootfs at the **same name**
+  (`data`, now 700G instead of 1.71TB) — `local-lvm`'s existing
+  `storage.cfg` entry needed zero changes, it just started working again
+  once a pool with that name existed. Deliberately sized smaller than
+  `storage` (700G vs 1TB) because it's thin-provisioned (overcommit
+  headroom scales with realistic aggregate usage, not nominal per-container
+  caps) while `storage` is a hard cap with no overcommit — the genuinely
+  open-ended growth (models, generated media) needed the larger real
+  allocation.
+- `llm-gpu-stack`/`comfyui-stack` `stack.yaml`s updated to match: `rootfs_size`
+  shrunk from 140G/250G down to 30G each (model weights no longer live
+  inside the container's own rootfs), and `host_bind_mounts` added
+  pointing at the new `/storage/models/*` and `/storage/artifacts` paths.
+  `terraform/lxc/storage/pve-framework.yaml`'s `template_profiles` now
+  point at `storage-template` instead of `local`.
+- `local` (`/var/lib/vz` on `pve-root`) left registered in `storage.cfg`
+  but no longer used for anything new — not removed, to avoid disturbing
+  any Proxmox-internal assumption that expects a `local` storage to exist.
+
 ## Decision 4: New dedicated SDN VLAN zone (`ai_seg`), not reuse of existing zones (implemented and verified live, 2026-07-17)
 
 Context: `fe-pve` is flat-LAN today. To reach it through Traefik/Authentik/

@@ -155,13 +155,34 @@ build it after, not as part of the initial reinstall pass.
    (`pve-manager/9.2.2`), hostname set to `pve-framework` from the start,
    at a new IP (192.168.1.8 — the box's old exploration-phase address,
    192.168.1.121, does not carry over). DNS (`pve-framework.gibbsgreatly.xyz`)
-   already points at the new IP; SSH key access confirmed. Storage layout
-   matches what `terraform/lxc/storage/pve-framework.yaml` already assumed
-   (single 1.8TB NVMe, `local-lvm` LVM-thin + `local` dir) — no changes
-   needed there. **`pveam list local` is empty** — no container templates
-   exist yet (neither the custom Docker-enhanced Debian template nor the
-   plain Ubuntu 26.04 template survive a reinstall); re-staging both is a
+   already points at the new IP; SSH key access confirmed. Initial storage
+   layout matched what `terraform/lxc/storage/pve-framework.yaml` already
+   assumed (single 1.8TB NVMe, `local-lvm` LVM-thin + `local` dir) — since
+   restructured live, see the new step 1a below. **`pveam list` is empty**
+   — no container templates exist yet (neither the custom Docker-enhanced
+   Debian template nor the plain Ubuntu 26.04 template survive a
+   reinstall); staging both against the new `storage-template` volume is a
    real prerequisite for step 4 below, not yet its own numbered step here.
+1a. **Storage restructure — done (2026-07-18).** Operator raised a real
+   concern: `local` (Proxmox's default dir storage for ISOs/templates/
+   backups) lived on `/var/lib/vz`, which is on the root filesystem
+   (`pve-root`) — meaning growable content would compete with the OS for
+   space. Fixed live and safely, since `pve-data` was confirmed at 0.00%
+   usage (nothing staged yet — this window closes the moment anything
+   real is stored). Used `pve`'s own live `storage.cfg` as the naming
+   precedent. Result: `pve-root`/`pve-swap` untouched; new plain ext4 LV
+   `storage` (1000G) mounted `/storage`, registered as `storage-iso`/
+   `storage-template`/`storage-backup` (Proxmox dir storage) plus plain
+   bind-mount directories `/storage/models/{llm,comfyui}`/`/storage/artifacts`;
+   `local-lvm`'s thin pool recreated at the same name (`data`, 700G, was
+   1.71TB) so its `storage.cfg` entry needed no changes. Full rationale
+   in `decisions.md` Decision 3. `llm-gpu-stack`/`comfyui-stack`
+   `stack.yaml`s and `terraform/lxc/storage/pve-framework.yaml` updated to
+   match — `rootfs_size` shrunk (140G/250G → 30G each, models no longer
+   live in-container), `host_bind_mounts` added, `template_profiles` now
+   point at `storage-template` instead of `local`. `tofu validate` clean;
+   not yet re-verified with a live `terragrunt plan` against the restructured
+   host.
 2. **Host bootstrap — step 1 of 3 done (2026-07-18).**
    `proxmox-initial-setup.yml` run against `192.168.1.8` (33 ok / 11
    changed / 0 failed) — repo switch, subscription-nag removal, Terraform

@@ -24,24 +24,36 @@ before).
 
 ## Storage
 
-Single NVMe, LVM-thin only — matches what
-`terraform/lxc/storage/pve-framework.yaml` already assumed, confirmed
-against the fresh install rather than carried over blindly:
+Single NVMe, restructured live 2026-07-18 (see
+`docs/framework-integration/decisions.md` Decision 3) so growable data
+never shares space with the Proxmox root filesystem — done while
+`pve-data` was at 0.00% usage (fresh install, nothing staged yet), so it
+was a clean, safe restructure rather than a data migration:
 
 ```
-pve-root   96G   (Debian/Proxmox OS)
-pve-swap   8G
-pve-data   1.7T  (lvmthin pool, thin-provisioned)
+pve-root     96G    (Debian/Proxmox OS, unchanged, nothing else lives here)
+pve-swap     8G     (unchanged)
+pve-storage  1000G  (plain ext4 LV, mounted /storage)
+pve-data     700G   (lvmthin pool, same name as before -> local-lvm needed
+                      no storage.cfg changes, just resized)
 ```
 
-`/etc/pve/storage.cfg` only defines `local` (dir) and `local-lvm`
-(lvmthin). No ZFS pool. The 58GB `sda` disk is unused — not part of any
-pool, no mountpoint.
+`/etc/pve/storage.cfg`: `local` (dir, `/var/lib/vz` on `pve-root` —
+still registered but no longer used for anything new) and `local-lvm`
+(lvmthin, container rootfs/volumes) as before, plus three new `dir`
+storages on `/storage` — `storage-iso`, `storage-template`,
+`storage-backup` — named to match `pve`'s own live convention. Plain
+(non-Proxmox-storage) directories `/storage/models/{llm,comfyui}` and
+`/storage/artifacts` exist for bind-mounting into containers (models/
+artifacts aren't Proxmox storage content types). No ZFS pool. The 58GB
+`sda` disk is unused — not part of any pool, no mountpoint.
 
-**`pveam list local` is empty — no container templates exist.** Neither
-the custom Docker-enhanced Debian template nor the plain Ubuntu 26.04
-template survive a reinstall (they're host-local files, not IaC). This is
-a real, open prerequisite before any stack can deploy — see "Gaps" below.
+**`pveam list local` is still empty — no container templates exist.**
+The Ubuntu 26.04/custom Debian templates need re-staging against the
+*new* `storage-template` volume (not `local`, which
+`terraform/lxc/storage/pve-framework.yaml`'s `template_profiles` no
+longer point at). Real, open prerequisite before any stack can deploy —
+see "Gaps" below.
 
 ## Network
 
@@ -115,12 +127,13 @@ Summarized from the docs there — see each for full detail:
 
 ## Gaps versus the platform contract
 
-1. **No container templates staged** — `pveam list local` is empty.
+1. **No container templates staged** — `pveam list` is empty everywhere.
    Blocks any `terragrunt apply` for `llm-gpu-stack`/`comfyui-stack`
    until the custom Debian Docker template
    (`ansible/00-initial-setup/build-debian-13-template.yml`) and the
-   plain Ubuntu 26.04 template (`pveam download`) are re-staged. Next
-   step.
+   plain Ubuntu 26.04 template (`pveam download`) are staged — now
+   against the new `storage-template` volume (`/storage/template`), not
+   `local`/`/var/lib/vz`, per the storage restructure above. Next step.
 2. **`llm-gpu-stack`/`comfyui-stack` untested against a real host.**
    Terraform (`stack.yaml` + Terragrunt scaffolding) and Ansible (roles +
    playbooks) are written and validated (`tofu validate`, `terragrunt

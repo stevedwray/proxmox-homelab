@@ -31,7 +31,12 @@ cores: 8
 # [[reference_unified_memory_oom_sizing]].
 memory: 16384
 swap: 2048
-rootfs_size: 140
+# Model weights live externally on the host's dedicated storage LV
+# (/storage/models, bind-mounted below), not inside the container's own
+# rootfs -- see docs/framework-integration/decisions.md Decision 3's
+# 2026-07-18 storage restructure. rootfs only needs to hold the OS, the
+# llama.cpp build, and its HIP/ROCm toolchain, not tens of GB of weights.
+rootfs_size: 30
 storage_profile: platform-default
 template_profile: ubuntu-native
 template_name: "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
@@ -62,6 +67,17 @@ device_passthrough:
     uid: 0
     gid: 0
     mode: "0666"
+
+# Model weights live on the host's dedicated storage LV, not the
+# container's own rootfs -- see Decision 3's 2026-07-18 update. Matches
+# llm_gpu_stack role's default llm_gpu_stack_models_dir (/data/models).
+# Own subdirectory under /storage/models, separate from comfyui-stack's
+# -- llama.cpp wants a flat directory of .gguf files, ComfyUI wants its
+# own structured checkpoints/vae/loras tree; keeping them apart avoids
+# the two layouts colliding in one shared directory listing.
+host_bind_mounts:
+  - host_path: /storage/models/llm
+    lxc_path: /data/models
 
 tags:
   - llm-gpu-stack
