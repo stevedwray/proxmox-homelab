@@ -132,6 +132,15 @@ zones:
 
 policies:
   - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      Traefik to AI-stack web UIs and the llama-server API. Cross-node:
+      ai_seg is defined in network/pve-framework.yaml (VLAN 50, on
+      fe-pve), not here — see the matching entry there and
+      docs/framework-integration/decisions.md Decision 4.
+  - from: edge_seg
     to: mgmt_seg
     protocol: tcp
     ports: [9000, 9443]

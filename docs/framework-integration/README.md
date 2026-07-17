@@ -5,10 +5,10 @@ Planning workspace for bringing the Framework Desktop (`fe-pve`,
 (`pve-framework`), hosting a new AI/LLM application stack behind the existing
 Traefik / Authentik / step-ca / Technitium / Harbor / NetBox platform.
 
-Status: **Phase 0 (host bootstrap) and Phase 1 step 1 (network
-onboarding's out-of-band prerequisite) are done and live-verified.**
-This is no longer planning-only — real changes have been applied to
-`fe-pve` and the MikroTik and confirmed working:
+Status: **Phase 0 (host bootstrap) and Phase 1 (network onboarding) are
+both done and live-verified.** This is no longer planning-only — real
+changes have been applied to `fe-pve`, the MikroTik, and the Terraform
+network/storage model, all confirmed working:
 
 - Host bootstrap: repo/subscription-nag fix, Terraform token (live-
   verified against the real API), unified-memory GTT tuning (computed
@@ -18,13 +18,18 @@ This is no longer planning-only — real changes have been applied to
   capture, not just config checks. Three distinct bugs were found and
   fixed getting here; see Decision 4 and `plan.md` Phase 1 step 1 for the
   full trail.
+- `terraform/lxc/network/pve-framework.yaml` and
+  `terraform/lxc/storage/pve-framework.yaml` added, and the actual Proxmox
+  SDN zone (`tvai`, VLAN 50) applied live via `pvesh` — confirmed present,
+  existing LXCs unaffected.
 - Secrets/environment handling generalized (Decision 6) and now has real
   data flowing through it: `terraform/secrets.pve-framework.enc.yaml`
   holds this node's actual Terraform token.
 
-Not yet done: writing `terraform/lxc/network/pve-framework.yaml` (Phase 1
-step 2 — the values to use are now confirmed-live), DNS/NetBox/registry
-onboarding (Phase 2), and the AI stack itself (Phase 3).
+Not yet done: `terraform/lxc/environments/pve-framework/` per-stack
+scaffolding, DNS/NetBox/registry onboarding (Phase 2), the AI stack itself
+(Phase 3), and a full teardown-cycle validation before this is promoted
+past the current `work/framework-integration` branch.
 
 Relationship to `docs/framework/`: that directory is the completed OS
 bake-off and hardware-enablement research (which OS to run, how GPU

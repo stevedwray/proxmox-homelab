@@ -167,10 +167,14 @@ Things the rest of the fleet has that this box currently lacks:
    live end-to-end, verified with real ping/packet-capture, not just
    config presence. See plan.md Phase 1 step 1 for the three bugs found
    and fixed along the way.
-3. No entry in `terraform/lxc/network/*.yaml`, `storage/*.yaml`, or
-   `environments/*/` yet — this is Phase 1 step 2, next up. The `ai_seg`
-   values to use (VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`) are
-   now confirmed live, not just proposed.
+3. ~~No entry in `terraform/lxc/network/*.yaml`, `storage/*.yaml`, or
+   `environments/*/`~~ — **mostly closed 2026-07-17**:
+   `terraform/lxc/network/pve-framework.yaml` and
+   `terraform/lxc/storage/pve-framework.yaml` added, and the Proxmox SDN
+   zone/VNet/subnet (`tvai`, VLAN 50) applied live via `pvesh` — confirmed
+   present, existing LXCs unaffected. Still missing:
+   `terraform/lxc/environments/pve-framework/` (per-stack Terragrunt
+   scaffolding, needed before any actual stack deploys in Phase 3).
 4. No DNS record anywhere (MikroTik static, Technitium, or otherwise) —
    still open, Phase 2.
 5. No NetBox entry (device or IPs) — still open, Phase 2.

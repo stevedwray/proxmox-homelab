@@ -1,0 +1,99 @@
+# Proxmox-only network intent for the pve-framework environment
+# (Framework Desktop, fe-pve, 192.168.1.121).
+#
+# Network model: Proxmox SDN VLAN zones — the MikroTik is the L3 gateway
+# for all zones, same as every other environment. No routing or NAT is
+# performed on the Proxmox host. Inter-zone traffic flows through the
+# MikroTik, which enforces firewall policy at the router.
+#
+# Unlike pve-test-vm (which mirrors pve's existing VLANs 10/20/30/40 with
+# a +100 IP offset), pve-framework gets one brand-new dedicated zone
+# (ai_seg) rather than reusing any existing zone — see
+# docs/framework-integration/decisions.md Decision 4 for the isolation
+# rationale (a newly-onboarded node shouldn't get blanket L2 access to
+# mgmt_seg/infra_seg just by trunking the same physical port they use).
+# pve-framework does not define mgmt_seg/edge_seg/infra_seg attachments of
+# its own — it has no local Authentik/Traefik/Harbor; it reuses pve's
+# existing instances over the cross-node policies below.
+#
+# Physical setup, confirmed live 2026-07-17 (see plan.md Phase 1 step 1
+# for the full bring-up trail, including three bugs found and fixed):
+#   fe-pve NIC (nic0/vmbr0, VLAN-aware) → MikroTik trunk (ether1, the port
+#   fe-pve's traffic actually arrives on — pve/others arrive via ether5;
+#   ai_seg is tagged on both)
+#     Tagged VLAN 50: ai_seg — 192.168.50.0/24, gw 192.168.50.1
+#
+# ping 192.168.50.1 from fe-pve itself: 0% packet loss, confirmed via
+# ARP/ICMP packet capture, not just a successful ping.
+
+proxmox:
+  target_node: pve-framework
+  pve_host: ${proxmox_host}
+
+attachments:
+  lan:
+    description: Default LAN bridge — used only for the host's own management IP.
+    type: bridge
+    bridge: vmbr0
+    vlan_tag: null
+    firewall: false
+
+  # ai_seg — AI/LLM application containers (VLAN 50, 192.168.50.0/24)
+  ai_seg:
+    description: AI/LLM application services — llm-gpu-stack, OpenWebUI, n8n, SearXNG, etc.
+    type: sdn_vnet
+    bridge: tvai
+    firewall: false
+    sdn:
+      zone: tvai
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-framework
+      vnet: tvai
+      vlan_tag: 50
+      alias: pve-framework AI application segment
+      subnet: "${lab_subnet_ai_cidr}"
+      gateway: "${lab_gw_ai}"
+      snat: false
+
+zones:
+  ai_seg:
+    description: AI/LLM application services (Decision 4 — new dedicated zone, not a reuse of mgmt_seg/edge_seg/infra_seg)
+    attachment: ai_seg
+    containers: []  # none yet — Phase 3 populates this as llm-gpu-stack and friends are deployed
+
+policies:
+  - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      Traefik (edge_seg, on pve) to AI-stack web UIs (OpenWebUI, n8n,
+      SearXNG) and the llama-server API if exposed directly. Cross-node:
+      edge_seg is defined in network/pve.yaml, not here — see the
+      matching entry there.
+  - from: ai_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [9000, 9443]
+    description: >-
+      ai_seg containers to Authentik (mgmt_seg, on pve) for forward-auth/
+      OIDC, and step-ca ACME. Cross-node: mgmt_seg is defined in
+      network/pve.yaml, not here.
+  # ai_seg -> infra_seg (Harbor, apt-cacher) is already covered by pve.yaml's
+  # existing "all_zones -> infra_seg" wildcard policy; no separate entry
+  # needed here.
+
+inventory:
+  proxmox_nodes:
+    - host: "${proxmox_host}"
+      host_ip: "192.168.1.121"
+      # NOTE: PROXMOX_READONLY_TOKEN_ID/SECRET do not exist yet for this
+      # node — only the full-privilege Terraform token
+      # (TF_VAR_pm_api_token_id/secret) has been created so far. A
+      # dedicated read-only discovery token is still needed before NetBox/
+      # health-check tooling can use this node entry (see
+      # docs/framework-integration/current-state.md gap 8).
+      token_id_env: PROXMOX_READONLY_TOKEN_ID
+      token_secret_env: PROXMOX_READONLY_TOKEN_SECRET

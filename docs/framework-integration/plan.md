@@ -141,31 +141,49 @@ cycle proves the bootstrap is real IaC, not another hand-tuned snapshot.
      the firewall-rule gap found in the last round — would need extending
      before being trusted as a complete reconcile path. Never run by me;
      operator did every MikroTik step via CLI directly.
-2. Add `terraform/lxc/network/pve-framework.yaml` (new file, mirrors `pve.yaml`
-   structure) defining `ai_seg` (and `mgmt_seg`/`edge_seg` *attachments*
-   only if Phase 3 needs `fe-pve` to run its own Traefik/Authentik-adjacent
-   pieces locally — default assumption is it doesn't; it reuses the
-   existing `pve` Traefik/Authentik instances over the MikroTik-routed
-   `ai_seg ↔ mgmt_seg`/`ai_seg ↔ edge_seg` policies instead).
-3. Add `terraform/lxc/storage/pve-framework.yaml` per Decision 3.
-4. Add cross-zone policies to `pve-framework.yaml`'s `policies:` block (and the
-   MikroTik firewall, out-of-band, same as every existing policy):
-   - `edge_seg (on pve) → ai_seg`: Traefik → AI-stack web UIs (OpenWebUI,
-     n8n, SearXNG) and the llama-server API, if exposed directly.
-   - `ai_seg → mgmt_seg (on pve)`: forward-auth callback to Authentik,
-     ACME to step-ca.
-   - `ai_seg → infra_seg (on pve)`: Harbor image pulls, apt-cacher (matches
-     the existing "all zones → infra_seg" policy — confirm it already
-     covers a cross-node zone, since `infra_seg` today only lists `pve` as
-     a node).
-5. Apply SDN zone via the existing manual `pvesh` procedure (Terraform/
-   Ansible VLAN-zone automation is a known gap per `NETWORK_CONTRACT.md` —
-   don't block this phase on fixing that gap first).
-6. Point `fe-pve`'s LXCs' resolver at the MikroTik `ai_seg` gateway
-   (`192.168.50.1`), same DNS-standard pattern as every other zone.
+2. **Done (2026-07-17).** `terraform/lxc/network/pve-framework.yaml`
+   added, mirroring `pve.yaml`'s structure — defines only the `ai_seg`
+   attachment/zone (no local `mgmt_seg`/`edge_seg`/`infra_seg`, per the
+   original plan: `fe-pve` has no local Authentik/Traefik/Harbor and
+   reuses `pve`'s). `containers: []` for now — Phase 3 populates it.
+3. **Done.** `terraform/lxc/storage/pve-framework.yaml` added per
+   Decision 3 (LVM-thin only, profile names kept for `stack.yaml`
+   compatibility).
+4. **Done.** Cross-zone policies added to both files (not just
+   `pve-framework.yaml` — `edge_seg` is defined in `pve.yaml`, so the
+   reciprocal entry belongs there too, otherwise a reader of `pve.yaml`
+   would never discover it now reaches another node):
+   - `edge_seg (on pve) → ai_seg`: added to **both** `pve.yaml` and
+     `pve-framework.yaml`.
+   - `ai_seg → mgmt_seg (on pve)`: added to `pve-framework.yaml` (source
+     zone is defined there).
+   - `ai_seg → infra_seg (on pve)`: confirmed **not** needed as a separate
+     entry — already covered by `pve.yaml`'s existing wildcard
+     `all_zones → infra_seg` policy.
+   - None of this is enforced by Terraform (known cross-zone firewall gap,
+     `NETWORK_CONTRACT.md`) — it documents what the MikroTik firewall
+     should allow. The MikroTik-side rules for these specific cross-node
+     paths aren't applied yet; only the `ai_seg`-to-router rules from step
+     1's troubleshooting exist so far.
+5. **Done.** SDN zone applied via `pvesh` directly against `fe-pve`
+   (matching the documented manual procedure — Terraform/Ansible VLAN-zone
+   automation remains a known gap, not fixed here): zone `tvai` (type
+   vlan, node `pve-framework`), VNet `tvai` (tag 50), subnet
+   `192.168.50.0/24`/gateway `192.168.50.1`. Verified present via
+   `pvesh get /cluster/sdn/zones`/`vnets`; existing LXCs (9000/9001)
+   confirmed unaffected. The `tvai` Linux bridge device doesn't exist yet
+   at the OS level — expected, not a bug: Proxmox SDN VNet bridges
+   materialize lazily once a container actually attaches (matches the
+   existing repo note that "SDN VNet bridges do not appear in
+   `/nodes/<node>/network`").
+6. **Nothing to apply yet** — no `ai_seg` containers exist. This becomes a
+   `stack.yaml` convention (`dns_server: "${lab_gw_ai}"`) for each stack
+   added in Phase 3, same as every other zone.
 
 Validation tier: SDN/network change → full teardown cycle on `pve-framework`
-before promoting.
+still owed before this is promoted past a `work/*` branch (per Decision 2,
+there's no separate test copy of this physical box — the teardown cycle
+*is* the validation environment here). Not done as part of this pass.
 
 ## Phase 2 — Platform onboarding (DNS, PKI, IPAM, registry)
 

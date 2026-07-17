@@ -1,0 +1,82 @@
+version: 1
+
+# fe-pve has a single 1.8TB NVMe fully committed to LVM-thin (pve-data) —
+# no ZFS pool, no dedicated template storage. Mirrors pve-test.yaml's
+# shape for a host without ZFS (see
+# docs/framework-integration/decisions.md Decision 3): profile names kept
+# for stack.yaml compatibility, all mapped to local-lvm/local, the only
+# two storage IDs that actually exist in /etc/pve/storage.cfg on this
+# node. Revisit only if snapshot/send-receive features become a real
+# requirement for this box specifically.
+
+defaults:
+  storage_profile: platform-default
+  extra_mount_profile: durable-default
+  template_profile: local-template
+
+templates:
+  default:
+    name: debian-13.1-2-docker-template.tar.gz
+
+storage_backends:
+  local-lvm:
+    content_types: [images, rootdir]
+    backend_type: lvm-thin
+  local:
+    content_types: [backup, iso, snippets, vztmpl]
+    backend_type: dir
+
+profiles:
+  platform-default:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-zfs:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  validation-small:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  ssd-runtime:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
+extra_mount_profiles:
+  durable-default:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-zfs:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-small:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-ssd:
+    storage: local-lvm
+    required_content_type: rootdir
+
+template_profiles:
+  local-template:
+    storage: local
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+
+legacy_rootfs_storage_profiles:
+  infrastructure-containers: platform-default
+  storage-containers: validation-small
+
+legacy_extra_mount_storage_profiles:
+  infrastructure-containers: durable-default
+  storage-containers: durable-small
+
+legacy_template_storage_profiles:
+  storage-template: local-template
+  local: local-template
