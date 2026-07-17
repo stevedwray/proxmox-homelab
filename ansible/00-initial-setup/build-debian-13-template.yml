@@ -741,7 +741,7 @@
       ansible.builtin.file:
         path: "{{ template_dumpdir }}"
         state: directory
-        mode: "0700"
+        mode: "0755"
 
     - name: Create linked clone for packaging
       ansible.builtin.command: "pct clone {{ template_id }} {{ clone_id }} --hostname {{ clone_hostname }} --full 0"
