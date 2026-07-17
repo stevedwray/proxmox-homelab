@@ -2,6 +2,31 @@
 # FILE: playbooks/templates/build-debian-template.yml
 # Purpose: Create a standardized Debian LXC template with Docker and automation tools
 # Updated for production storage layout and proper variable management
+#
+# This playbook has three plays, and the first and third both read the
+# same `target_hosts` variable -- the first play dynamically registers a
+# second host (the temp builder container, via add_host) for the middle
+# play's SSH-based configuration. Passing `-e target_hosts=all` leaks
+# that value into the THIRD play too, by which point "all" incorrectly
+# includes the container itself, not just the Proxmox host -- causes a
+# spurious "No route to host" once the container is stopped/converted to
+# a template mid-play. Always pass the literal Proxmox host address
+# (matching your -i ad-hoc inventory entry), not `all`:
+#
+#   ansible-playbook -i "<pve-host-ip>," -e target_hosts=<pve-host-ip> -u root \
+#     -e '{"debian_template": {"container_id": 910, "clone_id": 810,
+#          "hostname": "debian13-template-builder", "ip": "<free-lan-ip>",
+#          "disk": "8", "storage_pool": "<lvmthin-storage-id>",
+#          "base_template": "local:vztmpl/<debian-base-template-file>",
+#          "dumpdir": "<target-dir-storage-path>/template/cache",
+#          "ssh_private_key_file": "~/.ssh/id_ed25519",
+#          "ssh_public_key_path": "~/.ssh/id_ed25519.pub"}}' \
+#     00-initial-setup/build-debian-13-template.yml
+#
+# `-u root` (not `-e ansible_user=root`) for the same reason -- `-e` is
+# global across all three plays and would override the second play's own
+# `ansible_user: automation` (the container's actual login user, set up
+# with your SSH key by the first play).
 
 - name: Create and configure Debian LXC template
   hosts: "{{ target_hosts | default('proxmox') }}"
