@@ -1,0 +1,20 @@
+---
+comfyui_stack_repo: https://github.com/comfyanonymous/ComfyUI.git
+comfyui_stack_install_dir: /opt/ComfyUI
+comfyui_stack_venv_dir: /opt/comfyui-venv
+comfyui_stack_models_dir: "{{ comfyui_stack_install_dir }}/models"
+comfyui_stack_port: 8188
+
+# AMD's gfx1151-specific pip index -- bundles its own self-contained ROCm
+# SDK independent of the system apt rocm-dev install (versions don't need
+# to match). See docs/framework/comfyui-image-video-gen-findings.md §1.
+comfyui_stack_rocm_pip_index: https://repo.amd.com/rocm/whl/gfx1151/
+comfyui_stack_torch_version: "2.9.1+rocm7.13.0"
+comfyui_stack_torchvision_version: "0.26.0+rocm7.13.0"
+# No 2.9.1 build exists for this index -- findings doc §1.
+comfyui_stack_torchaudio_version: "2.9.0+rocm7.13.0"
+
+# findings doc §6c: keep deliberate VRAM headroom and disable smart-memory
+# offload cross-model residue accumulation (a no-op for freeing memory
+# within a single job on unified memory, but real value across requests).
+comfyui_stack_vram_headroom_gb: 6

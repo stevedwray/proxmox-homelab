@@ -1,0 +1,88 @@
+# llama.cpp GPU-passthrough inference stack — ai_seg zone (pve-framework).
+# Native (no Docker) HIP build, llama-server router mode. Wraps the
+# already-proven ad hoc container 9001 in real Terraform/Ansible, per
+# docs/framework-integration/post-reinstall-plan.md.
+#
+# See docs/framework/llamacpp-router-mode-deployment.md for the deployment
+# pattern this implements and
+# docs/framework/proxmox-strix-halo-setup-notes.md for the GPU-enablement
+# recipe this codifies (now via Proxmox's native device_passthrough
+# mechanism instead of hand-edited lxc.cgroup2.devices.allow lines — no
+# more reading the KFD major number live, Proxmox handles that internally).
+#
+# Kept in its own GPU-passthrough container, separate from comfyui-stack,
+# per docs/framework-integration/decisions.md Decision 5 (revised) —
+# different dependency stack and failure/memory profile, validated by a
+# real host-wide OOM incident when both were memory-heavy at once.
+
+hostname: llm-gpu-stack
+ip_address: "${lab_ip_llm_gpu}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+vmid: 50010
+cores: 8
+# Conservative starting ceiling — the dual-workload gateway
+# (docs/framework/dual-workload-gateway-design.md) that would let this
+# safely claim most of the host isn't built yet, and comfyui-stack may be
+# running concurrently on the same disposable box during testing. Revisit
+# with the same empirical anon-usage sizing discipline used for
+# comfyui-stack once a real target model/context-size is chosen — see
+# docs/framework-integration/decisions.md's Decision 5 addendum and
+# [[reference_unified_memory_oom_sizing]].
+memory: 16384
+swap: 2048
+rootfs_size: 140
+storage_profile: platform-default
+template_profile: ubuntu-native
+template_name: "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+ostype: ubuntu
+
+# Native GPU-passthrough LXC, not Docker-based.
+docker_enabled: false
+
+# unprivileged (true, the default) + device_passthrough is untested on
+# this specific hardware/ROCm combination as of this writing — the manual
+# bring-up always used privileged containers and explicitly left
+# unprivileged GPU passthrough as an open question
+# (proxmox-strix-halo-setup-notes.md's "Open questions" section). If GPU
+# access fails to initialize inside the container, the next troubleshooting
+# step is setting unprivileged: false here, not immediately assuming the
+# device_passthrough mechanism itself is broken.
+unprivileged: true
+device_passthrough:
+  - path: /dev/kfd
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/card1
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/renderD128
+    uid: 0
+    gid: 0
+    mode: "0666"
+
+tags:
+  - llm-gpu-stack
+  - ai
+  - gpu
+  - pve-framework
+
+network:
+  zone: ai_seg
+
+depends_on: []
+provides:
+  - service: llama-router-http
+    port: 8080
+    protocol: tcp
+
+ansible_playbook: "deploy-llm-gpu-stack"
+deployment_tier: ai
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

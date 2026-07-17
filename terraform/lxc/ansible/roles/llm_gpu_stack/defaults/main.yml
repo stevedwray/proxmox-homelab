@@ -1,0 +1,14 @@
+---
+llm_gpu_stack_amdgpu_target: gfx1151
+llm_gpu_stack_llamacpp_repo: https://github.com/ggml-org/llama.cpp.git
+llm_gpu_stack_llamacpp_dir: /opt/llama.cpp
+llm_gpu_stack_models_dir: /data/models
+llm_gpu_stack_models_max: 1
+llm_gpu_stack_ctx_size: 8192
+llm_gpu_stack_port: 8080
+
+# Empty by default -- no Traefik route exists yet (Phase 2 not done), and
+# llamacpp-router-mode-deployment.md documents the router as currently
+# unauthenticated while bound to ai_seg only. Set a real key before this
+# endpoint is ever exposed beyond ai_seg.
+llm_gpu_stack_api_key: ""

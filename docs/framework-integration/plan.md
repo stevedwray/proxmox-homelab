@@ -1,9 +1,20 @@
 # Plan — Integrating `fe-pve` (Framework Desktop) into the Platform
 
-Status: **planning only — nothing in this phase touches `fe-pve`, the
-MikroTik, or any tracked Terraform/Ansible state.** Follows the decisions
-in [decisions.md](./decisions.md); see [current-state.md](./current-state.md)
+Status: **Phases 0-1 executed and live-verified against the current
+(disposable, exploration-only) box; Phase 3 has real hand-validated
+findings but no Terraform/Ansible wrapping yet.** Follows the decisions in
+[decisions.md](./decisions.md); see [current-state.md](./current-state.md)
 for the facts it's based on.
+
+**This is a historical/architectural record of what was done and why —
+for what to actually do next, read
+[post-reinstall-plan.md](./post-reinstall-plan.md) instead.** The
+operator has confirmed the current box is disposable and will be wiped
+and reinstalled under its real name (`pve-framework`); the phases below
+describe real work already validated once (host bootstrap, `ai_seg`
+networking, the ComfyUI bake-off) that now needs to survive a clean
+reinstall via already-written or still-to-be-written automation, not be
+redone by hand again.
 
 Goal: turn `fe-pve` from an unmanaged, flat-LAN, hand-built box into a
 fully IaC-managed environment (`pve-framework`) that plugs into the existing
@@ -205,21 +216,24 @@ there's no separate test copy of this physical box — the teardown cycle
    Phase 1. Custom images this stack needs (a `llama-server` HIP build
    image, if containerized rather than native) get pushed to the existing
    Harbor, matching NFR-05 ("images must source from Harbor").
-5. **Authentik**: add `ai_seg`'s Traefik routes as new forward-auth (or
-   native-OIDC, matching whichever pattern Technitium's integration
-   settled on — see `docs/dns-refactor/decisions.md`) protected
-   applications — OpenWebUI, n8n, SearXNG admin, and the llama-server
-   endpoint if it should require auth rather than being ai_seg-internal
-   only.
+5. **Authentik**: per-service, following Decision 8 — default to native
+   OIDC (OpenWebUI: yes, well-supported; n8n: unconfirmed, check its
+   self-hosted docs when built; SearXNG: no native auth exists, so this
+   is Traefik forward-auth or no exposure, not a choice), validated
+   end-to-end per app rather than assumed to work. `llama-server` does
+   not go through Authentik at all — see the resolved "Open questions"
+   entry below (native API-key auth instead).
 
 ## Phase 3 — AI/LLM stack, as managed Terraform/Ansible LXCs
 
-Per Decision 5, one GPU-passthrough exception container plus
-one-LXC-per-service for everything else, all in `ai_seg`:
+Per Decision 5 (revised), one GPU-passthrough exception container **per
+distinct GPU workload class** plus one-LXC-per-service for everything
+else, all in `ai_seg`:
 
 | Stack | LXC | GPU passthrough? | Notes |
 |---|---|---|---|
 | `llm-gpu-stack` | 1 (native, replaces 9001) | yes | `llama-server` router mode + standalone embedding process, per `docs/framework/llamacpp-router-mode-deployment.md` |
+| `comfyui-stack` | 1, separate from `llm-gpu-stack` (replaces ad hoc 9002) | yes | **Bake-off complete and successful (2026-07-17)** — see `docs/framework/comfyui-image-video-gen-findings.md`. Image + video generation confirmed working (Z-Image Turbo, Wan 2.2 TI2V-5B/I2V-14B), real GPU compute verified via `rocm-smi`. Kept in its own container deliberately — see Decision 5's revision for why, including the host-wide OOM incident that validated the separation. Still ad hoc (systemd-run, no Terraform/Ansible role), same status 9001 was in before Phase 0. |
 | `openwebui-stack` | 1 | no | talks to `llm-gpu-stack`'s router endpoint over `ai_seg` |
 | `n8n-stack` | 1 | no | |
 | `searxng-stack` | 1 | no | |
@@ -227,20 +241,44 @@ one-LXC-per-service for everything else, all in `ai_seg`:
 | `redis-stack` | 1 | no | |
 | `qdrant-stack` (or Chroma) | 1 | no | vector DB, per project-brief's original candidate list |
 
+**New cross-cutting component, design only, not yet built:**
+`docs/framework/dual-workload-gateway-design.md` — a wake-on-connect TCP
+gateway running on the Proxmox host itself (not in a container) that
+keeps only one of `llm-gpu-stack`/`comfyui-stack` actually *resident* at a
+time (via `pct exec ... systemctl stop/start` on the specific service,
+not the container), so the host's memory isn't statically halved between
+two workloads that are rarely needed simultaneously. Runs with real
+host-level privileges triggered by arbitrary incoming connections — needs
+the same implementation-review care as any other host-level automation
+before it's deployed as an always-on service (the design doc's own
+"Blast-radius note" already flags this). Where this fits in the
+Terraform/Ansible model is still open — it's host-level, not a
+`stack.yaml`-shaped container, so it doesn't obviously fit the existing
+per-stack pattern; needs its own placement decision when this is built.
+
 Build order: `llm-gpu-stack` first (proves GPU passthrough survives being
-Terraform/Ansible-managed, the highest-risk new capability), then the
-supporting services, then wire Traefik/Authentik routes last once there's
-something real to route to.
+Terraform/Ansible-managed, the highest-risk new capability), then
+`comfyui-stack` (wrap the already-proven ad hoc 9002 setup the same way),
+then the supporting services, then the dual-workload gateway once both
+GPU stacks are Terraform/Ansible-managed, then wire Traefik/Authentik
+routes last once there's something real to route to.
 
 New Terraform work required (doesn't exist anywhere in `terraform/lxc/modules`
 today, confirmed by grep):
 
 - A GPU-passthrough LXC module/role: `/dev/kfd` + `/dev/dri` mount entries,
   `lxc.cgroup2.devices.allow` lines, and (only if nesting Docker per the
-  setup-notes doc) the AppArmor-unconfined + empty `cap.drop` pair. This is
-  the single piece of net-new Terraform/Ansible capability this plan
-  needs; everything else reuses the existing `lxc-docker-host` module
-  pattern unchanged.
+  setup-notes doc) the AppArmor-unconfined + empty `cap.drop` pair. Shared
+  by both `llm-gpu-stack` and `comfyui-stack` (same passthrough mechanism,
+  two separate container instances) — everything else reuses the existing
+  `lxc-docker-host` module pattern unchanged.
+- Memory-ceiling sizing must follow the empirical discipline from the
+  findings doc §6 — size close to real observed `anon` usage (not raw
+  peak, which includes disk-page-cache noise), not generously loose. A
+  loose ceiling doesn't make a GPU-heavy container safer on this
+  hardware's unified-memory architecture — it escalates OOM failures from
+  "this one process dies" to "the kernel starts killing unrelated
+  containers," exactly as happened during the ComfyUI bake-off.
 
 Each stack still gets a `stack.yaml`, a per-environment `terragrunt.hcl`
 under `terraform/lxc/environments/pve-framework/<stack>/` (per the pattern in
@@ -294,13 +332,39 @@ does — there is no separate "test-tier `fe-pve`" vs "lab-tier `fe-pve`":
 
 ## Open questions carried forward (not blocking, but need an answer before Phase 3 finishes)
 
-- Does the llama-server endpoint sit behind Authentik forward-auth/OIDC,
-  or is `ai_seg`-internal-only access (no Traefik route at all) acceptable
-  for API clients, with only the web UIs (OpenWebUI etc.) going through
-  Traefik+Authentik? Affects Phase 2 step 5 and Phase 1's policy list.
+- ~~Does the llama-server endpoint sit behind Authentik forward-auth/OIDC,
+  or is `ai_seg`-internal-only access acceptable?~~ — **resolved
+  2026-07-17**: neither exactly. `llama-server` supports native API-key
+  auth (`--api-key`/`--api-key-file`, `Authorization: Bearer` header) —
+  that's the right mechanism for a machine-to-machine API, not a
+  browser-login flow. Decide only whether it also gets a Traefik route
+  (with the API key enforced) or stays `ai_seg`-internal-only; either way
+  it does not go through Authentik.
+- **Authentik integration per AI-stack service — see Decision 8.** Default
+  to native OIDC (this platform's actual established pattern — Grafana/
+  Portainer/Harbor/Technitium all already use it, not Traefik
+  forward-auth), but validate each integration end-to-end before trusting
+  it; Technitium's own OIDC integration is known to be clunky with an
+  unresolved step-ca-vs-Traefik cert-path issue (operator-flagged,
+  explicitly deferred, not part of this plan). Still genuinely open:
+  whether n8n's self-hosted/community edition has usable native OIDC at
+  all (historically an Enterprise-tier feature in some versions) or needs
+  Traefik forward-auth as the fallback — check when n8n is actually built,
+  don't assume either way now.
 - Embedding-model process placement (CPU vs GPU) — flagged as untested in
   `docs/framework/llamacpp-router-mode-deployment.md`'s own "Not yet done"
   section; decide once `llm-gpu-stack` is live and real latency numbers
   exist.
 - Whether `qdrant-stack` or a Chroma-based stack is preferred — no
   retrieval-quality benchmark has been run for either (same doc).
+- ~~ComfyUI (`comfyui-stack`) — gated entirely behind a dedicated GPU
+  bake-off~~ — **cleared 2026-07-17**, bake-off complete and successful,
+  now a committed Phase 3 stack (see the table above and Decision 5's
+  revision). Remaining open sub-items from the findings/design docs: which
+  image model becomes the real default beyond the initial Z-Image
+  Turbo/Wan 2.2 survey (SDXL/Flux/Qwen-Image/HunyuanVideo/LTX-2 not yet
+  tried), whether the Vulkan/`stable-diffusion.cpp` path is worth testing
+  as a ROCm alternative, and the dual-workload-gateway's open
+  implementation decisions (daemon language/runtime, idle-timeout
+  auto-stop, cold-start UX, final `llm-gpu-stack` memory ceiling) listed
+  in `docs/framework/dual-workload-gateway-design.md`.

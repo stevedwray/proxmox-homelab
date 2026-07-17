@@ -1,0 +1,110 @@
+# Native (no Docker) ROCm/PyTorch build of ComfyUI, plus the two upstream
+# bug fixes and launch flags documented in
+# docs/framework/comfyui-image-video-gen-findings.md. Does not fetch model
+# checkpoints -- that stays an operator action (model URLs are embedded in
+# comfyui-workflow-templates' bundled workflow JSON, per findings doc §3).
+
+---
+- name: Install ROCm and ComfyUI system dependencies
+  ansible.builtin.apt:
+    name:
+      - rocm-dev
+      - rocm-smi
+      - python3-venv
+      - python3-pip
+      - git
+      - ffmpeg
+    state: present
+    update_cache: true
+
+- name: Confirm /dev/kfd is visible inside the container (device_passthrough sanity check)
+  ansible.builtin.stat:
+    path: /dev/kfd
+  register: comfyui_stack_kfd_stat
+  failed_when: not comfyui_stack_kfd_stat.stat.exists
+
+- name: Confirm /dev/dri render node is visible inside the container
+  ansible.builtin.stat:
+    path: /dev/dri/renderD128
+  register: comfyui_stack_dri_stat
+  failed_when: not comfyui_stack_dri_stat.stat.exists
+
+- name: Clone ComfyUI
+  ansible.builtin.git:
+    repo: "{{ comfyui_stack_repo }}"
+    dest: "{{ comfyui_stack_install_dir }}"
+    version: master
+    update: true
+    force: false
+
+- name: Create ComfyUI Python venv
+  ansible.builtin.command:
+    cmd: python3 -m venv {{ comfyui_stack_venv_dir }}
+    creates: "{{ comfyui_stack_venv_dir }}/bin/python3"
+
+- name: Install ROCm-build PyTorch/torchvision (AMD gfx1151 pip index -- bundles its own ROCm SDK)
+  ansible.builtin.pip:
+    name:
+      - "torch=={{ comfyui_stack_torch_version }}"
+      - "torchvision=={{ comfyui_stack_torchvision_version }}"
+    virtualenv: "{{ comfyui_stack_venv_dir }}"
+    extra_args: "--index-url {{ comfyui_stack_rocm_pip_index }}"
+
+- name: Install matching torchaudio build (fixes comfy/sd.py's unconditional audio_vae import -- findings doc §2.2)
+  ansible.builtin.pip:
+    name:
+      - "torchaudio=={{ comfyui_stack_torchaudio_version }}"
+    virtualenv: "{{ comfyui_stack_venv_dir }}"
+    extra_args: "--index-url {{ comfyui_stack_rocm_pip_index }}"
+
+- name: Generate ROCm-safe requirements file (torch/torchvision/torchaudio stripped so pip doesn't clobber the ROCm build with vanilla PyPI wheels)
+  ansible.builtin.shell:
+    cmd: >-
+      grep -Ev '^(torch|torchvision|torchaudio)([=<>~ ]|$)' requirements.txt > requirements-rocm.txt
+    chdir: "{{ comfyui_stack_install_dir }}"
+  changed_when: true
+
+- name: Install ComfyUI's remaining Python dependencies into the venv
+  ansible.builtin.pip:
+    requirements: "{{ comfyui_stack_install_dir }}/requirements-rocm.txt"
+    virtualenv: "{{ comfyui_stack_venv_dir }}"
+
+- name: Locate torchvision's _meta_registrations.py inside the venv
+  ansible.builtin.find:
+    paths: "{{ comfyui_stack_venv_dir }}/lib"
+    patterns: "_meta_registrations.py"
+    recurse: true
+  register: comfyui_stack_meta_reg_find
+
+- name: Patch torchvision::nms meta-registration bug (ROCm/TheRock#3134, pytorch/vision#9085 -- findings doc §2.1)
+  # Best-effort text patch derived from the bug writeup, not a diff taken
+  # against the live source -- verify this actually matched (task reports
+  # changed) the first time this runs against a real box. A no-match is
+  # harmless (either already patched or fixed upstream) since the replace
+  # module is a no-op rather than a failure in that case.
+  ansible.builtin.replace:
+    path: "{{ item.path }}"
+    regexp: '@torch\.library\.register_fake\("(?:torchvision::)?nms"\)'
+    replace: '@register_meta("nms")'
+  loop: "{{ comfyui_stack_meta_reg_find.files }}"
+  loop_control:
+    label: "{{ item.path }}"
+
+- name: Ensure ComfyUI models directory exists
+  ansible.builtin.file:
+    path: "{{ comfyui_stack_models_dir }}"
+    state: directory
+    mode: "0755"
+
+- name: Install comfyui systemd unit
+  ansible.builtin.template:
+    src: comfyui.service.j2
+    dest: /etc/systemd/system/comfyui.service
+    mode: "0644"
+  notify: Reload systemd and restart comfyui
+
+- name: Ensure comfyui service is enabled
+  ansible.builtin.systemd:
+    name: comfyui
+    enabled: true
+    daemon_reload: true

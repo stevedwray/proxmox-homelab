@@ -33,11 +33,14 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     size         = var.rootfs_size
   }
 
-  mount_point {
-    volume = var.docker_storage
-    size   = var.docker_storage_size
-    path   = "/var/lib/docker"
-    backup = var.docker_mount_backup_enabled
+  dynamic "mount_point" {
+    for_each = var.docker_enabled ? [1] : []
+    content {
+      volume = var.docker_storage
+      size   = var.docker_storage_size
+      path   = "/var/lib/docker"
+      backup = var.docker_mount_backup_enabled
+    }
   }
 
   dynamic "mount_point" {
@@ -56,6 +59,17 @@ resource "proxmox_virtual_environment_container" "docker_host" {
       volume = mount_point.value.host_path
       path   = mount_point.value.lxc_path
       backup = false
+    }
+  }
+
+  dynamic "device_passthrough" {
+    for_each = var.device_passthrough
+    content {
+      path       = device_passthrough.value.path
+      uid        = device_passthrough.value.uid
+      gid        = device_passthrough.value.gid
+      mode       = device_passthrough.value.mode
+      deny_write = device_passthrough.value.deny_write
     }
   }
 

@@ -218,6 +218,18 @@ variable "lab_ip_ci_runner" {
   default     = ""
 }
 
+variable "lab_ip_llm_gpu" {
+  description = "llm-gpu-stack service IPv4 address (ai_seg)"
+  type        = string
+  default     = ""
+}
+
+variable "lab_ip_comfyui" {
+  description = "comfyui-stack service IPv4 address (ai_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string
@@ -242,6 +254,12 @@ variable "lab_gw_build" {
   default     = ""
 }
 
+variable "lab_gw_ai" {
+  description = "AI application subnet (ai_seg) gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_subnet_mgmt_cidr" {
   description = "Management subnet CIDR"
   type        = string
@@ -262,6 +280,12 @@ variable "lab_subnet_infra_cidr" {
 
 variable "lab_subnet_build_cidr" {
   description = "Build subnet CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_ai_cidr" {
+  description = "AI application subnet (ai_seg) CIDR"
   type        = string
   default     = ""
 }

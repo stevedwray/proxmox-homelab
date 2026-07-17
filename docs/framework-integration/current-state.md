@@ -68,15 +68,46 @@ narrative):**
 
 ## Existing guest state (pre-dates this integration effort)
 
-Two LXCs from the `docs/framework/` AI-OS bake-off project, both created by
-hand (`pct`/manual config edits), not by Terraform:
+As found 2026-07-17 (original recon): two LXCs from the `docs/framework/`
+AI-OS bake-off project, both created by hand (`pct`/manual config edits),
+not by Terraform.
 
-| VMID | Name | Status | Purpose |
+**Updated 2026-07-17 (same day, separate from this workspace's own
+Ansible/Terraform work) — a third GPU-passthrough container was added for
+the ComfyUI bake-off** (`docs/framework/comfyui-image-video-gen-findings.md`):
+
+| VMID | Name | Status (current) | Purpose |
 |---|---|---|---|
-| 9000 | `llamacpp-gpu` | stopped | Docker-based GPU passthrough variant |
-| 9001 | `llamacpp-gpu-native` | running | Native (no-Docker) HIP build, current live target |
+| 9000 | `llamacpp-gpu` | stopped | Docker-based GPU passthrough variant, superseded by 9001 |
+| 9001 | `llamacpp-gpu-native` | **stopped** (was running at original recon; stopped as part of the OOM fix below, not yet restarted) | Native (no-Docker) HIP build, `llama-server` router mode |
+| 9002 | `comfyui-gpu` | running, memory ceiling 56GB | PyTorch/ROCm image+video generation via ComfyUI, deliberately separate container from 9001 — see `docs/framework-integration/decisions.md` Decision 5's revision |
 
-Container 9001's actual config (`/etc/pve/lxc/9001.conf`):
+All three: privileged, flat-LAN, DHCP-addressed, GPU passthrough applied
+by hand (same `/dev/kfd`+`/dev/dri` recipe as
+`docs/framework/proxmox-strix-halo-setup-notes.md`). `/data/ai` and
+`/srv/ai-stack` exist on the host per that doc's planned layout.
+
+**A real host-wide OOM incident occurred** while both 9001 and 9002 were
+memory-heavy at once — killed container 9001's `llama-router` process as
+collateral damage, root-caused to Strix Halo's unified memory (GPU/GTT
+and host RAM share one physical pool, so total demand can exceed physical
+RAM before any single container's own cgroup ceiling registers a
+problem) combined with 9002's ceiling being looser than the workload
+actually needed. Fixed by stopping 9001, right-sizing 9002's ceiling
+empirically (48GB → 32GB, confirmed properly contained but too tight →
+40GB, sufficient), and adding `--vram-headroom 6`/`--disable-smart-memory`
+to the ComfyUI launch. Full detail and the generalizable lesson (size
+cgroup ceilings close to real observed `anon` usage, not loose) in the
+findings doc §6c. This is *why* 9001 is currently stopped rather than an
+oversight — nothing has re-run both containers simultaneously since.
+
+A design (not yet built) for safely running both GPU workloads without
+statically halving the host's memory between them exists at
+`docs/framework/dual-workload-gateway-design.md` — see
+`docs/framework-integration/plan.md` Phase 3.
+
+Container 9001's config (`/etc/pve/lxc/9001.conf`) as originally found —
+unchanged since:
 
 ```
 arch: amd64
@@ -90,10 +121,6 @@ lxc.cgroup2.devices.allow: c 511:* rwm
 lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
 lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file
 ```
-
-Privileged, flat-LAN, DHCP-addressed, GPU passthrough applied by hand per
-`docs/framework/proxmox-strix-halo-setup-notes.md`. `/data/ai` and
-`/srv/ai-stack` exist on the host per that doc's planned layout.
 
 As found 2026-07-17 (original recon): host boot config already carried the
 unified-memory GTT fix from that doc, applied by hand —

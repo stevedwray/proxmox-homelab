@@ -170,3 +170,21 @@ variable "host_bind_mounts" {
   type        = list(object({ host_path = string, lxc_path = string }))
   default     = []
 }
+
+variable "docker_enabled" {
+  description = "Whether this container gets the /var/lib/docker mount point. Default true preserves existing behavior for every current stack; native (non-Docker) GPU-passthrough stacks (llm-gpu-stack, comfyui-stack) set this false."
+  type        = bool
+  default     = true
+}
+
+variable "device_passthrough" {
+  description = "Host devices to pass through to the container via Proxmox's native LXC device-passthrough mechanism (PVE 8.1+) — e.g. /dev/kfd, /dev/dri/renderD128 for AMD GPU compute. Default empty list means zero behavior change for every stack that doesn't set it."
+  type = list(object({
+    path       = string
+    uid        = optional(number)
+    gid        = optional(number)
+    mode       = optional(string)
+    deny_write = optional(bool)
+  }))
+  default = []
+}

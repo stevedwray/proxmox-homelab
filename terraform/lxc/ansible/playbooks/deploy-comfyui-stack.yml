@@ -1,0 +1,24 @@
+# comfyui-stack — native (no Docker) GPU-passthrough ComfyUI deployment
+# for pve-framework's ai_seg zone.
+# Play 1: LXC base configuration (DNS, apt-cacher, root CA)
+# Play 2: ROCm/PyTorch venv, ComfyUI checkout + bug fixes, systemd service
+#
+# See docs/framework/comfyui-image-video-gen-findings.md for the
+# deployment recipe and bug fixes this codifies (device passthrough itself
+# is handled by Terraform's native device_passthrough mechanism, not this
+# playbook).
+
+---
+- name: Configure LXC base (DNS, apt-cacher, root CA)
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+
+- name: Deploy ComfyUI service
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - comfyui_stack

@@ -33,14 +33,18 @@ locals {
     lab_ip_netbox         = var.lab_ip_netbox
     lab_ip_apt_cacher     = var.lab_ip_apt_cacher
     lab_ip_ci_runner      = var.lab_ip_ci_runner
+    lab_ip_llm_gpu        = var.lab_ip_llm_gpu
+    lab_ip_comfyui        = var.lab_ip_comfyui
     lab_gw_mgmt           = var.lab_gw_mgmt
     lab_gw_edge           = var.lab_gw_edge
     lab_gw_infra          = var.lab_gw_infra
     lab_gw_build          = var.lab_gw_build
+    lab_gw_ai             = var.lab_gw_ai
     lab_subnet_mgmt_cidr  = var.lab_subnet_mgmt_cidr
     lab_subnet_edge_cidr  = var.lab_subnet_edge_cidr
     lab_subnet_infra_cidr = var.lab_subnet_infra_cidr
     lab_subnet_build_cidr = var.lab_subnet_build_cidr
+    lab_subnet_ai_cidr    = var.lab_subnet_ai_cidr
     proxmox_host          = var.proxmox_host
     dayz_steam_username   = var.dayz_steam_username
     dayz_steam_password   = var.dayz_steam_password
@@ -614,6 +618,7 @@ module "lxc" {
   ip_address   = coalesce(var.stack_ip_address, local.stack.ip_address)
   gateway      = try(local.stack.gateway, var.default_gateway)
   lxc_password = var.lxc_password
+  unprivileged = try(local.stack.unprivileged, true)
 
   cores                       = try(local.stack.cores, 2)
   memory                      = try(local.stack.memory, 2048)
@@ -623,6 +628,16 @@ module "lxc" {
   docker_storage              = local.resolved_docker_storage
   docker_storage_size         = local.resolved_docker_storage_size
   docker_mount_backup_enabled = local.resolved_docker_mount_backup_enabled
+  # Optional, additive — default true/[] preserves existing behavior for
+  # every stack that doesn't set these. Native (non-Docker) GPU-passthrough
+  # stacks (llm-gpu-stack, comfyui-stack) set docker_enabled=false and pass
+  # device_passthrough entries for /dev/kfd, /dev/dri/*.
+  docker_enabled     = try(local.stack.docker_enabled, true)
+  device_passthrough = try(local.stack.device_passthrough, [])
+  # Was previously never wired through at all (module default "debian" was
+  # always used regardless of stack.yaml) -- additive fix, existing stacks
+  # are all Debian templates so this is a no-op for them.
+  ostype = try(local.stack.ostype, "debian")
 
   ostemplate       = local.resolved_ostemplate
   ssh_public_keys  = file(pathexpand(var.ssh_public_key_path))

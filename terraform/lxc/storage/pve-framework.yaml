@@ -68,6 +68,17 @@ template_profiles:
     required_content_type: vztmpl
     allowed_templates:
       - debian-13.1-2-docker-template.tar.gz
+  # Stock Ubuntu template for native (non-Docker) GPU-passthrough stacks
+  # (llm-gpu-stack, comfyui-stack) -- ROCm/Vulkan driver versions are
+  # meaningfully better on Ubuntu than Debian on this hardware, per
+  # docs/framework/proxmox-strix-halo-setup-notes.md §5. Already staged on
+  # `local` storage (confirmed via `pveam list local`), no custom
+  # Docker-enhanced build needed since these stacks don't use Docker.
+  ubuntu-native:
+    storage: local
+    required_content_type: vztmpl
+    allowed_templates:
+      - ubuntu-26.04-standard_26.04-1_amd64.tar.zst
 
 legacy_rootfs_storage_profiles:
   infrastructure-containers: platform-default

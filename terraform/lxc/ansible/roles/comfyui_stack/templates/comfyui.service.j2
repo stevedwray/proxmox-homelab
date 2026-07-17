@@ -1,0 +1,14 @@
+[Unit]
+Description=ComfyUI image/video diffusion server
+After=network.target
+
+[Service]
+WorkingDirectory={{ comfyui_stack_install_dir }}
+ExecStart={{ comfyui_stack_venv_dir }}/bin/python3 main.py \
+  --listen 0.0.0.0 --port {{ comfyui_stack_port }} \
+  --vram-headroom {{ comfyui_stack_vram_headroom_gb }} \
+  --disable-smart-memory
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target

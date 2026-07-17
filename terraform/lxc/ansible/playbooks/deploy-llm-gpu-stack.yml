@@ -1,0 +1,25 @@
+# llm-gpu-stack — native (no Docker) GPU-passthrough llama.cpp router-mode
+# deployment for pve-framework's ai_seg zone.
+# Play 1: LXC base configuration (DNS, apt-cacher, root CA)
+# Play 2: ROCm/HIP toolchain, llama.cpp HIP build, llama-router systemd service
+#
+# See docs/framework/llamacpp-router-mode-deployment.md for the deployment
+# pattern this implements and
+# docs/framework/proxmox-strix-halo-setup-notes.md for the GPU-enablement
+# findings this codifies (device passthrough itself is handled by
+# Terraform's native device_passthrough mechanism, not this playbook).
+
+---
+- name: Configure LXC base (DNS, apt-cacher, root CA)
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+
+- name: Deploy llama.cpp router-mode service
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - llm_gpu_stack

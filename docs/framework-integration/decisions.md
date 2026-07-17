@@ -117,7 +117,7 @@ capture (not just "ping succeeded") that ARP, ICMP, and the router's own
 reply path all genuinely work. `ai_seg`'s values (VLAN 50, subnet, gateway)
 are now confirmed-live facts, not a proposal.
 
-## Decision 5: GPU-passthrough container topology — one exception LXC, not one-per-service (proposed)
+## Decision 5: GPU-passthrough container topology — one exception LXC per workload class, not universal sharing (revised 2026-07-17 with real evidence)
 
 Context: `docs/design/architecture.md` NFR-02 says "one service per LXC —
 no co-location of unrelated services." `docs/framework/llamacpp-router-mode-deployment.md`
@@ -126,18 +126,53 @@ argues the opposite for GPU passthrough specifically: the expensive part
 a **container-level** cost, not a per-model or per-service one, and router
 mode already lets one `llama-server` process serve many models.
 
-Decision: one dedicated GPU-passthrough LXC (`llm-gpu-stack`, replacing
-ad hoc 9000/9001) hosts `llama-server` in router mode plus the standalone
-embedding-model process described in that doc. Every other AI-stack
-component (OpenWebUI, n8n, SearXNG, Postgres, Redis, Qdrant/Chroma) gets
-its own LXC, in `ai_seg`, following NFR-02 normally — none of them need
-the GPU.
+Original decision (as first proposed): one single dedicated GPU-passthrough
+LXC for everything GPU-bound on this box.
 
-Rationale: treats GPU passthrough as a narrow, explicitly-declared
-exception to NFR-02 (the resource being shared is the physical device, not
-general "unrelated services"), rather than either abandoning NFR-02
-site-wide or fighting the router-mode doc's already-validated reasoning
-for co-locating models.
+**Revised, based on what the operator actually built and validated**
+(`docs/framework/comfyui-image-video-gen-findings.md`): ComfyUI was
+deployed in its **own separate** GPU-passthrough container (9002,
+`comfyui-gpu`), deliberately kept apart from the `llama.cpp` container
+(9001) — not merged into one universal GPU container as the original
+wording of this decision implied. The findings doc's own stated reasoning:
+ComfyUI's dependency stack (PyTorch/ROCm, a large and version-sensitive
+custom-node ecosystem) is heavier and more fragile than `llama.cpp`'s
+minimal GGUF/HIP footprint, and its jobs saturate the GPU for long,
+uninterrupted stretches — different operational risk profile from
+`llm-gpu-stack`'s router-mode model-switching.
+
+This was validated as the right call, not just a convenience: running
+both workloads at once produced a genuine **host-wide OOM** that killed
+an unrelated container as collateral damage (§6c of the findings doc) —
+directly illustrating why these two GPU-bound workload classes need
+independent memory/lifecycle containment, not shared residency.
+`docs/framework/dual-workload-gateway-design.md` (design only, not yet
+built) is the follow-on plan for managing exactly this: both containers
+stay running, but a host-level gateway ensures only one *service* is
+actually resident/active at a time, stopping the loser on every switch.
+
+Revised decision: **one GPU-passthrough LXC per distinct GPU workload
+class**, not one universal container and not one-per-service either.
+`llm-gpu-stack` (LLM inference, router mode, multiple models) and
+`comfyui-stack` (image/video diffusion) are two separate GPU-passthrough
+containers. A third GPU-bound workload class would get its own container
+only if it has a similarly distinct dependency/blast-radius profile from
+the existing two — the bar is "materially different failure mode or
+dependency stack," not merely "a different application." Every non-GPU
+AI-stack component (OpenWebUI, n8n, SearXNG, Postgres, Redis,
+Qdrant/Chroma) still gets its own LXC per NFR-02 normally — none of them
+need the GPU, and none of this changes that.
+
+Rationale: still treats GPU passthrough as a narrow, explicitly-declared
+exception to NFR-02 (the resource being shared is the physical device),
+but the "how many exception containers" question is now answered by
+evidence (a real production incident) rather than the original
+container-cost-amortization argument alone. Sharing GPU passthrough setup
+cost across services is still the right instinct where the workloads are
+genuinely similar (multiple LLM models in one router-mode process); it
+stops being the right instinct once the workloads have different enough
+dependency stacks and memory behavior that shared residency creates real
+failure-containment risk.
 
 ## Decision 6: Generalize the production-credential wrapper instead of duplicating it (implemented 2026-07-17)
 
@@ -312,3 +347,60 @@ Rationale: matches how every other node in this repo is trusted — state
 lives in Git, not in a box's memory. The manual work already done isn't
 wasted; it's the spec for the Ansible role, exactly like the setup-notes
 doc already reads (each numbered gotcha maps directly to a role fix).
+
+## Decision 8: Authentik integration approach for AI-stack services (proposed, per-service)
+
+Context: operator asked directly (2026-07-17) how Authentik should
+integrate with the new AI-stack services (OpenWebUI, n8n, and others to
+come), looking forward rather than just sequencing Phase 2's checklist.
+Two mechanisms are available in this platform: Traefik forward-auth
+(available, but not actually used by anything currently deployed) and
+native OIDC via Authentik (the platform's actual precedent — Grafana,
+Portainer, and Harbor all already integrate this way, with matching
+`<APP>_OAUTH_*`/`<APP>_OIDC_*` secrets already in
+`terraform/secrets.common.enc.yaml`). A third data point: Technitium also
+uses native OIDC (`docs/dns-refactor/decisions.md`), but the operator
+reports it's "a little clunky" and appears to be serving its direct-TLS
+sidecar via a step-ca cert rather than going through Traefik —
+operator-flagged as a real issue, explicitly deferred ("a problem for
+another day"), not addressed by this decision.
+
+Decision: default to native OIDC per service, matching the established
+(not hypothetical) platform pattern — but treat each integration as
+something to validate end-to-end (redirect URIs, cert trust chain,
+group-claim mapping) before trusting it, specifically because Technitium's
+own native-OIDC integration already shows this isn't automatically
+painless on this platform. Fall back to Traefik forward-auth only where
+native support is missing or clearly worse. Per service, as currently
+understood:
+
+- **OpenWebUI**: native OIDC — mature, well-documented support, commonly
+  paired with Authentik specifically in the wider community. Follow the
+  same shape as Grafana/Portainer.
+- **n8n**: unconfirmed. Self-hosted/community n8n's native OIDC/SSO
+  support has historically been an Enterprise-tier-only feature in some
+  versions — don't assume either way; check n8n's current self-hosted
+  docs when this stack is actually built (Phase 3). Traefik forward-auth
+  is the fallback if native support isn't available or isn't good enough
+  in the self-hosted edition.
+- **SearXNG**: no native auth/user-account concept exists at all — this
+  isn't a choice between forward-auth and OIDC, it's forward-auth or no
+  gating (stay `ai_seg`-internal, no Traefik route) if any access control
+  is wanted.
+- **`llama-server` (the LLM API endpoint)**: does not go through Authentik
+  at all, regardless of the above — it's a machine-to-machine API, not a
+  browser login flow, so OIDC is the wrong tool. Uses `llama-server`'s
+  own native `--api-key`/`--api-key-file` auth instead (confirmed
+  supported — clients send `Authorization: Bearer <key>`). Whether it
+  also gets a Traefik route (with the key enforced) or stays
+  `ai_seg`-internal-only is still open — see plan.md's carried-forward
+  open questions.
+
+Rationale: "default to native OIDC" isn't a preference invented here — it's
+already how every currently-deployed OAuth-capable service in this repo
+works, so following it for the AI stack is consistency, not a new pattern
+to prove out. The validation caveat exists specifically because the one
+existing native-OIDC integration outside the original Phase 04 core
+services (Technitium) already surfaced real friction — ignoring that
+signal and assuming "native OIDC just works" for every new app would be
+the wrong lesson to take from it.
