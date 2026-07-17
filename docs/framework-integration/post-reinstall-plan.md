@@ -1,6 +1,8 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **in progress — reinstall done, Phase 0 host bootstrap under way.**
+Status: **in progress — reinstall, Phase 0 host bootstrap, and Phase 1
+network onboarding all done. Next: Phase 3 prerequisites (container
+templates, then `llm-gpu-stack`/`comfyui-stack`).**
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
@@ -175,17 +177,36 @@ build it after, not as part of the initial reinstall pass.
    confirm the mutating-command gate survived the token rotation) was
    blocked before even reaching the wrapper's own `TASK_APPROVAL` check —
    two independent layers both refuse it, as intended.
-   Still to run: `proxmox-gpu-unified-memory-tuning.yml`
+   Rest of Phase 0 — done (2026-07-18): `proxmox-gpu-unified-memory-tuning.yml`
    (`pmx_gpu_gtt_reserved_host_mb=32768`, matching the value already
-   validated) → `proxmox-vlan-aware-bridge.yml`, then **reboot** — nothing
-   is running yet on this box, so this is the cheapest possible time to
-   take the GTT change live; no service-interruption tradeoff to weigh
-   this time.
-3. **Network onboarding** (not started): recreate the `tvai` SDN zone/
-   VNet/subnet via `pvesh` (MikroTik/switch side already live, don't
-   touch). Verify with the same `ping 192.168.50.1` + packet-capture
-   discipline used the first time — don't assume it'll work just because
-   it worked once before on the same physical wiring.
+   validated; dry-run via `--check --diff` first, matching the discipline
+   that caught a real bug last time) → `proxmox-vlan-aware-bridge.yml` →
+   reboot. Verified live post-reboot, not just trusted from the Ansible
+   run completing: `/proc/cmdline` and `/sys/module/ttm/parameters/*`
+   both show `ttm.pages_limit=24401920`/`ttm.page_pool_size=24401920`
+   (32GB reserved out of 128GB total), and `ip -d link show vmbr0` shows
+   `vlan_filtering 1`. Phase 0 is now fully complete.
+3. **Network onboarding — done (2026-07-18).** Recreated via `pvesh`
+   (`proxmox-sdn-setup.yml` is not a fit — it's built for `pve-test`'s
+   4-zone shape and asserts on that; used the manual procedure from
+   `NETWORK_CONTRACT.md` instead, matching what was actually done the
+   first time): zone `tvai` (vlan, `vmbr0`, `pve-framework`), VNet `tvai`
+   (tag 50, alias "pve-framework AI application segment"), subnet
+   `192.168.50.0/24`/gateway `192.168.50.1`. All three verified via
+   `pvesh get` to match the intent file exactly. One behavior difference
+   from the original bring-up worth noting: the `tvai` Linux bridge came
+   up immediately at the OS level with zero containers attached, where the
+   original exploration-phase notes say it stayed absent until first
+   attachment — a PVE version/behavior difference, not a problem.
+   Re-verified reachability rather than assuming the physical wiring
+   still works just because it did before: temporary IP on `tvai`
+   (192.168.50.2/24, added and removed in the same step), `ping
+   192.168.50.1` + concurrent `tcpdump` — 0% packet loss, real ICMP
+   request/reply pairs captured on the wire. Unlike the original bring-up
+   (three separate bugs found across MikroTik safe-mode rollback, wrong
+   trunk port, and a missing firewall accept rule), this rebuild's
+   physical path worked cleanly on the first attempt — the MikroTik/
+   switch config genuinely survived the reinstall unchanged, as predicted.
 4. **`llm-gpu-stack`, `comfyui-stack`** (not started): re-stage both
    container templates first (the gap found in step 1 — custom Debian
    Docker template via `build-debian-13-template.yml`, plain Ubuntu 26.04
