@@ -183,6 +183,25 @@ build it after, not as part of the initial reinstall pass.
    point at `storage-template` instead of `local`. `tofu validate` clean;
    not yet re-verified with a live `terragrunt plan` against the restructured
    host.
+1b. **Container templates staged — done (2026-07-18).** Plain Ubuntu
+   26.04 (`pveam download storage-template ...`) and the custom
+   Docker-enhanced Debian template (`build-debian-13-template.yml`) both
+   landed on `storage-template`. The Debian build surfaced and fixed a
+   real bug in that playbook along the way: unprivileged-container
+   `vzdump` failing with `tar: ...tmp: Cannot open: Permission denied`
+   against a freshly-created directory — root-caused to the playbook's
+   own "Ensure dump directory exists" task hardcoding `mode: "0700"`
+   (`lxc-usernsexec`'s uid-remapped `tar` process can't write into a
+   0700 root-owned directory it doesn't own). Confirmed via a direct
+   `vzdump --storage <id>` test succeeding while `--dumpdir` against any
+   fresh 0700 directory failed identically, isolating the cause to that
+   one task rather than anything specific to the new `/storage` volume.
+   Fixed to `0755`, matching Proxmox's own `/var/lib/vz/dump`. Never
+   surfaced on `pve`/`pve-test-vm` before now — likely because their
+   target directories had already been touched by something else prior
+   to that task's assertion; `pve-framework`'s fresh install made this
+   the first true exercise of that exact path. Full trail in
+   `decisions.md` Decision 3's addendum.
 2. **Host bootstrap — step 1 of 3 done (2026-07-18).**
    `proxmox-initial-setup.yml` run against `192.168.1.8` (33 ok / 11
    changed / 0 failed) — repo switch, subscription-nag removal, Terraform

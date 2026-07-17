@@ -127,6 +127,30 @@ its root dataset) and adapted it to LVM:
   but no longer used for anything new — not removed, to avoid disturbing
   any Proxmox-internal assumption that expects a `local` storage to exist.
 
+**Addendum: a real bug the restructure surfaced, not caused by it.**
+Staging the custom Debian Docker template
+(`ansible/00-initial-setup/build-debian-13-template.yml`) against the new
+`storage-template` volume failed with `tar: ...tmp: Cannot open:
+Permission denied` during the `vzdump`-based packaging step. Root cause:
+that playbook's own "Ensure dump directory exists" task hardcoded
+`mode: "0700"` on the target directory. `vzdump` backs up unprivileged
+containers by wrapping `tar` in `lxc-usernsexec` (remapping container-uid
+0 to host-uid 100000), and that remapped process has no access to a 0700
+directory it doesn't (as its real, remapped identity) own. Isolated via a
+direct `vzdump --storage <registered-id>` test (succeeded — Proxmox
+treats a proper registered storage as trusted, bypassing this task
+entirely) versus `--dumpdir <raw-path>` against any freshly-created 0700
+directory, on *any* filesystem, including plain `ext4` root paths
+unrelated to this restructure (failed identically) — confirming the bug
+was this one task's hardcoded mode, not anything about `/storage`, ext4,
+or LVM-thin specifically. Fixed to `0755`, matching Proxmox's own
+`/var/lib/vz/dump`. Never surfaced on `pve`/`pve-test-vm` before now,
+most plausibly because their target directories had already been touched
+by something else before this task's assertion ever ran against them;
+`pve-framework`'s fresh install made this the first genuinely first-touch
+exercise of that exact path — a latent bug, not something this
+restructure introduced.
+
 ## Decision 4: New dedicated SDN VLAN zone (`ai_seg`), not reuse of existing zones (implemented and verified live, 2026-07-17)
 
 Context: `fe-pve` is flat-LAN today. To reach it through Traefik/Authentik/

@@ -48,12 +48,16 @@ storages on `/storage` — `storage-iso`, `storage-template`,
 artifacts aren't Proxmox storage content types). No ZFS pool. The 58GB
 `sda` disk is unused — not part of any pool, no mountpoint.
 
-**`pveam list local` is still empty — no container templates exist.**
-The Ubuntu 26.04/custom Debian templates need re-staging against the
-*new* `storage-template` volume (not `local`, which
-`terraform/lxc/storage/pve-framework.yaml`'s `template_profiles` no
-longer point at). Real, open prerequisite before any stack can deploy —
-see "Gaps" below.
+**Both templates staged on `storage-template` (2026-07-18).** Plain
+Ubuntu 26.04 (`pveam download`) and the custom Docker-enhanced Debian
+template (`build-debian-13-template.yml`) both landed successfully:
+`storage-template:vztmpl/ubuntu-26.04-standard_26.04-1_amd64.tar.zst`
+(151MB), `storage-template:vztmpl/debian-13.1-2-docker-template.tar.gz`
+(619MB). Building the Debian one surfaced and fixed a real bug in that
+playbook — see Decision 3's addendum in `decisions.md` for the full
+root-cause trail (unprivileged-container `vzdump` failing against a
+freshly-created `0700` directory; fixed to `0755`, matching Proxmox's own
+`/var/lib/vz/dump` convention).
 
 ## Network
 
@@ -127,13 +131,8 @@ Summarized from the docs there — see each for full detail:
 
 ## Gaps versus the platform contract
 
-1. **No container templates staged** — `pveam list` is empty everywhere.
-   Blocks any `terragrunt apply` for `llm-gpu-stack`/`comfyui-stack`
-   until the custom Debian Docker template
-   (`ansible/00-initial-setup/build-debian-13-template.yml`) and the
-   plain Ubuntu 26.04 template (`pveam download`) are staged — now
-   against the new `storage-template` volume (`/storage/template`), not
-   `local`/`/var/lib/vz`, per the storage restructure above. Next step.
+1. ~~No container templates staged~~ — **closed 2026-07-18**: both
+   templates staged on `storage-template`, see above.
 2. **`llm-gpu-stack`/`comfyui-stack` untested against a real host.**
    Terraform (`stack.yaml` + Terragrunt scaffolding) and Ansible (roles +
    playbooks) are written and validated (`tofu validate`, `terragrunt
