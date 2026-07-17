@@ -49,25 +49,43 @@ model just for this box. Avoids the false idea that `pve-framework` needs to be
 wiped and re-pointed at a different Terraform environment once it's
 "production".
 
-## Decision 3: Storage profile — keep LVM-thin, do not require ZFS (proposed)
+## Decision 3: Storage profile — keep LVM-thin, do not require ZFS (reaffirmed post-reinstall, 2026-07-18)
 
 Context: `pve-test-vm`'s storage profiles (`platform-zfs`, `durable-zfs`)
-assume a ZFS backend (`infrastructure-containers`). `fe-pve` has a single
-1.8TB NVMe already fully committed to `pve-data` (LVM-thin) with no ZFS
-pool. Building ZFS would mean repartitioning the NVMe — destructive, and
-this box already has real work on it (the AI-OS bake-off results,
-`/data/ai`, `/srv/ai-stack`).
+assume a ZFS backend (`infrastructure-containers`). The original rationale
+here (pre-reinstall) was avoiding a destructive repartition on a box that
+already had real work on it — moot now that the box actually got wiped
+and reinstalled, which would have been the natural point to switch if
+ZFS were wanted.
 
-Decision: add `terraform/lxc/storage/pve-framework.yaml` mirroring the legacy
-`pve-test.yaml` shape — `platform-default`/`platform-zfs`/etc. profile
-names kept for `stack.yaml` compatibility, but all mapped to `local-lvm`
-(no ZFS backend defined). Matches the existing precedent: `pve-test.yaml`
-already does exactly this for a host without ZFS.
+Decision, reaffirmed rather than just carried over: still LVM-thin, not
+ZFS, on the single 1.8TB NVMe (`terraform/lxc/storage/pve-framework.yaml`,
+`platform-default`/`platform-zfs`/etc. profile names kept for `stack.yaml`
+compatibility, all mapped to `local-lvm`).
 
-Rationale: avoids a destructive repartition for no functional requirement
-— LVM-thin is a supported profile target already, just under different
-profile names on `pve-test-vm`. Revisit only if snapshot/send-receive
-features become a real requirement for this box specifically.
+Rationale: a genuinely new consideration surfaced on reconsideration, not
+just the original "avoid a destructive repartition" logic — this box has
+**unified memory** (Strix Halo APU), so GPU compute and host RAM draw from
+the same physical pool. ZFS's ARC cache would compete directly with GPU
+workloads for that pool, on a host where memory headroom is already
+tightly and deliberately managed (see the GTT/`ttm.pages_limit` tuning and
+the ComfyUI host-wide OOM incident in
+`docs/framework/comfyui-image-video-gen-findings.md` §6c). On a normal
+server ZFS's snapshot/checksum benefits usually outweigh the ARC cost;
+here that cost is more real than usual, and there's no disk redundancy to
+gain either way (single NVMe). Revisit only if snapshot/send-receive
+features become a real requirement for this specific box.
+
+**Forward-looking note (2026-07-18):** a second NVMe is planned for this
+box, dedicated to model/artifact storage (LLM weights, ComfyUI
+checkpoints, generated images/video) — separate from the boot/root drive.
+When that lands, it's worth reconsidering ZFS *scoped to that drive only*
+(a dataset with a capped ARC, isolated from the boot pool) rather than
+applying this same host-wide answer to it by default — bulk model/media
+storage benefits from checksumming more than the OS/container root does,
+and an isolated ARC cap would contain the memory tradeoff instead of
+letting it compete with GPU workloads host-wide. Not scoped or designed
+yet; flagging so the reasoning doesn't have to be rediscovered.
 
 ## Decision 4: New dedicated SDN VLAN zone (`ai_seg`), not reuse of existing zones (implemented and verified live, 2026-07-17)
 

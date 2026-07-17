@@ -1,63 +1,55 @@
 # Framework Desktop Integration
 
-Planning workspace for bringing the Framework Desktop (currently hostname
-`fe-pve`, `192.168.1.121` — a temporary name from initial exploration; the
-box will be reinstalled from scratch and renamed to `pve-framework` once
-ready for production, per Decision 7) into the platform as a fully
+Workspace for bringing the Framework Desktop into the platform as a fully
 IaC-managed environment (`pve-framework`), hosting a new AI/LLM application
 stack behind the existing Traefik / Authentik / step-ca / Technitium /
 Harbor / NetBox platform.
 
-Status: **Phase 0 (host bootstrap) and Phase 1 (network onboarding) are
-both done and live-verified.** This is no longer planning-only — real
-changes have been applied to `fe-pve`, the MikroTik, and the Terraform
-network/storage model, all confirmed working:
+Status: **The reinstall happened (2026-07-18) — `pve-framework` is now the
+real, permanently-named host at `192.168.1.8`, not the disposable
+exploration-phase `fe-pve` box.** Phase 0 (host bootstrap) and Phase 1
+(network onboarding) are both done and live-verified against this fresh
+install:
 
-- Host bootstrap: repo/subscription-nag fix, Terraform token (live-
-  verified against the real API), unified-memory GTT tuning (computed
-  from actual RAM, not hardcoded), `vmbr0` made VLAN-aware.
-- `ai_seg` (VLAN 50) is live end-to-end — MikroTik, physical switch, and
-  `fe-pve` all confirmed working together via an actual `ping`/packet
-  capture, not just config checks. Three distinct bugs were found and
-  fixed getting here; see Decision 4 and `plan.md` Phase 1 step 1 for the
-  full trail.
-- `terraform/lxc/network/pve-framework.yaml` and
-  `terraform/lxc/storage/pve-framework.yaml` added, and the actual Proxmox
-  SDN zone (`tvai`, VLAN 50) applied live via `pvesh` — confirmed present,
-  existing LXCs unaffected.
-- Secrets/environment handling generalized (Decision 6) and now has real
-  data flowing through it: `terraform/secrets.pve-framework.enc.yaml`
-  holds this node's actual Terraform token.
+- Host bootstrap: repo/subscription-nag fix, fresh Terraform token
+  (live-verified against the real API), unified-memory GTT tuning
+  (computed from actual RAM), `vmbr0` made VLAN-aware — all confirmed
+  live post-reboot, not just trusted from the Ansible run completing.
+- `ai_seg` (VLAN 50) is live end-to-end — SDN zone/VNet/subnet
+  recreated via `pvesh`, reachability re-confirmed with a real
+  `ping`+`tcpdump` capture. The physical MikroTik/switch path worked
+  cleanly on the first attempt this time (unlike the three-bug original
+  bring-up), confirming it genuinely survived the reinstall unchanged.
+- Secrets/environment handling (Decision 6) has real data flowing
+  through it again: `terraform/secrets.pve-framework.enc.yaml` holds
+  this fresh host's actual Terraform token, `with-secrets-prod-framework`
+  verified end-to-end including its mutating-command approval gate.
 
-**Operator note (2026-07-17): the box in its current state is disposable —
-it's experimental/exploration state, not persistent.** It will be wiped
-and reinstalled from scratch under its real name (`pve-framework`) once
-ready for production. The current focus has shifted from "keep configuring
-this box" to **planning the post-reinstall bootstrap** — see
-[post-reinstall-plan.md](./post-reinstall-plan.md) for the concrete,
-ordered runbook, including what survives the reinstall (the MikroTik/
-switch config, every committed Ansible playbook, all of `docs/framework*`)
-versus what doesn't (Proxmox-local SDN state, the Terraform token,
-containers 9000/9001/9002 and everything inside them), and what still
-needs to be built *before* the reinstall so it isn't a second round of
-manual discovery.
+Full current facts: [current-state.md](./current-state.md). Concrete
+next-step runbook: [post-reinstall-plan.md](./post-reinstall-plan.md) —
+**Phase 3 prerequisites are next**: no container templates exist yet on
+the fresh install (`pveam list local` is empty), and `llm-gpu-stack`/
+`comfyui-stack` — written and `plan`-clean but never `apply`'d — are
+still genuinely untested against a real host.
 
-Not yet done: `terraform/lxc/environments/pve-framework/` per-stack
-scaffolding, DNS/NetBox/registry onboarding (Phase 2 — scoped and mostly
-straightforward, see plan.md), the AI stack itself as real Terraform/
-Ansible (Phase 3 — the GPU-passthrough role, `llm-gpu-stack`, and
-`comfyui-stack` playbooks are the main pre-reinstall work), and the
-reinstall itself, which doubles as the full teardown-cycle validation
-Phase 4 has been waiting for.
+Not yet done: container templates on the fresh host (blocks everything
+below), actually `apply`-ing `llm-gpu-stack`/`comfyui-stack` against
+`pve-framework` for the first time, DNS/NetBox/registry onboarding
+(Phase 2 — scoped and mostly straightforward, see plan.md), and the
+dual-workload gateway (depends on both GPU stacks existing as real
+systemd services first).
 
-**ComfyUI (image/video generation) — bake-off complete and successful,
-same day.** Now a committed Phase 3 stack, not a gated candidate — see
-`docs/framework/comfyui-image-video-gen-findings.md`. Running live in its
-own container (9002), separate from `llm-gpu-stack`'s container by
-deliberate design (Decision 5, revised) — a real host-wide OOM incident
-during the bake-off validated that separation directly. A follow-on
-design (not yet built) for running both GPU workloads without statically
-halving host memory between them: `docs/framework/dual-workload-gateway-design.md`.
+**ComfyUI (image/video generation) — bake-off complete and successful.**
+A committed Phase 3 stack, not a gated candidate — see
+`docs/framework/comfyui-image-video-gen-findings.md`. The bake-off ran
+live in its own container (9002) on the old exploration-phase box,
+separate from `llm-gpu-stack`'s container by deliberate design (Decision
+5, revised) — a real host-wide OOM incident during the bake-off validated
+that separation directly. That container didn't survive the reinstall;
+its recipe is now `comfyui_stack`'s Ansible role, written and
+`plan`-validated but not yet run against a real host. A follow-on design
+(not yet built) for running both GPU workloads without statically halving
+host memory between them: `docs/framework/dual-workload-gateway-design.md`.
 
 Relationship to `docs/framework/`: that directory is the completed OS
 bake-off and hardware-enablement research (which OS to run, how GPU
@@ -70,8 +62,7 @@ workspace doesn't repeat it.
 ## Read in this order
 
 1. [current-state.md](./current-state.md) — as-found facts about the box
-   today (hardware, storage, network, existing unmanaged guests, gaps
-   versus the platform contract).
+   today (hardware, storage, network, gaps versus the platform contract).
 2. [decisions.md](./decisions.md) — the architecture decisions this plan
    is built on, each with a recommended default and rationale. Flag any
    before implementation starts if you want a different call.
@@ -93,26 +84,28 @@ workspace doesn't repeat it.
   Decision 2.
 - New dedicated SDN VLAN zone (`ai_seg`), not reuse of `mgmt_seg`/`edge_seg`
   — matches `docs/design/network.md`'s already-reserved "Future zones:
-  `app_seg`" slot — see Decision 4. **Live and verified end-to-end as of
-  2026-07-17** — VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`, all
-  confirmed working from `fe-pve` itself.
+  `app_seg`" slot — see Decision 4. **Live and verified end-to-end against
+  the real `pve-framework` host as of 2026-07-18** — VLAN 50,
+  `192.168.50.0/24`, gateway `192.168.50.1`.
 - One GPU-passthrough exception LXC **per distinct GPU workload class**
   (not a single universal one) plus one-LXC-per-service for everything
-  else — see Decision 5, revised 2026-07-17 with real evidence:
+  else — see Decision 5, revised with real evidence from the bake-off:
   `llm-gpu-stack` and `comfyui-stack` are two separate GPU-passthrough
   containers, validated by a real host-wide OOM incident that occurred
-  when they were memory-heavy at the same time. Neither is
-  Terraform/Ansible-managed yet (both still ad hoc).
+  when they were memory-heavy at the same time. Both are now real
+  Terraform (`stack.yaml`) + Ansible (`llm_gpu_stack`/`comfyui_stack`
+  roles), `plan`-validated but not yet `apply`'d against `pve-framework`.
 - Secrets/environment handling is now generalized rather than
   per-node-hardcoded: `terraform/PRODUCTION_NODES` declares which nodes
   are production, `./with-secrets`'s safety rail blocks both `pve` and
   `pve-framework` uniformly, and `with-secrets-prod-framework` is now
   fully live with a real Terraform token in
   `terraform/secrets.pve-framework.enc.yaml` — see Decision 6.
-- The box gets rebuilt from Ansible, not automated around its current
-  hand-tuned state — see Decision 7. That rebuild is also when the
-  hostname changes from the current exploration-only `fe-pve` to the real
-  `pve-framework`.
+- The box gets rebuilt from Ansible, not automated around its
+  hand-tuned exploration-phase state — see Decision 7. **Done
+  2026-07-18** — the rebuild happened, hostname is `pve-framework` from
+  install time, and Phase 0/1 have both been re-run and re-verified
+  against the fresh host rather than assumed to carry over.
 - Authentik integration for the AI stack defaults to native OIDC per
   service (this platform's actual established pattern, not a new one),
   validated end-to-end rather than assumed — `llama-server` uses its own

@@ -1,221 +1,148 @@
-# Current State — Framework Desktop (`fe-pve`)
+# Current State — `pve-framework`
 
-Facts gathered live via `ssh root@192.168.1.121` on 2026-07-17, plus the
-research already recorded under `docs/framework/`. This doc is the
-as-found baseline the integration plan works from.
+Facts gathered live via `ssh root@192.168.1.8` on 2026-07-18, immediately
+after the operator wiped and reinstalled the Framework Desktop under its
+real name, per Decision 7 and
+[post-reinstall-plan.md](./post-reinstall-plan.md). This doc is the
+as-found baseline the rest of this workspace works from — it describes
+**this fresh install**, not the prior exploration-phase `fe-pve` box (see
+`plan.md`, now a historical record of that earlier phase, for what came
+before).
 
 ## Identity
 
 | | |
 |---|---|
-| Hostname | `fe-pve` |
-| Management IP | `192.168.1.121/24` (flat LAN, static, gateway `192.168.1.1`) |
+| Hostname | `pve-framework` (set correctly from install time — no post-hoc rename needed) |
+| Management IP | `192.168.1.8/24` (flat LAN, static, gateway `192.168.1.1`) — a **new** address; the old exploration-phase box was `192.168.1.121` |
+| DNS | `pve-framework.gibbsgreatly.xyz` already resolves to `192.168.1.8` |
 | Hardware | Framework Desktop, AMD Ryzen AI Max+ 395 (Strix Halo), 16c/32t |
 | GPU | Radeon 8060S (integrated, gfx1151), unified memory — no discrete VRAM pool |
-| RAM | 125 GiB total |
+| RAM | 128088 MiB (~125 GiB) total, as reported by `ansible_memtotal_mb` |
 | Disk | 1×58GB (`sda`, unused/blank), 1×1.8TB NVMe (`nvme0n1`) |
-| OS | Proxmox VE 9.2.2 / Debian 13 (trixie), kernel `7.0.2-6-pve` |
-
-Not yet in DNS, NetBox, or any repo inventory — it's known only by IP today.
+| OS | Proxmox VE 9.2.2 / Debian 13 (trixie), kernel `7.0.14-5-pve` |
 
 ## Storage
 
-Single NVMe, LVM-thin only:
+Single NVMe, LVM-thin only — matches what
+`terraform/lxc/storage/pve-framework.yaml` already assumed, confirmed
+against the fresh install rather than carried over blindly:
 
 ```
 pve-root   96G   (Debian/Proxmox OS)
-pve-data   1.7T  (lvmthin pool "data", thin-provisioned)
+pve-swap   8G
+pve-data   1.7T  (lvmthin pool, thin-provisioned)
 ```
 
-`/etc/pve/storage.cfg` only defines `local` (dir) and `local-lvm` (lvmthin).
-**No ZFS pool exists.** This differs from `pve-test-vm`'s storage profile
-set (`terraform/lxc/storage/pve-test-vm.yaml`), which assumes a ZFS backend
-(`infrastructure-containers`) for `platform-zfs`/`durable-zfs` profiles. It
-matches the legacy `pve-test.yaml` shape instead (`platform-default` →
-`local-lvm`). See [decisions.md](./decisions.md) Decision 3.
+`/etc/pve/storage.cfg` only defines `local` (dir) and `local-lvm`
+(lvmthin). No ZFS pool. The 58GB `sda` disk is unused — not part of any
+pool, no mountpoint.
 
-The 58GB `sda` disk is unused — not part of any pool, no mountpoint.
+**`pveam list local` is empty — no container templates exist.** Neither
+the custom Docker-enhanced Debian template nor the plain Ubuntu 26.04
+template survive a reinstall (they're host-local files, not IaC). This is
+a real, open prerequisite before any stack can deploy — see "Gaps" below.
 
 ## Network
 
-As found 2026-07-17 (original recon): `vmbr0` was a plain (non-VLAN-aware)
-bridge on `nic0`, static IP on the flat `192.168.1.0/24` LAN, no SDN zones,
-no VLAN tags, no trunk.
+Phase 0/1 both done and live-verified against this fresh install
+(2026-07-18):
 
-**Updated 2026-07-17 (same day, Phase 0/1 work — see plan.md for the full
-narrative):**
+- `vmbr0` is VLAN-aware (`bridge-vlan-aware yes`, `bridge-vids 2-4094`),
+  confirmed via `vlan_filtering 1` on the live interface, not just the
+  Ansible run completing.
+- `ai_seg` (VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`) is live
+  and verified end-to-end: SDN zone/VNet/subnet (`tvai`) recreated via
+  `pvesh`, and reachability re-confirmed with a temporary IP + `ping` +
+  concurrent `tcpdump` — 0% packet loss, real ICMP request/reply pairs
+  captured on the wire. Unlike the original exploration-phase bring-up
+  (three separate bugs: MikroTik safe-mode rollback, wrong trunk port,
+  missing firewall rule), this rebuild's physical path worked cleanly on
+  the first attempt — the MikroTik/switch config genuinely survived the
+  reinstall unchanged, as `post-reinstall-plan.md` predicted.
+- One behavior difference from the original bring-up worth noting: the
+  `tvai` Linux bridge came up immediately at the OS level with zero
+  containers attached, where the original notes say it stayed absent
+  until first attachment — a PVE version/behavior difference, not a
+  problem.
+- `ttm.pages_limit=24401920 ttm.page_pool_size=24401920` (32GB reserved
+  for the host out of 128GB total, ~95320MB GTT ceiling) confirmed live
+  in `/proc/cmdline` and `/sys/module/ttm/parameters/*` post-reboot — not
+  just staged in `/etc/default/grub`.
+- Not part of any Proxmox cluster; fully standalone, same as `pve` and
+  `pve-test-vm` are to each other.
+- Not yet revisited: DNS resolver config (`/etc/resolv.conf` presumably
+  still points at the MikroTik, not Technitium) — Phase 2 territory.
 
-- `vmbr0` is now VLAN-aware (`bridge-vlan-aware yes`, `bridge-vids
-  2-4094`), applied via `ansible/00-initial-setup/proxmox-vlan-aware-bridge.yml`.
-- `ai_seg` (VLAN 50, `192.168.50.0/24`, gateway `192.168.50.1`) is live and
-  verified end-to-end: MikroTik VLAN interface + gateway, bridge-VLAN
-  tagging on both physical trunk ports (`ether1` — the port `fe-pve`'s
-  traffic actually arrives on — and `ether5`), the physical switch
-  carrying VLAN 50 to `fe-pve`'s port, and a router input-firewall rule
-  permitting ICMP/DNS to the gateway. `ping 192.168.50.1` from `fe-pve`
-  itself: 0% packet loss, confirmed via packet capture, not just a config
-  check. See `plan.md` Phase 1 step 1 for the three distinct bugs hit and
-  fixed getting here (safe-mode rollback, missing `ether1` tagging,
-  missing firewall rule).
-- `nic1` exists but is unconfigured (`iface nic1 inet manual`, no bridge
-  membership).
-- `wlp192s0` (wifi) present but down — not in use.
-- `/etc/resolv.conf` points at the MikroTik (`192.168.1.1`), not at
-  Technitium — consistent with the box not yet being onboarded into the
-  `lab.gibbsgreatly.xyz` internal DNS model. Not yet revisited.
-- Not part of any Proxmox cluster; it is a fully standalone node, same as
-  `pve` and `pve-test-vm` are to each other.
+## Existing guest state
 
-## Existing guest state (pre-dates this integration effort)
+**None.** This is a fresh install — no containers exist yet. The prior
+exploration-phase guests (9000/9001/9002, the hand-built GPU-passthrough
+LXCs from the `docs/framework/` bake-offs) did not survive the reinstall
+and were never expected to; their value was the *knowledge* captured in
+`docs/framework/comfyui-image-video-gen-findings.md`,
+`docs/framework/llamacpp-router-mode-deployment.md`, and
+`docs/framework/proxmox-strix-halo-setup-notes.md`, now being wrapped
+into real Terraform/Ansible (`llm-gpu-stack`, `comfyui-stack` —
+written and `plan`-validated, not yet applied against this host).
 
-As found 2026-07-17 (original recon): two LXCs from the `docs/framework/`
-AI-OS bake-off project, both created by hand (`pct`/manual config edits),
-not by Terraform.
+## What `docs/framework/` establishes (research, still the source of truth)
 
-**Updated 2026-07-17 (same day, separate from this workspace's own
-Ansible/Terraform work) — a third GPU-passthrough container was added for
-the ComfyUI bake-off** (`docs/framework/comfyui-image-video-gen-findings.md`):
+Summarized from the docs there — see each for full detail:
 
-| VMID | Name | Status (current) | Purpose |
-|---|---|---|---|
-| 9000 | `llamacpp-gpu` | stopped | Docker-based GPU passthrough variant, superseded by 9001 |
-| 9001 | `llamacpp-gpu-native` | **stopped** (was running at original recon; stopped as part of the OOM fix below, not yet restarted) | Native (no-Docker) HIP build, `llama-server` router mode |
-| 9002 | `comfyui-gpu` | running, memory ceiling 56GB | PyTorch/ROCm image+video generation via ComfyUI, deliberately separate container from 9001 — see `docs/framework-integration/decisions.md` Decision 5's revision |
-
-All three: privileged, flat-LAN, DHCP-addressed, GPU passthrough applied
-by hand (same `/dev/kfd`+`/dev/dri` recipe as
-`docs/framework/proxmox-strix-halo-setup-notes.md`). `/data/ai` and
-`/srv/ai-stack` exist on the host per that doc's planned layout.
-
-**A real host-wide OOM incident occurred** while both 9001 and 9002 were
-memory-heavy at once — killed container 9001's `llama-router` process as
-collateral damage, root-caused to Strix Halo's unified memory (GPU/GTT
-and host RAM share one physical pool, so total demand can exceed physical
-RAM before any single container's own cgroup ceiling registers a
-problem) combined with 9002's ceiling being looser than the workload
-actually needed. Fixed by stopping 9001, right-sizing 9002's ceiling
-empirically (48GB → 32GB, confirmed properly contained but too tight →
-40GB, sufficient), and adding `--vram-headroom 6`/`--disable-smart-memory`
-to the ComfyUI launch. Full detail and the generalizable lesson (size
-cgroup ceilings close to real observed `anon` usage, not loose) in the
-findings doc §6c. This is *why* 9001 is currently stopped rather than an
-oversight — nothing has re-run both containers simultaneously since.
-
-A design (not yet built) for safely running both GPU workloads without
-statically halving the host's memory between them exists at
-`docs/framework/dual-workload-gateway-design.md` — see
-`docs/framework-integration/plan.md` Phase 3.
-
-Container 9001's config (`/etc/pve/lxc/9001.conf`) as originally found —
-unchanged since:
-
-```
-arch: amd64
-cores: 8
-memory: 8192
-net0: name=eth0,bridge=vmbr0,hwaddr=...,ip=dhcp,type=veth
-ostype: ubuntu
-rootfs: local-lvm:vm-9001-disk-0,size=132G
-lxc.cgroup2.devices.allow: c 226:* rwm
-lxc.cgroup2.devices.allow: c 511:* rwm
-lxc.mount.entry: /dev/dri dev/dri none bind,optional,create=dir
-lxc.mount.entry: /dev/kfd dev/kfd none bind,optional,create=file
-```
-
-As found 2026-07-17 (original recon): host boot config already carried the
-unified-memory GTT fix from that doc, applied by hand —
-`GRUB_CMDLINE_LINUX_DEFAULT="quiet ttm.pages_limit=25165824 ttm.page_pool_size=25165824"`
-(a flat 96GB ceiling picked by hand). Apt repos were already fixed to
-`pve-no-subscription` by hand too.
-
-**Updated 2026-07-17 (same day):** both are now real Ansible, not hand
-work:
-
-- `ansible/00-initial-setup/proxmox-initial-setup.yml` ran successfully
-  against `fe-pve` (repo fix, subscription-nag removal, `automation@pve` +
-  Terraform token — live-verified against the real Proxmox API before
-  trusting it).
-- `ansible/00-initial-setup/proxmox-gpu-unified-memory-tuning.yml` +
-  matching `tasks/` file replaced the hand-picked flat value with one
-  computed from this host's actual reported RAM
-  (`ansible_memtotal_mb`) minus an operator-set reserved margin
-  (32GB, matching the original manual choice) — now
-  `ttm.pages_limit=24401920 ttm.page_pool_size=24401920` (95320 MB
-  ceiling, slightly more accurate than the old round-number 96GB since
-  it's derived from what Linux actually reports as usable RAM rather
-  than the nominal 128GB spec). `quiet` preserved. Applied for real;
-  `update-grub` run. **A reboot is still required for this to take
-  effect** — deliberately withheld since it would interrupt the running
-  `9001` LXC; needs its own separate approval.
-
-## What `docs/framework/` establishes (research, not yet productized)
-
-Summarized from the four existing docs there — see each for full detail:
-
-- **`project-brief.md`** — original OS bake-off scope: compare Ubuntu/Proxmox/Gentoo
-  for a local LLM stack (`llama.cpp`, OpenWebUI, n8n, SearXNG, Postgres,
-  Redis, Qdrant/Chroma, optionally Caddy/Traefik, Tailscale/WireGuard).
-  Proxmox won.
+- **`project-brief.md`** — original OS bake-off scope: compare
+  Ubuntu/Proxmox/Gentoo for a local LLM stack (`llama.cpp`, OpenWebUI,
+  n8n, SearXNG, Postgres, Redis, Qdrant/Chroma, optionally
+  Caddy/Traefik, Tailscale/WireGuard). Proxmox won.
 - **`proxmox-strix-halo-setup-notes.md`** — the GPU-passthrough-into-LXC
-  recipe (kfd/dri passthrough, AppArmor+cap-drop for nested Docker,
-  ttm.pages_limit, Vulkan batch-size crash workaround). This is the
-  hardware-enablement knowledge the new stack must reuse; none of it is in
-  Ansible/Terraform yet.
+  recipe (kfd/dri passthrough, `ttm.pages_limit`, Vulkan batch-size crash
+  workaround). Now codified via Terraform's native `device_passthrough`
+  mechanism (see Decision in `terraform/lxc/modules/lxc-docker-host`)
+  rather than hand-edited `lxc.cgroup2.devices.allow` lines.
 - **`runtime-matrix-checkpoint-2026-07-16.md`** — llama.cpp/Ollama ×
-  Vulkan/ROCm × bare/Docker/Incus all verified working; HIP native ≈ Docker
-  perf; Vulkan ~15-20% faster on Proxmox LXC than Incus.
-- **`llamacpp-router-mode-deployment.md`** — the deployment pattern this
-  plan adopts: one GPU-passthrough container running `llama-server` in
-  router mode (`--models-dir`, one endpoint, model picked per-request),
-  not one container per model. Includes sizing guidance and an
-  as-yet-unbuilt embedding-model plan.
+  Vulkan/ROCm × bare/Docker/Incus all verified working; HIP native ≈
+  Docker perf; Vulkan ~15-20% faster on Proxmox LXC than Incus.
+- **`llamacpp-router-mode-deployment.md`** — the deployment pattern
+  `llm_gpu_stack`'s Ansible role implements: one GPU-passthrough
+  container running `llama-server` in router mode.
 - **`model-quality-and-vuln-bench-2026-07-17.md`** — model selection
-  evidence: Qwen2.5-Coder-32B is the recommended default generation model
-  (same correctness ceiling as Llama-3.3-70B, ~2.2x faster, half the disk).
-
-None of this research is wired into `terraform/lxc` or `ansible/` yet. The
-box is not reproducible from code today — a re-install would require
-manually replaying every step in `proxmox-strix-halo-setup-notes.md`.
+  evidence: Qwen2.5-Coder-32B is the recommended default generation
+  model.
+- **`comfyui-image-video-gen-findings.md`** — the completed ComfyUI
+  bake-off: ROCm/PyTorch setup, two upstream bugs and their fixes, the
+  host-wide OOM incident and its resolution. `comfyui_stack`'s Ansible
+  role implements this recipe.
 
 ## Gaps versus the platform contract
 
-Things the rest of the fleet has that this box currently lacks:
-
-1. ~~No Terraform/Ansible bootstrap has been run~~ — **closed 2026-07-17**:
-   `ansible/00-initial-setup/proxmox-initial-setup.yml` (repo fix,
-   subscription-nag removal, `automation@pve` + Terraform token, live-
-   verified against the real API), plus
-   `proxmox-gpu-unified-memory-tuning.yml` and
-   `proxmox-vlan-aware-bridge.yml` all ran successfully. Only remaining
-   sub-item: the GTT tuning needs a reboot to actually take effect (staged,
-   not yet applied — see plan.md Phase 0).
-2. ~~No SDN VLAN zones — flat LAN only, no trunk to the MikroTik.~~ —
-   **closed 2026-07-17**: `vmbr0` is VLAN-aware and `ai_seg` (VLAN 50) is
-   live end-to-end, verified with real ping/packet-capture, not just
-   config presence. See plan.md Phase 1 step 1 for the three bugs found
-   and fixed along the way.
-3. ~~No entry in `terraform/lxc/network/*.yaml`, `storage/*.yaml`, or
-   `environments/*/`~~ — **mostly closed 2026-07-17**:
-   `terraform/lxc/network/pve-framework.yaml` and
-   `terraform/lxc/storage/pve-framework.yaml` added, and the Proxmox SDN
-   zone/VNet/subnet (`tvai`, VLAN 50) applied live via `pvesh` — confirmed
-   present, existing LXCs unaffected. Still missing:
-   `terraform/lxc/environments/pve-framework/` (per-stack Terragrunt
-   scaffolding, needed before any actual stack deploys in Phase 3).
-4. No DNS record anywhere (MikroTik static, Technitium, or otherwise) —
-   still open, Phase 2.
-5. No NetBox entry (device or IPs) — still open, Phase 2.
-6. GPU passthrough (`/dev/kfd`, `/dev/dri`, AppArmor/cap-drop) has no
-   Terraform/Ansible module — `terraform/lxc/modules/lxc-docker-host` has
-   no GPU-passthrough support today (confirmed by grep — no `kfd`/`hostpci`
-   references anywhere in `terraform/lxc/modules` or `main.tf`).
-7. Existing guests (9000/9001) are unmanaged, privileged, flat-LAN,
-   DHCP-addressed — none of that matches how any other stack in the repo
-   is deployed.
-8. ~~No secrets/credential path~~ — **closed 2026-07-17**: secrets/env
-   handling generalized (`terraform/PRODUCTION_NODES`,
-   `scripts/with-secrets-prod-lib.sh`), `with-secrets-prod-framework` is
-   live with a real Terraform token in `terraform/secrets.pve-framework.enc.yaml`.
-   Still missing from that file: a dedicated `PROXMOX_READONLY_TOKEN_ID/SECRET`
-   (this node currently only has the full-privilege Terraform token) and
-   `TF_VAR_lxc_password` — needed before Phase 3.
+1. **No container templates staged** — `pveam list local` is empty.
+   Blocks any `terragrunt apply` for `llm-gpu-stack`/`comfyui-stack`
+   until the custom Debian Docker template
+   (`ansible/00-initial-setup/build-debian-13-template.yml`) and the
+   plain Ubuntu 26.04 template (`pveam download`) are re-staged. Next
+   step.
+2. **`llm-gpu-stack`/`comfyui-stack` untested against a real host.**
+   Terraform (`stack.yaml` + Terragrunt scaffolding) and Ansible (roles +
+   playbooks) are written and validated (`tofu validate`, `terragrunt
+   plan` clean, `ansible-lint` production profile clean) but never
+   `apply`'d — no container has actually been created, the HIP/ROCm
+   builds have never run for real, and whether `unprivileged: true` +
+   `device_passthrough` actually grants GPU access on this hardware is
+   still unverified (the original bake-off used the legacy privileged
+   passthrough pattern, never this mechanism).
+3. **No DNS record anywhere** (MikroTik static, Technitium, or
+   otherwise) beyond the bare `pve-framework.gibbsgreatly.xyz` A record
+   already pointing at 192.168.1.8 — Phase 2.
+4. **No NetBox entry** (device or IPs) — Phase 2. Note
+   `terraform/lxc/network/pve-framework.yaml`'s `inventory.proxmox_nodes`
+   entry now has the correct `host_ip: "192.168.1.8"` for when this
+   happens.
+5. **Secrets**: the Terraform automation token is live and
+   live-verified (`terraform/secrets.pve-framework.enc.yaml`). Still
+   missing: a dedicated `PROXMOX_READONLY_TOKEN_ID/SECRET` (this node
+   only has the full-privilege token so far) and `TF_VAR_lxc_password` —
+   needed before Phase 3 container creation.
+6. **Authentik/Traefik/Harbor/step-ca integration** for the AI stack —
+   not started. `pve-framework` has no local instances of these and
+   reuses `pve`'s per Decision 2/8; the actual wiring (OIDC clients,
+   Traefik routes) hasn't been done for any AI-stack service yet.
