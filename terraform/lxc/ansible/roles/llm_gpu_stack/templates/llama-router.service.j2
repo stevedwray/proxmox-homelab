@@ -9,7 +9,8 @@ ExecStart={{ llm_gpu_stack_llamacpp_dir }}/build-hip/bin/llama-server \
   --models-max {{ llm_gpu_stack_models_max }} \
   --n-gpu-layers 999 \
   --ctx-size {{ llm_gpu_stack_ctx_size }} \
-  --parallel {{ llm_gpu_stack_parallel_slots }}{% if llm_gpu_stack_api_key %} \
+  --parallel {{ llm_gpu_stack_parallel_slots }} \
+  --jinja{% if llm_gpu_stack_api_key %} \
   --api-key-file /etc/llama-router/api-key{% endif %}
 
 Restart=on-failure

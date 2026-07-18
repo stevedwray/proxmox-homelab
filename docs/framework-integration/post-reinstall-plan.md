@@ -1,11 +1,13 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **`llm-gpu-stack` and `comfyui-stack` are live, models staged,
-`ai-services-stack` (OpenWebUI + SearXNG) now being built.** See
-`docs/workflow/session-handoff-2026-07-18.md` for the earlier continuity
-checkpoint (superseded by this status block for anything past "models
-staged") and `decisions.md` Decision 9 for the ancillary-services split
-rationale.
+Status: **`llm-gpu-stack`, `comfyui-stack`, and `ai-services-stack`
+(OpenWebUI + SearXNG) are all live.** Chat/tool-calling bugs found and
+triaged (one fixed, two left open — see below). Three more chat-oriented
+models being staged. See `docs/workflow/session-handoff-2026-07-18.md`
+for the earlier continuity checkpoint (superseded by this status block
+for anything past "models staged"), `decisions.md` Decision 9 for the
+ancillary-services split rationale, and Decisions 10–11 for the bugs and
+gotcha below.
 
 **Models staged (2026-07-18):**
 - `llm-gpu-stack`: Qwen2.5-Coder-32B-Instruct-Q4_K_M (19.85GB, default),
@@ -37,9 +39,59 @@ OpenWebUI's login page confirmed showing the Authentik option via its own
 + key server-side. SearXNG never host-published, internal compose network
 only.
 
+**Bugs found and triaged (2026-07-18), see Decision 10:**
+- **Fixed**: `llm-gpu-stack` (any model) could produce garbage/repeated-
+  token output under concurrent requests — root-caused to `llama-server`'s
+  default 4-slot concurrent decode corrupting shared GPU state on this
+  HIP/ROCm build; OpenWebUI's real per-message pattern (main chat +
+  background title-gen + tag-gen) reliably triggered it. Fixed by forcing
+  `--parallel 1` (single-slot serialized decode). Verified via the same
+  concurrent-request reproduction, now returns correct output.
+- **Open, likely OpenWebUI-side, not our infra**: a background
+  title-generation task's JSON response sometimes renders into the main
+  chat bubble in OpenWebUI (Qwen). Could not reproduce via direct API
+  testing in any combination (streaming/non-streaming, 2–3 concurrent
+  requests, both `/completion` and `/v1/chat/completions`) — points at
+  OpenWebUI's own task/websocket routing, not `llama-router`. OpenWebUI is
+  pinned to `main`, which is confirmed identical to `latest` (this project
+  doesn't ship a separately-tagged stable release on `ghcr.io`), so there's
+  no simple "switch to stable" fix available either. Deprioritized — not
+  the operator's actual use case (VSCode/MCP, not OpenWebUI chat).
+- **Open, confirmed Qwen-specific**: Qwen2.5-Coder-32B doesn't populate
+  `tool_calls` correctly when a real `tools` schema is sent — dumps raw,
+  sometimes malformed JSON into `content` instead. Reproduced directly.
+  Adding `--jinja` to the launch flags didn't fix it. Llama-3.3-70B-Instruct
+  handles the identical request correctly. **Workaround: use
+  Llama-3.3-70B-Instruct for agentic/tool-calling work (VSCode/MCP), not
+  Qwen**, until Qwen's chat-template/tool-parser mismatch is actually
+  root-caused.
+
+**Chat-oriented models being staged (2026-07-18):** three DavidAU
+"uncensored"/creative-writing GGUFs requested for OpenWebUI chat use (not
+coding) — `L3.1-MOE-6X8B-Dark-Reasoning-Dantes-Peak-HORROR-R1-Uncensored-
+36B` (Q4_K_M, 20.48GB), `Command-R-01-Ultra-NEO-DARK-HORROR-V1-V2-35B`
+(Q4_K_S, 18.98GB — no Q4_K_M available), `Llama-3.2-8X4B-MOE-V2-Dark-
+Champion-Instruct-uncensored-abliterated-21B` (Q4_K_M, 11.97GB). `/storage`
+has ample headroom (1TB total, ~103GB used before these). Hit and fixed a
+new gotcha getting these staged — see Decision 11: `host_bind_mounts`
+targets for unprivileged containers need the host-side directory owned by
+the container's default subuid-mapped UID (100000), not real root; found
+via `Permission denied` writing into `/data/models` from inside
+`llm-gpu-stack` despite it looking like a normal `root:root 0755`
+directory from inside the container. `llm_gpu_stack_ctx_size` (8192,
+shared globally across whatever model the router has loaded) is worth
+revisiting for these three — long-context chat/roleplay use is exactly
+where 8K may feel cramped; not yet changed, revisit if it becomes a
+problem in practice.
+
 Next: `n8n-stack` (n8n + Postgres + Redis) and `rag-stack` (Qdrant/Chroma,
 deferred until OpenWebUI's embedded default isn't enough) — see
 Decision 9. NetBox registration explicitly deferred by the operator.
+Also still open: Terraform state-drift `ignore_changes` fix for
+`device_passthrough`/`host_bind_mounts` (identified, not applied —
+operator said "stop" mid-edit, only resume if asked again), and an actual
+end-to-end ComfyUI generation test (models confirmed staged/visible via
+API, never actually run a generation).
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.

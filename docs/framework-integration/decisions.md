@@ -528,3 +528,90 @@ similarity ("AI stuff" vs "automation stuff"); keeps failure/restart
 isolation where it actually matters (n8n's DB dependency doesn't couple
 to OpenWebUI/SearXNG's lifecycle) without over-fragmenting into unnecessary
 single-service containers where nothing actually needs the isolation.
+
+## Decision 10: `llama-router` forced to single-slot decode (`--parallel 1`) (implemented and verified, 2026-07-18)
+
+Context: Qwen2.5-Coder-32B-Instruct-Q4_K_M intermittently degenerated into
+endless repeated-token garbage output (`??????...`), first noticed via
+OpenWebUI on a Prolog quicksort prompt, later confirmed recurring live.
+Root-caused by reproducing it directly: firing simultaneous requests at
+`llm-gpu-stack` (mirroring OpenWebUI's real per-message pattern — main
+chat completion + background title-generation + tag-generation, all
+hitting the same loaded model at once) reliably corrupted output, while
+the exact same prompts sent one at a time — via the raw API, bypassing
+OpenWebUI and the chat template entirely — always worked. `llama-server`
+defaults to 4 parallel decode slots; concurrent multi-slot decode is
+corrupting shared GPU state on this HIP/ROCm (`gfx1151`) build.
+
+Decision: added `llm_gpu_stack_parallel_slots: 1` (role default) and
+`--parallel {{ llm_gpu_stack_parallel_slots }}` to the `llama-router`
+systemd unit (`terraform/lxc/ansible/roles/llm_gpu_stack/`). Forces
+single-slot serialized request handling — concurrent requests queue
+instead of decoding in parallel.
+
+Rationale: this is a single-user homelab; nothing needs true concurrent
+serving, and losing a little latency on background title/tag generation
+is a trivial cost against silently corrupted chat responses. Verified
+fixed by re-running the exact concurrent-request reproduction after
+deploy — all three (main-chat, title-gen, tag-gen) returned correct,
+coherent output. Applies globally to whichever model the router currently
+has loaded (`--models-max 1`), not just Qwen — DeepSeek/Llama were never
+directly confirmed vulnerable to the same race, but the fix covers them
+regardless.
+
+Not fixed by this: a separate, second Qwen-only bug where responses come
+back as valid but semantically wrong content (e.g. a background
+title-generation task's JSON appearing as the main chat message, or a
+hallucinated fake tool-call JSON blob in `content` when a real `tools`
+schema is present but Qwen's GGUF template/parser doesn't structure it
+into `tool_calls` correctly). Direct reproduction attempts (concurrent
+and sequential, streaming and non-streaming, `/completion` and `/v1/chat/
+completions`) could not reproduce the title/tag cross-talk at all —
+current best guess is an OpenWebUI-side task/websocket routing bug, not
+`llm-gpu-stack`. The tool-calling failure *was* reproduced directly
+(confirmed Qwen-specific — Llama-3.3-70B-Instruct handles the identical
+`tools`-schema request correctly, returning a proper `tool_calls` array)
+and adding `--jinja` to the launch flags did not fix it. Both left open;
+practical workaround is to prefer Llama-3.3-70B-Instruct for agentic/
+tool-calling use (e.g. VSCode/MCP) until Qwen's template issue is
+actually root-caused.
+
+## Decision 11: Unprivileged-container bind-mount ownership must match the host's default subuid mapping (gotcha, fixed 2026-07-18)
+
+Context: staging new model weights directly into `llm-gpu-stack` (writing
+into `/data/models`, the `host_bind_mounts` target for `/storage/models/
+llm`) failed with `Permission denied` even as root inside the container,
+even though the directory looked like a normal `root:root 0755` from
+inside. `llm-gpu-stack` is `unprivileged: true` with no custom `idmap`
+configured anywhere in its `stack.yaml` (only `device_passthrough` has
+explicit uid/gid, and that's device-node ownership, unrelated to the
+container's user-namespace mapping) — so Proxmox's standard default
+applies: container UID 0 (root) maps to host UID 100000. The host-side
+`/storage/models/llm` directory was owned by real host `root` (uid 0)
+after the Decision 3 storage restructure, so the container's remapped
+root wasn't actually the owner and silently fell into "other" (no write
+bit under `0755`).
+
+Fix: `chown -R 100000:100000 /storage/models/llm` run as real root
+directly on the `pve-framework` host (not inside the container). Confirmed
+working — subsequent `wget` from inside the container succeeded.
+
+Rationale / distinct from the earlier `vzdump` unprivileged-permission bug
+(same decisions doc, storage-restructure section): that one was a
+host-side directory being accessed *from the host* via `lxc-usernsexec`
+during backup; this one is a host-side bind-mounted directory being
+written *from inside* the unprivileged container itself. Same underlying
+cause class (unprivileged LXC UID remapping), different direction and
+different fix shape — worth keeping both documented separately since the
+symptom and fix look different enough that pattern-matching on one alone
+wouldn't surface the other.
+
+Follow-up not yet done: this same class of bug likely applies to any other
+`host_bind_mounts` target for an unprivileged container (e.g.
+`comfyui-stack`'s `/storage/models/comfyui` — not confirmed broken, since
+its models were already staged and working by the time this was
+diagnosed, but not confirmed correctly owned either). Worth either
+auditing all current `host_bind_mounts` host-side directories for correct
+`100000:100000` ownership, or better, codifying the `chown` as part of the
+Terraform/Ansible flow that creates these bind mounts so it's never a
+manual step again.
