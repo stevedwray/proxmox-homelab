@@ -21,15 +21,31 @@ gateway: "${lab_gw_ai}"
 dns_server: "${lab_gw_ai}"
 vmid: 50010
 cores: 8
-# Conservative starting ceiling — the dual-workload gateway
-# (docs/framework/dual-workload-gateway-design.md) that would let this
-# safely claim most of the host isn't built yet, and comfyui-stack may be
-# running concurrently on the same disposable box during testing. Revisit
-# with the same empirical anon-usage sizing discipline used for
-# comfyui-stack once a real target model/context-size is chosen — see
-# docs/framework-integration/decisions.md's Decision 5 addendum and
-# [[reference_unified_memory_oom_sizing]].
-memory: 16384
+# Right-sized 2026-07-18 -- do NOT confuse this container's own cgroup
+# ceiling with "how big a model fits." They're governed separately on
+# this hardware:
+#   - GPU-offloaded weights/KV-cache/compute buffers (this role runs
+#     --n-gpu-layers 999, full offload) are allocated via HIP into
+#     GTT-backed memory, which is capped by the HOST-level
+#     ttm.pages_limit boot parameter (~95GB, shared across every
+#     container) -- NOT this container's own memory.dedicated.
+#   - The model file is mmap()'d, not read into a heap buffer, and
+#     --mlock is not set -- host-side page cache backing it is clean and
+#     reclaimable as HIP streams it to the GPU, so cgroup v2 reclaims it
+#     under pressure rather than needing the full file size resident at
+#     once.
+#   - What's actually left as real container-level anon memory is just
+#     the llama-server process itself, HTTP request/response buffers
+#     (KB-scale), and the tokenizer's vocab tables (tens of MB) -- none
+#     of it scales with model size.
+# An earlier version of this comment sized the ceiling off the GGUF file
+# size on disk (~50G, to fit Llama-3.3-70B) -- that was the wrong mental
+# model, conflated with ComfyUI's PyTorch/ROCm sizing (a different
+# framework with a memory-retentive caching allocator, measured on a
+# workload with much larger per-step activation tensors -- not a sound
+# analogy for llama.cpp). 8192 (8G) is sized for the container's actual
+# process footprint with real margin, not the model.
+memory: 8192
 swap: 2048
 # Model weights live externally on the host's dedicated storage LV
 # (/storage/models, bind-mounted below), not inside the container's own
