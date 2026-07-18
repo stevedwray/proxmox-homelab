@@ -576,6 +576,33 @@ practical workaround is to prefer Llama-3.3-70B-Instruct for agentic/
 tool-calling use (e.g. VSCode/MCP) until Qwen's template issue is
 actually root-caused.
 
+**Follow-up, 2026-07-19 — Qwen3.6 in Continue, root-caused and fixed:**
+A similar-looking symptom recurred with the newly-added Qwen3.6-35B-A3B
+(via Continue in VSCode, not OpenWebUI): agent tool-use attempts failed
+repeatedly, and one reasoning trace appeared to reference unrelated
+content from a completely different, much earlier API test — initially
+suspected as genuine cross-session context contamination in
+`llama-server`, a serious concern if true (raised and investigated
+thoroughly given the implications). Ruled out via a systematic
+plant-a-marker-then-probe test across all four resident models
+(including cross-model swaps forced by `--models-max 1`) — zero
+contamination reproduced anywhere. The actual cause, confirmed directly
+from `llama-router`'s own request logs on `llm-gpu-stack`: the failing
+request hit `truncated = 1` at `n_tokens = 8191` — it simply ran out of
+the shared `--ctx-size 8192` budget mid-reasoning. Qwen3.6's reasoning
+length is non-deterministic (the identical prompt replayed cleanly at
+2785 completion tokens in one run, but ran to 6351+ tokens before being
+cut off in the original incident) — verbose reasoning models can
+legitimately think far longer than a simple instruct model on the same
+prompt, and 8192 wasn't enough headroom. Fixed by raising
+`llm_gpu_stack_ctx_size` to 32768 (GTT capacity analysis showed ample
+room — see the memory constraint model referenced in
+`post-reinstall-plan.md`). The "unrelated content in a reasoning trace"
+observation that triggered the contamination investigation was most
+likely the model's own tangential chain-of-thought rambling, not leaked
+session data — no evidence of actual contamination was found anywhere
+in this investigation, logs included.
+
 ## Decision 11: Unprivileged-container bind-mount ownership must match the host's default subuid mapping (gotcha, fixed 2026-07-18)
 
 Context: staging new model weights directly into `llm-gpu-stack` (writing

@@ -110,10 +110,16 @@ needs an explicit `GET /v1/models?reload=1` (or a service restart) before
 new models show up, including in OpenWebUI's picker (which just reflects
 whatever the router currently reports).
 
-`llm_gpu_stack_ctx_size` (8192, shared globally across whatever model the
-router has loaded) is worth revisiting for these three — long-context
-chat/roleplay use is exactly where 8K may feel cramped; not yet changed,
-revisit if it becomes a problem in practice.
+`llm_gpu_stack_ctx_size` raised 8192 → 32768 (2026-07-19), shared globally
+across whatever model the router has loaded. Triggered by a real failure,
+not speculative: Qwen3.6 in Continue hit `truncated = 1` at `n_tokens =
+8191` mid-reasoning (its reasoning length is non-deterministic — the same
+prompt finished cleanly at 2785 tokens once, ran to 6351+ before being cut
+off another time). Root-caused via `llama-router`'s own request logs after
+first (seriously, thoroughly) investigating and ruling out cross-session
+context contamination as a possible cause — see Decision 10's follow-up
+for the full investigation. No contamination was found anywhere; it was
+purely a too-small context budget for a verbose reasoner.
 
 Next: `n8n-stack` (n8n + Postgres + Redis) and `rag-stack` (Qdrant/Chroma,
 deferred until OpenWebUI's embedded default isn't enough) — see
