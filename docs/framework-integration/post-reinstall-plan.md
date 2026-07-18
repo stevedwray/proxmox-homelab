@@ -1,13 +1,18 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
 Status: **`llm-gpu-stack`, `comfyui-stack`, and `ai-services-stack`
-(OpenWebUI + SearXNG) are all live.** Chat/tool-calling bugs found and
-triaged (one fixed, two left open — see below). Three more chat-oriented
-models being staged. See `docs/workflow/session-handoff-2026-07-18.md`
-for the earlier continuity checkpoint (superseded by this status block
-for anything past "models staged"), `decisions.md` Decision 9 for the
-ancillary-services split rationale, and Decisions 10–11 for the bugs and
-gotcha below.
+(OpenWebUI + SearXNG) are all live**, plus VSCode client integration
+(Continue, GitHub Copilot BYOK) validated against the real router.
+`llm-gpu-stack` now serves 8 models total (7 chat-oriented + a dedicated
+small utility model). **Policy: Qwen (2.5-Coder-32B, 3.6-35B-A3B) is
+disabled in OpenWebUI and removed from VSCode client configs** — staged
+on the router but not used as a daily driver — see Decision 12. Default
+model for coding/agentic work is now Llama-3.3-70B-Instruct. See
+`docs/workflow/session-handoff-2026-07-18.md` for the earlier continuity
+checkpoint (superseded by this status block for anything past "models
+staged"), `decisions.md` Decision 9 for the ancillary-services split
+rationale, Decisions 10–11 for earlier bugs/gotchas, and Decision 12 for
+the VSCode integration, utility-model separation, and Qwen policy.
 
 **Models staged (2026-07-18):**
 - `llm-gpu-stack`: Qwen2.5-Coder-32B-Instruct-Q4_K_M (19.85GB, default),

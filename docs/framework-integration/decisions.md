@@ -642,3 +642,109 @@ auditing all current `host_bind_mounts` host-side directories for correct
 `100000:100000` ownership, or better, codifying the `chown` as part of the
 Terraform/Ansible flow that creates these bind mounts so it's never a
 manual step again.
+
+## Decision 12: VSCode client integration (Continue, Copilot BYOK), utility-model separation, and a policy to stop using Qwen in OpenWebUI/VSCode (2026-07-19)
+
+Context: wanted to validate model reliability for real agentic coding work
+(file creation, tool use) via VSCode, comparing Continue against GitHub
+Copilot Chat's BYOK ("Bring Your Own Key") custom-endpoint support, using
+the operator's actual daily tools rather than synthetic API tests alone.
+
+**Client setup, both point at `llm-gpu-stack`'s OpenAI-compatible API:**
+- **Continue**: `~/.continue/config.yaml`, `provider: openai` +
+  `apiBase`/`apiKey`/`model`. Needs the full `name`/`version`/`schema`
+  header and a `roles` field per model (`chat`, `edit`) — a bare
+  `models:` list with no header silently fails to load (shows "No models
+  configured" with no error).
+- **Copilot**: a completely different mechanism and a different file —
+  `~/.config/Code/User/chatLanguageModels.json` (not `settings.json`,
+  which only holds the `chat.byokUtilityModelDefault` setting and other
+  general prefs). `vendor: customendpoint`, `apiType: chat-completions`,
+  a `models` array with per-model `url` pointing at the full
+  `/chat/completions` path (not just a `/v1` base like Continue).
+  `maxInputTokens`/`maxOutputTokens` are VS Code's own client-side
+  context-budget bookkeeping — their sum must not exceed the model's real
+  context window, sized to `llm_gpu_stack_ctx_size` (see below).
+
+**Bugs hit, both real and both fixed:**
+1. **`No utility model is configured for 'copilot-utility-small'`** — a
+   known VS Code 1.128+ regression for BYOK users
+   ([microsoft/vscode#324007](https://github.com/microsoft/vscode/issues/324007),
+   [#324920](https://github.com/microsoft/vscode/issues/324920)): Copilot
+   uses a separate small model for background tasks (title-gen, context
+   summarization — same underlying pattern as OpenWebUI's Task Model and
+   Continue's tag-gen) and fails to fall back correctly under BYOK.
+   Documented fix: `chat.byokUtilityModelDefault` setting, values
+   `mainAgent` / `copilot` / `none` (default) — **not** a specific model
+   ID, a real constraint that shaped the final design below.
+2. **`No lowest priority node found (path: oie)`** — a separate,
+   **longstanding, unrelated Copilot extension bug** in its own internal
+   prompt-rendering/priority-pruning system
+   ([microsoft/vscode-copilot-release#7146](https://github.com/microsoft/vscode-copilot-release/issues/7146)
+   and many duplicates going back a long way, affecting first-party
+   models too, not BYOK-specific). Just a known extension crash to retry
+   past, nothing to fix on our side.
+
+**Important finding — the "no files created" symptom was a false lead,
+not a model reliability bug.** Both Qwen3.6 (Continue and Copilot) and
+initially Llama-3.3-70B (Copilot) produced good code but pasted it in
+chat instead of using `create_new_file`. Root cause, found directly in
+the captured request body via the diagnostic logging proxy (see
+Decision 10's follow-up for the same proxy technique): Copilot's own
+system prompt explicitly states *"If the user is requesting a code
+sample, you can answer it directly without using any tools."* The test
+prompt ("Generate the Python script for this...") reads as a code-sample
+request under that instruction — both models were correctly following
+Copilot's own rules, not malfunctioning. Fix is prompt phrasing
+("Create quicksort.py and populate it with..."), not model selection.
+
+**Real, measurable finding — Copilot's own background utility calls
+compete with real work under `--parallel 1`.** The same proxy capture
+showed Copilot firing two small "generate a cute progress message"
+utility completions within ~300ms of the real request, all serialized
+through the single decode slot from Decision 10 — directly explaining
+reported slowness. **`--parallel 1` is not wrong and was not reverted**
+(the alternative is confirmed GPU-state corruption, a correctness bug
+worse than latency) — the fix is giving utility/background tasks
+somewhere else to go instead of competing with the main model's queue:
+- **OpenWebUI**: Task Model *can* point at any specific registered
+  model (unlike Copilot's enum-only setting) — staged a small,
+  fast, non-Qwen model (`Llama-3.2-3B-Instruct-Q4_K_M`, bartowski,
+  1.88GB) specifically for this, and pointed both Local and External
+  Task Model at it instead of "Current Model."
+- **Copilot**: `chat.byokUtilityModelDefault` set to `"copilot"` instead
+  of `"mainAgent"` — routes utility calls to GitHub's own hosted models
+  entirely, off `llm-gpu-stack` and the shared slot completely. Assumes
+  an active Copilot subscription; simplest fix given the enum
+  constraint above.
+- **Continue**: no equivalent separate utility-model setting found:
+  its own background calls (if any) appear to just follow whatever
+  model is selected for chat. Not addressed separately — Continue is
+  currently deprioritized (see below).
+
+**Policy decision: stop using Qwen (2.5-Coder-32B and 3.6-35B-A3B) in
+OpenWebUI and VSCode going forward.** Cumulative pattern across this
+session: Qwen2.5-Coder's tool-calling dumps malformed raw JSON instead of
+a structured `tool_calls` field (Decision 10); Qwen3.6 hallucinated that
+no file-creation tool existed despite one being clearly documented in
+its own system prompt, on top of the ctx-size/non-deterministic-reasoning
+truncation issue (Decision 10 follow-up). Llama-3.3-70B has been
+consistently reliable across every direct test run this session (tool
+calling, file operations once prompted explicitly). Switched both
+Continue's `config.yaml` and Copilot's `chatLanguageModels.json` to
+Llama-3.3-70B; disabled (not removed) `Qwen2.5-Coder-32B-Instruct-Q4_K_M`
+and `Qwen3.6-35B-A3B-UD-Q4_K_M` in OpenWebUI's Admin Settings → Models,
+so they're excluded from the chat picker but remain staged on
+`llm-gpu-stack` for any future direct API testing or re-evaluation if
+Qwen's tool-calling/template issues get fixed upstream.
+
+**Not yet done**: `~/.continue/` has real cleanup identified but not
+executed — a 1.7GB stale `index/` cache (indexing is disabled in
+`.continuerc.json`, so this is pure dead weight), leftover `dev_data/`
+telemetry, unused March-dated scaffold files (`config.ts`,
+`package.json`, `tsconfig.json`, `types/`, `.utils/`), and a `rules/`
+folder (`local-implementation.md`, `terraform-ansible.md`) that's
+**global** rather than workspace-scoped, meaning proxmox-homelab-specific
+rules get injected into every unrelated Continue workspace/project. Low
+priority given Continue is currently deprioritized in favor of Copilot,
+but worth doing if Continue comes back into active use.
