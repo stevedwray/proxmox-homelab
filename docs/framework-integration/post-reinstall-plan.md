@@ -66,23 +66,54 @@ only.
   Qwen**, until Qwen's chat-template/tool-parser mismatch is actually
   root-caused.
 
-**Chat-oriented models being staged (2026-07-18):** three DavidAU
-"uncensored"/creative-writing GGUFs requested for OpenWebUI chat use (not
-coding) — `L3.1-MOE-6X8B-Dark-Reasoning-Dantes-Peak-HORROR-R1-Uncensored-
-36B` (Q4_K_M, 20.48GB), `Command-R-01-Ultra-NEO-DARK-HORROR-V1-V2-35B`
-(Q4_K_S, 18.98GB — no Q4_K_M available), `Llama-3.2-8X4B-MOE-V2-Dark-
-Champion-Instruct-uncensored-abliterated-21B` (Q4_K_M, 11.97GB). `/storage`
-has ample headroom (1TB total, ~103GB used before these). Hit and fixed a
-new gotcha getting these staged — see Decision 11: `host_bind_mounts`
-targets for unprivileged containers need the host-side directory owned by
-the container's default subuid-mapped UID (100000), not real root; found
-via `Permission denied` writing into `/data/models` from inside
-`llm-gpu-stack` despite it looking like a normal `root:root 0755`
-directory from inside the container. `llm_gpu_stack_ctx_size` (8192,
-shared globally across whatever model the router has loaded) is worth
-revisiting for these three — long-context chat/roleplay use is exactly
-where 8K may feel cramped; not yet changed, revisit if it becomes a
-problem in practice.
+**Chat-oriented models staged and confirmed live (2026-07-18):** three
+DavidAU "uncensored"/creative-writing GGUFs requested for OpenWebUI chat
+use (not coding) — `L3.1-MOE-6X8B-Dark-Reasoning-Dantes-Peak-HORROR-R1-
+Uncensored-36B` (Q4_K_M, 20.48GB), `Command-R-01-Ultra-NEO-DARK-HORROR-
+V1-V2-35B` (Q4_K_S, 18.98GB — no Q4_K_M available), `Llama-3.2-8X4B-MOE-V2-
+Dark-Champion-Instruct-uncensored-abliterated-21B` (Q4_K_M, 11.97GB).
+`llm-gpu-stack` now serves all six models total (the original three plus
+these); confirmed via `GET /v1/models` showing all six IDs, and via
+OpenWebUI's model picker after a page refresh. `/storage` has ample
+headroom (1TB total, ~103GB used before these, still well under half full).
+
+Two gotchas hit and fixed getting these staged:
+- **`host_bind_mounts` ownership** — see Decision 11: unprivileged
+  containers need the host-side bind-mount directory owned by the
+  container's default subuid-mapped UID (100000), not real root; found via
+  `Permission denied` writing into `/data/models` from inside
+  `llm-gpu-stack` despite it looking like a normal `root:root 0755`
+  directory from inside the container. Fixed with `chown -R
+  100000:100000 /storage/models/llm` on the host.
+- **Download tooling/memory** — plain anonymous `wget` slowed
+  dramatically partway through a ~20GB download; switching to an
+  authenticated HF token fixed the resolver-level behavior but not the
+  actual throughput (root cause turned out to be normal network-path
+  characteristics — the CDN resolved to AWS ap-southeast-1/Singapore
+  edges, not a HuggingFace rate limit). Installing HF's accelerated `hf`
+  CLI (`HF_XET_HIGH_PERFORMANCE=1`) directly inside `llm-gpu-stack` got
+  real speed (114MB/s) but got OOM-killed at ~10GB — Xet's
+  high-performance parallel-chunk transfer buffers substantially more
+  client-side memory than a simple stream, and blew past the container's
+  deliberately tight 8GB memory ceiling (sized for the inference workload,
+  not a download client). Landed on downloading via `hf`/Xet on a separate
+  personal workstation (ample RAM, no container ceiling to fight) and
+  `rsync -avP --partial` transferring the finished file straight into
+  `/storage/models/llm/` on the `pve-framework` host — sidesteps both the
+  memory ceiling and avoids installing extra tooling on production infra
+  entirely. Worth reusing this pattern for any future large model
+  downloads rather than fighting the container's memory budget again.
+
+Also confirmed (by design, not a bug): `llm-gpu-stack`'s router does
+**not** auto-discover new files dropped into its models directory — it
+needs an explicit `GET /v1/models?reload=1` (or a service restart) before
+new models show up, including in OpenWebUI's picker (which just reflects
+whatever the router currently reports).
+
+`llm_gpu_stack_ctx_size` (8192, shared globally across whatever model the
+router has loaded) is worth revisiting for these three — long-context
+chat/roleplay use is exactly where 8K may feel cramped; not yet changed,
+revisit if it becomes a problem in practice.
 
 Next: `n8n-stack` (n8n + Postgres + Redis) and `rag-stack` (Qdrant/Chroma,
 deferred until OpenWebUI's embedded default isn't enough) — see
