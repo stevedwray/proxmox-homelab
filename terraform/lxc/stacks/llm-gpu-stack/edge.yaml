@@ -1,0 +1,25 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: llm-gpu-edge
+  stack: llm-gpu-stack
+spec:
+  routes:
+    - name: llm-gpu
+      host: llm.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_LLM_GPU}:8080
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # Decision 8: llama-server is a machine API, not a browser login --
+        # it uses its own native --api-key-file auth (now actually
+        # configured, see LLM_GPU_STACK_API_KEY in secrets.common.enc.yaml)
+        # instead of Authentik. Traefik terminates TLS and routes only; the
+        # real auth boundary is the application layer.
+        mode: none

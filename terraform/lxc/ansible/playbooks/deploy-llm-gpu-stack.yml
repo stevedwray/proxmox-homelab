@@ -21,5 +21,11 @@
   hosts: all
   become: true
   gather_facts: true
+  vars:
+    # Set now that this service is being exposed through Traefik --
+    # Decision 8: llama-server uses its own native API-key auth instead of
+    # Authentik (it's a machine API, not a browser login), so this is the
+    # actual security boundary once the edge route's auth.mode is `none`.
+    llm_gpu_stack_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
   roles:
     - llm_gpu_stack
