@@ -11,12 +11,20 @@ llm_gpu_stack_models_max: 1
 # n_tokens = 8191 mid-reasoning, before it ever reached its actual answer
 # (its reasoning length is non-deterministic -- one run finished cleanly at
 # 2785 completion tokens, another ran to 6351 before getting cut off).
-# Raised to 32768 for headroom; GTT capacity analysis showed ample room
-# (largest concurrent scenario tested -- Llama-3.3-70B + a full ComfyUI
-# video job -- still had ~17GB of the 96GB ttm.pages_limit ceiling free at
-# the old 8192 ctx-size, plenty of margin for a 4x increase in the KV-cache
-# component). Revisit further (64K/128K) only if this proves insufficient.
-llm_gpu_stack_ctx_size: 32768
+# Raised to 32768, then to 65536 (2026-07-19) -- the first raise fixed
+# server-side truncation, but VS Code Copilot's own client-side context
+# management (separate maxInputTokens/maxOutputTokens budget, unrelated to
+# the server) started "compacting" conversations almost immediately at
+# 32768 -- its own baseline agent-mode system prompt/tool overhead alone
+# was eating a large enough share of a tightly-split 32768 budget to
+# trigger premature compaction before any real conversation happened.
+# Doubling gives both the server and every client's own budget-splitting
+# logic real headroom instead of requiring a precise split of a scarce
+# pool. GTT capacity analysis showed ample room (largest concurrent
+# scenario tested -- Llama-3.3-70B + a full ComfyUI video job -- still had
+# ~17GB of the 96GB ttm.pages_limit ceiling free at the original 8192
+# ctx-size). Revisit further (128K/256K) only if this proves insufficient.
+llm_gpu_stack_ctx_size: 65536
 llm_gpu_stack_port: 8080
 
 # Concurrent multi-slot decode (llama-server's default n_slots=4) corrupts
