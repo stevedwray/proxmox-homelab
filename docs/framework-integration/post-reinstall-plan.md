@@ -26,9 +26,20 @@ rationale.
   on `pve-framework`) so a future rebuild doesn't need to re-download
   ~78GB from HuggingFace.
 
-Next: `ai-services-stack` (OpenWebUI + SearXNG, native OIDC for OpenWebUI,
-`ai_seg` network) — see Decision 9. `n8n-stack` and `rag-stack` after
-that. NetBox registration explicitly deferred by the operator.
+**`ai-services-stack` live (2026-07-18):** CT 50012, OpenWebUI + SearXNG,
+`openwebui.lab.gibbsgreatly.xyz` verified working end-to-end — native
+OIDC via Authentik (provider/application created through
+`reconcile-authentik-edge.py`, required registering the new route in
+`discover-authentik-edge.py`'s `OIDC_ROUTE_CLIENT_IDS` allowlist first —
+a deliberate safety gate against auto-provisioning unregistered routes),
+OpenWebUI's login page confirmed showing the Authentik option via its own
+`/api/config` endpoint. Backend pre-configured with `llm-gpu-stack`'s API
++ key server-side. SearXNG never host-published, internal compose network
+only.
+
+Next: `n8n-stack` (n8n + Postgres + Redis) and `rag-stack` (Qdrant/Chroma,
+deferred until OpenWebUI's embedded default isn't enough) — see
+Decision 9. NetBox registration explicitly deferred by the operator.
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
