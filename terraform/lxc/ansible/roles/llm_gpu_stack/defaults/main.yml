@@ -7,6 +7,15 @@ llm_gpu_stack_models_max: 1
 llm_gpu_stack_ctx_size: 8192
 llm_gpu_stack_port: 8080
 
+# Concurrent multi-slot decode (llama-server's default n_slots=4) corrupts
+# shared GPU state on this HIP/ROCm build -- confirmed via reproducing
+# garbage/repeated-token output by firing simultaneous requests at the same
+# model (mirrors OpenWebUI's per-message main-chat + title-gen + tag-gen
+# pattern, which was the actual trigger, not any single prompt). Forcing
+# single-slot serialized handling eliminates the race; fine for a
+# single-user homelab where nothing needs true concurrent serving.
+llm_gpu_stack_parallel_slots: 1
+
 # Empty by default -- no Traefik route exists yet (Phase 2 not done), and
 # llamacpp-router-mode-deployment.md documents the router as currently
 # unauthenticated while bound to ai_seg only. Set a real key before this
