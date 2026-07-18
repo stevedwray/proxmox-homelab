@@ -14,6 +14,7 @@
       - python3-pip
       - git
       - ffmpeg
+      - rsync
     state: present
     update_cache: true
 
@@ -29,13 +30,32 @@
   register: comfyui_stack_dri_stat
   failed_when: not comfyui_stack_dri_stat.stat.exists
 
-- name: Clone ComfyUI
+- name: Clone ComfyUI into a scratch directory
+  # comfyui_stack_install_dir already exists and is non-empty by the time
+  # this runs -- host_bind_mounts (models/, output/) auto-create it as
+  # their mount-point parent before this role ever executes, and
+  # ansible.builtin.git (like plain `git clone`) refuses to clone into a
+  # non-empty directory. Clone to scratch, then merge in below, leaving
+  # the two bind-mounted subdirectories untouched.
   ansible.builtin.git:
     repo: "{{ comfyui_stack_repo }}"
-    dest: "{{ comfyui_stack_install_dir }}"
+    dest: /tmp/comfyui-clone
     version: master
     update: true
-    force: false
+    force: true
+  register: comfyui_stack_checkout
+
+- name: Merge cloned ComfyUI into the install dir (preserving bind-mounted models/output)
+  # Excludes must be anchored to the transfer root (leading /) -- an
+  # unanchored --exclude=models also matches ComfyUI's own internal
+  # comfy/ldm/models/ package deep in the source tree, silently dropping
+  # it and breaking `from .ldm.models.autoencoder import ...` at runtime.
+  ansible.builtin.command: # noqa: command-instead-of-module
+    cmd: >-
+      rsync -a --exclude=/models --exclude=/output
+      /tmp/comfyui-clone/ {{ comfyui_stack_install_dir }}/
+  when: comfyui_stack_checkout.changed
+  changed_when: true
 
 - name: Create ComfyUI Python venv
   ansible.builtin.command:
