@@ -4,7 +4,19 @@ llm_gpu_stack_llamacpp_repo: https://github.com/ggml-org/llama.cpp.git
 llm_gpu_stack_llamacpp_dir: /opt/llama.cpp
 llm_gpu_stack_models_dir: /data/models
 llm_gpu_stack_models_max: 1
-llm_gpu_stack_ctx_size: 8192
+# Shared globally across every model on the router, not per-model. 8192 was
+# fine for straightforward instruct models (Qwen2.5-Coder, Llama-3.3, etc.)
+# but is too small for verbose reasoning models -- confirmed via
+# llama-server's own logs showing Qwen3.6 hitting `truncated = 1` at
+# n_tokens = 8191 mid-reasoning, before it ever reached its actual answer
+# (its reasoning length is non-deterministic -- one run finished cleanly at
+# 2785 completion tokens, another ran to 6351 before getting cut off).
+# Raised to 32768 for headroom; GTT capacity analysis showed ample room
+# (largest concurrent scenario tested -- Llama-3.3-70B + a full ComfyUI
+# video job -- still had ~17GB of the 96GB ttm.pages_limit ceiling free at
+# the old 8192 ctx-size, plenty of margin for a 4x increase in the KV-cache
+# component). Revisit further (64K/128K) only if this proves insufficient.
+llm_gpu_stack_ctx_size: 32768
 llm_gpu_stack_port: 8080
 
 # Concurrent multi-slot decode (llama-server's default n_slots=4) corrupts
