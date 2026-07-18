@@ -486,3 +486,45 @@ existing native-OIDC integration outside the original Phase 04 core
 services (Technitium) already surfaced real friction — ignoring that
 signal and assuming "native OIDC just works" for every new app would be
 the wrong lesson to take from it.
+
+## Decision 9: Ancillary AI-stack services split into three stacks by real dependency shape (2026-07-18)
+
+Context: with `llm-gpu-stack`/`comfyui-stack` live, the remaining
+project-brief scope (OpenWebUI, SearXNG, n8n, Postgres, Redis, Qdrant/
+Chroma — already validated working together in the original bake-off
+harness) needs to land as real Terraform/Ansible stacks. First instinct
+was one-container-per-service, matching a (wrong) assumption about this
+repo's convention; checking `monitoring-stack` (a real, existing stack)
+showed it actually bundles four distinct Docker services — VictoriaMetrics,
+Grafana, a Harbor-findings-exporter, cAdvisor — in one container via one
+compose file. The real convention is "one container per cohesive stack,"
+not "one container per service."
+
+Decision: three stacks, split by actual dependency shape rather than by
+topic grouping:
+
+- **`ai-services-stack`**: OpenWebUI + SearXNG. Neither needs an external
+  database — OpenWebUI ships its own embedded vector store/SQLite by
+  default (basic RAG works before any dedicated vector-DB stack exists),
+  SearXNG is stateless. SearXNG is reached over Docker's internal compose
+  network only (`http://searxng:8080`), never published externally —
+  matches the bake-off's own proven pattern (Postgres/Redis/Qdrant
+  weren't host-published either; only what a human actually needs to
+  reach was). OpenWebUI gets native OIDC per Decision 8, a real Traefik
+  route (`openwebui.lab.gibbsgreatly.xyz`), `ai_seg` network.
+- **`n8n-stack`**: n8n + Postgres + Redis — kept separate because n8n is
+  the one service in this set with a genuine external-database
+  dependency (Postgres backing it, matching the bake-off's own config);
+  bundling it into `ai-services-stack` would tie an unrelated service's
+  restart/failure lifecycle to n8n's DB.
+- **`rag-stack`** (deferred, not yet scoped): Qdrant and/or Chroma, if/when
+  OpenWebUI's embedded default vector store isn't enough. Not a
+  prerequisite for `ai-services-stack` to be useful.
+
+Rationale: matches the real, verified repo convention (`monitoring-stack`)
+rather than an assumed one; splits along genuine dependency lines (does
+this service need an external DB or not) rather than superficial topic
+similarity ("AI stuff" vs "automation stuff"); keeps failure/restart
+isolation where it actually matters (n8n's DB dependency doesn't couple
+to OpenWebUI/SearXNG's lifecycle) without over-fragmenting into unnecessary
+single-service containers where nothing actually needs the isolation.

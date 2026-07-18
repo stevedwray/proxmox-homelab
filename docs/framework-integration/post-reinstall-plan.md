@@ -1,17 +1,34 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **`llm-gpu-stack` and `comfyui-stack` are live and reachable
-through the platform's normal HTTPS+auth pattern.** See
-`docs/workflow/session-handoff-2026-07-18.md` for the full continuity
-checkpoint (what's live, every bug found/fixed, open items) — this doc
-has the detailed phase-by-phase trail, that one is the "pick this back up"
-summary. Reinstall, Phase 0/1, storage restructure, templates, both GPU
-stacks, and Traefik/Authentik edge routing are all done:
-`llm.lab.gibbsgreatly.xyz` (own API-key auth) and
-`comfyui.lab.gibbsgreatly.xyz` (Authentik forward-auth) both verified
-working end-to-end. NetBox registration explicitly deferred by the
-operator. Next: stage model weights (operator decision — nothing is
-staged yet) and the dual-workload gateway.
+Status: **`llm-gpu-stack` and `comfyui-stack` are live, models staged,
+`ai-services-stack` (OpenWebUI + SearXNG) now being built.** See
+`docs/workflow/session-handoff-2026-07-18.md` for the earlier continuity
+checkpoint (superseded by this status block for anything past "models
+staged") and `decisions.md` Decision 9 for the ancillary-services split
+rationale.
+
+**Models staged (2026-07-18):**
+- `llm-gpu-stack`: Qwen2.5-Coder-32B-Instruct-Q4_K_M (19.85GB, default),
+  DeepSeek-R1-Distill-Qwen-32B-Q4_K_M (19.85GB, vuln-review specialist),
+  Llama-3.3-70B-Instruct-Q4_K_M (42.5GB, available but not recommended
+  over Qwen) — all in `/storage/models/llm/` on `pve-framework`,
+  confirmed working via a real inference request through Qwen.
+  `llm-gpu-stack`'s memory ceiling corrected from an initial wrong
+  50G estimate down to 8G (real anon usage measured at ~1.6GB even under
+  active GPU-offloaded inference — GPU-offloaded weights/KV-cache live in
+  host-level GTT memory via `ttm.pages_limit`, not this container's own
+  cgroup; don't conflate the two on this hardware).
+- `comfyui-stack`: Z-Image Turbo (diffusion model + `qwen_3_4b` text
+  encoder + VAE, ~20.6GB) staged in `/storage/models/comfyui/`. Not yet
+  reload-tested against the running service.
+- All three LLM `.gguf` files also backed up to an NFS NAS share
+  (`nas.gibbsgreatly.xyz:/volume1/Models`, mounted at `/mnt/nas-models`
+  on `pve-framework`) so a future rebuild doesn't need to re-download
+  ~78GB from HuggingFace.
+
+Next: `ai-services-stack` (OpenWebUI + SearXNG, native OIDC for OpenWebUI,
+`ai_seg` network) — see Decision 9. `n8n-stack` and `rag-stack` after
+that. NetBox registration explicitly deferred by the operator.
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
