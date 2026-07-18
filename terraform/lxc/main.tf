@@ -35,6 +35,7 @@ locals {
     lab_ip_ci_runner      = var.lab_ip_ci_runner
     lab_ip_llm_gpu        = var.lab_ip_llm_gpu
     lab_ip_comfyui        = var.lab_ip_comfyui
+    lab_ip_ai_services    = var.lab_ip_ai_services
     lab_gw_mgmt           = var.lab_gw_mgmt
     lab_gw_edge           = var.lab_gw_edge
     lab_gw_infra          = var.lab_gw_infra

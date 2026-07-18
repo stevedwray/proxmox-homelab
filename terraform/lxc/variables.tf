@@ -230,6 +230,12 @@ variable "lab_ip_comfyui" {
   default     = ""
 }
 
+variable "lab_ip_ai_services" {
+  description = "ai-services-stack (OpenWebUI+SearXNG) service IPv4 address (ai_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string
