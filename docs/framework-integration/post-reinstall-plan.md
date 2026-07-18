@@ -1,8 +1,13 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **in progress — reinstall, Phase 0 host bootstrap, and Phase 1
-network onboarding all done. Next: Phase 3 prerequisites (container
-templates, then `llm-gpu-stack`/`comfyui-stack`).**
+Status: **`llm-gpu-stack` and `comfyui-stack` are live on `pve-framework`.**
+Reinstall, Phase 0 host bootstrap, Phase 1 network onboarding, storage
+restructure, container templates, and both GPU stacks are all done —
+CT 50010 (`llama-router`, port 8080) and CT 50011 (`comfyui`, port 8188)
+both confirmed serving HTTP with real GPU passthrough working under
+`unprivileged: true`, the single biggest open unknown from the whole
+build, now proven rather than assumed. Next: Phase 2 (DNS/NetBox/Authentik
+onboarding) and the dual-workload gateway.
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
@@ -132,22 +137,25 @@ The dual-workload gateway (`docs/framework/dual-workload-gateway-design.md`)
 still depends on both stacks existing as real systemd services first —
 build it after, not as part of the initial reinstall pass.
 
-## What's still open before this is genuinely reinstall-ready
+## What's still open
 
-- **No real `terragrunt apply` yet.** Everything above is `plan`-clean but
-  untested end to end — the actual container creation, the HIP/ROCm build
-  running for real, the GPU actually initializing under
-  `unprivileged: true` + `device_passthrough`, and the `torchvision::nms`
-  patch actually matching are all still unverified. This is the next step
-  against the current disposable box, under the normal production
-  approval flow (`pve-framework` is a listed production node — see
-  CLAUDE.md), before it can be trusted as reinstall automation rather than
-  untested code.
-- Whether `unprivileged: true` + `device_passthrough` actually grants
-  working GPU access on this hardware at all — the original manual
-  bring-up of both 9001 and 9002 used the legacy privileged
-  `lxc.cgroup2.devices.allow` pattern, never this mechanism. Documented
-  fallback if it doesn't work: `unprivileged: false`.
+Both open items below from the pre-apply version of this section are
+now **closed (2026-07-18)** — see step 4 in the sequence below for the
+full trail: `terragrunt apply` succeeded for both stacks (after removing
+`device_passthrough`/bind-mount handling from Terraform's managed
+resource, per the root@pam restriction found), and
+`unprivileged: true` + out-of-band `device_passthrough` is confirmed
+working — `/dev/kfd`+`/dev/dri/*` visible and functional inside both
+containers, no need for the documented `unprivileged: false` fallback.
+
+Genuinely still open:
+- Phase 2 (DNS/NetBox/Authentik onboarding) for both new containers.
+- The dual-workload gateway (depends on both stacks existing as real
+  systemd services, which is now true).
+- No model weights staged yet in `/storage/models/{llm,comfyui}` — both
+  services are up but have nothing to actually serve/generate with yet.
+- Final memory ceiling validation for `llm-gpu-stack` once a real target
+  model/context-size is chosen (currently a conservative placeholder).
 
 ## Sequence, once the reinstall actually happens
 
@@ -247,17 +255,40 @@ build it after, not as part of the initial reinstall pass.
    trunk port, and a missing firewall accept rule), this rebuild's
    physical path worked cleanly on the first attempt — the MikroTik/
    switch config genuinely survived the reinstall unchanged, as predicted.
-4. **`llm-gpu-stack`, `comfyui-stack`** (not started): re-stage both
-   container templates first (the gap found in step 1 — custom Debian
-   Docker template via `build-debian-13-template.yml`, plain Ubuntu 26.04
-   via `pveam download`), then `terragrunt apply` both environments,
-   then the `deploy-llm-gpu-stack`/`deploy-comfyui-stack` playbooks
-   (`llm_gpu_stack`/`comfyui_stack` Ansible roles). This should be close to
-   a non-event if the pre-reinstall build-and-test work above was actually
-   finished (including a real, not just planned, apply) before the
-   reinstall happened — it wasn't (see "What's still open" above), so
-   treat this as the first real test of that code, not a rerun of
-   something already proven.
+4. **`llm-gpu-stack`, `comfyui-stack` — done (2026-07-18).** Both
+   templates staged, `terragrunt apply` for both environments, then the
+   `deploy-llm-gpu-stack`/`deploy-comfyui-stack` playbooks. Was not the
+   non-event the earlier text hoped for — genuinely the first real test
+   of this code, and it found three real bugs:
+   - **`device_passthrough` and bind-type `mount_point` blocks are both
+     hardcoded by Proxmox to `root@pam`-only authentication**, rejecting
+     the `automation@pve` API token's create call with a 403 regardless
+     of its Administrator RBAC role. Same restriction class the module
+     already worked around for the `keyctl` feature flag
+     (`configure-keyctl.yml`). Fixed the same way: removed both from the
+     Terraform-managed resource, added
+     `ansible/playbooks/configure-device-passthrough.yml` to apply them
+     out-of-band via direct root SSH `pct set` (true `root@pam`, not
+     subject to the restriction).
+   - `comfyui_stack`'s `git clone` into `/opt/ComfyUI` failed because the
+     bind-mounted `models`/`output` subdirectories had already created it
+     as a non-empty directory (mount points materialize before the role
+     runs). Fixed by cloning to a scratch path and merging via `rsync`.
+   - That same fix had its own bug: an unanchored `--exclude=models`
+     rsync pattern also matched ComfyUI's own internal
+     `comfy/ldm/models/` package deep in the source tree, silently
+     dropping it and breaking the service at runtime
+     (`ModuleNotFoundError: No module named 'comfy.ldm.models'`) until
+     anchored to `--exclude=/models`.
+
+   **Result, fully verified**: CT 50010 (`llama-router`, port 8080) and
+   CT 50011 (`comfyui`, port 8188) both confirmed serving real HTTP
+   traffic, both with `/dev/kfd`+`/dev/dri/*` visible and functional
+   inside an `unprivileged: true` container — this was flagged as
+   genuinely untested since the original bake-off always used privileged
+   containers; now proven, not assumed. The speculative `torchvision::nms`
+   patch (previously unconfirmed whether it would match the real
+   installed package) matched and applied correctly on the real run.
 5. **Platform onboarding** (Phase 2, now under the real name): Technitium
    host record for `pve-framework` (not `fe-pve`), NetBox device
    registration, Authentik OIDC wiring per Decision 8 for whichever web
