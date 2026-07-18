@@ -1,13 +1,17 @@
 # Post-Reinstall Bootstrap Plan — `pve-framework`
 
-Status: **`llm-gpu-stack` and `comfyui-stack` are live on `pve-framework`.**
-Reinstall, Phase 0 host bootstrap, Phase 1 network onboarding, storage
-restructure, container templates, and both GPU stacks are all done —
-CT 50010 (`llama-router`, port 8080) and CT 50011 (`comfyui`, port 8188)
-both confirmed serving HTTP with real GPU passthrough working under
-`unprivileged: true`, the single biggest open unknown from the whole
-build, now proven rather than assumed. Next: Phase 2 (DNS/NetBox/Authentik
-onboarding) and the dual-workload gateway.
+Status: **`llm-gpu-stack` and `comfyui-stack` are live and reachable
+through the platform's normal HTTPS+auth pattern.** See
+`docs/workflow/session-handoff-2026-07-18.md` for the full continuity
+checkpoint (what's live, every bug found/fixed, open items) — this doc
+has the detailed phase-by-phase trail, that one is the "pick this back up"
+summary. Reinstall, Phase 0/1, storage restructure, templates, both GPU
+stacks, and Traefik/Authentik edge routing are all done:
+`llm.lab.gibbsgreatly.xyz` (own API-key auth) and
+`comfyui.lab.gibbsgreatly.xyz` (Authentik forward-auth) both verified
+working end-to-end. NetBox registration explicitly deferred by the
+operator. Next: stage model weights (operator decision — nothing is
+staged yet) and the dual-workload gateway.
 This is the concrete, ordered runbook for what happens once the Framework
 Desktop is wiped and reinstalled from scratch under its real name
 (`pve-framework`, not the prior exploration-only `fe-pve`), per Decision 7.
