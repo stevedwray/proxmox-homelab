@@ -459,6 +459,8 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (base_url,)
     if _oidc_route_key(intent) == ("technitium-stack", "technitium"):
         return (f"{base_url}/sso/callback",)
+    if _oidc_route_key(intent) == ("ai-services-stack", "openwebui"):
+        return (f"{base_url}/oauth/oidc/callback",)
     return ()
 
 
