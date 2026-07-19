@@ -464,7 +464,80 @@ acceptance testing — the plan's own rule that the final decision names a
    now that a working combination (LM Studio) exists. Revisit only if LM
    Studio itself fails later acceptance testing and a fallback is needed.
 
-## 1. Purpose
+### Phase 6 (Qwen3-Coder) started — near-miss caught before damage
+
+`Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf` (18.56 GB) landed on
+`/data/models` via the operator's own `hf` + rsync workflow while Phase 3
+work was wrapping up; `Q6_K` had not yet arrived. Started Q4 testing
+immediately rather than wait idle (section 10.2), reusing the LM Studio
+harness: unloaded Llama 3.3, imported the new GGUF via
+`--symbolic-link` (no duplicate copy), loaded with the same `-c 65536
+--parallel 1 --gpu max` settings (17.28 GiB, ~18s).
+
+**Near-miss, caught before any data was lost**: `run_phase3_lmstudio.sh`
+had hardcoded output paths (`results/phase3-lmstudio-protocol-ladder`
+etc.) — running it a second time for a new model would have silently
+overwritten the Llama 3.3 results it had just produced. Caught this
+*before* the overwrite occurred (the script only writes at the very end
+of each stage), killed the run, renamed the existing Llama 3.3 result
+directories to `results/phase3-lmstudio-llama33-*`, and added a required
+`<result_label>` argument to the script so every model's results get
+their own namespaced directory going forward
+(`results/phase3-lmstudio-<label>-*`). Re-launched cleanly as
+`qwen3coder-q4`.
+
+### Phase 6 Q4 results — fast and mostly correct, but a real tool-selection concern
+
+**Protocol ladder**: 26/27 by the validator, but two of the "valid" cases
+are confounded by the `--tool-choice-override required` substitution and
+deserve separate scrutiny. Looking at the *un-confounded* rungs (where
+`tool_choice` was already a plain string in the original fixture, no
+override applied):
+
+- `03_required_selection` (task: find every reference to `DATABASE_URL` —
+  the obviously correct tool is `search_files`): **called `read_file` on
+  all 3 reps.** Wrong tool, unambiguous case.
+- `06_tool_result_continuation` (task: after reading a file's content,
+  write a summary — the obviously correct next action is `create_file`):
+  **called `read_file` again on all 3 reps** — a redundant, wrong action.
+- `05_automatic_no_tool`: same over-calling pattern seen on both llama.cpp
+  and Llama-3.3-on-LM-Studio (calls `search_files` when no tool is
+  needed) — consistent with this being a cross-model/cross-server
+  tendency, not model- or server-specific.
+
+The two `tool_choice`-overridden rungs (forced `read_file`/`create_file`)
+also picked the *wrong* tool under the relaxed "any tool" constraint —
+consistent with, not independent evidence of, the same selection problem,
+but confounded by the override and not conclusive on their own.
+
+**Real-client reduced fixtures — corrected**: initially recorded as 3/4
+valid with `no_tools_control` flagged for "repetition." **That flag was a
+false positive in the validator, corrected before being relied on**: the
+actual content is a long (6,466-char), well-structured, entirely
+coherent response — a complete, correct quicksort implementation plus
+test data, README, a test runner, and requirements.txt, all syntactically
+valid Python/Markdown. The repetition heuristic's n-gram check counted
+legitimate repeated code-comment patterns (`# Test case`, `# Test Data`,
+`for _ in`) that recur naturally across a long structured response, with
+no requirement that the repeats be *clustered* the way a genuine
+degenerate loop's repeats are. Fixed `detect_repetition()` in
+`validator.py` to require repeats within a bounded nearby window
+(`cluster_span_words`), not just "occurs N times somewhere in the
+document" — verified against both the real DRY=0.8 degenerate case (still
+correctly flagged) and this Qwen3-Coder response (no longer flagged).
+Corrected result: **4/4 real-client-reduced fixtures pass**, and
+noticeably fast — 9.5s/13.8s/21.2s for the tool-calling ones, vs. Llama
+3.3's 36–110s on the same fixtures on the same server (consistent with
+the A3B MoE architecture's 3.3B active parameters vs. Llama's 70B dense).
+
+**Net assessment so far**: Qwen3-Coder Q4 does **not** reproduce the
+degenerate-collapse failure this investigation is chasing (a real,
+positive result, and faster than Llama 3.3 to boot) — but it has its
+**own** distinct problem: incorrect tool selection in unambiguous
+situations, seen cleanly (without the `tool_choice` confound) in two of
+seven protocol-ladder rungs. This needs weighing against Llama-3.3-on-
+LM-Studio, which selected the *correct* tool on every un-confounded rung
+it was tested against. Full 84-tool test running now.
 
 Establish a reliable complete configuration for local agentic coding in VS Code
 on the Framework Desktop. A complete configuration includes the client, server,
