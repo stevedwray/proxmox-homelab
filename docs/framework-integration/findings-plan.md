@@ -802,6 +802,40 @@ blocker — worth the operator's awareness before relying on this
 combination unattended, but not disqualifying given no test today has
 been able to make it recur on demand.
 
+### Second crash, on the small proven-reliable schema — confirms "probabilistic," not schema-tied
+
+A third agent_loop task (add an `is_prime` function + tests, same 5-tool
+set that ran 10/10 clean turns earlier) **crashed at turn 4** — same
+signature (`HTTP 400: "Engine protocol predict request failed: fetch
+failed"`), caught cleanly this time by `agent_loop.py`'s transport-error
+handling (no unhandled traceback). This is the single most important
+data point on the crash question: **the exact small, previously-proven
+5-tool schema that completed 10/10 clean turns in an earlier task
+crashed here at only 4 tool calls in.** Combined with the 15/15 clean
+full-84-tool reps and the clean 10-turn 84-tool-padded run, this rules
+out tool-schema size, turn count, and sustained repeated load as reliable
+predictors — **the crash looks genuinely probabilistic**, a driver-level
+race under GPU decode load that can strike a small, simple request
+almost as readily as a large one, just infrequently.
+
+Recovery this time was notably different: `ensure_model_loaded.sh`
+reported the model "already loaded" (no reload needed), and a follow-up
+real request succeeded immediately — this crash instance was
+self-recovering, unlike the earlier two which needed a full
+`lms load`/`lms server start` cycle. Suggests there may be more than one
+severity tier of the same underlying Vulkan issue. Repo reset via `git
+checkout` for any further runs.
+
+**Net conclusion on reliability**: this combination (LM Studio + Vulkan +
+Qwen3-Coder) is very good but not bulletproof — expect an occasional
+crash requiring a health-check-and-reload (now automated via
+`ensure_model_loaded.sh`), roughly on the order of a few times across
+today's ~30+ trials (2 clearly needing reload, 1 self-recovering, out of
+single-shot and multi-turn tests numbering well over 30 all told). Any
+production use of this combination should assume this and wrap requests
+with the same kind of health-check-and-retry logic built here, not treat
+it as "just works."
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
