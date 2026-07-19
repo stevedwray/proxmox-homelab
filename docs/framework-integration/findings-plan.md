@@ -693,6 +693,45 @@ note above. Not yet conclusively isolated (turn count and schema size
 both differ between the two cases); more multi-turn runs at varying tool
 counts would sharpen this further.
 
+### Crash-trigger experiment result — hypothesis refuted, root cause still open
+
+Extended `agent_loop.py` with `--extra-tools-from-fixture` to pad the
+5-tool set with the other 79 tools from the real captured Copilot
+request (same names/schemas, not synthetic), giving a genuine
+Copilot-sized 84-tool schema while keeping the same 5 tools actually
+executable (calling any of the other 79 returns a stub "not available"
+error, the way a real client would handle an unsupported tool). Re-ran
+the identical defect-repair task from the clean 5-tool success above.
+
+**Result: no crash.** 10/10 turns completed, `finish_reason: tool_calls`
+throughout, ending on `replace_string_in_file` — `validate.sh` still
+exits 0 (the fix was correct even though the run hit `--max-turns` before
+a final verification call). **This refutes the "large tool schema +
+multi-turn" hypothesis as stated** — the exact same 84-tool schema that
+appears in the request that crashed during real Copilot usage did *not*
+crash across 10 full turns here.
+
+Checked actual growth to understand why: this run's assistant-generated
+content totalled only ~1,812 characters across all 10 turns (the
+disposable-fixture's files/test output are tiny), so total context
+likely stayed well below what accumulated in the real Copilot session by
+its 7th message. The crash-triggering session's exact prompt shape
+(system prompt content/length, precise tool-result formatting, possibly
+larger real file contents) hasn't been replicated — the difference could
+be genuine context-size growth (not just tool-schema size, which is
+mostly fixed overhead regardless of turn count), something specific to
+Copilot's own request formatting this harness doesn't reproduce, or the
+crash could simply be non-deterministic (a driver-level race condition
+under sustained decode load, which wouldn't reproduce on every attempt
+regardless of prompt shape).
+
+**Decision: stop chasing the exact root cause for now** — diminishing
+returns given the effort already spent, and not necessary to reach the
+plan's practical goal. Redirecting remaining overnight effort toward
+building empirical crash-rate statistics across many varied trials
+(useful for the promotion gate regardless of mechanism) rather than
+further isolating this one mechanism.
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
