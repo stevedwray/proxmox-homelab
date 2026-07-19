@@ -605,6 +605,20 @@ degenerate-collapse failure this whole investigation started from (a
 malformed response a client can detect and retry, not a silently wrong
 one).
 
+**Quantified overnight**: a 15-trial varied-seed sweep across
+`nine_tools`/`one_tool_create_file`/`minimal_prompt_one_tool` (5 seeds
+each) hit this same leak exactly once (seed 1004,
+`minimal_prompt_one_tool`) — manually confirmed by reading the raw
+content (correct `<function=create_file>` XML, correctly formed,
+simply not extracted). **Empirical rate so far: roughly 1-in-15 to
+1-in-8 depending how the earlier 2/2 auto-mode-twin trials are weighted
+in** — real, worth tracking, but the other 14/15 in this sweep parsed
+correctly, including every `nine_tools` and `one_tool_create_file` trial.
+Not frequent enough to be a blocking concern on its own, but frequent
+enough that any client integration should treat a `content` field
+containing `<function=` as a signal to retry rather than display as
+prose.
+
 ### Phase 6 Q4 full-84-tool result — no crash, correct, fast
 
 Where Llama 3.3 on LM Studio crashed with `vk::Queue::submit:
