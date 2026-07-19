@@ -732,6 +732,36 @@ building empirical crash-rate statistics across many varied trials
 (useful for the promotion gate regardless of mechanism) rather than
 further isolating this one mechanism.
 
+### Overnight reliability sweep result — 10/10, zero crashes
+
+Built `overnight_reliability_sweep.sh`: repeats the full 84-tool fixture
+N times against Qwen3-Coder, health-checking/auto-recovering
+(`ensure_model_loaded.sh`) between every rep, tallying pass/fail/crash.
+Ran 10 reps unattended.
+
+**Result: 10 pass, 0 fail, 0 crash.** Timings: 107.9s (first rep, likely
+cold-cache warmup), then 22.2–37.8s for the remaining 9, one anomalously
+fast at 4.1s (not investigated further — didn't fail validation, may just
+have been a shorter correct response). Combined with the earlier 3/3
+single-shot reps and 2/2 multi-turn reps (one of which used this exact
+84-tool schema), **the full-84-tool fixture is now 15/15 clean across
+every test run today** on Qwen3-Coder. The one and only crash observed
+all day remains the single real Copilot session — still unreproduced by
+any synthetic test, despite deliberately targeting tool-schema size,
+multi-turn accumulation, and now sustained repeated load as candidate
+triggers.
+
+**Working conclusion for tonight**: whatever triggered the real-session
+crash is either rare/probabilistic (a driver-level race that doesn't fire
+on most attempts) or tied to some aspect of Copilot's actual request
+shape not yet reproduced here (exact system prompt, exact tool-result
+formatting, or real accumulated file-content sizes larger than the tiny
+disposable-fixture repo's). Given 15/15 clean synthetic runs, this reads
+as a real but apparently low-frequency risk, not a reliably-reproducible
+blocker — worth the operator's awareness before relying on this
+combination unattended, but not disqualifying given no test today has
+been able to make it recur on demand.
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
