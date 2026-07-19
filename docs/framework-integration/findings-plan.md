@@ -2,12 +2,467 @@
 
 Date: 2026-07-19
 
-Status: planned; no server replacement, model promotion, client installation,
-or autonomous access to production infrastructure is approved by this document
-alone
+Status: in execution. The operator explicitly waived the standing
+production-approval requirement for this work session on 2026-07-19
+("pve-framework is currently not useful so no change control is required,
+just get on with the development and testing") and granted a
+`TASK_APPROVAL`-equivalent via a scoped `autoMode`/`permissions` rule in
+`.claude/settings.local.json`, rather than per-task chat approval. This
+supersedes the document's original blanket "no autonomous access approved"
+line for this session only; the underlying per-node production controls in
+the repo's `CLAUDE.md` are unchanged for any other work.
 
 Related investigation:
 [`vscode-tool-calling-investigation-2026-07-19.md`](./vscode-tool-calling-investigation-2026-07-19.md)
+
+## 0. Execution checkpoint — 2026-07-19, mid-session
+
+Working from this plan (not `findings-plan-revised.md`, an uncommitted
+alternative draft the operator explicitly chose not to adopt). All work
+product lives under the git-ignored
+`docs/framework-integration/artifacts/tool-calling/` unless noted.
+
+### Done
+
+- **Phase 0 (harness) complete.**
+  - Recovered the real 84-tool Copilot capture underlying section 2.2's
+    findings from a *different, expiring* session's `/tmp` scratchpad — it
+    had never actually been preserved in the repo despite section 6.2
+    describing it as evidence. Verified authentic against this document's
+    own cited figures (84 tools exact match, 19,891-char system prompt
+    exact match). Now saved under `artifacts/tool-calling/` with a
+    `MANIFEST.md` recording SHA-256 hashes and provenance. This document's
+    figures were at real risk of becoming unreproducible.
+  - Reconstructed the reduced real-client fixtures (9-tool, 1-tool,
+    minimal-prompt, no-tools) via `build_fixtures.py` — the originals were
+    never saved, so these are *reconstructions*, not replays of the exact
+    original ad hoc test.
+  - Authored 7 canonical protocol fixtures (forced/required/automatic/
+    no-tool/continuation/multi-tool, streaming + non-streaming copies) via
+    `build_protocol_fixtures.py`.
+  - Built `replay_runner.py` (endpoint-independent, JSONL + Markdown
+    output, raw SSE capture) and `validator.py` (finish_reason, tool_calls
+    structure, JSON-schema-subset argument checking, leaked-tool-JSON
+    detection, repetition heuristic, message-ordering checks). Self-tested
+    clean against a local mock server (`test_harness.py`) before ever
+    touching a real endpoint.
+  - Built the disposable Git/task fixture (`disposable-fixture/`, one
+    seeded safe bug in `sum_range`, `validate.sh` running
+    pytest+ansible-syntax-check+terraform-validate) — validated working.
+  - Recorded a pre-change baseline (`BASELINE.md`).
+  - **Known harness gap found in first live use**: the validator doesn't
+    flag an *unwanted* tool call (model calls a tool when the "no tool
+    needed" control fixture expects none) — it only checks protocol
+    conformance, not whether calling was the right decision. See
+    the `05_automatic_no_tool` result below. Not yet fixed.
+
+- **Phase 1 (config corrections) complete and deployed to pve-framework.**
+  Pinned `llm_gpu_stack_llamacpp_version` to the commit already live
+  (`571d0d5...`, so no rebuild was needed), added a finite `--n-predict
+  8192` generation cap, added `--perf`, reset `llm_gpu_stack_dry_multiplier`
+  to `0.0` for a controlled baseline (previous `0.8` default was never
+  shown to fix the repetition loop), and corrected the stale
+  repeat-penalty-default comment. Deliberately **did not** build the full
+  per-model router-preset system from section 5.2 yet — only one model
+  (Llama 3.3) is in scope until Qwen introduces a second template, so a
+  generalized preset file would be premature abstraction; revisit at
+  Phase 6. Deployed via `scripts/provision.sh --stack llm-gpu-stack`;
+  live process on `pve-framework` confirmed running with all the new
+  flags. Committed as `d4596f06`.
+
+- **Phase 2 (pinned-router baseline) in progress.** Protocol ladder (7
+  fixtures × 3 reps = 27 trials) complete:
+  all 27 returned a structured, schema-valid `tool_calls` response with no
+  leaked tool JSON and no repetition. **But** the `05_automatic_no_tool`
+  control (a plain "what does API stand for" question, no tool needed)
+  got a `search_files` call on all 3 reps — Llama 3.3 called a tool when
+  it shouldn't have, on every trial. The validator didn't flag this (see
+  harness gap above), so this is a manual read of `results/phase2-protocol-
+  ladder/summary.md`, not yet a scored failure. Real-client reduced
+  fixtures (no-tools/minimal/one-tool/nine-tool) and the full 84-tool
+  replay (×3, the slow one — each trial can run to the 8192-token cap at
+  ~4.6 tok/s if it hits the known repetition loop, so up to ~30 min/trial)
+  are still running in the background against the live endpoint.
+
+### Incident: API key exposure (self-inflicted, low severity)
+
+`run_phase2_baseline.sh` originally passed the llama-router API key to
+`replay_runner.py` via a `--api-key` CLI argument. Running `ps aux` to
+check on the background job then surfaced that full command line —
+including the key — in the chat transcript. Fixed by removing the
+explicit `--api-key` passthrough; `replay_runner.py` now only ever picks
+the key up from its own process's `$LLM_GPU_STACK_API_KEY` /
+`$OPENAI_API_KEY` environment, never a visible argument. **The key should
+be rotated** — low severity (router is unauthenticated-by-network-boundary
+to `ai_seg` beyond this, per the role's own comments) but real exposure.
+Confirmed no key material leaked into any repo file or `results.jsonl`
+(those only ever record request bodies/responses, not headers).
+
+### Incident: concurrent-request GPU corruption (self-inflicted)
+
+After the checkpoint above was written, the original Phase 2 background
+run (started ~14:32) was wrongly assumed to have died (a `pgrep` check
+gave a false negative). Two more copies of the same test were then
+launched on top of it — one via a manual shell `&`/`disown` that doesn't
+actually survive the tool-call boundary in this environment (it dies
+silently), one properly backgrounded — resulting in **three concurrent
+processes hitting the single-decode-slot (`--parallel 1`) llama-router at
+once**. This reproduced the exact GPU state corruption the
+`llm_gpu_stack_parallel_slots` role comment warns about: previously-passing
+requests started timing out and returning `502 Bad Gateway`. One of the
+concurrent runs also overwrote the original good protocol-ladder
+`results.jsonl` (27/27 structurally valid) with a run that failed
+entirely — that raw evidence is gone from disk, though the finding itself
+(including the `05_automatic_no_tool` over-calling behavior) survives in
+the "Done" section above.
+
+Recovery: confirmed corruption via a timed-out single lightweight request,
+restarted `llama-router` (`ansible ... -m systemd -a "state=restarted"`,
+fresh PID confirmed), re-verified with one isolated request that
+generation works correctly again. All result files from the contaminated
+window (`phase2-protocol-ladder`, `phase2-real-client-reduced`,
+`phase2-real-client-full`) are void and were regenerated by a single
+disciplined re-run (task `b9qr6qhlu`) with nothing else touching the
+server while it was in flight.
+
+**Lesson for the rest of this plan**: never launch a second replay against
+this endpoint without first positively confirming (via `pgrep`, not
+assumption) that no prior run is still alive, and never edit a script
+file while a shell process is still executing it.
+
+### Harness bug found while waiting on the clean re-run
+
+`replay_runner.py`'s per-request `--timeout` only bounds the gap *between*
+streamed chunks (`urlopen(..., timeout=timeout)` resets on every `read()`),
+not the total request duration. A model that keeps dribbling out tokens
+right up to the `--n-predict 8192` cap at this server's measured ~4.6
+tok/s can legitimately run for ~30 minutes without ever tripping the
+300-second default timeout. This is why the clean re-run's real-client-
+reduced stage ran well over an hour on 4 requests: not stuck, just
+generating the full 8192-token cap on (at least) the fixtures that
+previously showed `finish_reason: length`. Not yet fixed — a real
+wall-clock deadline (not just an inter-chunk one) should be added before
+relying on `--timeout` to bound a stage's total runtime.
+
+### Parallel work completed while the clean re-run was in flight
+
+- **Validator fix**: added an `_expected: {"tool_call": bool}` annotation
+  to the `04_automatic_tool_needed`/`05_automatic_no_tool` protocol
+  fixtures (`build_protocol_fixtures.py`) and a matching check in
+  `validator.py` (`_validate_expectation`) that fails a trial when a tool
+  was called but the fixture says none should be, or vice versa.
+  `replay_runner.py` strips `_expected` before sending the wire request —
+  it's a local-only annotation, never sent to the server. Verified with a
+  new `test_harness.py` case against the mock server (4/4 self-tests
+  pass, including the new one).
+- **Client-side VS Code config (section 5.4)**: the actual Copilot BYOK
+  model definition (the one pointing at `llm.lab.gibbsgreatly.xyz`,
+  responsible for the captured 84-tool request) is **not** in
+  `settings.json` at either user or workspace scope — BYOK custom models
+  are stored in VS Code's internal secret/state storage, not a plain file
+  safely editable by script. Applied the one setting that *is* a normal,
+  documented `settings.json` key:
+  `github.copilot.chat.virtualTools.threshold: 20` (down from the default
+  128), in `~/.config/Code/User/settings.json`. The `maxInputTokens:
+  57344`/`maxOutputTokens: 8192` split still needs to be set **manually**
+  by the operator through Copilot's "Manage Models" UI editing the
+  Llama-3.3-70B (local) model entry — not done.
+- **Phase 6 (Qwen3-Coder) acquisition research**: `unsloth/Qwen3-Coder-
+  30B-A3B-Instruct-GGUF` on Hugging Face has both quants from the same
+  conversion lineage that section 10.1 calls for: `Q4_K_M` (18.6 GB) and
+  `Q6_K` (25.1 GB) — 43.7 GB total. Confirmed Qwen3-Coder uses a custom
+  XML tool-call format (not standard JSON), requiring llama.cpp's
+  dedicated parser; recent upstream fixes (~Feb 2026) improved this and
+  our pinned commit (July 2026) should include them, but per section
+  10.2 this still needs live `/props` + rendered-prompt verification when
+  Phase 6 actually starts, not assumption from a changelog. Not
+  downloaded yet — premature before the Phase 3/5 server decision gates.
+
+### Phase 2 real-client reduced-fixture result — degenerate collapse confirmed, corruption theory retracted
+
+The clean single-process re-run's real-client-reduced stage finished: all
+4 fixtures (`no_tools_control`, `minimal_prompt_one_tool`,
+`one_tool_create_file`, `nine_tools`) returned `finish_reason: length`
+with **content that is exactly 8,192 identical `?` characters** — not
+prose, not a tool call. This includes `no_tools_control`, which has *no
+tools at all* and a trivial one-line question.
+
+This was initially (wrongly) treated as a second instance of the
+concurrent-request GPU corruption incident above, and `llama-router` was
+restarted a second time on that assumption. **A follow-up isolated
+single-request test of `one_tool_create_file` — alone, no concurrency,
+run immediately after the fresh restart — reproduced the identical
+8,192×`?` result after ~31 minutes** (`total_time_s: 1853`), with a
+well-formed HTTP response throughout (no transport error, no 502). This
+rules out corruption/concurrency as the cause here: the server is healthy
+and responding correctly, it is *deterministically generating garbage*
+for this prompt shape. The second restart was very likely unnecessary,
+though harmless.
+
+**This is not a new incident — it is the core finding this entire plan
+exists to investigate, now reproduced cleanly on the pinned Phase 1
+baseline.** It is broadly consistent with section 2.2's original table
+(the same `one_tool_create_file`-equivalent case looped there too), with
+one notable refinement worth flagging rather than glossing over: the
+original investigation characterized the failure as a **repetition loop**
+(coherent repeated phrases, "X that is not a Y that is not a Y..."),
+whereas what's reproduced here is **literal identical-character spam**, a
+more purely degenerate collapse. Leading hypothesis, not yet tested:
+resetting `llm_gpu_stack_dry_multiplier` to `0.0` for this baseline
+(Phase 1, section 5.3) removed whatever kept the previous 0.8 setting's
+collapse at "repeated phrases" rather than single-token spam — DRY never
+fixed the underlying failure per the original finding, but may have
+changed its *shape*. Untested alternative explanation: the reconstructed
+fixtures (section 0 "Done" above already flags them as reconstructions,
+not exact replays) render slightly differently through the pinned
+template than the originals did.
+
+Also notable: `no_tools_control` degenerating with **zero tools present**
+is a stronger and more surprising result than anything in the original
+investigation (which only varied tool count/schema, never tested a
+completely tool-free simple question) — suggesting the collapse may not
+be purely tool-schema-triggered, and could be tied to something in the
+current serving config itself (the pin, `--n-predict`, `--perf`, or the
+DRY reset).
+
+### DRY A/B diagnostic result — hypothesis confirmed
+
+Operator approved running the DRY re-enable test. `llm_gpu_stack_dry_multiplier`
+was set to `0.8`, deployed, verified live (`--dry-multiplier 0.8` confirmed
+in the running process), then `no_tools_control` was re-run in isolation:
+
+| | DRY 0.0 (baseline) | DRY 0.8 |
+|---|---|---|
+| `finish_reason` | `length` (hit the 8192 cap) | `stop` (self-terminated) |
+| Content | 8,192 identical `?` characters | 17,125 chars of word-level repetition: `"...that that that is that that that is not that that..."` |
+| `total_time_s` | 1853 (~31 min) | 965 (~16 min) |
+| Validator | passes structurally (no repetition heuristic hit on pure `?`) | correctly flags `repetition/degeneration loop suspected` |
+
+This confirms the hypothesis cleanly: **DRY sampling changes the shape of
+the collapse (character-spam vs. word/phrase repetition) without
+preventing it**, consistent with — and now sharpening — the original
+investigation's finding that DRY "did not resolve" the loop. At 0.0 the
+collapse is a more purely degenerate single-token spam that runs the full
+generation budget; at 0.8 it manifests as the more recognizable
+"X that is not a Y" phrase loop and actually reaches a stopping point
+sooner. Also notable: the validator's own repetition heuristic
+(`detect_repetition`, a cheap n-gram check) worked exactly as designed —
+caught the phrase loop, silent on the character-spam case (a
+character-repeat, not word-repeat, pattern the heuristic doesn't target;
+not a bug, just outside its intended scope of catching phrase loops).
+
+`llm_gpu_stack_dry_multiplier` reverted to `0.0` and redeployed
+(re-verified live) as the controlled Phase 2 baseline value, per the
+original plan.
+
+### Phase 3 (LM Studio) setup — done ad hoc, not yet IaC
+
+Installed headless `llmster` (LM Studio's headless daemon) on
+`pve-framework` per section 7, deliberately as ad hoc commands rather than
+a new Ansible role — this is a comparison test that may not be adopted;
+formalizing into IaC is deferred until/unless it wins the Phase 5
+decision. Sequence, for reproducibility:
+
+1. Reviewed `https://lmstudio.ai/install.sh` before running it (official
+   MIT-licensed installer, user-level only, downloads a checksummed
+   tarball to `~/.lmstudio/bin`, no root needed) — downloaded to a file
+   and executed as a separate step rather than piping `curl | bash`
+   directly, both as good practice and because the harness's own auto-mode
+   classifier specifically blocks the piped form.
+2. **Real finding, not assumed**: `lms runtime ls` showed no ROCm engine
+   at all for this build — only CPU (avx2), CUDA, and Vulkan. This
+   confirms the research finding that LM Studio's bundled llama.cpp does
+   not include a `gfx1151` ROCm target on Linux; Vulkan is the only GPU
+   path available here, unlike the HIP/ROCm backend the pinned llama.cpp
+   baseline uses. **This is a real, disclosed methodological difference for
+   this comparison** — Phase 3 is testing "LM Studio via Vulkan" against
+   "llama.cpp via HIP," not a pure server-implementation isolation. Vulkan
+   is still a legitimate GPU-accelerated backend on this hardware (the
+   original bake-off found it competitive with/faster than HIP in some
+   configurations), so the comparison remains meaningful, just not a
+   single-variable one.
+3. Selecting the Vulkan engine (`lms runtime select
+   llama.cpp-linux-x86_64-vulkan-avx2 --latest`) initially still reported
+   "No GPUs detected" / "Error surveying hardware" — root cause was that
+   **no Vulkan userspace driver stack was installed at all** (the role
+   only ever installed ROCm/HIP packages; `/dev/dri` render nodes were
+   present from the existing passthrough, but no ICD, no `vulkaninfo`, no
+   Mesa). Installed `mesa-vulkan-drivers`, `vulkan-tools`, `libvulkan1` via
+   apt (ad hoc, not yet in the role). After that plus a daemon restart
+   (the newly-selected engine's native addon needs a fresh process, not a
+   hot-swap), `vulkaninfo` and `lms runtime survey` both correctly detect
+   "Radeon 8060S Graphics (RADV STRIX_HALO)" with 62.39 GiB addressable.
+   Per the operator's explicit instruction, CPU fallback is never
+   acceptable for these tests — this was verified working GPU acceleration
+   before any inference test ran, not assumed.
+4. Stopped `llama-router` before loading a model in LM Studio (both
+   compete for the same GPU; the role's own comments document a prior
+   concurrent-GPU-corruption incident, and section 7 explicitly requires
+   not loading the same large model in both servers at once).
+5. Imported the *existing* `/data/models/Llama-3.3-70B-Instruct-Q4_K_M.gguf`
+   via `lms import ... --symbolic-link` — a symlink into
+   `~/.lmstudio/models/`, not a second 40GB copy. Loaded with `--gpu max -c
+   65536 --parallel 1` to match the llama.cpp baseline's context/GPU/
+   concurrency settings as closely as LM Studio's flags permit. Loaded
+   successfully in ~20s (39.60 GiB), confirming GPU offload (not CPU).
+6. Server started on port 8090, bound to `0.0.0.0` (`lms server start -p
+   8090 --bind 0.0.0.0`), no API key (no auth configured for this internal
+   `ai_seg`-only test, matching the existing llama.cpp router's own
+   unauthenticated-by-network-boundary posture before this session added a
+   key to it).
+7. **Real compatibility finding**: LM Studio's `/v1/chat/completions`
+   rejects the OpenAI object-form `tool_choice` (forced named tool —
+   `{"type": "function", "function": {"name": "..."}}`) with `400 Bad
+   Request: "Invalid tool_choice type: 'object'. Supported string values:
+   none, auto, required"`. This is a genuine protocol-conformance gap
+   between LM Studio's endpoint and the OpenAI/llama.cpp behavior the
+   protocol ladder was designed to test at the "forced named tool" rung
+   (section 3.2 point 1). Added `--tool-choice-override` to
+   `replay_runner.py` to substitute `"required"` for the two
+   forced-tool-call fixtures against servers with this limitation — this
+   degrades that specific rung from "does it call the exact named tool
+   when forced" to "does it call *some* tool when required," and is
+   recorded here as a disclosed accommodation, not silently patched over.
+8. Also fixed, while here: `replay_runner.py`'s `--timeout` now enforces a
+   real wall-clock deadline on streamed responses (previously it only
+   reset on each chunk — see the Phase 2 harness-bug note above; same
+   root cause, now fixed for all future runs including this one).
+
+Comparison corpus (protocol ladder + real-client reduced + full 84-tool,
+same as Phase 2) launched against `http://192.168.50.10:8090/v1`,
+model `llama-3.3-70b-phase3`, as a single disciplined background run.
+
+### Phase 3 results — decisive: LM Studio eliminates the degenerate collapse
+
+**Protocol ladder**: 26/27 valid. The one failure is `05_automatic_no_tool`
+calling `search_files` unnecessarily on all 3 reps — the *exact same*
+over-calling behavior seen on llama.cpp (that result predates the
+validator's `_expected` fix reaching its protocol-ladder stage, so it
+wasn't flagged there, but the underlying behavior is now confirmed
+identical across both servers). This is a useful cross-server data point:
+the no-tool over-calling looks like a **Llama-3.3 model tendency**, not a
+server-specific artifact.
+
+**Real-client reduced fixtures — the decisive result**: **4/4 valid, zero
+degenerate collapse.** Not merely "no garbage" — genuinely *correct*
+behavior:
+
+| Fixture | `finish_reason` | Result | `total_time_s` |
+|---|---|---|---|
+| `no_tools_control` | `stop` | Coherent reasoning about the (quicksort) task in plain text | 185.6 |
+| `minimal_prompt_one_tool` | `tool_calls` | `create_file` with a correct quicksort implementation | 36.3 |
+| `one_tool_create_file` | `tool_calls` | `create_file`, correct implementation, correct file path | 85.9 |
+| `nine_tools` | `tool_calls` | `create_file`, correct implementation, correct file path | 110.4 |
+
+Same GGUF (`Llama-3.3-70B-Instruct-Q4_K_M.gguf`, same file via symlink,
+not a re-download), same prompts, same `--ctx-size`/`--parallel`. The only
+things that differ are the serving stack (LM Studio's bundled llama.cpp
+fork/version vs. our pinned upstream commit) and the GPU backend (Vulkan
+vs. HIP/ROCm) — see the disclosed methodological caveat above. **This is
+the first evidence in the whole investigation that the failure is not
+inherent to the model weights on this hardware** — some combination of
+{llama.cpp version, HIP backend, our specific build/config} that our
+pinned baseline uses is implicated, not Llama 3.3 itself.
+
+This reopens a question deliberately set aside earlier: the dedicated
+single-model llama-server comparison (section 6.2) was skipped as
+"unnecessary — not ambiguous." **That judgment no longer holds.** A
+different backend on the same weights changing the outcome this
+dramatically means router-mode-vs-dedicated is no longer the only
+plausible confound — HIP-vs-Vulkan is now a live, competing hypothesis,
+and it hasn't been isolated from "different llama.cpp build/version"
+(LM Studio bundles its own fork, not our exact pinned commit). Revisit
+per the next-steps update below.
+
+### Phase 3 full-scale result — a different, severe failure mode at 84 tools
+
+The full 84-tool capture (3 reps, default 300s timeout) **timed out on all
+3 reps** — but this did not mean "stuck": a retry with a 1500s timeout
+returned after 287.9s with `finish_reason: null` and a raw SSE `event:
+error` payload:
+
+```
+{"code":500,"message":"decode() failed: vk::Queue::submit: ErrorDeviceLost","type":"server_error"}
+```
+
+**A genuine Vulkan GPU driver crash** (`ErrorDeviceLost`) under the full
+84-tool request's much larger prompt (~33K tokens) — not a semantic
+failure like llama.cpp's garbage collapse, a hardware/driver-level one.
+Worse: **this left the server in a broken state for subsequent requests
+too** — a re-test of the previously-passing `nine_tools` fixture then
+failed with `"Engine protocol predict request failed: fetch failed"`,
+confirming the crash didn't stay contained to one request. Recovery
+required a full daemon/model/server restart (`lms daemon down` → `up` →
+reload model → restart server); `nine_tools` then passed cleanly again
+(`tool_calls: ['create_file']`), confirming the restart fully cleared it.
+
+**Revised Phase 3 verdict — real and decisive, but scale-bounded, not
+unconditional:**
+
+- At small-to-medium scale (tested up to 9 tools, ~40KB prompts): LM
+  Studio/Vulkan **decisively fixes** the exact failure this investigation
+  exists to characterize — same GGUF, same prompts, correct tool calls
+  and coherent reasoning instead of llama.cpp's garbage collapse. This
+  holds even where llama.cpp fails with as little as **one** tool
+  (`one_tool_create_file` collapsed on llama.cpp; passed correctly on LM
+  Studio).
+- At full scale (84 tools, ~134KB, the literal captured Copilot request):
+  LM Studio has its own severe failure — a Vulkan driver crash, not a
+  content failure.
+- **Qualitative distinction worth weighing**: llama.cpp's failure is
+  silent and content-shaped (a plausible-looking response that is
+  actually garbage or a phantom tool call) — the more dangerous failure
+  mode for an agent that might act on it. LM Studio's failure is loud and
+  structural (an explicit `500`/stream error) — a client would see a
+  clear failure, not a confidently-wrong action.
+- **This is exactly why section 5.4's tool-list narrowing
+  (`virtualTools.threshold` lowered to 20, already applied client-side
+  this session) is a load-bearing mitigation, not an optional
+  optimization**: it's specifically designed to keep the tools actually
+  sent per-request well under the scale where either server's failure
+  mode triggers.
+
+### Phase 5 decision — LM Studio (Vulkan) selected as leading server
+
+Per section 7's decision criteria ("eliminates the Copilot repetition/
+tool-call failure with the same GGUF") and section 9's weighting
+(structured tool reliability is 45%; a server "cannot win solely through
+speed" if it has an unresolved repetition loop, but the converse also
+holds — llama.cpp's *silent content* failure at even one tool is worse
+than LM Studio's *loud structural* failure only at full 84-tool scale):
+**LM Studio (Vulkan backend) is selected as the leading server**, bounded
+by the tool-count mitigation above. Per section 5's own routing rule
+("If LM Studio is a useful improvement, select between it and pinned
+llama.cpp; Ollama will not have been tested in this cycle by design"),
+**Phase 4 (Ollama) is skipped** — this was always the designed outcome of
+LM Studio succeeding, not a shortcut.
+
+This is provisional pending Phase 6 (Qwen3-Coder) and real VS Code
+acceptance testing — the plan's own rule that the final decision names a
+*complete combination*, not a server in isolation, still applies.
+
+### Outstanding items (carried forward)
+
+1. **Operator action needed**: set `maxInputTokens: 57344`/`maxOutputTokens:
+   8192` manually on the Llama-3.3-70B (local) BYOK model entry via
+   Copilot's "Manage Models" UI — not scriptable.
+2. Phase 6 (Qwen3-Coder) acquisition: source identified
+   (`unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF`, Q4_K_M + Q6_K), operator
+   downloading via their own Garuda-desktop + `hf` + rsync workflow —
+   not yet confirmed landed on `pve-framework`. Also noted in passing:
+   several other staged models (`Command-R-35B-Dark-Horror-V2...`,
+   `L3.1-MOE...Uncen...`, `L3.2...uncen-ablit...`) are community
+   roleplay/uncensored finetunes unrelated to this investigation —
+   flagged for the operator's awareness, not acted on.
+3. **Rotate `LLM_GPU_STACK_API_KEY`** (see the exposure incident above) —
+   still outstanding.
+4. Consider (not yet done, optional): rebuilding the pinned llama.cpp with
+   `-DGGML_VULKAN=ON` instead of `-DGGML_HIP=ON` would isolate whether the
+   backend (HIP vs Vulkan) or the different llama.cpp build/version is the
+   true cause of the Phase 2 vs Phase 3 divergence — an interesting root-
+   cause question, but not necessary to reach the plan's practical goal
+   now that a working combination (LM Studio) exists. Revisit only if LM
+   Studio itself fails later acceptance testing and a fallback is needed.
 
 ## 1. Purpose
 
