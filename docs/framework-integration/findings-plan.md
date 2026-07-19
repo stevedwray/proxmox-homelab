@@ -644,6 +644,55 @@ sufficient to shrink the schema actually sent), are now load-bearing
 open questions before this combination could be trusted for unattended
 or high-stakes use.
 
+### Overnight autonomous testing (operator handed off for the night)
+
+Operator confirmed the crash above and explicitly authorized continuing
+autonomously overnight, checking in again in the morning. Built two new
+pieces of harness infrastructure first:
+
+- `ensure_model_loaded.sh` — idempotent health-check-and-recover: checks
+  `lms ps` for the expected identifier, reloads + restarts the server if
+  missing. Run before any further server-touching test, given the
+  demonstrated real crash risk. (First attempt to invoke it piped a
+  script via ansible's shell module over stdin — ansible does not forward
+  stdin that way and the command hung; killed it and switched to the
+  proven copy-then-execute pattern used for the LM Studio installer.)
+- `agent_loop.py` — a genuine multi-turn agentic loop: sends the
+  conversation, executes any returned tool calls for real (read/create/
+  edit files, run shell commands) scoped to a disposable repo root, feeds
+  results back, repeats until the model stops or a turn limit is hit.
+  Closer to real Phase 8 acceptance testing than single-request replay,
+  and the first tool able to reproduce a *multi-turn* conversation the
+  way a real crash-triggering Copilot session does (all prior testing was
+  single-shot). Also fixed to catch transport errors (HTTP/connection
+  failures) cleanly instead of an unhandled traceback, since a transport
+  error here may mean the server itself just crashed again.
+
+**First real multi-turn task — clean success.** Task: "there is a
+failing test in this repository, find and fix it." Using only the 5-tool
+narrow set (`read_file`, `create_file`, `replace_string_in_file`,
+`list_dir`, `run_in_terminal`) from section 5.4's recommendation — 10
+turns, 9 tool calls, `finish_reason: stop` on its own: explored
+(`list_dir`, read README/source/tests) → reproduced the failure
+(`pytest`) → applied a precise minimal fix (`replace_string_in_file`,
+correctly changing `range(low, high)` to `range(low, high + 1)` — the
+exact seeded bug, nothing extraneous) → re-ran `pytest` → ran the
+project's own `validate.sh` → exit code 0 across pytest + ansible-lint +
+terraform validate. **No crash, no wasted turns, no fabrication** — this
+is a full section-8-style acceptance pass on this task. Repo reset
+(`git checkout`) for further runs.
+
+This is an important data point for the crash-trigger question: a
+genuine multi-turn conversation (10 turns) with a **narrow** tool set
+(5 tools) completed cleanly, while a **real Copilot session** (7
+messages, Copilot's much larger tool schema) crashed. This points at
+tool-schema/prompt size as the more likely trigger dimension than raw
+turn count — consistent with, and now better isolated from, the
+"probably tool-schema-triggered" hypothesis in the full-84-tool crash
+note above. Not yet conclusively isolated (turn count and schema size
+both differ between the two cases); more multi-turn runs at varying tool
+counts would sharpen this further.
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
