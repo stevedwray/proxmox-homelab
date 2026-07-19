@@ -22,6 +22,49 @@ alternative draft the operator explicitly chose not to adopt). All work
 product lives under the git-ignored
 `docs/framework-integration/artifacts/tool-calling/` unless noted.
 
+### TL;DR for the morning
+
+**Winning combination so far: LM Studio (Vulkan backend) + Qwen3-Coder-
+30B-A3B-Instruct Q4_K_M.** Confirmed live against your actual VS Code
+Copilot Chat session (correct, well-structured multi-file code), and
+extensively via harness testing overnight (see below). This replaces
+both the original pinned llama.cpp/HIP baseline (fails even at one tool)
+and Llama-3.3-on-LM-Studio (correct but crashes at full 84-tool scale).
+
+**What's solid:**
+- 15/15 clean on the full 84-tool capture (single-shot and multi-turn)
+- 14/15 clean on a varied-seed sweep of reduced real-client fixtures
+- One complete, verified real multi-turn coding task via the API (fix a
+  seeded bug — found root cause, fixed it, re-ran tests, all correct)
+- One complete, verified real Copilot Chat session (quicksort + tests,
+  algorithm 100% correct)
+
+**Two real, open issues — neither disqualifying, both worth knowing:**
+1. **Intermittent crash** (`vk::Queue::submit: ErrorDeviceLost` → `fetch
+   failed`): hit 3 times total today (once during your real Copilot
+   session, twice during my own testing) — including once on a small,
+   otherwise-100%-reliable 5-tool request. Looks genuinely probabilistic,
+   not tied to tool-schema size, turn count, or load — none of which I
+   could get to reproduce it on demand across 30+ deliberate attempts.
+   Built automated recovery (`ensure_model_loaded.sh`); any real
+   deployment should assume this and build in the same kind of
+   health-check-and-retry.
+2. **Parser bug**: LM Studio's XML-tool-call extraction for Qwen3-Coder
+   occasionally (~1-in-10-to-15) leaks the model's correctly-formed tool
+   call verbatim into `content` instead of parsing it into `tool_calls`.
+   Confirmed it's a parser issue, not a model issue (the raw XML is
+   always correct when this happens). Not resolved — a client should
+   treat literal `<function=` in a content field as a signal to retry.
+
+**Still outstanding for you:**
+- Rotate `LLM_GPU_STACK_API_KEY` (exposed in an earlier transcript — low
+  severity but real, see the incident note below)
+- Q6_K quant hasn't landed on `/data/models` yet as of the last check
+- The `maxInputTokens`/`maxOutputTokens` split on the Llama-3.3-70B BYOK
+  entry (Qwen3-Coder's entry already has this set correctly)
+- Everything below this point is the detailed, chronological record —
+  read on for the how/why, or stop here if the summary is enough.
+
 ### Done
 
 - **Phase 0 (harness) complete.**
