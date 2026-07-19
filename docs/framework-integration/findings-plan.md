@@ -496,19 +496,54 @@ override applied):
 
 - `03_required_selection` (task: find every reference to `DATABASE_URL` —
   the obviously correct tool is `search_files`): **called `read_file` on
-  all 3 reps.** Wrong tool, unambiguous case.
+  all 3 reps.** Wrong tool, unambiguous case — *initially* read as a model
+  weakness; corrected below.
 - `06_tool_result_continuation` (task: after reading a file's content,
   write a summary — the obviously correct next action is `create_file`):
-  **called `read_file` again on all 3 reps** — a redundant, wrong action.
+  **called `read_file` again on all 3 reps** — same pattern.
 - `05_automatic_no_tool`: same over-calling pattern seen on both llama.cpp
   and Llama-3.3-on-LM-Studio (calls `search_files` when no tool is
   needed) — consistent with this being a cross-model/cross-server
-  tendency, not model- or server-specific.
+  tendency, not model- or server-specific. This one is unaffected by the
+  parser bug found below (it's an `auto` rung).
 
-The two `tool_choice`-overridden rungs (forced `read_file`/`create_file`)
-also picked the *wrong* tool under the relaxed "any tool" constraint —
-consistent with, not independent evidence of, the same selection problem,
-but confounded by the override and not conclusive on their own.
+**Correction — this is an LM Studio parser bug, not a Qwen3-Coder
+reasoning failure.** Inspecting the raw `content` alongside the parsed
+`tool_calls` for `03_required_selection` shows the model's own generated
+text is *correct*:
+
+```
+I'll search for all references to "DATABASE_URL" in the repository.
+<function=search_files>
+<parameter=query>
+DATABASE_URL
+</parameter>
+</function>
+```
+
+— but the extracted `tool_calls` entry that LM Studio's OpenAI-compat
+layer produced from this is `read_file` with `{"path":"README.md"}`,
+matching neither the function name nor the arguments the model actually
+generated. `06_tool_result_continuation` shows the identical pattern:
+content correctly shows `<function=create_file><parameter=path>
+summary.txt</parameter>...`, parsed as `read_file` with
+`{"path":"summary.txt"}`. **Qwen3-Coder generated the right call in its
+native XML format both times; LM Studio's XML-to-JSON tool-call parser
+mis-translated it into a different name and different arguments.** This
+is exactly the protocol/parser-vs-model distinction section 3.2 exists to
+make, and exactly the risk flagged for Qwen3-Coder's "completely custom
+XML format" during acquisition research.
+
+The two `tool_choice`-overridden rungs (forced `read_file`/`create_file`,
+substituted to `"required"`) show the same mis-parse pattern. Put
+together, **every rung that used `tool_choice: "required"` (native or
+overridden) hit this parser bug; every rung using `"auto"` or no
+`tool_choice` — including all real-client fixtures, which is how Copilot
+actually calls the API — parsed correctly.** This looks like a bug
+specific to LM Studio's `required`-choice code path for this model's
+custom parser, not a general breakage. Not independently confirmed
+against LM Studio's upstream issue tracker; recorded here as an empirical
+finding from this harness, not a verified root cause.
 
 **Real-client reduced fixtures — corrected**: initially recorded as 3/4
 valid with `no_tools_control` flagged for "repetition." **That flag was a
@@ -531,13 +566,18 @@ noticeably fast — 9.5s/13.8s/21.2s for the tool-calling ones, vs. Llama
 the A3B MoE architecture's 3.3B active parameters vs. Llama's 70B dense).
 
 **Net assessment so far**: Qwen3-Coder Q4 does **not** reproduce the
-degenerate-collapse failure this investigation is chasing (a real,
-positive result, and faster than Llama 3.3 to boot) — but it has its
-**own** distinct problem: incorrect tool selection in unambiguous
-situations, seen cleanly (without the `tool_choice` confound) in two of
-seven protocol-ladder rungs. This needs weighing against Llama-3.3-on-
-LM-Studio, which selected the *correct* tool on every un-confounded rung
-it was tested against.
+degenerate-collapse failure this investigation is chasing, and its own
+tool-*selection* reasoning is correct even where the parser mangled the
+output (the model's raw XML named the right function with the right
+arguments both times). The real, load-bearing finding is narrower than
+first thought: **LM Studio's `tool_choice: "required"` path has a parser
+bug for Qwen3-Coder's custom XML format; `"auto"` (what Copilot actually
+sends) does not.** Given real client usage is `auto`-shaped, this doesn't
+disqualify the combination the way a `05_automatic_no_tool`-style failure
+would — but it does mean any client or workflow that relies on forcing a
+specific tool (`tool_choice: "required"` or a named function) against
+Qwen3-Coder on LM Studio cannot currently be trusted, until/unless
+retested against a newer LM Studio/llama.cpp-fork build.
 
 ### Phase 6 Q4 full-84-tool result — no crash, correct, fast
 
