@@ -602,6 +602,48 @@ tool-selection weakness needs to be kept in view for Phase 8's more
 varied acceptance tasks (search, refactor, diagnostics), not dismissed,
 but it doesn't offset the decisive real-client result on its own.
 
+### First real VS Code acceptance signal — and a real-usage crash
+
+With Qwen3-Coder pointed at directly from Copilot BYOK (operator edited
+`~/.config/Code/User/chatLanguageModels.json` directly — a real, plain
+JSON file, not opaque internal state as earlier assumed; corrected that
+understanding), the operator ran an actual live Copilot Chat session
+against `qwen3-coder-30b-phase6`: "create a Python quicksort
+implementation with test data." Result, in `~/git/vscode-ai-testing/`:
+a correct recursive quicksort, a separate correct in-place iterative
+version with proper edge-case handling, a test suite, and test data —
+genuinely good, well-organized multi-file output. Running the generated
+test suite: 12/15 pass; **the 3 failures are all the model making
+arithmetic mistakes hand-writing its own expected test values** (e.g.
+dropping a duplicate element when manually working out the sorted form
+of an 8-element array) — verified by comparing the actual
+`quicksort()` output against Python's own `sorted()`, which match
+exactly. The algorithm itself is 100% correct; only the model's manual
+verification-by-hand of its own test fixtures was sloppy. This is this
+plan's first genuine, if informal, positive VS Code acceptance signal.
+
+**Then, mid-session, the server crashed** — same signature as the
+full-84-tool synthetic crash (`vk::Queue::submit: ErrorDeviceLost` →
+`Engine protocol predict request failed: fetch failed`), but this time
+during **real Copilot usage** (7 messages, real ~11,000-token prompt with
+much of Copilot's full tool roster still present despite
+`virtualTools.threshold: 20`). This is the most important finding of the
+session: **the Vulkan crash is not a synthetic-scale-only curiosity — it
+can and did hit genuine interactive usage.** Recovered with the same
+reload procedure as before (`lms load` + `lms server start`), verified
+healthy with a clean sanity request.
+
+**Implication**: LM Studio + Qwen3-Coder is not yet a "just works"
+combination for sustained real Copilot sessions — it's demonstrably
+capable of excellent output, but carries a real, recurring crash risk
+once conversation/tool-schema size grows past some threshold between
+"9 tools, clean" and "real Copilot session, crashed." Locating that
+threshold more precisely, and/or getting Copilot's tool roster reliably
+narrowed (the `virtualTools.threshold` change alone did not appear
+sufficient to shrink the schema actually sent), are now load-bearing
+open questions before this combination could be trusted for unattended
+or high-stakes use.
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
