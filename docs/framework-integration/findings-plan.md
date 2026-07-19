@@ -537,7 +537,32 @@ positive result, and faster than Llama 3.3 to boot) — but it has its
 situations, seen cleanly (without the `tool_choice` confound) in two of
 seven protocol-ladder rungs. This needs weighing against Llama-3.3-on-
 LM-Studio, which selected the *correct* tool on every un-confounded rung
-it was tested against. Full 84-tool test running now.
+it was tested against.
+
+### Phase 6 Q4 full-84-tool result — no crash, correct, fast
+
+Where Llama 3.3 on LM Studio crashed with `vk::Queue::submit:
+ErrorDeviceLost` at this exact scale, **Qwen3-Coder Q4 handled the full
+84-tool capture correctly on all 3 reps** — `create_file` with the
+correct path and a correct quicksort implementation each time, no crash,
+no timeout. Timings: 101.8s / 37.1s / 23.2s — the first rep likely
+includes cold-cache/prompt-processing warmup; even the slowest is far
+faster than Llama 3.3 ever got at this scale (crashed before completing).
+
+Combined with the reduced-fixture results: **Qwen3-Coder Q4 is 7/7
+correct across every real-client scale tested (small through the full
+84-tool capture), with no degenerate collapse and no crash anywhere** —
+a materially better result than either llama.cpp/HIP (collapses even at
+one tool) or Llama-3.3/LM-Studio-Vulkan (correct through 9 tools, crashes
+at 84). This is weighed against the two genuine protocol-ladder
+tool-selection misses noted above, which are real but did not manifest
+in any of the real-client-shaped tests (whose correct tool was
+essentially unambiguous — the task always maps to `create_file`). The
+tool-selection weakness needs to be kept in view for Phase 8's more
+varied acceptance tasks (search, refactor, diagnostics), not dismissed,
+but it doesn't offset the decisive real-client result on its own.
+
+## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code
 on the Framework Desktop. A complete configuration includes the client, server,
