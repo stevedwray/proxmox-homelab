@@ -579,6 +579,32 @@ specific tool (`tool_choice: "required"` or a named function) against
 Qwen3-Coder on LM Studio cannot currently be trusted, until/unless
 retested against a newer LM Studio/llama.cpp-fork build.
 
+**Correction, found overnight — the auto/required split doesn't hold.**
+Built `auto`-mode twins of `03_required_selection` and
+`06_tool_result_continuation` (via `build_protocol_fixtures.py`,
+`_expected: {"tool_call": true}`) specifically to get a clean read past
+the required-mode confound. Result: **the exact same leak-into-content
+failure happened in `auto` mode too**, 3/3 and 3/3. Comparing the raw
+`content` field against a correctly-parsed `auto`-mode response
+(`04_automatic_tool_needed`, where `content` is only
+`"I'll check what's in the config.py file for you. Let me read it.\n"`,
+tool call cleanly extracted) against a failing one (`content` is the
+*entire raw XML block* verbatim, including a stray unmatched
+`</tool_call>` closing tag with no corresponding opening tag, tool_calls
+empty): **this is not an auto-vs-required split at all — it's an
+inconsistent parser that sometimes fails to extract the tool-call block
+regardless of `tool_choice` mode**, plausibly tied to formatting variance
+in exactly how the model closes/wraps its XML (the stray unmatched
+closing tag is a real clue, not confirmed as the root cause). The
+practical conclusion stands regardless of exact mechanism: **this parser
+issue is real and not fully understood, needs eyes-on review of raw
+responses rather than trusting the validator's `valid`/`invalid` count
+alone**, and is a genuine, open reliability question for Qwen3-Coder on
+this LM Studio build — separate from, and less severe than, the
+degenerate-collapse failure this whole investigation started from (a
+malformed response a client can detect and retry, not a silently wrong
+one).
+
 ### Phase 6 Q4 full-84-tool result — no crash, correct, fast
 
 Where Llama 3.3 on LM Studio crashed with `vk::Queue::submit:
