@@ -35,7 +35,7 @@
   ansible.builtin.git:
     repo: "{{ llm_gpu_stack_llamacpp_repo }}"
     dest: "{{ llm_gpu_stack_llamacpp_dir }}"
-    version: master
+    version: "{{ llm_gpu_stack_llamacpp_version }}"
     update: true
   register: llm_gpu_stack_llamacpp_checkout
 

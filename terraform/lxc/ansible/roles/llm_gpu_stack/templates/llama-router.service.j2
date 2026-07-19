@@ -10,10 +10,12 @@ ExecStart={{ llm_gpu_stack_llamacpp_dir }}/build-hip/bin/llama-server \
   --n-gpu-layers 999 \
   --ctx-size {{ llm_gpu_stack_ctx_size }} \
   --parallel {{ llm_gpu_stack_parallel_slots }} \
+  --n-predict {{ llm_gpu_stack_n_predict }} \
   --dry-multiplier {{ llm_gpu_stack_dry_multiplier }} \
   --dry-base {{ llm_gpu_stack_dry_base }} \
   --dry-allowed-length {{ llm_gpu_stack_dry_allowed_length }} \
-  --dry-penalty-last-n {{ llm_gpu_stack_dry_penalty_last_n }}{% if llm_gpu_stack_use_jinja %} \
+  --dry-penalty-last-n {{ llm_gpu_stack_dry_penalty_last_n }}{% if llm_gpu_stack_perf %} \
+  --perf{% endif %}{% if llm_gpu_stack_use_jinja %} \
   --jinja{% endif %}{% if llm_gpu_stack_api_key %} \
   --api-key-file /etc/llama-router/api-key{% endif %}
 

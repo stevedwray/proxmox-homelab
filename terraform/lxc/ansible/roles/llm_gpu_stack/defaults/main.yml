@@ -2,8 +2,25 @@
 llm_gpu_stack_amdgpu_target: gfx1151
 llm_gpu_stack_llamacpp_repo: https://github.com/ggml-org/llama.cpp.git
 llm_gpu_stack_llamacpp_dir: /opt/llama.cpp
+# Pinned commit, not `master` -- the prior `version: master` + `update: true`
+# meant a later provision could silently change the live binary and
+# invalidate any tool-calling comparison mid-experiment (see
+# docs/framework-integration/findings-plan.md section 2.1/5.1). This was
+# upstream `master` and the live build (`b10068`) as of 2026-07-19; bump
+# deliberately, not by drift.
+llm_gpu_stack_llamacpp_version: 571d0d540df04f25298d0e159e520d9fc62ed121
 llm_gpu_stack_models_dir: /data/models
 llm_gpu_stack_models_max: 1
+# Finite generation cap so a repetition/degeneration loop terminates instead
+# of running to the model's full context window. A client may still request
+# fewer tokens; this is only a ceiling. See findings-plan.md section 5.1.
+llm_gpu_stack_n_predict: 8192
+# Emit the server's own prompt/generation timing breakdown per response
+# (`timings` object) so prompt-processing and token-generation throughput
+# stay distinguishable -- conflating them previously produced a misleading
+# "~50 tok/s" figure that was actually prompt-processing speed (findings-plan.md
+# section 2.3).
+llm_gpu_stack_perf: true
 # Shared globally across every model on the router, not per-model. 8192 was
 # fine for straightforward instruct models (Qwen2.5-Coder, Llama-3.3, etc.)
 # but is too small for verbose reasoning models -- confirmed via
@@ -42,22 +59,24 @@ llm_gpu_stack_parallel_slots: 1
 # endpoint is ever exposed beyond ai_seg.
 llm_gpu_stack_api_key: ""
 
-# DRY sampling -- server-side default so every client gets baseline
-# protection against repeated-phrase degenerate loops ("X that is not a Y
-# that is not a Y...") regardless of whether it sends its own sampling
-# params. llama-server's plain `repeat_penalty` (default 1.1, already on)
-# only penalizes individual repeated tokens; it does not reliably catch
-# multi-token *phrase* repeats, which is what we actually hit -- reproduced
-# with two different models (Llama-3.3-70B via Copilot, Devstral-Small-2
-# via direct API), ruling out a client- or model-specific cause. DRY is
-# llama.cpp's purpose-built sequence-aware sampler for exactly this failure
-# class, but ships disabled by default (dry_multiplier defaults to 0.0) --
-# nothing in our stack or in Copilot/Continue's own requests turns it on.
-# Values are the commonly-recommended baseline; dry_allowed_length raised
-# from the bare default of 2 to 3 to tolerate short legitimate repeats in
-# generated code (repeated `if`/`def`/similar variable names) without
-# over-penalizing them.
-llm_gpu_stack_dry_multiplier: 0.8
+# DRY sampling -- llama.cpp's purpose-built sequence-aware sampler against
+# repeated-phrase degenerate loops ("X that is not a Y that is not a Y...").
+# llama-server's plain `repeat_penalty` (default 1.00, i.e. off by default --
+# corrected 2026-07-19; earlier comment here wrongly said 1.1/already-on)
+# only penalizes individual repeated tokens even when enabled; it does not
+# catch multi-token *phrase* repeats, which is what we actually hit --
+# reproduced with two different models (Llama-3.3-70B via Copilot,
+# Devstral-Small-2 via direct API), ruling out a client- or model-specific
+# cause. Ships disabled by default (dry_multiplier 0.0); this role
+# previously turned it on globally, but findings-plan.md section 2.3/5.3
+# found it did not resolve the preserved Copilot/Devstral repetition loops,
+# so it should not be credited as a fix. Reset to 0.0 (off) for a clean,
+# controlled Phase 2 baseline -- revisit as a per-model experiment once a
+# server/model combination is otherwise passing, not as a platform-wide
+# default. dry_base/dry_allowed_length/dry_penalty_last_n only take effect
+# once dry_multiplier is non-zero; left at their previously-chosen values so
+# re-enabling later is a one-line change.
+llm_gpu_stack_dry_multiplier: 0.0
 llm_gpu_stack_dry_base: 1.75
 llm_gpu_stack_dry_allowed_length: 3
 llm_gpu_stack_dry_penalty_last_n: -1
