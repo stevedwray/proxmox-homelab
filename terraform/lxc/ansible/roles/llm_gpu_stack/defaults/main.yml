@@ -70,12 +70,16 @@ llm_gpu_stack_api_key: ""
 # cause. Ships disabled by default (dry_multiplier 0.0); this role
 # previously turned it on globally, but findings-plan.md section 2.3/5.3
 # found it did not resolve the preserved Copilot/Devstral repetition loops,
-# so it should not be credited as a fix. Reset to 0.0 (off) for a clean,
-# controlled Phase 2 baseline -- revisit as a per-model experiment once a
-# server/model combination is otherwise passing, not as a platform-wide
-# default. dry_base/dry_allowed_length/dry_penalty_last_n only take effect
-# once dry_multiplier is non-zero; left at their previously-chosen values so
-# re-enabling later is a one-line change.
+# so it should not be credited as a fix. Confirmed again 2026-07-19 via a
+# one-fixture A/B: at 0.0, `no_tools_control` collapsed into 8192 identical
+# `?` characters (finish_reason: length); at 0.8, the same fixture collapsed
+# into word-level repetition ("that that that is not that...", 17k chars)
+# and actually self-terminated (finish_reason: stop) rather than exhausting
+# the generation cap. DRY changes the *shape* of the collapse, not whether
+# it happens -- back to 0.0 as the controlled baseline value. dry_base/
+# dry_allowed_length/dry_penalty_last_n only take effect once
+# dry_multiplier is non-zero; left set for whenever DRY is revisited as a
+# per-model experiment.
 llm_gpu_stack_dry_multiplier: 0.0
 llm_gpu_stack_dry_base: 1.75
 llm_gpu_stack_dry_allowed_length: 3
