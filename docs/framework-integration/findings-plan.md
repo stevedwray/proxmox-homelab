@@ -18,8 +18,8 @@ Related investigation:
 ## 0. Execution checkpoint — 2026-07-19, mid-session
 
 Working from this plan (not `findings-plan-revised.md`, an uncommitted
-alternative draft the operator explicitly chose not to adopt). All work
-product lives under the git-ignored
+alternative draft the operator explicitly chose not to adopt and which has
+since been deleted). All work product lives under the git-ignored
 `docs/framework-integration/artifacts/tool-calling/` unless noted.
 
 ### TL;DR for the morning
@@ -878,6 +878,66 @@ single-shot and multi-turn tests numbering well over 30 all told). Any
 production use of this combination should assume this and wrap requests
 with the same kind of health-check-and-retry logic built here, not treat
 it as "just works."
+
+### Root cause found, 2026-07-20 — it was never a Vulkan driver race
+
+A further real-usage crash (2026-07-19 19:03:17, same "fetch failed"
+signature, hit during actual VS Code Copilot use rather than synthetic
+testing) prompted going back to actually root-cause this rather than
+continuing to accept it as unexplained. LM Studio's own application log
+only ever shows the symptom — it has no visibility into what actually
+killed the process. Cross-referencing the exact crash timestamp against
+the **host's kernel log** (`journalctl -k` on `pve-framework` itself, not
+the container — required converting the container's UTC clock to the
+host's NZST, a 12-hour offset that initially obscured the correlation)
+found the real cause immediately:
+
+```
+oom-kill:constraint=CONSTRAINT_MEMCG,oom_memcg=/lxc/50010,
+  task_memcg=.../session-c71.scope,task=llama-server,pid=2006078,uid=100000
+Memory cgroup out of memory: Killed process 2006078 (llama-server)
+  total-vm:55106528kB, anon-rss:8128700kB, ...
+```
+
+The kernel OOM-killer terminated `llama-server` because `llm-gpu-stack`'s
+LXC container has a `memory: 8192` (8GB) cgroup ceiling — a value never
+sized for a 30B model at long context, and one that governs none of the
+model's actual GPU/GTT memory (that's `ttm.pages_limit`, a separate
+host-kernel boundary; confirmed a 17GB model loads fine inside this same
+8GB-ceilinged container, because weights/KV cache bypass the cgroup
+entirely). Checking every OOM kill on the host across the prior ~32
+hours found **six for six** with the identical signature — anon-rss
+clustered at 7.9–8.1GB, right against the 8GB ceiling, across every
+"probabilistic crash" instance characterized above (the crash-trigger
+experiment, the overnight sweep's clean run, and both "real" crashes).
+None showed any GPU-level signature (no `amdgpu` ring timeout, no device
+reset, no kernel GPU driver messages at all in these windows) — this
+was never the Vulkan reliability bug documented separately in
+`docs/framework/proxmox-strix-halo-setup-notes.md` §8 (a real but
+distinct issue: a genuine GPU ring-timeout/reset at default batch sizes
+with very long contexts, upstream-tracked as
+[ggml-org/llama.cpp#21724](https://github.com/ggml-org/llama.cpp/issues/21724)).
+That bug remains a real, separate risk worth guarding against
+independently (explicit `--batch-size`/`--ubatch-size` rather than
+defaults) — it simply isn't what caused any of the crashes recorded in
+this document.
+
+This fully explains why the crash looked "probabilistic" and independent
+of tool-schema size, turn count, and sustained load: it was never about
+request shape at all, it tracks accumulated host-RAM-side memory
+pressure inside a hard, undersized container ceiling.
+
+**This finding, combined with the operator's stated intent for this
+hardware (one flexible GPU resource, not two statically-partitioned
+containers), is why `pve-framework` is being rebuilt bare-metal on
+Ubuntu 26 rather than re-tuned in place.** See
+[`docs/framework-ubuntu/plan.md`](../framework-ubuntu/plan.md) for the
+migration plan and
+[`lessons-learned.md`](./lessons-learned.md) §1 for the full incident
+writeup. Nothing about the model/server/client selection above changes
+as a result — LM Studio + Qwen3-Coder-30B-A3B-Instruct + VS Code Copilot
+BYOK remains the validated configuration; only the host underneath it is
+changing.
 
 ## 1. Purpose
 

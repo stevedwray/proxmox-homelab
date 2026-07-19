@@ -5,6 +5,29 @@ IaC-managed environment (`pve-framework`), hosting a new AI/LLM application
 stack behind the existing Traefik / Authentik / step-ca / Technitium /
 Harbor / NetBox platform.
 
+> **Superseded for the *hosting* question (2026-07-20).** The Proxmox/LXC
+> memory model turned out to have a real, diagnosed reliability problem —
+> `llm-gpu-stack`'s 8GB LXC memory ceiling was silently OOM-killing the LLM
+> service under real usage, misread overnight as a "probabilistic Vulkan
+> crash." Combined with the operator's actual intent (one flexible GPU
+> resource, not two statically-partitioned containers), `pve-framework` is
+> being rebuilt bare-metal on Ubuntu 26 — see
+> **[`docs/framework-ubuntu/plan.md`](../framework-ubuntu/plan.md)** for the
+> migration plan and
+> **[`lessons-learned.md`](./lessons-learned.md)** for what's durable from
+> this Proxmox/LXC chapter versus what's now historical.
+>
+> **Still live and unaffected by this move**: everything below about model
+> selection, server choice, tool-calling behavior, and client integration —
+> [`findings-plan.md`](./findings-plan.md) and
+> [`vscode-tool-calling-investigation-2026-07-19.md`](./vscode-tool-calling-investigation-2026-07-19.md)
+> remain the current reference for the AI stack itself, independent of
+> which host it runs on.
+>
+> Everything else in this README describes the Proxmox/LXC-era state as it
+> stood before that decision — kept for context, not as current guidance
+> on how to host this.
+
 Status: **The reinstall happened (2026-07-18) — `pve-framework` is now the
 real, permanently-named host at `192.168.1.8`, not the disposable
 exploration-phase `fe-pve` box.** Phase 0 (host bootstrap) and Phase 1
@@ -133,3 +156,9 @@ workspace doesn't repeat it.
   this plan's Phase 3 must follow correctly from day one.
 - `docs/dns-refactor/`, `docs/step-ca-implementation/` — DNS/PKI patterns
   Phase 2 reuses rather than reinvents.
+- [pentesting.md](./pentesting.md) — exploratory feasibility scan for
+  running PentestGPT against the local model stack; not started, gated on
+  `findings-plan.md`'s client/server validation landing first.
+- [lessons-learned.md](./lessons-learned.md) — consolidated Proxmox/LXC/
+  Terraform-era findings, curated for anyone evaluating a similar setup on
+  different hardware; superseded here by `docs/framework-ubuntu/`.

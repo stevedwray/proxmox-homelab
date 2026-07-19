@@ -107,6 +107,8 @@
       "Bash(sed -n '52,70p' /home/steve/git/proxmox-homelab/terraform/lxc/stacks/monitoring-stack/stack.yaml)",
       "Bash(sed -n '52,68p' /home/steve/git/proxmox-homelab/terraform/lxc/stacks/proxy-stack/stack.yaml)",
       "Bash(./with-secrets ssh *)",
+      "Bash(./with-secrets-prod-framework *)",
+      "Bash(./with-secrets-prod *)",
       "Bash(./with-secrets terragrunt *)",
       "Bash(python3 -)",
       "Bash(echo \"Exit: $?\")",
