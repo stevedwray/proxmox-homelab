@@ -41,3 +41,31 @@ llm_gpu_stack_parallel_slots: 1
 # unauthenticated while bound to ai_seg only. Set a real key before this
 # endpoint is ever exposed beyond ai_seg.
 llm_gpu_stack_api_key: ""
+
+# DRY sampling -- server-side default so every client gets baseline
+# protection against repeated-phrase degenerate loops ("X that is not a Y
+# that is not a Y...") regardless of whether it sends its own sampling
+# params. llama-server's plain `repeat_penalty` (default 1.1, already on)
+# only penalizes individual repeated tokens; it does not reliably catch
+# multi-token *phrase* repeats, which is what we actually hit -- reproduced
+# with two different models (Llama-3.3-70B via Copilot, Devstral-Small-2
+# via direct API), ruling out a client- or model-specific cause. DRY is
+# llama.cpp's purpose-built sequence-aware sampler for exactly this failure
+# class, but ships disabled by default (dry_multiplier defaults to 0.0) --
+# nothing in our stack or in Copilot/Continue's own requests turns it on.
+# Values are the commonly-recommended baseline; dry_allowed_length raised
+# from the bare default of 2 to 3 to tolerate short legitimate repeats in
+# generated code (repeated `if`/`def`/similar variable names) without
+# over-penalizing them.
+llm_gpu_stack_dry_multiplier: 0.8
+llm_gpu_stack_dry_base: 1.75
+llm_gpu_stack_dry_allowed_length: 3
+llm_gpu_stack_dry_penalty_last_n: -1
+
+# --jinja makes llama-server render each GGUF's own embedded chat template
+# instead of its generic built-in fallback. Toggleable to test whether a
+# given model's tool-calling failures are a template-rendering mismatch
+# rather than the model itself -- temporarily testable per-deploy, not
+# meant to be a permanent per-model setting in router mode (this flag is
+# global across every model on the router).
+llm_gpu_stack_use_jinja: true

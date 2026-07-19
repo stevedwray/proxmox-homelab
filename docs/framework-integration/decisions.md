@@ -748,3 +748,14 @@ folder (`local-implementation.md`, `terraform-ansible.md`) that's
 rules get injected into every unrelated Continue workspace/project. Low
 priority given Continue is currently deprioritized in favor of Copilot,
 but worth doing if Continue comes back into active use.
+
+**Follow-up, same day — unresolved, see dedicated document.** Further
+testing found Llama-3.3-70B (the model this decision landed on) failing
+via the real Copilot client despite passing every direct-API test, and
+five additional models (Llama-3.3-70B-Q3_K_M, both Devstral Small
+variants, Hermes-3-Llama-3.1-8B) all failing tool-calling at the same
+specific step in different ways. Full methodology, results table, and
+the actual open question (never conclusively resolved) are in
+[`vscode-tool-calling-investigation-2026-07-19.md`](vscode-tool-calling-investigation-2026-07-19.md) —
+written specifically so a fresh session can critically review and retest
+it, not just take the conclusion on faith.
