@@ -56,8 +56,32 @@
     # §6) rather than the shared task's own 16GB default -- overridden
     # deliberately, not left at default.
     pmx_gpu_gtt_reserved_host_mb: 32768
+    # 192.168.40.11:3142 -- confirmed reachable from this host (nc test,
+    # 2026-07-20), matching the existing "all zones and LAN to Harbor and
+    # apt-cacher" firewall policy (terraform/lxc/network/pve.yaml). Same
+    # apt-cacher-ng proxy pattern lxc_base's role uses elsewhere in this
+    # repo, applied here since this host was set up without it initially.
+    framework_apt_cacher_host: 192.168.40.11
 
   tasks:
+    - name: Check if apt-cacher-ng is reachable before configuring proxy
+      ansible.builtin.wait_for:
+        host: "{{ framework_apt_cacher_host }}"
+        port: 3142
+        timeout: 3
+      register: framework_apt_cacher_reachable
+      ignore_errors: true
+
+    - name: Configure apt to use apt-cacher-ng proxy
+      ansible.builtin.copy:
+        dest: /etc/apt/apt.conf.d/01proxy
+        content: |
+          Acquire::http::Proxy "http://{{ framework_apt_cacher_host }}:3142";
+        owner: root
+        group: root
+        mode: '0644'
+      when: not (framework_apt_cacher_reachable.failed | default(true))
+
     - name: Add {{ framework_gpu_group_user }} to video/render groups for GPU device access
       ansible.builtin.user:
         name: "{{ framework_gpu_group_user }}"
