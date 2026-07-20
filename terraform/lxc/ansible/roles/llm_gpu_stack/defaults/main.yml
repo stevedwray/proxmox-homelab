@@ -9,7 +9,12 @@ llm_gpu_stack_llamacpp_dir: /opt/llama.cpp
 # upstream `master` and the live build (`b10068`) as of 2026-07-19; bump
 # deliberately, not by drift.
 llm_gpu_stack_llamacpp_version: 571d0d540df04f25298d0e159e520d9fc62ed121
-llm_gpu_stack_models_dir: /data/models
+# /data/models was the LXC-internal bind-mount target for the old
+# Proxmox/LXC deployment (pve-framework, retired -- see
+# docs/framework-ubuntu/plan.md). This role now only targets the bare-metal
+# host directly, so it points at the real host-side path instead of a
+# container-namespace indirection that no longer exists.
+llm_gpu_stack_models_dir: /storage/models/llm
 llm_gpu_stack_models_max: 1
 # Finite generation cap so a repetition/degeneration loop terminates instead
 # of running to the model's full context window. A client may still request

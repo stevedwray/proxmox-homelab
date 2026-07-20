@@ -1,0 +1,178 @@
+---
+# Installs and systemd-supervises LM Studio (llmster) on the Framework
+# Desktop, per docs/framework-ubuntu/plan.md Phase 3 (§9).
+#
+# The old setup ran LM Studio as a child of whatever ad hoc SSH/ansible
+# session started it (visible in OOM logs as `session-cNN.scope`) -- a
+# real reliability gap, since it didn't survive a host reboot without a
+# manual re-run (see decisions.md Decision 6). This replaces that with a
+# real systemd unit: `lms daemon up` self-daemonizes (forks and
+# reparents to PID 1, confirmed live -- ppid=1, returns immediately
+# rather than blocking), so `Type=forking` is correct; the actual
+# model-load/server-start steps are idempotent (checked, not
+# unconditionally re-run) via the supervisor script below, matching the
+# pattern in docs/framework-integration/artifacts/tool-calling/ensure_model_loaded.sh.
+#
+# Config carried forward from findings-plan.md / plan.md §8 (the known-good
+# snapshot): Qwen3-Coder-30B-A3B-Instruct Q4_K_M, 256K context, --parallel 1.
+#
+# Known, accepted limitation (plan.md §8): `lms load` has no
+# --batch-size/--ubatch-size flags and no documented config-file
+# passthrough for them (checked directly against the official headless
+# docs, 2026-07-20) -- the Vulkan long-context ring-timeout bug's fix
+# cannot be applied to LM Studio's engine the way it can to native
+# llama.cpp. Watch for it during Phase 3 validation; native llama.cpp
+# remains available specifically because it does support these flags.
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-lmstudio.yml
+
+- name: Install and systemd-supervise LM Studio (llmster) for AI/LLM workloads
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_lmstudio_user: steve
+    framework_lmstudio_model: qwen3-coder-30b-a3b-instruct
+    framework_lmstudio_identifier: qwen3-coder-30b-phase6
+    framework_lmstudio_context: 262144
+    framework_lmstudio_port: 8090
+    framework_lmstudio_home: "/home/{{ framework_lmstudio_user }}"
+
+  tasks:
+    - name: Check if llmster is already installed
+      ansible.builtin.stat:
+        path: "{{ framework_lmstudio_home }}/.lmstudio/bin/lms"
+      become: true
+      become_user: "{{ framework_lmstudio_user }}"
+      register: framework_lms_binary
+
+    - name: Download LM Studio install script (reviewed manually before first use, 2026-07-20 -- official MIT-licensed installer, user-level, checksummed)
+      ansible.builtin.get_url:
+        url: https://lmstudio.ai/install.sh
+        dest: /tmp/lmstudio-install.sh
+        mode: '0755'
+      when: not framework_lms_binary.stat.exists
+
+    - name: Run LM Studio install script
+      ansible.builtin.command: sh /tmp/lmstudio-install.sh
+      become: true
+      become_user: "{{ framework_lmstudio_user }}"
+      when: not framework_lms_binary.stat.exists
+
+    - name: Install LM Studio supervisor script (idempotent daemon-up/load/server-start)
+      ansible.builtin.copy:
+        dest: "{{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh"
+        mode: '0755'
+        owner: "{{ framework_lmstudio_user }}"
+        group: "{{ framework_lmstudio_user }}"
+        content: |
+          #!/bin/bash
+          set -euo pipefail
+          export PATH="{{ framework_lmstudio_home }}/.lmstudio/bin:$PATH"
+
+          if ! lms daemon status >/dev/null 2>&1; then
+            lms daemon up
+          fi
+
+          for _ in $(seq 1 30); do
+            lms daemon status >/dev/null 2>&1 && break
+            sleep 1
+          done
+
+          if ! lms ps 2>/dev/null | grep -q '{{ framework_lmstudio_identifier }}'; then
+            lms load '{{ framework_lmstudio_model }}' --gpu max \
+              -c {{ framework_lmstudio_context }} --parallel 1 \
+              --identifier '{{ framework_lmstudio_identifier }}' -y
+          fi
+
+          if ! lms server status 2>/dev/null | grep -qi running; then
+            lms server start --port {{ framework_lmstudio_port }} --bind 0.0.0.0
+          fi
+
+    - name: Install LM Studio systemd unit
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lmstudio.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=LM Studio (llmster) headless LLM server
+          After=network-online.target
+          Wants=network-online.target
+
+          [Service]
+          # llmster self-daemonizes (double-fork, reparents to PID 1) and
+          # writes no PID file anywhere (confirmed live, 2026-07-20) --
+          # Type=forking without a PIDFile cannot correctly track it and
+          # was observed to immediately run ExecStop right after the setup
+          # script exited, tearing the whole thing back down. oneshot +
+          # RemainAfterExit is the correct fit: run the idempotent setup
+          # once, mark the unit active, and don't try to supervise a
+          # specific long-running main process at all -- the periodic
+          # health-check timer (lmstudio-healthcheck.timer) covers restart-
+          # on-crash instead, which is a better fit anyway for this
+          # project's known crash mode (needs a full daemon/model/server
+          # re-check, not just a process restart).
+          Type=oneshot
+          RemainAfterExit=yes
+          User={{ framework_lmstudio_user }}
+          Group={{ framework_lmstudio_user }}
+          Environment=PATH={{ framework_lmstudio_home }}/.lmstudio/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          ExecStart={{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh
+          ExecStop={{ framework_lmstudio_home }}/.lmstudio/bin/lms daemon down
+
+          [Install]
+          WantedBy=multi-user.target
+      register: framework_lmstudio_unit
+
+    - name: Install LM Studio health-check service (re-runs the same idempotent supervisor script)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lmstudio-healthcheck.service
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Re-check LM Studio daemon/model/server state (idempotent)
+
+          [Service]
+          Type=oneshot
+          User={{ framework_lmstudio_user }}
+          Group={{ framework_lmstudio_user }}
+          Environment=PATH={{ framework_lmstudio_home }}/.lmstudio/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          ExecStart={{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh
+      register: framework_lmstudio_healthcheck_unit
+
+    - name: Install LM Studio health-check timer
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/lmstudio-healthcheck.timer
+        mode: '0644'
+        content: |
+          [Unit]
+          Description=Periodically re-check LM Studio daemon/model/server state
+
+          [Timer]
+          OnBootSec=2min
+          OnUnitActiveSec=2min
+
+          [Install]
+          WantedBy=timers.target
+      register: framework_lmstudio_healthcheck_timer
+
+    - name: Reload systemd units
+      ansible.builtin.systemd:
+        daemon_reload: true
+      when: >-
+        framework_lmstudio_unit.changed or
+        framework_lmstudio_healthcheck_unit.changed or
+        framework_lmstudio_healthcheck_timer.changed
+
+    - name: Enable and start lmstudio.service
+      ansible.builtin.systemd:
+        name: lmstudio.service
+        enabled: true
+        state: started
+
+    - name: Enable and start lmstudio-healthcheck.timer
+      ansible.builtin.systemd:
+        name: lmstudio-healthcheck.timer
+        enabled: true
+        state: started

@@ -1,0 +1,159 @@
+---
+# Bootstraps the Framework Desktop (bare-metal Ubuntu 26.04, AMD Strix
+# Halo / gfx1151) for AI/LLM workloads, per docs/framework-ubuntu/plan.md
+# Phase 1 (§9). Covers everything left after manual installer partitioning
+# (EFI + separate /boot + root as a plain ext4 partition, not LVM, + swap,
+# with an empty `vg0` VG already assembled on the remaining ~1.7TB -- see
+# plan.md §3):
+#
+#   - video/render group membership, needed before any process can open
+#     /dev/dri or /dev/kfd as a non-root user
+#   - a `models` logical volume in the existing `vg0`, mounted at
+#     /storage, matching the /storage/models/{llm,comfyui} path
+#     convention already used throughout findings-plan.md,
+#     comfyui-image-video-gen-findings.md, and the download scripts in
+#     docs/framework-ubuntu/model-sources/ -- deliberately not /data/models
+#     (that was the LXC-internal bind-mount target; there's no container
+#     namespace to bridge on bare metal, so this uses the host-side path
+#     convention directly)
+#   - ttm.pages_limit/ttm.page_pool_size GRUB tuning, reusing the existing
+#     shared task (tasks/proxmox-gpu-unified-memory-tuning.yml) so the
+#     ceiling is computed from this host's actual RAM rather than the
+#     literal old-host page count -- pmx_gpu_gtt_reserved_host_mb: 32768
+#     matches the documented 32GB-on-128GB policy
+#     (proxmox-strix-halo-setup-notes.md §6 / plan.md §8), not the task's
+#     own 16GB default
+#   - Mesa Vulkan + ROCm/HIP packages via plain apt -- no LXC abstraction
+#     boundary to reason about anymore, this IS the Ubuntu host directly
+#   - NFS client (nfs-common) + an on-demand automount fstab entry for the
+#     NAS models export (same noauto/x-systemd.automount shape the old
+#     host used -- backup/restore only, never a live-serving dependency)
+#
+# Does NOT yet: actually restore models from the NAS backup onto
+# /storage/models/{llm,comfyui} (separate step, real data transfer, run
+# once this playbook has created both ends of that path), or install
+# Docker/Ollama/llama.cpp/LM Studio (Phase 3, §9).
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-bootstrap.yml
+
+- name: Bootstrap Framework Desktop for AI/LLM workloads
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_gpu_group_user: steve
+    framework_models_vg: vg0
+    framework_models_lv_name: models
+    framework_models_lv_size: 100%FREE
+    framework_models_mount_point: /storage
+    framework_models_filesystem: ext4
+    framework_models_filesystem_label: models
+    framework_nas_export: "nas.gibbsgreatly.xyz:/volume1/Models"
+    framework_nas_mount_point: /mnt/nas-models
+    pmx_gpu_unified_memory_tuning_enabled: true
+    # Matches "we used 32GB on a 128GB box" (proxmox-strix-halo-setup-notes.md
+    # §6) rather than the shared task's own 16GB default -- overridden
+    # deliberately, not left at default.
+    pmx_gpu_gtt_reserved_host_mb: 32768
+
+  tasks:
+    - name: Add {{ framework_gpu_group_user }} to video/render groups for GPU device access
+      ansible.builtin.user:
+        name: "{{ framework_gpu_group_user }}"
+        groups: video,render
+        append: true
+
+    - name: Check if models logical volume exists
+      ansible.builtin.command: "lvdisplay {{ framework_models_vg }}/{{ framework_models_lv_name }}"
+      register: framework_models_lv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create models logical volume (remaining vg0 free space)
+      community.general.lvol:
+        vg: "{{ framework_models_vg }}"
+        lv: "{{ framework_models_lv_name }}"
+        size: "{{ framework_models_lv_size }}"
+        state: present
+      when: framework_models_lv_check.rc != 0
+
+    - name: Check if models LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+      register: framework_models_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format models logical volume
+      community.general.filesystem:
+        fstype: "{{ framework_models_filesystem }}"
+        dev: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        opts: "-L {{ framework_models_filesystem_label }}"
+      when: framework_models_fs_check.stdout | default('') == ''
+
+    - name: Create models mount point
+      ansible.builtin.file:
+        path: "{{ framework_models_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add models volume to fstab
+      ansible.posix.mount:
+        path: "{{ framework_models_mount_point }}"
+        src: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        fstype: "{{ framework_models_filesystem }}"
+        opts: defaults
+        state: present
+
+    - name: Mount models volume
+      ansible.posix.mount:
+        path: "{{ framework_models_mount_point }}"
+        src: "/dev/{{ framework_models_vg }}/{{ framework_models_lv_name }}"
+        fstype: "{{ framework_models_filesystem }}"
+        opts: defaults
+        state: mounted
+
+    - name: Create /storage/models/{llm,comfyui} subdirectories
+      ansible.builtin.file:
+        path: "/storage/models/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - llm
+        - comfyui
+
+    - name: Install NFS client (for the NAS backup/restore mount, §4 -- on-demand only, not a live-serving dependency)
+      ansible.builtin.apt:
+        name: nfs-common
+        state: present
+
+    - name: Create NAS mount point
+      ansible.builtin.file:
+        path: "{{ framework_nas_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add NAS models export to fstab (on-demand automount, matching the old host's convention -- not mounted at boot)
+      ansible.posix.mount:
+        path: "{{ framework_nas_mount_point }}"
+        src: "{{ framework_nas_export }}"
+        fstype: nfs4
+        opts: "rw,_netdev,noauto,x-systemd.automount,x-systemd.idle-timeout=600"
+        state: present
+
+    - name: Apply unified-memory GTT/TTM tuning (ttm.pages_limit/page_pool_size)
+      ansible.builtin.import_tasks: tasks/proxmox-gpu-unified-memory-tuning.yml
+
+    - name: Install Mesa Vulkan drivers and ROCm/HIP packages
+      ansible.builtin.apt:
+        name:
+          - mesa-vulkan-drivers
+          - vulkan-tools
+          - rocm-dev
+          - rocm-smi
+          - cmake
+          - build-essential
+          - git
+          - libcurl4-openssl-dev
+        state: present
+        update_cache: true

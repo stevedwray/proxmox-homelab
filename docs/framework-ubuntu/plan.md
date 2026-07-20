@@ -1,9 +1,12 @@
 # Ubuntu 26 Bare-Metal Migration — Plan
 
-Status: **planned, not started.** No changes have been made against
-`pve-framework` as a result of this document. The current Proxmox install
-stays in place and fully operational until this plan says otherwise (see
-§11 Rollback).
+Status: **in execution.** `framework.gibbsgreatly.xyz` is up and being
+built out live — Phases 0–3 are done and verified (see §0 checkpoint
+below). The old Proxmox host on this same physical hardware no longer
+exists (it was the same box, same IP, already repurposed) — the §11
+rollback plan's premise (keep Proxmox running until validated) is
+already moot for this hardware specifically; the models were fully
+backed up to NAS before that happened, so no data was at risk.
 
 Date: 2026-07-20.
 
@@ -24,6 +27,90 @@ Related documents:
   — §6–8 (unified memory, Vulkan/HIP performance, the Vulkan
   long-context reliability bug) are **not** Proxmox-specific and are
   carried forward into this plan directly (§4, §8 below).
+
+## 0. Execution checkpoint — 2026-07-20
+
+### TL;DR
+
+`framework.gibbsgreatly.xyz` (192.168.1.8) is a live, working Ubuntu
+26.04 host with three LLM backends running simultaneously, each
+verified with a real inference request. Everything below is done and
+re-runnable via committed Ansible, not ad hoc — safe to pick this up
+cold from this section alone.
+
+### Done
+
+- **Phase 0 (prep)**: LLM (238GB) and ComfyUI (20GB) models fully backed
+  up to NAS, verified byte-for-byte matching. Two previously
+  host-local-only model-download scripts pulled into
+  `docs/framework-ubuntu/model-sources/`.
+- **Phase 1 (base install)**: manual install kept minimal (EFI + root +
+  swap as plain partitions, empty `vg0` VG). Everything else via
+  `ansible/00-initial-setup/framework-desktop-bootstrap.yml`: `models`
+  LV created/mounted at `/storage`, `video`/`render` group membership,
+  `ttm.pages_limit`/`page_pool_size` GRUB tuning (recomputed from this
+  host's real RAM, not the old host's literal value), Mesa/ROCm
+  packages, NFS client + on-demand NAS automount, and the actual model
+  restore (rsync from NAS onto local disk — hit and immediately fixed a
+  self-inflicted command-syntax mistake mid-transfer, no data lost).
+  Rebooted and re-verified: GTT ceiling active, GPU still functional.
+- **Phase 2 (GPU validation)**: `vulkaninfo`/`rocm-smi`/`rocminfo` all
+  confirmed working as the actual non-root service user — no LXC
+  passthrough plumbing needed at all.
+- **Phase 3 (three LLM backends, all verified with real requests)**:
+  - **LM Studio** (`ansible/00-initial-setup/framework-desktop-lmstudio.yml`) —
+    Qwen3-Coder-30B-A3B-Instruct, 256K context, port 8090. Real systemd
+    unit built (fixing the old ad-hoc-SSH-session reliability gap) — hit
+    and fixed a real bug here too: `Type=forking` doesn't work for a
+    self-daemonizing process with no PID file (it was tearing the
+    service back down right after startup); fixed to `Type=oneshot` +
+    `RemainAfterExit=yes` plus a 2-minute health-check timer.
+  - **Native llama.cpp** (`ansible/00-initial-setup/framework-desktop-llamacpp.yml`,
+    reusing the existing `llm_gpu_stack` role adapted in place) — HIP
+    backend, port 8080, `llama-router.service`.
+  - **Ollama** (`ansible/00-initial-setup/framework-desktop-ollama.yml`) —
+    ROCm (`gfx1151`), port 11434, its own official systemd unit.
+- **Ansible inventory**: new `framework` group added to
+  `ansible/inventory/{inventory.yml,dev.yml,production.yml}`, confirmed
+  working (`ansible framework -m ping` → `pong`).
+
+### Current state of the host, as of this checkpoint
+
+Three services running concurrently, each independently verified:
+
+| Service | Backend | Port | Unit |
+| --- | --- | --- | --- |
+| LM Studio | Vulkan | 8090 | `lmstudio.service` + `lmstudio-healthcheck.timer` |
+| llama-router | HIP | 8080 | `llama-router.service` |
+| Ollama | ROCm | 11434 | `ollama.service` |
+
+### Not yet done / open items
+
+- **Phase 4 (ComfyUI)** — not started. Plan: try `yanwk/comfyui-boot`'s
+  ROCm image variants first (§5), verify `gfx1151` actually works
+  (neither the image nor its upstream repo documents Strix Halo support
+  explicitly), fall back to native only if no image works.
+- **Phase 5 (GPU workload exclusivity)** — not started, and the ComfyUI
+  unload-vs-restart question (§9) needs re-testing fresh on this host,
+  not assumed from the old LXC-era finding.
+- **Phase 6 (`ai-services-stack`)** — not started.
+- **Phase 7 (platform integration cutover + Portainer registration)** —
+  not started; depends on Phase 6 existing first.
+- **Phase 8 (decommission old Terraform/credential-model footprint)** —
+  blocked on the above; also genuinely can't "roll back" to the old
+  Proxmox install on this hardware anymore (see Status line above), so
+  this is now cleanup of dead references rather than a real fallback
+  decision.
+- **Not yet validated**: the LM Studio + Qwen3-Coder path against the
+  existing tool-calling harness, and a real VS Code Copilot session —
+  still the one path with an actual acceptance gate (`findings-plan.md`
+  §12).
+- **Known, accepted limitation**: LM Studio's CLI/headless mode has no
+  way to set `--batch-size`/`--ubatch-size` (checked directly against
+  the official docs) — the Vulkan long-context ring-timeout fix can't be
+  applied to it. Native llama.cpp (HIP, unaffected by this specific bug
+  per the original test matrix) remains available as the fallback if
+  this ever manifests in practice.
 
 ## 1. Why this move
 
@@ -111,49 +198,44 @@ just from a bare-metal host instead of an LXC guest.
   llama.cpp specifically needs a pinned commit and explicit batch/ubatch
   flags (§8) that a generic image would need to accommodate.
 
-**Filesystem layout**, grounded in the current disk (`lsblk` against the
-live host: single 1.8TB NVMe, GPT/UEFI, currently `pve-root` 96G ext4 at
-6.4GB used, an 8G swap at ~2.3GB actual use, and a 984GB `pve-storage`
-LVM volume carrying the Proxmox-era dir-storage split):
+**Filesystem layout — verified live against the actual fresh install**
+(`framework.gibbsgreatly.xyz`, 2026-07-20, superseding the pre-install
+assumption below the line):
 
-- **No ZFS for root** — same reasoning as the old workspace's Decision 3,
-  more directly applicable with no LXC layer to buffer it: ZFS's ARC
-  cache competes with unified GPU memory for the same physical pool.
-  Plain **ext4**.
-- **Models are served locally, not from NFS** (see §4 — NFS is backup
-  only) — so, unlike the LXC-era split, this host still needs a
-  generously-sized local partition/logical volume for the model library
-  (currently ~258GB combined LLM+ComfyUI, expected to grow). Simpler
-  than the old Proxmox dir-storage scheme (no separate ISO/template/
-  backup dir-stores needed — those were Proxmox-specific), but the space
-  allocation itself doesn't shrink.
-- Recommend keeping **LVM** (thick-provisioned, not thin — the old
-  thin-pool existed specifically for Proxmox's per-container rootfs
-  sizing, moot now) purely for resize flexibility later, without ZFS's
-  memory cost: a `root` LV (ext4, ~100GB is ample given current 6.4GB
-  actual use) and a `models` LV (ext4, sized generously against the
-  remaining ~1.7TB — most of the disk) mounted wherever
-  `llm_gpu_stack`/`comfyui_stack`'s adapted roles expect it.
-- **Decided: only the minimum needed to boot is done by hand in the
-  installer** — EFI partition + enough of a root LV to get Ubuntu
-  installed and Ansible-reachable (Ubuntu's installer's own built-in LVM
-  option is fine for this). Everything else — extending the VG, creating
-  and formatting/mounting the `models` LV, GRUB `ttm.pages_limit` tuning,
-  Mesa/RADV+ROCm install, the NFS-backed model restore, all of Ansible's
-  own bootstrap — happens via Ansible post-install, not manually during
-  the OS install. Matches this repo's existing discipline (old
-  workspace's Decision 7: state lives in Git, not in a box's memory) and
-  keeps the manual, error-prone part of the install as small as possible.
-- **Modest swap** (8–16GB, matching current ~2.3GB actual usage) as a
-  last-resort safety net only, not for real capacity — real capacity is
-  `ttm.pages_limit` (§8).
-- Standard GPT/EFI System Partition (already UEFI hardware, confirmed
-  live).
-- **Not yet decided, operator's call**: whether to rename the host at
-  install time (already decided — see §2) affects nothing here; whether
-  a second NVMe (mentioned as "planned" in the old workspace, not
-  actually installed as of this writing) materializes before the rebuild
-  changes the exact partition sizes but not this shape.
+- Manual partitioning done: `nvme0n1p1` (1G, EFI), `nvme0n1p2` (96G,
+  ext4, root — **plain partition, not inside an LVM VG**), `nvme0n1p3`
+  (10G, ext4, separate `/boot`), `nvme0n1p4` (10G, swap),
+  `nvme0n1p5` (~1.7TB, LVM PV) — already assembled into an empty VG
+  (`vg0`, confirmed via `vgs`: 1 PV, 0 LVs, `<1.71t` free). This is
+  actually cleaner than originally planned: root has no LVM involvement
+  at all, so nothing Ansible does to `vg0`/the `models` LV can ever
+  touch root.
+- **No ZFS** — plain **ext4** throughout, same reasoning as the old
+  workspace's Decision 3 (ZFS's ARC cache competing with unified GPU
+  memory), more directly applicable with no LXC layer to buffer it.
+- **Ansible's job from here**: create a `models` LV inside the existing
+  `vg0` (sized generously against the ~1.7TB free — models are currently
+  ~258GB combined LLM+ComfyUI, expected to grow), format ext4, mount
+  wherever `llm_gpu_stack`/`comfyui_stack`'s adapted roles expect it.
+  GRUB `ttm.pages_limit` tuning, Mesa/RADV+ROCm install, the NFS-backed
+  model restore, and Ansible's own bootstrap all still pending (verified
+  live: no `ttm.pages_limit` in `/proc/cmdline` yet, no ROCm/Docker/
+  Ansible installed yet) — matches Phase 1 (§9) exactly where expected.
+- **Two gaps found during the live check, needed before GPU workloads
+  can run**: the `steve` user isn't yet in the `video`/`render` groups
+  that own `/dev/dri`/`/dev/kfd` — add this as part of Phase 1/2's
+  Ansible bootstrap. And a leftover installer USB stick is still
+  attached (`/dev/sda`, exFAT+vfat, not part of the actual system) —
+  harmless, but unplug it so it's never mistaken for real storage.
+- Swap: 10G configured, matches the "modest, last-resort safety net
+  only" recommendation — real capacity is `ttm.pages_limit` (§8), not
+  swap.
+- GPT/UEFI confirmed live.
+
+*Original pre-install planning assumption, for reference*: root and
+`models` both as LVs in one shared VG. Superseded by the above —
+the manual partitioning ended up cleaner (root fully outside LVM), not
+worse; no need to redo anything to match the original assumption.
 
 ## 4. Model storage: NFS/NAS is backup only, models are served locally
 
@@ -209,11 +291,28 @@ Existing roles, current state, and what changes:
 | `lxc_base`, `lxc_tun_device`, `docker_socket_proxy`, `portainer_agent`/`portainer_api`/`portainer_stack`/`portainer_backup` | LXC-provisioning and Portainer-fleet-management roles. | **Not used at all** for this node going forward — these exist to provision/manage LXC guests via Portainer, which no longer applies once `pve-framework` isn't running LXC containers. Not deleted (still used by `pve`/`pve-test-vm`), just never invoked against this host. |
 | `node_exporter`, `rsyslog_forward` | Generic host observability roles. | Carry forward as-is — these already target "a Linux host," not "an LXC guest specifically." |
 
-Inventory: new group/host entry for `framework.gibbsgreatly.xyz`
-(`192.168.1.8`, §2) as a bare host — no `vmid`/`pve_host`/
-Terraform-derived connection details, just a normal Ansible inventory
-host — replacing the three Terraform-state-derived container
-inventories.
+**Inventory: done**, verified live 2026-07-20. New `framework` group
+added to `ansible/inventory/{inventory.yml,dev.yml,production.yml}`
+(mirroring the existing `debian_template_builder`-style pattern — a
+standalone host with no dev/test tiering, present in all three files
+since there's only one instance of this box). Host
+`framework.gibbsgreatly.xyz`, `ansible_user: steve`, matching
+`FRAMEWORK_HOST_IP` env var added to `.env.template`
+(`ansible_host_ip_map` pattern's sibling — direct inline lookup, same
+shape as `pve.gibbsgreatly.xyz`'s entry in `production.yml`, not the
+`ansible_host_ip_map` indirection used for the template-builder
+containers). Confirmed working: `ansible framework -i ansible/inventory/
+-m ping` → `pong`. No `vmid`/`pve_host`/Terraform-derived connection
+details — this is a normal static inventory host, replacing the three
+Terraform-state-derived container inventories entirely.
+
+**Nothing to clean up in this inventory system for the old
+`pve-framework`** — checked directly: it was never onboarded into
+`ansible/inventory/*.yml` at all. It only ever existed via the
+gitignored, Terraform-generated per-stack `inventory.yml` files under
+`terraform/lxc/environments/pve-framework/`, which aren't touched until
+Phase 8 (§9) per the rollback plan (§11) — they'll simply stop being
+regenerated once that Terraform environment is torn down.
 
 **Three LLM backends, not one — this is a development box, not a fixed
 production endpoint.** Install and run **Ollama, native llama.cpp
@@ -547,44 +646,164 @@ being re-derived:
 
 **Phase 1 — Ubuntu 26 base install**
 
-*Manual (installer), kept to the minimum needed to boot and become
-Ansible-reachable (§3):*
-- Fresh install, bare metal, no Proxmox. Hostname
-  `framework.gibbsgreatly.xyz`, same IP `192.168.1.8` (§2).
-- EFI partition + a root LV via the installer's own built-in LVM option
-  — nothing more by hand.
+*Manual (installer) — **done**, verified live 2026-07-20:*
+- Fresh install, bare metal, no Proxmox. Hostname `framework`
+  (FQDN `framework.gibbsgreatly.xyz`), IP `192.168.1.8` (§2). SSH with
+  key auth, passwordless sudo for `steve`.
+- Partitioning done (§3): EFI + separate `/boot` + root as a plain ext4
+  partition (not LVM) + swap, plus an empty `vg0` VG already assembled
+  on the remaining ~1.7TB ready for the `models` LV.
 
-*Ansible-driven, everything else (§3):*
-- Extend the VG and create/format/mount the `models` LV (most of the
-  remaining ~1.7TB). No ZFS anywhere, modest swap (8–16GB).
-- GRUB `ttm.pages_limit`/`ttm.page_pool_size` tuning, carrying forward
-  the exact current value (§8): `ttm.pages_limit=24401920
-  ttm.page_pool_size=24401920`.
-- Mesa/RADV + ROCm install per `proxmox-strix-halo-setup-notes.md` §5.
-- Restore models from NAS onto the local `models` LV (§4) — NFS mounted
-  on-demand for this, not a live-serving dependency thereafter.
-- Base Ansible bootstrap proper (node_exporter, rsyslog_forward).
+*Ansible-driven (§3) — mostly done, verified live 2026-07-20 via
+`ansible/00-initial-setup/framework-desktop-bootstrap.yml`, added to the
+new `framework` inventory group (§5):*
+- **Done**: `models` LV created inside `vg0` (all remaining ~1.7TB),
+  formatted ext4, mounted at `/storage`; `/storage/models/{llm,comfyui}`
+  created. No ZFS anywhere.
+- **Done**: `steve` added to the `video`/`render` groups (the gap found
+  during the live check).
+- **Done, but not yet active — reboot required**: GRUB
+  `ttm.pages_limit`/`ttm.page_pool_size` tuning applied via the existing
+  shared task (`tasks/proxmox-gpu-unified-memory-tuning.yml`), computed
+  from this host's actual RAM with a 32GB host-side reservation
+  (matching the documented policy, not re-derived from scratch) —
+  `ttm.pages_limit=23811072 ttm.page_pool_size=23811072` (~93GB out of
+  125780MB total). Deliberately recomputed rather than hardcoding the
+  old host's literal `24401920` — same policy, this host's own actual
+  RAM reading. `/proc/cmdline` confirmed still on the old boot; nothing
+  GPU-related should be assumed to reflect this until the host reboots.
+- **Done**: Mesa Vulkan drivers + ROCm/HIP packages installed
+  (`vulkaninfo`, `rocm-smi` confirmed present).
+- **Not yet done**: restore models from NAS onto the local `models` LV
+  (§4) — NFS mounted on-demand for this, not a live-serving dependency
+  thereafter. Base Ansible bootstrap proper (node_exporter,
+  rsyslog_forward) — not yet added to this playbook.
+- Housekeeping: leftover installer USB stick — **removed**.
 
-**Phase 2 — GPU access validation**
-- Prove `/dev/dri`/`/dev/kfd` access and `rocm-smi`/`vulkaninfo` work
-  directly on the host before deploying anything real — this is now a
-  strictly simpler check than the LXC passthrough case (no cgroup device
-  ACLs, no `device_passthrough` root@pam-only API fields to fight).
+**Rebooted and verified, 2026-07-20**: `ttm.pages_limit`/`page_pool_size`
+confirmed active in `/proc/cmdline` and cross-checked against the GPU
+driver's own sysfs (`mem_info_gtt_total` ≈ 90.8GB, matching the computed
+~93GB ceiling). `vulkaninfo`/`rocm-smi` both still work post-reboot;
+`/storage` survived via its fstab entry. Operator also ran `apt update` +
+`fwupdmgr update` — the only firmware change applied was a routine UEFI
+Secure Boot `dbx` (forbidden-signature database) update from LVFS, not a
+BIOS/GPU firmware change; nothing here affects anything above. Kernel is
+now `7.0.0-28-generic` (from the `apt update`).
+
+**Phase 1 complete, 2026-07-20.** NFS client (`nfs-common`) and an
+on-demand automount fstab entry added for the NAS export (matching the
+old host's `noauto`/`x-systemd.automount` shape) — needed a
+`systemctl daemon-reload` after the fstab edit for the automount unit to
+register, since it was added post-boot rather than present at boot.
+Models restored from NAS onto `/storage/models/{llm,comfyui}`: sizes
+verified matching exactly on both ends (238GB LLM, 20GB ComfyUI, 0
+processes left running, no errors in either rsync log).
+
+One operational note for next time: the two restores were launched as a
+single concatenated `rsync src1 dst1 src2 dst2` command — rsync
+interpreted that as multiple sources into one destination, and it
+started copying an LLM `.gguf` into the ComfyUI directory before being
+killed a few seconds in. Only a partial temp file (rsync's own
+`.<name>.<random>` staging convention, never a committed file) resulted;
+deleted, then re-run as two separate correctly-scoped commands. No data
+loss, but worth remembering rsync takes many sources and exactly one
+destination, not multiple src/dest pairs concatenated.
+
+**Phase 2 — GPU access validation — complete, 2026-07-20.**
+Verified as the actual non-root user (`steve`, no sudo — the case that
+actually matters, since real services run as this user, not root):
+`vulkaninfo` detects `Radeon 8060S Graphics (RADV STRIX_HALO)` via Mesa
+26.0.3; `rocm-smi` sees the device (idle, 40°C); `rocminfo` confirms
+`gfx1151` directly. No LXC passthrough plumbing, no
+`device_passthrough` root@pam-only fields to fight — plain group
+membership (§1's `video`/`render` fix) was sufficient, confirming the
+strictly-simpler case the plan predicted.
 
 **Phase 3 — LLM service bring-up (three backends, per §5)**
-- Deploy LM Studio, native llama.cpp (`llama-server`), and Ollama, each
-  its own systemd unit and port.
-- Apply the Vulkan batch/ubatch fix from §8 explicitly wherever Vulkan
-  is in use, don't rely on defaults.
-- Validate the LM Studio + Qwen3-Coder path specifically against the
-  existing harness — `replay_runner.py`, `agent_loop.py`,
-  `ensure_model_loaded.sh` are all server-endpoint parameters, not
-  Proxmox-coupled, and are reusable unchanged against the new bare-metal
-  endpoint.
-- Validate with a real VS Code Copilot session, same acceptance bar as
-  `findings-plan.md` §12 — this remains the one path with a real
-  acceptance gate; native llama.cpp/Ollama are available for development
-  use without needing to clear the same bar themselves.
+
+**LM Studio: done, verified live 2026-07-20**, via
+`ansible/00-initial-setup/framework-desktop-lmstudio.yml`:
+- Installed via the official `install.sh` (reviewed before running, same
+  as the original setup); Vulkan engine auto-selected this time (Phase
+  1's Mesa install meant the original "No GPUs detected" issue never
+  recurred — `lms runtime survey` correctly reported "Radeon 8060S
+  Graphics (RADV STRIX_HALO)" immediately).
+- Qwen3-Coder-30B-A3B-Instruct-Q4_K_M imported via symlink from
+  `/storage/models/llm/`, loaded at 262144 context, `--parallel 1`,
+  identifier `qwen3-coder-30b-phase6` — the known-good snapshot from
+  Phase 0.
+- **Real systemd unit built, fixing the ad-hoc-session reliability gap**
+  (decisions.md Decision 6): `lmstudio.service` runs an idempotent
+  supervisor script (daemon up → wait for ready → load model if not
+  already → start server if not already). **Real mistake caught and
+  fixed during this**: first attempt used `Type=forking`, which failed —
+  `llmster` self-daemonizes with no PID file anywhere (confirmed live),
+  so systemd couldn't track the forked process and immediately ran
+  `ExecStop` right after the setup script exited, tearing the whole
+  thing back down. Fixed to `Type=oneshot` + `RemainAfterExit=yes` (run
+  the idempotent setup once, mark active, don't try to supervise a
+  specific long-running process) — confirmed stable afterward
+  (`active (exited)`, model stays loaded, server stays up).
+- Since oneshot doesn't detect a later independent crash the way a
+  properly-tracked `forking` unit would, added
+  `lmstudio-healthcheck.timer` (every 2 minutes, `OnBootSec=2min`/
+  `OnUnitActiveSec=2min`) re-running the same idempotent supervisor
+  script — actually a better fit than process-restart-on-failure for
+  this project's known crash mode (needs a full daemon/model/server
+  re-check, not just a process restart), not just a workaround for the
+  missing PID file.
+- Confirmed end-to-end: real `/v1/chat/completions` request through the
+  systemd-managed service returns correctly (`pong`, `finish_reason:
+  stop`).
+- Vulkan batch/ubatch fix (§8) **confirmed NOT applicable to LM Studio**:
+  checked `lms load --help` and the official headless docs directly —
+  no `--batch-size`/`--ubatch-size` flags, no documented config-file
+  passthrough for them at all. This is now a confirmed constraint, not
+  an open question — watch for the ring-timeout symptom during real use
+  at long context; native llama.cpp remains available specifically
+  because it does support these flags.
+
+**Native llama.cpp: done, verified live 2026-07-20**, via
+`ansible/00-initial-setup/framework-desktop-llamacpp.yml`, which reuses
+the existing `llm_gpu_stack` role directly rather than reinventing it —
+confirmed only ever used by the now-retired `pve-framework` LXC
+deployment, so safe to adapt in place: removed the
+`device_passthrough`-sanity-check tasks (meaningless with no container
+boundary) and repointed `llm_gpu_stack_models_dir` from the old LXC
+bind-mount target (`/data/models`) to the real host path
+(`/storage/models/llm`). Pinned-commit HIP build compiled cleanly,
+`llama-router.service` up on port 8080 (distinct from LM Studio's 8090),
+real request against the same Qwen3-Coder model returns correctly
+(`pong`, `finish_reason: stop`). Vulkan batch/ubatch fix (§8) doesn't
+apply here — this build targets HIP, and
+`proxmox-strix-halo-setup-notes.md` §8's own test matrix showed HIP
+completing cleanly at default batch sizes in the exact scenario where
+Vulkan crashed.
+
+**Ollama: done, verified live 2026-07-20**, via
+`ansible/00-initial-setup/framework-desktop-ollama.yml`. Simpler than
+LM Studio — Ollama's official installer sets up its own systemd unit
+and does its own AMD GPU detection (reviewed directly in the install
+script's `configure_systemd()`/`check_gpu()` functions), no custom unit
+needed. GPU correctly detected via ROCm (`gfx1151`, 90.8GB total/74.6GB
+available) — notably, Ollama drops the Vulkan candidate by default
+policy ("dropping integrated GPU" — it excludes iGPUs from the Vulkan
+path unless `OLLAMA_IGPU_ENABLE=1`) but accepts the same iGPU via ROCm
+without that restriction. Port 11434 (Ollama's default, no conflict).
+Smoke-tested with a small pulled model (`llama3.2:1b`), real generation
+confirmed working.
+
+**All three backends now up simultaneously**, each on its own port,
+confirmed with real inference requests to each: LM Studio (Vulkan,
+:8090), native llama.cpp (HIP, :8080), Ollama (ROCm, :11434).
+
+**Still to validate**: the LM Studio + Qwen3-Coder path against the
+existing harness (`replay_runner.py`, `agent_loop.py`,
+`ensure_model_loaded.sh` — all server-endpoint parameters, reusable
+unchanged) and a real VS Code Copilot session, same acceptance bar as
+`findings-plan.md` §12 — this remains the one path with a real
+acceptance gate; native llama.cpp/Ollama are for development use without
+needing to clear the same bar themselves.
 
 **Phase 4 — ComfyUI bring-up**
 - Try `yanwk/comfyui-boot`'s `rocm`/`rocm7`/`rocm6` variants first (§5)

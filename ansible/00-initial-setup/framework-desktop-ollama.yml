@@ -1,0 +1,42 @@
+---
+# Installs Ollama on the Framework Desktop, per docs/framework-ubuntu/plan.md
+# Phase 3 (§9) -- the third of three LLM backends kept available side by
+# side for active development use (LM Studio is the validated default for
+# the real VS Code Copilot acceptance path; this and native llama.cpp
+# don't need to clear that same bar).
+#
+# Unlike LM Studio, Ollama's official installer handles both systemd unit
+# creation (ollama.service, enabled+started) and AMD GPU detection
+# (lspci/lshw vendor 1002 check) itself -- reviewed directly,
+# /tmp/ollama-install.sh's configure_systemd()/check_gpu() functions, no
+# custom systemd unit needed here the way LM Studio required one.
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-ollama.yml
+
+- name: Install Ollama for AI/LLM development use
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  tasks:
+    - name: Check if ollama is already installed
+      ansible.builtin.stat:
+        path: /usr/local/bin/ollama
+      register: framework_ollama_binary
+
+    - name: Download Ollama install script (reviewed manually before first use, 2026-07-20 -- official installer, sets up its own systemd unit + AMD GPU detection)
+      ansible.builtin.get_url:
+        url: https://ollama.com/install.sh
+        dest: /tmp/ollama-install.sh
+        mode: '0755'
+      when: not framework_ollama_binary.stat.exists
+
+    - name: Run Ollama install script
+      ansible.builtin.command: sh /tmp/ollama-install.sh
+      when: not framework_ollama_binary.stat.exists
+
+    - name: Ensure ollama service is enabled and running
+      ansible.builtin.systemd:
+        name: ollama
+        enabled: true
+        state: started

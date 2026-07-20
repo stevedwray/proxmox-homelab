@@ -19,18 +19,6 @@
     state: present
     update_cache: true
 
-- name: Confirm /dev/kfd is visible inside the container (device_passthrough sanity check)
-  ansible.builtin.stat:
-    path: /dev/kfd
-  register: llm_gpu_stack_kfd_stat
-  failed_when: not llm_gpu_stack_kfd_stat.stat.exists
-
-- name: Confirm /dev/dri render node is visible inside the container
-  ansible.builtin.stat:
-    path: /dev/dri/renderD128
-  register: llm_gpu_stack_dri_stat
-  failed_when: not llm_gpu_stack_dri_stat.stat.exists
-
 - name: Clone llama.cpp
   ansible.builtin.git:
     repo: "{{ llm_gpu_stack_llamacpp_repo }}"

@@ -1,0 +1,33 @@
+---
+# Native (HIP) llama.cpp router-mode service on the Framework Desktop, per
+# docs/framework-ubuntu/plan.md Phase 3 (§9) -- one of three LLM backends
+# kept available side by side for active development use (LM Studio is the
+# validated default for the real VS Code Copilot acceptance path; this and
+# Ollama don't need to clear that same bar).
+#
+# Reuses the terraform/lxc/ansible/roles/llm_gpu_stack role directly --
+# this is the same pinned-commit HIP build and llama-router systemd unit
+# the old pve-framework LXC deployment used, adapted in place for bare
+# metal (device_passthrough sanity-check tasks removed -- meaningless when
+# there's no container boundary; llm_gpu_stack_models_dir now points at
+# the real host path /storage/models/llm instead of the old LXC bind-mount
+# target /data/models). This role is not used by any other environment
+# (confirmed: only terraform/lxc/stacks/llm-gpu-stack references it), so
+# adapting it in place was safe rather than needing a fork.
+#
+# Note on the Vulkan long-context ring-timeout bug (plan.md §8): this
+# build targets HIP, not Vulkan -- proxmox-strix-halo-setup-notes.md §8's
+# own test matrix showed HIP completing cleanly at default batch sizes in
+# the exact scenario where Vulkan crashed, so the --batch-size/--ubatch-size
+# fix that LM Studio's Vulkan engine can't apply isn't a known issue for
+# this backend. Not additionally hardened here for that reason, not an
+# oversight.
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-llamacpp.yml
+
+- name: Deploy native llama.cpp (HIP, router mode) for development use
+  hosts: framework
+  become: true
+  gather_facts: true
+  roles:
+    - llm_gpu_stack
