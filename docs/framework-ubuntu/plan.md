@@ -34,7 +34,10 @@ Related documents:
 
 `framework.gibbsgreatly.xyz` (192.168.1.8) is a live, working Ubuntu
 26.04 host with three LLM backends and ComfyUI all running
-simultaneously, each independently verified. Everything below is done and
+simultaneously, each independently verified. The platform cutover
+against `pve` (Traefik/Authentik/Technitium) is also done — real HTTPS
+requests through `llm.lab.gibbsgreatly.xyz`/`comfyui.lab.gibbsgreatly.xyz`
+now correctly reach the new host. Everything below is done and
 re-runnable via committed Ansible, not ad hoc — safe to pick this up
 cold from this section alone.
 
@@ -118,15 +121,19 @@ release the other service's GPU memory on demand (§9 Phase 5).
   of this image or already handled (not blocking — real generation
   already confirmed working without them).
 - **Phase 6 (`ai-services-stack`)** — not started.
-- **Phase 7 (platform integration cutover)** — the local part is done
-  (`.env`/`edge.yaml` repointed at `192.168.1.8`, LM Studio's `:8090`
-  chosen over the abandoned `:8080` native backend for the public
-  `llm.${LAB_DOMAIN}` route, idempotent re-run confirmed on all six
-  playbooks, stale Technitium records manually deleted and verified
-  gone). Still needs explicit approval before touching `pve` itself:
-  pushing the new Traefik config via `provision.sh`/`reconcile_all_edge`
-  and letting Authentik's forwardAuth object update in place. Portainer
-  registration for `ai-services-stack` still depends on Phase 6.
+- **Phase 7 (platform integration cutover) — done and verified
+  end-to-end**, including the production piece against `pve` (Traefik +
+  Authentik + Technitium), done with explicit per-step approval. Real
+  mistake caught along the way: an earlier "probably succeeded" claim
+  about the first `proxy-stack` push turned out wrong on direct
+  verification (the live Traefik container still had the old backend
+  address) — corrected by re-running it properly. Also hit and worked
+  around a real, separate apt-cacher-ng issue breaking `node_exporter`
+  installs on both `proxy-stack` and `technitium-stack`. Confirmed live:
+  `https://llm.lab.gibbsgreatly.xyz/v1/models` → `200`,
+  `https://comfyui.lab.gibbsgreatly.xyz/` → `302` (Authentik redirect,
+  correct for its forwardAuth route). Only Portainer registration for
+  `ai-services-stack` remains, blocked on Phase 6.
 - **Phase 8 (decommission old Terraform/credential-model footprint)** —
   blocked on the above; also genuinely can't "roll back" to the old
   Proxmox install on this hardware anymore (see Status line above), so
@@ -952,22 +959,70 @@ not just log-watching:
     matches the Docker container's exposed port).
   - `ai-services-stack/edge.yaml`/`LAB_IP_AI_SERVICES` — deferred,
     Phase 6 not done yet.
-- **Technitium — done.** Operator manually deleted the stale
-  `llm.lab.gibbsgreatly.xyz`/`comfyui.lab.gibbsgreatly.xyz` A records
-  pointing at the old `192.168.50.x` addresses (these don't self-correct,
-  per §7). Confirmed via direct `dig` against `192.168.1.1`: both names
-  now return nothing.
-- **Not yet done, still needs explicit approval before proceeding — this
-  reaches real production systems** (`pve`'s Traefik and Authentik),
-  unlike everything else in this migration so far, which was scoped to
-  `framework.gibbsgreatly.xyz` under this session's existing broad
-  authorization:
-  - Register `ai-services-stack` with Portainer (blocked on Phase 6
-    existing first anyway).
-  - Run `provision.sh`/`reconcile_all_edge` so Traefik picks up the new
-    backend addresses and Authentik's OIDC/forwardAuth objects update in
-    place (§7 — confirmed safe/idempotent for Authentik specifically,
-    since the same stack/route identities are being reused).
+- **Production cutover against `pve` — done and verified end-to-end,
+  2026-07-20.** This reached real production systems (Traefik, Authentik,
+  Technitium) — the one part of this whole migration outside this
+  session's broad `framework.gibbsgreatly.xyz` authorization, done with
+  explicit per-step operator approval.
+
+  **Correction to an earlier claim in this doc**: the DNS A record's
+  target was never the backend IP — checked `render-edge-technitium.py`
+  directly, it always publishes `${LAB_IP_PROXY}` (`192.168.30.10`,
+  Traefik itself), regardless of the backend. The "stale record" framed
+  earlier as "pointing at the old backend IP" was imprecise; the actual
+  effect of deleting it was simply removing the record entirely (nothing
+  auto-republished it), not fixing a wrong value.
+
+  1. **Traefik + Authentik reconcile**: scoped `reconcile-edge.py --apply`
+     to just the two live manifests (passing them as explicit positional
+     args rather than the default full `--stacks-dir` discovery) — a dry
+     run first showed several *unrelated* stacks (harbor, monitoring,
+     portainer, technitium, a shared Authentik outpost) also had pending
+     drift; scoping to just our two files avoided touching any of that.
+     Authentik actions were all `noop` for both stacks, confirming it
+     never stored the backend address to begin with.
+  2. **Pushing the rendered config to the live Traefik container**: hit a
+     real, separate infrastructure issue — `node_exporter`'s apt-cache
+     update failed identically on both `proxy-stack` and
+     `technitium-stack` (Ansible's `apt` module rejected a corrupted/
+     GPG-unverifiable `deb.debian.org` `trixie` `InRelease` fetch that
+     plain `apt-get` merely warned about and continued past). Clearing
+     the LXC's own apt lists didn't fix it — pointing at apt-cacher-ng
+     itself serving a bad cached copy, a platform issue outside this
+     task's scope. Worked around narrowly via `-e monitoring_enabled=false`
+     (the existing guard on `node_exporter`'s role include in
+     `lxc_base`), not a permanent change to any shared role.
+  3. **Real mistake made and caught by verification, not assumed fixed**:
+     the *first* `proxy-stack` run (operator-run) hit this same
+     `node_exporter` failure early in the play — I initially told the
+     operator it "likely succeeded before the unrelated failure," based
+     on task-order guesswork I hadn't actually verified. **That was
+     wrong.** Checking the *live* Traefik container's own config file
+     directly afterward showed it still had the old `192.168.50.10:8080`
+     value — the actual publish step had never run. Corrected by
+     re-running `deploy-proxy-stack.yml` directly with the same
+     `monitoring_enabled=false` workaround, which completed cleanly
+     (`failed=0`) and did reach "Publish rendered Traefik files."
+  4. **Technitium**: same `node_exporter` workaround, then
+     `provision.sh --stack technitium-stack` (later replicated directly
+     for the `monitoring_enabled=false` override) republished all 22
+     records from current `EdgeManifest`s — 3 were actually missing
+     (added), the rest already matched and were correctly skipped.
+  5. **Verified end-to-end, not just "task succeeded"**: live Traefik
+     container's own config file checked directly (shows
+     `http://192.168.1.8:8090`); `dig` confirms both DNS names resolve to
+     `192.168.30.10`; real HTTPS requests through the full DNS → Traefik
+     → backend chain both succeed —
+     `https://llm.lab.gibbsgreatly.xyz/v1/models` → `200`,
+     `https://comfyui.lab.gibbsgreatly.xyz/` → `302` (correctly redirects
+     to Authentik login, that route's `forwardAuth` middleware intercepts
+     before ever reaching the backend, so a raw connectivity test doesn't
+     apply the same way there).
+
+  **Still open**: Portainer registration for `ai-services-stack` (blocked
+  on Phase 6 existing first). The `node_exporter`/apt-cacher-ng issue
+  itself is unresolved — real, recurring, but a separate platform problem
+  from this migration; worth a follow-up outside this doc.
 
 **Phase 8 — Decommission Proxmox/Terraform for this node**
 - Only after Phase 3–7 are validated end-to-end (§11).
