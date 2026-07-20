@@ -190,6 +190,29 @@
         not framework_lms_binary.stat.exists or
         (framework_lmstudio_old_install.stat.exists and not framework_lmstudio_new_install.stat.exists)
 
+    # 2026-07-20: `lms daemon status`/`lms server status` were found to be
+    # unreliable specifically in the healthcheck timer's execution
+    # context -- confirmed live: every single 2-minute tick triggered an
+    # unconditional `lms server start`, even with the model correctly
+    # loaded and actively mid-response to a real VS Code Copilot request,
+    # killing that in-flight request (client saw
+    # net::ERR_INCOMPLETE_CHUNKED_ENCODING). An earlier, separate
+    # incident that looked similar was traced to a duplicate test-harness
+    # process colliding with itself (lessons-learned.md §12) -- that
+    # confound was real, but this is a second, independent, genuine bug
+    # it had been masking, not the same thing. See decisions.md Decision
+    # 6 follow-up for the full account.
+    #
+    # Fixed by checking actual API reachability via a real HTTP request
+    # first: if the server is already correctly answering with the
+    # expected model loaded, exit immediately without touching
+    # daemon/model/server state at all. Only fall through to the
+    # existing idempotent bring-up sequence (unchanged) if the API
+    # genuinely isn't answering -- e.g. after a real crash, or after
+    # switch-to-comfyui.sh's deliberate `lms unload --all` (in which case
+    # this reloads the model, same as before this fix; that's a
+    # pre-existing interaction with the GPU-switch scripts, not something
+    # this change affects either way).
     - name: Install LM Studio supervisor script (idempotent daemon-up/load/server-start)
       ansible.builtin.copy:
         dest: "{{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh"
@@ -200,6 +223,11 @@
           #!/bin/bash
           set -euo pipefail
           export PATH="{{ framework_lmstudio_home }}/.lmstudio/bin:$PATH"
+
+          if curl -sf -m 5 "http://127.0.0.1:{{ framework_lmstudio_port }}/v1/models" 2>/dev/null \
+              | grep -q '{{ framework_lmstudio_identifier }}'; then
+            exit 0
+          fi
 
           if ! lms daemon status >/dev/null 2>&1; then
             lms daemon up

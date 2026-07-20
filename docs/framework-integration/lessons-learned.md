@@ -334,3 +334,17 @@ established for different mistakes this project has made. This is not
 about LM Studio or the healthcheck timer being innocent by assumption —
 it's that "isolate the test to be sure it's the system under test doing
 this, not the test itself" comes before writing up any conclusion.
+
+**Correction, 2026-07-20, same day:** the healthcheck timer was not
+innocent after all. A real VS Code Copilot session (no duplicate
+processes involved) hit the identical restart-mid-request signature,
+confirmed via the same `journalctl` cross-reference technique. Falsifying
+the duplicate-process theory for *that specific incident* was correct and
+worth doing — but it got over-generalized into "the timer is fine,"
+when the duplicate processes were actually masking a second, real,
+independent bug in the same script. See `decisions.md` Decision 6's
+second follow-up for the root cause and fix. Compounding takeaway: ruling
+out one specific confound doesn't clear everything downstream of it —
+worth explicitly asking "is there also a real bug under here" rather than
+letting one successful falsification retire the whole line of
+investigation.

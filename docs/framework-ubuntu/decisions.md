@@ -217,6 +217,47 @@ run entirely as `lmstudio` (confirmed via `ps -ef`), `lmstudio` has no
 sudo access (`sudo -l -U lmstudio` confirms), and a real chat completion
 against `qwen3-coder-30b-phase6` succeeds.
 
+### Follow-up, 2026-07-20: the healthcheck timer really was killing real requests
+
+A real VS Code Copilot session against `qwen3-coder-30b-phase6` failed
+with `net::ERR_INCOMPLETE_CHUNKED_ENCODING` mid-response. This is the
+same "healthcheck timer force-restarts the server" pattern investigated
+earlier (`findings-plan.md`'s bare-metal re-verification section,
+`lessons-learned.md` §12) — that investigation concluded it was a false
+lead caused by two duplicate test-sweep processes colliding, and the
+timer was innocent. **That conclusion doesn't fully hold up.** This
+incident was a single, real Copilot session, no duplicate processes
+involved, and the exact same signature recurred: `journalctl` showed the
+healthcheck timer firing every 2 minutes and printing "Success! Server
+is now running on port 8090" — an actual, unconditional restart — on
+every single tick, including the one that landed at 84.5% through
+prompt-processing a real ~28,700-token Copilot request. The restart is
+what the client saw as an incomplete chunked response.
+
+The duplicate-process confound from the earlier investigation was real
+(confirmed via `ps aux` at the time) and did produce a similar-looking
+symptom, but it was evidently masking this second, genuine, independent
+bug rather than fully explaining the pattern away. Lesson on top of the
+earlier lesson: falsifying one specific theory (two processes running)
+doesn't prove there's no other real bug hiding behind it — worth staying
+alert to that follow-up-doubt each time, not just fixing whatever the
+first successful falsification surfaces and moving on.
+
+**Root cause**: `lmstudio-supervisor.sh` decided the server needed
+restarting based on `lms daemon status`/`lms server status`, which are
+unreliable in the healthcheck timer's exact execution context (the
+"why" wasn't pinned down further — same practical-fix-over-root-cause
+call as elsewhere in this project). **Fix**: check actual API
+reachability first via a real HTTP request
+(`curl http://127.0.0.1:8090/v1/models`, grep for the expected model
+identifier) — if that succeeds, exit immediately without touching
+daemon/model/server state at all; only fall through to the existing
+recovery sequence if the API genuinely isn't answering. Verified live:
+fired a deliberately long completion request (2000 tokens) timed to
+span a real timer tick — the tick fired mid-generation, took no action
+(no restart log line, clean exit), and the request completed in full
+(`finish_reason: length`, all 2000 tokens generated, uninterrupted).
+
 ## Decision 7: Documentation split — lessons-learned vs. carried-forward reference
 
 Context: `docs/framework-integration/` and `docs/framework/` hold ~10

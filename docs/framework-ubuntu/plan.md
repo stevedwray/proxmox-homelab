@@ -185,6 +185,73 @@ release the other service's GPU memory on demand (§9 Phase 5).
   Studio moved off `steve` (passwordless sudo) onto a dedicated `lmstudio`
   system user with no sudo access — see `decisions.md` Decision 6
   follow-up for the three real migration bugs hit and fixed along the way.
+- **Dedicated `containers` LV, 2026-07-20**: root (a plain 96GB
+  partition, not LVM) was down to 27G free with `/var/lib/docker` +
+  `/var/lib/containerd` alone accounting for ~47G, growing with every
+  benchmark image pulled/built. Shrank `models` (1.71TB → 1.41TB, only
+  258G actually used, ample margin either side) to free space in `vg0`
+  for a new dedicated `containers` LV (300G), bind-mounted onto
+  `/var/lib/docker`/`/var/lib/containerd`. Full live migration (stop
+  everything touching `/storage` → `e2fsck` → `resize2fs` → `lvreduce`
+  → `e2fsck` → remount → `lvcreate`/`mkfs` the new LV →
+  `rsync -aHAX` the existing docker/containerd data across → bind mounts
+  → bring everything back up) done with zero data loss, verified via
+  real inference requests against all three backends plus ComfyUI GPU
+  detection afterward. `framework-desktop-bootstrap.yml` updated to
+  match (fixed-size `models`, new `containers` LV + bind-mount tasks) and
+  confirmed idempotent by re-running it against the already-migrated
+  live host (only two harmless directory-mode-normalization changes, no
+  disruption). Old `/var/lib/docker.old`/`containerd.old` intentionally
+  left in place as a rollback safety net — delete after a confidence
+  period, not immediately.
+- **First real VS Code Copilot attempt, 2026-07-20 — failed, then fixed**:
+  first live Copilot Chat request against `qwen3-coder-30b-phase6` hit
+  `net::ERR_INCOMPLETE_CHUNKED_ENCODING`. Root cause: `lmstudio-
+  healthcheck.timer` was unconditionally restarting the server on every
+  2-minute tick regardless of health, and this one landed mid-request.
+  This reopens (and partially corrects) the "duplicate test process, timer
+  is innocent" conclusion from the bare-metal re-verification above — see
+  `decisions.md` Decision 6's second follow-up and
+  `lessons-learned.md` §12's correction. Fixed by checking real API
+  reachability before ever touching daemon/server state; verified live
+  with a deliberately long request spanning an actual timer tick (tick
+  fired, took no action, request completed in full). Also fixed two
+  stale URLs in the operator's local `chatLanguageModels.json` (still
+  pointed at the old LXC container IP / a long-stopped diagnostic proxy)
+  while investigating.
+- **Second real VS Code Copilot attempt, 2026-07-20 — a genuine
+  multi-file agentic task, diagnosed from the LM Studio server log**:
+  after the healthcheck fix above, retried with "generate a Python
+  quicksort script plus synthetic test data." Reconstructed the full
+  session from the server log (every request logs the complete message
+  history, so this needed no special capture proxy): the model built
+  `quicksort.py`, then (a follow-up turn) split test data into a separate
+  `test_data.txt`, iterated on real data-format bugs a few times — then
+  **VS Code's own client-side context-budget management force-triggered
+  a lossy conversation summary** ("the conversation has grown too large
+  for the context"), because `chatLanguageModels.json` capped this model
+  at `maxInputTokens: 57344` + `maxOutputTokens: 8192` = 65536 total even
+  though the server has 262144 available. This is the exact risk flagged
+  earlier in `findings-plan.md` ("revisit further only if this proves
+  insufficient") — now confirmed insufficient for a real multi-file task.
+  After the summary, the model's understanding of `test_data.txt`'s real
+  content went stale, causing repeated failed `replace_string_in_file`
+  attempts, a `create_file`-on-existing-file tool-usage error, an `rm` of
+  the data file out of apparent frustration, a brand-new self-contained
+  `quicksort_clean.py` created instead of fixing the original, and three
+  redundant "I've completed everything" `manage_todo_list` calls before
+  it finally noticed the original script was now broken. **Fix applied**:
+  raised `maxInputTokens`/`maxOutputTokens` to 180000/24000 (204000
+  total, comfortable margin under the server's 262144).
+- **Verification, 2026-07-20**: operator retried with a larger real task
+  (quicksort in Python, Go, Rust, and Prolog) and reported it went well.
+  Confirmed from the server log
+  (`2026-07-20.2.log`): 24 requests, conversation history grew smoothly
+  and monotonically from 31 to 77 messages with no resets, and zero
+  occurrences of the "too large for the context" forced-summary phrase
+  anywhere in the log. The client-side token-budget fix holds — no
+  compaction-induced confusion spiral on a comparably-sized multi-file
+  task. This item is now closed.
 
 ## 1. Why this move
 

@@ -34,6 +34,30 @@
 # once this playbook has created both ends of that path), or install
 # Docker/Ollama/llama.cpp/LM Studio (Phase 3, §9).
 #
+# `containers` LV (2026-07-20): Docker/containerd's image and layer data
+# was filling up the plain, non-LVM 96GB root partition (confirmed live --
+# root had 27G free and shrinking with every benchmark image pulled or
+# built). `models` was originally created with 100%FREE, leaving vg0 with
+# 0 free extents, so it had to be shrunk first (1.71TB -> 1.41TB; only
+# 258G actually used at the time, so ample headroom either side) to make
+# room for a dedicated 300GB `containers` LV, bind-mounted onto
+# /var/lib/docker and /var/lib/containerd. On a fresh rebuild this just
+# works -- the LV/mount/bind-mounts below are created before Docker is
+# ever installed (Phase 3, in each service's own playbook), so
+# /var/lib/docker and /var/lib/containerd are empty bind-mount targets
+# from the start, no migration needed. If this is instead being run
+# against an already-provisioned host with existing container data (as
+# it was here), that data must be migrated manually first -- stop
+# docker.service/containerd.service and every container, rsync -aHAX the
+# existing /var/lib/docker and /var/lib/containerd into the new LV's
+# docker/ and containerd/ subdirectories (preserving hardlinks -- overlay2
+# relies on them for layer sharing), *then* apply this playbook so the
+# bind mounts land on top of the already-migrated data rather than
+# masking it with empty directories. This is a one-time operator action,
+# not automated here, matching this repo's existing pattern for
+# not-safely-automatable one-time migrations (see the LM Studio model
+# catalog re-import note in framework-desktop-lmstudio.yml).
+#
 # Run: ansible-playbook -i ansible/inventory/ framework-desktop-bootstrap.yml
 
 - name: Bootstrap Framework Desktop for AI/LLM workloads
@@ -45,10 +69,20 @@
     framework_gpu_group_user: steve
     framework_models_vg: vg0
     framework_models_lv_name: models
-    framework_models_lv_size: 100%FREE
+    # Was 100%FREE; fixed at 1410G (2026-07-20) to leave room in vg0 for
+    # the containers LV below -- see the header note above. 1410G is
+    # deliberately far above actual model usage (258G at the time), not a
+    # tight fit.
+    framework_models_lv_size: 1410G
     framework_models_mount_point: /storage
     framework_models_filesystem: ext4
     framework_models_filesystem_label: models
+    framework_containers_vg: vg0
+    framework_containers_lv_name: containers
+    framework_containers_lv_size: 300G
+    framework_containers_mount_point: /mnt/container-storage
+    framework_containers_filesystem: ext4
+    framework_containers_filesystem_label: containers
     framework_nas_export: "nas.gibbsgreatly.xyz:/volume1/Models"
     framework_nas_mount_point: /mnt/nas-models
     pmx_gpu_unified_memory_tuning_enabled: true
@@ -145,6 +179,91 @@
       loop:
         - llm
         - comfyui
+
+    - name: Check if containers logical volume exists
+      ansible.builtin.command: "lvdisplay {{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+      register: framework_containers_lv_check
+      changed_when: false
+      failed_when: false
+
+    - name: Create containers logical volume
+      community.general.lvol:
+        vg: "{{ framework_containers_vg }}"
+        lv: "{{ framework_containers_lv_name }}"
+        size: "{{ framework_containers_lv_size }}"
+        state: present
+      when: framework_containers_lv_check.rc != 0
+
+    - name: Check if containers LV needs formatting
+      ansible.builtin.command: "blkid -s TYPE -o value /dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+      register: framework_containers_fs_check
+      changed_when: false
+      failed_when: false
+
+    - name: Format containers logical volume
+      community.general.filesystem:
+        fstype: "{{ framework_containers_filesystem }}"
+        dev: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        opts: "-L {{ framework_containers_filesystem_label }}"
+      when: framework_containers_fs_check.stdout | default('') == ''
+
+    - name: Create containers mount point
+      ansible.builtin.file:
+        path: "{{ framework_containers_mount_point }}"
+        state: directory
+        mode: '0755'
+
+    - name: Add containers volume to fstab
+      ansible.posix.mount:
+        path: "{{ framework_containers_mount_point }}"
+        src: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        fstype: "{{ framework_containers_filesystem }}"
+        opts: defaults
+        state: present
+
+    - name: Mount containers volume
+      ansible.posix.mount:
+        path: "{{ framework_containers_mount_point }}"
+        src: "/dev/{{ framework_containers_vg }}/{{ framework_containers_lv_name }}"
+        fstype: "{{ framework_containers_filesystem }}"
+        opts: defaults
+        state: mounted
+
+    - name: Create docker/containerd subdirectories on the containers volume
+      ansible.builtin.file:
+        path: "{{ framework_containers_mount_point }}/{{ item }}"
+        state: directory
+        mode: '0755'
+      loop:
+        - docker
+        - containerd
+
+    # /var/lib/docker and /var/lib/containerd are bind-mounted onto the
+    # containers LV rather than reconfiguring Docker/containerd's own
+    # data-root paths -- keeps their default config untouched. Docker
+    # isn't installed by this playbook (Phase 3, per-service playbooks),
+    # so on a fresh host these are just empty directories at this point;
+    # whatever Docker/containerd later create lands transparently on the
+    # dedicated LV instead of root.
+    - name: Create /var/lib/docker and /var/lib/containerd mount points
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0711'
+      loop:
+        - /var/lib/docker
+        - /var/lib/containerd
+
+    - name: Bind-mount containers volume subdirectories onto /var/lib/docker and /var/lib/containerd
+      ansible.posix.mount:
+        path: "{{ item.dest }}"
+        src: "{{ framework_containers_mount_point }}/{{ item.src }}"
+        fstype: none
+        opts: bind
+        state: mounted
+      loop:
+        - { src: docker, dest: /var/lib/docker }
+        - { src: containerd, dest: /var/lib/containerd }
 
     - name: Install NFS client (for the NAS backup/restore mount, §4 -- on-demand only, not a live-serving dependency)
       ansible.builtin.apt:
