@@ -12,7 +12,9 @@ spec:
       host: openwebui.${LAB_DOMAIN}
       backend:
         type: url
-        url: http://${LAB_IP_AI_SERVICES}:8080
+        # Host port 8080 remains assigned to llamacpp-router on the shared
+        # Framework host; OpenWebUI publishes its container port 8080 on 8081.
+        url: http://${LAB_IP_AI_SERVICES}:8081
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}
