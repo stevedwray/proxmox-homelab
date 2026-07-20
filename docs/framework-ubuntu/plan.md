@@ -81,10 +81,24 @@ cold from this section alone.
   substitute). Confirmed via logs and the live API: correct GPU/VRAM
   detected, restored models (`z_image_turbo_bf16.safetensors`,
   `ae.safetensors`) visible through the right loader nodes. Port 8188.
+  Real end-to-end generation confirmed too (Phase 5 testing pulled the
+  actual official Z-Image-Turbo workflow and ran it — succeeded, a real
+  PNG produced).
+- **Phase 5 (GPU workload exclusivity)**: both re-tests done for real,
+  neither assumed. `lms unload --all` cleanly frees LM Studio's GTT
+  memory (41.7 GiB). ComfyUI's `POST /free` also cleanly frees its GTT
+  memory (19.4 GiB, confirmed stable across a repeat call) — **this
+  corrects the old LXC-era finding** (partial-unload residue, restart
+  required) rather than repeating it; different ComfyUI version/image/
+  host. `switch-to-comfyui`/`switch-to-llm` scripts installed to
+  `/usr/local/bin` via `ansible/00-initial-setup/framework-desktop-gpu-switch.yml`,
+  both confirmed working. No systemd `Conflicts=` or gateway design
+  needed.
 
 ### Current state of the host, as of this checkpoint
 
-Four services running concurrently, each independently verified:
+Four services running concurrently, each independently verified,
+switchable via two tested scripts:
 
 | Service | Backend | Port | Unit |
 | --- | --- | --- | --- |
@@ -93,16 +107,16 @@ Four services running concurrently, each independently verified:
 | Ollama | ROCm | 11434 | `ollama.service` |
 | ComfyUI | ROCm (Docker) | 8188 | `docker compose` (`/opt/comfyui-docker`), `restart: unless-stopped` |
 
+`/usr/local/bin/switch-to-comfyui` and `/usr/local/bin/switch-to-llm`
+release the other service's GPU memory on demand (§9 Phase 5).
+
 ### Not yet done / open items
 
-- **Phase 4 remainder**: an actual end-to-end image generation run
-  (needs a real workflow JSON, not just API reachability) and
-  confirming whether `comfyui-image-video-gen-findings.md`'s two
-  upstream bug fixes / `--vram-headroom 6`/`--disable-smart-memory`
-  flags are needed on top of this image or already handled.
-- **Phase 5 (GPU workload exclusivity)** — not started, and the ComfyUI
-  unload-vs-restart question (§9) needs re-testing fresh on this host,
-  not assumed from the old LXC-era finding.
+- **Phase 4 remainder**: confirming whether
+  `comfyui-image-video-gen-findings.md`'s two upstream bug fixes /
+  `--vram-headroom 6`/`--disable-smart-memory` flags are needed on top
+  of this image or already handled (not blocking — real generation
+  already confirmed working without them).
 - **Phase 6 (`ai-services-stack`)** — not started.
 - **Phase 7 (platform integration cutover + Portainer registration)** —
   not started; depends on Phase 6 existing first.
@@ -851,62 +865,54 @@ needing to clear the same bar themselves.
   way LM Studio's final validation is a real VS Code Copilot session
   rather than a synthetic check.
 
-**Phase 5 — GPU workload exclusivity (not a memory-sizing problem)**
-- Confirmed with the operator: running LLM coding assistance and ComfyUI
-  generation simultaneously is not a real use case here. That reframes
-  this phase — it isn't about safely sizing memory for two workloads
-  that might both be heavy at once (the old two-LXC design's actual
-  failure mode: each container's ceiling might look reasonable
-  individually, but the *sum* of both being near-full at once is what
-  produced the real host-wide OOM that justified Decision 5 in the old
-  workspace). With only one workload ever active, there's no sum to
-  guess — the only real ceiling left is `ttm.pages_limit` (§8), which
-  was always the correct boundary.
-- What's actually needed is **releasing the memory of whichever workload
-  you just finished with**, not necessarily stopping its container/unit
-  permanently. Both can stay resident as always-on systemd units (cheap
-  when idle) — the switch action just needs to actually free the memory
-  of the one you're leaving.
-- **ComfyUI's unload behavior: revisit and re-test fresh on the new
-  host, don't just carry the old finding forward unchanged.**
-  `comfyui-image-video-gen-findings.md` §6c documented real incidents on
-  the *old* setup: switching models within ComfyUI left residue
-  ("Unloaded partially: 858MB freed, 486MB remains loaded..." stacking
-  with the next model's requirements), and even with
-  `--disable-smart-memory` set, a model "stayed fully resident in the
-  container's memory even after its job completed." The validated fix
-  at the time was restarting the process, not trusting ComfyUI's
-  in-place unload. That was real, but it's also from an earlier ComfyUI
-  version on the old LXC setup — worth actually re-testing on the fresh
-  Ubuntu install (current ComfyUI version, current drivers) rather than
-  assuming the exact same residue behavior still holds. Concretely:
-  load a model, unload/switch to a different one, check `anon` in
-  `/sys/fs/cgroup/.../memory.stat` (or the equivalent on a non-cgroup-
-  bounded native process) before and after. Fall back to "restart
-  required" only if re-testing actually reproduces the same residue —
-  don't presume it without checking.
-- LM Studio is architecturally cleaner — server process and loaded-model
-  state are already independent (observed directly: `lms server status`
-  reports "running" independent of `lms ps`'s loaded-model list) — so
-  `lms unload --all` plausibly frees GTT memory cleanly while leaving the
-  lightweight server daemon resident. **Unverified, not assumed**: test
-  this empirically once the new host exists (load a model, unload it,
-  confirm GTT usage actually drops via `/sys/class/drm/card1/device/
-  mem_info_gtt_used`) before relying on it. Fall back to a full restart
-  if unload proves incomplete.
-- Concrete mechanism, pending both re-tests above: a small two-line
-  switch script per direction — `lms unload --all` (or `systemctl
-  restart` if that proves necessary) when moving to ComfyUI work, and
-  the ComfyUI equivalent (unload call or restart, per whichever the
-  re-test confirms) when moving to LLM work — triggered manually or via
-  a lightweight hook. Lighter-weight than a full `systemd Conflicts=`
-  mutual-exclusion rule or `dual-workload-gateway-design.md`'s full
-  gateway design, and grounded in what's actually tested on this
-  specific host rather than carried-over assumption.
-- Until built, operator discipline (manually run the appropriate restart/
-  unload before switching) is the interim state — acceptable short-term
-  given actual usage is already sequential, but call this out explicitly
-  as unfinished rather than silently relying on it indefinitely.
+**Phase 5 — GPU workload exclusivity — done, verified live 2026-07-20**,
+via `ansible/00-initial-setup/framework-desktop-gpu-switch.yml`.
+
+Not a memory-sizing problem, confirmed with the operator: running LLM
+coding assistance and ComfyUI generation simultaneously is not a real
+use case here, so there's no sum-of-two-ceilings to guess (the old
+two-LXC design's actual failure mode) — the only real ceiling is
+`ttm.pages_limit` (§8). What's needed is releasing the memory of
+whichever workload you just finished with, not stopping its
+service/container permanently.
+
+**Both re-tests done empirically on this host, neither assumed from the
+old finding** — real workflow submitted through ComfyUI's actual API
+(the official Z-Image-Turbo example workflow, extracted from the
+embedded PNG metadata at
+`comfyanonymous.github.io/ComfyUI_examples/z_image/`), real GTT memory
+measured before/after via `/sys/class/drm/card1/device/mem_info_gtt_used`,
+not just log-watching:
+
+- **LM Studio (`lms unload --all`): clean.** 65.1 GiB → 23.4 GiB, a
+  41.7 GiB drop — matching the model (18.56GB) plus its 256K-context KV
+  cache almost exactly. No restart needed.
+- **ComfyUI (`POST /free`): also clean — this corrects the old
+  finding, not just repeats it.** Ran the actual Z-Image-Turbo workflow
+  end-to-end (real generation succeeded, `ComfyUI_00001_.png` produced;
+  first-run took ~8 minutes, dominated by model/text-encoder load and
+  first-time kernel compilation for `gfx1151`, not the 9 sampler steps
+  themselves). Post-generation GTT was 81.1 GiB; `/free` dropped it to
+  61.7 GiB (19.4 GiB freed) — and that new baseline is even slightly
+  *below* the pre-generation baseline (69.9 GiB from the LM Studio test
+  minutes earlier), strongly indicating no residue at all. A second
+  `/free` call returned the identical GTT figure (no further reduction,
+  no growing residue either) and the container's own memory/CPU dropped
+  to an idle baseline. The old `comfyui-image-video-gen-findings.md`
+  §6c finding (partial-unload residue, restart required) was real *for
+  that setup* — different ComfyUI version, different image, LXC not
+  Docker — but doesn't hold here. Recorded as a correction, not a
+  contradiction.
+- **Mechanism built and tested**: `switch-to-comfyui` (runs `lms unload
+  --all`) and `switch-to-llm` (calls ComfyUI's `/free`) installed to
+  `/usr/local/bin`, both confirmed working end-to-end. No `systemd
+  Conflicts=` rule or `dual-workload-gateway-design.md`'s full gateway
+  needed — both services already have a clean native unload path.
+- **Scope**: this covers the actual real use-case pair (LM Studio for
+  coding vs. ComfyUI for generation) only. Native llama.cpp and Ollama
+  are lighter, occasional-use dev backends outside this mechanism —
+  Ollama already self-unloads on its own keep-alive TTL; llama-router
+  can be managed manually if that's ever actually needed.
 
 **Phase 6 — `ai-services-stack` bring-up**
 - Docker Compose port, mechanical (§5).
