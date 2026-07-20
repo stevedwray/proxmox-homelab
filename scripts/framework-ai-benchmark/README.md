@@ -32,3 +32,8 @@ Local regression tests:
 ```bash
 python3 -m unittest discover -s scripts/framework-ai-benchmark -p 'test_*.py' -v
 ```
+
+`run-creative-followup.sh` is a queue helper for the 2026-07-20 run. It waits
+for a named benchmark user unit to finish successfully, then runs the two story
+tasks three times against each of the three installed Dark/uncensored creative
+models. Each model receives its own ordinary checkpointed benchmark directory.

@@ -50,6 +50,23 @@ The current run was observed completing its first request successfully while
 continuous telemetry, raw results, and the evaluation corpus were all growing.
 No incident was present at that checkpoint.
 
+### Queued creative-model follow-up
+
+A detached follow-up is queued behind the main run. It does not modify or
+interrupt the 153-request matrix. After the parent reports successful
+completion, it runs both story tasks three times with each of these llama.cpp
+models (18 additional requests):
+
+- `L3.1-MOE-6X8B-Dark-RS-Dantes-Peak-HRR-R1-Uncen-36B-Q4_K_M-imat`;
+- `L3.2-8X4B-MOE-V2-Dark-Champion-Inst-21B-uncen-ablit-D_AU-Q4_k_m`; and
+- `Command-R-35B-Dark-Horror-V2-D_AU-Q4_k_s`.
+
+Each model has a separate normal timestamped result directory. The queue writes
+`creative-followup-<timestamp>.tsv` in the benchmark results root, mapping each
+model to its result directory and final status. If the parent benchmark fails
+or is interrupted, the follow-up exits without running; resume and complete the
+parent before re-queuing it.
+
 ## Evidence collected
 
 The run directory contains:
@@ -91,6 +108,19 @@ jq . "$RUN_DIR/progress.json"
 
 A successful complete run has `"complete": true` and `"total_records": 153`.
 The transient benchmark unit normally disappears once it has finished.
+
+The queued creative follow-up may still be active after this parent unit
+disappears. Check it and locate its result index with:
+
+```bash
+systemctl --user status framework-ai-benchmark-creative-followup.service
+ls -1t /storage/artifacts/framework-ai-benchmarks/creative-followup-*.tsv | head -n 1
+```
+
+Wait for that follow-up unit to finish before processing the three additional
+story runs. Apply the same review procedure below to each directory named in
+the TSV index. They are deliberately separate from the 153-record parent, so
+their `progress.json` files each report six records.
 
 If the unit is no longer active but `complete` is not true, inspect the end of
 the operational log:
