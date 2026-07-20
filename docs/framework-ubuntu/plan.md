@@ -77,7 +77,12 @@ cold from this section alone.
   `ansible/inventory/{inventory.yml,dev.yml,production.yml}`, confirmed
   working (`ansible framework -m ping` → `pong`).
 - **Phase 4 (ComfyUI, via `ansible/00-initial-setup/framework-desktop-comfyui.yml`)**:
-  Docker + `yanwk/comfyui-boot:rocm`. Real bug hit and fixed:
+  Docker + `yanwk/comfyui-boot:rocm`, pulled through Harbor's `dockerhub`
+  proxy-cache project (`harbor.lab.gibbsgreatly.xyz/dockerhub/yanwk/
+  comfyui-boot:rocm`) — see `lessons-learned.md` §10 for how this was
+  found (a real gap in this session's own first check, corrected once
+  challenged) and `apt-cacher-ng` wired in alongside it, same host, same
+  session. Real bug hit and fixed:
   `gfx1151` isn't in this image's bundled ROCm hardware table — crash-
   looped until `HSA_OVERRIDE_GFX_VERSION=11.5.1` was set (that's
   `gfx1151`'s own literal version decomposition, not a workaround

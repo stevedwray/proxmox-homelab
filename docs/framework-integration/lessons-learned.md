@@ -214,3 +214,50 @@ lessons, not everything from the old workspace:
   bug at default batch sizes) are platform-independent kernel/driver
   findings, not Proxmox lessons — carried forward directly into
   `framework-ubuntu/plan.md` §7, not summarized again here.
+
+## 10. Harbor as a registry cache — real mechanism found late, on the second check
+
+Not a Proxmox/LXC-era finding (recorded here anyway since this is where
+the operator flagged it) — a genuine mistake in this session's own
+investigation, corrected before it caused real harm.
+
+Setting up Docker on the new bare-metal host (`framework.gibbsgreatly.xyz`,
+`docs/framework-ubuntu/`), the first check for "is this host wired into
+the platform's shared caches the way everything else is" found
+apt-cacher-ng in active use (`lxc_base` role) but concluded Harbor's
+Docker registry-mirror capability was **unused anywhere in this repo** —
+based on grepping for `enable_registry_mirror: true` (the flag gating
+`docker_base` role's daemon-level `registry-mirrors` config) and finding
+zero matches. That grep result was correct, but the conclusion drawn
+from it was wrong: it answered "is the *daemon-mirror* mechanism used?"
+not "is Harbor used at all?" — a real difference the operator caught by
+being skeptical of a monitoring-stack-wide platform apparently never
+touching its own registry.
+
+**The actual mechanism**, found on a closer look: `deploy-monitoring-stack.yml`
+pulls its VictoriaMetrics/Grafana/Python images through
+`harbor.lab.gibbsgreatly.xyz/dockerhub/<original-image-path>:<tag>` —
+explicit image-name prefixing through one of Harbor's proxy-cache
+projects (`dockerhub`), not Docker's daemon-level `registry-mirrors`
+feature at all. Confirmed live: `docker pull
+harbor.lab.gibbsgreatly.xyz/dockerhub/library/hello-world` succeeds with
+no authentication, TLS trusted automatically (routed through Traefik's
+own Let's Encrypt cert, same as Harbor's web UI at the same hostname).
+
+**Fixed for the new host**: ComfyUI's image reference in
+`ansible/00-initial-setup/framework-desktop-comfyui.yml` changed from
+`yanwk/comfyui-boot:rocm` to
+`harbor.lab.gibbsgreatly.xyz/dockerhub/yanwk/comfyui-boot:rocm`,
+redeployed, GPU access and HTTP health both reconfirmed working
+afterward — same image, same content, now actually going through the
+shared cache like everything else.
+
+**Takeaway**: a clean grep result answering the literal question asked
+("is X used?") isn't the same as verifying the actual behavior the
+question was really about ("is this platform's shared caching being
+used at all, by whatever mechanism"). When a repo has two different ways
+to accomplish the same goal (daemon-level mirror vs. explicit path
+prefix), checking only one and concluding "unused" for both is a real
+gap — worth a second look specifically when the answer would otherwise
+imply an established, multi-stack platform convention was never actually
+followed anywhere.

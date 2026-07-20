@@ -21,6 +21,20 @@
 # override needed there); verify live rather than assuming either way
 # (plan.md §5's open verification item).
 #
+# Image pulled through Harbor's "dockerhub" proxy-cache project
+# (harbor.lab.gibbsgreatly.xyz/dockerhub/<image>), the same real,
+# already-in-use pattern monitoring-stack's images use (deploy-monitoring-
+# stack.yml, e.g. victoriametrics/grafana-oss/python images) -- confirmed
+# working live, 2026-07-20 (anonymous pull, no auth needed, TLS trusted
+# via Traefik's own cert). Corrects an earlier wrong claim in this repo's
+# history: Docker's daemon-level `registry-mirrors` feature
+# (docker_base role, `enable_registry_mirror`) was assumed to be the
+# established Harbor pattern and reported as unused everywhere -- that
+# part is true (grep confirms it), but the *actual* working mechanism
+# (explicit `dockerhub/` image-path prefixing, not a transparent daemon
+# mirror) was missed on the first pass. See
+# docs/framework-integration/lessons-learned.md for the full account.
+#
 # Run: ansible-playbook -i ansible/inventory/ framework-desktop-comfyui.yml
 
 - name: Install Docker and deploy ComfyUI (yanwk/comfyui-boot, ROCm)
@@ -30,7 +44,7 @@
 
   vars:
     framework_comfyui_user: steve
-    framework_comfyui_image: "yanwk/comfyui-boot:rocm"
+    framework_comfyui_image: "harbor.lab.gibbsgreatly.xyz/dockerhub/yanwk/comfyui-boot:rocm"
     framework_comfyui_port: 8188
     framework_comfyui_dir: /opt/comfyui-docker
     # gfx1151 (Strix Halo) isn't in this image's bundled ROCm hardware
