@@ -181,3 +181,15 @@
           - libcurl4-openssl-dev
         state: present
         update_cache: true
+
+    # This host is reached over wired ethernet only (enp191s0, static IP)
+    # -- the onboard wifi radio (wlp192s0) is unused (confirmed
+    # NO-CARRIER/DOWN, 2026-07-20). wpa_supplicant.service runs generically
+    # via dbus by default; masked rather than just disabled so it can't be
+    # dbus-activated back on by some other component querying it.
+    - name: Stop and mask wpa_supplicant.service (wifi unused, wired-only host)
+      ansible.builtin.systemd:
+        name: wpa_supplicant.service
+        state: stopped
+        enabled: false
+        masked: true

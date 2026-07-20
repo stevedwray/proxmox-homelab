@@ -261,3 +261,76 @@ prefix), checking only one and concluding "unused" for both is a real
 gap — worth a second look specifically when the answer would otherwise
 imply an established, multi-stack platform convention was never actually
 followed anywhere.
+
+## 11. A remembered "Docker can't do GPU here" blocker was actually a benchmark-harness bug
+
+`framework-ubuntu`'s original Phase 3 plan (Decision 5 in `decisions.md`)
+put LM Studio, llama.cpp, and Ollama on native systemd rather than
+Docker. The operator's recollection was that Ollama specifically "had a
+problem in Docker before" on this hardware — a real memory, not a made-up
+constraint, but one that turned out not to describe the actual current
+state.
+
+`/home/steve/git/local-ai-testing` (a separate, purpose-built benchmarking
+repo) had already run a full runtime-comparison matrix on this exact
+`gfx1151` box — llama.cpp and Ollama, Vulkan and ROCm, host bare-metal /
+host+Docker / Incus bare / Incus+Docker, 16 cells total, every one
+`backend_verified: true` with 64-96% GPU utilization
+(`docs/framework/runtime-matrix-checkpoint-2026-07-16.md`). The real prior
+bug was in that repo's own benchmark harness: `OLLAMA_IGPU_ENABLE` was
+only being set for the Vulkan cells, not the ROCm ones, and Strix Halo's
+GPU is integrated regardless of backend — Ollama was dropping the ROCm
+device from candidacy and silently falling back to CPU for every ROCm
+cell until that harness bug was found and fixed. Docker itself was never
+the problem.
+
+Carried the fix forward rather than re-discovering it: both
+`framework-desktop-ollama.yml` and `framework-desktop-llamacpp.yml` were
+converted to Docker (`ollama/ollama:rocm` and a custom HIP-built image,
+respectively — see `decisions.md`'s Decision 5 supersession), each
+verified with a real inference request plus a live device/GPU-utilization
+check (79-96% range), not just a container-is-running check.
+
+**Takeaway**: a remembered "X doesn't work" from past experience is a
+lead worth checking, not a permanent constraint to design around by
+default — especially when the actual root cause lived in test tooling
+rather than the technology itself, and especially when a sibling repo in
+the same homelab had already done the exact verification needed to settle it.
+
+## 12. A self-inflicted duplicate test process looked exactly like a real bug
+
+Re-running the tool-calling harness against the new bare-metal host
+(2026-07-20, `findings-plan.md`'s "Bare-metal re-verification" section)
+to check whether the memcg-OOM fix actually eliminated the crash. An
+early backgrounding attempt used a trailing shell `&` *inside* a call
+already marked to run in the background — the outer wrapper returned
+immediately (the `&` detached before the real command ran), which looked
+like an instant, empty failure. It wasn't: the actual sweep process kept
+running, untracked by anything that would report on it. Restarting the
+sweep "again" then ran a second copy concurrently against the same
+single-request-slot LM Studio instance.
+
+The result looked exactly like a real, specific bug: overlapping
+requests, cancelled tasks in LM Studio's own server log, and a
+suspiciously exact correlation with `lmstudio-healthcheck.timer`'s
+2-minute tick (three consecutive timer firings, three consecutive
+"Client disconnected" log lines). This was written up internally as "the
+healthcheck timer force-restarts the server under real load, killing
+in-flight requests" — a plausible, well-evidenced-looking theory, checked
+against the actual systemd journal timestamps, that still turned out to
+be wrong. The check that actually falsified it: `ps aux | grep
+overnight_reliability_sweep` showed two full sweep processes running at
+once. Once both were killed and a single clean sweep was run, the
+"bug" — and the timer correlation — didn't recur.
+
+**Takeaway**: a timing correlation this exact is itself a reason for
+suspicion, not just confirmation — a real hardware/software bug rarely
+lines up with a fixed periodic interval that precisely by coincidence.
+Before writing up a theory that explains a suspicious pattern, check the
+most boring possible cause first (is more than one copy of my own test
+harness running right now?) via a direct, cheap command
+(`ps aux`), the same discipline `lessons-learned.md` §10 and §11 already
+established for different mistakes this project has made. This is not
+about LM Studio or the healthcheck timer being innocent by assumption —
+it's that "isolate the test to be sure it's the system under test doing
+this, not the test itself" comes before writing up any conclusion.

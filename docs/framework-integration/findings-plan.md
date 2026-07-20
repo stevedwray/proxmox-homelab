@@ -939,6 +939,78 @@ as a result — LM Studio + Qwen3-Coder-30B-A3B-Instruct + VS Code Copilot
 BYOK remains the validated configuration; only the host underneath it is
 changing.
 
+### Bare-metal re-verification, 2026-07-20 — 0 crashes across a clean 15-rep sweep
+
+With the migration to `framework.gibbsgreatly.xyz` done (`docs/framework-ubuntu/plan.md`
+§0), re-ran the existing tool-calling harness
+(`docs/framework-integration/artifacts/tool-calling/`) against the new
+host to check whether removing the memcg ceiling actually fixed the
+practical reliability problem, rather than assuming it from the root
+cause alone.
+
+**Re-pointed the harness at the new host**: `overnight_reliability_sweep.sh`'s
+`BASE_URL` and `health_check()` updated from the old LXC container
+address (`192.168.50.10`) and the retired `with-secrets-prod-framework`/
+Terraform-inventory wrapper to `framework.gibbsgreatly.xyz` and a plain
+`ansible framework -i ansible/inventory/ -m ansible.builtin.script`
+call — that production-credential model was for the Proxmox node, not
+this host (`docs/framework-ubuntu/decisions.md` Decision 4).
+
+**A real self-inflicted mistake during this re-run, corrected before it
+produced a false conclusion**: an earlier attempt to background the
+sweep used a trailing shell `&` *inside* an already-backgrounded tool
+call. The outer wrapper returned immediately (the shell-level `&`
+detached before the actual sweep ran), which looked like a fast, empty
+failure — but the real sweep process kept running, untracked. Restarting
+it "again" then ran a second sweep concurrently against the same
+single-`--parallel 1`-slot LM Studio instance, and the two colliding,
+overlapping requests produced exactly the confusing pattern a real bug
+would produce: cancelled tasks, `finish_reason: None`, and a suspicious
+correlation with the `lmstudio-healthcheck.timer`'s 2-minute tick. This
+was initially (wrongly) written up as "the healthcheck timer force-
+restarts the server under load, killing in-flight requests." That theory
+did not survive a direct check: `ps aux` showed two
+`overnight_reliability_sweep.sh` processes actually running at once.
+Killed both, confirmed the host was back to a single idle model
+(`lms ps`), and reran cleanly. **The healthcheck timer was never at
+fault — see `lessons-learned.md` §12 for the full account.**
+
+**Clean result, single sweep instance, full 84-tool fixture, 15 reps:
+12 pass, 3 fail, 0 crash.** Zero crashes is the headline result — this is
+the same fixture and methodology as the original LXC-era sweep (which
+also read 10/10 clean, before the *real* crashes were later traced to
+memcg OOM via other, longer-running tests). The 3 non-crash fails all
+carry the exact same signature already documented above (`"unexpected
+finish_reason: None"` plus a `create_file` call missing its arguments) —
+the known, pre-existing tool-call-argument-extraction parser quirk
+(empirically ~1-in-8 to 1-in-15 previously; 3/15 here, same order of
+magnitude), not a new failure mode.
+
+**Multi-turn (`agent_loop.py`) spot checks, narrow 5-tool set, disposable
+fixture repo, defect-repair task**: 4 runs. One hit a genuine transport
+error (`Remote end closed connection without response`) at turn 7 —
+checked directly rather than assumed: no OOM kernel-log signature, no
+process death (`lms ps` still showed the model loaded and idle
+immediately after), LM Studio's own server log showed a "Client
+disconnected. Stopping generation" line at the same instant. This does
+not match the old OOM signature and was not reproduced in 3 immediate
+retries (2 hit `--max-turns` without fixing the seeded bug — a model
+tool-selection/looping issue after an early bad `cd /` command confused
+the model about its own working directory, not a crash; 1 completed
+cleanly, `validate.sh` exit 0). Given the low N, this single transport
+error is recorded as an open, unconfirmed data point, not written up as
+a conclusion either way.
+
+**Net assessment**: the bare-metal migration's core goal — eliminating
+the memcg-OOM-driven crash — is empirically supported (0/15 on the exact
+fixture that hit the old crash pattern). The known tool-call-parser quirk
+persists unchanged (expected — that lives in LM Studio's request
+handling, not the host). Full Phase 8 acceptance testing (§12 below, the
+12-point list, ideally including a real VS Code Copilot session on the
+new host) has not yet been run — this re-verification targeted the
+specific crash mechanism this migration was meant to fix, not the full
+acceptance gate.
+
 ## 1. Purpose
 
 Establish a reliable complete configuration for local agentic coding in VS Code

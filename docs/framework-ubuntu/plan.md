@@ -68,11 +68,21 @@ cold from this section alone.
     self-daemonizing process with no PID file (it was tearing the
     service back down right after startup); fixed to `Type=oneshot` +
     `RemainAfterExit=yes` plus a 2-minute health-check timer.
-  - **Native llama.cpp** (`ansible/00-initial-setup/framework-desktop-llamacpp.yml`,
-    reusing the existing `llm_gpu_stack` role adapted in place) — HIP
-    backend, port 8080, `llama-router.service`.
+  - **llama.cpp** (`ansible/00-initial-setup/framework-desktop-llamacpp.yml`) —
+    HIP backend, port 8080, router mode. Originally native (reusing
+    `llm_gpu_stack`); converted to a custom-built Docker image 2026-07-20
+    (see decisions.md Decision 5 supersession) — same pinned commit,
+    same `gfx1151` HIP build, same serving flags, verified via a real
+    chat completion plus a `rocm-smi` sample showing 79% GPU utilization
+    mid-generation.
   - **Ollama** (`ansible/00-initial-setup/framework-desktop-ollama.yml`) —
-    ROCm (`gfx1151`), port 11434, its own official systemd unit.
+    ROCm (`gfx1151`), port 11434. Originally native; converted to Docker
+    (`ollama/ollama:rocm`, Harbor-proxied) 2026-07-20 — the prior
+    "Ollama-in-Docker has a GPU problem" belief didn't hold up (see
+    decisions.md), confirmed via logs showing the real GPU device and a
+    real generate call at GPU speed (1498 tok/s prompt eval, 287 tok/s
+    generation). The old native binary/unit/build dir were removed from
+    the host.
 - **Ansible inventory**: new `framework` group added to
   `ansible/inventory/{inventory.yml,dev.yml,production.yml}`, confirmed
   working (`ansible framework -m ping` → `pong`).
@@ -110,9 +120,9 @@ switchable via two tested scripts:
 
 | Service | Backend | Port | Unit |
 | --- | --- | --- | --- |
-| LM Studio | Vulkan | 8090 | `lmstudio.service` + `lmstudio-healthcheck.timer` |
-| llama-router | HIP | 8080 | `llama-router.service` |
-| Ollama | ROCm | 11434 | `ollama.service` |
+| LM Studio | Vulkan | 8090 | `lmstudio.service` + `lmstudio-healthcheck.timer` (native — no viable GPU-capable Docker path, see decisions.md); runs as dedicated `lmstudio` user (no sudo), not `steve` — see Decision 6 follow-up, 2026-07-20 |
+| llama-router | HIP (Docker) | 8080 | `docker compose` (`/opt/llamacpp-docker`), `restart: unless-stopped` |
+| Ollama | ROCm (Docker) | 11434 | `docker compose` (`/opt/ollama-docker`), `restart: unless-stopped` |
 | ComfyUI | ROCm (Docker) | 8188 | `docker compose` (`/opt/comfyui-docker`), `restart: unless-stopped` |
 
 `/usr/local/bin/switch-to-comfyui` and `/usr/local/bin/switch-to-llm`
@@ -143,17 +153,38 @@ release the other service's GPU memory on demand (§9 Phase 5).
   blocked on the above; also genuinely can't "roll back" to the old
   Proxmox install on this hardware anymore (see Status line above), so
   this is now cleanup of dead references rather than a real fallback
-  decision.
-- **Not yet validated**: the LM Studio + Qwen3-Coder path against the
-  existing tool-calling harness, and a real VS Code Copilot session —
-  still the one path with an actual acceptance gate (`findings-plan.md`
-  §12).
+  decision. Now also includes `terraform/lxc/ansible/roles/llm_gpu_stack`
+  itself: unused by this host as of the Docker conversion (2026-07-20)
+  but deliberately left in place since the retired `pve-framework` stack
+  definition still references it — delete alongside that stack, not before.
+- **Crash-mechanism re-verification done, 2026-07-20** (`findings-plan.md`
+  "Bare-metal re-verification" section): re-ran the existing tool-calling
+  harness against `framework.gibbsgreatly.xyz` — clean 15-rep sweep of the
+  full-84-tool fixture came back **0 crashes** (12 pass, 3 fail on the
+  same pre-existing, already-documented tool-call-parser quirk, not
+  anything new). This empirically supports the memcg-OOM root cause
+  actually being fixed by the move to bare metal, not just theoretically.
+- **Not yet validated**: full Phase 8 acceptance testing (`findings-plan.md`
+  §12, the 12-point list) and a real VS Code Copilot session on the new
+  host — still the one remaining gate before this is a fully accepted
+  production path, separate from the crash-mechanism check above.
 - **Known, accepted limitation**: LM Studio's CLI/headless mode has no
   way to set `--batch-size`/`--ubatch-size` (checked directly against
   the official docs) — the Vulkan long-context ring-timeout fix can't be
   applied to it. Native llama.cpp (HIP, unaffected by this specific bug
   per the original test matrix) remains available as the fallback if
   this ever manifests in practice.
+- **Host hardening, 2026-07-20**: `wpa_supplicant.service` stopped/
+  disabled/masked (host is wired-only, wifi radio unused/down) — now in
+  `framework-desktop-bootstrap.yml`, not just a manual change. `upowerd`
+  and the `amd-pstate-epp` CPU power state were checked and found benign
+  (no battery, no power-profiles-daemon/TLP consuming upowerd's signals;
+  `powersave` governor + `balance_performance` EPP is the standard modern
+  AMD tuning, not legacy aggressive throttling — left as-is, no evidence
+  it's limiting the real inference throughput already measured). LM
+  Studio moved off `steve` (passwordless sudo) onto a dedicated `lmstudio`
+  system user with no sudo access — see `decisions.md` Decision 6
+  follow-up for the three real migration bugs hit and fixed along the way.
 
 ## 1. Why this move
 

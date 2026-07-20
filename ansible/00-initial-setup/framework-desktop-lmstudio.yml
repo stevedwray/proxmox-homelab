@@ -24,6 +24,17 @@
 # llama.cpp. Watch for it during Phase 3 validation; native llama.cpp
 # remains available specifically because it does support these flags.
 #
+# Dedicated service user (2026-07-20): originally ran as `steve`, who has
+# passwordless sudo (NOPASSWD: ALL) -- a real, unnecessary blast-radius
+# risk for a service that executes model-directed tool calls. Moved to a
+# dedicated `lmstudio` system user with no sudo access at all, `video`/
+# `render` group membership only (matches what GPU access actually
+# needs). The one-time migration step below moves the existing
+# `~/.lmstudio` install (app state/config only, ~3.1GB -- the actual
+# model weights live under the shared /storage/models/llm, symlinked in
+# via `lms import --symbolic-link` and already world-readable, so they
+# don't need copying) rather than reinstalling from scratch.
+#
 # Run: ansible-playbook -i ansible/inventory/ framework-desktop-lmstudio.yml
 
 - name: Install and systemd-supervise LM Studio (llmster) for AI/LLM workloads
@@ -32,7 +43,8 @@
   gather_facts: true
 
   vars:
-    framework_lmstudio_user: steve
+    framework_lmstudio_user: lmstudio
+    framework_lmstudio_migrate_from_user: steve
     framework_lmstudio_model: qwen3-coder-30b-a3b-instruct
     framework_lmstudio_identifier: qwen3-coder-30b-phase6
     framework_lmstudio_context: 262144
@@ -40,6 +52,118 @@
     framework_lmstudio_home: "/home/{{ framework_lmstudio_user }}"
 
   tasks:
+    - name: Install acl package (required for become_user to an unprivileged account)
+      ansible.builtin.apt:
+        name: acl
+        state: present
+
+    - name: Stop old lmstudio units before any user/data migration
+      ansible.builtin.systemd:
+        name: "{{ item }}"
+        state: stopped
+      loop:
+        - lmstudio-healthcheck.timer
+        - lmstudio.service
+      failed_when: false
+
+    - name: Gracefully stop the llmster daemon if still running as the migration-source user
+      ansible.builtin.command: "{{ '/home/' + framework_lmstudio_migrate_from_user + '/.lmstudio/bin/lms' }} daemon down"
+      become: true
+      become_user: "{{ framework_lmstudio_migrate_from_user }}"
+      failed_when: false
+      changed_when: false
+
+    - name: Create dedicated LM Studio service user (no sudo, GPU groups only)
+      ansible.builtin.user:
+        name: "{{ framework_lmstudio_user }}"
+        system: true
+        shell: /usr/sbin/nologin
+        groups: video,render
+        create_home: true
+      register: framework_lmstudio_user_result
+
+    # A system-account user (no interactive login) never gets a
+    # /run/user/<uid> XDG runtime dir from logind by default -- confirmed
+    # live, 2026-07-20: `lms daemon up`/`lms server status` need one
+    # (llmster's own daemon socket/IPC lives there) and fail with "no
+    # valid installation could be found" without it. `enable-linger` is
+    # the standard systemd mechanism for a service account that needs a
+    # persistent per-user runtime dir without a real login session.
+    - name: Enable lingering for the dedicated user (persistent XDG_RUNTIME_DIR without a login session)
+      ansible.builtin.command: "loginctl enable-linger {{ framework_lmstudio_user }}"
+      changed_when: false
+
+    - name: Record the dedicated user's XDG runtime dir path
+      ansible.builtin.set_fact:
+        framework_lmstudio_xdg_runtime_dir: "/run/user/{{ framework_lmstudio_user_result.uid }}"
+
+    - name: Check whether the LM Studio install still needs migrating from {{ framework_lmstudio_migrate_from_user }}
+      ansible.builtin.stat:
+        path: "/home/{{ framework_lmstudio_migrate_from_user }}/.lmstudio"
+      register: framework_lmstudio_old_install
+
+    - name: Check whether the dedicated user's install already exists
+      ansible.builtin.stat:
+        path: "{{ framework_lmstudio_home }}/.lmstudio"
+      register: framework_lmstudio_new_install
+
+    - name: Migrate existing ~/.lmstudio install to the dedicated user (one-time)
+      ansible.builtin.command: >-
+        mv /home/{{ framework_lmstudio_migrate_from_user }}/.lmstudio
+        {{ framework_lmstudio_home }}/.lmstudio
+      when:
+        - framework_lmstudio_old_install.stat.exists
+        - not framework_lmstudio_new_install.stat.exists
+
+    - name: Fix ownership of the migrated install
+      ansible.builtin.file:
+        path: "{{ framework_lmstudio_home }}/.lmstudio"
+        owner: "{{ framework_lmstudio_user }}"
+        group: "{{ framework_lmstudio_user }}"
+        recurse: true
+      when:
+        - framework_lmstudio_old_install.stat.exists
+        - not framework_lmstudio_new_install.stat.exists
+
+    # A raw mv+chown of the llmster bundle was NOT sufficient on its own
+    # (verified live, 2026-07-20): `lms daemon up` failed with "no valid
+    # installation could be found" for the migrated user even though
+    # ownership and file layout looked correct -- re-running the official
+    # installer over the migrated directory (re-downloads llmster fresh
+    # in place, fast/idempotent) fixed it immediately. Root cause not
+    # fully isolated (plausibly a permission/capability bit that a plain
+    # chown doesn't preserve across a raw mv) -- fixing the practical
+    # problem rather than chasing the exact mechanism further, matching
+    # this project's established pattern (see findings-plan.md's OOM
+    # root-cause writeup for the same judgment call).
+    #
+    # Not gated on "migration just happened this run" (unlike the tasks
+    # above) -- this is a plain idempotent string replace, safe to always
+    # attempt, and self-heals if the stale path ever reappears.
+    - name: Fix stale downloadsFolder path in settings.json (self-healing, always checked)
+      ansible.builtin.replace:
+        path: "{{ framework_lmstudio_home }}/.lmstudio/settings.json"
+        regexp: "/home/{{ framework_lmstudio_migrate_from_user }}/\\.lmstudio/models"
+        replace: "{{ framework_lmstudio_home }}/.lmstudio/models"
+      when: framework_lmstudio_new_install.stat.exists
+
+    # Migrating the raw files does NOT carry over LM Studio's internal
+    # model catalog/index (.internal/gguf-metadata-cache.json,
+    # internal-engine-index.json still reference the old user's paths and
+    # aren't safely hand-editable) -- confirmed live, 2026-07-20: `lms ls`
+    # stopped showing the model after migration even though the symlink
+    # was still present on disk, and `lms load` failed with "Model not
+    # found". This does NOT auto-fix itself and is not something this
+    # playbook re-imports automatically (matches the existing pattern:
+    # model weights/catalog entries have always been an operator action
+    # against the running service, never fetched/managed by this
+    # playbook -- see the file header). If `lms ls` doesn't show
+    # {{ framework_lmstudio_model }} after a migration, re-import it once:
+    #   rm -f {{ framework_lmstudio_home }}/.lmstudio/models/lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-GGUF/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+    #   lms import -y --symbolic-link \
+    #     --user-repo lmstudio-community/Qwen3-Coder-30B-A3B-Instruct-GGUF \
+    #     /storage/models/llm/Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf
+
     - name: Check if llmster is already installed
       ansible.builtin.stat:
         path: "{{ framework_lmstudio_home }}/.lmstudio/bin/lms"
@@ -52,13 +176,19 @@
         url: https://lmstudio.ai/install.sh
         dest: /tmp/lmstudio-install.sh
         mode: '0755'
-      when: not framework_lms_binary.stat.exists
+      when: >-
+        not framework_lms_binary.stat.exists or
+        (framework_lmstudio_old_install.stat.exists and not framework_lmstudio_new_install.stat.exists)
 
-    - name: Run LM Studio install script
+    - name: Run LM Studio install script (also re-run once, unconditionally, right after a migration -- see note above)
       ansible.builtin.command: sh /tmp/lmstudio-install.sh
+      environment:
+        XDG_RUNTIME_DIR: "{{ framework_lmstudio_xdg_runtime_dir }}"
       become: true
       become_user: "{{ framework_lmstudio_user }}"
-      when: not framework_lms_binary.stat.exists
+      when: >-
+        not framework_lms_binary.stat.exists or
+        (framework_lmstudio_old_install.stat.exists and not framework_lmstudio_new_install.stat.exists)
 
     - name: Install LM Studio supervisor script (idempotent daemon-up/load/server-start)
       ansible.builtin.copy:
@@ -118,6 +248,7 @@
           User={{ framework_lmstudio_user }}
           Group={{ framework_lmstudio_user }}
           Environment=PATH={{ framework_lmstudio_home }}/.lmstudio/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          Environment=XDG_RUNTIME_DIR={{ framework_lmstudio_xdg_runtime_dir }}
           ExecStart={{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh
           ExecStop={{ framework_lmstudio_home }}/.lmstudio/bin/lms daemon down
 
@@ -138,6 +269,7 @@
           User={{ framework_lmstudio_user }}
           Group={{ framework_lmstudio_user }}
           Environment=PATH={{ framework_lmstudio_home }}/.lmstudio/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+          Environment=XDG_RUNTIME_DIR={{ framework_lmstudio_xdg_runtime_dir }}
           ExecStart={{ framework_lmstudio_home }}/.lmstudio/bin/lmstudio-supervisor.sh
       register: framework_lmstudio_healthcheck_unit
 

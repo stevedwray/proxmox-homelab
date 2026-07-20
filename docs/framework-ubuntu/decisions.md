@@ -73,7 +73,7 @@ LXC-provisioning and Portainer-fleet-management roles
 simply stop being invoked against this host; they're still used by
 `pve`/`pve-test-vm` and aren't touched.
 
-## Decision 5: No containerization mandate — Docker only where it already fit
+## Decision 5 (superseded 2026-07-20, see below): No containerization mandate — Docker only where it already fit
 
 Context: the operator's constraint was specifically "nothing running
 inside LXC-style containers," not "everything must be Dockerized."
@@ -88,6 +88,63 @@ apply). Keep `ai-services-stack` as Docker Compose, since that's already
 the right fit and changes nothing but the host. Revisit only if a
 concrete reason to containerize the GPU services shows up (none has so
 far) — see `plan.md` §3, §5.
+
+### Superseded 2026-07-20: dockerize everything that genuinely supports it
+
+The operator explicitly reversed this after the native systemd rollout
+("dockerise everything that can"), having previously assumed a real
+Ollama-in-Docker GPU limitation existed. That assumption didn't hold up:
+`/home/steve/git/local-ai-testing`'s own runtime-comparison matrix
+(`docs/framework/runtime-matrix-checkpoint-2026-07-16.md`) had already
+verified both llama.cpp and Ollama with real GPU acceleration in Docker
+on this exact `gfx1151` hardware — the prior "Docker can't do it" belief
+traced to a bug in that repo's own benchmark harness
+(`OLLAMA_IGPU_ENABLE` only set for the Vulkan cells, not ROCm), not a
+real Docker/GPU limitation.
+
+Both were converted and verified end-to-end on `framework.gibbsgreatly.xyz`:
+
+- **Ollama** → `ollama/ollama:rocm` (pulled through Harbor's `dockerhub`
+  proxy-cache), `/dev/kfd` + `/dev/dri` passthrough, numeric render/video
+  GIDs, `OLLAMA_IGPU_ENABLE=1`/`HIP_VISIBLE_DEVICES=0`/
+  `ROCR_VISIBLE_DEVICES=0`. Logs confirmed `library=ROCm compute=gfx1151
+  name=ROCm0 description="Radeon 8060S Graphics"`; a real generate call
+  ran at GPU speed (1498 tok/s prompt eval, 287 tok/s generation).
+  See `ansible/00-initial-setup/framework-desktop-ollama.yml`.
+- **llama.cpp** → no off-the-shelf image exists for a pinned-commit,
+  `gfx1151`-targeted HIP build, so a custom Dockerfile bakes the same
+  build local-ai-testing already verified working
+  (`roles/llamacpp_docker_bench`), preserving every router-mode serving
+  flag from the native `llm_gpu_stack` role unchanged. Verified via a
+  real chat completion plus a `rocm-smi` sample mid-generation showing
+  79% GPU utilization. See
+  `ansible/00-initial-setup/framework-desktop-llamacpp.yml`.
+
+The old native installs (binary, systemd units, build directory) were
+removed from the host. `terraform/lxc/ansible/roles/llm_gpu_stack` (the
+role these playbooks used to include) is left in place rather than
+deleted — it's still referenced by the not-yet-decommissioned
+`pve-framework` Terraform stack (Phase 8, not done), and deleting
+Terraform-adjacent shared code ahead of that decommission wasn't part of
+this task.
+
+**LM Studio is the one exception, and stays native.** No clean
+GPU-capable Docker path exists for it on this hardware:
+- The only official image, `lmstudio/llmster-preview`, is CPU-only
+  (confirmed directly against its Docker Hub page).
+- `linuxserver/lm-studio` exists but bundles a full KDE/web-desktop
+  environment (~8.2GB) rather than the headless daemon, and only
+  supports AMD via Vulkan through `/dev/dri` — not ROCm, a real
+  regression from the ROCm backend already validated as the production
+  config (`findings-plan.md`).
+- The community `LucaTheHacker/LMStudio-Container` image documents
+  NVIDIA Container Toolkit support only; no AMD/ROCm passthrough path is
+  documented, and Strix Halo's iGPU isn't reachable via NVIDIA-specific
+  `--gpus all` regardless.
+
+None of these give LM Studio a Docker path that matches what native
+`lms`/`llmster` already does on this hardware, so it stays as-is
+(`ansible/00-initial-setup/framework-desktop-lmstudio.yml`, unchanged).
 
 ## Decision 6: LLM service needs a real process-supervision fix, not just a host move
 
@@ -107,6 +164,58 @@ or a native `llama-server` build (the role's original approach, now that
 both known failure modes — memcg ceiling, Vulkan batch/ubatch sizing —
 are understood and avoidable); either way, it must be a supervised
 service, not a session-scoped process.
+
+### Follow-up, 2026-07-20: dedicated service user, not `steve`
+
+The systemd unit above initially ran as `steve` — a real but unnecessary
+blast-radius problem, since `steve` has passwordless (`NOPASSWD: ALL`)
+sudo. A service that executes model-directed tool calls has no business
+running as the one account with full root access. Moved to a dedicated
+`lmstudio` system user: no sudo at all, `video`/`render` group membership
+only (what GPU access actually needs). See
+`ansible/00-initial-setup/framework-desktop-lmstudio.yml`.
+
+Migration surfaced three real, non-obvious problems, each confirmed live
+before being called a finding:
+
+1. **A system account has no `/run/user/<uid>` by default.** `lms daemon
+   up`/`server status` need one (llmster's own daemon IPC lives there)
+   and failed with a generic "no valid installation could be found"
+   otherwise. Fixed via `loginctl enable-linger lmstudio` — the standard
+   systemd mechanism for a persistent per-user runtime dir without a real
+   login session — plus `Environment=XDG_RUNTIME_DIR=...` on both systemd
+   units.
+2. **A raw `mv` + `chown -R` of the existing `~/.lmstudio` install was
+   not sufficient on its own**, even with runtime dir fixed — `lms
+   daemon up` still failed the same way. Re-running the official
+   installer over the migrated directory (fast, idempotent, re-downloads
+   `llmster` in place) fixed it. Exact mechanism not fully isolated
+   (plausibly a permission/capability bit a plain chown doesn't preserve)
+   — fixed the practical problem rather than chasing this further, same
+   judgment call as the OOM root-cause investigation.
+3. **The model catalog does not survive a raw file move.** `lms ls`
+   stopped listing the loaded model after migration even though its
+   symlink (into the shared `/storage/models/llm`, unaffected by the
+   user change) was still present on disk — LM Studio's internal index
+   (`.internal/gguf-metadata-cache.json`, `internal-engine-index.json`)
+   still referenced the old user's paths. Not hand-edited (format not
+   well understood); fixed by removing the stale symlink and re-running
+   `lms import --symbolic-link`, which rebuilds the catalog entry
+   cleanly. This is a one-time manual step, documented inline in the
+   playbook, not automated — matches the existing pattern that model
+   weights/catalog entries have always been an operator action, never
+   fetched or managed by this playbook.
+
+Also found and fixed along the way: `settings.json`'s `downloadsFolder`
+field still pointed at `/home/steve/.lmstudio/models` post-migration —
+harmless until something (e.g. `lms import`) tried to write there and
+hit `EACCES`. Now self-healing on every playbook run (plain idempotent
+string replace), not just a one-time migration step.
+
+Verified end-to-end after all fixes: `llmster` and its worker processes
+run entirely as `lmstudio` (confirmed via `ps -ef`), `lmstudio` has no
+sudo access (`sudo -l -U lmstudio` confirms), and a real chat completion
+against `qwen3-coder-30b-phase6` succeeds.
 
 ## Decision 7: Documentation split — lessons-learned vs. carried-forward reference
 
