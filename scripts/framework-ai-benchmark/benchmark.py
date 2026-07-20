@@ -178,8 +178,8 @@ ALLOWED_METHODS = {
 }
 
 
-FORBIDDEN_AST = (ast.Import, ast.ImportFrom, ast.ClassDef, ast.AsyncFunctionDef, ast.With,
-                 ast.AsyncWith, ast.Global, ast.Nonlocal, ast.Delete)
+FORBIDDEN_AST = (ast.Import, ast.ImportFrom, ast.ClassDef, ast.AsyncFunctionDef,
+                 ast.With, ast.AsyncWith, ast.Global, ast.Nonlocal, ast.Delete)
 
 
 def validate_top_level(tree: ast.Module) -> str | None:
@@ -209,14 +209,15 @@ def validate_generated_code(code: str, required: set[str]) -> tuple[bool, str, a
         tree = ast.parse(code)
     except SyntaxError as exc:
         return False, f"syntax error: {exc}", None
-    found = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
-    if not required.issubset(found):
-        return False, f"missing required function(s): {sorted(required - found)}", tree
+    public_functions = {node.name for node in tree.body if isinstance(node, ast.FunctionDef)}
+    if not required.issubset(public_functions):
+        return False, f"missing required function(s): {sorted(required - public_functions)}", tree
+    callable_functions = {node.name for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)}
     top_level_error = validate_top_level(tree)
     if top_level_error:
         return False, top_level_error, tree
     for node in ast.walk(tree):
-        node_error = validate_ast_node(node, found)
+        node_error = validate_ast_node(node, callable_functions)
         if node_error:
             return False, node_error, tree
     return True, "safe AST", tree
@@ -336,7 +337,7 @@ def code_grader(required: set[str], tests: str, structural: Callable[[ast.Module
 
 
 def order_structure(tree: ast.Module) -> list[dict[str, Any]]:
-    functions = [node for node in tree.body if isinstance(node, ast.FunctionDef)]
+    functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef)]
     loops = sum(isinstance(node, (ast.For, ast.While)) for node in ast.walk(tree))
     return [
         check("helper_extracted", len(functions) >= 2, f"found {len(functions)} functions"),
@@ -483,17 +484,18 @@ def sudo(command: list[str], **kwargs: Any) -> dict[str, Any]:
 
 def parse_parameter_billions(text: str) -> float | None:
     compact = text.upper().replace(" ", "")
+    values: list[float] = []
     for suffix, divisor in (("B", 1.0), ("M", 1000.0)):
-        end = compact.find(suffix)
-        if end < 1:
-            continue
-        start = end - 1
-        while start >= 0 and (compact[start].isdigit() or compact[start] == "."):
-            start -= 1
-        number = compact[start + 1:end]
-        with contextlib.suppress(ValueError):
-            return float(number) / divisor
-    return None
+        search_from = 0
+        while (end := compact.find(suffix, search_from)) >= 0:
+            start = end - 1
+            while start >= 0 and (compact[start].isdigit() or compact[start] == "."):
+                start -= 1
+            number = compact[start + 1:end]
+            with contextlib.suppress(ValueError):
+                values.append(float(number) / divisor)
+            search_from = end + 1
+    return max(values) if values else None
 
 
 def discover_models() -> dict[str, list[dict[str, Any]]]:

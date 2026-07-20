@@ -79,8 +79,34 @@ def merge_intervals(intervals):
         self.assertFalse(grade["passed"])
         self.assertRegex(grade["checks"][0]["detail"], r"unsafe|disallowed")
 
+    def test_code_grader_allows_generated_helper_calls(self):
+        response = """```python
+def summarize_orders(orders):
+    def is_status(order, status):
+        return order.get('status') == status
+    for order in orders:
+        if is_status(order, 'paid') and 'amount' not in order:
+            raise ValueError('missing amount')
+    paid = [order for order in orders if is_status(order, 'paid')]
+    return {'paid_total': sum(order['amount'] for order in paid),
+            'paid_count': len(paid),
+            'pending_ids': [order['id'] for order in orders if is_status(order, 'pending')]}
+```"""
+        grade = bench.code_grader(
+            {"summarize_orders"}, bench.ORDER_TESTS, bench.order_structure
+        )(response)
+        self.assertTrue(grade["passed"], grade)
+
 
 class SelectionTests(unittest.TestCase):
+    def test_parameter_parser_uses_total_size_in_moe_names(self):
+        self.assertEqual(
+            bench.parse_parameter_billions("L3.2-8X4B-MOE-Inst-21B-Q4_K_M"), 21.0
+        )
+        self.assertEqual(
+            bench.parse_parameter_billions("Qwen3-Coder-30B-A3B-Instruct"), 30.0
+        )
+
     def test_task_specific_model_selection_and_eligibility(self):
         inventory = {
             "llamacpp": [

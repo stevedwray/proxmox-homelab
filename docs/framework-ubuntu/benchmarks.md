@@ -1,11 +1,21 @@
 # Framework AI benchmarks
 
-Status: **full overnight run in progress**.
+Status: **complete and analysed**.
 
-Started: 2026-07-20 06:31 UTC (18:31 NZST).
+Primary matrix: 2026-07-20 06:31-07:16 UTC (18:31-19:16 NZST).
 
-Run directory:
-`/storage/artifacts/framework-ai-benchmarks/20260720T063153`.
+The accepted evidence consists of 171 successful requests across the primary
+matrix and creative follow-ups. A separate six-request failed Command-R launch
+is retained as configuration/reliability evidence; it is not part of quality or
+performance averages.
+
+| Run | Purpose | Accepted records | Result |
+| --- | --- | ---: | --- |
+| `20260720T063153` | Full llama.cpp, LM Studio, and Ollama matrix | 153 | Complete |
+| `20260720T071650` | L3.1 creative follow-up | 6 | Complete |
+| `20260720T072420` | L3.2 creative follow-up | 6 | Complete |
+| `20260720T072622` | Command-R at router default 65,536 context | 0 | Six model-load failures; diagnostic only |
+| `20260720T080605` | Command-R retry at 8,192 context | 6 | Complete |
 
 This is the operator record and morning-processing runbook. See
 [`overnight-llm-benchmark.md`](./overnight-llm-benchmark.md) for the detailed
@@ -46,26 +56,168 @@ The task-specific resident models selected at run start are:
   runtime/performance evidence but marked `quality_eligible: false`; it must
   not be used in comparative quality rankings.
 
-The current run was observed completing its first request successfully while
-continuous telemetry, raw results, and the evaluation corpus were all growing.
-No incident was present at that checkpoint.
+The primary run completed all 153 requests in 44 minutes 23 seconds. Its
+follow-ups completed without requiring an interactive terminal or VS Code.
 
-### Queued creative-model follow-up
+## Results and recommendations
 
-A detached follow-up is queued behind the main run. It does not modify or
-interrupt the 153-request matrix. After the parent reports successful
-completion, it runs both story tasks three times with each of these llama.cpp
-models (18 additional requests):
+### Reliability
 
-- `L3.1-MOE-6X8B-Dark-RS-Dantes-Peak-HRR-R1-Uncen-36B-Q4_K_M-imat`;
-- `L3.2-8X4B-MOE-V2-Dark-Champion-Inst-21B-uncen-ablit-D_AU-Q4_k_m`; and
-- `Command-R-35B-Dark-Horror-V2-D_AU-Q4_k_s`.
+- All 171 accepted requests returned successfully, with no benchmark-detected
+  kernel, GPU-reset, segfault, OOM-kill, or service-death signature.
+- The first Command-R attempt failed cleanly at model load on all six requests.
+  The router requested approximately 81,920 MiB for the 65,536-token context
+  and `cudaMalloc` returned out-of-memory. This was a model/context
+  configuration failure rather than an inference crash. Retrying the same
+  model through an isolated 8,192-token llama.cpp instance produced six
+  successful responses. The temporary instance was removed and original
+  services were restored.
+- The highest reported temperature sensor reading was 92.625 C during a
+  DeepSeek `pickle_safe` request. Peak observed swap was 0.59 GiB, load was
+  2.62, and CPU busy was 9.47%. There was no correlated reset or thermal error
+  signature, but the 92.625 C peak merits watching on future long runs.
+- GPU use reached 100% for every large llama.cpp model. The primary run and all
+  accepted follow-ups restored the initially active LM Studio, llama.cpp, and
+  Ollama services.
 
-Each model has a separate normal timestamped result directory. The queue writes
-`creative-followup-<timestamp>.tsv` in the benchmark results root, mapping each
-model to its result directory and final status. If the parent benchmark fails
-or is interrupted, the follow-up exits without running; resume and complete the
-parent before re-queuing it.
+### Performance and deterministic quality
+
+The following table uses the corrected offline grades described below. “Cloud”
+is the mean of correctness, usefulness, and instruction-following scores from
+the full-output review, on a 0-5 scale. Wall time is per request. These are
+model-and-runtime pair results, not a pure runtime contest: the runtimes did not
+serve identical model files.
+
+| Runtime/model | Suite | Deterministic | Strict | Cloud | Wall s | Gen tok/s | Peak RAM GiB |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| llama.cpp / Llama 3.3 70B Q4 | Chat | 1.000 | 100.0% | 4.63 | 19.12 | 4.77 | 63.2 |
+| llama.cpp / Llama 3.3 70B Q4 | Story | 1.000 | 100.0% | 4.00 | 166.47 | 4.70 | 64.6 |
+| llama.cpp / Qwen3-Coder 30B Q4 | Code generation | 0.500 | 50.0% | 3.17 | 4.39 | 69.51 | 27.0 |
+| llama.cpp / Qwen3-Coder 30B Q4 | Refactoring | 0.875 | 50.0% | 4.50 | 3.05 | 69.50 | 27.1 |
+| llama.cpp / DeepSeek R1 Qwen 32B Q4 | Security | 0.827 | 70.8% | 3.33 | 50.60 | 10.47 | 40.5 |
+| LM Studio / qwen3-coder-30b-phase6 | Chat | 0.941 | 66.7% | 4.04 | 1.57 | 77.67 | 45.7 |
+| LM Studio / qwen3-coder-30b-phase6 | Code generation | 0.500 | 50.0% | 3.17 | 2.17 | 80.09 | 46.1 |
+| LM Studio / qwen3-coder-30b-phase6 | Refactoring | 0.875 | 50.0% | 4.50 | 2.54 | 78.87 | 46.2 |
+| LM Studio / qwen3-coder-30b-phase6 | Security | 0.694 | 50.0% | 3.83 | 1.29 | 78.27 | 46.4 |
+| LM Studio / qwen3-coder-30b-phase6 | Story | 0.972 | 83.3% | 3.72 | 8.38 | 82.47 | 45.9 |
+
+Ollama's only resident model, Qwen 2.5 0.5B, completed every request at
+255-260 generated tokens/s, 1.1-3.3 seconds per request, and at most 4.7 GiB
+RAM. It achieved no strict passes and remains a smoke/throughput baseline only;
+it is excluded from quality comparisons.
+
+The LM Studio pair is the clear practical throughput winner in this inventory:
+approximately 78-82 generated tokens/s and single-digit wall times. Llama 3.3
+70B is much slower at 4.7 tokens/s and consumes about 65 GiB, but it is the most
+reliable chat and literal story-constraint follower. Qwen3-Coder through
+llama.cpp used substantially less RAM than the LM Studio variant, while LM
+Studio was modestly faster on the same code task prompts.
+
+### Correctness and usefulness findings
+
+- **Chat:** Llama 3.3 won overall. It obeyed every bounded constraint and gave
+  the correct schedule result. Its incident responses did assume resolution in
+  the customer message before verification. LM Studio was much faster, but it
+  invented rollback outcomes and measurements, and one response contradicted
+  the supplied “no database” fact.
+- **Code generation:** Both eligible Qwen variants passed `merge_intervals`
+  three times and failed `unicode_slugify` three times. The slug implementations
+  used explicitly prohibited imports and mishandled separators or Unicode
+  normalization. There is no eligible code-generation winner on this small
+  corpus.
+- **Refactoring:** Both Qwen variants passed the order refactor after correcting
+  the grader's nested-helper defect. Both accepted `True` as an integer chunk
+  size, contrary to the prompt, so their strict pass rate is 50%. They are tied
+  on output quality; LM Studio is faster and llama.cpp uses less RAM.
+- **Security:** DeepSeek made the correct safe/vulnerable decision on 19/24
+  samples and LM Studio on 15/24. DeepSeek is therefore the better detector in
+  this run, but it wrapped every answer in Markdown despite the exact-JSON
+  requirement. LM Studio returned directly parseable JSON, but produced nine
+  false positives across the safe Ansible, command, and pickle cases and used
+  the wrong CWE on all three vulnerable Ansible cases. Neither should be used
+  as an autonomous security gate without schema validation and a second-stage
+  verifier.
+- **Repeatability:** Many temperature-zero chat, code, and security responses
+  were identical across seeds. Three repetitions provide stability evidence,
+  but not three independent reasoning approaches.
+
+### Creative-model comparison
+
+| Model/runtime | Deterministic | Strict | Cloud | Wall s | Gen tok/s | Peak RAM GiB |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| Llama 3.3 70B / llama.cpp | 1.000 | 100.0% | 4.00 | 166.47 | 4.70 | 64.6 |
+| qwen3-coder-30b-phase6 / LM Studio | 0.972 | 83.3% | 3.72 | 8.38 | 82.47 | 45.9 |
+| L3.1 MoE 36B / llama.cpp | 0.873 | 33.3% | 3.14 | 71.81 | 9.60 | 32.9 |
+| L3.2 MoE 21B / llama.cpp | 0.905 | 66.7% | 2.94 | 17.20 | 46.57 | 24.2 |
+| Command-R 35B / llama.cpp, 8K context | 0.790 | 0.0% | 2.64 | 95.10 | 9.10 | 38.3 |
+
+Llama 3.3 is the best of the tested story models for constraint compliance and
+coherence, although its prose is formulaic. LM Studio's Qwen is the best
+speed/quality compromise and sometimes more vivid, but contains more factual
+and internal inconsistencies. The creative fine-tunes did not improve judged
+literary usefulness: L3.2 scored well mechanically but moved two Mars stories
+to Earth's Svalbard/arctic setting; L3.1 was repetitive and uneven; Command-R
+leaked `<|END_OF_TURN_TOKEN|>` after every response, breaking exact endings,
+and included serious Martian-atmosphere errors.
+
+### Recommended use of the installed stack
+
+- Use **LM Studio/qwen3-coder-30b-phase6** for interactive drafting and coding
+  where latency matters, with tests or review applied to every code result.
+- Use **llama.cpp/Llama 3.3 70B** when instruction fidelity and supplied-context
+  retention matter more than latency.
+- Use **llama.cpp/DeepSeek R1 Qwen 32B** as a security-review assistant, not a
+  decision-maker; normalize its fenced JSON and independently verify findings.
+- Keep **Ollama/Qwen 0.5B** only as a health and maximum-throughput baseline
+  until a quality-eligible Ollama model is installed.
+- Prefer **Llama 3.3** for unattended story generation, or LM Studio Qwen when
+  throughput is the priority. Do not prefer the three creative fine-tunes on
+  the evidence from this corpus.
+
+### Analysis corrections and limitations
+
+The audit found and corrected two harness-analysis defects:
+
+1. The AST gate recognized only top-level functions, despite the order-refactor
+   prompt requiring a helper. It now accepts calls to generated nested helpers
+   and counts them for the structural check. This changes both eligible order
+   tasks from false failures to passes.
+2. Model-size parsing selected the first `B` token in a name. That marked the
+   `8X4B ... 21B` model as 4B and ineligible. Parsing now uses the largest
+   explicit parameter count, correctly classifying it as 21B.
+
+The corrected harness and its regression tests were installed at
+`/home/steve/framework-ai-benchmark/` after analysis; all 11 tests also pass on
+Framework. No rerun is needed because the raw outputs were regraded offline.
+
+Imports remain prohibited in code tasks exactly as the prompts specify. The
+original run artifacts are immutable; corrected grades are derived alongside
+them. Non-streaming API calls cannot report time to first token. One-second
+telemetry also leaves some sub-two-second LM Studio and Ollama requests with
+zero to two resource samples, so their request-level resource means are less
+robust than the longer llama.cpp samples. The corpus is deliberately compact;
+its rankings are directional, not a comprehensive model certification.
+
+The processed results are on Framework at
+`/storage/artifacts/framework-ai-benchmarks/analysis-20260720/`. A local ignored
+working copy is in
+`docs/framework-ubuntu/artifacts/benchmark-analysis-20260720/`. Both contain
+`corrected-results.jsonl`, `corrected-summary.json`, `cloud-scores.jsonl`, and
+`cloud-summary.json`. The cloud review contains one judgment for each of the
+171 accepted responses. Every quality-eligible output was reviewed in full;
+the excluded Ollama smoke records retain mechanically derived scores for
+completeness.
+
+## Creative-model follow-up mechanics
+
+The detached follow-up did not modify or interrupt the 153-request matrix. It
+ran both story tasks three times for each creative model. Each model has a
+separate timestamped result directory, preserving clear provenance.
+
+The queue writes `creative-followup-<timestamp>.tsv` in the benchmark results
+root, mapping each model to its result directory and final status. If a future
+parent benchmark fails or is interrupted, the follow-up exits without running;
+resume and complete the parent before re-queuing it.
 
 ## Evidence collected
 
@@ -93,6 +245,10 @@ resets, device loss, watchdog/panic events, and container deaths.
 
 ## Morning procedure
 
+The 2026-07-20 evidence has already been processed and its conclusions are
+recorded above. The procedure below is retained for independent verification
+and future overnight runs.
+
 Set the run location once in the morning shell:
 
 ```bash
@@ -109,7 +265,7 @@ jq . "$RUN_DIR/progress.json"
 A successful complete run has `"complete": true` and `"total_records": 153`.
 The transient benchmark unit normally disappears once it has finished.
 
-The queued creative follow-up may still be active after this parent unit
+A queued creative follow-up may still be active after its parent unit
 disappears. Check it and locate its result index with:
 
 ```bash
@@ -167,7 +323,7 @@ Print records where the harness saw a crash/error signature even if the API
 request itself returned:
 
 ```bash
-jq -c 'select(((.anomalies // []) | length) > 0) | {runtime,model,suite,task,repetition,anomalies}' "$RUN_DIR/results.jsonl"
+jq -c 'select(((.log_anomalies // []) | length) > 0) | {runtime,model,suite,task,repetition,log_anomalies}' "$RUN_DIR/results.jsonl"
 ```
 
 Review a listed incident JSON before the larger final logs. Use
@@ -327,9 +483,10 @@ folded back into tracked documentation.
 ## Validation and source state
 
 The installed harness passed foreground success, deliberate-timeout incident,
-and detached logout-survival tests on Framework. Nine regression tests, Ruff,
-Bandit, ShellCheck, and repository whitespace checks pass. SonarCloud reports
-no unresolved issue or security hotspot in the harness; the repository-wide
-quality gate remains red because of existing unrelated backlog.
-
-Source commit: `87a8fed0` on `task/framework-overnight-benchmarks`.
+and detached logout-survival tests on Framework. The audited source passes 11
+regression tests, Ruff, Bandit, ShellCheck, and repository whitespace checks.
+SonarCloud reports no unresolved issue or security hotspot in the harness; the
+repository-wide quality gate remains red because of existing unrelated
+backlog. Development and analysis are on
+`task/framework-overnight-benchmarks`; the initial deployed harness is commit
+`87a8fed0`, with the grader corrections documented above made after the run.
