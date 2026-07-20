@@ -7,8 +7,8 @@ hypervisor.
 Status: **Ubuntu 26.04 migration and core GPU runtimes complete; follow-on
 validation in progress.** See [`plan.md`](./plan.md) for the live execution
 checkpoint, [`decisions.md`](./decisions.md) for the choices behind it, and
-[`overnight-llm-benchmark.md`](./overnight-llm-benchmark.md) for the autonomous
-Ollama/llama.cpp/LM Studio quality and performance harness.
+[`benchmarks.md`](./benchmarks.md) for the active autonomous Ollama/llama.cpp/
+LM Studio benchmark and morning-processing runbook.
 
 ## Why
 
@@ -40,6 +40,9 @@ rather than just re-tuning its memory limit.
 - [`overnight-llm-benchmark.md`](./overnight-llm-benchmark.md) — one-command,
   detached overnight benchmark for chat, story generation, code generation,
   refactoring, and vulnerability review across all three installed runtimes.
+- [`benchmarks.md`](./benchmarks.md) — record of the active full run, collected
+  evidence, failure triage, performance/resource analysis, and morning cloud-LLM
+  judging procedure.
 
 ## Related documents
 
