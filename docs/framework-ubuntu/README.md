@@ -8,7 +8,9 @@ Status: **Ubuntu 26.04 migration and core GPU runtimes complete; follow-on
 validation in progress.** See [`plan.md`](./plan.md) for the live execution
 checkpoint, [`decisions.md`](./decisions.md) for the choices behind it, and
 [`benchmarks.md`](./benchmarks.md) for the active autonomous Ollama/llama.cpp/
-LM Studio benchmark and morning-processing runbook.
+LM Studio benchmark and morning-processing runbook, and
+[`comfyui-benchmarks.md`](./comfyui-benchmarks.md) for image-generation smoke
+tests, performance/resource measurements, retained PNGs, and visual judging.
 
 ## Why
 
@@ -43,6 +45,9 @@ rather than just re-tuning its memory limit.
 - [`benchmarks.md`](./benchmarks.md) — record of the active full run, collected
   evidence, failure triage, performance/resource analysis, and morning cloud-LLM
   judging procedure.
+- [`comfyui-benchmarks.md`](./comfyui-benchmarks.md) — detached ComfyUI smoke
+  and eight-image benchmark, evidence layout, and local/cloud result-processing
+  procedure.
 
 ## Related documents
 
