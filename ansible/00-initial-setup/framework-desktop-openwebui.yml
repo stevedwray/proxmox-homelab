@@ -25,11 +25,13 @@
     framework_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     framework_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ framework_lab_domain, true) }}"
     framework_openwebui_oidc_client_id: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_ID') | default('openwebui', true) }}"
-    framework_openwebui_oidc_client_secret: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET') | mandatory('OPENWEBUI_OIDC_CLIENT_SECRET env var is required') }}"
+    framework_openwebui_oidc_client_secret: >-
+      {{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET')
+         | mandatory('OPENWEBUI_OIDC_CLIENT_SECRET env var is required') }}
     framework_openwebui_llm_api_base: "https://llm.{{ framework_lab_domain }}/v1"
     framework_openwebui_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     framework_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
-    framework_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
+    framework_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
     framework_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
 
   pre_tasks:
@@ -96,8 +98,11 @@
               volumes:
                 - {{ framework_openwebui_data_dir }}:/app/backend/data
               environment:
+                ENABLE_OPENAI_API: "true"
+                ENABLE_OLLAMA_API: "false"
                 OPENAI_API_BASE_URL: "{{ framework_openwebui_llm_api_base }}"
                 OPENAI_API_KEY: "{{ framework_openwebui_llm_api_key }}"
+                WEBUI_URL: "https://openwebui.{{ framework_lab_domain }}"
                 ENABLE_OAUTH_SIGNUP: "true"
                 OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
                 OAUTH_CLIENT_ID: "{{ framework_openwebui_oidc_client_id }}"
@@ -105,8 +110,8 @@
                 OPENID_PROVIDER_URL: "https://{{ framework_authentik_fqdn }}/application/o/edge-ai-services-stack-openwebui/.well-known/openid-configuration"
                 OAUTH_PROVIDER_NAME: "Authentik"
                 OAUTH_SCOPES: "openid email profile"
-                ENABLE_RAG_WEB_SEARCH: "true"
-                RAG_WEB_SEARCH_ENGINE: "searxng"
+                ENABLE_WEB_SEARCH: "true"
+                WEB_SEARCH_ENGINE: "searxng"
                 SEARXNG_QUERY_URL: "{{ framework_searxng_query_url }}"
               depends_on:
                 - searxng
@@ -128,3 +133,119 @@
       changed_when: >-
         'Started' in framework_openwebui_up.stderr or
         'Created' in framework_openwebui_up.stderr
+
+    - name: Reconcile infrastructure-managed OpenWebUI connection settings
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - openwebui
+          - python
+          - -c
+          - |
+            import json
+            import os
+            import sqlite3
+            import time
+
+            database = "/app/backend/data/webui.db"
+            backup = f"{database}.phase6-pre-connection-fix"
+            connection = sqlite3.connect(database)
+            desired = {
+                "openai.enable": json.dumps(True),
+                "openai.api_base_urls": json.dumps(
+                    [os.environ["OPENAI_API_BASE_URL"]], separators=(",", ":")
+                ),
+                "openai.api_keys": json.dumps(
+                    [os.environ["OPENAI_API_KEY"]], separators=(",", ":")
+                ),
+                "ollama.enable": json.dumps(False),
+                "web.search.enable": json.dumps(True),
+                "web.search.engine": json.dumps("searxng"),
+                "web.search.searxng_query_url": json.dumps(
+                    os.environ["SEARXNG_QUERY_URL"]
+                ),
+                "webui.url": json.dumps(os.environ["WEBUI_URL"]),
+            }
+            pending = []
+            for key, value in desired.items():
+                row = connection.execute(
+                    "SELECT value FROM config WHERE key = ?", (key,)
+                ).fetchone()
+                if row is None or row[0] != value:
+                    pending.append((key, value))
+
+            if pending:
+                if not os.path.exists(backup):
+                    backup_connection = sqlite3.connect(backup)
+                    connection.backup(backup_connection)
+                    backup_connection.close()
+                    os.chmod(backup, 0o600)
+
+                updated_at = int(time.time())
+                connection.executemany(
+                    """
+                    INSERT INTO config (key, value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(key) DO UPDATE SET
+                      value = excluded.value,
+                      updated_at = excluded.updated_at
+                    """,
+                    [(key, value, updated_at) for key, value in pending],
+                )
+                connection.commit()
+
+            connection.close()
+            print(json.dumps({
+                "changed": bool(pending),
+                "keys": [key for key, _value in pending],
+            }))
+      register: framework_openwebui_connection_reconcile
+      changed_when: >-
+        (framework_openwebui_connection_reconcile.stdout | from_json).changed
+
+    - name: Restart OpenWebUI after connection settings change
+      ansible.builtin.command: docker compose restart openwebui
+      args:
+        chdir: "{{ framework_openwebui_dir }}"
+      when: framework_openwebui_connection_reconcile.changed
+      changed_when: true
+
+    - name: Wait for OpenWebUI after connection reconciliation
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ framework_openwebui_port }}/"
+        status_code: 200
+      register: framework_openwebui_health
+      retries: 30
+      delay: 2
+      until: framework_openwebui_health.status == 200
+
+    - name: Verify OpenWebUI can discover models from the managed LLM route
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - openwebui
+          - python
+          - -c
+          - |
+            import json
+            import os
+            import urllib.request
+
+            request = urllib.request.Request(
+                f"{os.environ['OPENAI_API_BASE_URL']}/models",
+                headers={
+                    "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"
+                },
+            )
+            with urllib.request.urlopen(request, timeout=15) as response:
+                models = [
+                    model.get("id")
+                    for model in json.load(response).get("data", [])
+                    if model.get("id")
+                ]
+            if not models:
+                raise SystemExit("managed LLM route returned no models")
+            print(json.dumps({"models": models}))
+      changed_when: false
