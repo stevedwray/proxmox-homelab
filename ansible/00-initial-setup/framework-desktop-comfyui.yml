@@ -1,0 +1,122 @@
+---
+# Installs Docker and deploys ComfyUI via the yanwk/comfyui-boot ROCm image
+# on the Framework Desktop, per docs/framework-ubuntu/plan.md Phase 4 (§9).
+#
+# Decided (see plan.md §5, correcting an earlier wrong assumption in this
+# same plan): use an existing Docker image in the first instance, not a
+# native from-source build -- Docker-vs-native GPU performance on this
+# hardware was already measured with no meaningful difference
+# (proxmox-strix-halo-setup-notes.md §7), so there was never a real
+# risk premise for defaulting to native.
+#
+# Exact run command sourced directly from the upstream repo
+# (github.com/YanWenKun/ComfyUI-Docker/blob/main/rocm/README.adoc,
+# 2026-07-20) and adapted: models volume points at the already-populated
+# /storage/models/comfyui (diffusion_models/text_encoders/vae, restored
+# from NAS backup) instead of an empty directory.
+#
+# gfx1151 (Strix Halo) is not explicitly documented as supported by this
+# image or its upstream repo -- HSA_OVERRIDE_GFX_VERSION starts unset,
+# matching the working native llama.cpp/HIP build's own precedent (no
+# override needed there); verify live rather than assuming either way
+# (plan.md §5's open verification item).
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-comfyui.yml
+
+- name: Install Docker and deploy ComfyUI (yanwk/comfyui-boot, ROCm)
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_comfyui_user: steve
+    framework_comfyui_image: "yanwk/comfyui-boot:rocm"
+    framework_comfyui_port: 8188
+    framework_comfyui_dir: /opt/comfyui-docker
+    # gfx1151 (Strix Halo) isn't in this image's bundled ROCm hardware
+    # table (confirmed live, 2026-07-20 -- container crash-looped on
+    # "No CUDA GPUs are available" from PyTorch's ROCm/HIP backend with
+    # this unset, despite /dev/kfd and /dev/dri being correctly visible
+    # with the right permissions). 11.5.1 is gfx1151's own literal
+    # version-string decomposition (matching the documented gfx1100->
+    # 11.0.0 / gfx1201->12.0.1 pattern), not a same-family substitute.
+    framework_comfyui_hsa_override: "11.5.1"
+
+  tasks:
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add {{ framework_comfyui_user }} to the docker group
+      ansible.builtin.user:
+        name: "{{ framework_comfyui_user }}"
+        groups: docker
+        append: true
+
+    - name: Create ComfyUI docker-compose directory and volume paths
+      ansible.builtin.file:
+        path: "{{ framework_comfyui_dir }}/{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ framework_comfyui_user }}"
+        group: "{{ framework_comfyui_user }}"
+      loop:
+        - storage
+        - storage-models/hf-hub
+        - storage-models/torch-hub
+        - storage-user/input
+        - storage-user/output
+        - storage-user/workflows
+
+    - name: Install ComfyUI docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ framework_comfyui_dir }}/docker-compose.yml"
+        mode: '0644'
+        content: |
+          services:
+            comfyui:
+              image: {{ framework_comfyui_image }}
+              container_name: comfyui
+              restart: unless-stopped
+              devices:
+                - /dev/kfd
+                - /dev/dri
+              group_add:
+                - video
+              ipc: host
+              cap_add:
+                - SYS_PTRACE
+              security_opt:
+                - seccomp=unconfined
+                - label=disable
+              ports:
+                - "{{ framework_comfyui_port }}:8188"
+              volumes:
+                - {{ framework_comfyui_dir }}/storage:/root
+                - /storage/models/comfyui:/root/ComfyUI/models
+                - {{ framework_comfyui_dir }}/storage-models/hf-hub:/root/.cache/huggingface/hub
+                - {{ framework_comfyui_dir }}/storage-models/torch-hub:/root/.cache/torch/hub
+                - {{ framework_comfyui_dir }}/storage-user/input:/root/ComfyUI/input
+                - {{ framework_comfyui_dir }}/storage-user/output:/root/ComfyUI/output
+                - {{ framework_comfyui_dir }}/storage-user/workflows:/root/ComfyUI/user/default/workflows
+              environment:
+                HSA_OVERRIDE_GFX_VERSION: "{{ framework_comfyui_hsa_override }}"
+                CLI_ARGS: ""
+      register: framework_comfyui_compose
+
+    - name: Bring up ComfyUI via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ framework_comfyui_dir }}"
+      register: framework_comfyui_up
+      changed_when: "'Started' in framework_comfyui_up.stderr or 'Created' in framework_comfyui_up.stderr"

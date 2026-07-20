@@ -33,8 +33,8 @@ Related documents:
 ### TL;DR
 
 `framework.gibbsgreatly.xyz` (192.168.1.8) is a live, working Ubuntu
-26.04 host with three LLM backends running simultaneously, each
-verified with a real inference request. Everything below is done and
+26.04 host with three LLM backends and ComfyUI all running
+simultaneously, each independently verified. Everything below is done and
 re-runnable via committed Ansible, not ad hoc — safe to pick this up
 cold from this section alone.
 
@@ -73,23 +73,33 @@ cold from this section alone.
 - **Ansible inventory**: new `framework` group added to
   `ansible/inventory/{inventory.yml,dev.yml,production.yml}`, confirmed
   working (`ansible framework -m ping` → `pong`).
+- **Phase 4 (ComfyUI, via `ansible/00-initial-setup/framework-desktop-comfyui.yml`)**:
+  Docker + `yanwk/comfyui-boot:rocm`. Real bug hit and fixed:
+  `gfx1151` isn't in this image's bundled ROCm hardware table — crash-
+  looped until `HSA_OVERRIDE_GFX_VERSION=11.5.1` was set (that's
+  `gfx1151`'s own literal version decomposition, not a workaround
+  substitute). Confirmed via logs and the live API: correct GPU/VRAM
+  detected, restored models (`z_image_turbo_bf16.safetensors`,
+  `ae.safetensors`) visible through the right loader nodes. Port 8188.
 
 ### Current state of the host, as of this checkpoint
 
-Three services running concurrently, each independently verified:
+Four services running concurrently, each independently verified:
 
 | Service | Backend | Port | Unit |
 | --- | --- | --- | --- |
 | LM Studio | Vulkan | 8090 | `lmstudio.service` + `lmstudio-healthcheck.timer` |
 | llama-router | HIP | 8080 | `llama-router.service` |
 | Ollama | ROCm | 11434 | `ollama.service` |
+| ComfyUI | ROCm (Docker) | 8188 | `docker compose` (`/opt/comfyui-docker`), `restart: unless-stopped` |
 
 ### Not yet done / open items
 
-- **Phase 4 (ComfyUI)** — not started. Plan: try `yanwk/comfyui-boot`'s
-  ROCm image variants first (§5), verify `gfx1151` actually works
-  (neither the image nor its upstream repo documents Strix Halo support
-  explicitly), fall back to native only if no image works.
+- **Phase 4 remainder**: an actual end-to-end image generation run
+  (needs a real workflow JSON, not just API reachability) and
+  confirming whether `comfyui-image-video-gen-findings.md`'s two
+  upstream bug fixes / `--vram-headroom 6`/`--disable-smart-memory`
+  flags are needed on top of this image or already handled.
 - **Phase 5 (GPU workload exclusivity)** — not started, and the ComfyUI
   unload-vs-restart question (§9) needs re-testing fresh on this host,
   not assumed from the old LXC-era finding.
@@ -805,19 +815,41 @@ unchanged) and a real VS Code Copilot session, same acceptance bar as
 acceptance gate; native llama.cpp/Ollama are for development use without
 needing to clear the same bar themselves.
 
-**Phase 4 — ComfyUI bring-up**
-- Try `yanwk/comfyui-boot`'s `rocm`/`rocm7`/`rocm6` variants first (§5)
-  — fall back to the native from-source build only if none can be made
-  to work on this GPU.
-- Verify `gfx1151` actually works with the chosen tag — neither the
-  image nor its upstream repo documents Strix Halo support explicitly
-  (§5); test whether it works as-is or needs `HSA_OVERRIDE_GFX_VERSION`
-  set, before assuming it just works.
-- Confirm whether the image already handles the two upstream bug fixes
-  and `--vram-headroom 6`/`--disable-smart-memory` launch flags from
-  `comfyui-image-video-gen-findings.md`, or whether they need applying
-  on top.
-- Validate against that same findings doc's existing test workflow.
+**Phase 4 — ComfyUI bring-up — done, verified live 2026-07-20**, via
+`ansible/00-initial-setup/framework-desktop-comfyui.yml`:
+- Docker + Compose plugin installed (`docker.io`/`docker-compose-v2`
+  directly from Ubuntu 26.04's own repos — recent enough, no need for
+  Docker's upstream apt repo).
+- `yanwk/comfyui-boot:rocm` deployed via docker-compose, exact run
+  command sourced directly from the upstream repo's ROCm README and
+  adapted to mount the already-populated `/storage/models/comfyui`
+  directly as the models volume.
+- **`gfx1151` needed the override, confirmed live, not assumed**: first
+  attempt (no `HSA_OVERRIDE_GFX_VERSION`) crash-looped —
+  `/dev/kfd`/`/dev/dri` were correctly visible with the right
+  permissions (ruling out a passthrough problem), but PyTorch's
+  ROCm/HIP backend reported "No CUDA GPUs are available" (normal
+  ROCm-PyTorch terminology — `torch.cuda` is aliased to HIP, not a sign
+  of a CUDA-vs-ROCm image mismatch). Set
+  `HSA_OVERRIDE_GFX_VERSION=11.5.1` — `gfx1151`'s own literal version
+  decomposition (matching the documented `gfx1100→11.0.0`/
+  `gfx1201→12.0.1` pattern, not a same-family substitute) — and the
+  container came up stable. Confirmed in logs: `Total VRAM 93012 MB`
+  (matching the `ttm.pages_limit` ceiling exactly), `pytorch version:
+  2.13.0+rocm7.2`, `Device: cuda:0 AMD Radeon 8060S Graphics : native`.
+- Confirmed via the API, not just logs: HTTP 200 on the web root,
+  `/system_stats` reports the correct GPU device and VRAM, and both
+  restored models (`z_image_turbo_bf16.safetensors`,
+  `ae.safetensors`) are visible through the correct loader nodes
+  (`UNETLoader`, `VAELoader`) — the volume mount is wired up correctly.
+- **Not yet done**: an actual end-to-end image generation run (needs a
+  real workflow JSON for this specific model, not just API
+  reachability) and confirming whether the two upstream bug fixes /
+  `--vram-headroom 6`/`--disable-smart-memory` flags from
+  `comfyui-image-video-gen-findings.md` are needed on top of this image
+  or already handled — left as a real-usage validation step, the same
+  way LM Studio's final validation is a real VS Code Copilot session
+  rather than a synthetic check.
 
 **Phase 5 — GPU workload exclusivity (not a memory-sizing problem)**
 - Confirmed with the operator: running LLM coding assistance and ComfyUI
