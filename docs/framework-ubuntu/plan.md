@@ -118,8 +118,15 @@ release the other service's GPU memory on demand (§9 Phase 5).
   of this image or already handled (not blocking — real generation
   already confirmed working without them).
 - **Phase 6 (`ai-services-stack`)** — not started.
-- **Phase 7 (platform integration cutover + Portainer registration)** —
-  not started; depends on Phase 6 existing first.
+- **Phase 7 (platform integration cutover)** — the local part is done
+  (`.env`/`edge.yaml` repointed at `192.168.1.8`, LM Studio's `:8090`
+  chosen over the abandoned `:8080` native backend for the public
+  `llm.${LAB_DOMAIN}` route, idempotent re-run confirmed on all six
+  playbooks, stale Technitium records manually deleted and verified
+  gone). Still needs explicit approval before touching `pve` itself:
+  pushing the new Traefik config via `provision.sh`/`reconcile_all_edge`
+  and letting Authentik's forwardAuth object update in place. Portainer
+  registration for `ai-services-stack` still depends on Phase 6.
 - **Phase 8 (decommission old Terraform/credential-model footprint)** —
   blocked on the above; also genuinely can't "roll back" to the old
   Proxmox install on this hardware anymore (see Status line above), so
@@ -945,20 +952,22 @@ not just log-watching:
     matches the Docker container's exposed port).
   - `ai-services-stack/edge.yaml`/`LAB_IP_AI_SERVICES` — deferred,
     Phase 6 not done yet.
-- **Not yet done, needs explicit approval before proceeding — this
-  reaches real production systems** (`pve`'s Traefik, Authentik, and
-  Technitium), unlike everything else in this migration so far, which
-  was scoped to `framework.gibbsgreatly.xyz` under this session's
-  existing broad authorization:
+- **Technitium — done.** Operator manually deleted the stale
+  `llm.lab.gibbsgreatly.xyz`/`comfyui.lab.gibbsgreatly.xyz` A records
+  pointing at the old `192.168.50.x` addresses (these don't self-correct,
+  per §7). Confirmed via direct `dig` against `192.168.1.1`: both names
+  now return nothing.
+- **Not yet done, still needs explicit approval before proceeding — this
+  reaches real production systems** (`pve`'s Traefik and Authentik),
+  unlike everything else in this migration so far, which was scoped to
+  `framework.gibbsgreatly.xyz` under this session's existing broad
+  authorization:
   - Register `ai-services-stack` with Portainer (blocked on Phase 6
     existing first anyway).
   - Run `provision.sh`/`reconcile_all_edge` so Traefik picks up the new
     backend addresses and Authentik's OIDC/forwardAuth objects update in
     place (§7 — confirmed safe/idempotent for Authentik specifically,
     since the same stack/route identities are being reused).
-  - Manually delete the stale Technitium A records pointing at the old
-    `192.168.50.x` addresses (§7 — confirmed these don't self-correct
-    either way).
 
 **Phase 8 — Decommission Proxmox/Terraform for this node**
 - Only after Phase 3–7 are validated end-to-end (§11).
