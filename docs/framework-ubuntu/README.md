@@ -4,9 +4,11 @@ Workspace for moving `pve-framework` (the Framework Desktop) off Proxmox
 VE/LXC/Terraform onto bare-metal Ubuntu 26.04 LTS, Ansible-managed, no
 hypervisor.
 
-Status: **planned, not started.** See [`plan.md`](./plan.md) for the full
-migration plan and [`decisions.md`](./decisions.md) for the specific
-choices behind it.
+Status: **Ubuntu 26.04 migration and core GPU runtimes complete; follow-on
+validation in progress.** See [`plan.md`](./plan.md) for the live execution
+checkpoint, [`decisions.md`](./decisions.md) for the choices behind it, and
+[`overnight-llm-benchmark.md`](./overnight-llm-benchmark.md) for the autonomous
+Ollama/llama.cpp/LM Studio quality and performance harness.
 
 ## Why
 
@@ -35,6 +37,9 @@ rather than just re-tuning its memory limit.
 - [`decisions.md`](./decisions.md) — the specific decisions this plan
   rests on, with rationale, in the same style as the (now historical)
   `docs/framework-integration/decisions.md`.
+- [`overnight-llm-benchmark.md`](./overnight-llm-benchmark.md) — one-command,
+  detached overnight benchmark for chat, story generation, code generation,
+  refactoring, and vulnerability review across all three installed runtimes.
 
 ## Related documents
 
