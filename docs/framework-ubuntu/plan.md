@@ -918,22 +918,47 @@ not just log-watching:
 - Docker Compose port, mechanical (§5).
 
 **Phase 7 — Ansible role adaptation and platform integration cutover**
-- New bare-host inventory group.
-- Strip passthrough-check tasks from `llm_gpu_stack`/`comfyui_stack`.
-- Confirm idempotent re-run against the live bare host (same standard
-  the rest of this repo holds Ansible changes to).
-- Apply the new `edge.yaml` backend addressing scheme decided in §7
-  (per-service port on `192.168.1.8`, no `ai_seg` VLAN) — update the
-  three stacks' `edge.yaml`/`.env` `LAB_IP_*`/port definitions
-  accordingly.
-- Register `ai-services-stack` with Portainer per §7's decision
-  (`portainer_agent: true`, add the role, add to
-  `register_portainer_environments`); `llm_gpu_stack`/`comfyui_stack`
-  stay outside Portainer's scope (native systemd, not Docker).
-- Re-run `provision.sh`/`reconcile_all_edge` to let Traefik self-heal
-  (§7) and Authentik update in place (§7, since the same stack/route
-  identities are being reused) — then manually delete the stale
-  Technitium A records (§7), which don't self-correct either way.
+- New bare-host inventory group — **done** (§5).
+- Strip passthrough-check tasks from `llm_gpu_stack` — **done** (§5);
+  `comfyui_stack` role is moot, ComfyUI runs via Docker instead (§5
+  decision reversal).
+- **Idempotent re-run confirmed, 2026-07-20**: all six
+  `framework-desktop-*.yml` playbooks re-run back to back — five showed
+  `changed=0` immediately; the bootstrap playbook showed one transient
+  `changed=1` on its first re-run (plausibly the `user` module's
+  `groups`/`append` handling recalculating on that pass) and `changed=0`
+  on a second re-run immediately after. Confirmed stable, not a real
+  drift.
+- **`edge.yaml`/`.env` addressing scheme applied, 2026-07-20** — done for
+  the two stacks actually live on the new host:
+  - `.env`/`.env.template`: `LAB_IP_LLM_GPU`/`LAB_IP_COMFYUI` updated to
+    `192.168.1.8` (confirmed via `with-secrets`'s own sourcing order that
+    `.env.pve` doesn't override these, so the base `.env` file is exactly
+    what a real `pve` run reads).
+  - `terraform/lxc/stacks/llm-gpu-stack/edge.yaml`: backend port changed
+    from `8080` to `8090` — **a real decision, not a copied-over
+    default**: port 8080 was native llama-router (the abandoned HIP
+    approach per `findings-plan.md`); the platform's public
+    `llm.${LAB_DOMAIN}` route should point at LM Studio (8090), the
+    actual validated production endpoint.
+  - `comfyui-stack/edge.yaml` needed no port change (8188 already
+    matches the Docker container's exposed port).
+  - `ai-services-stack/edge.yaml`/`LAB_IP_AI_SERVICES` — deferred,
+    Phase 6 not done yet.
+- **Not yet done, needs explicit approval before proceeding — this
+  reaches real production systems** (`pve`'s Traefik, Authentik, and
+  Technitium), unlike everything else in this migration so far, which
+  was scoped to `framework.gibbsgreatly.xyz` under this session's
+  existing broad authorization:
+  - Register `ai-services-stack` with Portainer (blocked on Phase 6
+    existing first anyway).
+  - Run `provision.sh`/`reconcile_all_edge` so Traefik picks up the new
+    backend addresses and Authentik's OIDC/forwardAuth objects update in
+    place (§7 — confirmed safe/idempotent for Authentik specifically,
+    since the same stack/route identities are being reused).
+  - Manually delete the stale Technitium A records pointing at the old
+    `192.168.50.x` addresses (§7 — confirmed these don't self-correct
+    either way).
 
 **Phase 8 — Decommission Proxmox/Terraform for this node**
 - Only after Phase 3–7 are validated end-to-end (§11).

@@ -9,7 +9,13 @@ spec:
       host: llm.${LAB_DOMAIN}
       backend:
         type: url
-        url: http://${LAB_IP_LLM_GPU}:8080
+        # Port 8090 (LM Studio, Vulkan), not 8080 (native llama-router,
+        # HIP) -- findings-plan.md established LM Studio + Qwen3-Coder as
+        # the validated production endpoint; native llama-router is kept
+        # as an available dev backend (docs/framework-ubuntu/plan.md §5),
+        # not the one the platform's public llm.${LAB_DOMAIN} route
+        # should point at. Deliberate choice, not a copied-over default.
+        url: http://${LAB_IP_LLM_GPU}:8090
       dns:
         enabled: true
         target: ${LAB_IP_PROXY}
