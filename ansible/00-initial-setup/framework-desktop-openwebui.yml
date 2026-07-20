@@ -28,7 +28,9 @@
     framework_openwebui_oidc_client_secret: >-
       {{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET')
          | mandatory('OPENWEBUI_OIDC_CLIENT_SECRET env var is required') }}
-    framework_openwebui_llm_api_base: "https://llm.{{ framework_lab_domain }}/v1"
+    framework_openwebui_lmstudio_api_base: "https://llm.{{ framework_lab_domain }}/v1"
+    framework_openwebui_llamacpp_api_base: "http://host.docker.internal:8080/v1"  # NOSONAR: same-host Docker gateway
+    framework_openwebui_ollama_api_base: "http://host.docker.internal:11434"  # NOSONAR: same-host Docker gateway
     framework_openwebui_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     framework_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
     framework_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
@@ -95,13 +97,16 @@
               restart: unless-stopped
               ports:
                 - "{{ framework_openwebui_port }}:8080"
+              extra_hosts:
+                - "host.docker.internal:host-gateway"
               volumes:
                 - {{ framework_openwebui_data_dir }}:/app/backend/data
               environment:
                 ENABLE_OPENAI_API: "true"
-                ENABLE_OLLAMA_API: "false"
-                OPENAI_API_BASE_URL: "{{ framework_openwebui_llm_api_base }}"
-                OPENAI_API_KEY: "{{ framework_openwebui_llm_api_key }}"
+                ENABLE_OLLAMA_API: "true"
+                OPENAI_API_BASE_URLS: "{{ framework_openwebui_lmstudio_api_base }};{{ framework_openwebui_llamacpp_api_base }}"
+                OPENAI_API_KEYS: "{{ framework_openwebui_llm_api_key }};{{ framework_openwebui_llm_api_key }}"
+                OLLAMA_BASE_URL: "{{ framework_openwebui_ollama_api_base }}"
                 WEBUI_URL: "https://openwebui.{{ framework_lab_domain }}"
                 ENABLE_OAUTH_SIGNUP: "true"
                 OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
@@ -151,15 +156,20 @@
             database = "/app/backend/data/webui.db"
             backup = f"{database}.phase6-pre-connection-fix"
             connection = sqlite3.connect(database)
+            openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
+            openai_api_keys = os.environ["OPENAI_API_KEYS"].split(";")
             desired = {
                 "openai.enable": json.dumps(True),
                 "openai.api_base_urls": json.dumps(
-                    [os.environ["OPENAI_API_BASE_URL"]], separators=(",", ":")
+                    openai_base_urls, separators=(",", ":")
                 ),
                 "openai.api_keys": json.dumps(
-                    [os.environ["OPENAI_API_KEY"]], separators=(",", ":")
+                    openai_api_keys, separators=(",", ":")
                 ),
-                "ollama.enable": json.dumps(False),
+                "ollama.enable": json.dumps(True),
+                "ollama.base_urls": json.dumps(
+                    [os.environ["OLLAMA_BASE_URL"]], separators=(",", ":")
+                ),
                 "web.search.enable": json.dumps(True),
                 "web.search.engine": json.dumps("searxng"),
                 "web.search.searxng_query_url": json.dumps(
@@ -220,7 +230,7 @@
       delay: 2
       until: framework_openwebui_health.status == 200
 
-    - name: Verify OpenWebUI can discover models from the managed LLM route
+    - name: Verify OpenWebUI can discover models from all managed LLM routes
       ansible.builtin.command:
         argv:
           - docker
@@ -233,19 +243,34 @@
             import os
             import urllib.request
 
-            request = urllib.request.Request(
-                f"{os.environ['OPENAI_API_BASE_URL']}/models",
-                headers={
-                    "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"
-                },
-            )
-            with urllib.request.urlopen(request, timeout=15) as response:
-                models = [
-                    model.get("id")
-                    for model in json.load(response).get("data", [])
-                    if model.get("id")
+            discovered = {}
+            openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
+            openai_api_keys = os.environ["OPENAI_API_KEYS"].split(";")
+            for base_url, api_key in zip(openai_base_urls, openai_api_keys):
+                request = urllib.request.Request(
+                    f"{base_url}/models",
+                    headers={"Authorization": f"Bearer {api_key}"},
+                )
+                with urllib.request.urlopen(request, timeout=15) as response:
+                    discovered[base_url] = [
+                        model.get("id")
+                        for model in json.load(response).get("data", [])
+                        if model.get("id")
+                    ]
+
+            with urllib.request.urlopen(
+                f"{os.environ['OLLAMA_BASE_URL']}/api/tags", timeout=15
+            ) as response:
+                discovered[os.environ["OLLAMA_BASE_URL"]] = [
+                    model.get("name")
+                    for model in json.load(response).get("models", [])
+                    if model.get("name")
                 ]
-            if not models:
-                raise SystemExit("managed LLM route returned no models")
-            print(json.dumps({"models": models}))
+
+            empty_routes = [
+                base_url for base_url, models in discovered.items() if not models
+            ]
+            if empty_routes:
+                raise SystemExit(f"managed LLM routes returned no models: {empty_routes}")
+            print(json.dumps({"models": discovered}))
       changed_when: false
