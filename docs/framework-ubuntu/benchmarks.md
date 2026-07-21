@@ -40,6 +40,56 @@ Evidence and the exact one-off runner are retained on Framework at
 The exit path restored the original state: LM Studio's Qwen model resident,
 the pilot unloaded from llama.cpp and Ollama, and all normal services active.
 
+## Controlled 30B/65K-context comparison (2026-07-21)
+
+A second controlled run used the larger
+`Qwen3-Coder-30B-A3B-Instruct-Q4_K_M.gguf` model and a 65,536-token context in
+all three engines. llama.cpp read the shared GGUF directly, LM Studio used its
+symbolically linked copy of the same model, and Ollama used the canonical blob
+created from that GGUF. The Ollama import requires an additional 18,556,689,568
+bytes of storage; a hard link cannot avoid that canonical rewrite.
+
+The serialized test used temperature zero and seed 4242. The short workload
+contained 74 input tokens and requested 512 output tokens; one warm-up was
+excluded and five requests were measured. The long workload contained 41,508
+input tokens and requested 256 output tokens; one warm-up was excluded and
+three requests were measured. A per-repetition nonce appeared before the long
+reference ledger to prevent prompt-prefix cache reuse. Every accepted request
+reached its output cap.
+
+Short-prompt generation:
+
+| Runtime | Mean wall tok/s | Median wall tok/s | Std. dev. | Mean wall s | Server tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LM Studio / Vulkan | 84.13 | 84.08 | 0.14 | 6.09 | not exposed |
+| llama.cpp / HIP | 68.16 | 68.15 | 0.04 | 7.51 | 68.82 |
+| Ollama / ROCm | 66.57 | 66.56 | 0.15 | 7.69 | 68.25 |
+
+Long-context end-to-end performance:
+
+| Runtime | Mean total wall s | Prompt eval s | Prompt tok/s | Generation s | Generation tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Ollama / ROCm | 83.92 | 74.74 | 555.37 | 8.26 | 31.01 |
+| llama.cpp / HIP | 96.41 | 87.55 | 474.08 | 8.19 | 31.24 |
+| LM Studio / Vulkan | 146.75 | not exposed | not exposed | not exposed | not exposed |
+
+The winner therefore depends on workload. LM Studio was 23.4% faster than
+llama.cpp and 26.4% faster than Ollama for short-context generation. With
+41,508 input tokens, Ollama had 13.0% lower end-to-end latency than llama.cpp
+and 42.8% lower latency than LM Studio; llama.cpp was 34.3% lower-latency than
+LM Studio. llama.cpp and Ollama both fell to approximately 31 generated tok/s
+once the active context was large, while prompt ingestion dominated total
+latency. LM Studio's API does not split prompt and generation timing, but its
+end-to-end result is directly comparable.
+
+The accepted evidence and exact runner are retained at
+`/storage/artifacts/framework-ai-benchmarks/apples-qwen30b-65k-20260721T003809Z/`.
+An earlier attempt in the adjacent `...T002941Z` directory is diagnostic only:
+its repeated prefix was cached and most long responses stopped after one
+token, so those long-context numbers were explicitly rejected. The accepted
+run produced no GPU reset, OOM-kill, segfault, or watchdog signature and
+restored all normal services and the original LM Studio model residency.
+
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
 is retained as configuration/reliability evidence; it is not part of quality or
