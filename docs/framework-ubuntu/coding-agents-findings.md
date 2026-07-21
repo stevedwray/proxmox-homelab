@@ -6,7 +6,7 @@ operator-directed Ollama-only path.
 ## Decision
 
 Use **OpenCode 1.18.4** as the primary daily coding agent on this workstation,
-with **Cline 3.0.46** as the preferred fallback. Both use
+with **Aider 0.86.2** as the preferred fallback/control client. Both use
 `eval-qwen3-coder-30b-a3b:q4_k_m` on Ollama at
 `http://192.168.1.8:11434` (OpenCode uses `/v1`). Each successful client was
 given a 180,000-input, 24,000-output budget; the live Ollama model confirmed a
@@ -31,9 +31,9 @@ is not used for this decision.
 | Framework | Result | Task evidence and decision |
 | --- | --- | --- |
 | OpenCode | **Primary** | Passed Python regression (6/6), Ansible syntax repair, ShellCheck repair, and two simultaneous disposable-worktree sessions. It also read a full large repository document and authored Terraform test coverage; the final Terraform gate was blocked by the local `bpg/proxmox` provider before test execution. |
-| Cline | **Preferred fallback** | A corrected supported JSON/headless setup passed its Ollama smoke (7,427 input / 7 output tokens in 9.9 seconds) and the Python regression (6/6) in a Python+Node disposable agent container. |
-| Aider | Viable control client | A normal Git-enabled disposable clone with its explicit `OLLAMA_API_BASE` passed the Python regression (6/6), a seeded real Ansible-role syntax repair, and a seeded ShellCheck repair. Its large-document Terraform-test run failed because it wrote the fixture under a duplicated nested path, leaving the real module with zero discovered tests. The earlier 0/6 Python run was a harness failure, not a client verdict. |
-| OpenHands | Viable for contained Docker runs | The official `uv` installation route produced OpenHands CLI 1.16.0; it passed the Python regression (6/6) in its isolated Docker execution container. Its documented nested-sandbox volume wiring still needs a separate integration check. |
+| Cline | Revalidate before use | A corrected supported JSON/headless setup previously passed its Ollama smoke (7,427 input / 7 output tokens in 9.9 seconds) and the Python regression (6/6), but the current headless-container path exits before creating a session even after Cline-generated provider setup. |
+| Aider | **Preferred fallback** | A normal Git-enabled disposable clone with its explicit `OLLAMA_API_BASE` passed the Python regression (6/6), a seeded real Ansible-role syntax repair, and a seeded ShellCheck repair. Its large-document Terraform-test run failed because it wrote the fixture under a duplicated nested path, leaving the real module with zero discovered tests. The earlier 0/6 Python run was a harness failure, not a client verdict. |
+| OpenHands | Python-only candidate | The official `uv` installation route produced OpenHands CLI 1.16.0; it passed the Python regression (6/6) in its isolated Docker execution container, but failed the seeded Ansible role repair by leaving invalid YAML. Its documented nested-sandbox volume wiring still needs a separate integration check. |
 | Goose | Secondary candidate | Passed Python regression (6/6) with native Ollama tooling, but its repeat Ansible run made no repair after its asynchronous CLI return. |
 
 The full JSONL run ledger and Markdown task reports are retained under the
