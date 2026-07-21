@@ -130,6 +130,35 @@ systemd cgroup, logs, and the exact comparison are retained at
 Docker Ollama remained the persistent deployment and was restored with no
 resident model.
 
+## llama.cpp micro-batch follow-up (2026-07-21)
+
+The Qwen 30B/65K llama.cpp workloads were repeated with one configuration
+change: physical micro-batch increased from llama.cpp's default 512 to 2048,
+matching the value selected by Ollama. Model, backend, context, prompt tokens,
+output limits, seed, temperature, batch size 2048, and parallelism one were
+otherwise unchanged. All eight measured requests reached their output caps.
+
+| Workload | llama.cpp ubatch 512 | llama.cpp ubatch 2048 | Ollama ubatch 2048 |
+| --- | ---: | ---: | ---: |
+| Short generation | 68.16 wall tok/s | 68.14 wall tok/s | 66.57 wall tok/s |
+| Short mean wall | 7.51 s | 7.51 s | 7.69 s |
+| Long mean wall | 96.41 s | **77.90 s** | 83.92 s |
+| Long generation | 31.24 tok/s | 31.37 tok/s | 31.01 tok/s |
+
+The larger micro-batch had no meaningful effect on short generation, but cut
+the 41,508-input-token workload's total latency by 19.2%. Tuned llama.cpp was
+7.2% lower-latency than Ollama. Since long-context generation throughput moved
+by less than one percent while 18.5 seconds disappeared from total latency,
+the improvement is prompt ingestion. This confirms that Ollama's earlier
+long-context advantage came from runner configuration, not an inherent Ollama
+performance advantage over llama.cpp.
+
+Evidence and the exact runner are retained at
+`/storage/artifacts/framework-ai-benchmarks/llamacpp-ubatch2048-qwen30b-65k-20260721T024553Z/`.
+The 2048 micro-batch requires a larger compute buffer. Qwen 30B at 65K context
+fit successfully on this host, but the setting must be tested against the
+installed 70B models before it can safely become a global router default.
+
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
 is retained as configuration/reliability evidence; it is not part of quality or
