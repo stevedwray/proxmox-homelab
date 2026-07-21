@@ -156,8 +156,38 @@ performance advantage over llama.cpp.
 Evidence and the exact runner are retained at
 `/storage/artifacts/framework-ai-benchmarks/llamacpp-ubatch2048-qwen30b-65k-20260721T024553Z/`.
 The 2048 micro-batch requires a larger compute buffer. Qwen 30B at 65K context
-fit successfully on this host, but the setting must be tested against the
-installed 70B models before it can safely become a global router default.
+fit successfully on this host. The installed 70B models were tested separately
+below before considering the setting as a router default.
+
+## llama.cpp 70B micro-batch safety matrix (2026-07-21)
+
+Llama 3.3 70B Q3_K_M (31.9 GiB) and Q4_K_M (39.6 GiB) were each loaded in an
+isolated llama.cpp HIP container with `batch-size=2048`, `ubatch-size=2048`,
+one parallel slot, and increasing 8K, 32K, and 65K contexts. Each successful
+load was followed by a calibrated long-input request; context escalation would
+have stopped at the first failure. All six loads and all six requests passed.
+
+| Quant | Context | Prompt + output tokens | Wall time | MemAvailable after request | Result |
+| --- | ---: | ---: | ---: | ---: | --- |
+| Q3_K_M | 8,192 | 4,105 + 64 | 42.41 s | 41.0 GiB | HTTP 200; no OOM |
+| Q3_K_M | 32,768 | 24,595 + 64 | 255.18 s | 33.4 GiB | HTTP 200; no OOM |
+| Q3_K_M | 65,536 | 41,545 + 64 | 500.95 s | 23.6 GiB | HTTP 200; no OOM |
+| Q4_K_M | 8,192 | 4,105 + 64 | 46.84 s | 38.7 GiB | HTTP 200; no OOM |
+| Q4_K_M | 32,768 | 24,595 + 64 | 258.75 s | 31.1 GiB | HTTP 200; no OOM |
+| Q4_K_M | 65,536 | 41,545 + 64 | 516.61 s | 20.9 GiB | HTTP 200; no OOM |
+
+There was no server allocation error, kernel OOM kill, container restart, or
+GPU reset signature. The most demanding tested case, Q4_K_M at 65K, retained
+20.9 GiB of host `MemAvailable` after inference. The normal llama.cpp and
+Ollama containers were restored, Ollama had no resident model, and LM Studio
+remained inactive as it was before the run.
+
+This clears the 2048 micro-batch safety gate for the installed Llama 3.3 70B
+quantizations under the router's serialized one-model/one-slot operating mode.
+It does not make the separately documented Command-R 65K allocation failure
+viable, nor does it validate concurrent large GPU workloads. Evidence and the
+exact runner are retained at
+`/storage/artifacts/framework-ai-benchmarks/llamacpp-70b-ubatch2048-safety-20260721T031015Z/`.
 
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
