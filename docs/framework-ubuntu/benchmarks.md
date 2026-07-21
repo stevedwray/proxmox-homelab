@@ -90,6 +90,46 @@ token, so those long-context numbers were explicitly rejected. The accepted
 run produced no GPU reset, OOM-kill, segfault, or watchdog signature and
 restored all normal services and the original LM Studio model residency.
 
+## Ollama Docker versus native host execution (2026-07-21)
+
+The accepted Qwen 30B/65K Ollama workloads were repeated with Ollama executing
+directly on the Framework host. Framework had no native Ollama package or
+service installed, so the test extracted the exact Ollama 0.32.1 binary and
+2.5 GiB ROCm runtime bundle from the existing Harbor-sourced Docker image into
+a temporary directory. A transient host systemd unit ran those files as user
+`steve` on port 11435, using the same canonical model store. This held the
+Ollama version, libraries, model, backend, prompts, context, and sampling
+settings constant while changing the Docker boundary. The temporary runtime
+was removed after the run; no persistent native installation was made.
+
+| Workload | Docker Ollama | Native Ollama | Result |
+| --- | ---: | ---: | --- |
+| Short, 74 input + 512 output | 66.57 wall tok/s | 64.19 wall tok/s | Docker 3.7% faster |
+| Long, 41,508 input + 256 output | 83.92 s total | 89.85 s total | Docker 6.6% lower latency |
+
+The long-context timing breakdown explains most of the difference:
+
+| Deployment | Prompt eval s | Prompt tok/s | Generation s | Generation tok/s |
+| --- | ---: | ---: | ---: | ---: |
+| Docker | 74.74 | 555.37 | 8.26 | 31.01 |
+| Native host | 80.59 | 515.04 | 8.41 | 30.44 |
+
+Native execution therefore provided no performance benefit. Docker was
+slightly faster in both workloads, with most of the long-context delta in
+prompt ingestion rather than generation. This is one sequential paired run,
+not randomized interleaving, so the small short-generation difference may
+include normal system variance; it is nevertheless sufficient to reject a
+meaningful Docker overhead on this stack.
+
+The native log confirms `library=ROCm`, `compute=gfx1151`, all 49 layers
+offloaded, a 17.5 GiB GPU model buffer, and a 6 GiB GPU KV cache. All eight
+measured native requests reached their output caps, and there was no GPU reset,
+OOM-kill, segfault, or watchdog signature. Evidence, runtime hashes, the host
+systemd cgroup, logs, and the exact comparison are retained at
+`/storage/artifacts/framework-ai-benchmarks/native-ollama-qwen30b-65k-20260721T011048Z/`.
+Docker Ollama remained the persistent deployment and was restored with no
+resident model.
+
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
 is retained as configuration/reliability evidence; it is not part of quality or
