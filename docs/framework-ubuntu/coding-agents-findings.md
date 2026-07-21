@@ -52,7 +52,8 @@ command.
   destroyed exactly that LXC, its generated inventory, and its epoch marker.
 - The Terraform task is not a pass or fail for any agent until the local
   provider handshake problem is repaired and the authored `terraform test`
-  fixture can execute.
+  fixture can execute. It was independently reproduced with Terraform 1.15.8
+  and the locked `bpg/proxmox` 0.100.0 provider in a disposable clone.
 - Aider now has Ansible and ShellCheck coverage, but its large-document
   Terraform-test authoring failed before the known provider-handshake gate.
 - Cline's current headless container path regressed: even a Cline-generated
