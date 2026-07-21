@@ -32,7 +32,7 @@ is not used for this decision.
 | --- | --- | --- |
 | OpenCode | **Primary** | Passed Python regression (6/6), Ansible syntax repair, ShellCheck repair, and two simultaneous disposable-worktree sessions. It also read a full large repository document and authored Terraform test coverage; the final Terraform gate was blocked by the local `bpg/proxmox` provider before test execution. |
 | Cline | **Preferred fallback** | A corrected supported JSON/headless setup passed its Ollama smoke (7,427 input / 7 output tokens in 9.9 seconds) and the Python regression (6/6) in a Python+Node disposable agent container. |
-| Aider | Viable control client | A normal Git-enabled disposable clone with its explicit `OLLAMA_API_BASE` passed the Python regression (6/6). The earlier 0/6 run was a harness failure, not a client verdict. |
+| Aider | Viable control client | A normal Git-enabled disposable clone with its explicit `OLLAMA_API_BASE` passed the Python regression (6/6), a seeded real Ansible-role syntax repair, and a seeded ShellCheck repair. Its large-document Terraform-test run failed because it wrote the fixture under a duplicated nested path, leaving the real module with zero discovered tests. The earlier 0/6 Python run was a harness failure, not a client verdict. |
 | OpenHands | Viable for contained Docker runs | The official `uv` installation route produced OpenHands CLI 1.16.0; it passed the Python regression (6/6) in its isolated Docker execution container. Its documented nested-sandbox volume wiring still needs a separate integration check. |
 | Goose | Secondary candidate | Passed Python regression (6/6) with native Ollama tooling, but its repeat Ansible run made no repair after its asynchronous CLI return. |
 
@@ -53,7 +53,12 @@ command.
 - The Terraform task is not a pass or fail for any agent until the local
   provider handshake problem is repaired and the authored `terraform test`
   fixture can execute.
+- Aider now has Ansible and ShellCheck coverage, but its large-document
+  Terraform-test authoring failed before the known provider-handshake gate.
+- Cline's current headless container path regressed: even a Cline-generated
+  Ollama provider configuration exits before a session is created. Reproduce
+  and repair that client/runtime issue before giving it broader task coverage.
 - Run the Ansible, ShellCheck, large-document, and parallel-worktree tasks
-  through Cline/Aider/OpenHands before changing the primary recommendation.
-  Resolve the OpenHands nested-sandbox volume behavior before granting it
-  routine Docker-socket access.
+  through OpenHands and Cline once Cline's runtime is repaired. Resolve the
+  OpenHands nested-sandbox volume behavior before granting it routine
+  Docker-socket access.
