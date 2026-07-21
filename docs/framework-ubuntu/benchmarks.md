@@ -4,6 +4,42 @@ Status: **complete and analysed**.
 
 Primary matrix: 2026-07-20 06:31-07:16 UTC (18:31-19:16 NZST).
 
+## Controlled one-model runtime comparison (2026-07-21)
+
+A follow-up performance run compared all three runtimes using the same source
+model, `Llama-3.2-3B-Instruct-Q4_K_M.gguf`, after it had been made available to
+llama.cpp directly, LM Studio by symbolic link, and Ollama through its required
+canonical blob import. Each runtime used an 8,192-token context, temperature
+zero, seed 4242, the same prompt, and a 512-token output cap. The runtimes were
+serialized. One warm-up request was excluded, followed by five measured
+requests; every measured request reached exactly 512 output tokens.
+
+| Runtime | Mean wall tok/s | Median wall tok/s | Std. dev. | Mean wall s | Server tok/s |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| LM Studio / Vulkan | 87.93 | 87.97 | 0.63 | 5.82 | not exposed |
+| llama.cpp / HIP | 80.97 | 80.93 | 0.18 | 6.32 | 81.66 |
+| Ollama / ROCm | 78.41 | 78.46 | 0.13 | 6.53 | 80.61 |
+
+On this controlled generation workload, LM Studio was 8.6% faster than
+llama.cpp and 12.1% faster than Ollama by the common wall-clock measure.
+llama.cpp was 3.3% faster than Ollama. The low run-to-run variation makes the
+ordering credible for this model and configuration.
+
+Load-to-ready observations were 1.128 seconds for the isolated llama.cpp
+container, 3.803 seconds for LM Studio daemon plus model plus server startup,
+and 1.146 seconds from Ollama's reported model-load duration. These boundaries
+are not equivalent, so they are diagnostic observations rather than a ranked
+cold-start result. LM Studio does not expose server-side generation timing in
+its OpenAI-compatible response, hence wall-clock throughput is the primary
+comparison metric. Output text was not bit-identical across engines despite
+aligned model, prompt, context, temperature, and seed; this run establishes
+performance, not cross-engine deterministic or quality equivalence.
+
+Evidence and the exact one-off runner are retained on Framework at
+`/storage/artifacts/framework-ai-benchmarks/apples-llama32-20260721T000313Z/`.
+The exit path restored the original state: LM Studio's Qwen model resident,
+the pilot unloaded from llama.cpp and Ollama, and all normal services active.
+
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
 is retained as configuration/reliability evidence; it is not part of quality or
