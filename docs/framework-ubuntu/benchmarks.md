@@ -189,6 +189,38 @@ viable, nor does it validate concurrent large GPU workloads. Evidence and the
 exact runner are retained at
 `/storage/artifacts/framework-ai-benchmarks/llamacpp-70b-ubatch2048-safety-20260721T031015Z/`.
 
+## Qwen 30B concurrent-serving comparison (2026-07-21)
+
+The earlier TinyLlama concurrent matrix showed a large llama.cpp lead, whereas
+the initial serialized Qwen 30B comparison was close. To resolve that
+workload difference, current Docker Ollama/ROCm 0.32.1 and llama.cpp/HIP were
+tested directly with the canonical Qwen3-Coder 30B Q4 model, three waves at
+each of one, two, and four simultaneous clients, 65,536 context tokens per
+client, and a 512-token response cap. llama.cpp used `batch-size=2048` and
+`ubatch-size=2048`; Ollama used `num_batch=2048` and explicit matching
+parallelism. For four clients, both servers allocated four independent 65K
+slots (262,144 total llama.cpp context), rather than silently dividing a
+single 65K context between clients.
+
+| Simultaneous clients | llama.cpp aggregate tok/s | Ollama aggregate tok/s | llama.cpp lead | Mean request time: llama.cpp / Ollama |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | 67.44 | 47.59 | 41.7% | 7.59 s / 10.76 s |
+| 2 | 100.41 | 84.16 | 19.3% | 10.20 s / 12.16 s |
+| 4 | 128.96 | 103.55 | 24.5% | 15.88 s / 19.77 s |
+
+All 42 requests returned HTTP 200 and exactly 512 completion tokens; there
+were no server allocation errors, kernel OOM kills, GPU resets, container
+restarts, or residual test containers. The four-client cases retained 40.7
+GiB `MemAvailable` for llama.cpp and 40.3 GiB for Ollama after inference.
+
+Both runtimes scale with concurrency, but llama.cpp's throughput rose 1.91×
+from one to four clients while Ollama's rose 2.18×. Ollama therefore narrows
+the relative gap as parallelism rises, but did not overtake llama.cpp in this
+matched real-model test. This reconciles the results: the near-tie observed
+in serialized long-context work does not represent concurrent shared-service
+throughput. Evidence and the exact runner are retained at
+`/storage/artifacts/framework-ai-benchmarks/qwen30-concurrency-20260721T042547Z/`.
+
 The accepted evidence consists of 171 successful requests across the primary
 matrix and creative follow-ups. A separate six-request failed Command-R launch
 is retained as configuration/reliability evidence; it is not part of quality or
