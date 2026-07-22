@@ -141,7 +141,9 @@
       "Bash(awk '{sum+=$1} END {print sum/1024/1024 \" MB\"}')",
       "Bash(xargs -I{} sh -c 'echo \"--- {} ---\"; grep -i -A1 \"^status\\\\|^\\\\*\\\\*status\" {}')",
       "Bash(python3 /tmp/claude-1000/-home-steve-git-proxmox-homelab/a753eb54-308c-4911-95bb-5f83bb035a32/scratchpad/fix_ip_scheme.py)",
-      "Bash(ping -c1 -W2 192.168.1.1)"
+      "Bash(ping -c1 -W2 192.168.1.1)",
+      "Bash(ssh framework.gibbsgreatly.xyz ' *)",
+      "Bash(ssh framework.gibbsgreatly.xyz \"systemctl is-active docker.service docker.socket containerd.service 2>&1; echo '---'; sudo lsof +D /storage 2>&1; echo '---'; pgrep -fa 'llmster|llama-server' 2>&1 || echo 'none found'\")"
     ],
     "deny": [
       "Read(./secrets/**)",

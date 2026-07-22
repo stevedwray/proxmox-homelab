@@ -48,6 +48,16 @@ rather than just re-tuning its memory limit.
 - [`comfyui-benchmarks.md`](./comfyui-benchmarks.md) — detached ComfyUI smoke
   and eight-image benchmark, evidence layout, and local/cloud result-processing
   procedure.
+- [`colibri-evaluation.md`](./colibri-evaluation.md) — research into
+  Colibrì (a single-model, disk-streaming 744B MoE inference engine) as a
+  possible fifth workload on this host: hardware fit, GPU-acceleration
+  status, containerization, RAM-contention risk against the four services
+  above, and a bounded proof-of-concept test plan. Research only, not
+  started.
+- [`local-ai-development.md`](./local-ai-development.md) — the layer above
+  inference: coding agents, MCP, model gateway/workflow platforms, chat UIs,
+  image-gen additions. Candidate table plus a phased development/test plan.
+  Planning only, not started.
 
 ## Related documents
 

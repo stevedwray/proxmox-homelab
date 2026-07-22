@@ -135,7 +135,13 @@ release the other service's GPU memory on demand (§9 Phase 5).
   `--vram-headroom 6`/`--disable-smart-memory` flags are needed on top
   of this image or already handled (not blocking — real generation
   already confirmed working without them).
-- **Phase 6 (`ai-services-stack`)** — not started.
+- **Phase 6 (`ai-services-stack`)** — not started; detailed step-by-step
+  plan (new playbook, data-volume placement, addressing update,
+  production reconcile against `pve` with approval flow, verification)
+  written 2026-07-21, see the full "Phase 6 — `ai-services-stack`
+  bring-up" entry below in this same section. Old `ai-stack` LXC on
+  `pve` (VMID 116) is explicitly out of scope — operator wants to
+  rebuild it separately, later.
 - **Phase 7 (platform integration cutover) — done and verified
   end-to-end**, including the production piece against `pve` (Traefik +
   Authentik + Technitium), done with explicit per-step approval. Real
@@ -1032,7 +1038,196 @@ not just log-watching:
   can be managed manually if that's ever actually needed.
 
 **Phase 6 — `ai-services-stack` bring-up**
-- Docker Compose port, mechanical (§5).
+
+Not started as of 2026-07-21. **Decided (2026-07-21): the old `ai-stack`
+LXC on `pve` (VMID 116 — n8n/SearXNG/Postgres/LiteLLM/Redis/Flowise/
+Qdrant/AnythingLLM, no OpenWebUI despite the name) is out of scope here
+— it's old enough the operator wants to rebuild it from scratch, as a
+separate future task, not extend/reuse.** This phase is specifically
+about porting `ai-services-stack` (OpenWebUI + SearXNG only, per
+`decisions.md` Decision 9) onto `framework.gibbsgreatly.xyz`, the same
+way `llm-gpu-stack`/`comfyui-stack` already landed there.
+
+Live state confirmed 2026-07-21, so this plan is grounded in what
+actually exists, not assumption:
+- `framework.gibbsgreatly.xyz` currently runs only `comfyui`, `ollama`,
+  `llamacpp-router` (`docker ps -a`) — no OpenWebUI/SearXNG anywhere yet.
+- `https://openwebui.lab.gibbsgreatly.xyz` returns **502** — DNS
+  (`dig` → `192.168.30.10`, Traefik itself, matching every other
+  stack's pattern) and a Traefik router already exist from an earlier
+  partial setup, but the backend (`http://192.168.50.12:8080`, the old
+  `ai_seg` IP) is dead — confirmed via the locally generated
+  `terraform/lxc/environments/pve/.generated/traefik/ai-services-stack.yml`,
+  which still has the stale `192.168.50.12:8080` target. This is exactly
+  the "not done yet" gap Phase 7 already flagged (§9 above:
+  "`ai-services-stack/edge.yaml`/`LAB_IP_AI_SERVICES` — deferred, Phase
+  6 not done yet").
+- Root (`/`) has 31G free of 94G post-LV-migration; `/mnt/container-storage`
+  (the dedicated `containers` LV from Phase 3/6 of the earlier LV work)
+  has 240G free of 295G — the natural home for OpenWebUI/SearXNG's data
+  volumes, consistent with why that LV was created in the first place
+  (keep container-adjacent data off the small root partition).
+- `LLM_GPU_STACK_API_KEY`, `OPENWEBUI_OIDC_CLIENT_SECRET`,
+  `SEARXNG_SECRET_KEY` already exist in `terraform/secrets.common.enc.yaml`
+  (confirmed via `./with-secrets env | grep ...`) — no new secrets
+  needed.
+- **Caveat worth carrying forward, not fixing here**: neither LM Studio
+  (`framework-desktop-lmstudio.yml`) nor native llama.cpp
+  (`framework-desktop-llamacpp.yml`, see its own `# nosonar` comment —
+  "no api key set, `llm_gpu_stack_api_key` empty") actually check an API
+  key today, despite `LLM_GPU_STACK_API_KEY` existing in secrets and
+  `llm.${LAB_DOMAIN}`'s `edge.yaml` being `auth.mode: none` on the
+  assumption the app layer covers it (Decision 8). It doesn't yet — the
+  route is currently open to anyone who can reach it, key or no key.
+  Pre-existing gap, unrelated to standing up OpenWebUI; flag to the
+  operator, don't silently fix as a side effect of this phase.
+
+**Precedent to follow, not the Terraform-era one**: `llm-gpu-stack` and
+`comfyui-stack` did **not** reuse their old Terraform-provisioned-LXC
+Ansible roles (`terraform/lxc/ansible/roles/{llm_gpu_stack,comfyui_stack}`)
+on bare metal — those stay untouched, unused, and get deleted wholesale
+in Phase 8. Instead, each got a fresh, self-contained playbook under
+`ansible/00-initial-setup/framework-desktop-*.yml`, plain `docker compose`
+(no `community.docker` collection, no `lxc_base` role — that role's DNS-
+resolver-overwrite and OpenIPMI tasks are actively wrong for a real host
+with real DNS), Harbor-proxied images
+(`harbor.lab.gibbsgreatly.xyz/dockerhub/<image>`). `framework-desktop-comfyui.yml`
+is the clearest template to copy the shape of. `ai-services-stack`
+should get the same treatment: a new
+`ansible/00-initial-setup/framework-desktop-openwebui.yml`, not a reuse
+of `terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml` (which
+assumes `lxc_base`/`docker_base`/Portainer-agent registration — all
+LXC-provisioning concerns that don't apply here). That old playbook and
+`terraform/lxc/stacks/ai-services-stack/stack.yaml` are left alone until
+Phase 8, same as the other two stacks' Terraform artifacts.
+
+**One open decision for whoever picks this up** — where OpenWebUI's
+`OPENAI_API_BASE_URL` should point, now that it's co-located with LM
+Studio instead of being a separate LXC on another VLAN:
+- **Local** (`http://127.0.0.1:8090/v1`): skips DNS → Traefik → back-to-
+  the-same-box round trip entirely; there's no auth on that route
+  anyway (`mode: none`, see caveat above) so nothing is lost by
+  bypassing it. Simpler, faster, matches this migration's general
+  "remove unnecessary layers" theme.
+- **Public** (`https://llm.${LAB_DOMAIN}/v1`, the existing playbook
+  default): exercises the full validated path end-to-end on every
+  request, and matches what a non-co-located OpenWebUI instance would
+  need — but is pure overhead here with no real benefit given the
+  current no-auth reality.
+Recommendation: local (`127.0.0.1:8090`), but this is a real decision,
+not a mechanical port — confirm before writing the compose file rather
+than assuming.
+
+Step-by-step:
+
+1. **Write the new playbook**:
+   `ansible/00-initial-setup/framework-desktop-openwebui.yml`, `hosts:
+   framework`, modeled on `framework-desktop-comfyui.yml`'s shape:
+   - Ensure `docker.io`/`docker-compose-v2` present (already true from
+     the earlier Docker work on this host — task stays for idempotency/
+     rebuild-from-scratch, matches the existing pattern).
+   - Create `/opt/openwebui-docker` plus data dirs on the `containers`
+     LV: `/mnt/container-storage/openwebui-data`,
+     `/mnt/container-storage/searxng-data` (owned by whichever UID the
+     containers run as — check the images' documented non-root UID if
+     any, or accept root-owned bind mounts as the other three stacks
+     already do).
+   - Render the compose file — same two services
+     (`ghcr.io/open-webui/open-webui:main`,
+     `docker.io/searxng/searxng:latest`, pulled straight from upstream
+     since neither is currently proxied through Harbor's `dockerhub/`
+     mirror — decide whether to add that prefix for consistency with
+     `comfyui`'s pattern, or pull directly since these aren't ROCm-
+     specific images) as
+     `terraform/lxc/ansible/playbooks/deploy-ai-services-stack.yml`
+     already defines, adjusted for: bare-metal paths (per above), the
+     `OPENAI_API_BASE_URL` decision above, and reading
+     `OPENWEBUI_OIDC_CLIENT_SECRET`/`SEARXNG_SECRET_KEY`/
+     `LLM_GPU_STACK_API_KEY` the same `lookup('env', ...) |
+     mandatory(...)` way the existing playbook does (values already
+     resolve via `./with-secrets`, nothing new to add to
+     `secrets.common.enc.yaml`).
+   - Seed `searxng`'s `settings.yml` with `formats: [html, json]`, same
+     as the existing playbook (`json` is required for OpenWebUI's RAG
+     web-search integration to parse SearXNG's response).
+   - `docker compose up -d`, same `changed_when` pattern as the ComfyUI
+     playbook.
+2. **Syntax-check before running** (CLAUDE.md requirement for any
+   Ansible edit, no matter how small): `ansible-playbook -i
+   ansible/inventory/ ansible/00-initial-setup/framework-desktop-openwebui.yml
+   --syntax-check`.
+3. **Run it**: `ansible-playbook -i ansible/inventory/
+   ansible/00-initial-setup/framework-desktop-openwebui.yml`.
+4. **Verify locally first**, before touching any shared platform state:
+   `curl http://127.0.0.1:8080` on the framework host should return
+   OpenWebUI's own page (not yet reachable via the public hostname at
+   this point — that's step 6). Confirm SearXNG answers internally via
+   `docker exec openwebui curl -s http://searxng:8080/search?q=test&format=json`
+   (or equivalent) rather than assuming the compose network wiring is
+   correct.
+5. **Update addressing** — same mechanical change already made for the
+   other two stacks in Phase 7 (§9 above): `.env` and `.env.template`,
+   `LAB_IP_AI_SERVICES` from `192.168.50.12` → `192.168.1.8`. No change
+   needed to `terraform/lxc/stacks/ai-services-stack/edge.yaml` itself —
+   it already parameterizes on `${LAB_IP_AI_SERVICES}`.
+6. **Production reconcile against `pve`** — this is a real production
+   mutation (Traefik + Authentik + Technitium on `pve`, a declared
+   production node per `CLAUDE.md`), same category of action as the
+   llm-gpu-stack/comfyui-stack cutover already done and documented above
+   in this same §9 Phase 7 entry. Follow the identical approval flow
+   used there, not a shortcut:
+   - **Preflight to the operator**: target = `pve` (Traefik/Authentik/
+     DNS containers), mutating, scope = the single
+     `ai-services-stack/edge.yaml` manifest only.
+   - **Scope the reconcile explicitly** — pass the manifest as a
+     positional arg rather than `provision.sh`'s default full
+     `--stacks-dir` discovery, exactly like the earlier cutover did,
+     because a dry run last time surfaced unrelated pending drift in
+     other stacks (harbor, monitoring, portainer, technitium, a shared
+     Authentik outpost) that scoping avoided touching:
+     ```
+     ./with-secrets python3 terraform/lxc/reconcile-edge.py \
+       terraform/lxc/stacks/ai-services-stack/edge.yaml \
+       --authentik-url "https://authentik-int.${LAB_DOMAIN}:9443" \
+       --no-verify-tls --json
+     ```
+     as a dry run first; add `--apply` only after operator approval and
+     with `TASK_APPROVAL` set per `CLAUDE.md`'s flow, using
+     `./with-secrets-prod` (target node `pve`) rather than plain
+     `./with-secrets` for the actual apply.
+   - Applying will (a) reconcile the Authentik OIDC Provider/Application
+     for `edge-ai-services-stack-openwebui` (client ID/secret must match
+     what the compose file's `OAUTH_CLIENT_ID`/`OAUTH_CLIENT_SECRET`
+     already read from the same secrets), and (b) re-render Traefik's
+     dynamic config — but the *push* to the live `proxy-stack` container
+     still needs the explicit `ansible-playbook ... deploy-proxy-stack.yml`
+     step `reconcile_all_edge()` does internally (see `scripts/provision.sh`
+     around line 173-191) — don't assume the Python script alone updates
+     the live container; verify the live Traefik container's own config
+     file afterward the same way the earlier cutover caught a real miss
+     (§9 Phase 7, "real mistake made and caught by verification" note
+     above) rather than trusting a clean exit code.
+   - Technitium: no change expected — the ai-services-stack A record
+     already exists pointing at `${LAB_IP_PROXY}` (confirmed via `dig`
+     above), and that value doesn't change with this migration (still
+     Traefik's own IP, not the backend's).
+7. **Verify end-to-end**: `https://openwebui.lab.gibbsgreatly.xyz` should
+   now return a real response (redirect to Authentik login, matching
+   `comfyui`'s `forwardAuth` pattern verification done earlier — except
+   `openwebui`'s route is `auth.mode: oidc`, a different mechanism:
+   OpenWebUI itself redirects to Authentik via its own OIDC client, not
+   a Traefik middleware — so expect OpenWebUI's login page with an
+   "Authentik" SSO button, not an immediate redirect). Log in, confirm a
+   chat against the local LLM backend actually works, confirm a RAG web
+   search actually returns SearXNG results.
+8. **Not part of this phase, explicitly deferred to Phase 7's own
+   still-open item**: Portainer registration for `ai-services-stack`
+   (flip `portainer_agent: false` → `true` in `stack.yaml`, add to
+   `register_portainer_environments`'s list in `provision.sh`) — this
+   assumes the old Terraform/LXC-Portainer-agent model, which may not
+   even be the right mechanism for a bare-metal Docker host; worth
+   re-examining rather than mechanically porting once this phase is
+   otherwise working.
 
 **Phase 7 — Ansible role adaptation and platform integration cutover**
 - New bare-host inventory group — **done** (§5).
