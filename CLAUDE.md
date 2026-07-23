@@ -39,7 +39,8 @@ Match validation depth to change risk. A full teardown is required only for high
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
 | Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test |
-| Terraform / network / SDN / firewall | Full teardown cycle on pve-test |
+| Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
+| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test |
 | Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test |
 
 Batch related changes during development and run the appropriate tier.
