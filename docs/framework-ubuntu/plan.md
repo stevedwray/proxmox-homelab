@@ -135,13 +135,40 @@ release the other service's GPU memory on demand (§9 Phase 5).
   `--vram-headroom 6`/`--disable-smart-memory` flags are needed on top
   of this image or already handled (not blocking — real generation
   already confirmed working without them).
-- **Phase 6 (`ai-services-stack`)** — not started; detailed step-by-step
-  plan (new playbook, data-volume placement, addressing update,
-  production reconcile against `pve` with approval flow, verification)
-  written 2026-07-21, see the full "Phase 6 — `ai-services-stack`
-  bring-up" entry below in this same section. Old `ai-stack` LXC on
-  `pve` (VMID 116) is explicitly out of scope — operator wants to
-  rebuild it separately, later.
+- **Phase 6 (`ai-services-stack`) — done, 2026-07-23.** Playbook written
+  and running
+  (`framework-desktop-openwebui.yml`, commits `0cca6d81`/`58ff5cdb`/
+  `3ed64fdb`, 2026-07-21), addressing updated, local verification
+  passed at deploy time (playbook's own task confirms OpenWebUI
+  discovers models from all three LLM routes, including Ollama's
+  `/api/tags`). **Production reconcile against `pve` confirmed live,
+  2026-07-23** — a read-only dry-run via `./with-secrets-prod python3
+  terraform/lxc/reconcile-edge.py terraform/lxc/stacks/ai-services-stack/
+  edge.yaml --authentik-url ... --json` (no `--apply`) showed Traefik
+  already matching desired state exactly, the Authentik Application
+  object already matching, and DNS already resolving correctly — this
+  corrects the earlier "still unconfirmed" note in
+  `local-ai-development.md`, which was stale. `https://openwebui.
+  lab.gibbsgreatly.xyz/` independently confirmed returning a real `200`
+  with OpenWebUI's own page. One dry-run item flagged
+  (`edge-ai-services-stack-openwebui-provider`, "differs from desired
+  state") is a tooling false positive, not real drift: Authentik's
+  OAuth2Provider API never returns `client_secret` on GET (write-only
+  field), so `reconcile-authentik-edge.py`'s blind `current != value`
+  comparison (line ~698) always flags it regardless of whether the live
+  secret is actually correct — operator declined to `--apply` over this
+  since everything else already matches live. **Step 7 (human
+  verification) done, 2026-07-23** — operator confirmed Authentik SSO
+  login works, then ran a real chat with web search enabled
+  ("Research CVE recently published affecting Linux") against
+  `eval-qwen3-coder-30b-a3b:q6_k` (served via Ollama): response showed
+  the `search_web` tool call firing and a "3 Sources" citation strip
+  with real external URLs (theregister.com, app.opencve.io,
+  ubuntu.com/blog) — confirms SearXNG is actually being queried and its
+  results actually cited, not just the model answering from its own
+  training data. **Phase 6 is complete.** Old `ai-stack` LXC on `pve`
+  (VMID 116) is explicitly out of scope — operator wants to rebuild it
+  separately, later.
 - **Phase 7 (platform integration cutover) — done and verified
   end-to-end**, including the production piece against `pve` (Traefik +
   Authentik + Technitium), done with explicit per-step approval. Real

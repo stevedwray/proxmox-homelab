@@ -42,6 +42,11 @@
     framework_ollama_port: 11434
     framework_ollama_dir: /opt/ollama-docker
     framework_ollama_models_dir: /storage/models/ollama
+    # Read-only access to the LM Studio/llama.cpp GGUF library so existing
+    # downloads can be imported into Ollama's own catalog (`ollama create`)
+    # without re-downloading. See docs/framework-ubuntu/model-sources/
+    # import-existing-gguf-models-to-ollama.sh for the one-time import step.
+    framework_ollama_llm_models_dir: /storage/models/llm
 
   tasks:
     - name: Stop and disable the old native ollama.service, if present
@@ -112,6 +117,7 @@
                 - "{{ framework_ollama_port }}:11434"
               volumes:
                 - {{ framework_ollama_models_dir }}:/root/.ollama
+                - {{ framework_ollama_llm_models_dir }}:/mnt/llm-models:ro
               environment:
                 # Strix Halo's GPU is integrated regardless of backend; Ollama
                 # drops integrated GPUs from candidacy unless told otherwise

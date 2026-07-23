@@ -20,11 +20,16 @@ agent/orchestration/UI layers on top of it.
   (commits `0cca6d81`/`58ff5cdb`/`3ed64fdb`, 2026-07-21) — it exposes all
   three backends (LM Studio via the public `llm.${LAB_DOMAIN}` route,
   llama.cpp/Ollama via `host.docker.internal` same-host gateway), and its own
-  Ansible task confirms model discovery against all three. Still unconfirmed:
-  the production Traefik/Authentik/DNS reconcile against `pve` and a real
-  browser login + RAG-search check (`plan.md` Phase 6 steps 6–7) — `plan.md`'s
-  own checkpoint text still says "not started," which is now stale; don't
-  trust it without rechecking `git log` first.
+  Ansible task confirms model discovery against all three. **Production
+  Traefik/Authentik/DNS reconcile against `pve` confirmed live, 2026-07-23**
+  (read-only dry-run + direct `curl`/`dig` checks — see `plan.md` Phase 6
+  entry for detail) — this note itself was stale, confirming the warning
+  below was warranted. **Human verification (browser SSO login + RAG
+  web-search check) also done, 2026-07-23** — operator confirmed Authentik
+  login works and a real chat with web search enabled returned a
+  visible `search_web` tool call plus a "3 Sources" citation strip with
+  real external URLs. **Phase 6 is now fully complete**, `plan.md`'s own
+  checkpoint updated to match.
 - **Real long-context benchmark data now exists** (`benchmarks.md`,
   2026-07-21): at 65,536-token context with 41,508 input tokens, end-to-end
   latency was Ollama/ROCm 83.9s, llama.cpp/HIP 96.4s, LM Studio/Vulkan 146.8s
