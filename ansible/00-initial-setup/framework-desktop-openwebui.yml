@@ -16,8 +16,17 @@
     framework_openwebui_dir: /opt/openwebui-docker
     framework_openwebui_data_dir: /mnt/container-storage/openwebui-data
     framework_searxng_data_dir: /mnt/container-storage/searxng-data
-    framework_openwebui_image: "harbor.lab.gibbsgreatly.xyz/ghcr/open-webui/open-webui:main"
-    framework_searxng_image: "harbor.lab.gibbsgreatly.xyz/dockerhub/searxng/searxng:latest"
+    # Pinned by digest rather than :main/:latest -- floating tags gave no
+    # reproducibility or controlled upgrade path (a routine `docker compose
+    # pull` could silently change behavior, as happened with OpenWebUI's own
+    # native-function-calling default -- see decisions.md). These are the
+    # exact digests already validated end-to-end on this host as of
+    # 2026-07-23: open-webui v0.10.2, searxng 2026.7.19+6da6eee26. To
+    # deliberately upgrade: pull the new tag, capture its RepoDigest
+    # (`docker inspect <image> --format '{{.RepoDigests}}'`), update the pin
+    # below, `--syntax-check`, redeploy, then re-verify per plan.md Phase 6.
+    framework_openwebui_image: "harbor.lab.gibbsgreatly.xyz/ghcr/open-webui/open-webui@sha256:a26effeb220e132482bf7e0560b3404843e7bc40d23051144e062960df8df6b0"  # v0.10.2
+    framework_searxng_image: "harbor.lab.gibbsgreatly.xyz/dockerhub/searxng/searxng@sha256:b8ca38ba06eea544d7555e88321e212ddc0d5c3c7de055419cfb2e5c6bf30812"  # 2026.7.19+6da6eee26
     # Host port 8080 belongs to the retained llamacpp-router dev backend.
     # Traefik is the public entry point, so OpenWebUI uses an unambiguous
     # host-side port while continuing to listen on 8080 in its container.
@@ -32,6 +41,13 @@
     framework_openwebui_llamacpp_api_base: "http://host.docker.internal:8080/v1"  # NOSONAR: same-host Docker gateway
     framework_openwebui_ollama_api_base: "http://host.docker.internal:11434"  # NOSONAR: same-host Docker gateway
     framework_openwebui_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+    # Explicitly managed rather than left to OpenWebUI's own auto-generate-
+    # and-store-in-the-data-dir default: signs sessions/JWTs, so a fresh
+    # data dir on a rebuilt host must not silently mint a new one and log
+    # everyone out. Value is the key already in live use, promoted into
+    # secrets.common.enc.yaml rather than rotated, to avoid invalidating
+    # current sessions.
+    framework_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
     framework_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
     framework_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
     framework_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
@@ -102,6 +118,7 @@
               volumes:
                 - {{ framework_openwebui_data_dir }}:/app/backend/data
               environment:
+                WEBUI_SECRET_KEY: "{{ framework_openwebui_webui_secret_key }}"
                 ENABLE_OPENAI_API: "true"
                 ENABLE_OLLAMA_API: "true"
                 OPENAI_API_BASE_URLS: "{{ framework_openwebui_lmstudio_api_base }};{{ framework_openwebui_llamacpp_api_base }}"
@@ -119,7 +136,13 @@
                 WEB_SEARCH_ENGINE: "searxng"
                 SEARXNG_QUERY_URL: "{{ framework_searxng_query_url }}"
               depends_on:
-                - searxng
+                searxng:
+                  condition: service_healthy
+              logging:
+                driver: json-file
+                options:
+                  max-size: "10m"
+                  max-file: "3"
 
             searxng:
               image: {{ framework_searxng_image }}
@@ -129,6 +152,17 @@
                 - {{ framework_searxng_data_dir }}:/etc/searxng
               environment:
                 SEARXNG_BASE_URL: "{{ framework_searxng_base_url }}"
+              healthcheck:
+                test: ["CMD", "wget", "-q", "--spider", "http://localhost:8080/search?q=test&format=json"]
+                interval: 30s
+                timeout: 5s
+                retries: 3
+                start_period: 15s
+              logging:
+                driver: json-file
+                options:
+                  max-size: "10m"
+                  max-file: "3"
 
     - name: Bring up OpenWebUI and SearXNG via docker compose
       ansible.builtin.command: docker compose up -d
