@@ -393,6 +393,18 @@ without parsing terminal prose.
 It verifies that each active stack has a `STACK_CONTRACT.md` and includes the current
 core boundary sections: `## Provides` and `## Dependencies`.
 
+**Convention (not yet enforced by the validator): `## Implementation Files`.**
+Every `STACK_CONTRACT.md` should list the exact repo-relative paths a stack
+touches (`stack.yaml`, playbook, any stack-specific role) and mark each as
+already existing — edit in place, do not recreate under a new path. This
+exists specifically for local/small coding-agent sessions: the Ollama
+coding-agent bake-off (`docs/framework-ubuntu/artifacts/coding-agents-20260721/`)
+found that without an explicit, unambiguous file map, a 30B-class local model
+would sometimes fabricate a replacement file believing it lacked read access,
+or author a new file under a duplicated nested path instead of the real
+module — both silent failures that only surfaced at validation time. See
+`terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md` for the worked example.
+
 `--check-contract-docs` is a conservative sync check for active stacks only. It verifies
 that each active stack has a `STACK_CONTRACT.md` and that declared `depends_on` stack
 names and `provides.service` names appear in the contract text. It does not attempt to

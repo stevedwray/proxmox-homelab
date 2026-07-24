@@ -60,16 +60,8 @@ work to a later stage once the pattern itself is proven.
   following the Stage 5/6 pattern (`not ansible_check_mode` /
   `ignore_errors: "{{ ansible_check_mode }}"` where the container/service
   doesn't exist yet on a fresh host).
-- `portainer_agent: true` — registers with the existing `portainer-stack`
-  instance in `mgmt_seg` (`${lab_ip_portainer}:9000`), same as every other
-  Stage 6/7 stack. **Reachability from a LAN-bridge host to `mgmt_seg` is
-  unconfirmed** — the MikroTik forward-chain rules documented in
-  `router/desired-config.md` only show explicit LAN↔WAN and kid-curfew
-  rules, nothing that looks like an explicit inter-VLAN drop, so this may
-  already just work by default. Verify with a plain `curl`/`nc` check to
-  `<portainer-stack-ip>:9000` from the new LXC before assuming — if it's
-  blocked, that's a small, separate, well-scoped router question, not a
-  blocker for authoring the stack itself.
+- `portainer_agent: false` — Portainer registration is explicitly out of
+  scope for this first pass (see "Deliberately deferred" below for why).
 - Health check: TCP reachability on `25565` + a server-list-ping status
   check (no RCON/auth needed for basic validation).
 
@@ -84,6 +76,25 @@ work to a later stage once the pattern itself is proven.
   bug from the coding-agent bake-off is still open; validate with
   `terragrunt apply`/`plan` + Ansible functional checks only, same as every
   Stage 6 exemplar
+- No Portainer registration (see "Deliberately deferred" below)
+
+### Deliberately deferred: Portainer registration
+
+Earlier drafts of this stage set `portainer_agent: true`, assuming it would
+register the stack with `portainer-stack`. It would not have: at the
+Terraform layer `portainer_agent` only fires `null_resource.stack_cleanup`
+(`terraform/lxc/main.tf`, explicitly commented "Legacy Portainer cleanup
+resource kept only for state retirement") — real agent registration only
+happens when a playbook explicitly includes the `portainer_agent` role, as
+`deploy-stack.yml` does for `deployment_tier: apps` stacks. `ci-runner-01`,
+this stage's structural template, is `deployment_tier: platform` and never
+takes that path, so copying its shape while also claiming Portainer
+registration was internally inconsistent. Rather than resolve the Tier
+1-vs-2 question for a first opencode run, this stage drops Portainer
+entirely: `portainer_agent: false`, no registration claim, no reachability
+check. Revisit as a separate, explicitly scoped follow-up once the
+`portainer-agent-contract.md` subsystem contract exists to make the correct
+pattern unambiguous.
 
 ## Validation sequence
 
@@ -98,15 +109,13 @@ terragrunt apply
 ./with-secrets scripts/provision.sh --stack minecraft-stack
 ./with-secrets scripts/provision.sh --stack minecraft-stack   (idempotent rerun)
 health check: TCP connect + server-list ping on :25565
-health check: curl/nc reachability to portainer-stack:9000 from the new LXC
 ```
 
 Evidence under `docs/sessions/evidence/slr-10-minecraft-exemplar/`.
 
-**Done when:** apply → check → live → rerun → health all pass, Portainer
-registration is either confirmed working or the reachability gap is
-documented as a named follow-up (not silently ignored), and
-`STACK_CONTRACT.md` reflects reality.
+**Done when:** apply → check → live → rerun → health all pass and
+`STACK_CONTRACT.md` reflects reality (including `portainer_agent: false`
+and why).
 
 ## Execution — using the local coding agent, not this session
 
@@ -118,7 +127,13 @@ actually passed cleanly in the bake-off, rather than one large prompt):
 
 1. Author `stack.yaml` + `STACK_CONTRACT.md` + `docker-compose.yml`
    (context: `docker-socket-proxy-test/` and `ci-runner-01/
-   STACK_CONTRACT.md` as templates)
+   STACK_CONTRACT.md` as templates). Include the `## Implementation Files`
+   section (see `terraform/lxc/README.md`'s Validation section for why) —
+   list the exact new paths being created under
+   `terraform/lxc/stacks/minecraft-stack/` and
+   `terraform/lxc/ansible/playbooks/deploy-minecraft-stack.yml`, and state
+   plainly that none of them exist yet, so the agent creates rather than
+   searches for them.
 2. `terragrunt.hcl` + `inventory.yml`, `terragrunt plan`
 3. `deploy-minecraft-stack.yml` with check-mode guards
 4. Run check → live → rerun → health, fix whatever check-mode reveals
@@ -134,6 +149,12 @@ that slice only (its assigned fallback role per the bake-off decision).
 
 ## Open follow-ups (not blocking this stage)
 
+- Portainer registration for minecraft-stack — deferred (see "Deliberately
+  deferred" above). Do this only after `portainer-agent-contract.md` exists
+  and after deciding whether minecraft-stack should move to
+  `deployment_tier: apps` (Tier 2 `deploy-stack.yml`/`app_stack` path) or
+  stay Tier 1-shaped with the `portainer_agent` role added explicitly to its
+  own playbook.
 - `game_seg` SDN zone + MikroTik trunk/rule for workstation reachability —
   deferred; now cheap to validate under CLAUDE.md's additive-SDN tier when
   it happens.

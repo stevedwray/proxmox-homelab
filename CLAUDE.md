@@ -5,18 +5,20 @@
 ```
 feat/* / fix/* / task/* / work/*   ← active development (temporary)
        ↓  appropriate validation tier (see below)
-stable                             ← validated on pve-test, ready for pve
+stable                             ← validated on pve-test-vm, ready for pve
        ↓  incremental deploy on pve + smoke test passes
 main                               ← current production state
 ```
 
 | Branch | Meaning | Promotion gate |
 |---|---|---|
-| `stable` | Validated on pve-test via the appropriate tier for the change class. | See Validation Tiers below. |
+| `stable` | Validated on pve-test-vm via the appropriate tier for the change class. | See Validation Tiers below. |
 | `main` | Deployed to pve; smoke test passed. | Incremental deploy on pve succeeds with no regressions. |
 
 `baseline/teardown-validated` is frozen as a historical marker (last full-teardown-validated state). Do not use as a development base.
 `dev/pve-test` is retired (archival only — do not use as a PR target).
+
+Do not develop directly on `stable` or `main`. All active work happens on short-lived `feat/`, `fix/`, `task/`, or `work/*` branches cut from the current working HEAD.
 
 See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full details.
 
@@ -24,7 +26,7 @@ See [docs/workflow/branch-model.md](docs/workflow/branch-model.md) for full deta
 
 - All work: cut `feat/`, `fix/`, `task/`, or `work/*` from the current working HEAD.
 - Validate on the short-lived branch (live runs, tests, populate checks).
-- Promote to `stable` once the appropriate validation tier passes on pve-test.
+- Promote to `stable` once the appropriate validation tier passes on pve-test-vm.
 - `stable` is a **promotion target only** — never use it as the base for a new development branch.
 - If validation fails, stop and present options — do not merge until resolved or explicitly accepted.
 - PR `stable` → `main` only after a successful incremental deploy to pve.
@@ -38,10 +40,10 @@ Match validation depth to change risk. A full teardown is required only for high
 |---|---|
 | Python logic with unit tests | `python3 -m unittest discover -s . -p "test_*.py"` |
 | Ansible comment or nosonar changes | `ansible-playbook --syntax-check` on all affected playbooks |
-| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test |
+| Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test-vm |
 | Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
-| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test |
+| Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test-vm |
+| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test-vm |
 
 Batch related changes during development and run the appropriate tier.
 
@@ -57,7 +59,7 @@ Batch related changes during development and run the appropriate tier.
 ## Security Scanning
 
 - **snyk**: `/home/steve/.local/bin/snyk iac test terraform/` — Terraform IaC only, not Ansible
-- **sonar-scanner**: `source .env && sonar-scanner` — config in `sonar-project.properties`
+- **sonar-scanner**: `./with-secrets /home/steve/.local/bin/sonar-scanner` — config in `sonar-project.properties`; `SONAR_TOKEN` is SOPS-backed, not in plain `.env`, so it must run through `./with-secrets`
 
 ## Documentation Workspace Pattern
 
@@ -172,3 +174,51 @@ new automation. See `docs/framework-integration/decisions.md` Decision 6.
 
 - [Production Credentials Reference](/home/steve/git/proxmox-homelab/docs/reference/production-credentials.md)
 - [Task 01: Production Credential Controls](/home/steve/git/proxmox-homelab/docs/productionize-refactor/tasks/01-credential-controls.md)
+
+## Workspace Operating Patterns
+
+- Use `./with-secrets <command>` for commands that need credentials. It injects non-secret local config plus SOPS-backed secrets from `terraform/secrets.common.enc.yaml`; do not rely on `source .env` for secret-bearing workflows.
+- Treat `.env` as gitignored non-secret config only: hostnames, node names, IPs, usernames, and workspace names. Real passwords, tokens, API keys, and service secrets belong in `terraform/secrets.common.enc.yaml` via SOPS.
+- New Terraform secrets in SOPS should use the exact `TF_VAR_*` environment variable name Terraform expects, such as `TF_VAR_lxc_password` or `TF_VAR_pm_api_token_secret`, rather than adding a separate mapping layer.
+- Edit SOPS secrets with `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops terraform/secrets.common.enc.yaml`. Do not decrypt secrets into plaintext files or commit private age keys.
+- GitHub Actions secrets are for CI-only values and CI SOPS decryption. Local infrastructure automation should prefer SOPS plus `with-secrets`.
+- Generated files under `terraform/lxc/.generated/` are runtime output, not source of truth. Regenerate them from manifests immediately before publish or validation.
+- Prefer dry-run-first workflows for reconcilers and edge changes. Use full baseline reconciler checks after applies when validating stack-owned edge state.
+
+## Script Credential Handling
+
+Some scripts call `./with-secrets` internally; others rely on it being in the environment. Use this table when writing gate commands:
+
+| Script | Credential handling | How to invoke |
+|---|---|---|
+| `scripts/provision.sh` | None — relies on env vars injected by caller | `./with-secrets scripts/provision.sh --stack <name>` |
+| `scripts/rebuild-gate-destroy.sh` | Self-wrapping — calls `${WITH_SECRETS}` internally | `./scripts/rebuild-gate-destroy.sh --execute` |
+| `scripts/teardown-deploy-test.sh` | Self-wrapping — calls `with-secrets` internally | `./scripts/teardown-deploy-test.sh <args>` |
+
+For `scripts/teardown-deploy-test.sh cycle`, pass `--approval-packet <path>` by default.
+When session context sets `env.disposable: true`, pass `--disposable` and omit `--approval-packet`.
+
+When adding a new script, check whether it calls `${WITH_SECRETS}` or `with-secrets` internally before deciding whether to prefix with `./with-secrets`.
+
+## Stack Service Types
+
+Not all stacks run Docker containers. When writing health/verify gate commands, derive the check from the actual service type — do not assume Docker. Reference the deployment playbook in `terraform/lxc/ansible/playbooks/` to confirm.
+
+| Stack | Service type | Verify approach |
+|---|---|---|
+| `apt-cacher-stack` | systemd (apt-cacher-ng) | Check systemd unit or HTTP port 3142 |
+| `dns-stack` | systemd (CoreDNS) | `dig` query against the DNS container IP |
+| `step-ca-stack` | systemd (step-ca) | HTTPS GET to `/acme/acme/directory` |
+| `ci-runner-01` | systemd (GitHub Actions runner) | Check systemd unit `actions.runner.*.service` |
+| `harbor-stack` | Docker Compose | `curl` to registry API or health endpoint |
+| `authentik-stack` | Docker Compose | `curl` to `/-/health/live/` |
+| `proxy-stack` | Docker Compose (Traefik) | `curl` to Traefik ingress |
+| `monitoring-stack` | Docker Compose | `curl` to Grafana and VictoriaMetrics |
+| `netbox-stack` | Docker Compose | `curl` to NetBox HTTP port |
+| `portainer-stack` | Docker Compose | `curl` to Portainer API `/api/system/status` |
+
+## Execution Guardrails
+
+- Before any `terragrunt apply` or deployment validation run, verify `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` returns `pve-test-vm`; otherwise stop and treat it as a targeting error.
+- For direct Ansible validation against inline inventories like `-i '10.57.x.x,'`, always pass `-u root`; otherwise Ansible can silently fall back to the local workstation username and report misleading SSH failures.
+- `pvesh` runs only on a Proxmox node itself; it is not installed on the operator's workstation. For read-only API checks from the workstation, use `./with-secrets` and curl against `${TF_VAR_proxmox_api_url}` with the `PROXMOX_READONLY_TOKEN_ID`/`PROXMOX_READONLY_TOKEN_SECRET` header (`Authorization: PVEAPIToken=<id>=<secret>`), or SSH to the target node and run `pvesh`/`pct list` there.
