@@ -49,12 +49,7 @@ work to a later stage once the pattern itself is proven.
 **In scope:**
 - New stack directory `terraform/lxc/stacks/minecraft-stack/` (`stack.yaml`,
   `STACK_CONTRACT.md`, `terragrunt.hcl`, `inventory.yml`,
-  `docker-compose.yml`), modeled directly on `docker-socket-proxy-test`'s
-  shape (simplest existing exemplar: plain LAN bridge, no zone, no Harbor
-  dependency assumptions to untangle).
-- `docker-compose.yml`: single service, `itzg/minecraft-server:stable-java21`
-  (same image already in use in the legacy `gaming-stack` box, per the
-  `.hold/minecraft/stack.yaml` discovery notes — known-good image choice).
+  `docker-compose.yml`).
 - New bounded Ansible playbook `deploy-minecraft-stack.yml` — `docker_base`
   role + compose up, check-mode guards on the compose/startup tasks
   following the Stage 5/6 pattern (`not ansible_check_mode` /
@@ -64,6 +59,119 @@ work to a later stage once the pattern itself is proven.
   scope for this first pass (see "Deliberately deferred" below for why).
 - Health check: TCP reachability on `25565` + a server-list-ping status
   check (no RCON/auth needed for basic validation).
+
+### Exact target content for slice 1
+
+A prior attempt at this slice produced a `stack.yaml` with wrong field names
+(`stack_name` instead of `hostname`), a fabricated nested `network:` block
+holding `ip_address`/`gateway`/a non-existent `bridge` key, and several
+required fields (`dns_server`, `deployment_tier`) dropped entirely — despite
+being told to "model on" a real template file. The model pattern-matched
+generic Docker/IaC shape instead of transcribing the referenced file's
+actual fields. To remove that failure mode, this is the literal target
+content to transcribe, not a shape to approximate. Two named references
+only, each for a different part — copying more than these two invites
+exactly the "triangulate five near-matches" problem this note exists to
+prevent:
+
+- **`stack.yaml` field shape**: `terraform/lxc/stacks/ci-runner-01/stack.yaml`
+  (the current active exemplar, not `docker-socket-proxy-test`, which
+  predates several now-required fields and isn't in the validator's active
+  set).
+- **`docker-compose.yml` shape**: `terraform/lxc/stacks/authentik-stack/docker-compose.yml`
+  (`ci-runner-01` has no compose file — it's a systemd stack).
+
+`terraform/lxc/stacks/minecraft-stack/stack.yaml`:
+
+```yaml
+hostname: minecraft-stack
+ip_address: "192.168.1.60/24"
+gateway: "192.168.1.1"
+dns_server: "192.168.1.1"
+vmid: 170
+cores: 2
+memory: 2048
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: "10G"
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - docker
+  - minecraft
+  - game
+depends_on: []
+provides:
+  - service: minecraft-java
+    port: 25565
+    protocol: tcp
+ansible_playbook: "deploy-minecraft-stack"
+deployment_tier: apps
+portainer_agent: false
+```
+
+`deployment_tier: apps` is correct and intentional here even though the
+playbook shape below mirrors `ci-runner-01` (`deployment_tier: platform`).
+The tier label is orchestration-scope metadata (`scripts/provision.sh
+--tier`) describing what this stack *is*, not which playbook pattern it
+must use — those are two independent choices, and this stage deliberately
+picks a Tier 1-shaped playbook for a Tier 2-tiered stack for its first
+pass (see "Deliberately deferred" below). No `network:` block: this is a
+plain LAN bridge with no SDN zone, and `network.zone`/`network.access_path`
+are the only real keys under that block (see
+`terraform/lxc/PLATFORM_CONTRACT.md`'s field table) — there is no `bridge:`
+field in the schema at all.
+
+`terraform/lxc/stacks/minecraft-stack/docker-compose.yml`:
+
+```yaml
+services:
+  minecraft:
+    image: itzg/minecraft-server:stable-java21
+    container_name: minecraft-stack-minecraft
+    restart: unless-stopped
+    ports:
+      - "25565:25565/tcp"
+    environment:
+      EULA: "TRUE"
+    volumes:
+      - minecraft-data:/data
+
+volumes:
+  minecraft-data:
+```
+
+`EULA: "TRUE"` is required by the image itself — without it the container
+starts, prints Mojang's EULA notice, and exits without running a server
+(see the note added to `.hold/minecraft/stack.yaml`). The named volume
+follows `authentik-stack`'s pattern for persisting `/data` (world save)
+across container recreation.
+
+`STACK_CONTRACT.md`: copy `terraform/lxc/STACK_CONTRACT.template.md`, not
+`ci-runner-01/STACK_CONTRACT.md` directly — the template exists specifically
+so every required section heading (`## Provides`, `## Dependencies`, both
+enforced by `validate-stack-metadata.sh --check-contract-sections`) is
+present by construction rather than left to the prior attempt's ad hoc
+one-paragraph contract, which had neither. Read `ci-runner-01`'s contract
+alongside the template for how a filled-in example reads, but fill in the
+template's placeholders rather than free-writing from the example.
+
+**Checkpoint — run immediately after writing all three files, before
+moving to slice 2:**
+
+```bash
+terraform/lxc/validate-stack-metadata.sh --check-contract-sections
+```
+
+(No `./with-secrets` needed — this validator only reads local YAML/Markdown
+files, no credentials or network calls involved.)
+
+This is expected to fail before slice 1 (missing stack file) and should
+pass with zero issues once `stack.yaml` and `STACK_CONTRACT.md` are
+written correctly — it mechanically checks every field mistake from the
+prior attempt (missing/nested required fields, bad `ip_address` shape,
+invalid `deployment_tier`, missing contract sections). Do not proceed to
+slice 2 while this fails.
 
 **Explicitly out of scope for this stage:**
 - No new SDN zone / `game_seg` (deferred to a later stage, now that
@@ -125,11 +233,11 @@ one coordinating OpenCode 1.18.4 session against Ollama
 exemplar` worktree, never `main`. Run as bounded slices (matching what
 actually passed cleanly in the bake-off, rather than one large prompt):
 
-1. Author `stack.yaml` + `STACK_CONTRACT.md` + `docker-compose.yml`
-   (context: `docker-socket-proxy-test/` and `ci-runner-01/
-   STACK_CONTRACT.md` as templates). Include the `## Implementation Files`
-   section (see `terraform/lxc/README.md`'s Validation section for why) —
-   list the exact new paths being created under
+1. Author `stack.yaml` + `STACK_CONTRACT.md` + `docker-compose.yml` — see
+   "Exact target content for slice 1" above for the literal content, the
+   two named reference files, and the mandatory validator checkpoint before
+   moving on. The `STACK_CONTRACT.md`'s `## Implementation Files` section
+   should list the exact new paths being created under
    `terraform/lxc/stacks/minecraft-stack/` and
    `terraform/lxc/ansible/playbooks/deploy-minecraft-stack.yml`, and state
    plainly that none of them exist yet, so the agent creates rather than
@@ -150,11 +258,13 @@ that slice only (its assigned fallback role per the bake-off decision).
 ## Open follow-ups (not blocking this stage)
 
 - Portainer registration for minecraft-stack — deferred (see "Deliberately
-  deferred" above). Do this only after `portainer-agent-contract.md` exists
-  and after deciding whether minecraft-stack should move to
-  `deployment_tier: apps` (Tier 2 `deploy-stack.yml`/`app_stack` path) or
-  stay Tier 1-shaped with the `portainer_agent` role added explicitly to its
-  own playbook.
+  deferred" above). `deployment_tier: apps` is already set; the remaining
+  decision is whether minecraft-stack should move to the generic Tier 2
+  `deploy-stack.yml`/`app_stack` playbook pattern (which brings
+  `portainer_agent` with it), or stay on its own bespoke
+  `deploy-minecraft-stack.yml` playbook with the `portainer_agent` role
+  added explicitly. Do this only after `portainer-agent-contract.md` exists
+  to make the tradeoff unambiguous.
 - `game_seg` SDN zone + MikroTik trunk/rule for workstation reachability —
   deferred; now cheap to validate under CLAUDE.md's additive-SDN tier when
   it happens.

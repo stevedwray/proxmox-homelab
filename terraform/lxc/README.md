@@ -396,7 +396,10 @@ core boundary sections: `## Provides` and `## Dependencies`.
 **Convention (not yet enforced by the validator): `## Implementation Files`.**
 Every `STACK_CONTRACT.md` should list the exact repo-relative paths a stack
 touches (`stack.yaml`, playbook, any stack-specific role) and mark each as
-already existing — edit in place, do not recreate under a new path. This
+already existing — edit in place, do not recreate under a new path — or new,
+not yet created. `terraform/lxc/STACK_CONTRACT.template.md` has this section
+(and every other required section) pre-filled with placeholders; copy it
+instead of free-writing a contract from an example stack. This
 exists specifically for local/small coding-agent sessions: the Ollama
 coding-agent bake-off (`docs/framework-ubuntu/artifacts/coding-agents-20260721/`)
 found that without an explicit, unambiguous file map, a 30B-class local model

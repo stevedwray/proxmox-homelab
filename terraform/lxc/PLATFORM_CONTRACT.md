@@ -240,6 +240,11 @@ following files in this repository:
 - `terraform/lxc/PLATFORM_CONTRACT.md` — this document (contract source).
 - `terraform/lxc/stacks/*/STACK_CONTRACT.md` — per-stack contracts the platform
   consumes (examples: `stacks/portainer-stack/STACK_CONTRACT.md`).
+- `terraform/lxc/STACK_CONTRACT.template.md` — copy this when authoring a new
+  stack's contract; it has every required section heading pre-filled with
+  placeholders so `validate-stack-metadata.sh --check-contract-sections`
+  passes by construction instead of by remembering which headings are
+  required.
 
 If you edit the contract semantics here, add or update the cross-link above to
 point readers at the representative implementation example(s).
