@@ -265,6 +265,32 @@ terragrunt init
 ./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- destroy -auto-approve
 ```
 
+## Scaffolding a new stack with a local coding agent
+
+`./scaffold-stack.sh <stack-name>` authors a new stack's five files
+(`stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`,
+and its Ansible playbook) using five narrow, single-file OpenCode agents
+defined in `.opencode/agent/`, gated by the validators below between every
+step. This exists because a single general-purpose local-model agent asked
+to author all five files in one open-ended task reliably fails in specific,
+repeatable ways (invents an SDN zone that was explicitly ruled out, uses an
+unpinned image tag, wanders into unrequested files); five agents each
+scoped to exactly one file — with `bash`/`glob`/`grep`/`task` denied so
+they can't wander into contaminating examples elsewhere in the repo — does
+not. Full findings: `docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md`.
+
+```bash
+# 1. Copy the example and fill in the new stack's facts
+cp terraform/lxc/stacks/stack-request.example.yaml \
+   terraform/lxc/stacks/<stack-name>/stack-request.yaml
+
+# 2. Run the scaffolder — stops on the first validator failure
+terraform/lxc/scaffold-stack.sh <stack-name>
+```
+
+Not covered: `terragrunt plan`/`apply`, `provision.sh` check/live/rerun, and
+health checks — those are real infrastructure steps and stay manual.
+
 ## Validation
 
 Use the disposable validation stacks on `pve-test` to exercise the network layer end to end.
