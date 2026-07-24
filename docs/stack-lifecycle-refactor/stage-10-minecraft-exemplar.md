@@ -68,11 +68,18 @@ holding `ip_address`/`gateway`/a non-existent `bridge` key, and several
 required fields (`dns_server`, `deployment_tier`) dropped entirely — despite
 being told to "model on" a real template file. The model pattern-matched
 generic Docker/IaC shape instead of transcribing the referenced file's
-actual fields. To remove that failure mode, this is the literal target
-content to transcribe, not a shape to approximate. Two named references
-only, each for a different part — copying more than these two invites
-exactly the "triangulate five near-matches" problem this note exists to
-prevent:
+actual fields. To remove that failure mode, `stack.yaml`'s content below is
+the literal target to transcribe, not a shape to approximate —
+`stack.yaml`'s schema is entirely repo-specific, so there's no competing
+generic pattern for the model to fall back on, and copying it exactly is a
+correctness win, not a shortcut. `docker-compose.yml` is different: it's
+handled further below as a generation task with explicit constraints,
+because a Minecraft Compose file is one of the most common patterns in
+public training data, and two prior attempts both show that prior winning
+out over instructions even when given literal content to copy. Two named
+references only, each for a different part — copying more than these two
+invites exactly the "triangulate five near-matches" problem this note
+exists to prevent:
 
 - **`stack.yaml` field shape**: `terraform/lxc/stacks/ci-runner-01/stack.yaml`
   (the current active exemplar, not `docker-socket-proxy-test`, which
@@ -122,30 +129,45 @@ are the only real keys under that block (see
 `terraform/lxc/PLATFORM_CONTRACT.md`'s field table) — there is no `bridge:`
 field in the schema at all.
 
-`terraform/lxc/stacks/minecraft-stack/docker-compose.yml`:
+`terraform/lxc/stacks/minecraft-stack/docker-compose.yml`: **author this one,
+don't transcribe a fixed answer** — a Minecraft Compose file is one of the
+most heavily-represented patterns in public training data, so the risk here
+isn't guessing wrong from nothing, it's a strong pretrained prior overriding
+this repo's actual conventions. Two prior attempts both fell into exactly
+that: `itzg/minecraft-server:latest` instead of a pinned tag, and one
+invented a custom top-level `networks:` block plus a separate templated
+compose file living outside the stack directory entirely
+(`terraform/lxc/templates/minecraft-compose.yml.j2`, rendered via Ansible
+`template`) instead of a static `docker-compose.yml` in
+`terraform/lxc/stacks/minecraft-stack/` — checked directly against
+`terraform/lxc/ansible/playbooks/deploy-stack.yml`'s
+`lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml')`,
+which is the one real precedent for how this repo reads a stack's compose
+file, and confirmed no active stack does it any other way.
 
-```yaml
-services:
-  minecraft:
-    image: itzg/minecraft-server:stable-java21
-    container_name: minecraft-stack-minecraft
-    restart: unless-stopped
-    ports:
-      - "25565:25565/tcp"
-    environment:
-      EULA: "TRUE"
-    volumes:
-      - minecraft-data:/data
+Requirements:
+- Single service, `itzg/minecraft-server`, pinned to the `stable-java21` tag
+  — not `latest` (see `.hold/minecraft/stack.yaml`'s discovery notes for why
+  this tag is the known-good choice).
+- `EULA: "TRUE"` in `environment:` — required by the image itself; without
+  it the container starts, prints Mojang's EULA notice, and exits without
+  running a server.
+- Port `25565/tcp` only (not `25565:25565` bare, not UDP — see the port note
+  in `.hold/minecraft/stack.yaml`).
+- World data (`/data`) persisted via a named Docker volume declared in a
+  top-level `volumes:` block — not a relative bind mount like `./data` or
+  `./minecraft-data` (both prior attempts used a bind mount here) — follow
+  `authentik-stack`'s pattern (`authentik-postgresql:/var/lib/postgresql/data`
+  plus a matching top-level `volumes:` entry).
+- `container_name: minecraft-stack-minecraft` and `restart: unless-stopped`,
+  matching the `<stack>-<service>` naming convention used elsewhere.
 
-volumes:
-  minecraft-data:
-```
-
-`EULA: "TRUE"` is required by the image itself — without it the container
-starts, prints Mojang's EULA notice, and exits without running a server
-(see the note added to `.hold/minecraft/stack.yaml`). The named volume
-follows `authentik-stack`'s pattern for persisting `/data` (world save)
-across container recreation.
+Explicitly do not add, even though they're common in a typical public
+Minecraft Compose example: a custom top-level `networks:` block, a pinned
+`VERSION` environment variable, difficulty/MOTD/player-count/query env vars,
+or a separately mounted `server.properties` file — none of that was asked
+for, this is a deliberately minimal first pass (see Scope above), and
+adding it is exactly the failure mode both prior attempts hit.
 
 `STACK_CONTRACT.md`: copy `terraform/lxc/STACK_CONTRACT.template.md`, not
 `ci-runner-01/STACK_CONTRACT.md` directly — the template exists specifically
@@ -161,17 +183,20 @@ moving to slice 2:**
 
 ```bash
 terraform/lxc/validate-stack-metadata.sh --check-contract-sections
+terraform/lxc/validate-compose.sh --stack minecraft-stack
 ```
 
-(No `./with-secrets` needed — this validator only reads local YAML/Markdown
+(No `./with-secrets` needed — both validators only read local YAML/Markdown
 files, no credentials or network calls involved.)
 
-This is expected to fail before slice 1 (missing stack file) and should
-pass with zero issues once `stack.yaml` and `STACK_CONTRACT.md` are
-written correctly — it mechanically checks every field mistake from the
-prior attempt (missing/nested required fields, bad `ip_address` shape,
-invalid `deployment_tier`, missing contract sections). Do not proceed to
-slice 2 while this fails.
+Both are expected to fail before slice 1 (missing files) and should pass
+with zero issues once all three files are written correctly. Between them
+they mechanically catch every defect from both prior attempts: missing or
+nested required `stack.yaml` fields, bad `ip_address` shape, invalid
+`deployment_tier`, missing contract sections, an unpinned or `:latest`
+image tag, a custom `networks:` block, and a `docker-compose.yml` that
+doesn't exist at the correct stack-owned path. Do not proceed to slice 2
+while either fails.
 
 **Explicitly out of scope for this stage:**
 - No new SDN zone / `game_seg` (deferred to a later stage, now that
@@ -234,9 +259,10 @@ exemplar` worktree, never `main`. Run as bounded slices (matching what
 actually passed cleanly in the bake-off, rather than one large prompt):
 
 1. Author `stack.yaml` + `STACK_CONTRACT.md` + `docker-compose.yml` — see
-   "Exact target content for slice 1" above for the literal content, the
-   two named reference files, and the mandatory validator checkpoint before
-   moving on. The `STACK_CONTRACT.md`'s `## Implementation Files` section
+   "Exact target content for slice 1" above for `stack.yaml`'s literal
+   content, `docker-compose.yml`'s generation constraints, the two named
+   reference files, and the mandatory validator checkpoint before moving on.
+   The `STACK_CONTRACT.md`'s `## Implementation Files` section
    should list the exact new paths being created under
    `terraform/lxc/stacks/minecraft-stack/` and
    `terraform/lxc/ansible/playbooks/deploy-minecraft-stack.yml`, and state
