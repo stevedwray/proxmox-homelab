@@ -19,10 +19,28 @@ workstation, all `200`.
 **Next: Phase 4 (layered validation)** — this needs the operator driving
 PentAGI's own web UI directly (creating an Assistant, running the direct
 tool-call and agent-delegation tests, then a scoped Metasploitable 2 flow);
-not something this plan can execute unattended. [plan.md](./plan.md) is
-the phased plan this was executed against — kept up to date with what
-actually happened,
-not just what was designed.
+not something this plan can execute unattended.
+
+**Infrastructure incident during Phase 4 Test 1 (2026-07-26), found and
+resolved — not a PentAGI/pentagi-stack bug.** Test 1's first tool call
+stalled with no GPU activity on `framework.gibbsgreatly.xyz`. Root cause:
+`pve-test-vm`'s external USB drive (a Samsung PSSD T7, backing the
+`infrastructure` ZFS pool that `pentagi-stack`'s own rootfs lives on) was
+hitting repeated UAS (USB Attached SCSI) resets every 1–3 minutes
+(`dmesg`: `uas_eh_device_reset_handler`), stalling I/O enough to explain
+the stuck image pull, high load average, and intermittent SSH timeouts —
+a known recurring issue with this drive, not related to any of this
+workspace's own changes. Operator shut down `pve-test-vm`, reseated the
+USB connection, and restarted it — all pools reported healthy afterward,
+`pentagi-stack`'s containers auto-restarted cleanly (`unless-stopped`),
+PentAGI's API confirmed responding again. Worth remembering: **when
+diagnosing something on `pve-test-vm` that looks like it could be a
+container issue but shows high load with no single hot process and
+intermittent SSH stalls, check `dmesg` on `pve-test-vm` itself for USB
+errors before assuming it's the stack's own problem.**
+
+[plan.md](./plan.md) is the phased plan this was executed against — kept
+up to date with what actually happened, not just what was designed.
 
 **Phase 0 done (2026-07-26)** — MikroTik trunk tagging (§0.1), the Proxmox
 SDN zone (§0.2, `tvpent` — note: had to be renamed from the originally
