@@ -236,6 +236,12 @@ variable "lab_ip_ai_services" {
   default     = ""
 }
 
+variable "lab_ip_pentagi" {
+  description = "pentagi-stack service IPv4 address (pentest_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string
@@ -266,6 +272,12 @@ variable "lab_gw_ai" {
   default     = ""
 }
 
+variable "lab_gw_pentest" {
+  description = "PentAGI pentest subnet (pentest_seg) gateway IPv4 address"
+  type        = string
+  default     = ""
+}
+
 variable "lab_subnet_mgmt_cidr" {
   description = "Management subnet CIDR"
   type        = string
@@ -292,6 +304,12 @@ variable "lab_subnet_build_cidr" {
 
 variable "lab_subnet_ai_cidr" {
   description = "AI application subnet (ai_seg) CIDR"
+  type        = string
+  default     = ""
+}
+
+variable "lab_subnet_pentest_cidr" {
+  description = "PentAGI pentest subnet (pentest_seg) CIDR"
   type        = string
   default     = ""
 }

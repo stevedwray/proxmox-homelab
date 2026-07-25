@@ -73,7 +73,8 @@ pentest_seg — VLAN 70, 192.168.70.0/24, gateway 192.168.70.1
 
 **Done (2026-07-26) — MikroTik side.** Cross-zone policy applied directly on the MikroTik (`hAP ax^3`, RouterOS 7.23.1) as forward-chain rules, going beyond the minimum and giving `pentest_seg` real containment (no other zone on this router currently has explicit east-west isolation — verified live via read-only query during this rollout that `build_seg`/`mgmt_seg`/`edge_seg`/`infra_seg`/`ai_seg` all currently have unrestricted forward-chain reachability to each other; the documented "default-deny" model is intent, not enforced state, for those zones):
 
-- `pentest_seg → infra_seg` (`192.168.40.0/24`): TCP 80/443/3142 (Harbor + apt-cacher)
+- `pentest_seg → infra_seg` (`192.168.40.0/24`): TCP 3142 (apt-cacher, reached directly at its own IP)
+- `pentest_seg → 192.168.30.110` (edge_seg, Traefik): TCP 80/443 (Harbor — **not** infra_seg. `harbor.${LAB_DOMAIN}` resolves to Traefik's edge_seg IP, not Harbor's own infra_seg IP. Discovered live, 2026-07-26: all four PentAGI image pulls timed out for ~15 minutes until this was corrected — infra_seg-only was the wrong destination zone entirely.)
 - `pentest_seg → framework.gibbsgreatly.xyz` (`192.168.1.8`, flat LAN): TCP 11434 (Ollama), TCP 8082 (SearXNG)
 - `pentest_seg → 192.168.1.113` (`LAB_TARGET`): full port/protocol range, scoped by **destination IP** only — pentesting needs open-ended port enumeration against an authorized target, so the containment is "only this one host," not a fixed port list (see Phase 4 Test 3 for why)
 - `edge_seg → pentest_seg`: TCP 8443, for Traefik to reach the PentAGI UI once Phase 3 is live
@@ -107,7 +108,7 @@ For stronger isolation, move execution containers to a dedicated worker VM or ho
 PROXMOX_NODE            = pve-test-vm
 LXC_HOSTNAME            = pentagi-stack
 LXC_CORES               = 8
-LXC_MEMORY_MB           = 16384
+LXC_MEMORY_MB           = 8192          # right-sized for the pve-test-vm validation run 2026-07-26; revisit if pgvector/scraper get memory-starved under real load
 LXC_SWAP_MB             = 2048
 LXC_ROOTFS_GB           = 30          # weights/data are external; see storage note below
 DOCKER_STORAGE_GB       = 50          # separate docker_mount, not rootfs
@@ -214,40 +215,26 @@ This replaces raw `pct create`/manual Docker install with this repo's normal pat
 
 The MikroTik and `pve-test-vm`'s physical trunk port both now carry the new `pentest_seg` VLAN (70) as an 802.1Q tag — same prerequisite Decision 4 hit for `ai_seg`, done via RouterOS CLI directly (operator, over SSH), not Ansible/REST automation, matching how `ai_seg` was done too. Full command trail and the live-verified cross-zone firewall policy are in §0's Network zone section above. Verified via `ping 192.168.70.1` from the workstation (0% loss) — **not** a self-ping on the router, which isn't a reliable test on RouterOS for a bridge-VLAN sub-interface's own address.
 
-### 0.2 Declare the zone — **not yet done**
+### 0.2 Declare the zone — **done, 2026-07-26**
 
-The MikroTik/L3 side is live, but Proxmox doesn't know about this zone yet. Add a `pentest_seg` attachment/zone block to `terraform/lxc/network/pve-test-vm.yaml`, following the exact shape of the existing `infra_seg`/`mgmt_seg` entries (VLAN 70, `192.168.70.0/24`, gateway `192.168.70.1`, `zone_type: vlan`, `bridge: vmbr0`). Add the cross-zone `policies:` entries as documentation of what's already enforced at the MikroTik (§0's Network zone section).
+`pentest_seg` was added to `terraform/lxc/network/pve-test-vm.yaml` (attachment, `zones:` entry, and `policies:` entries), following the exact shape of `infra_seg`/`mgmt_seg`. **Real gotcha hit and fixed**: Proxmox SDN zone names are capped at **8 characters** — the originally planned `tvpentest` (9 chars) was rejected by `pvesh` with `zone: value may only be 8 characters long`. Renamed to `tvpent` throughout (attachment `bridge`/`zone`/`vnet` in `network.yaml`, matching what the MikroTik-side commands in §0 above already used). Also required two new Terraform variables that didn't exist yet — `lab_ip_pentagi`, `lab_gw_pentest`, `lab_subnet_pentest_cidr` in `terraform/lxc/variables.tf` and `main.tf`'s `stack_template_vars` map — every zone needs its own declared Terraform variable, not just an env var.
 
-Validate per `CLAUDE.md`'s Validation Tiers table ("Terraform/network/SDN — additive only"): `terragrunt plan` should show zero changes/deletions to existing resources, then apply and run `scripts/provision.sh --stack <name>` against 1–2 existing `pve-test-vm` stacks (e.g. `infra_seg`'s NetBox, or `mgmt_seg`'s Authentik) to confirm no regression. A full teardown cycle is still owed before promoting this past `stable`, but not required per iteration.
+Validated per `CLAUDE.md`'s "Terraform/network/SDN — additive only" tier: `terragrunt plan` showed a clean `5 to add, 0 to change, 0 to destroy` before applying.
 
-### 0.3 Scaffold the stack
+### 0.3 Scaffold the stack — **done, 2026-07-26**
 
-```bash
-cp terraform/lxc/stacks/stack-request.example.yaml \
-   terraform/lxc/stacks/pentagi-stack/stack-request.yaml
-# edit stack-request.yaml with pentagi-stack's real values, then:
-./terraform/lxc/scaffold-stack.sh pentagi-stack
-```
+**Not actually scaffolded via `scaffold-stack.sh`.** That OpenCode-agent-driven scaffolder turned out to be effectively unused in this repo — its own exemplar (`minecraft-stack`) doesn't exist anywhere in the tree anymore, and two of its five "agents" (`stack-yaml-writer`, `playbook-writer`) just write exact content verbatim rather than generating anything, so there was no real benefit over authoring directly. Instead, `pentagi-stack` was hand-built following the actual, currently-deployed convention (`graylog-stack`'s shape): `stack.yaml` + `edge.yaml` under `terraform/lxc/stacks/pentagi-stack/`, `terragrunt.hcl` under `terraform/lxc/environments/pve-test-vm/pentagi-stack/` (fixed boilerplate, identical to every other stack's), and the full deploy logic in `terraform/lxc/ansible/playbooks/deploy-pentagi-stack.yml` — Harbor-rewritten vendored `docker-compose.yml` embedded via Jinja, `.env` templated separately. Passed `ansible-playbook --syntax-check` and this repo's stack validators (which, like the scaffolder, only cover a narrow hardcoded stack list that `pentagi-stack` isn't part of — consistent with most real stacks here).
 
-`stack_yaml` fields to set (see "Known-good values" above): `hostname: pentagi-stack`, zone `pentest_seg`, `template_name: debian-13.1-2-docker-template.tar.gz`, `docker_storage_size`/`docker_mount` sized per the storage note above, `unprivileged: true` with `nesting=1,keyctl=1` (the scaffolder's Docker-stack profile already sets these — confirm rather than assume). Also set, matching every other Docker/Harbor-routed stack:
-
-```yaml
-registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
-apt_cacher_host: "${lab_ip_apt_cacher}"
-```
-
-`compose_requirements`/`compose_forbidden`/`contract_facts` should describe PentAGI's own vendored `docker-compose.yml` (Harbor-rewritten, Phase 1) as the intended deployment mechanism — not a hand-authored compose file, and not the interactive installer either (Phase 1 explains why neither is needed).
-
-Also create `terraform/lxc/stacks/pentagi-stack/edge.yaml` now (Phase 3 covers its content) — it's one of the standard files the scaffolder/edge-rendering pipeline expects per stack, not something bolted on afterward.
+Applied via `terragrunt apply`: 5 resources added (LXC container VMID `70010`, the SDN zone/vnet/subnet, ansible inventory, container epoch), 0 changed, 0 destroyed.
 
 ### Acceptance criteria
 
-- `pentest_seg` exists as a live SDN zone on `pve-test-vm`, confirmed by `pvesh`/live ping the same way `ai_seg` was verified (not just "the Ansible run completed")
-- `terraform/lxc/stacks/pentagi-stack/` has the standard stack layout, including `edge.yaml`
-- `scripts/provision.sh --stack pentagi-stack` runs clean against `pve-test-vm`
-- The LXC starts, is `unprivileged: 1`, has `nesting=1,keyctl=1`, and lands in `pentest_seg` with the assigned IP
-- `docker info` inside the container reports a working driver with no setup steps taken beyond what the template already provides
-- `registry_host`/`apt_cacher_host` are set and match the values every other `pve-test-vm` stack uses
+- ✅ `pentest_seg` exists as a live SDN zone on `pve-test-vm` (`tvpent`), confirmed the same way `ai_seg` was verified (workstation ping, not a router self-ping)
+- ✅ `terraform/lxc/stacks/pentagi-stack/` has `stack.yaml` + `edge.yaml`; `terragrunt.hcl` lives under `environments/pve-test-vm/pentagi-stack/`
+- ✅ `scripts/provision.sh --stack pentagi-stack` runs clean against `pve-test-vm` (`failed=0`)
+- ✅ The LXC started, `unprivileged: true`, VMID `70010`, IP `192.168.70.10`, landed in `pentest_seg`
+- ✅ `docker info` inside the container reports a working driver with no setup steps taken beyond what the template already provides
+- ✅ `registry_host`/`apt_cacher_host` set and match the values every other `pve-test-vm` stack uses
 
 ---
 
@@ -340,6 +327,8 @@ PENTAGI_POSTGRES_PASSWORD={{ pentagi_stack_postgres_password }}   # from terrafo
 
 `SERVER_USE_SSL=false` is deliberate: Traefik terminates TLS externally (Phase 3), so PentAGI serves plain HTTP internally, matching how every other web UI in this platform is fronted — no self-signed-cert handling needed on the Traefik side. `PUBLIC_URL`/`CORS_ORIGINS` use `pve-test-vm`'s own domain (`LAB_DOMAIN=test.gibbsgreatly.xyz`), not `lab.gibbsgreatly.xyz` (that's `pve`'s domain — see `.env.pve-test-vm`).
 
+**`PENTAGI_POSTGRES_PASSWORD` must be generated URL-safe — real bug hit live, 2026-07-26.** This value gets embedded directly into `DATABASE_URL=postgres://...:${PENTAGI_POSTGRES_PASSWORD}@pgvector:5432/...` via plain Docker Compose variable substitution, which has no way to URL-encode it. A `base64`-generated secret (`openssl rand -base64 24`) can contain `/`, which Go's URL parser reads as the path separator — `pentagi` went into a silent restart loop with `invalid port ... after host` in its logs, even though every container had actually started successfully. Generate this secret with `openssl rand -hex 24` instead (alphanumeric only). Because `pgvector` bakes the password into its data volume at first `initdb`, discovering this after the fact also means wiping `pentagi-stack_pentagi-postgres-data` and letting it reinitialize — cheap here since nothing real was in it, but don't assume a password rotation is ever just an `.env` edit once real data exists.
+
 **OAuth reality check**: PentAGI's own login only supports Google and GitHub OAuth — confirmed directly from its Go source (`backend/pkg/server/oauth/{google,github}.go`, no generic/custom OIDC client). `OAUTH_GOOGLE_CLIENT_ID`/`OAUTH_GITHUB_CLIENT_ID` are real env vars but neither is Authentik. Leave both blank; Authentik integration happens at the Traefik layer instead (Phase 3), not here.
 
 ### 1.6 Deploy and verify
@@ -369,14 +358,16 @@ docker inspect pentagi \
   --format '{{range .Mounts}}{{println .Source "->" .Destination}}{{end}}'
 ```
 
-### Acceptance criteria
+### Acceptance criteria — all met, 2026-07-26
 
-- `pentagi`, `pgvector`, `scraper` and `pgexporter` are running, all images pulled through Harbor (`docker inspect` shows the Harbor-prefixed image name, not a raw Docker Hub/quay.io reference)
-- `pgvector` is healthy
-- PentAGI starts without provider or database errors
-- The Docker socket is mounted as intended
-- No unexpected cloud LLM provider is configured
-- No console/TUI installer session was required at any point
+- ✅ `pentagi`, `pgvector`, `scraper` and `pgexporter` are running, all images pulled through Harbor (`docker inspect` confirms `harbor.test.gibbsgreatly.xyz/dockerhub/...` / `.../quay/...`, not a raw Docker Hub/quay.io reference)
+- ✅ `pgvector` is healthy
+- ✅ PentAGI starts without provider or database errors — `goose: successfully migrated database to version: 20260511`, `API server listening on 0.0.0.0:8443`, and `curl http://localhost:8443/` returns `HTTP 200`
+- ✅ The Docker socket is mounted as intended
+- ✅ No unexpected cloud LLM provider is configured
+- ✅ No console/TUI installer session was required at any point
+
+Two real bugs hit and fixed along the way, both documented above and in `README.md`: `pentest_seg`'s containment initially missed the Harbor-via-Traefik path (all pulls timed out), and the first `PENTAGI_POSTGRES_PASSWORD` was base64-generated and broke `DATABASE_URL` parsing (silent restart loop despite every container "running").
 
 ---
 

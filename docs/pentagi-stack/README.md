@@ -6,49 +6,54 @@ autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 (the Framework Desktop — bare-metal Ubuntu 26, not Proxmox) and exposing its
 web UI through Traefik.
 
-Status: **Phase 0.1 (MikroTik/switch, out-of-band) is done; Phase 0.2 (the
-actual Proxmox SDN zone) and everything after it is still pending.** No
-LXC exists yet, no Terraform/Ansible stack exists yet, and the
-`terraform/lxc/network/pve-test-vm.yaml` declaration / `pvesh` SDN zone
-itself haven't been created — VLAN 70 is routable now, but Proxmox doesn't
-know about it yet. [plan.md](./plan.md) is a phased, execution-ready plan.
+Status: **Phase 0 and Phase 1 are done — PentAGI is live on `pve-test-vm`.**
+`pentagi-stack` (VMID `70010`, `192.168.70.10`) is up, all four containers
+healthy, PentAGI's own API server responding `HTTP 200`. Phase 2 onward
+(provider/tool-calling preflight, Traefik + Authentik forward-auth, layered
+validation) has not started yet. [plan.md](./plan.md) is the phased plan
+this was executed against — kept up to date with what actually happened,
+not just what was designed.
 
-**Phase 0.1 done (2026-07-26).** The MikroTik/switch trunk tagging and L3
-gateway bring-up are complete and live-verified, matching exactly how
-`ai_seg` was verified — **from a remote host (the workstation), not a
-self-ping on the router itself** (a self-ping on a bridge-VLAN
-sub-interface isn't a reliable test on RouterOS and shouldn't be used to
-judge success/failure):
+**Phase 0 done (2026-07-26)** — MikroTik trunk tagging (§0.1), the Proxmox
+SDN zone (§0.2, `tvpent` — note: had to be renamed from the originally
+planned `tvpentest`, since Proxmox SDN zone names are capped at 8
+characters), and the `pentagi-stack` Terraform/Ansible stack itself (§0.3)
+were all built and applied live via `terragrunt apply` (5 resources added,
+0 changed, 0 destroyed — clean additive-only run). Full containment was
+applied at the MikroTik, going beyond every other zone on this router,
+which a live check found has no actual east-west isolation today despite
+the documented "default-deny" intent — worth a follow-up pass across those
+zones at some point, separate from this workspace.
 
-- `vlan70-pentest` interface + bridge-VLAN tagging on **both** `ether1` and
-  `ether5` (the same dual-tag every existing zone needs — this is the exact
-  bug Decision 4 hit originally when only one port was tagged)
-- Gateway `192.168.70.1/24`, connected route confirmed present
-- Input-chain accept rules (icmp/DNS to the router) for `pentest_seg`
-- **Full forward-chain containment applied** (the plan's "recommended,
-  not required" option) — `pentest_seg` can reach `infra_seg` (Harbor/
-  apt-cacher), `framework.gibbsgreatly.xyz` (Ollama/SearXNG), `LAB_TARGET`
-  (full port range, destination-scoped), `edge_seg → pentest_seg` for
-  Traefik, and general internet egress (PentAGI's DuckDuckGo/Sploitus
-  providers call out directly) — with an explicit deny to everything else.
-  **This is real containment no other zone on `pve-test-vm` currently has**
-  — a live read-only check of the MikroTik's forward chain during this
-  rollout found that `build_seg`/`mgmt_seg`/`edge_seg`/`infra_seg`/`ai_seg`
-  have no actual east-west isolation today (the documented "default-deny"
-  model is intent, not current enforced state) — worth a follow-up pass
-  across those zones at some point, separate from this workspace.
-- Verified: `ping 192.168.70.1` from the workstation, 0% packet loss.
+**Phase 1 done (2026-07-26)** — PentAGI deployed via templated `.env` +
+vendored, Harbor-rewritten `docker-compose.yml`, no interactive installer.
+Two real bugs were found and fixed live, both worth remembering:
 
-Still needed: **Phase 0.2** — declare `pentest_seg` in
-`terraform/lxc/network/pve-test-vm.yaml` and create the actual Proxmox SDN
-zone/VNet/subnet (via `pvesh`, matching how every other zone here was
-applied), then **Phase 0.3**, scaffolding `terraform/lxc/stacks/pentagi-stack/`
-itself. Neither is blocked anymore now that the network layer is live. Two
-of the plan's other open questions are also already resolved:
-`llama-3.3-70b-instruct:q4_k_m`/`:q3_k_m` are confirmed pulled on
-`framework.gibbsgreatly.xyz`'s Ollama (live `/api/tags` check), and
-`forwardAuth`'s Authentik reconciliation is confirmed fully automated (see
-below) — no manual Authentik step needed there.
+1. **Harbor is reached through Traefik (`edge_seg`, `192.168.30.110`), not
+   at its own `infra_seg` IP.** `harbor.${LAB_DOMAIN}` resolves to Traefik's
+   address, so the zone's containment needed a `pentest_seg → edge_seg`
+   rule, not just `→ infra_seg`. All four image pulls timed out for ~15
+   minutes before this was caught — a real gap in the original zone design,
+   not a hypothetical one. (A related, easy-to-repeat mistake: the fix rule
+   was first added *after* the zone's deny-all catch-all in the MikroTik's
+   rule order, so it silently didn't fire until moved — the same ordering
+   trap Decision 4 already warned about for `ai_seg`.)
+2. **`PENTAGI_POSTGRES_PASSWORD` must be URL-safe.** It's embedded directly
+   into PentAGI's `DATABASE_URL` connection string via plain Compose
+   variable substitution, which can't URL-encode it. A `base64`-generated
+   secret containing `/` broke Go's URL parser (`invalid port ... after
+   host`), putting `pentagi` into a restart loop even though every
+   container had started. Generate this one with `openssl rand -hex 24`
+   (alphanumeric only), not `-base64`. Since `pgvector`'s data volume bakes
+   the password in at first `initdb`, fixing this after the fact also
+   requires wiping `pentagi-stack_pentagi-postgres-data` and letting it
+   reinitialize — safe here since nothing real was in it yet.
+
+Also confirmed along the way: `llama-3.3-70b-instruct:q4_k_m`/`:q3_k_m` are
+live on `framework.gibbsgreatly.xyz`'s Ollama, and `forwardAuth`'s Authentik
+reconciliation is fully automated (a shared forward-auth outpost, no manual
+Authentik object needed) — both were open questions in the original plan,
+now resolved.
 
 ## Read in this order
 

@@ -1,0 +1,372 @@
+# PentAGI -- autonomous AI pentesting agent, pentest_seg zone (pve-test-vm).
+# See docs/pentagi-stack/plan.md for the full deployment plan.
+#
+# No interactive installer -- PentAGI is a plain docker-compose.yml + .env
+# app under the hood (confirmed directly from vxcontrol/pentagi's own repo).
+# This playbook vendors that compose file with its four images rewritten
+# through Harbor's dockerhub/quay proxy-cache projects (matching
+# deploy-graylog-stack.yml's pattern) and templates the .env directly,
+# rather than running the console-driven installer.
+#
+# Auth: PentAGI's own login only supports Google/GitHub OAuth (confirmed
+# from backend/pkg/server/oauth/{google,github}.go -- no generic OIDC
+# client exists in the app itself), so OAUTH_GOOGLE_*/OAUTH_GITHUB_* stay
+# blank here. Traefik forwardAuth (this stack's edge.yaml) gates the UI at
+# the edge instead -- see docs/pentagi-stack/plan.md Phase 3.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    pentagi_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    pentagi_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ pentagi_lab_domain, true) }}"
+    docker_registry_host: "{{ pentagi_registry_host }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "7"
+            }
+          }
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy PentAGI compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    pentagi_compose_dir: /opt/pentagi-stack
+    pentagi_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    pentagi_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ pentagi_lab_domain, true) }}"
+    pentagi_public_url: "https://pentagi.{{ pentagi_lab_domain }}"
+
+    # Framework backends -- always by DNS name, never the raw IP.
+    pentagi_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
+
+    # Model policy -- Decision 12: Llama-3.3-70B-Instruct, not Qwen. Confirmed
+    # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
+    # tool-call preflight is still the first PentAGI-specific confirmation --
+    # this default is a strong prior, not an assumed-working fact.
+    pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('llama-3.3-70b-instruct:q4_k_m', true) }}"
+    pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text:latest', true) }}"
+
+    # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
+    # of stack scaffolding; must exist before this playbook can actually run.
+    pentagi_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
+    pentagi_postgres_password: "{{ lookup('env', 'PENTAGI_POSTGRES_PASSWORD') | mandatory('PENTAGI_POSTGRES_PASSWORD env var is required') }}"
+
+    pentagi_runtime_images:
+      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pentagi:latest"
+      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest"
+      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest"
+      - "{{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
+
+  tasks:
+    - name: Create PentAGI compose directory
+      ansible.builtin.file:
+        path: "{{ pentagi_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Placeholder provider config files (bind-mount targets must be files, not auto-created dirs)
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/{{ item }}"
+        mode: "0640"
+        content: ""
+        force: false
+      loop:
+        - example.custom.provider.yml
+        - example.ollama.provider.yml
+
+    # Vendored from vxcontrol/pentagi's own docker-compose.yml (upstream,
+    # confirmed via its repo directly) -- only the four image lines are
+    # rewritten to pull through Harbor; every ${VAR:-default} passthrough
+    # below is native Docker Compose substitution from the .env file this
+    # playbook also writes, not Jinja.
+    - name: Write PentAGI docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          volumes:
+            pentagi-data:
+              driver: local
+            pentagi-ssl:
+              driver: local
+            pentagi-ollama:
+              driver: local
+            scraper-ssl:
+              driver: local
+            pentagi-postgres-data:
+              driver: local
+
+          networks:
+            pentagi-network:
+              driver: bridge
+              name: pentagi-network
+
+          services:
+            pentagi:
+              image: ${PENTAGI_IMAGE:-{{ pentagi_registry_host }}/dockerhub/vxcontrol/pentagi:latest}
+              restart: unless-stopped
+              container_name: pentagi
+              hostname: pentagi
+              expose:
+                - 8443/tcp
+              ports:
+                - ${PENTAGI_LISTEN_IP:-0.0.0.0}:${PENTAGI_LISTEN_PORT:-8443}:8443
+              depends_on:
+                pgvector:
+                  condition: service_healthy
+              environment:
+                - DEBUG=${DEBUG:-false}
+                - DOCKER_GID=998
+                - CORS_ORIGINS=${CORS_ORIGINS:-}
+                - COOKIE_SIGNING_SALT=${COOKIE_SIGNING_SALT:-}
+                - INSTALLATION_ID=${INSTALLATION_ID:-}
+                - LICENSE_KEY=${LICENSE_KEY:-}
+                - ASK_USER=${ASK_USER:-true}
+                - OLLAMA_SERVER_URL=${OLLAMA_SERVER_URL:-}
+                - OLLAMA_SERVER_API_KEY=${OLLAMA_SERVER_API_KEY:-}
+                - OLLAMA_SERVER_MODEL=${OLLAMA_SERVER_MODEL:-}
+                - EMBEDDING_URL=${EMBEDDING_URL:-}
+                - EMBEDDING_KEY=${EMBEDDING_KEY:-}
+                - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+                - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-}
+                - EMBEDDING_STRIP_NEW_LINES=${EMBEDDING_STRIP_NEW_LINES:-true}
+                - ASSISTANT_USE_AGENTS=${ASSISTANT_USE_AGENTS:-false}
+                - EXECUTION_MONITOR_ENABLED=${EXECUTION_MONITOR_ENABLED:-true}
+                - EXECUTION_MONITOR_SAME_TOOL_LIMIT=${EXECUTION_MONITOR_SAME_TOOL_LIMIT:-5}
+                - EXECUTION_MONITOR_TOTAL_TOOL_LIMIT=${EXECUTION_MONITOR_TOTAL_TOOL_LIMIT:-10}
+                - MAX_GENERAL_AGENT_TOOL_CALLS=${MAX_GENERAL_AGENT_TOOL_CALLS:-100}
+                - MAX_LIMITED_AGENT_TOOL_CALLS=${MAX_LIMITED_AGENT_TOOL_CALLS:-20}
+                - AGENT_PLANNING_STEP_ENABLED=${AGENT_PLANNING_STEP_ENABLED:-true}
+                - PROXY_URL=${PROXY_URL:-}
+                - HTTP_CLIENT_TIMEOUT=${HTTP_CLIENT_TIMEOUT:-}
+                - TERMINAL_TOOL_TIMEOUT=${TERMINAL_TOOL_TIMEOUT:-}
+                - SCRAPER_PUBLIC_URL=${SCRAPER_PUBLIC_URL:-}
+                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL:-https://someuser:somepass@scraper/}
+                - PUBLIC_URL=${PUBLIC_URL:-}
+                - SERVER_PORT=8443
+                - SERVER_HOST=0.0.0.0
+                - SERVER_USE_SSL=${SERVER_USE_SSL:-false}
+                - OAUTH_GOOGLE_CLIENT_ID=${OAUTH_GOOGLE_CLIENT_ID:-}
+                - OAUTH_GOOGLE_CLIENT_SECRET=${OAUTH_GOOGLE_CLIENT_SECRET:-}
+                - OAUTH_GITHUB_CLIENT_ID=${OAUTH_GITHUB_CLIENT_ID:-}
+                - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-}
+                - DATABASE_URL=postgres://${PENTAGI_POSTGRES_USER:-postgres}:${PENTAGI_POSTGRES_PASSWORD:-postgres}@pgvector:5432/${PENTAGI_POSTGRES_DB:-pentagidb}?sslmode=disable
+                - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
+                - SPLOITUS_ENABLED=${SPLOITUS_ENABLED:-true}
+                - SEARXNG_URL=${SEARXNG_URL:-}
+                - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
+                - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
+                - DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-}
+                - DOCKER_INSIDE=${DOCKER_INSIDE:-true}
+                - DOCKER_NET_ADMIN=${DOCKER_NET_ADMIN:-true}
+                - DOCKER_SOCKET=${DOCKER_SOCKET:-/var/run/docker.sock}
+                - DOCKER_NETWORK=${DOCKER_NETWORK:-}
+                - DOCKER_PUBLIC_IP=${DOCKER_PUBLIC_IP:-0.0.0.0}
+                - DOCKER_WORK_DIR=${DOCKER_WORK_DIR:-}
+                - DOCKER_DEFAULT_IMAGE=${DOCKER_DEFAULT_IMAGE:-}
+                - DOCKER_DEFAULT_IMAGE_FOR_PENTEST=${DOCKER_DEFAULT_IMAGE_FOR_PENTEST:-}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              volumes:
+                - pentagi-data:/opt/pentagi/data
+                - pentagi-ssl:/opt/pentagi/ssl
+                - pentagi-ollama:/root/.ollama
+                - /var/run/docker.sock:/var/run/docker.sock
+                - ./example.custom.provider.yml:/opt/pentagi/conf/custom.provider.yml
+                - ./example.ollama.provider.yml:/opt/pentagi/conf/ollama.provider.yml
+              user: root:root # while using docker.sock
+              networks:
+                - pentagi-network
+
+            pgvector:
+              image: {{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest
+              restart: unless-stopped
+              container_name: pgvector
+              hostname: pgvector
+              expose:
+                - 5432/tcp
+              environment:
+                POSTGRES_USER: ${PENTAGI_POSTGRES_USER:-postgres}
+                POSTGRES_PASSWORD: ${PENTAGI_POSTGRES_PASSWORD:-postgres}
+                POSTGRES_DB: ${PENTAGI_POSTGRES_DB:-pentagidb}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U $${PENTAGI_POSTGRES_USER:-postgres}"]
+                interval: 3s
+                timeout: 3s
+                retries: 10
+                start_period: 5s
+              volumes:
+                - pentagi-postgres-data:/var/lib/postgresql/data
+              networks:
+                - pentagi-network
+
+            pgexporter:
+              image: {{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0
+              restart: unless-stopped
+              depends_on:
+                pgvector:
+                  condition: service_healthy
+              container_name: pgexporter
+              hostname: pgexporter
+              expose:
+                - 9187/tcp
+              environment:
+                - DATA_SOURCE_NAME=postgresql://${PENTAGI_POSTGRES_USER:-postgres}:${PENTAGI_POSTGRES_PASSWORD:-postgres}@pgvector:5432/${PENTAGI_POSTGRES_DB:-pentagidb}?sslmode=disable
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              networks:
+                - pentagi-network
+
+            scraper:
+              image: {{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest
+              restart: unless-stopped
+              container_name: scraper
+              hostname: scraper
+              expose:
+                - 443/tcp
+              environment:
+                - MAX_CONCURRENT_SESSIONS=${LOCAL_SCRAPER_MAX_CONCURRENT_SESSIONS:-10}
+                - USERNAME=${LOCAL_SCRAPER_USERNAME:-someuser}
+                - PASSWORD=${LOCAL_SCRAPER_PASSWORD:-somepass}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              volumes:
+                - scraper-ssl:/usr/src/app/ssl
+              networks:
+                - pentagi-network
+              shm_size: 2g
+      register: pentagi_compose_file
+
+    - name: Write PentAGI .env
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/.env"
+        mode: "0640"
+        content: |
+          # Provider (Ollama on framework.gibbsgreatly.xyz -- DNS name, never the raw IP)
+          OLLAMA_SERVER_URL=http://{{ pentagi_framework_host }}:11434
+          OLLAMA_SERVER_API_KEY=
+          OLLAMA_SERVER_MODEL={{ pentagi_primary_model }}
+
+          # Embedding
+          EMBEDDING_URL=http://{{ pentagi_framework_host }}:11434
+          EMBEDDING_MODEL={{ pentagi_embedding_model }}
+          EMBEDDING_PROVIDER=ollama
+          EMBEDDING_STRIP_NEW_LINES=true
+
+          # Search tools
+          SEARXNG_URL=http://{{ pentagi_framework_host }}:8082
+          DUCKDUCKGO_ENABLED=true
+          SPLOITUS_ENABLED=true
+
+          # Agent execution settings
+          ASK_USER=true
+          ASSISTANT_USE_AGENTS=false
+          EXECUTION_MONITOR_ENABLED=true
+          EXECUTION_MONITOR_SAME_TOOL_LIMIT=5
+          EXECUTION_MONITOR_TOTAL_TOOL_LIMIT=10
+          MAX_GENERAL_AGENT_TOOL_CALLS=100
+          MAX_LIMITED_AGENT_TOOL_CALLS=20
+          AGENT_PLANNING_STEP_ENABLED=true
+
+          # Server -- Traefik terminates TLS externally (edge.yaml), so
+          # PentAGI serves plain HTTP internally, matching every other web
+          # UI on this platform. No self-signed-cert handling needed at
+          # the Traefik side.
+          PENTAGI_LISTEN_IP=0.0.0.0
+          PENTAGI_LISTEN_PORT=8443
+          PUBLIC_URL={{ pentagi_public_url }}
+          CORS_ORIGINS={{ pentagi_public_url }}
+          SERVER_USE_SSL=false
+          COOKIE_SIGNING_SALT={{ pentagi_cookie_salt }}
+
+          # Postgres (pgvector)
+          PENTAGI_POSTGRES_USER=postgres
+          PENTAGI_POSTGRES_PASSWORD={{ pentagi_postgres_password }}
+          PENTAGI_POSTGRES_DB=pentagidb
+
+          # OAuth -- left blank deliberately. PentAGI's own login only
+          # supports Google/GitHub (confirmed from source); Authentik
+          # integration happens at the Traefik layer (edge.yaml
+          # forwardAuth), not here.
+          OAUTH_GOOGLE_CLIENT_ID=
+          OAUTH_GOOGLE_CLIENT_SECRET=
+          OAUTH_GITHUB_CLIENT_ID=
+          OAUTH_GITHUB_CLIENT_SECRET=
+
+          # Docker -- nested DooD inside this LXC's own Docker daemon, not
+          # a remote worker (Phase 6 is the future split-worker path).
+          DOCKER_HOST=unix:///var/run/docker.sock
+          DOCKER_INSIDE=true
+          DOCKER_NET_ADMIN=true
+          DOCKER_SOCKET=/var/run/docker.sock
+          DOCKER_PUBLIC_IP=0.0.0.0
+          DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
+      no_log: true
+      register: pentagi_env_file
+
+    - name: Pull PentAGI runtime images
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+      register: pentagi_image_pull
+      retries: 5
+      delay: 10
+      until: pentagi_image_pull is succeeded
+      loop: "{{ pentagi_runtime_images }}"
+
+    - name: Bring up PentAGI stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ pentagi_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed) else 'auto' }}"
+
+    - name: Wait for PentAGI web port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8443
+        timeout: 120
+
+    - name: Confirm pgvector container is healthy
+      ansible.builtin.command:
+        cmd: docker inspect --format='{{ '{{' }}.State.Health.Status{{ '}}' }}' pgvector
+      register: pentagi_pgvector_health
+      changed_when: false
+      until: pentagi_pgvector_health.stdout == "healthy"
+      retries: 10
+      delay: 5
