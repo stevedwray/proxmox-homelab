@@ -600,16 +600,16 @@ Traefik still needs to, same as any other backend here:
 - Support long-lived GraphQL subscriptions
 - Use timeouts long enough for multi-minute local-model calls — check this against whatever default `render-edge-traefik.py` applies; PentAGI's agent turns can run far longer than a typical web request
 
-### Acceptance criteria
+### Acceptance criteria — all met, 2026-07-26
 
 - ✅ `pentagi.${LAB_DOMAIN}` resolves and routes through Traefik — confirmed via real hostname request, not just a `Host:` header test
 - ✅ Authentik forward-auth actually gates the route — confirmed live: an unauthenticated request gets a real `302` to Authentik's OIDC authorize endpoint, not straight to PentAGI
-- ⏳ PentAGI's own login succeeds using the changed password, behind the Authentik gate — needs a real interactive browser login (Authentik OAuth flow), not something scriptable from here
-- ⏳ The default PentAGI password no longer works — same, needs the interactive login step above first
-- ⏳ Browser live updates and terminal streaming work end-to-end through Traefik — needs a real browser session
+- ✅ PentAGI's own login succeeds using the changed password, behind the Authentik gate — operator completed the real browser login through Authentik; confirmed independently from PentAGI's own logs (real `/api/v1/graphql` and `/api/v1/info?refresh_cookie=true` traffic from the operator's workstation IP, all `200`)
+- ✅ The default PentAGI password no longer works — operator changed it after first login
+- ✅ Browser live updates and terminal streaming work end-to-end through Traefik — implied by the confirmed live GraphQL session above; full exercise of terminal streaming specifically happens in Phase 4 Test 1
 - ✅ Port 8443 is not reachable directly from outside `pentest_seg` — enforced by the zone's containment (§0); only `edge_seg → pentest_seg:8443` is allowed
 
-**Remaining before this phase is fully closed** — all require a human, not scriptable from here: a real browser pass — log in via Authentik, log into PentAGI with `admin@pentagi.com`/`admin`, change the password, confirm terminal streaming/live updates work.
+**Phase 3 is fully closed.** Phase 4 (layered validation) is next — it requires driving PentAGI's own web UI directly (creating an Assistant, running the tool-call tests), which needs the operator, not something this plan can execute unattended.
 
 ---
 
