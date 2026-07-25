@@ -114,7 +114,7 @@ OLLAMA_PORT             = 11434
 SEARXNG_PORT            = 8082
 PENTAGI_UI_PORT         = 8443
 
-PRIMARY_MODEL           = llama-3.3-70b-instruct        # see model policy note below
+PRIMARY_MODEL           = llama-3.3-70b-instruct:q4_k_m  # confirmed pulled live 2026-07-26 (also :q3_k_m available)
 TESTED_FALLBACK_MODEL   = command-r-35b-dark-horror-v2-d_au:q4_k_s
 REJECTED_FOR_TOOLS      = qwen3.6-35b-a3b-ud:q4_k_m     # Decision 12 — do not use as primary
 ANALYSIS_CANDIDATE      = deepseek-r1-distill-qwen-32b:q4_k_m   # non-tool roles only
@@ -284,7 +284,7 @@ Values below replace what the interactive installer would have asked for, source
 ```dotenv
 OLLAMA_SERVER_URL=http://framework.gibbsgreatly.xyz:11434
 OLLAMA_SERVER_API_KEY=
-OLLAMA_SERVER_MODEL={{ pentagi_stack_primary_model }}
+OLLAMA_SERVER_MODEL={{ pentagi_stack_primary_model }}   # llama-3.3-70b-instruct:q4_k_m
 
 EMBEDDING_URL=http://framework.gibbsgreatly.xyz:11434
 EMBEDDING_MODEL=nomic-embed-text:latest
@@ -294,7 +294,7 @@ EMBEDDING_STRIP_NEW_LINES=true
 
 Use the native Ollama base URL — do not append `/v1`. The model name must match `ollama list` on `framework.gibbsgreatly.xyz` exactly; do not configure `nomic-embed-txt`.
 
-**Model policy**: default `pentagi_stack_primary_model` to `llama-3.3-70b-instruct` (or whatever tag the model is loaded under on `framework.gibbsgreatly.xyz`'s Ollama), not `qwen3.6-35b-a3b-ud` — per Decision 12's evidence-based ban on Qwen for reliable structured tool calls. If Llama-3.3-70B-Instruct's own preflight (Phase 2) fails, fall back to `command-r-35b-dark-horror-v2-d_au:q4_k_s` (`TESTED_FALLBACK_MODEL`) next — not Qwen, which stays rejected regardless of how the other two perform.
+**Model policy**: default `pentagi_stack_primary_model` to `llama-3.3-70b-instruct:q4_k_m` — confirmed actually pulled and available on `framework.gibbsgreatly.xyz`'s Ollama via a live `/api/tags` check (2026-07-26; `:q3_k_m` is also present as a smaller/faster alternative) — not `qwen3.6-35b-a3b-ud`, per Decision 12's evidence-based ban on Qwen for reliable structured tool calls. If Llama-3.3-70B-Instruct's own preflight (Phase 2) fails, fall back to `command-r-35b-dark-horror-v2-d_au:q4_k_s` (`TESTED_FALLBACK_MODEL`, also confirmed present) next — not Qwen, which stays rejected regardless of how the other two perform.
 
 ### 1.3 Template `.env` — search tools
 
@@ -383,11 +383,11 @@ Complete these checks before running a real autonomous flow.
 
 ### 2.1 Confirm the primary model capabilities
 
-Test `PRIMARY_MODEL` first (default `llama-3.3-70b-instruct` — see the model policy note in §0). On the Framework:
+Test `PRIMARY_MODEL` first (default `llama-3.3-70b-instruct:q4_k_m` — see the model policy note in §0). On the Framework:
 
 ```bash
 curl -s http://127.0.0.1:11434/api/show \
-  -d '{"model":"llama-3.3-70b-instruct"}' |
+  -d '{"model":"llama-3.3-70b-instruct:q4_k_m"}' |
 jq '{capabilities, model_info}'
 ```
 
@@ -407,7 +407,7 @@ thinking
 curl -s http://127.0.0.1:11434/api/chat \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "llama-3.3-70b-instruct",
+    "model": "llama-3.3-70b-instruct:q4_k_m",
     "stream": false,
     "messages": [{
       "role": "user",
@@ -535,7 +535,7 @@ Use this sequence:
 Example only when needed:
 
 ```text
-FROM llama-3.3-70b-instruct
+FROM llama-3.3-70b-instruct:q4_k_m
 PARAMETER num_ctx 131072
 ```
 
@@ -576,7 +576,7 @@ spec:
 
 `auth.mode: forwardAuth`, not `oidc` — PentAGI's own login only supports Google/GitHub OAuth (confirmed from source, Phase 1), so it can't be the native-OIDC party the way OpenWebUI/Grafana/Portainer are. `forwardAuth` routes through Traefik's `authentik` middleware (`render-edge-traefik.py`'s `router["middlewares"] = ["authentik"]` branch) instead, gating access to the whole UI at the edge before any request reaches PentAGI's own login page — same fallback Decision 8 already describes for apps without usable native OIDC.
 
-**Not yet confirmed — verify before relying on it**: `discover-authentik-edge.py`'s `OIDC_ROUTE_CLIENT_IDS`/`OIDC_ROUTE_CLIENT_SECRETS` tables are keyed for `oidc`-mode routes specifically (client-id/secret pairs per app). Whether `reconcile-authentik-edge.py` also automatically provisions the Authentik-side Proxy Provider + Application a `forwardAuth` route needs, or whether that's a manual one-time Authentik setup step, isn't established yet from the apps reviewed so far (all of them use `oidc` mode). Check this directly before assuming it's a zero-touch reconcile — if it's not automated, this is a manual Authentik admin step, once, not a blocker to the rest of the plan.
+**Confirmed (2026-07-26): `forwardAuth` reconciliation is real and automated, not a manual step.** `reconcile-authentik-edge.py` has dedicated `forwardAuth` handling — it creates/updates an Authentik **Proxy Provider** (`create_proxy_provider`/`update_proxy_provider`, distinct from the `oidc`-mode `create_oauth2_provider` path), attaches it to a single **shared forward-auth outpost** (`SHARED_FORWARD_OUTPOST`) that already serves every `forwardAuth`-mode host, and actively probes each host's forward-auth endpoint (`_validate_forwardauth_endpoint_serving`, error code `AKR004` if a host 404s or doesn't respond) as part of reconcile. Adding `pentagi.${LAB_DOMAIN}` as a `forwardAuth` route means joining that existing shared outpost's host list — no new per-app Authentik object to hand-create, and no separate client-id/secret pair the way `oidc` mode needs.
 
 ### 3.2 PentAGI's own login stays as defense-in-depth, not the primary gate
 
