@@ -1,20 +1,17 @@
 # Framework platform integration — Graylog, Grafana, NetBox, Portainer
 
-Status: **All three original plans deployed and verified live, 2026-07-25**
+Status: **Everything deployed and verified live, 2026-07-25**
 (branch `task/framework-platform-integration`) — `node_exporter` and
 `cadvisor` both confirmed `health: up` in VictoriaMetrics' `/api/v1/targets`
 on `pve`; rsyslog/Docker log forwarding to Graylog confirmed running on
 framework; `framework` device (id=7) plus all 5 AI service records
-confirmed live in NetBox via direct API query. Also added a "Local AI"
-Grafana dashboard (GPU + Ollama stats) and Portainer environment
-registration beyond the original three-platform scope, both on operator
-request — Portainer's **environment registration is live** (endpoint 9,
-confirmed `Status: 1`/up), but pushing the 4 stacks as fully
-Portainer-managed is **deliberately paused**, gated behind an explicit
-opt-in flag, since it requires container downtime — see "Portainer"
-section below. See "Live deployment notes" and "NetBox
-deployment notes" below for the real bugs hit and fixed along the way —
-not just the happy path. Companion to
+confirmed live in NetBox via direct API query; all four Docker stacks
+(`ollama`, `comfyui`, `ai-services-stack`, `llamacpp`) confirmed
+`Status: 1` as fully Portainer-managed stacks, endpoint 9. Also added a
+"Local AI" Grafana dashboard (GPU + Ollama stats) beyond the original
+three-platform scope, on operator request. See "Live deployment notes",
+"NetBox deployment notes", and "Portainer" below for the real bugs hit
+and fixed along the way — not just the happy path. Companion to
 [`local-ai-development.md`](./local-ai-development.md) (agent/orchestration
 layer) and [`plan.md`](./plan.md) (inference layer, done) — this covers
 wiring the already-working `framework.gibbsgreatly.xyz` host into the three
@@ -342,7 +339,7 @@ already used one function up. Portainer itself is still down as of this
 writing — worth checking separately, but no longer blocks NetBox
 population.
 
-## Portainer (added 2026-07-25, environment live; stack push paused)
+## Portainer (added 2026-07-25, fully deployed and verified — including the stack push)
 
 Follow-on from Plan A/framework's Docker-heavy shape, on operator
 request: connect framework's four Docker Compose stacks (llama.cpp,
@@ -419,6 +416,66 @@ That flag also gates a container-removal step (by exact `container_name`,
 one stack at a time in the same loop) added specifically so this can be
 triggered later without re-deriving what's needed.
 
+### Stack push completed (follow-on session, operator-approved downtime window)
+
+Ran the opt-in flag above once the operator confirmed a downtime window.
+Three stacks (Ollama, ComfyUI, ai-services-stack) swapped over cleanly on
+the first attempt. **The fourth, llama.cpp, caused a real, live outage**
+— worth recording precisely, not just "it got fixed":
+
+1. llama.cpp's compose file has a `build: {context: .}` section (it's
+   compiled from source on this host, unlike the other three which just
+   reference pre-built images). Portainer's stack-create actually runs
+   `docker compose build` itself, which failed ("listing workers for
+   Build ... frame too large") — not the naming-conflict error from the
+   first attempt, a different failure, because by this point the
+   container-removal step had already run. **llama.cpp was down with no
+   container running** until fixed.
+2. Root cause: Portainer's `create/standalone/string` API only transmits
+   the compose YAML *text*, not the Dockerfile/build-context files
+   `context: .` refers to — structural, not a network glitch. No
+   `build:`-based stack can ever deploy through this API path.
+3. **Immediate recovery, prioritized over the underlying fix**: re-ran
+   `framework-desktop-llamacpp.yml` directly (bypasses Portainer
+   entirely, plain `docker compose up -d --build` like normal) to
+   restore service first. Confirmed via `docker ps` and a `/health`
+   check before doing anything else.
+4. **Underlying fix**: added a transform step to
+   `framework-desktop-portainer.yml` that strips any `build:` key from
+   every service in every stack before pushing (generic, not
+   llama.cpp-specific, in case a future stack adds one) — the image
+   (`llamacpp-router:hip`) is already built locally by that stack's own
+   playbook, so `build:` was never actually needed for Portainer's copy,
+   only `image:`.
+5. **The first version of this fix was itself broken** (`map('combine',
+   {'value': dict(item.value...)})` — `item` isn't bound the way that
+   pattern assumes; Jinja2 has no dict-comprehension syntax at all,
+   unlike Python) — caught by `--syntax-check` and, more importantly, by
+   testing the actual transform logic standalone against all four of
+   framework's *real* compose files (pulled live via `sudo cat`) before
+   touching production again, given the first attempt had just caused an
+   outage. The working form uses a real `{% for %}` loop with `.update()`
+   accumulation. Verified: every key survives except `build:`, and the
+   transform is a confirmed no-op for the three stacks that never had a
+   `build:` key to begin with.
+6. **Two more idempotency bugs**, both cosmetic/edge-case, caught by
+   deliberately re-running the playbook to confirm a clean idempotent
+   pass rather than assuming success from one green run: a stale
+   `item.item.item.name` reference in the final report task (left over
+   from an earlier, differently-nested version of the payload structure),
+   and `framework_portainer_stack_payloads` being entirely undefined
+   (not even an empty list) on a run where zero stacks need pushing,
+   since a `set_fact` task with a zero-item loop never executes at all.
+   Fixed by pre-declaring the variable at play level.
+
+**Final verified state**: all four stacks (`ollama`, `comfyui`,
+`ai-services-stack`, `llamacpp`) show `Status: 1` in Portainer; all seven
+containers on the host (`llamacpp-router`, `ollama`, `comfyui`,
+`openwebui`, `searxng`, `portainer-agent`, `cadvisor`) confirmed running
+via `docker ps`; health endpoints on ports 8080/11434/8081 all responded.
+A second full playbook run confirmed `changed=0, failed=0` — genuinely
+idempotent, not just "worked once."
+
 ## Sequencing and risk
 
 1. **Graylog — done, deployed, verified.** (Lowest friction, most
@@ -427,9 +484,10 @@ triggered later without re-deriving what's needed.
    and self-contained.)
 2. **Grafana/monitoring — done, deployed, verified.** (Same role-wiring
    shape as Graylog; the mgmt_seg↔LAN step-ca path is confirmed working.)
-3. **NetBox — not started.** Actual development work (new populate.py
-   path + test), do it as its own reviewed change rather than folding it
-   into the Ansible wiring above.
+3. **NetBox — done, deployed, verified.** See Plan C above.
+4. **Portainer — done, deployed, verified, including the stack push.**
+   See below — completed in a follow-on session once a downtime window
+   was available.
 
 1 and 2 are implemented on `task/framework-platform-integration`,
 syntax-checked (including a check that the `rsyslog_forward` role change

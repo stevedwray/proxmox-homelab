@@ -97,6 +97,14 @@
     #   ... ansible-playbook ... -e framework_portainer_push_stacks=true
     framework_portainer_push_stacks: false
 
+    # Must be pre-declared: when every stack is already registered (the
+    # normal, fully-idempotent case), the accumulator loop below runs zero
+    # iterations and a set_fact task with zero loop items never executes
+    # at all -- without this, the variable would stay flat-out undefined
+    # rather than resolving to an empty list. Found live 2026-07-25 on the
+    # very next re-run after all four stacks were already pushed.
+    framework_portainer_stack_payloads: []
+
   tasks:
     - name: Create Portainer agent compose directory
       ansible.builtin.file:
@@ -211,6 +219,40 @@
             label: "{{ item.name }}"
           register: framework_portainer_compose_slurp
 
+        # Found live 2026-07-25: llamacpp's compose has a `build: {context:
+        # .}` section (it's built from source on this host). Portainer's
+        # create-from-string API only transmits the compose YAML text, not
+        # the Dockerfile/build context it refers to, so pushing it as-is
+        # fails ("listing workers for Build ... frame too large") --
+        # structural, not transient. The image (llamacpp-router:hip) is
+        # already built locally by this stack's own playbook, so `build:`
+        # is unnecessary for Portainer's copy specifically: strip it from
+        # every service in every stack before pushing (generic, not just
+        # llamacpp, in case a future stack adds one) and let `image:`
+        # resolve to the already-built local image instead.
+        - name: "Strip build: sections before pushing (image already built locally; string-deploy API has no build context)"
+          ansible.builtin.set_fact:
+            framework_portainer_stack_payloads: >-
+              {{ framework_portainer_stack_payloads | default([]) + [{'name': item.item.name, 'content': framework_portainer_stripped_compose}] }}
+          vars:
+            framework_portainer_compose_parsed: "{{ item.content | b64decode | from_yaml }}"
+            # Jinja has no dict-comprehension syntax (that's Python-only) --
+            # this is the verified-working form: accumulate into a plain
+            # dict via .update() inside a real {% for %} block. Tested
+            # standalone against llamacpp's actual compose file (all keys
+            # survive except build:) and against a build-free compose
+            # (confirmed no-op) before wiring in, given the outage the
+            # first (broken) version of this task caused.
+            framework_portainer_stripped_compose: |-
+              {% set stripped_services = {} %}
+              {% for svc_name, svc in framework_portainer_compose_parsed.services.items() %}
+              {% set _ = stripped_services.update({svc_name: dict(svc.items() | rejectattr('0', 'equalto', 'build'))}) %}
+              {% endfor %}
+              {{ {'services': stripped_services} | to_nice_yaml }}
+          loop: "{{ framework_portainer_compose_slurp.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
         - name: Push each stack to Portainer
           ansible.builtin.uri:
             url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks/create/standalone/string?endpointId={{ portainer_endpoint_id }}" # nosonar
@@ -220,19 +262,19 @@
               Content-Type: application/json
             body_format: json
             body:
-              Name: "{{ item.item.name }}"
-              StackFileContent: "{{ item.content | b64decode }}"
+              Name: "{{ item.name }}"
+              StackFileContent: "{{ item.content }}"
               Env: []
             status_code: 200
-          loop: "{{ framework_portainer_compose_slurp.results }}"
+          loop: "{{ framework_portainer_stack_payloads }}"
           loop_control:
-            label: "{{ item.item.name }}"
+            label: "{{ item.name }}"
           delegate_to: localhost
           register: framework_portainer_stack_deploy
 
         - name: Report deployed stacks
           ansible.builtin.debug:
-            msg: "Deployed stack '{{ item.item.item.name }}' (ID: {{ item.json.Id }})"
+            msg: "Deployed stack '{{ item.item.name }}' (ID: {{ item.json.Id }})"
           loop: "{{ framework_portainer_stack_deploy.results }}"
           loop_control:
-            label: "{{ item.item.item.name }}"
+            label: "{{ item.item.name }}"
