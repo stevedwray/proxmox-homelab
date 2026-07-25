@@ -572,7 +572,14 @@ spec:
 
 `auth.mode: forwardAuth`, not `oidc` — PentAGI's own login only supports Google/GitHub OAuth (confirmed from source, Phase 1), so it can't be the native-OIDC party the way OpenWebUI/Grafana/Portainer are. `forwardAuth` routes through Traefik's `authentik` middleware (`render-edge-traefik.py`'s `router["middlewares"] = ["authentik"]` branch) instead, gating access to the whole UI at the edge before any request reaches PentAGI's own login page — same fallback Decision 8 already describes for apps without usable native OIDC.
 
-**Confirmed (2026-07-26): `forwardAuth` reconciliation is real and automated, not a manual step.** `reconcile-authentik-edge.py` has dedicated `forwardAuth` handling — it creates/updates an Authentik **Proxy Provider** (`create_proxy_provider`/`update_proxy_provider`, distinct from the `oidc`-mode `create_oauth2_provider` path), attaches it to a single **shared forward-auth outpost** (`SHARED_FORWARD_OUTPOST`) that already serves every `forwardAuth`-mode host, and actively probes each host's forward-auth endpoint (`_validate_forwardauth_endpoint_serving`, error code `AKR004` if a host 404s or doesn't respond) as part of reconcile. Adding `pentagi.${LAB_DOMAIN}` as a `forwardAuth` route means joining that existing shared outpost's host list — no new per-app Authentik object to hand-create, and no separate client-id/secret pair the way `oidc` mode needs.
+**Confirmed and applied (2026-07-26): `forwardAuth` reconciliation is real and automated, not a manual step.** `reconcile-authentik-edge.py` has dedicated `forwardAuth` handling — a per-route **Proxy Provider + Application** get created automatically (`edge-pentagi-stack-pentagi-provider`/`-app`, same naming convention `oidc` mode uses), both attached to a single **shared forward-auth outpost** (`authentik Embedded Outpost`) that already serves every other `forwardAuth`-mode host. Correction to the note this replaced: it's not "zero new Authentik objects" — it *is* zero **manual** ones; the provider/application are still real objects, just fully automated. The shared-outpost update is a genuine additive merge (`existing_providers | required_providers`, confirmed by reading `_build_outpost_update_patch` before applying) — it cannot drop `netbox`/`comfyui`'s existing links, so scoping the reconcile to just `pentagi-stack/edge.yaml` (via `reconcile-edge.py`'s positional `manifests` arg, not `--stacks-dir`) was safe and left every other stack's Authentik state untouched. `terragrunt plan`/discovery-style scoping applies here the same way it does to SDN changes: verify the blast radius before applying to shared infrastructure.
+
+**Done and verified live, 2026-07-26:**
+1. `./with-secrets python3 terraform/lxc/reconcile-edge.py --authentik-url https://authentik-int.test.gibbsgreatly.xyz:9443 --no-verify-tls --json --apply terraform/lxc/stacks/pentagi-stack/edge.yaml` — created the Proxy Provider + Application, updated the shared outpost's provider links and config, rendered `pentagi-stack.yml` into `.generated/traefik/`. `status: passed`, 3 actions (1 outpost update, 2 creates), zero issues.
+2. Pushed the rendered Traefik config to the live proxy: `./with-secrets ansible-playbook -i terraform/lxc/environments/pve-test-vm/proxy-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` (with `ANSIBLE_CONFIG`/`ANSIBLE_ROLES_PATH` set). Traefik hot-reloaded the new route via its file-provider watch (`providers.file.watch: true`) — **no container restart**, confirmed by `docker compose`'s own recreate logic only firing on `docker_daemon_config.changed`, which it wasn't.
+3. Verified directly against the live Traefik, bypassing DNS (not yet pushed — see below): `curl -sk -H 'Host: pentagi.test.gibbsgreatly.xyz' https://<traefik-ip>/` → **`HTTP 302`**, `Location:` header a genuine Authentik OIDC authorize URL (`authentik.test.gibbsgreatly.xyz/application/o/authorize/...&redirect_uri=...pentagi.../outpost.goauthentik.io/callback...`). The gate is real, not just configured.
+
+**Not yet done:** the CoreDNS zone `reconcile-edge.py` also renders (`.generated/coredns/coredns-lab.zone`) was never pushed to the actual DNS server — `dig pentagi.test.gibbsgreatly.xyz` returns nothing yet. Doesn't block the auth-gate verification above (that used a direct `Host:` header against Traefik's IP), but a real browser test needs this pushed first, or a temporary hosts-file entry.
 
 ### 3.2 PentAGI's own login stays as defense-in-depth, not the primary gate
 
@@ -595,12 +602,14 @@ Traefik still needs to, same as any other backend here:
 
 ### Acceptance criteria
 
-- `pentagi.${LAB_DOMAIN}` resolves and routes through Traefik, not a direct `<LXC_IP>:8443` connection
-- Authentik forward-auth actually gates the route — an unauthenticated request is redirected to Authentik login, not straight to PentAGI
-- PentAGI's own login succeeds using the changed password, behind the Authentik gate
-- The default PentAGI password no longer works
-- Browser live updates and terminal streaming work end-to-end through Traefik
-- Port 8443 is not reachable directly from outside `pentest_seg` — only Traefik's route reaches it
+- ⏳ `pentagi.${LAB_DOMAIN}` resolves and routes through Traefik — **routing confirmed** via direct `Host:` header test; **DNS not yet pushed**, so the hostname itself doesn't resolve yet (see note above)
+- ✅ Authentik forward-auth actually gates the route — confirmed live: an unauthenticated request gets a real `302` to Authentik's OIDC authorize endpoint, not straight to PentAGI
+- ⏳ PentAGI's own login succeeds using the changed password, behind the Authentik gate — needs a real interactive browser login (Authentik OAuth flow), not something scriptable from here
+- ⏳ The default PentAGI password no longer works — same, needs the interactive login step above first
+- ⏳ Browser live updates and terminal streaming work end-to-end through Traefik — needs a real browser session
+- ✅ Port 8443 is not reachable directly from outside `pentest_seg` — enforced by the zone's containment (§0); only `edge_seg → pentest_seg:8443` is allowed
+
+**Remaining before this phase is fully closed**: push the CoreDNS zone so the hostname resolves, then a real browser pass — log in via Authentik, log into PentAGI with `admin@pentagi.com`/`admin`, change the password, confirm terminal streaming/live updates work.
 
 ---
 

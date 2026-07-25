@@ -6,12 +6,21 @@ autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 (the Framework Desktop — bare-metal Ubuntu 26, not Proxmox) and exposing its
 web UI through Traefik.
 
-Status: **Phase 0, 1, and 2 are done — PentAGI is live and preflight-passed
-on `pve-test-vm`.** `pentagi-stack` (VMID `70010`, `192.168.70.10`) is up,
-all four containers healthy, PentAGI's own API server responding
-`HTTP 200`. Phase 3 onward (Traefik + Authentik forward-auth, layered
-validation) has not started yet. [plan.md](./plan.md) is the phased plan
-this was executed against — kept up to date with what actually happened,
+Status: **Phase 0, 1, and 2 are done; Phase 3 (Traefik + Authentik
+forward-auth) is functionally live, with two small loose ends.**
+`pentagi-stack` (VMID `70010`, `192.168.70.10`) is up, all four containers
+healthy, PentAGI's own API responding `HTTP 200`. A real request to
+`pentagi.test.gibbsgreatly.xyz` through Traefik gets a genuine `302` to
+Authentik's OIDC authorize endpoint — the forward-auth gate is confirmed
+working live, verified via a direct `Host:` header test against Traefik.
+
+**Still open in Phase 3**: the CoreDNS zone for `pentagi.test.gibbsgreatly.xyz`
+hasn't been pushed yet (routing works, the hostname itself just doesn't
+resolve), and the actual interactive steps — browser login through
+Authentik, then logging into PentAGI itself and changing the default
+`admin@pentagi.com`/`admin` password — need a human, not something
+scriptable from here. [plan.md](./plan.md) is the phased plan this was
+executed against — kept up to date with what actually happened,
 not just what was designed.
 
 **Phase 0 done (2026-07-26)** — MikroTik trunk tagging (§0.1), the Proxmox
