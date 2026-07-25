@@ -9,7 +9,7 @@ dns_server: "${lab_gw_pentest}"
 network:
   zone: pentest_seg
 vmid: 70010
-cores: 8
+cores: 2
 memory: 8192
 swap: 2048
 rootfs_size: 30

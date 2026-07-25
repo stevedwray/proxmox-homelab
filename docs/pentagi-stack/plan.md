@@ -107,7 +107,7 @@ For stronger isolation, move execution containers to a dedicated worker VM or ho
 ```text
 PROXMOX_NODE            = pve-test-vm
 LXC_HOSTNAME            = pentagi-stack
-LXC_CORES               = 8
+LXC_CORES               = 2              # right-sized 2026-07-26: pve-test-vm only has 4 real cores across 14 containers; 8 was copied from llm-gpu-stack's pve-framework (16c/32t) values and gave pentagi-stack an effectively unbounded cgroup CPU quota relative to every sibling stack (harbor-stack tops out at 4, most others at 1-2)
 LXC_MEMORY_MB           = 8192          # right-sized for the pve-test-vm validation run 2026-07-26; revisit if pgvector/scraper get memory-starved under real load
 LXC_SWAP_MB             = 2048
 LXC_ROOTFS_GB           = 30          # weights/data are external; see storage note below
