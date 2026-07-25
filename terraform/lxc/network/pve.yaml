@@ -196,3 +196,28 @@ inventory:
       role: iot
       ip: 192.168.1.23
       description: "Raspberry Pi — argon-02"
+    - name: framework
+      role: ai-workstation
+      ip: 192.168.1.8
+      description: "framework.gibbsgreatly.xyz — bare-metal Ubuntu 26.04, AI/LLM development host (not a Proxmox VM; see docs/framework-ubuntu/plan.md)"
+      services:
+        - name: lmstudio
+          port: 8090
+          protocol: tcp
+          description: "LM Studio — Vulkan backend, interactive Copilot use"
+        - name: llamacpp
+          port: 8080
+          protocol: tcp
+          description: "llama.cpp server — HIP backend, agentic/autonomous use"
+        - name: ollama
+          port: 11434
+          protocol: tcp
+          description: "Ollama — ROCm backend"
+        - name: openwebui
+          port: 8081
+          protocol: tcp
+          description: "OpenWebUI — chat UI, Authentik SSO"
+        - name: searxng
+          port: 8082
+          protocol: tcp
+          description: "SearXNG — web search, used by OpenWebUI RAG and directly by other LAN projects"

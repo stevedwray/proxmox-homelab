@@ -1,12 +1,15 @@
 # Framework platform integration — Graylog, Grafana, NetBox
 
-Status: **Plans A (Grafana/monitoring) and B (Graylog) deployed and
-verified live, 2026-07-25** (branch `task/framework-platform-integration`)
-— `node_exporter` and `cadvisor` both confirmed `health: up` in
-VictoriaMetrics' `/api/v1/targets` on `pve`, rsyslog/Docker log forwarding
-to Graylog confirmed running on framework. Plan C (NetBox) not started.
-See "Live deployment notes" below for the two real bugs hit and fixed
-along the way (not just the happy path). Companion to
+Status: **All three plans deployed and verified live, 2026-07-25**
+(branch `task/framework-platform-integration`) — `node_exporter` and
+`cadvisor` both confirmed `health: up` in VictoriaMetrics' `/api/v1/targets`
+on `pve`; rsyslog/Docker log forwarding to Graylog confirmed running on
+framework; `framework` device (id=7) plus all 5 AI service records
+confirmed live in NetBox via direct API query. Also added a "Local AI"
+Grafana dashboard (GPU + Ollama stats) beyond the original three-platform
+scope, on operator request. See "Live deployment notes" and "NetBox
+deployment notes" below for the real bugs hit and fixed along the way —
+not just the happy path. Companion to
 [`local-ai-development.md`](./local-ai-development.md) (agent/orchestration
 layer) and [`plan.md`](./plan.md) (inference layer, done) — this covers
 wiring the already-working `framework.gibbsgreatly.xyz` host into the three
@@ -288,41 +291,51 @@ utilization/memory/what's-loaded, not throughput. Would need either
 enabling llama.cpp's own metrics flag (if this build supports it) or a
 real request-level exporter, a separate piece of work.
 
-## Plan C — NetBox (inventory)
+## Plan C — NetBox (inventory) — deployed and verified live
 
-This is genuinely new code, not a config change — size it like a small
-feature, not a wiring task.
+Turned out much cheaper than scoped above, because a closer look at
+`populate.py` found an already-built, already-precedented mechanism this
+plan didn't know about when it was first written: `populate_static_hosts()`
+(device + interface + IP, no Proxmox VM discovery needed), data-driven
+from `network/pve.yaml`'s `inventory.static_hosts` list — already used
+live for `pve-test-vm`, `linux-desktop`, and two Raspberry Pis. No new
+`_ensure_bare_metal_host()` helper needed; the MikroTik-style precedent
+this plan expected to have to build already existed one level up.
 
-1. In `terraform/lxc/stacks/netbox-stack/integrations/populate.py`, add:
-   - `PLATFORMS`: `{"name": "Ubuntu 26.04", "slug": "ubuntu-26-04"}`.
-   - `DEVICE_ROLES`: a role for a bare-metal compute host (e.g.
-     `"AI Workstation"` or reuse a broader `"Compute"` role if one gets
-     added for other future bare-metal hosts).
-   - `DEVICE_TYPES`: the existing `"Generic Device"` entry may already
-     cover this, or add a `"Generic Server"` type if `"Generic Device"` is
-     semantically reserved for network gear (check current usage before
-     reusing it, since MikroTik is Generic Device today).
-   - A small `_ensure_bare_metal_host(nb, site, name, ip, role, platform,
-     description)` helper, modeled directly on `_ensure_proxmox_hypervisor`
-     minus the Proxmox-cluster parts — device + one interface + one IP,
-     called once for `framework` / `192.168.1.8`.
-2. Represent the host's services (LM Studio `:8090`, llama.cpp `:8080`,
-   Ollama `:11434`, OpenWebUI `:8081`, SearXNG `:8082`) as `ipam/services`
-   entries attached to the new device — same model already used for
-   `stack.yaml`'s `provides:` list elsewhere, just sourced from a small
-   static list instead of a `stack.yaml` (framework has no `stack.yaml`,
-   and reviving the stale `terraform/lxc/network/pve-framework.yaml` file
-   flagged for cleanup in `plan.md` §7 would resurrect the wrong,
-   LXC-shaped model — don't do that; a fresh static block matching the
-   MikroTik pattern is the right size for one host).
-3. Add a corresponding `test_populate_*.py` test following the existing
-   convention in `integrations/tests/` before this ships, per the repo's
-   validation tier for Python logic with tests.
-4. This mutates NetBox's live data on `pve` (a production node) — runs
-   through the same `CLAUDE.md` approval flow as any other `pve` mutation,
-   even though it's an application-level change rather than
-   infrastructure. Treat it as a normal, low-blast-radius mutation
-   (additive-only NetBox records), not a structural change.
+What was actually built:
+1. **Added `framework` to `network/pve.yaml`'s `static_hosts`** (role
+   `ai-workstation`, IP `192.168.1.8`) — this alone gets the device,
+   interface, and primary IP for free via the existing function.
+2. **Extended `populate_static_hosts()` with an optional `services:` key**
+   per static host (small, additive — ~15 lines), since the existing
+   function had no service-attachment path at all (services elsewhere in
+   this script come from live Portainer/socket-proxy probing of VMs,
+   which doesn't apply to a static host). Declared, not live-probed:
+   `network/pve.yaml`'s `framework` entry now lists all 5 AI services
+   (LM Studio `:8090`, llama.cpp `:8080`, Ollama `:11434`, OpenWebUI
+   `:8081`, SearXNG `:8082`) with `parent_object_type: dcim.device`.
+3. Added `integrations/tests/test_populate_static_hosts.py` (3 tests:
+   plain device-only case doesn't regress, framework's full service list
+   registers correctly, a malformed service entry fails loudly rather
+   than silently). Full suite: 128/128 passing.
+4. Ran `populate.py --plan` first (dry run), confirmed the plan was
+   additive-only (1 device, 1 interface, 1 IP, 5 services — nothing
+   existing touched), then applied for real. Verified directly against
+   the live NetBox API afterward: `framework` device id=7, all 5 services
+   present with correct ports.
+
+**Real bug found and fixed along the way, unrelated to this change**:
+`populate.py --plan` crashed outright with `ConnectionRefusedError`
+before ever reaching the static-hosts step — `management-stack.gibbsgreatly.xyz:9443`
+(the Portainer instance the script always tries to probe first, for live
+VM service discovery) was unreachable, and unlike `PortainerClient`'s own
+constructor a few lines away (which already degrades gracefully),
+`portainer.get_endpoints()` in `discover.py` had no equivalent try/except
+— any momentary Portainer outage crashed the *entire* populate run, not
+just VM service discovery. Fixed with the same graceful-degrade pattern
+already used one function up. Portainer itself is still down as of this
+writing — worth checking separately, but no longer blocks NetBox
+population.
 
 ## Sequencing and risk
 
@@ -355,13 +368,18 @@ a full teardown-style rehearsal.
 
 ## Open questions
 
-- Exact NetBox device-role/device-type naming (`"AI Workstation"` vs. a
-  more generic `"Compute"` role reusable for future non-Proxmox hosts) —
-  operator call, not decided here.
-- Whether GPU metrics (ROCm/AMDGPU exporter) belong in a future Grafana
-  pass — noted as out of scope for this plan, not decided against.
+- ~~Exact NetBox device-role/device-type naming~~ — resolved: `ai-workstation`
+  role, `Generic Device` type (matching MikroTik's existing usage of that
+  type — didn't need a new `Generic Server` type).
+- ~~Whether GPU metrics belong in a future Grafana pass~~ — resolved: built
+  as part of the "Local AI dashboard" section above.
 - `.env.pve-framework`'s stale Proxmox-era contents are a separate cleanup
   item (`plan.md` §7) — not blocking this plan, but shouldn't be built on.
+- Portainer (`management-stack.gibbsgreatly.xyz:9443`) was down during
+  this session's NetBox work — the crash-on-outage bug is fixed, but the
+  outage itself wasn't investigated; worth checking separately.
+- Every other stack's cadvisor is still on the broken `v0.49.1`/`gcr.io`
+  image (see "Live deployment notes" above) — not re-verified here.
 - **Worth checking, not checked here**: every other stack's cadvisor
   still runs the same `v0.49.1`/`gcr.io` image that turned out broken on
   framework (silently reports raw cgroups instead of failing). Whether
