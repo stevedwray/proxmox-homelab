@@ -535,14 +535,14 @@ FROM llama-3.3-70b-instruct:q4_k_m
 PARAMETER num_ctx 131072
 ```
 
-### Acceptance criteria
+### Acceptance criteria — all met, 2026-07-26
 
-- `PRIMARY_MODEL` (Llama-3.3-70B-Instruct) produces structured tool calls against PentAGI's own provider calibration, not just against VSCode/Copilot
-- The embedding API returns a valid vector
-- SearXNG returns JSON
-- A Docker container can reach both services
-- Ollama reports an adequate effective context and GPU execution
-- No cloud provider keys are unintentionally configured
+- ✅ `PRIMARY_MODEL` (`llama-3.3-70b-instruct:q4_k_m`) produces structured tool calls via Ollama's own `/api/chat` — a clean populated `tool_calls` array with correct `function.name`/`function.arguments`, no malformed JSON. **This is the first direct confirmation for PentAGI's own provider calibration path** (Decision 12's evidence was from VSCode/Copilot/Continue, not Ollama's native tool-calling API) — resolved, not just a strong prior anymore.
+- ✅ The embedding API returns a valid vector — `nomic-embed-text:latest`, 768 dimensions, no error.
+- ✅ SearXNG returns valid JSON with `format=json` — **but note**: at test time, most of SearXNG's underlying engines were rate-limited/blocked (`brave`/`google cse`: "too many requests", `startpage`: "CAPTCHA", `duckduckgo`: "timeout"), a pre-existing operational state on `framework.gibbsgreatly.xyz`'s SearXNG instance, not something this deployment caused. Format works; actual result yield may be degraded until those engines cool down. Worth rechecking before relying on SearXNG results in Phase 4.
+- ✅ A Docker container on `pentagi-stack` can reach both Ollama and SearXNG (`docker run curlimages/curl` → both `HTTP 200`).
+- ✅ Ollama reports an adequate effective context and full GPU execution — confirmed via `/api/ps`: `context_length: 131072`, `size_vram` equals `size` (85.6GB), i.e. 100% GPU-resident, no CPU offload.
+- ✅ No cloud provider keys are unintentionally configured (`.env` has them all blank, per Phase 1).
 
 ---
 

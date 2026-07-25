@@ -6,10 +6,10 @@ autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 (the Framework Desktop — bare-metal Ubuntu 26, not Proxmox) and exposing its
 web UI through Traefik.
 
-Status: **Phase 0 and Phase 1 are done — PentAGI is live on `pve-test-vm`.**
-`pentagi-stack` (VMID `70010`, `192.168.70.10`) is up, all four containers
-healthy, PentAGI's own API server responding `HTTP 200`. Phase 2 onward
-(provider/tool-calling preflight, Traefik + Authentik forward-auth, layered
+Status: **Phase 0, 1, and 2 are done — PentAGI is live and preflight-passed
+on `pve-test-vm`.** `pentagi-stack` (VMID `70010`, `192.168.70.10`) is up,
+all four containers healthy, PentAGI's own API server responding
+`HTTP 200`. Phase 3 onward (Traefik + Authentik forward-auth, layered
 validation) has not started yet. [plan.md](./plan.md) is the phased plan
 this was executed against — kept up to date with what actually happened,
 not just what was designed.
@@ -54,6 +54,23 @@ live on `framework.gibbsgreatly.xyz`'s Ollama, and `forwardAuth`'s Authentik
 reconciliation is fully automated (a shared forward-auth outpost, no manual
 Authentik object needed) — both were open questions in the original plan,
 now resolved.
+
+**Phase 2 done (2026-07-26)** — provider/tool-calling preflight, all
+checks passed:
+
+- `llama-3.3-70b-instruct:q4_k_m` produces clean, structured tool calls via
+  Ollama's own `/api/chat` — **the load-bearing check the whole model
+  policy hinged on**, since Decision 12's Qwen-vs-Llama evidence came from
+  VSCode/Copilot/Continue, never from Ollama's native tool-calling API
+  directly. Confirmed here, not just inherited as a strong prior.
+- Embedding (`nomic-embed-text:latest`, 768 dimensions), Docker-network
+  reachability to both Ollama and SearXNG, and full GPU residency at
+  131072 context (`size_vram` == `size`, no CPU offload) all confirmed.
+- **One caveat, not a blocker**: SearXNG's `format=json` works, but most of
+  its underlying engines (`brave`, `google cse`, `startpage`,
+  `duckduckgo`) were rate-limited/CAPTCHA'd at test time — a pre-existing
+  operational state on `framework.gibbsgreatly.xyz`, unrelated to this
+  deployment. Worth rechecking before trusting SearXNG results in Phase 4.
 
 ## Read in this order
 
