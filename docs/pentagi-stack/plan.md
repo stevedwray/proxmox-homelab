@@ -71,13 +71,18 @@ Decision: new dedicated zone, following that same precedent.
 pentest_seg — VLAN 70, 192.168.70.0/24, gateway 192.168.70.1
 ```
 
-Cross-zone policy needed (add to `terraform/lxc/network/pve-test-vm.yaml`'s `policies:` once the zone exists):
+**Done (2026-07-26) — MikroTik side.** Cross-zone policy applied directly on the MikroTik (`hAP ax^3`, RouterOS 7.23.1) as forward-chain rules, going beyond the minimum and giving `pentest_seg` real containment (no other zone on this router currently has explicit east-west isolation — verified live via read-only query during this rollout that `build_seg`/`mgmt_seg`/`edge_seg`/`infra_seg`/`ai_seg` all currently have unrestricted forward-chain reachability to each other; the documented "default-deny" model is intent, not enforced state, for those zones):
 
-- `pentest_seg → framework.gibbsgreatly.xyz` (flat LAN): TCP 11434 (Ollama), TCP 8082 (SearXNG)
-- `pentest_seg → <lab target(s)>`: scoped by **destination IP**, not by port — pentesting needs open-ended port enumeration against an authorized target, so the containment is "only this one host," not a fixed port list (see Phase 4 Test 3 for why). Do not default-allow this zone to the whole LAN.
+- `pentest_seg → infra_seg` (`192.168.40.0/24`): TCP 80/443/3142 (Harbor + apt-cacher)
+- `pentest_seg → framework.gibbsgreatly.xyz` (`192.168.1.8`, flat LAN): TCP 11434 (Ollama), TCP 8082 (SearXNG)
+- `pentest_seg → 192.168.1.113` (`LAB_TARGET`): full port/protocol range, scoped by **destination IP** only — pentesting needs open-ended port enumeration against an authorized target, so the containment is "only this one host," not a fixed port list (see Phase 4 Test 3 for why)
 - `edge_seg → pentest_seg`: TCP 8443, for Traefik to reach the PentAGI UI once Phase 3 is live
+- `pentest_seg → vlan1-wan`: unrestricted egress — PentAGI's DuckDuckGo/Sploitus search providers call out directly, not only via SearXNG
+- `pentest_seg → everything else`: explicit deny, added last so the accepts above take precedence
 
-**Out-of-band prerequisite, same as `ai_seg`'s rollout:** the MikroTik and `pve-test-vm`'s physical trunk port both need to carry VLAN 70 as an 802.1Q tag before `configure-network-sdn-vnet.yml` can attach anything to it. This is operator action, not something this plan can execute — flag it as Phase 0's first blocking step.
+Still needed: mirror this into `terraform/lxc/network/pve-test-vm.yaml`'s declarative `policies:` block (documentation of intent — the MikroTik enforces it regardless, but the YAML should reflect live reality) and create the actual Proxmox SDN zone/VNet/subnet (`0.2` below) — the MikroTik/L3 side being live doesn't mean Proxmox knows about this zone yet.
+
+**Out-of-band prerequisite, same as `ai_seg`'s rollout — done (2026-07-26).** The MikroTik and `pve-test-vm`'s physical trunk port both now carry VLAN 70 as an 802.1Q tag, verified live: bridge-VLAN tagging on **both** `ether1` and `ether5` (the same dual-tag every existing zone needs — the exact gap that originally broke `ai_seg`), gateway `192.168.70.1/24` up with a connected route, and `ping 192.168.70.1` from the workstation at 0% packet loss. (A self-ping run directly on the MikroTik's own CLI failed first — that's a red herring, not a real fault; RouterOS self-pings to a bridge-VLAN sub-interface's own address aren't a reliable test. Verify from a remote host, matching how `ai_seg` was verified.)
 
 PentAGI is not simply a Kali host containing pentest utilities. It is an autonomous agent platform with:
 
@@ -205,13 +210,13 @@ Until the complete execution-and-storage path is validated, smoke-test commands 
 
 This replaces raw `pct create`/manual Docker install with this repo's normal path: every service is a `terraform/lxc/stacks/<name>/stack.yaml` + Ansible role, built via `terraform/lxc/scaffold-stack.sh`, not hand-run commands. The original draft's separate "install Docker inside the LXC" phase is **not needed as a manual step** — `debian-13.1-2-docker-template.tar.gz` already ships Docker preinstalled (`ansible/00-initial-setup/build-debian-13-template.yml`), and the standard `docker_mount`/`docker_storage_size` stack-contract fields handle the rest, the same way `ai-services-stack` and every other Docker-based stack in this repo already work. Nothing PentAGI-specific is needed there — Phase 1 below picks up directly with templating and deploying PentAGI's own Compose stack once the container exists (no interactive installer — see Phase 1's note).
 
-### 0.1 Out-of-band: MikroTik trunk tagging (operator action)
+### 0.1 Out-of-band: MikroTik trunk tagging (operator action) — **done, 2026-07-26**
 
-Before any Terraform/SDN work: the MikroTik and `pve-test-vm`'s physical trunk port both need to carry the new `pentest_seg` VLAN (70) as an 802.1Q tag — same prerequisite Decision 4 hit for `ai_seg`. This cannot be done by an AI assistant from the workstation; flag it to the operator and wait for confirmation before Terraform SDN work proceeds.
+The MikroTik and `pve-test-vm`'s physical trunk port both now carry the new `pentest_seg` VLAN (70) as an 802.1Q tag — same prerequisite Decision 4 hit for `ai_seg`, done via RouterOS CLI directly (operator, over SSH), not Ansible/REST automation, matching how `ai_seg` was done too. Full command trail and the live-verified cross-zone firewall policy are in §0's Network zone section above. Verified via `ping 192.168.70.1` from the workstation (0% loss) — **not** a self-ping on the router, which isn't a reliable test on RouterOS for a bridge-VLAN sub-interface's own address.
 
-### 0.2 Declare the zone
+### 0.2 Declare the zone — **not yet done**
 
-Add a `pentest_seg` attachment/zone block to `terraform/lxc/network/pve-test-vm.yaml`, following the exact shape of the existing `infra_seg`/`mgmt_seg` entries (VLAN 70, `192.168.70.0/24`, gateway `192.168.70.1`, `zone_type: vlan`, `bridge: vmbr0`). Add the cross-zone `policies:` entries listed in §0's Network zone section above.
+The MikroTik/L3 side is live, but Proxmox doesn't know about this zone yet. Add a `pentest_seg` attachment/zone block to `terraform/lxc/network/pve-test-vm.yaml`, following the exact shape of the existing `infra_seg`/`mgmt_seg` entries (VLAN 70, `192.168.70.0/24`, gateway `192.168.70.1`, `zone_type: vlan`, `bridge: vmbr0`). Add the cross-zone `policies:` entries as documentation of what's already enforced at the MikroTik (§0's Network zone section).
 
 Validate per `CLAUDE.md`'s Validation Tiers table ("Terraform/network/SDN — additive only"): `terragrunt plan` should show zero changes/deletions to existing resources, then apply and run `scripts/provision.sh --stack <name>` against 1–2 existing `pve-test-vm` stacks (e.g. `infra_seg`'s NetBox, or `mgmt_seg`'s Authentik) to confirm no regression. A full teardown cycle is still owed before promoting this past `stable`, but not required per iteration.
 
