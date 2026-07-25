@@ -31,6 +31,11 @@
     # Traefik is the public entry point, so OpenWebUI uses an unambiguous
     # host-side port while continuing to listen on 8080 in its container.
     framework_openwebui_port: 8081
+    # Published so other LAN projects can query SearXNG directly, not just
+    # via OpenWebUI's RAG web-search. No auth in front of it (SearXNG has
+    # none built in, and this bypasses Traefik/Authentik) -- same no-auth
+    # posture as the LM Studio/llama.cpp/Ollama endpoints on this host.
+    framework_searxng_port: 8082
     framework_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     framework_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ framework_lab_domain, true) }}"
     framework_openwebui_oidc_client_id: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_ID') | default('openwebui', true) }}"
@@ -49,6 +54,8 @@
     # current sessions.
     framework_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
     framework_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
+    # OpenWebUI's own RAG web-search still talks to SearXNG over the
+    # internal Docker network -- unrelated to the LAN-facing port below.
     framework_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
     framework_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
 
@@ -106,6 +113,10 @@
         dest: "{{ framework_openwebui_dir }}/docker-compose.yml"
         mode: "0640"
         content: |
+          # Neither service sets its own `logging:` block -- both inherit
+          # the host-level Docker daemon syslog log-driver (written by
+          # framework-desktop-bootstrap.yml) so container logs reach
+          # Graylog, same as llama.cpp/Ollama/ComfyUI on this host.
           services:
             openwebui:
               image: {{ framework_openwebui_image }}
@@ -138,16 +149,13 @@
               depends_on:
                 searxng:
                   condition: service_healthy
-              logging:
-                driver: json-file
-                options:
-                  max-size: "10m"
-                  max-file: "3"
 
             searxng:
               image: {{ framework_searxng_image }}
               container_name: searxng
               restart: unless-stopped
+              ports:
+                - "{{ framework_searxng_port }}:8080"
               volumes:
                 - {{ framework_searxng_data_dir }}:/etc/searxng
               environment:
@@ -158,11 +166,6 @@
                 timeout: 5s
                 retries: 3
                 start_period: 15s
-              logging:
-                driver: json-file
-                options:
-                  max-size: "10m"
-                  max-file: "3"
 
     - name: Bring up OpenWebUI and SearXNG via docker compose
       ansible.builtin.command: docker compose up -d

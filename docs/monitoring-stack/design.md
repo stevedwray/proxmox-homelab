@@ -78,6 +78,7 @@ step-ca scrape warning is no longer emitted.**
 | Harbor Operations | Component health, queue state, proxy-cache activity |
 | Harbor Scan Coverage | Findings exporter health, scan coverage, severity totals |
 | Harbor CVE Inventory | Detailed CVE rows from the live Harbor findings feed |
+| Local AI | GPU utilization/GTT memory + Ollama loaded-model stats for `framework.gibbsgreatly.xyz`, via node_exporter's textfile collector (added 2026-07-25, see `docs/framework-ubuntu/platform-integration-plan.md`) |
 | Lab Logs | Historical Grafana log explorer retained only as design context |
 | Auth Logs | Historical Grafana auth log explorer retained only as design context |
 

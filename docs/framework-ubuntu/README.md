@@ -58,6 +58,9 @@ rather than just re-tuning its memory limit.
   inference: coding agents, MCP, model gateway/workflow platforms, chat UIs,
   image-gen additions. Candidate table plus a phased development/test plan.
   Planning only, not started.
+- [`platform-integration-plan.md`](./platform-integration-plan.md) — wiring
+  this host into Graylog (logging), Grafana/VictoriaMetrics (metrics), and
+  NetBox (inventory). Planning only, not started.
 
 ## Related documents
 

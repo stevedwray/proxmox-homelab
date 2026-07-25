@@ -11,6 +11,7 @@
     regexp: '^module\(load="imklog"\)'
     line: '#module(load="imklog")   # disabled: LXC containers cannot access /proc/kmsg'
     backrefs: true
+  when: rsyslog_forward_disable_imklog | bool
   notify: Restart rsyslog
   ignore_errors: "{{ ansible_check_mode }}"
 
