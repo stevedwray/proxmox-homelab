@@ -6,21 +6,20 @@ autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 (the Framework Desktop — bare-metal Ubuntu 26, not Proxmox) and exposing its
 web UI through Traefik.
 
-Status: **Phase 0, 1, and 2 are done; Phase 3 (Traefik + Authentik
-forward-auth) is functionally live, with two small loose ends.**
-`pentagi-stack` (VMID `70010`, `192.168.70.10`) is up, all four containers
-healthy, PentAGI's own API responding `HTTP 200`. A real request to
-`pentagi.test.gibbsgreatly.xyz` through Traefik gets a genuine `302` to
-Authentik's OIDC authorize endpoint — the forward-auth gate is confirmed
-working live, verified via a direct `Host:` header test against Traefik.
+Status: **Phase 0 through 3 are done — PentAGI is fully live and reachable
+at its real hostname.** `pentagi-stack` (VMID `70010`, `192.168.70.10`) is
+up, all four containers healthy. `https://pentagi.test.gibbsgreatly.xyz/`
+resolves (DNS pushed via **Technitium**, the actual live DNS server on
+`pve-test-vm` — not CoreDNS, despite some legacy naming in this repo) and
+returns a genuine `HTTP/2 302` to Authentik's OIDC authorize endpoint, with
+a real session cookie set — the forward-auth gate is confirmed working
+end-to-end via the real hostname, not just a spoofed `Host:` header.
 
-**Still open in Phase 3**: the CoreDNS zone for `pentagi.test.gibbsgreatly.xyz`
-hasn't been pushed yet (routing works, the hostname itself just doesn't
-resolve), and the actual interactive steps — browser login through
-Authentik, then logging into PentAGI itself and changing the default
-`admin@pentagi.com`/`admin` password — need a human, not something
-scriptable from here. [plan.md](./plan.md) is the phased plan this was
-executed against — kept up to date with what actually happened,
+**Only interactive steps remain, needing a human**: log in through
+Authentik in a browser, then log into PentAGI itself
+(`admin@pentagi.com`/`admin`) and change the default password, and confirm
+terminal streaming/live updates work. [plan.md](./plan.md) is the phased
+plan this was executed against — kept up to date with what actually happened,
 not just what was designed.
 
 **Phase 0 done (2026-07-26)** — MikroTik trunk tagging (§0.1), the Proxmox

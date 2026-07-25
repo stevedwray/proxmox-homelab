@@ -579,7 +579,7 @@ spec:
 2. Pushed the rendered Traefik config to the live proxy: `./with-secrets ansible-playbook -i terraform/lxc/environments/pve-test-vm/proxy-stack/inventory.yml -u root terraform/lxc/ansible/playbooks/deploy-proxy-stack.yml` (with `ANSIBLE_CONFIG`/`ANSIBLE_ROLES_PATH` set). Traefik hot-reloaded the new route via its file-provider watch (`providers.file.watch: true`) — **no container restart**, confirmed by `docker compose`'s own recreate logic only firing on `docker_daemon_config.changed`, which it wasn't.
 3. Verified directly against the live Traefik, bypassing DNS (not yet pushed — see below): `curl -sk -H 'Host: pentagi.test.gibbsgreatly.xyz' https://<traefik-ip>/` → **`HTTP 302`**, `Location:` header a genuine Authentik OIDC authorize URL (`authentik.test.gibbsgreatly.xyz/application/o/authorize/...&redirect_uri=...pentagi.../outpost.goauthentik.io/callback...`). The gate is real, not just configured.
 
-**Not yet done:** the CoreDNS zone `reconcile-edge.py` also renders (`.generated/coredns/coredns-lab.zone`) was never pushed to the actual DNS server — `dig pentagi.test.gibbsgreatly.xyz` returns nothing yet. Doesn't block the auth-gate verification above (that used a direct `Host:` header against Traefik's IP), but a real browser test needs this pushed first, or a temporary hosts-file entry.
+**Done, 2026-07-26:** the live DNS server on `pve-test-vm` is **Technitium**, not CoreDNS (`terraform/lxc/render-edge-technitium.py` + `deploy-technitium-stack.yml`, not the `dns-stack`/CoreDNS path — that naming is a historical leftover). Pushed via `render-edge-technitium.py --stacks-dir ... --output-records .../zone-records.json` then `deploy-technitium-stack.yml -e technitium_generated_zone_src=...` — purely additive (per-record `GET`-then-`add`, `failed=0`, no records removed; `comfyui`/`llm`/`openwebui` were also missing DNS entries and got caught up in the same pass, unrelated pre-existing gaps like the Authentik ones found earlier). Confirmed: `dig pentagi.test.gibbsgreatly.xyz` resolves via both Technitium directly and the MikroTik forwarder path (what a real client actually uses). Full end-to-end test against the **real hostname** (not a spoofed `Host:` header): `curl https://pentagi.test.gibbsgreatly.xyz/` → `HTTP/2 302` to Authentik's OIDC authorize URL, with a real `authentik_proxy_*` session cookie set.
 
 ### 3.2 PentAGI's own login stays as defense-in-depth, not the primary gate
 
@@ -602,14 +602,14 @@ Traefik still needs to, same as any other backend here:
 
 ### Acceptance criteria
 
-- ⏳ `pentagi.${LAB_DOMAIN}` resolves and routes through Traefik — **routing confirmed** via direct `Host:` header test; **DNS not yet pushed**, so the hostname itself doesn't resolve yet (see note above)
+- ✅ `pentagi.${LAB_DOMAIN}` resolves and routes through Traefik — confirmed via real hostname request, not just a `Host:` header test
 - ✅ Authentik forward-auth actually gates the route — confirmed live: an unauthenticated request gets a real `302` to Authentik's OIDC authorize endpoint, not straight to PentAGI
 - ⏳ PentAGI's own login succeeds using the changed password, behind the Authentik gate — needs a real interactive browser login (Authentik OAuth flow), not something scriptable from here
 - ⏳ The default PentAGI password no longer works — same, needs the interactive login step above first
 - ⏳ Browser live updates and terminal streaming work end-to-end through Traefik — needs a real browser session
 - ✅ Port 8443 is not reachable directly from outside `pentest_seg` — enforced by the zone's containment (§0); only `edge_seg → pentest_seg:8443` is allowed
 
-**Remaining before this phase is fully closed**: push the CoreDNS zone so the hostname resolves, then a real browser pass — log in via Authentik, log into PentAGI with `admin@pentagi.com`/`admin`, change the password, confirm terminal streaming/live updates work.
+**Remaining before this phase is fully closed** — all require a human, not scriptable from here: a real browser pass — log in via Authentik, log into PentAGI with `admin@pentagi.com`/`admin`, change the password, confirm terminal streaming/live updates work.
 
 ---
 
