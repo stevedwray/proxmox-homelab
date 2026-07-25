@@ -1,13 +1,18 @@
-# Framework platform integration — Graylog, Grafana, NetBox
+# Framework platform integration — Graylog, Grafana, NetBox, Portainer
 
-Status: **All three plans deployed and verified live, 2026-07-25**
+Status: **All three original plans deployed and verified live, 2026-07-25**
 (branch `task/framework-platform-integration`) — `node_exporter` and
 `cadvisor` both confirmed `health: up` in VictoriaMetrics' `/api/v1/targets`
 on `pve`; rsyslog/Docker log forwarding to Graylog confirmed running on
 framework; `framework` device (id=7) plus all 5 AI service records
 confirmed live in NetBox via direct API query. Also added a "Local AI"
-Grafana dashboard (GPU + Ollama stats) beyond the original three-platform
-scope, on operator request. See "Live deployment notes" and "NetBox
+Grafana dashboard (GPU + Ollama stats) and Portainer environment
+registration beyond the original three-platform scope, both on operator
+request — Portainer's **environment registration is live** (endpoint 9,
+confirmed `Status: 1`/up), but pushing the 4 stacks as fully
+Portainer-managed is **deliberately paused**, gated behind an explicit
+opt-in flag, since it requires container downtime — see "Portainer"
+section below. See "Live deployment notes" and "NetBox
 deployment notes" below for the real bugs hit and fixed along the way —
 not just the happy path. Companion to
 [`local-ai-development.md`](./local-ai-development.md) (agent/orchestration
@@ -336,6 +341,83 @@ just VM service discovery. Fixed with the same graceful-degrade pattern
 already used one function up. Portainer itself is still down as of this
 writing — worth checking separately, but no longer blocks NetBox
 population.
+
+## Portainer (added 2026-07-25, environment live; stack push paused)
+
+Follow-on from Plan A/framework's Docker-heavy shape, on operator
+request: connect framework's four Docker Compose stacks (llama.cpp,
+Ollama, ComfyUI, ai-services-stack) to the lab's Portainer so they're
+manageable from its UI, not just plain `docker compose` deployments only
+Ansible knows about.
+
+**Not the same Portainer as the "still down" note above** — that one is
+`management-stack.gibbsgreatly.xyz:9443`, a legacy instance
+`network/pve.yaml`'s `proxmox_nodes[0].portainer_url` still points at for
+NetBox's VM-service discovery, unrelated to this. The lab's actual
+current Portainer server is the `portainer-stack` LXC (`192.168.20.20:9000`),
+which is up and is what this section registers framework with.
+
+**Key finding, checked live before building anything**: Portainer only
+shows a compose deployment as an editable "Stack" (not just loose
+containers) if it was deployed *through Portainer's own API*
+(`/api/stacks/create/standalone/string`), not via plain `docker compose
+up`. Framework's four stacks are deployed the second way (by their own
+`framework-desktop-*.yml` playbooks), so getting real management, not
+just visibility, needs an extra step beyond registering the agent.
+
+**Existing precedent found and reused**: this repo already has a pattern
+for exactly "a pre-existing physical/LAN host, not created via the
+LXC/Terraform lifecycle" — `torrent-stack`/`media-stack`/`gaming-stack`/
+`cloud-stack` all use the `portainer_api` (register/update the endpoint)
+and `portainer_stack` (push compose content via the API) roles this way.
+No step-ca/mTLS anywhere in this subsystem — agent↔server trust is
+self-signed/skip-verify by design, matching every other agent
+registration in this repo.
+
+New playbook: `ansible/00-initial-setup/framework-desktop-portainer.yml`.
+Deploys the agent directly via `docker compose up -d` (no pre-baked
+systemd unit needed, unlike the LXC `portainer_agent` role — matches
+every other `framework-desktop-*.yml` playbook's own style instead), then
+reuses `portainer_api` as-is for registration. Deliberately does **not**
+reuse `portainer_stack`'s stack-push task unchanged: that task reads
+compose content via `lookup('file', stack_dir + '/' + item.compose_file)`
+— a local file in this repo — but framework's four compose files are
+rendered directly onto the remote host by their own playbooks, not
+stored locally. This playbook instead `slurp`s each file back from
+framework itself before pushing it to Portainer, guaranteeing
+byte-for-byte identity with what's actually running rather than a second
+copy that could drift.
+
+**Deployed and confirmed live**: agent running on framework, environment
+registered (endpoint ID 9), confirmed via direct Portainer API query —
+`Status: 1` (up), meaning `mgmt_seg` (`192.168.20.20`) → framework
+(`192.168.1.8:9001`) reachability, the one open question from Plan A/B,
+is now settled for this port too.
+
+**Stack push is deliberately paused, not broken**: attempting it hit a
+real, expected conflict — Portainer's stack-create actually runs `docker
+compose up` itself to take ownership, which fails outright ("Conflict.
+The container name ... is already in use") against containers Ansible's
+own `docker compose up -d` already created. Making the swap means
+removing the existing containers first, i.e. **real downtime** on all
+four in-use AI services while each recreates. Checked for orphaned state
+after the failed attempt (via the Portainer API) — none; zero stack
+records exist on the endpoint, confirming Portainer rolled the failure
+back cleanly rather than leaving something half-registered.
+
+Given the operator's own AI workloads were live at the time, this was
+paused rather than pushed through — the playbook's default run only
+does the (downtime-free, fully idempotent, re-verified) agent/registration
+steps; the container swap requires an explicit opt-in:
+```bash
+ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets-prod-framework \
+  ansible-playbook -i ansible/inventory/ \
+  ansible/00-initial-setup/framework-desktop-portainer.yml \
+  -e framework_portainer_push_stacks=true
+```
+That flag also gates a container-removal step (by exact `container_name`,
+one stack at a time in the same loop) added specifically so this can be
+triggered later without re-deriving what's needed.
 
 ## Sequencing and risk
 
