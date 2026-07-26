@@ -67,8 +67,16 @@
     # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
     # tool-call preflight is still the first PentAGI-specific confirmation --
     # this default is a strong prior, not an assumed-working fact.
-    pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('llama-3.3-70b-instruct:q4_k_m', true) }}"
-    pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text:latest', true) }}"
+    # Qwen3.6, not Llama-3.3-70B-Instruct -- confirmed live 2026-07-26 that
+    # Llama fails PentAGI's actual tool-call format ("peg-native format")
+    # consistently across independent retry cycles, despite passing a
+    # simpler direct /api/chat preflight test. Decision 12's Qwen ban is
+    # scoped to VSCode/Copilot/Continue's tool-calling integration and
+    # doesn't transfer to PentAGI's own separate parser. Qwen3.6 is the
+    # model the operator's own prior hands-on PentAGI testing actually
+    # used successfully -- see docs/pentagi-stack/original/pentagi/.env.
+    pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('qwen3.6-35b-a3b-ud:q4_k_m', true) }}"
+    pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text', true) }}"
 
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.

@@ -28,6 +28,7 @@ storage-audit
 # with real plaintext secrets (Langfuse S3/Redis, scraper creds), not
 # repo-tracked config.
 docs/pentagi-stack/original/
+docs/pentagi-stack/*.tar.gz
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml

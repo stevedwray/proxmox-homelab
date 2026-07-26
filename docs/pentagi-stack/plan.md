@@ -120,20 +120,20 @@ OLLAMA_PORT             = 11434
 SEARXNG_PORT            = 8082
 PENTAGI_UI_PORT         = 8443
 
-PRIMARY_MODEL           = llama-3.3-70b-instruct:q4_k_m  # confirmed pulled live 2026-07-26 (also :q3_k_m available)
+PRIMARY_MODEL           = qwen3.6-35b-a3b-ud:q4_k_m     # corrected 2026-07-26 — see model policy note below
+REJECTED_FOR_PENTAGI    = llama-3.3-70b-instruct:q4_k_m # confirmed failing live, see note below (still fine for VSCode/Copilot per Decision 12)
 TESTED_FALLBACK_MODEL   = command-r-35b-dark-horror-v2-d_au:q4_k_s
-REJECTED_FOR_TOOLS      = qwen3.6-35b-a3b-ud:q4_k_m     # Decision 12 — do not use as primary
 ANALYSIS_CANDIDATE      = deepseek-r1-distill-qwen-32b:q4_k_m   # non-tool roles only
-EMBEDDING_MODEL         = nomic-embed-text:latest
+EMBEDDING_MODEL         = nomic-embed-text
 
 LAB_TARGET              = 192.168.1.113   # Metasploitable 2 — confirm still authorized/in-scope before Phase 4
 ```
 
 **Storage note:** don't size `LXC_ROOTFS_GB` the way the original draft did (a flat 80G rootfs). Every Docker-enabled stack in this repo (`ai-services-stack`, `minecraft-stack`, etc.) keeps Docker's own data on a separate `docker_mount`/`docker_storage_size`, not inside rootfs — `pentagi-stack`'s `stack.yaml` should do the same, sized for `pgvector`'s data plus pulled images (`vxcontrol/pentagi`, `vxcontrol/scraper`, `vxcontrol/pgvector`, `vxcontrol/kali-linux`), not folded into a single oversized rootfs.
 
-**Model policy note:** `docs/framework-integration/decisions.md` Decision 12 is an explicit, evidence-based policy to stop using Qwen models (2.5-Coder-32B, 3.6-35B-A3B) for anything requiring reliable structured tool calls, after repeated malformed/hallucinated tool-call failures in VSCode/Copilot/Continue — Llama-3.3-70B-Instruct is the model already proven reliable for tool-calling on this stack. Since PentAGI's entire execution loop depends on clean tool-call parsing, Phase 2's preflight tests Llama-3.3-70B-Instruct as `PRIMARY_MODEL` first.
+**Model policy note — corrected 2026-07-26 after live Phase 4 testing.** The original version of this note reasoned from `docs/framework-integration/decisions.md` Decision 12 (an evidence-based policy to stop using Qwen models for VSCode/Copilot/Continue tool-calling, after repeated malformed/hallucinated failures there) to default `PRIMARY_MODEL` to Llama-3.3-70B-Instruct instead. That reasoning turned out not to transfer: **Llama-3.3-70B-Instruct passed a simple direct `/api/chat` preflight test cleanly, then failed consistently against PentAGI's actual runtime prompts** — three independent retry cycles in a real Test 1 run, every one failing with `The model produced output that does not match the expected peg-native format`, PentAGI's own reflector fallback unable to recover either. Decision 12's evidence is real, but it's scoped to a *different* tool-calling integration (VSCode/Copilot/Continue's own parsing) than PentAGI's separate, independent tool-call format — it doesn't generalize here.
 
-**Important caveat, not yet resolved**: Decision 12's evidence is from VSCode/Copilot/Continue clients, not PentAGI itself — PentAGI calibrates tool-call parsing independently (the "failed to determine tool call ID template" error below is PentAGI-specific, not something the VSCode investigation ever hit). Llama-3.3-70B-Instruct is the *strongest available prior* going into Phase 2's preflight, not a confirmed-for-PentAGI fact yet — treat Phase 2.2's tool-call test against it as still genuinely load-bearing, not a formality.
+The operator's own prior hands-on PentAGI testing (before this plan existed, preserved in `docs/pentagi-stack/original/pentagi/.env`) had already found the actual answer: `qwen3.6-35b-a3b-ud:q4_k_m`, which calibrated successfully then and is what `PRIMARY_MODEL` now defaults to. The lesson generalizes beyond just this one model swap: **a simple single-tool preflight test is not a reliable proxy for a target application's real prompt complexity** — Phase 2's `/api/chat` test validated basic Ollama tool-calling mechanics, but PentAGI's real system prompt (much larger, many tool definitions, its own response-format expectations) exposed a failure the simple test structurally couldn't catch. Treat Phase 4's actual live test as the real acceptance gate for model choice, not Phase 2's preflight — Phase 2 is necessary but not sufficient.
 
 ### Model lessons learned (from earlier hands-on PentAGI testing)
 
@@ -276,7 +276,7 @@ Values below replace what the interactive installer would have asked for, source
 ```dotenv
 OLLAMA_SERVER_URL=http://framework.gibbsgreatly.xyz:11434
 OLLAMA_SERVER_API_KEY=
-OLLAMA_SERVER_MODEL={{ pentagi_stack_primary_model }}   # llama-3.3-70b-instruct:q4_k_m
+OLLAMA_SERVER_MODEL={{ pentagi_stack_primary_model }}   # qwen3.6-35b-a3b-ud:q4_k_m
 
 EMBEDDING_URL=http://framework.gibbsgreatly.xyz:11434
 EMBEDDING_MODEL=nomic-embed-text:latest
@@ -286,7 +286,7 @@ EMBEDDING_STRIP_NEW_LINES=true
 
 Use the native Ollama base URL — do not append `/v1`. The model name must match `ollama list` on `framework.gibbsgreatly.xyz` exactly; do not configure `nomic-embed-txt`.
 
-**Model policy**: default `pentagi_stack_primary_model` to `llama-3.3-70b-instruct:q4_k_m` — confirmed actually pulled and available on `framework.gibbsgreatly.xyz`'s Ollama via a live `/api/tags` check (2026-07-26; `:q3_k_m` is also present as a smaller/faster alternative) — not `qwen3.6-35b-a3b-ud`, per Decision 12's evidence-based ban on Qwen for reliable structured tool calls. If Llama-3.3-70B-Instruct's own preflight (Phase 2) fails, fall back to `command-r-35b-dark-horror-v2-d_au:q4_k_s` (`TESTED_FALLBACK_MODEL`, also confirmed present) next — not Qwen, which stays rejected regardless of how the other two perform.
+**Model policy — corrected 2026-07-26**: default `pentagi_stack_primary_model` to `qwen3.6-35b-a3b-ud:q4_k_m`. Llama-3.3-70B-Instruct was tried first per Decision 12's VSCode/Copilot/Continue tool-calling evidence, passed Phase 2's simple preflight, then failed consistently against PentAGI's actual runtime prompts in real Phase 4 testing (three independent retry cycles, all `The model produced output that does not match the expected peg-native format`). Decision 12's ban doesn't transfer to PentAGI's own separate tool-call parser. Qwen3.6 is the model the operator's own prior hands-on PentAGI testing had already found to work (`docs/pentagi-stack/original/pentagi/.env`) — real, PentAGI-specific evidence beats the Decision-12-derived prior. If Qwen3.6 ever regresses, fall back to `command-r-35b-dark-horror-v2-d_au:q4_k_s` (`TESTED_FALLBACK_MODEL`, also confirmed present and previously validated against PentAGI in that same original testing) next.
 
 ### 1.3 Template `.env` — search tools
 
@@ -379,11 +379,11 @@ Complete these checks before running a real autonomous flow.
 
 ### 2.1 Confirm the primary model capabilities
 
-Test `PRIMARY_MODEL` first (default `llama-3.3-70b-instruct:q4_k_m` — see the model policy note in §0). On the Framework:
+Test `PRIMARY_MODEL` first (default `qwen3.6-35b-a3b-ud:q4_k_m` — see the model policy note in §0). On the Framework:
 
 ```bash
 curl -s http://127.0.0.1:11434/api/show \
-  -d '{"model":"llama-3.3-70b-instruct:q4_k_m"}' |
+  -d '{"model":"qwen3.6-35b-a3b-ud:q4_k_m"}' |
 jq '{capabilities, model_info}'
 ```
 
@@ -403,7 +403,7 @@ thinking
 curl -s http://127.0.0.1:11434/api/chat \
   -H 'Content-Type: application/json' \
   -d '{
-    "model": "llama-3.3-70b-instruct:q4_k_m",
+    "model": "qwen3.6-35b-a3b-ud:q4_k_m",
     "stream": false,
     "messages": [{
       "role": "user",
@@ -531,13 +531,13 @@ Use this sequence:
 Example only when needed:
 
 ```text
-FROM llama-3.3-70b-instruct:q4_k_m
+FROM qwen3.6-35b-a3b-ud:q4_k_m
 PARAMETER num_ctx 131072
 ```
 
 ### Acceptance criteria — all met, 2026-07-26
 
-- ✅ `PRIMARY_MODEL` (`llama-3.3-70b-instruct:q4_k_m`) produces structured tool calls via Ollama's own `/api/chat` — a clean populated `tool_calls` array with correct `function.name`/`function.arguments`, no malformed JSON. **This is the first direct confirmation for PentAGI's own provider calibration path** (Decision 12's evidence was from VSCode/Copilot/Continue, not Ollama's native tool-calling API) — resolved, not just a strong prior anymore.
+- ✅ Re-run against `qwen3.6-35b-a3b-ud:q4_k_m` (2026-07-26) after superseding `llama-3.3-70b-instruct:q4_k_m` (see model policy note in §0): clean populated `tool_calls` array, correct `function.name`/`function.arguments`, plus visible reasoning in a `thinking` field. **Caveat carried forward unchanged**: this same simple single-tool preflight also passed for Llama, which then failed consistently against PentAGI's actual runtime prompts — a green Phase 2 result is necessary but was proven not sufficient this same session. Treat Phase 4's real test as the actual acceptance gate regardless of which model is configured.
 - ✅ The embedding API returns a valid vector — `nomic-embed-text:latest`, 768 dimensions, no error.
 - ✅ SearXNG returns valid JSON with `format=json` — **but note**: at test time, most of SearXNG's underlying engines were rate-limited/blocked (`brave`/`google cse`: "too many requests", `startpage`: "CAPTCHA", `duckduckgo`: "timeout"), a pre-existing operational state on `framework.gibbsgreatly.xyz`'s SearXNG instance, not something this deployment caused. Format works; actual result yield may be degraded until those engines cool down. Worth rechecking before relying on SearXNG results in Phase 4.
 - ✅ A Docker container on `pentagi-stack` can reach both Ollama and SearXNG (`docker run curlimages/curl` → both `HTTP 200`).
