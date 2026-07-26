@@ -252,6 +252,21 @@ policies:
       this outbound leg is what rsyslog itself needs and was timing out
       until this was added (confirmed live via journalctl on pentagi-stack).
   - from: pentest_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      pentagi-stack's node_exporter issuing/renewing its TLS cert from
+      step-ca (node_exporter role's step ca certificate call,
+      node_exporter_step_ca_url defaults to https://<step-ca>, i.e. 443).
+      Other zones reach step-ca without an explicit rule because they
+      aren't contained like pentest_seg is -- this makes it explicit here.
+  - from: mgmt_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8080]
+    description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's cAdvisor
+  - from: pentest_seg
     to: default
     protocol: all
     ports: []

@@ -83,11 +83,17 @@
     pentagi_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
     pentagi_postgres_password: "{{ lookup('env', 'PENTAGI_POSTGRES_PASSWORD') | mandatory('PENTAGI_POSTGRES_PASSWORD env var is required') }}"
 
+    # cAdvisor -- same pattern every other Docker stack here already uses
+    # (graylog-stack, authentik-stack, harbor-stack, proxy-stack,
+    # portainer-stack), just never added when pentagi-stack was built.
+    pentagi_cadvisor_image: "{{ pentagi_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
+
     pentagi_runtime_images:
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pentagi:latest"
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest"
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest"
       - "{{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
+      - "{{ pentagi_cadvisor_image }}"
 
     # Custom-built pentest worker image -- see the "bootsnap-safe Kali
     # worker image" tasks below. Pushed to a new plain (non-proxy) Harbor
@@ -549,6 +555,19 @@
               networks:
                 - pentagi-network
               shm_size: 2g
+
+            cadvisor:
+              image: {{ pentagi_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
       register: pentagi_compose_file
 
     - name: Write PentAGI .env

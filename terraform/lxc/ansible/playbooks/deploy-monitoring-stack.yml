@@ -190,6 +190,8 @@
                   labels: {stack: graylog-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:9100"]
                   labels: {stack: framework}
+                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
+                  labels: {stack: pentagi-stack}
 
             - job_name: cadvisor
               static_configs:
@@ -209,6 +211,8 @@
                   labels: {stack: graylog-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:8083"]
                   labels: {stack: framework}
+                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
+                  labels: {stack: pentagi-stack}
 
             - job_name: coredns
               scrape_interval: 15s
