@@ -7,7 +7,7 @@ autonomous AI pentesting-agent platform — as `pentagi-stack`, a Debian LXC on
 web UI through Traefik.
 
 Status: **Phase 0 through 3 are fully done.** `pentagi-stack` (VMID `70010`,
-`192.168.70.10`) is up, all four containers healthy. `pentagi.test.gibbsgreatly.xyz`
+`192.168.70.110`, renumbered 2026-07-26 -- see below) is up, all four containers healthy. `pentagi.test.gibbsgreatly.xyz`
 resolves (DNS pushed via **Technitium**, the actual live DNS server on
 `pve-test-vm` — not CoreDNS, despite some legacy naming in this repo),
 routes through Traefik, and Authentik forward-auth gates it correctly.

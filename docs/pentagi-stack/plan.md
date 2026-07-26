@@ -227,12 +227,14 @@ Validated per `CLAUDE.md`'s "Terraform/network/SDN — additive only" tier: `ter
 
 Applied via `terragrunt apply`: 5 resources added (LXC container VMID `70010`, the SDN zone/vnet/subnet, ansible inventory, container epoch), 0 changed, 0 destroyed.
 
+**Renumbered 2026-07-26** from `192.168.70.10` to `.110`, freeing `.10` as the canonical IP for the future `pve` deployment (matching this repo's "pve = base, pve-test-vm = base+100" convention already used for every other shared zone). While re-running `terragrunt plan` for the renumber, it failed repo-wide (`vars map does not contain key "LAB_DOMAIN"`) — a `policies:` `description:` field in `terraform/lxc/network/pve-test-vm.yaml` had contained literal prose text `harbor.${LAB_DOMAIN}`, and Terraform's `templatefile()` processes the **entire** input file as a template before any YAML parsing happens, so that prose was treated as a real variable reference. This had been silently broken since it was written — nothing had re-triggered a `templatefile()` pass over that file until this unrelated renumber's `plan`. Fixed by escaping to `harbor.${LAB_DOMAIN}` (double-dollar). **Lesson**: any literal `${...}` text anywhere in a `.yaml` file consumed by `templatefile()` — including inside comments/descriptions, not just live config — must be escaped, or it silently breaks the *next* unrelated `plan` that happens to touch the file.
+
 ### Acceptance criteria
 
 - ✅ `pentest_seg` exists as a live SDN zone on `pve-test-vm` (`tvpent`), confirmed the same way `ai_seg` was verified (workstation ping, not a router self-ping)
 - ✅ `terraform/lxc/stacks/pentagi-stack/` has `stack.yaml` + `edge.yaml`; `terragrunt.hcl` lives under `environments/pve-test-vm/pentagi-stack/`
 - ✅ `scripts/provision.sh --stack pentagi-stack` runs clean against `pve-test-vm` (`failed=0`)
-- ✅ The LXC started, `unprivileged: true`, VMID `70010`, IP `192.168.70.10`, landed in `pentest_seg`
+- ✅ The LXC started, `unprivileged: true`, VMID `70010`, IP `192.168.70.110` (renumbered 2026-07-26 from `.10`, freeing `.10` for the future `pve` deployment -- see §0), landed in `pentest_seg`
 - ✅ `docker info` inside the container reports a working driver with no setup steps taken beyond what the template already provides
 - ✅ `registry_host`/`apt_cacher_host` set and match the values every other `pve-test-vm` stack uses
 

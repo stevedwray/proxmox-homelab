@@ -318,7 +318,7 @@ policies:
     protocol: tcp
     ports: [80, 443]
     description: >-
-      pentagi-stack image pulls (Harbor) — corrected 2026-07-26: harbor.${LAB_DOMAIN}
+      pentagi-stack image pulls (Harbor) — corrected 2026-07-26: harbor.$${LAB_DOMAIN}
       resolves to Traefik's edge_seg IP, not Harbor's own infra_seg IP, so this
       must open to edge_seg, not infra_seg. Discovered live: all four PentAGI
       image pulls timed out until this was added — see docs/pentagi-stack/plan.md.
