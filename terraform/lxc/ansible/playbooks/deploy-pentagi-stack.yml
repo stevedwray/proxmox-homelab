@@ -96,15 +96,125 @@
         state: directory
         mode: "0750"
 
-    - name: Placeholder provider config files (bind-mount targets must be files, not auto-created dirs)
+    - name: Placeholder custom provider config (unused -- bind-mount target must be a file, not auto-created dir)
       ansible.builtin.copy:
-        dest: "{{ pentagi_compose_dir }}/{{ item }}"
+        dest: "{{ pentagi_compose_dir }}/example.custom.provider.yml"
         mode: "0640"
         content: ""
         force: false
-      loop:
-        - example.custom.provider.yml
-        - example.ollama.provider.yml
+
+    # Per-agent-role provider tuning -- this file was a blank placeholder
+    # until 2026-07-27. Without it, every PentAGI agent role (pentester,
+    # reflector, enricher, adviser, ...) ran on undifferentiated Ollama
+    # defaults: no per-role max_tokens cap and no per-role temperature.
+    # Real-world evidence from the first full Metasploitable 2 run
+    # (docs/pentagi-stack/plan.md Phase 4 Test 3): the chatty roles
+    # (reflector, enricher, adviser) dominated tool-call volume (240+63+62
+    # of ~800 total msgchains vs. 11 pentester chains) and repeatedly hit
+    # `stop reason 'length'` -- the model ran out of its generation budget
+    # mid-tool-call and produced unparseable output, triggering retry
+    # loops that burned hours of wall-clock time. Tightening max_tokens on
+    # exactly those roles forces them to stay concise and finish inside
+    # budget; lower temperature reduces the free-text "report" rambling
+    # that was crowding out actual tool calls. generator/pentester/coder
+    # keep more room and higher temperature since they need to plan and
+    # construct non-trivial commands/exploits.
+    - name: Write PentAGI per-agent-role Ollama provider config
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/example.ollama.provider.yml"
+        mode: "0640"
+        content: |
+          simple:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.2
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          simple_json:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.0
+            top_p: 1.0
+            n: 1
+            max_tokens: 2000
+
+          primary_agent:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.2
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          assistant:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          generator:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.4
+            top_p: 0.9
+            n: 1
+            max_tokens: 4000
+
+          refiner:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.3
+            top_p: 0.9
+            n: 1
+            max_tokens: 3000
+
+          adviser:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 2000
+
+          reflector:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.15
+            top_p: 0.8
+            n: 1
+            max_tokens: 1500
+
+          searcher:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.15
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          enricher:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.15
+            top_p: 0.85
+            n: 1
+            max_tokens: 2000
+
+          coder:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.1
+            top_p: 0.8
+            n: 1
+            max_tokens: 6000
+
+          installer:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.1
+            top_p: 0.8
+            n: 1
+            max_tokens: 4000
+
+          pentester:
+            model: "{{ pentagi_primary_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 6000
+      register: pentagi_ollama_provider_file
 
     # Vendored from vxcontrol/pentagi's own docker-compose.yml (upstream,
     # confirmed via its repo directly) -- only the four image lines are
@@ -362,7 +472,7 @@
         state: present
         pull: never
         remove_orphans: true
-        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed) else 'auto' }}"
+        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed or pentagi_ollama_provider_file.changed) else 'auto' }}"
 
     - name: Wait for PentAGI web port to accept connections
       ansible.builtin.wait_for:
