@@ -102,6 +102,44 @@ attachments:
       gateway: "${lab_gw_build}"
       snat: false
 
+  # -------------------------------------------------------------------------
+  # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
+  #
+  # Mirrors pve-test-vm.yaml's pentest_seg (dedicated, contained zone — not
+  # merged into infra_seg/mgmt_seg per NFR-03 default-deny reasoning, same
+  # precedent as ai_seg on pve-framework, Decision 4). pve and pve-test-vm
+  # are separate standalone Proxmox instances, so the tvpent zone/vnet name
+  # is reused here without conflict.
+  # Gateway: MikroTik VLAN 70 interface (192.168.70.1), same trunk/VLAN as
+  # pve-test-vm's instance, shared subnet.
+  # Containers: pentagi-stack (192.168.70.10 — canonical; pve-test-vm's own
+  # instance uses .110, freed for this purpose 2026-07-26).
+  #
+  # See docs/pentagi-stack/plan.md for the pve-test-vm precedent this
+  # mirrors, including the real MikroTik containment policy this zone needs
+  # once live (Traefik -> pentest_seg:8443, pentest_seg -> infra_seg
+  # apt-cacher, pentest_seg -> edge_seg Harbor, pentest_seg -> LLM_GPU host,
+  # pentest_seg -> authorized pentest target, explicit deny to everything
+  # else).
+  # -------------------------------------------------------------------------
+  pentest_seg:
+    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    type: sdn_vnet
+    bridge: tvpent
+    firewall: false
+    sdn:
+      zone: tvpent
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvpent
+      vlan_tag: 70
+      alias: pve pentest segment
+      subnet: "${lab_subnet_pentest_cidr}"
+      gateway: "${lab_gw_pentest}"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -129,6 +167,11 @@ zones:
     attachment: seg_c
     containers:
       - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
+  pentest_seg:
+    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    attachment: pentest_seg
+    containers:
+      - "pentagi-stack — ${lab_ip_pentagi}"
 
 policies:
   - from: edge_seg
@@ -170,6 +213,34 @@ policies:
     protocol: tcp
     ports: [9000, 9443]
     description: NetBox to Portainer socket proxy and Authentik
+  - from: edge_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8443]
+    description: Traefik to the PentAGI UI (mirrors pve-test-vm.yaml)
+  - from: pentest_seg
+    to: infra_seg
+    protocol: tcp
+    ports: [3142]
+    description: pentagi-stack apt proxy (apt-cacher, reached directly at its infra_seg IP)
+  - from: pentest_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      pentagi-stack image pulls (Harbor) — harbor.$${LAB_DOMAIN} resolves to
+      Traefik's edge_seg IP, not Harbor's own infra_seg IP (same gotcha hit
+      live on pve-test-vm — see docs/pentagi-stack/plan.md).
+  - from: pentest_seg
+    to: 192.168.1.8
+    protocol: tcp
+    ports: [11434, 8082]
+    description: pentagi-stack to framework.gibbsgreatly.xyz (Ollama, SearXNG)
+  - from: pentest_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — pentest_seg has no other reachability beyond the above plus internet egress
 
 inventory:
   proxmox_nodes:

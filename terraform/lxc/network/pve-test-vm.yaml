@@ -182,7 +182,8 @@ attachments:
   #   NFR-03 default-deny reasoning — same precedent as ai_seg on
   #   pve-framework (docs/framework-integration/decisions.md Decision 4).
   # Gateway: MikroTik VLAN 70 interface (192.168.70.1) — live since 2026-07-26.
-  # Containers: pentagi-stack (192.168.70.10)
+  # Containers: pentagi-stack (192.168.70.110 — renumbered 2026-07-26 from .10,
+  #   freeing .10 as the canonical IP for the future pve deployment)
   #
   # Real containment exists at the MikroTik for this zone specifically (see
   # docs/pentagi-stack/plan.md §0) — pentest_seg can reach infra_seg
