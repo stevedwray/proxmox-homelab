@@ -632,7 +632,18 @@
           DOCKER_INSIDE=true
           DOCKER_NET_ADMIN=true
           DOCKER_SOCKET=/var/run/docker.sock
-          DOCKER_PUBLIC_IP=0.0.0.0
+          # Real IP, not the 0.0.0.0 placeholder -- per PentAGI's own docs
+          # (backend/docs/docker.md), this is "the public IP for port
+          # bindings" that gets told to agents for reverse-shell/callback
+          # LHOST use. PentAGI already allocates and host-publishes two
+          # deterministic ports per flow for exactly this; left at the
+          # 0.0.0.0 default, an agent has no way to know pentagi-stack's
+          # real address and falls back to guessing from `ip addr` inside
+          # the worker container, which only shows Docker's internal
+          # bridge IP (172.17.0.2) -- unreachable from any real target.
+          # Confirmed live 2026-07-26: reverse-shell exploit attempts
+          # (UnrealIRCd, distccd) failed exactly this way.
+          DOCKER_PUBLIC_IP={{ ansible_host }}
           DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_kali_fixed_image }}
       no_log: true
       register: pentagi_env_file
