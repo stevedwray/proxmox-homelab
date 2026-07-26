@@ -24,9 +24,29 @@ PENTAGI_TOOL_TEST_OK
 Linux 0108c373 ... x86_64 GNU/Linux
 ```
 
-Not with the model originally configured, though — see below. **Test 2
-(agent delegation) and Test 3 (scoped Metasploitable 2 flow) are next**,
-still needing the operator driving PentAGI's own web UI directly.
+Not with the model originally configured, though — see below. Test 2
+(agent delegation) and Test 3 (scoped Metasploitable 2 flow) were deferred by
+operator choice — Test 1 was judged sufficient internal validation to move on.
+
+**Production (`pve`) deployment done and verified, 2026-07-26.** Same stack
+shape as `pve-test-vm`, on the shared `pentest_seg` zone (VLAN 70) at its
+canonical IP `192.168.70.10` (freed by renumbering `pve-test-vm`'s instance to
+`.110` — see Phase 0). `https://pentagi.lab.gibbsgreatly.xyz/` resolves,
+routes through Traefik, and returns Authentik's forward-auth `302`, matching
+the `pve-test-vm` signature exactly. New MikroTik rule needed:
+`pentest_seg → 192.168.30.10` (pve's own Traefik IP) for Harbor pulls — the
+same "Harbor is reached via Traefik, not its own IP" gotcha as before, just
+re-hit on the production router. **Real mistake made and caught by the
+operator**: DNS was initially pushed to `dns-stack`/CoreDNS on `pve` — per
+`docs/dns-refactor/README.md`, CoreDNS was cut over to **Technitium**
+(`192.168.20.15`) as the live authoritative delegate on `pve` back in Phase 3
+of that workspace, and is now rollback-only. Fixed by rendering/publishing
+the record through `render-edge-technitium.py` + `deploy-technitium-stack.yml`
+instead. Lesson: check which DNS backend is *actually* authoritative for a
+target environment before assuming `dns-stack`/CoreDNS is live, even on
+`pve` — this workspace's own `pve-test-vm` notes already called this out for
+the test environment, but the lesson wasn't generalized to "check this again
+for every environment," including production.
 
 **Model correction, 2026-07-26 — real, PentAGI-specific evidence beat the
 repo-wide policy.** `PRIMARY_MODEL` was `llama-3.3-70b-instruct:q4_k_m` per

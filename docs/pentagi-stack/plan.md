@@ -756,6 +756,74 @@ This demonstrates why end-to-end storage validation is necessary before testing 
 - No cloud LLM fallback occurs
 - The final report contains traceable evidence
 
+Test 2 (agent delegation) and Test 3 (scoped Metasploitable 2 flow) were
+deferred by operator choice, 2026-07-26 — Test 1 was judged sufficient
+internal validation of tool-calling to move on to production rollout.
+
+---
+
+## Phase 4.5 — Production rollout to `pve` — **done, 2026-07-26**
+
+Same stack shape as `pve-test-vm` (`stack.yaml`, `edge.yaml`, Ansible
+playbook all shared/unmodified), deployed to `pve` on the shared
+`pentest_seg` zone (VLAN 70) at its canonical IP `192.168.70.10` — freed by
+renumbering `pve-test-vm`'s own instance to `.110` earlier (Phase 0). This
+was a production mutation, gated by `CLAUDE.md`'s Production Credential
+Controls: Preflight Summary → chat approval → `TASK_APPROVAL` +
+`with-secrets-prod` → After-Action Summary.
+
+**Sequence**: `terragrunt apply` (SDN zone/vnet/subnet + LXC, 5 added/0
+changed/0 destroyed) → Ansible deploy (`deploy-pentagi-stack.yml`) → scoped
+`reconcile-edge.py --apply` (Authentik application + proxy provider created,
+Traefik dynamic file rendered) → `deploy-proxy-stack.yml` (publish the
+rendered Traefik file) → DNS record push → live smoke test.
+
+**Real bugs hit, same classes as `pve-test-vm`, re-triggered on `pve`
+specifically:**
+
+1. **Apt-cacher-ng/node_exporter conflict, recurring.** The same
+   `monitoring_enabled=false` workaround already documented in
+   `docs/framework-ubuntu/plan.md` for a pre-existing apt-cacher-ng
+   cache-corruption issue was needed again here — hit on `pentagi-stack`
+   itself, then again on `proxy-stack` when redeploying it to publish the
+   new Traefik route. Neither is pentagi-specific; both are the same
+   generic `lxc_base` node_exporter install gotcha.
+2. **MikroTik Harbor-via-Traefik rule, re-hit per-node.** The
+   `pentest_seg → 192.168.30.110` (Traefik) rule added for `pve-test-vm`
+   only covers *that* node's Traefik IP — `pve`'s own Traefik lives at a
+   different IP (`192.168.30.10`), so image pulls timed out identically
+   until a second, `pve`-specific accept rule was added (same
+   ordering-before-the-deny-all-catch-all requirement as before).
+3. **Wrong DNS backend — the most significant miss.** DNS was initially
+   pushed to `dns-stack`/CoreDNS on `pve` via `deploy-coredns.yml`. That
+   playbook itself failed on an unrelated apt task (`Install CoreDNS host
+   dependencies`, another apt-cacher-ng cache hiccup) — but even had it
+   succeeded, it would have updated a **decommissioned** server. Per
+   `docs/dns-refactor/README.md`, `pve`'s production cutover from CoreDNS to
+   Technitium (`192.168.20.15`) completed already; CoreDNS is rollback-only
+   there. This workspace's own notes already flagged this exact gap for
+   `pve-test-vm` ("DNS on `pve-test-vm` is actually served by Technitium,
+   not `dns-stack`/CoreDNS") but the lesson wasn't generalized to "check
+   this again per-environment" — caught by the operator, not found
+   independently. Fixed by rendering the record via
+   `render-edge-technitium.py` (scoped to `pentagi-stack/edge.yaml`,
+   merged against the seed zone) and publishing it via
+   `deploy-technitium-stack.yml` with `technitium_generated_zone_src`
+   pointed at the rendered file — one record created (`pentagi`), 0
+   failures, everything else already matched.
+
+**Verified live**: `https://pentagi.lab.gibbsgreatly.xyz/` resolves via
+Technitium (both directly and through the real MikroTik resolver path),
+routes through Traefik, and returns Authentik's forward-auth `302` — the
+same working signature as `pve-test-vm`.
+
+**Harness note**: several of these steps (`terragrunt apply`,
+`ansible-playbook`, `reconcile-edge.py --apply`) were initially blocked by
+this session's own `autoMode` permission classifier, a layer separate from
+`with-secrets-prod`'s own `TASK_APPROVAL` gate. Resolved by adding scoped
+`autoMode.allow` entries to `.claude/settings.local.json` (operator-applied,
+since the harness blocks the agent from editing its own permission file).
+
 ---
 
 ## Phase 5 — Operations, backups and upgrades
