@@ -219,6 +219,11 @@ policies:
     protocol: tcp
     ports: [8443]
     description: Traefik to the PentAGI UI (mirrors pve-test-vm.yaml)
+  - from: mgmt_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [9187]
+    description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's pgexporter
   - from: pentest_seg
     to: infra_seg
     protocol: tcp

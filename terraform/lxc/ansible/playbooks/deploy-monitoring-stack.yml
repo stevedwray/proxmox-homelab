@@ -294,6 +294,14 @@
                     - "{{ lookup('env', 'LAB_IP_STEP_CA') }}:9443"
                   labels:
                     stack: step-ca-stack
+
+            - job_name: pentagi-postgres
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_PENTAGI') }}:9187"
+                  labels:
+                    stack: pentagi-stack
+                    component: pgexporter
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning

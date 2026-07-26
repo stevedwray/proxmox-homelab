@@ -172,23 +172,18 @@
     # from SOPS). Reusing that shared credential here would mean any secret
     # rotation done for this stack's sake could silently break those CI
     # pipelines. This robot can only push/pull the 'pentagi' project.
-    - name: Get existing Harbor robot accounts (idempotency check)
-      ansible.builtin.uri:
-        url: "https://{{ pentagi_registry_host }}/api/v2.0/robots?page_size=100"
-        method: GET
-        url_username: "{{ harbor_admin_user }}"
-        url_password: "{{ harbor_admin_password }}"
-        force_basic_auth: true
-        status_code: 200
-      register: pentagi_harbor_robots
-      delegate_to: localhost
-
-    - name: Check if the pentagi push robot already exists
-      ansible.builtin.set_fact:
-        pentagi_kali_robot_existing: "{{ pentagi_harbor_robots.json | selectattr('name', 'search', 'kali-push') | list }}"
-      delegate_to: localhost
-
-    - name: Create project-scoped Harbor robot for the pentagi image push
+    # NOTE: Harbor's GET /api/v2.0/robots (and /robots/{id}) does not
+    # reliably list/return project-scoped (level=project) robots in this
+    # Harbor version -- confirmed live: a robot created successfully here,
+    # whose secret kept authenticating fine against /v2/, still 404'd by
+    # ID and was absent from the full list immediately after. So an
+    # existence pre-check against that endpoint is not trustworthy. Instead,
+    # just attempt creation and treat 409 (name already taken) as the
+    # idempotent case, falling back to the secret already persisted in SOPS
+    # from whichever run first created it. The robot name is deterministic
+    # (Harbor always renders it "robot$<project>+<name>"), so there's no
+    # need to read it back from the API either way.
+    - name: Create project-scoped Harbor robot for the pentagi image push (409 = already exists)
       ansible.builtin.uri:
         url: "https://{{ pentagi_registry_host }}/api/v2.0/robots"
         method: POST
@@ -209,9 +204,8 @@
                   action: "pull"
                 - resource: "repository"
                   action: "push"
-        status_code: 201
+        status_code: [201, 409]
       register: pentagi_kali_robot_create
-      when: pentagi_kali_robot_existing | length == 0
       delegate_to: localhost
       no_log: true
 
@@ -221,20 +215,17 @@
           - "ACTION REQUIRED: created a new Harbor robot scoped to the 'pentagi' project only."
           - "Add to terraform/secrets.common.enc.yaml so future runs don't need to recreate it:"
           - "  PENTAGI_HARBOR_ROBOT_PASSWORD = {{ pentagi_kali_robot_create.json.secret }}"
-          - "(username is deterministic: {{ pentagi_kali_robot_create.json.name }})"
+          - "(username is deterministic: robot${{ pentagi_kali_project_name }}+kali-push)"
           - "This run uses the freshly-created secret directly; it will not be shown again."
-      when: pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped
+      when: pentagi_kali_robot_create.status == 201
       delegate_to: localhost
 
     - name: Set effective pentagi push robot credentials
       ansible.builtin.set_fact:
-        pentagi_kali_robot_user: >-
-          {{ pentagi_kali_robot_create.json.name
-             if (pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped)
-             else pentagi_kali_robot_existing[0].name }}
+        pentagi_kali_robot_user: "robot${{ pentagi_kali_project_name }}+kali-push"
         pentagi_kali_robot_password: >-
           {{ pentagi_kali_robot_create.json.secret
-             if (pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped)
+             if pentagi_kali_robot_create.status == 201
              else lookup('env', 'PENTAGI_HARBOR_ROBOT_PASSWORD') }}
       no_log: true
       delegate_to: localhost
@@ -527,6 +518,8 @@
               hostname: pgexporter
               expose:
                 - 9187/tcp
+              ports:
+                - "9187:9187"
               environment:
                 - DATA_SOURCE_NAME=postgresql://${PENTAGI_POSTGRES_USER:-postgres}:${PENTAGI_POSTGRES_PASSWORD:-postgres}@pgvector:5432/${PENTAGI_POSTGRES_DB:-pentagidb}?sslmode=disable
               logging:
