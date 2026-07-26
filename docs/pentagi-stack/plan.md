@@ -650,6 +650,19 @@ Acceptance:
 - The command is not repeated
 - Logs contain no embedding or provider errors
 
+**✅ Passed, 2026-07-26 (with `qwen3.6-35b-a3b-ud:q4_k_m`, after Llama-3.3-70B-Instruct failed — see model policy note in §0).** `pentagi-terminal-4` created and started cleanly (`debian:latest` — see note below), assistant provider prepared, single clean tool-call execution. Real output:
+
+```text
+PENTAGI_TOOL_TEST_OK
+Linux 0108c373 7.0.6-2-pve #1 SMP PREEMPT_DYNAMIC PMX 7.0.6-2 (2026-05-29T11:08Z) x86_64 GNU/Linux
+```
+
+No embedding/provider errors, no repeated execution, command ran exactly once. This is the direct, PentAGI-specific confirmation the whole model-policy investigation was for.
+
+**Gotcha found along the way, not yet fixed**: the worker image used here was `debian:latest`, pulled **directly from Docker Hub, not through Harbor** — `DOCKER_DEFAULT_IMAGE_FOR_PENTEST` (Harbor-rewritten) only applies to tasks PentAGI classifies as pentest-related; plain terminal tasks fall back to PentAGI's own hardcoded default (`DOCKER_DEFAULT_IMAGE`, left blank in this plan's `.env` template). Worked fine here because `pentest_seg`'s containment already allows general internet egress, but it bypasses Harbor's cache and the "everything pulls through Harbor" convention. Fix: set `DOCKER_DEFAULT_IMAGE` in the `.env` template to a Harbor-rewritten default too (e.g. `{{ pentagi_registry_host }}/dockerhub/library/debian:latest`), not left blank.
+
+**Also found**: deleting/recreating flows in the UI while an earlier flow's worker container is still resolving can leave the next `createAssistant` call hanging for a long time (~12 minutes observed) before failing with `context canceled` — this resolved itself once the stale container was fully cleaned up and a fresh flow was created. Not yet root-caused further; worth watching for if it recurs.
+
 ### Test 2 — agent delegation
 
 Repeat with **Use Agents enabled**.

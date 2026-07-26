@@ -16,10 +16,42 @@ Operator has logged in through Authentik and changed PentAGI's default
 `/api/v1/graphql` traffic in PentAGI's own logs from the operator's
 workstation, all `200`.
 
-**Next: Phase 4 (layered validation)** — this needs the operator driving
-PentAGI's own web UI directly (creating an Assistant, running the direct
-tool-call and agent-delegation tests, then a scoped Metasploitable 2 flow);
-not something this plan can execute unattended.
+**Phase 4 Test 1 passed, 2026-07-26** — direct Assistant tool call, clean
+single execution, no embedding/provider errors:
+
+```
+PENTAGI_TOOL_TEST_OK
+Linux 0108c373 ... x86_64 GNU/Linux
+```
+
+Not with the model originally configured, though — see below. **Test 2
+(agent delegation) and Test 3 (scoped Metasploitable 2 flow) are next**,
+still needing the operator driving PentAGI's own web UI directly.
+
+**Model correction, 2026-07-26 — real, PentAGI-specific evidence beat the
+repo-wide policy.** `PRIMARY_MODEL` was `llama-3.3-70b-instruct:q4_k_m` per
+Decision 12 (a real, evidence-based ban on Qwen — but for VSCode/Copilot/
+Continue's *own* tool-calling integration). It passed a simple direct
+`/api/chat` preflight cleanly, then failed **consistently** against
+PentAGI's actual runtime prompts in live Test 1 attempts — three
+independent retry cycles, every one `The model produced output that does
+not match the expected peg-native format`, PentAGI's own reflector
+fallback unable to recover either. The operator's own prior hands-on
+PentAGI testing had already found the real answer, preserved in
+`docs/pentagi-stack/original/pentagi/.env` (gitignored — real secrets):
+`qwen3.6-35b-a3b-ud:q4_k_m`. Switched to it, redeployed, retested — passed
+cleanly on the first real attempt. **Lesson that generalizes**: a simple
+single-tool preflight test validates basic API mechanics, not a real
+application's actual prompt complexity — treat Phase 4's live test as the
+real acceptance gate for model choice, Phase 2 as necessary but not
+sufficient.
+
+**Security fix, same session**: found and fixed a `.gitignore` bug where
+the blanket `!.env` negation (meant only for this repo's own root `.env`)
+was unignoring *any* file literally named `.env` anywhere in the tree —
+including the operator's original PentAGI install directory, which
+contains real plaintext secrets (Langfuse S3/Redis credentials, scraper
+auth). Re-ignored that directory and its tarball specifically.
 
 **Infrastructure incident during Phase 4 Test 1 (2026-07-26), found and
 resolved — not a PentAGI/pentagi-stack bug.** Test 1's first tool call
