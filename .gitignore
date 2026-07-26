@@ -22,6 +22,12 @@ storage-audit
 !.env.pve-test.template
 !.env.pve-test-vm.template
 !.env.pve.template
+# The bare !.env negation above (for this repo's own root .env) unignores
+# any file literally named .env anywhere in the tree by accident -- re-ignore
+# this one specifically, since it's the operator's own prior PentAGI install
+# with real plaintext secrets (Langfuse S3/Redis, scraper creds), not
+# repo-tracked config.
+docs/pentagi-stack/original/
 
 # SOPS — never commit decrypted/plaintext versions
 *.dec.yaml
