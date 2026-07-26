@@ -156,7 +156,8 @@ zones:
       - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
       - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
       - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
-      - "dns-stack (VMID 20013)  — ${lab_ip_dns}"
+      - "technitium-stack — ${lab_ip_technitium} — LIVE authoritative DNS for lab.gibbsgreatly.xyz (MikroTik lab-zone-delegate points here; see docs/dns-refactor/README.md)"
+      - "dns-stack (VMID 20013)  — ${lab_ip_dns} — ROLLBACK ONLY, cut over to technitium-stack above; not the active delegate target"
   edge_seg:
     description: Edge ingress — Traefik reverse proxy
     attachment: edge_seg

@@ -232,6 +232,7 @@ zones:
       - "Portainer (VMID 20020)  — ${lab_ip_portainer}"
       - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
       - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
+      - "technitium-stack (VMID 20015) — ${lab_ip_technitium} — LIVE authoritative DNS for test.gibbsgreatly.xyz (MikroTik test-zone-delegate points here; see docs/dns-refactor/README.md)"
       - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
   edge_seg:
     description: Edge ingress — Traefik reverse proxy
