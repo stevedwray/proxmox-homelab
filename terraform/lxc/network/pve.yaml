@@ -243,6 +243,15 @@ policies:
     ports: [11434, 8082]
     description: pentagi-stack to framework.gibbsgreatly.xyz (Ollama, SearXNG)
   - from: pentest_seg
+    to: 192.168.20.14
+    protocol: tcp
+    ports: [514]
+    description: >-
+      pentagi-stack rsyslog forwarding to Graylog. Missed on the first pass --
+      only the inbound mgmt_seg -> pentest_seg:9187 scrape rule was added;
+      this outbound leg is what rsyslog itself needs and was timing out
+      until this was added (confirmed live via journalctl on pentagi-stack).
+  - from: pentest_seg
     to: default
     protocol: all
     ports: []
