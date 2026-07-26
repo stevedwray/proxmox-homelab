@@ -89,12 +89,181 @@
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest"
       - "{{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
 
+    # Custom-built pentest worker image -- see the "bootsnap-safe Kali
+    # worker image" tasks below. Pushed to a new plain (non-proxy) Harbor
+    # project, since dockerhub/quay are pull-through proxy-cache projects
+    # only and can't accept a direct push of a locally-built image.
+    pentagi_kali_project_name: "pentagi"
+    pentagi_kali_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/kali-linux-fixed:latest"
+    harbor_admin_user: "{{ lookup('env', 'HARBOR_ADMIN') | default('admin', true) }}"
+    harbor_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var is required') }}"
+
   tasks:
     - name: Create PentAGI compose directory
       ansible.builtin.file:
         path: "{{ pentagi_compose_dir }}"
         state: directory
         mode: "0750"
+
+    # -----------------------------------------------------------------
+    # Bootsnap-safe Kali worker image.
+    #
+    # vxcontrol/kali-linux:latest ships two self-referential symlinks from
+    # upstream LLVM/Debian packaging: /usr/lib/llvm-18/build/Release and
+    # .../build/Debug+Asserts both point to ".." (their own parent dir),
+    # so recursively walking either is an infinite loop. Confirmed live
+    # 2026-07-26/27 during a real PentAGI Metasploitable 2 assessment:
+    # Ruby's bootsnap gem (Metasploit's require-cache) hit that loop on a
+    # cold cache-build inside the long-lived pentagi-terminal-1 worker
+    # container and crashed msfconsole with Errno::ELOOP, forcing manual
+    # exploitation for the rest of a 13.5-hour run. A fresh pull of the
+    # same image did NOT reproduce it every time (5/5 clean spot-checks),
+    # so the trigger condition is state-dependent, not deterministic on a
+    # bare `msfconsole --version` -- but the two symlinks are a real,
+    # permanent trap regardless of what causes bootsnap to scan into
+    # them, and neither is needed for pentesting (every other path under
+    # llvm-18/build -- include/lib/share/cmake/bin -- is untouched and
+    # left alone). Removing them at the image layer closes the trap for
+    # good instead of chasing the exact trigger.
+    - name: Ensure Harbor 'pentagi' project exists for custom-built images
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/projects?name={{ pentagi_kali_project_name }}"
+        method: GET
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      register: pentagi_harbor_projects
+      delegate_to: localhost
+
+    - name: Create 'pentagi' Harbor project (custom images, not a proxy-cache)
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/projects"
+        method: POST
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          project_name: "{{ pentagi_kali_project_name }}"
+          public: false
+        status_code: 201
+      when: pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
+      delegate_to: localhost
+
+    - name: Write Dockerfile for bootsnap-safe Kali worker image
+      ansible.builtin.file:
+        path: "{{ pentagi_compose_dir }}/kali-fixed"
+        state: directory
+        mode: "0750"
+
+    - name: Write bootsnap-safe Kali worker Dockerfile
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/kali-fixed/Dockerfile"
+        mode: "0640"
+        content: |
+          FROM {{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
+          RUN rm -f /usr/lib/llvm-18/build/Release /usr/lib/llvm-18/build/Debug+Asserts
+
+    # Dedicated, narrowly-scoped robot for this one push -- deliberately NOT
+    # the shared 'robot$ci-runner' system-level robot that signature-gate.yml
+    # /security-scan.yml/supply-chain-signing-proof.yml use for signing and
+    # scanning (sourced from GitHub Actions repo secrets, a separate store
+    # from SOPS). Reusing that shared credential here would mean any secret
+    # rotation done for this stack's sake could silently break those CI
+    # pipelines. This robot can only push/pull the 'pentagi' project.
+    - name: Get existing Harbor robot accounts (idempotency check)
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/robots?page_size=100"
+        method: GET
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      register: pentagi_harbor_robots
+      delegate_to: localhost
+
+    - name: Check if the pentagi push robot already exists
+      ansible.builtin.set_fact:
+        pentagi_kali_robot_existing: "{{ pentagi_harbor_robots.json | selectattr('name', 'search', 'kali-push') | list }}"
+      delegate_to: localhost
+
+    - name: Create project-scoped Harbor robot for the pentagi image push
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "kali-push"
+          description: "pentagi-stack Ansible only -- push/pull for the pentagi project's custom Kali worker image, not shared with CI"
+          duration: -1
+          level: "project"
+          permissions:
+            - kind: "project"
+              namespace: "{{ pentagi_kali_project_name }}"
+              access:
+                - resource: "repository"
+                  action: "pull"
+                - resource: "repository"
+                  action: "push"
+        status_code: 201
+      register: pentagi_kali_robot_create
+      when: pentagi_kali_robot_existing | length == 0
+      delegate_to: localhost
+      no_log: true
+
+    - name: Display new pentagi push robot credentials -- store in SOPS for future runs
+      ansible.builtin.debug:
+        msg:
+          - "ACTION REQUIRED: created a new Harbor robot scoped to the 'pentagi' project only."
+          - "Add to terraform/secrets.common.enc.yaml so future runs don't need to recreate it:"
+          - "  PENTAGI_HARBOR_ROBOT_PASSWORD = {{ pentagi_kali_robot_create.json.secret }}"
+          - "(username is deterministic: {{ pentagi_kali_robot_create.json.name }})"
+          - "This run uses the freshly-created secret directly; it will not be shown again."
+      when: pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped
+      delegate_to: localhost
+
+    - name: Set effective pentagi push robot credentials
+      ansible.builtin.set_fact:
+        pentagi_kali_robot_user: >-
+          {{ pentagi_kali_robot_create.json.name
+             if (pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped)
+             else pentagi_kali_robot_existing[0].name }}
+        pentagi_kali_robot_password: >-
+          {{ pentagi_kali_robot_create.json.secret
+             if (pentagi_kali_robot_create is defined and pentagi_kali_robot_create is not skipped)
+             else lookup('env', 'PENTAGI_HARBOR_ROBOT_PASSWORD') }}
+      no_log: true
+      delegate_to: localhost
+
+    - name: Log in to Harbor to push the custom Kali worker image
+      community.docker.docker_login:
+        registry_url: "{{ pentagi_registry_host }}"
+        username: "{{ pentagi_kali_robot_user }}"
+        password: "{{ pentagi_kali_robot_password }}"
+      no_log: true
+
+    - name: Build bootsnap-safe Kali worker image
+      community.docker.docker_image_build:
+        name: "{{ pentagi_kali_fixed_image }}"
+        path: "{{ pentagi_compose_dir }}/kali-fixed"
+        pull: true
+        rebuild: always
+
+    - name: Push bootsnap-safe Kali worker image
+      community.docker.docker_image_push:
+        name: "{{ pentagi_kali_fixed_image }}"
+
+    - name: Verify the bootsnap symlink trap is actually gone
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm {{ pentagi_kali_fixed_image }} bash -c
+          "test ! -e /usr/lib/llvm-18/build/Release && test ! -e /usr/lib/llvm-18/build/Debug+Asserts && msfconsole --version"
+      register: pentagi_kali_fixed_verify
+      changed_when: false
 
     - name: Placeholder custom provider config (unused -- bind-mount target must be a file, not auto-created dir)
       ansible.builtin.copy:
@@ -452,7 +621,7 @@
           DOCKER_NET_ADMIN=true
           DOCKER_SOCKET=/var/run/docker.sock
           DOCKER_PUBLIC_IP=0.0.0.0
-          DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
+          DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_kali_fixed_image }}
       no_log: true
       register: pentagi_env_file
 
