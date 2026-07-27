@@ -88,8 +88,22 @@
     # portainer-stack), just never added when pentagi-stack was built.
     pentagi_cadvisor_image: "{{ pentagi_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
 
+    # Custom-built PentAGI backend image -- our private fork
+    # (github.com/stevedwray/pentagi, branch fix/lab-lessons-learned) with
+    # lessons learned baked into the pentester/coder default prompts
+    # (callback address via DOCKER_PUBLIC_IP, exploitation completion
+    # criterion, non-interactive session verification) plus a real fix in
+    # backend/pkg/tools/terminal.go: reject leaked tool-call-format
+    # artifacts (e.g. "<parameter=cwd>") before they reach `sh -c`, since
+    # upstream silently executes them as a shell command that then fails
+    # with a syntax error invisible to the tool-call-fixer retry path.
+    # Built and pushed manually for now (docker build/push from the fork
+    # checkout, not yet wired into this playbook) -- same Harbor project
+    # as the bootsnap-safe Kali image below.
+    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed:latest"
+
     pentagi_runtime_images:
-      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pentagi:latest"
+      - "{{ pentagi_fixed_image }}"
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest"
       - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest"
       - "{{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
@@ -575,6 +589,10 @@
         dest: "{{ pentagi_compose_dir }}/.env"
         mode: "0640"
         content: |
+          # Custom-built backend image (private fork with lab lessons learned
+          # baked in -- see PENTAGI_IMAGE var comment in this playbook).
+          PENTAGI_IMAGE={{ pentagi_fixed_image }}
+
           # Provider (Ollama on framework.gibbsgreatly.xyz -- DNS name, never the raw IP)
           OLLAMA_SERVER_URL=http://{{ pentagi_framework_host }}:11434
           OLLAMA_SERVER_API_KEY=
@@ -648,10 +666,21 @@
       no_log: true
       register: pentagi_env_file
 
+    # force_source: true is required here -- community.docker.docker_image
+    # treats "an image already exists locally under this tag name" as
+    # satisfied and skips the actual pull, without checking whether the
+    # registry's current digest for that tag has changed. That's fine for
+    # dockerhub/quay upstream tags that rarely change, but pentagi-fixed
+    # and kali-linux-fixed are OUR OWN mutable :latest tags we repeatedly
+    # rebuild and push to the same name -- confirmed live: without this,
+    # a redeploy after pushing a new pentagi-fixed image silently kept
+    # running the stale one (local + running-container digest both still
+    # matched the previous push, despite this task reporting "ok").
     - name: Pull PentAGI runtime images
       community.docker.docker_image:
         name: "{{ item }}"
         source: pull
+        force_source: true
       register: pentagi_image_pull
       retries: 5
       delay: 10
