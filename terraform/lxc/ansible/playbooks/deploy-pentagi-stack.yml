@@ -78,6 +78,19 @@
     pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('qwen3.6-35b-a3b-ud:q4_k_m', true) }}"
     pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text', true) }}"
 
+    # llama.cpp's own native multi-model router (llamacpp-router on
+    # framework.gibbsgreatly.xyz, port 8080) -- lets qwen3.6 (fast base
+    # agents) and gpt-oss-120b (stronger adviser model, per PentAGI's own
+    # recommended architecture) stay loaded concurrently as independent
+    # processes, unlike Ollama's OLLAMA_MAX_LOADED_MODELS which is only a
+    # soft ceiling: confirmed live 2026-07-28 that Ollama's own scheduler
+    # still evicted a model rather than risk a 3-model fit, even with the
+    # limit raised and keep-alive disabled. Model IDs are llama.cpp's own
+    # filename-derived names, not Ollama's tag format.
+    pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
+    pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
+    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('gpt-oss-120b', true) }}"
+
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.
     pentagi_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
@@ -299,102 +312,118 @@
     # that was crowding out actual tool calls. generator/pentester/coder
     # keep more room and higher temperature since they need to plan and
     # construct non-trivial commands/exploits.
-    - name: Write PentAGI per-agent-role Ollama provider config
+    # Switched from Ollama to llama.cpp's native multi-model router
+    # (custom/OpenAI-compatible provider) 2026-07-28 -- see the
+    # pentagi_llamacpp_url comment above for why. The adviser role alone
+    # gets the stronger gpt-oss-120b model; every other role stays on the
+    # fast qwen3.6 base model, both loaded concurrently as independent
+    # llama.cpp processes with no shared-scheduler eviction risk between
+    # them.
+    #
+    # IMPORTANT: this file is only read at all if LLM_SERVER_CONFIG_PATH
+    # is set to its in-container mount path -- confirmed live 2026-07-28
+    # that the equivalent OLLAMA_SERVER_CONFIG_PATH was never actually
+    # set in this deploy, so the previous per-role Ollama tuning below
+    # was silently never applied; PentAGI fell back to its embedded
+    # default config.yml (temperature 1.0, much higher max_tokens) the
+    # entire time instead. See LLM_SERVER_CONFIG_PATH in the .env content
+    # further down in this playbook -- do not repeat that mistake here.
+    - name: Write PentAGI per-agent-role llama.cpp provider config
       ansible.builtin.copy:
-        dest: "{{ pentagi_compose_dir }}/example.ollama.provider.yml"
+        dest: "{{ pentagi_compose_dir }}/example.custom.provider.yml"
         mode: "0640"
         content: |
           simple:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.2
             top_p: 0.85
             n: 1
             max_tokens: 3000
 
           simple_json:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.0
             top_p: 1.0
             n: 1
             max_tokens: 2000
 
           primary_agent:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.2
             top_p: 0.85
             n: 1
             max_tokens: 3000
 
           assistant:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.25
             top_p: 0.85
             n: 1
             max_tokens: 3000
 
           generator:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.4
             top_p: 0.9
             n: 1
             max_tokens: 4000
 
           refiner:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.3
             top_p: 0.9
             n: 1
             max_tokens: 3000
 
           adviser:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_adviser_model }}"
             temperature: 0.25
             top_p: 0.85
             n: 1
             max_tokens: 2000
 
           reflector:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.15
             top_p: 0.8
             n: 1
             max_tokens: 1500
 
           searcher:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.15
             top_p: 0.85
             n: 1
             max_tokens: 3000
 
           enricher:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.15
             top_p: 0.85
             n: 1
             max_tokens: 2000
 
           coder:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.1
             top_p: 0.8
             n: 1
             max_tokens: 6000
 
           installer:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.1
             top_p: 0.8
             n: 1
             max_tokens: 4000
 
           pentester:
-            model: "{{ pentagi_primary_model }}"
+            model: "{{ pentagi_llamacpp_primary_model }}"
             temperature: 0.25
             top_p: 0.85
             n: 1
             max_tokens: 6000
-      register: pentagi_ollama_provider_file
+      register: pentagi_custom_provider_file
 
     # Vendored from vxcontrol/pentagi's own docker-compose.yml (upstream,
     # confirmed via its repo directly) -- only the four image lines are
@@ -444,9 +473,11 @@
                 - INSTALLATION_ID=${INSTALLATION_ID:-}
                 - LICENSE_KEY=${LICENSE_KEY:-}
                 - ASK_USER=${ASK_USER:-true}
-                - OLLAMA_SERVER_URL=${OLLAMA_SERVER_URL:-}
-                - OLLAMA_SERVER_API_KEY=${OLLAMA_SERVER_API_KEY:-}
-                - OLLAMA_SERVER_MODEL=${OLLAMA_SERVER_MODEL:-}
+                - LLM_SERVER_URL=${LLM_SERVER_URL:-}
+                - LLM_SERVER_KEY=${LLM_SERVER_KEY:-}
+                - LLM_SERVER_MODEL=${LLM_SERVER_MODEL:-}
+                - LLM_SERVER_PROVIDER=${LLM_SERVER_PROVIDER:-}
+                - LLM_SERVER_CONFIG_PATH=${LLM_SERVER_CONFIG_PATH:-}
                 - EMBEDDING_URL=${EMBEDDING_URL:-}
                 - EMBEDDING_KEY=${EMBEDDING_KEY:-}
                 - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
@@ -498,7 +529,6 @@
                 - pentagi-ollama:/root/.ollama
                 - /var/run/docker.sock:/var/run/docker.sock
                 - ./example.custom.provider.yml:/opt/pentagi/conf/custom.provider.yml
-                - ./example.ollama.provider.yml:/opt/pentagi/conf/ollama.provider.yml
               user: root:root # while using docker.sock
               networks:
                 - pentagi-network
@@ -594,12 +624,28 @@
           # baked in -- see PENTAGI_IMAGE var comment in this playbook).
           PENTAGI_IMAGE={{ pentagi_fixed_image }}
 
-          # Provider (Ollama on framework.gibbsgreatly.xyz -- DNS name, never the raw IP)
-          OLLAMA_SERVER_URL=http://{{ pentagi_framework_host }}:11434
-          OLLAMA_SERVER_API_KEY=
-          OLLAMA_SERVER_MODEL={{ pentagi_primary_model }}
+          # Provider -- llama.cpp's native multi-model router
+          # (llamacpp-router on framework.gibbsgreatly.xyz, port 8080),
+          # not Ollama. LLM_SERVER_MODEL is just the fallback/default;
+          # LLM_SERVER_CONFIG_PATH is what actually applies the per-role
+          # model/temperature/max_tokens tuning below -- do NOT leave this
+          # unset, confirmed live 2026-07-28 that the Ollama-era
+          # equivalent (OLLAMA_SERVER_CONFIG_PATH) was never set here,
+          # so the per-role tuning file was silently never read the
+          # entire time this stack ran on Ollama.
+          LLM_SERVER_URL={{ pentagi_llamacpp_url }}
+          # llama-server enforces no auth at all, but PentAGI's underlying
+          # OpenAI client library requires a non-empty token regardless --
+          # confirmed live 2026-07-28 ("missing the OpenAI API key" crash
+          # loop with this left blank). Placeholder value, not a real secret.
+          LLM_SERVER_KEY=not-needed
+          LLM_SERVER_MODEL={{ pentagi_llamacpp_primary_model }}
+          LLM_SERVER_PROVIDER=
+          LLM_SERVER_CONFIG_PATH=/opt/pentagi/conf/custom.provider.yml
 
-          # Embedding
+          # Embedding -- stays on Ollama. Its footprint (~300MB) was never
+          # the cause of the multi-model eviction problem the adviser
+          # model split above solves; no reason to move it too.
           EMBEDDING_URL=http://{{ pentagi_framework_host }}:11434
           EMBEDDING_MODEL={{ pentagi_embedding_model }}
           EMBEDDING_PROVIDER=ollama
@@ -708,7 +754,7 @@
         state: present
         pull: never
         remove_orphans: true
-        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed or pentagi_ollama_provider_file.changed) else 'auto' }}"
+        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed or pentagi_custom_provider_file.changed) else 'auto' }}"
 
     - name: Wait for PentAGI web port to accept connections
       ansible.builtin.wait_for:

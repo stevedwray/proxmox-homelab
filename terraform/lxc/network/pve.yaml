@@ -240,8 +240,12 @@ policies:
   - from: pentest_seg
     to: 192.168.1.8
     protocol: tcp
-    ports: [11434, 8082]
-    description: pentagi-stack to framework.gibbsgreatly.xyz (Ollama, SearXNG)
+    ports: [11434, 8082, 8080]
+    description: >-
+      pentagi-stack to framework.gibbsgreatly.xyz (Ollama for embeddings,
+      SearXNG, and llamacpp-router's native multi-model OpenAI-compatible
+      endpoint -- the adviser/pentester/coder chat-completion provider as
+      of 2026-07-28, replacing Ollama for that role specifically).
   - from: pentest_seg
     to: 192.168.20.14
     protocol: tcp
