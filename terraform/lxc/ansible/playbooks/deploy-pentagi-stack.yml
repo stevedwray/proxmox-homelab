@@ -664,6 +664,19 @@
           # Confirmed live 2026-07-26: reverse-shell exploit attempts
           # (UnrealIRCd, distccd) failed exactly this way.
           DOCKER_PUBLIC_IP={{ ansible_host }}
+
+          # Host network mode for ephemeral worker containers -- confirmed
+          # live 2026-07-27: UnrealIRCd and distccd exploitation attempts
+          # (both needing a reverse callback, unlike the vsftpd bind shell
+          # which doesn't) were blocked by Docker's bridge NAT even with
+          # DOCKER_PUBLIC_IP correctly set to the real host IP above --
+          # the mentor's own diagnosis was "NAT prevents reverse callbacks".
+          # In host mode, worker containers share pentagi-stack's own
+          # network namespace directly (no NAT hop), and PentAGI already
+          # allocates two deterministic ports per flow for exactly this
+          # case (see docker.GetPrimaryContainerPorts) -- this was deferred
+          # until the other lesson-learned fixes were validated first.
+          DOCKER_NETWORK=host
           DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_kali_fixed_image }}
       no_log: true
       register: pentagi_env_file

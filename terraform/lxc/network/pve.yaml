@@ -266,6 +266,19 @@ policies:
     protocol: tcp
     ports: [8080]
     description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's cAdvisor
+  - from: 192.168.1.113
+    to: pentest_seg
+    protocol: tcp
+    ports: [28000-29999]
+    description: >-
+      Authorized lab target (Metasploitable 2) reverse-shell/callback
+      traffic to pentagi-stack, needed now that DOCKER_NETWORK=host means
+      ephemeral worker containers bind PentAGI's deterministic per-flow
+      ports (docker.BaseContainerPortsNumber=28000,
+      docker.limitContainerPortsNumber=2000, 2 ports/flow) directly on
+      pentagi-stack's own host-mode network namespace instead of via
+      Docker bridge NAT. Scoped to this single authorized target, not all
+      of 192.168.1.0/24 -- narrower than "from: default" would allow.
   - from: pentest_seg
     to: default
     protocol: all
