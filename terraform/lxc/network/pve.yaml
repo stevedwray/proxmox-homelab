@@ -268,17 +268,30 @@ policies:
     description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's cAdvisor
   - from: 192.168.1.113
     to: pentest_seg
-    protocol: tcp
-    ports: [28000-29999]
+    protocol: all
+    ports: []
     description: >-
-      Authorized lab target (Metasploitable 2) reverse-shell/callback
-      traffic to pentagi-stack, needed now that DOCKER_NETWORK=host means
-      ephemeral worker containers bind PentAGI's deterministic per-flow
-      ports (docker.BaseContainerPortsNumber=28000,
-      docker.limitContainerPortsNumber=2000, 2 ports/flow) directly on
-      pentagi-stack's own host-mode network namespace instead of via
-      Docker bridge NAT. Scoped to this single authorized target, not all
-      of 192.168.1.0/24 -- narrower than "from: default" would allow.
+      Authorized lab target (Metasploitable 2) <-> pentagi-stack, fully
+      open both directions for this single host pair. Originally scoped
+      to just PentAGI's deterministic per-flow port range
+      (docker.BaseContainerPortsNumber=28000, 2 ports/flow) for
+      reverse-shell/callback traffic under DOCKER_NETWORK=host, but
+      widened 2026-07-28: confirmed live that an agent picking an
+      arbitrary LPORT outside that range (e.g. testing
+      cmd/unix/reverse_perl on 4444/4445/5555) gets silently dropped by
+      the narrower rule, producing a clean-looking "exploit ran, no
+      errors, but no session" failure that's actually a firewall drop,
+      not a real bug. For active validation testing, that ambiguity
+      costs more than the narrower scope is worth -- still scoped to
+      only this single authorized target, not all of 192.168.1.0/24.
+  - from: pentest_seg
+    to: 192.168.1.113
+    protocol: all
+    ports: []
+    description: >-
+      Mirrors the rule above -- explicit outbound leg to the same single
+      authorized target, so nothing about port/protocol choice on either
+      side of this one host pair can introduce test ambiguity.
   - from: pentest_seg
     to: default
     protocol: all
