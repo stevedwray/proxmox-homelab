@@ -159,6 +159,10 @@ checks passed:
    installer) → provider/tool-calling preflight → Traefik + Authentik
    forward-auth → layered validation → operations/backups → worker-node
    isolation. Each phase has concrete tasks and acceptance criteria.
+2. [lessons-learned.md](./lessons-learned.md) — checkpoint from the
+   validation-testing phase that followed deployment: eight fixes to a
+   private PentAGI fork, infrastructure changes, what broke and why, and
+   the current plan to move the adviser model onto llama.cpp.
 
 ## Key facts up front
 
