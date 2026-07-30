@@ -1,0 +1,27 @@
+hostname: harness-target
+ip_address: 192.168.1.55/24
+gateway: 192.168.1.1
+dns_server: 192.168.1.1
+vmid: 50010
+cores: 2
+memory: 2048
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 10G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+- docker
+- pentest
+- target
+depends_on: []
+provides:
+- service: struts2
+  port: 8080
+  protocol: tcp
+- service: redis
+  port: 6379
+  protocol: tcp
+ansible_playbook: deploy-harness-target
+deployment_tier: apps
+portainer_agent: false

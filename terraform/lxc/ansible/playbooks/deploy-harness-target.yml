@@ -1,0 +1,70 @@
+---
+- name: Deploy harness-target stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: harness-target
+    harness_target_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    harness_target_stack_dir: "/opt/stacks/{{ stack_name }}"
+    redis_marker_key: "internal:api_key"
+    redis_marker_value: "harness-evidence-4f8c2a91-b3e0-4d6a-9c2f-7a1e5d9b0c33"
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ harness_target_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ harness_target_compose_content }}"
+        dest: "{{ harness_target_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ harness_target_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start harness-target services via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ harness_target_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Struts2 to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8080
+        timeout: 120
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Wait for Redis to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 6379
+        timeout: 60
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Seed Redis evidence marker key (idempotent, runs every deploy)
+      ansible.builtin.command:
+        cmd: >-
+          docker exec harness-target-redis
+          redis-cli SET {{ redis_marker_key }} {{ redis_marker_value }}
+      register: redis_seed
+      changed_when: "'OK' in redis_seed.stdout"
+      when: not ansible_check_mode

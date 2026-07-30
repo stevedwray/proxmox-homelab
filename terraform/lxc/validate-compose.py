@@ -26,7 +26,6 @@ ACTIVE_STACKS = (
     "authentik-stack",
     "step-ca-stack",
     "ci-runner-01",
-    "minecraft-stack",
 )
 
 

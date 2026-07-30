@@ -20,7 +20,6 @@ ACTIVE_STACKS = (
     "authentik-stack",
     "step-ca-stack",
     "ci-runner-01",
-    "minecraft-stack",
 )
 ACTIVE_STACK_SET = frozenset(ACTIVE_STACKS)
 

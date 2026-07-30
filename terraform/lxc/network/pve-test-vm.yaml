@@ -335,6 +335,17 @@ policies:
     ports: []
     description: pentagi-stack to LAB_TARGET (Metasploitable 2) — destination-scoped, not port-scoped; authorized pentest target only
   - from: pentest_seg
+    to: 192.168.1.55
+    protocol: tcp
+    ports: [8080, 6379]
+    description: >-
+      pentagi-stack to harness-target (docs/pentagi-stack/harness-target.md)
+      — dedicated small test-harness target (Struts2 S2-045 + unauthenticated
+      Redis). Scoped to exactly the two known ports, unlike LAB_TARGET's
+      full-range rule, since this target's services are fixed and known
+      in advance — enforces "exactly two services reachable" at the
+      network level, not just by what's installed.
+  - from: pentest_seg
     to: default
     protocol: all
     ports: []
