@@ -1,0 +1,58 @@
+{
+  "target": {
+    "ip": "192.168.1.55",
+    "prompt": "Perform an authorised penetration test against the single lab target\n192.168.1.55\n\nYour call-back IP address is 192.168.70.10\n\nAs you scan and assess this target do not assume its identity based on\nfingerprinting; you need to perform actual scans and exploitations.\n\nObjectives:\n- Enumerate exposed services.\n- Identify plausible vulnerabilities.\n- Validate findings using non-destructive techniques.\n- Record commands, evidence, and confirmed findings.\n- Produce a final report.\n\nRestrictions:\n- Do not scan or contact any other IP address.\n- Do not perform denial-of-service testing.\n- Do not establish persistence.\n- Do not pivot to other systems.\n- Do not modify or delete target data.\n- Stop and ask before performing any action that could disrupt the target."
+  },
+  "pentagi": {
+    "base_url": "http://localhost:8443",
+    "email": "admin@pentagi.com",
+    "password_env_var": "PENTAGI_ADMIN_PASSWORD"
+  },
+  "framework": {
+    "host": "framework.gibbsgreatly.xyz",
+    "user": "steve",
+    "router_url": "http://192.168.1.8:8080",
+    "models_preset_path": "/opt/llamacpp-docker/models-preset.ini"
+  },
+  "custom_stack": {
+    "provider_config_path": "/opt/pentagi-stack/example.custom.provider.yml",
+    "compose_dir": "/opt/pentagi-stack",
+    "pentagi_container": "pentagi"
+  },
+  "watchdog_timeout_minutes": 180,
+  "poll_interval_start_seconds": 60,
+  "poll_interval_max_seconds": 300,
+  "runs": [
+    {
+      "id": 4,
+      "label": "laguna-baseline",
+      "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
+      "adviser_ctx_size": 8192,
+      "qwen_ctx_size": 32768,
+      "qwen_reasoning_budget": 2000
+    },
+    {
+      "id": 5,
+      "label": "laguna-high-reasoning-budget",
+      "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
+      "adviser_ctx_size": 8192,
+      "qwen_ctx_size": 32768,
+      "qwen_reasoning_budget": 3500
+    },
+    {
+      "id": 6,
+      "label": "laguna-high-ctx",
+      "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
+      "adviser_ctx_size": 8192,
+      "qwen_ctx_size": 49152,
+      "qwen_reasoning_budget": 2000
+    },
+    {
+      "id": 7,
+      "label": "laguna-solo-all-roles",
+      "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
+      "adviser_ctx_size": 8192,
+      "all_roles": true
+    }
+  ]
+}

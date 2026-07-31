@@ -401,7 +401,7 @@
             temperature: 0.15
             top_p: 0.85
             n: 1
-            max_tokens: 2000
+            max_tokens: 8000
 
           coder:
             model: "{{ pentagi_llamacpp_primary_model }}"
