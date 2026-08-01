@@ -4,6 +4,18 @@ Status: **planned, ready to implement.** Both open questions that could
 have blocked starting (free `vmid`, router auth exposure) are resolved
 below — nothing left to research before Step 1.
 
+**Corrected 2026-08-02** after a gap review + live re-verification found
+one addressing bug that would have broken Step 1 if followed literally
+(new LXC would have been assigned framework's own flat-LAN IP), plus a
+missing firewall rule. See the "Addressing" callout below `ai_seg`, and
+the updated Steps 1–3. Live-checked same day: `docker ps` on `framework`
+still matches "Current state" exactly (same 7 containers, same ports,
+same image digests); `vmid 50013` confirmed free on both `pve` and
+`pve-test-vm` (`pct list`); `mcp-utility-stack`'s IPs confirmed live at
+`192.168.50.10` (pve) / `192.168.50.110` (pve-test-vm); `192.168.50.11`
+and `192.168.50.111` confirmed unclaimed (no ARP/ping response, not
+referenced in `.env`/`.env.template`).
+
 ## Getting started (fresh session)
 
 1. This plan currently lives on `feat/mcp-utility-stack` (the branch's
@@ -114,6 +126,24 @@ egress allowlist is scoped narrowly to named CVE/threat-intel API hosts
 arbitrary search engines. This migration must extend that policy, not
 just reuse it (Step 4).
 
+**Addressing gap (found + fixed 2026-08-02):** the existing
+`terraform/lxc/stacks/ai-services-stack/stack.yaml` and `edge.yaml` (the
+"stale scaffolding" below) both parameterize on `${lab_ip_ai_services}` /
+`${LAB_IP_AI_SERVICES}`. Today that variable is `192.168.1.8` —
+**framework's own flat-LAN IP**, not an `ai_seg` address. It used to be
+`192.168.50.12` before `docs/framework-ubuntu/plan.md`'s Phase 7 (§9,
+step 5) flattened it back to `192.168.1.8` when framework went
+bare-metal. Rewriting `stack.yaml` per Step 1 without also fixing this
+variable would assign the new LXC `192.168.1.8/24` — colliding with the
+live framework host and outside `192.168.50.0/24` entirely. Fixed by
+Step 1 below: `lab_ip_ai_services` becomes a genuinely new `ai_seg`
+address per environment (`192.168.50.11` on `pve`, `192.168.50.111` on
+`pve-test-vm` — the next unused slot after `mcp-utility-stack`'s
+`.10`/`.110`, live-confirmed unclaimed), and Step 3's reference to
+framework's own LAN IP is repointed at the already-existing
+`LAB_IP_FRAMEWORK`/`FRAMEWORK_HOST_IP` (`192.168.1.8`) instead, so the
+two hosts no longer share one variable.
+
 ## Target architecture
 
 ```
@@ -141,7 +171,11 @@ framework.gibbsgreatly.xyz (192.168.1.8, flat LAN)
      unused slot in this range as of 2026-08-02), Docker host template
      (matches the old file's shape here — it was already Docker-based,
      unlike `llm-gpu-stack`/`comfyui-stack`), no `device_passthrough`
-     (no GPU need). `depends_on: [apt-cacher-stack]`.
+     (no GPU need). `depends_on: [apt-cacher-stack]`. Also fix the
+     `provides:` block while rewriting — the stale file lists port
+     `8080`, which doesn't match the `:8081` this stack actually
+     publishes (see `edge.yaml` below); a copy/paste leftover, not
+     intentional.
    - `edge.yaml` — one route, `openwebui.{{LAB_DOMAIN}}` → new LXC's
      `ai_seg` IP:8081, `auth.mode: oidc` unchanged (reuses the existing
      Authentik app). SearXNG itself stays unrouted/no public Traefik
@@ -150,24 +184,59 @@ framework.gibbsgreatly.xyz (192.168.1.8, flat LAN)
    - `terraform/lxc/environments/pve-test-vm/ai-services-stack/` and
      `.../pve/ai-services-stack/` — `terragrunt.hcl`/`inventory.yml`,
      copying `mcp-utility-stack`'s files as the template.
+   - **Addressing** — change `LAB_IP_AI_SERVICES` from `192.168.1.8` to
+     the new LXC's own `ai_seg` address, split per environment exactly
+     the way `LAB_IP_MCP_UTILITY` already is (confirmed live by grep —
+     base `.env` holds the `pve` value, `.env.pve-test-vm` overlays the
+     `pve-test-vm` value; `.env.pve` has no override, so it inherits
+     base `.env`):
+     - `.env` and `.env.template`: `LAB_IP_AI_SERVICES='192.168.50.11'`
+       (was `192.168.1.8`).
+     - `.env.pve-test-vm` and `.env.pve-test-vm.template`: add
+       `LAB_IP_AI_SERVICES=192.168.50.111` (currently absent — today
+       `pve-test-vm` silently inherits base `.env`'s wrong value, since
+       no override exists yet).
+     - `.11`/`.111` follow the base+100 convention, the next slot after
+       `mcp-utility-stack`'s `.10`/`.110`; both live-confirmed unclaimed
+       2026-08-02 (no ARP/ping response, not referenced elsewhere in
+       `.env`/`.env.template`).
+     Do this *before* the first `terragrunt plan` on `pve-test-vm` —
+     `stack.yaml`'s `ip_address: "${lab_ip_ai_services}/24"` reads this
+     directly.
    - New ansible playbook (or heavily adapted copy of
      `ansible/00-initial-setup/framework-desktop-openwebui.yml`) that
      targets the new LXC instead of `framework` directly, with the
      `host.docker.internal` endpoints replaced per Step 3.
 
-2. **Firewall**: add a MikroTik rule, `ai_seg → framework:8080,11434`
-   (cross-subnet, `192.168.50.0/24 → 192.168.1.8`). This is a new,
-   narrowly-scoped cross-zone rule — additive only, so per CLAUDE.md's
-   validation tiers this needs `terragrunt plan` showing zero
-   changes/deletions to existing resources, then apply +
+2. **Firewall**: two rules needed, not one — the plan originally only
+   named the egress rule; the ingress rule Traefik needs was missing.
+   - Egress: `ai_seg → framework:8080,11434` (cross-subnet,
+     `192.168.50.0/24 → 192.168.1.8`) so OpenWebUI can reach
+     llama.cpp/Ollama.
+   - Ingress: `edge_seg → ai_seg:8081` in both
+     `terraform/lxc/network/pve.yaml` and `.../pve-test-vm.yaml`'s
+     `policies:` blocks, plus the matching MikroTik rule. The existing
+     generic `edge_seg → ai_seg:[80,443]` entry in `pve.yaml` is not
+     enough on its own — `mcp-utility-stack` needed its own dedicated
+     `edge_seg → ai_seg:8000` rule for Traefik to reach its backend
+     (see `pve-test-vm.yaml`'s policies), and the same pattern applies
+     here for OpenWebUI's `:8081`. Without this, Traefik cannot reach
+     the new LXC regardless of `edge.yaml` being correct.
+   Both are new, narrowly-scoped cross-zone rules — additive only, so
+   per CLAUDE.md's validation tiers this needs `terragrunt plan` showing
+   zero changes/deletions to existing resources, then apply +
    `scripts/provision.sh --stack ai-services-stack` on `pve-test-vm`
    against 1-2 adjacent stacks to confirm no regression. Full teardown
    is owed before promotion past `stable`, not required per iteration.
 
 3. **The one real config change, not just a relocation**: point
    OpenWebUI's `OPENAI_API_BASE_URLS`/`OLLAMA_BASE_URL` at
-   `http://<framework-lan-ip>:8080/v1` and `:11434` instead of
-   `host.docker.internal`. **Checked live (2026-08-02): the llama.cpp
+   `http://${LAB_IP_FRAMEWORK}:8080/v1` and `:11434` instead of
+   `host.docker.internal` — use `LAB_IP_FRAMEWORK`/`FRAMEWORK_HOST_IP`
+   (`192.168.1.8`, already defined in `.env` for exactly this host), not
+   `LAB_IP_AI_SERVICES`. That variable now names the *new LXC's own*
+   address (see the Addressing fix in Step 1) — reusing it here would
+   point OpenWebUI at itself. **Checked live (2026-08-02): the llama.cpp
    router does not enforce `LLM_GPU_STACK_API_KEY` (or any auth) on
    direct `:8080` access** — a request with no key and a request with a
    deliberately wrong key both returned `200`. It's already reachable
