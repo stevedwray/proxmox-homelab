@@ -26,8 +26,12 @@ subnet, so network/firewall changes made for one apply to both.
 Joins pentagi-stack's existing `pentest_seg` zone rather than a new dedicated
 zone — reuses its containment policy (internet egress for feed sync and image
 pulls, reach to `LAB_TARGET`/`harness-target`, explicit deny-by-default
-elsewhere) with no new MikroTik zone required. PentAGI can reach this stack's
-GMP socket-backed API in-zone with no additional cross-zone firewall rule.
+elsewhere) with no new MikroTik zone required. Note: same-zone network reach
+is *not* the same as GMP reach — `gvmd` only exposes GMP over a Unix socket
+today, not a TCP listener, so nothing outside this stack's own LXC/Docker
+daemon can actually speak GMP to it yet. See
+`docs/greenbone-stack/pentagi-integration.md` for the real gap and what
+would need to change for PentAGI (or anything else) to call in.
 
 ## Inputs
 
@@ -76,7 +80,11 @@ sync is large and can take a long time — do not casually wipe these volumes.
 ## What May Depend on This Stack
 
 Nothing yet. Future PentAGI GMP/`gvm-tools` integration (out of scope for this
-pass) would make `pentagi-stack` a consumer of this stack's GMP API.
+pass) would make `pentagi-stack` a consumer of this stack's GMP API — see
+`docs/greenbone-stack/pentagi-integration.md` for what that would actually
+require (GMP is Unix-socket-only today; a TCP listener would need to be
+added to `gvmd` first, plus a scoped credential and a GMP client in
+PentAGI's worker image).
 
 ## What Must Not Be Edited Casually
 

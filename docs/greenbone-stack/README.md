@@ -233,6 +233,10 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 1. [plan.md](./plan.md) — the phased deployment plan: stack scaffolding
    (done) → apply + first boot → feed sync validation → Traefik + Authentik
    exposure → an authorized test scan → future PentAGI integration (deferred).
+2. [pentagi-integration.md](./pentagi-integration.md) — notes for the
+   deferred PentAGI↔GVM integration: the real technical gap (GVM's GMP API
+   is Unix-socket-only today, not network-reachable from another LXC),
+   what would need to change, and a recommended shape if it's picked up.
 
 ## Key facts up front
 
@@ -309,6 +313,9 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 
 ## Related documentation
 
+- [pentagi-integration.md](./pentagi-integration.md) — deferred
+  PentAGI↔GVM integration notes: current architecture of both stacks, the
+  real gap (GMP is socket-only, not network-reachable), and options.
 - `docs/pentagi-stack/` — the sibling `pentest_seg` stack this one joins;
   its `plan.md`, `README.md`, and `harness-target.md` document the zone's
   real MikroTik containment and the authorized scan targets

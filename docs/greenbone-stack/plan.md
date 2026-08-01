@@ -324,6 +324,11 @@ not a second permanent deployment.
 - **PentAGI ↔ GVM integration.** Wiring PentAGI to trigger or query GVM
   scans via `gvm-tools`/the GMP API would touch PentAGI's own compose/
   tooling and is materially more work — a separate task, not bundled here.
+  See [pentagi-integration.md](./pentagi-integration.md) for the concrete
+  gap (GVM's GMP API is Unix-socket-only today, not reachable from
+  another LXC's Docker daemon at all — same-zone network reach is not
+  the same thing as socket-backed reach) and what would actually need to
+  change.
 - **Resource sizing revisit.** If `pve-test-vm`'s 4 GB allocation proves too
   slow for future validation work, consider a scoped one-stack-at-a-time
   pass (stop `pentagi-stack` temporarily) rather than raising memory beyond
