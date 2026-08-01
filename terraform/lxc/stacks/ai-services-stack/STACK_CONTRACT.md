@@ -41,9 +41,10 @@ hosts — not sufficient here):
 
 | Input | Source | Notes |
 |-------|--------|-------|
-| `LAB_FQDN_HARBOR` (falls back to `harbor.${LAB_DOMAIN}`) | env var, optional | Registry host — both app images and the SearXNG-settings-seed helper image are pulled through Harbor's proxy-cache, not directly from ghcr.io/Docker Hub. FQDN via Traefik/`edge_seg`, not `LAB_IP_HARBOR`'s raw `infra_seg` IP: `ai_seg` is a contained zone (like `pentest_seg`) with no direct route to `infra_seg` — confirmed live 2026-08-02, a raw-IP pull timed out. Reuses the same `ai_seg -> edge_seg:443` rule the OIDC route needs |
+| `LAB_FQDN_HARBOR` (falls back to `harbor.${LAB_DOMAIN}`) | env var, optional | Registry host — both app images and the SearXNG-settings-seed helper image are pulled through Harbor's proxy-cache, not directly from ghcr.io/Docker Hub. FQDN via Traefik/`edge_seg`, not `LAB_IP_HARBOR`'s raw `infra_seg` IP: `ai_seg` is a contained zone (like `pentest_seg`) with no direct route to `infra_seg` — confirmed live 2026-08-02, a raw-IP pull timed out. Reuses the same `ai_seg -> edge_seg:443` rule the LM Studio route needs |
 | `FRAMEWORK_HOST` (falls back to `framework.gibbsgreatly.xyz`) | env var, optional | framework's FQDN — OpenWebUI's llama.cpp/Ollama routes point here, not `LAB_IP_AI_SERVICES` (this stack's own address) or `host.docker.internal` (only valid same-host, which this LXC no longer is). Matches `deploy-pentagi-stack.yml`'s identical `pentagi_framework_host` pattern, the other contained zone reaching framework the same way |
-| `LAB_DOMAIN` | env var (mandatory) | Public hostname base (`openwebui.${LAB_DOMAIN}`) and Authentik FQDN |
+| `LAB_DOMAIN` | env var (mandatory) | Public hostname base (`openwebui.${LAB_DOMAIN}`) |
+| `LAB_FQDN_AUTHENTIK_INTERNAL` (falls back to `authentik-int.${LAB_DOMAIN}`) | env var, optional | OIDC discovery URL — deliberately the step-ca-issued **internal** direct-TLS endpoint (`mgmt_seg`), not the public `authentik.${LAB_DOMAIN}` route. That route's cert is Let's Encrypt staging on `pve-test-vm` (untrusted by design), which breaks `authlib`'s backend-side discovery fetch even though a human can click through it in a browser. See `docs/design/lessons-learned.md`'s Authentik section. Needs its own `ai_seg -> 192.168.20.110(Authentik):443` firewall rule — the first cross-zone rule into `mgmt_seg` from a contained zone. |
 | `OPENWEBUI_OIDC_CLIENT_SECRET` | SOPS (`terraform/secrets.common.enc.yaml`), mandatory | Authentik app `edge-ai-services-stack-openwebui`, reused as-is — public hostname doesn't change, only its backend IP |
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
@@ -105,6 +106,23 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   optional — OpenWebUI's RAG web search needs the JSON format; the same
   requirement broke PentAGI's own SearXNG integration this session (see
   `docs/pentagi-stack/lessons-learned.md`).
+- **OpenWebUI's `openwebui` service has two CA bundle bind mounts, both
+  required, for two different reasons.** The system path
+  (`/etc/ssl/certs/ca-certificates.crt`) covers `urllib`/`aiohttp`; the
+  `certifi` path (`.../site-packages/certifi/cacert.pem`) covers `authlib`
+  (OpenWebUI's actual OAuth library, via `httpx`), which ignores the
+  system trust store entirely. Removing either one silently breaks OIDC
+  discovery with no error surfaced anywhere except a wrong/missing
+  redirect. See `docs/design/lessons-learned.md`'s Authentik section.
+- **Deploying via `scripts/provision.sh --stack ai-services-stack` alone
+  does not publish the Traefik edge route or reconcile the Authentik
+  app.** That requires a separate, manual
+  `terraform/lxc/reconcile-edge.py --apply` run scoped to this stack's
+  `edge.yaml`, followed by pushing the result through
+  `deploy-proxy-stack.yml`. Skipping this leaves the container fully
+  correct but genuinely unreachable at its public hostname — see
+  `docs/design/lessons-learned.md`'s Authentik section for the exact
+  commands.
 
 ## Playbook
 

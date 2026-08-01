@@ -115,20 +115,69 @@ each integrated service (Grafana). This is the main obstacle to a fully automate
 The `terraform-provider-authentik` can automate these steps and should be implemented before
 the platform is considered rebuild-safe.
 
-**LE staging on `pve-test-vm` breaks backend-side OIDC discovery, not just browser cert
-warnings — and this applies to Authentik's own edge route, not only individual app
-routes.** `authentik-stack/edge.yaml` uses the standard `letsencrypt` resolver (not the
+**LE staging on `pve-test-vm` breaks backend-side OIDC discovery against Authentik's
+*public* route — but the fix is the internal endpoint, not "wait for pve".**
+`authentik-stack/edge.yaml` uses the standard `letsencrypt` resolver (not the
 `step-ca`-backed override Harbor gets), so on `pve-test-vm` its cert is Let's Encrypt
 *staging* — untrusted by design (see the LE staging CA note above). Any backend service
 doing a server-side OIDC discovery fetch (not a human clicking through a browser
 warning) will hard-fail TLS verification against `authentik.${LAB_DOMAIN}` on
-`pve-test-vm`, confirmed by tracing this through to `authlib`'s actual HTTP client, not
-just inferred. Same root cause already affects the `llm.${LAB_DOMAIN}` (LM Studio)
-route. **Interactive OIDC login cannot be fully validated on `pve-test-vm` for any app**
-— this is expected, not a bug in the app's config — and will work once promoted to
-`pve` (real production LE cert). Don't spend time chasing this as if it were a
-configuration mistake; verify the cert issuer (`openssl s_client ... | openssl x509
--noout -issuer`) before assuming a config/DB/cache bug.
+`pve-test-vm`. **This does not mean OIDC is unvalidatable pre-promotion** — a first pass
+at this problem wrongly concluded that and deferred it, which was wrong and got
+corrected the same session. The actual fix: point the app's discovery URL at
+`authentik-int.${LAB_DOMAIN}` (step-ca-issued direct-TLS endpoint in `mgmt_seg`,
+already proven for Grafana/Portainer — see
+`docs/step-ca-implementation/internal-tls-consumer-matrix.md`), which needs a new
+`<zone> → mgmt_seg:443` firewall rule if the app's zone is contained (`ai_seg`,
+`pentest_seg`) and doesn't already reach `mgmt_seg`. Same root cause also affects the
+`llm.${LAB_DOMAIN}` (LM Studio) route, which has no split-endpoint override in
+OpenWebUI's case (see below) and so stays on the public route, accepted as a
+browser-only click-through wart rather than fixed.
+
+**Apps without a split authorize/token-endpoint override can't cleanly use
+`authentik-int` for the *interactive* leg — check first, don't assume.** Grafana and
+Portainer set `token_url`/`api_url` to the internal endpoint while keeping `auth_url`
+(the browser redirect target) on the public one — that's why they work today with an
+LE-staging cert nobody trusts. Generic OIDC clients that derive every endpoint from one
+`server_metadata_url` (OpenWebUI's `authlib`-based provider is one; so is Harbor's,
+already flagged "explicitly deferred" in the consumer matrix for this exact reason) have
+no such split — pointing them at `authentik-int` sends the *browser* there too, not just
+the backend. That's fine as long as the operator's own client trusts the pve-test-vm
+step-ca root (`certs/homelab-root.pve-test-vm.crt`) and can reach `mgmt_seg:443`/`:9443`
+directly (LAN already could, in this case, no new rule needed for that side) — but it's
+a real architectural difference from the Grafana/Portainer pattern, not a drop-in
+substitution. Confirm which category an app falls into before assuming its migration to
+`authentik-int` is as simple as Grafana's was.
+
+**`authlib`'s real HTTP client (`httpx`) ignores the container's system CA trust store
+entirely — it loads its own bundled `certifi` file.** A bind-mount that correctly fixes
+`urllib`/`aiohttp` TLS verification (`/etc/ssl/certs/ca-certificates.crt` at its usual
+path) leaves `authlib`'s actual discovery/token fetches still failing, silently, with no
+error surfaced anywhere except a wrong/missing redirect. Confirmed by reading the actual
+traceback through `authlib → httpx_client → httpx → httpcore`, not by guessing from the
+symptom. Fix: also bind-mount the trusted CA bundle onto
+`/usr/local/lib/python{version}/site-packages/certifi/cacert.pem` (or wherever
+`certifi.where()` reports for the image). When manually appending a cert to an existing
+PEM bundle file (rather than bind-mounting), a missing newline before `-----BEGIN
+CERTIFICATE-----` silently corrupts the previous entry — verify with `openssl x509 -in
+<bundle> -noout -subject` after any manual edit, not just a line count.
+
+**`scripts/provision.sh --stack <name>` never reconciles Traefik/DNS/Authentik-app
+config for that stack — full runs do it automatically, single-stack runs don't.**
+Every `--stack` invocation logs `"SKIP edge reconcile: single-stack mode (activate-edge
+phase handles this)"`, easy to miss in a long log. `activate-edge` is a phase of the
+*full teardown-cycle* tooling (`scripts/teardown-deploy-test.sh`), not something
+`--stack` triggers on its own — deploying a brand-new stack with `provision.sh --stack`
+alone leaves its edge route unpublished indefinitely, with no error, while the container
+itself runs fine and looks correctly configured. Symptom: the public hostname keeps
+behaving like nothing changed no matter what gets fixed on the app side, because
+requests never reach the new container's corrected code at all. Fix for a single new
+stack outside a full cycle: run `terraform/lxc/reconcile-edge.py --apply <path to that
+stack's edge.yaml>` directly (scoping to one manifest also avoids tripping over
+unrelated stacks with pre-existing reconcile issues — a full un-scoped run can crash
+entirely on a single stale manifest elsewhere), then push the result via
+`ansible-playbook deploy-proxy-stack.yml -e traefik_generated_source_dir=<generated
+dir>`, replicating what `reconcile_all_edge()` in `provision.sh` does for full runs.
 
 ## Chainloop
 

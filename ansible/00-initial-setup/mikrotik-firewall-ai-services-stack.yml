@@ -1,5 +1,5 @@
 ---
-# ai-services-stack firewall rules -- ai_seg (VLAN 50) needs four new
+# ai-services-stack firewall rules -- ai_seg (VLAN 50) needs five new
 # cross-zone paths for OpenWebUI/SearXNG that don't exist on the live
 # router today (confirmed via a live read-only audit, 2026-08-02 --
 # GET /rest/ip/firewall/filter showed only the pre-existing
@@ -12,17 +12,27 @@
 #
 #   1. edge_seg -> ai_seg:8081   (Traefik to OpenWebUI, ingress)
 #   2. ai_seg -> framework:8080,11434  (llamacpp-router, Ollama, egress)
-#   3. ai_seg -> edge_seg:443    (OIDC discovery/token exchange with
-#      Authentik, and the LM Studio backend route -- both
-#      authentik.${LAB_DOMAIN} and llm.${LAB_DOMAIN} resolve to Traefik's
-#      edge_seg IP, confirmed from authentik-stack/llm-gpu-stack's own
-#      edge.yaml `dns.target` fields. Not in the original plan.md draft;
-#      found via live verification.)
+#   3. ai_seg -> edge_seg:443    (LM Studio backend route -- llm.${LAB_DOMAIN}
+#      resolves to Traefik's edge_seg IP, confirmed from llm-gpu-stack's
+#      own edge.yaml `dns.target` field. Not in the original plan.md
+#      draft; found via live verification.)
 #   4. ai-services-stack's own IP -> internet:80  (SearXNG's one real
 #      egress gap -- port 443 already has zone-wide reach via the
 #      existing rule above, deliberately left as-is per operator decision
 #      2026-08-02 rather than retroactively tightened as a side effect of
 #      this migration)
+#   5. ai_seg -> mgmt_seg (Authentik's own IP, LAB_IP_AUTHENTIK):443  (OIDC
+#      discovery/token exchange with Authentik -- corrected 2026-08-02:
+#      the public authentik.${LAB_DOMAIN} route was tried first (rule 3's
+#      original scope also covered it), but its cert on pve-test-vm is
+#      Let's Encrypt *staging* -- untrusted by design, breaks backend TLS
+#      verification even though a human can click through it in a
+#      browser. Fixed by pointing OpenWebUI's OPENID_PROVIDER_URL at
+#      authentik-int.${LAB_DOMAIN} instead (step-ca-issued, real trust),
+#      which lives in mgmt_seg, not edge_seg -- a genuinely new cross-zone
+#      path, the first of its kind into mgmt_seg from a contained zone.
+#      Scoped to Authentik's own IP specifically, not the whole mgmt_seg
+#      subnet. See docs/design/lessons-learned.md's Authentik section.)
 #
 # pve and pve-test-vm share one physical MikroTik and one 192.168.50.0/24
 # subnet (confirmed: MIKROTIK_HOST/.env has no per-node override, and
@@ -58,6 +68,7 @@
     lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
     lab_ip_framework: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
     lab_ip_ai_services: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
+    lab_ip_authentik: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
 
     ai_services_firewall_rules:
       - comment: "ai-services-stack: edge_seg to ai_seg openwebui 8081"
@@ -88,6 +99,13 @@
         src-address: "{{ lab_ip_ai_services }}"
         dst-address: "!192.168.0.0/16"
         dst-port: "80"
+      - comment: "ai-services-stack: ai_seg to Authentik direct TLS (mgmt_seg) for OIDC"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_ip_authentik }}"
+        dst-port: "443"
 
   pre_tasks:
     - name: Assert MikroTik password is set

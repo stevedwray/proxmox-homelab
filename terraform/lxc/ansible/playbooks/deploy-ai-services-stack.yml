@@ -76,7 +76,18 @@
     # framework, which also runs llamacpp-router on :8080).
     ai_services_openwebui_port: 8081
     ai_services_searxng_port: 8082
-    ai_services_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ ai_services_lab_domain, true) }}"
+    # Internal direct-TLS endpoint (step-ca issued, mgmt_seg), not the
+    # public authentik.${LAB_DOMAIN} route -- corrected 2026-08-02: the
+    # public route's cert on pve-test-vm is Let's Encrypt *staging*
+    # (untrusted by design), which breaks OpenWebUI's backend-side OIDC
+    # discovery fetch even though a human can click through the same cert
+    # in a browser. authentik-int has no such issue (real Homelab-CA
+    # trust) and its self-reported authorize/token endpoints are fully
+    # functional on this hostname (confirmed live, both plain :443 and
+    # :9443 work identically). See docs/design/lessons-learned.md's
+    # Authentik section and the ai_seg -> mgmt_seg:443 firewall rule this
+    # requires (mikrotik-firewall-ai-services-stack.yml).
+    ai_services_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ ai_services_lab_domain, true) }}"
     ai_services_openwebui_oidc_client_id: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_ID') | default('openwebui', true) }}"
     ai_services_openwebui_oidc_client_secret: >-
       {{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET')
@@ -164,6 +175,31 @@
                 - "{{ ai_services_openwebui_port }}:8080"
               volumes:
                 - ai-services-openwebui-data:/app/backend/data
+                # Bind-mounts the LXC host's own trusted CA bundle (already
+                # includes the Homelab root CA -- see
+                # ansible/00-initial-setup/ai-services-data-migration.yml's
+                # "Trust the homelab root CA" play) into the container at
+                # the same path Python's default SSL context resolves to
+                # on this image (verified: /usr/lib/ssl/cert.pem symlinks
+                # here). Without this, OpenWebUI's own backend OIDC
+                # discovery fetch to authentik-int.${LAB_DOMAIN}
+                # (step-ca-issued cert) fails TLS verification even though
+                # the host trusts it fine -- containers have their own
+                # separate cert store. Read-only: openwebui never needs to
+                # write here.
+                - /etc/ssl/certs/ca-certificates.crt:/etc/ssl/certs/ca-certificates.crt:ro
+                # authlib (OpenWebUI's actual OAuth library) makes its real
+                # HTTP calls via httpx, which -- unlike urllib/aiohttp --
+                # does NOT consult the system trust store above at all; it
+                # loads its own bundled certifi package file exclusively.
+                # Confirmed live 2026-08-02: the system-store mount alone
+                # left authlib's own discovery fetch failing with the same
+                # SSL error, traced via the container's actual traceback
+                # (authlib -> httpx_client -> httpx -> httpcore). Mounting
+                # the same trusted bundle over certifi's file fixes the
+                # actual code path OIDC login uses, not just python's
+                # stdlib ssl default.
+                - /etc/ssl/certs/ca-certificates.crt:/usr/local/lib/python3.11/site-packages/certifi/cacert.pem:ro
               environment:
                 WEBUI_SECRET_KEY: "{{ ai_services_openwebui_webui_secret_key }}"
                 ENABLE_OPENAI_API: "true"

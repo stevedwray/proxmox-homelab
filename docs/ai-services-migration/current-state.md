@@ -18,15 +18,20 @@ cleanly before Step 7 (promote to `stable`, deploy to `pve`).
   `/mnt/container-storage/{openwebui,searxng}-data` into this LXC's Docker
   named volumes (`ai-services-openwebui-data`, `ai-services-searxng-data`)
   before first start — not a fresh install.
-- **MikroTik firewall**: 4 new rules live on the one shared physical router
+- **MikroTik firewall**: 5 new rules live on the one shared physical router
   (affects `pve` and `pve-test-vm` simultaneously, same subnet):
   `edge_seg→ai_seg:8081`, `ai_seg→framework:8080,11434`,
-  `ai_seg→edge_seg:443`, and `192.168.50.111→internet:80` (this last one is
-  IP-scoped to the `pve-test-vm` instance specifically — **must be re-run
-  with `pve`'s `LAB_IP_AI_SERVICES` after promotion**, the other three are
-  subnet/zone-wide and already cover both nodes). Independently verified
-  via the router's own read-only REST API, not just by trusting the
-  ansible playbook's exit code.
+  `ai_seg→edge_seg:443`, `192.168.50.111→internet:80`, and
+  `ai_seg→192.168.20.110(Authentik):443` (added later — see the OIDC section
+  below). The `internet:80` rule is IP-scoped to the `pve-test-vm` instance
+  specifically — **must be re-run with `pve`'s `LAB_IP_AI_SERVICES` after
+  promotion**; the other four are subnet/zone-wide or reference Authentik's
+  fixed IP and already cover both nodes. Independently verified via the
+  router's own read-only REST API, not just by trusting the ansible
+  playbook's exit code.
+- **Traefik edge route**: live and correct. `openwebui.test.gibbsgreatly.xyz`
+  → `192.168.50.111:8081`, published via `terraform/lxc/reconcile-edge.py`
+  (see the OIDC section below for why this needed a manual, scoped run).
 - **`framework`**: completely untouched. Still running `llamacpp-router`,
   `ollama`, `comfyui`, and the original `openwebui`/`searxng` containers
   side by side. `openwebui.lab.gibbsgreatly.xyz` (production domain) still
@@ -55,21 +60,53 @@ cleanly before Step 7 (promote to `stable`, deploy to `pve`).
   `pve-test-vm` instance being unreachable is pre-existing — it was
   deliberately stopped after its own promotion to `pve` on 2026-08-01
   (`git show 4fe9bab9`), unrelated to this work.
-- **OIDC — config confirmed correct, interactive login blocked by a
-  pve-test-vm-only platform limitation, not a bug here.** See
-  lessons-learned.md's Authentik section: Authentik's own edge route on
-  `pve-test-vm` uses the standard `letsencrypt` resolver (not the
-  `step-ca`-backed one Harbor gets), so its cert there is Let's Encrypt
-  **staging** — inherently untrusted by design
-  (`docs/design/lessons-learned.md`, "LE staging CA for all pve-test dev
-  passes"). OpenWebUI's backend-side OIDC discovery fetch to Authentik
-  therefore cannot succeed on `pve-test-vm` no matter what's configured on
-  the OpenWebUI side — confirmed by tracing this through OpenWebUI's actual
-  `authlib`-based OAuth code, not just inference. This is the same
-  limitation already known to affect the LM Studio route
-  (`llm.${LAB_DOMAIN}`, also on the `letsencrypt` resolver). **Will work
-  once promoted to `pve`** (real production Let's Encrypt cert). Not
-  something to fix — don't spend time on it again in a future session.
+- **OIDC login: fully working end-to-end, confirmed live** (real redirect
+  to a real Authentik login page, `200`, `<title>authentik</title>`).
+  Getting here took three separate real bugs, not one platform limitation
+  — an earlier version of this checkpoint wrongly concluded OIDC "can't be
+  validated on pve-test-vm" and deferred it to promotion; that was wrong,
+  caught and corrected the same session:
+  1. Authentik's *public* edge route (`authentik.${LAB_DOMAIN}`) does use
+     the `letsencrypt` resolver, which is LE **staging** on `pve-test-vm`
+     — genuinely untrusted, this part of the original diagnosis was
+     correct. But the fix isn't "wait for pve" — this platform already has
+     a working pattern for exactly this (see `docs/step-ca-implementation/
+     internal-tls-consumer-matrix.md`): route backend-only OIDC calls
+     through `authentik-int.${LAB_DOMAIN}` instead, a step-ca-issued
+     direct-TLS endpoint in `mgmt_seg`, already proven for
+     Grafana/Portainer. Switched `OPENID_PROVIDER_URL` to it.
+  2. That needed a new `ai_seg → 192.168.20.110 (Authentik):443` firewall
+     rule — the first cross-zone rule into `mgmt_seg` from a contained
+     zone; nothing existing needed one since Grafana/Portainer already
+     live inside `mgmt_seg` itself.
+  3. Even with the right endpoint and firewall rule, OpenWebUI's actual
+     OAuth library (`authlib`, via `httpx`) still failed TLS verification
+     — `httpx` ignores the container's system CA trust store entirely and
+     loads its own bundled `certifi` package file. Confirmed by reading
+     the real traceback down through `authlib → httpx_client → httpx →
+     httpcore`, not by guessing. Fixed by bind-mounting the LXC host's
+     already-trusted CA bundle onto `certifi`'s file path too, not just
+     the system location.
+  4. Separately, **the edge route to the new LXC had never actually been
+     published to Traefik at all.** `scripts/provision.sh --stack
+     ai-services-stack` (used for every deploy this session) explicitly
+     skips edge/DNS/Authentik-app reconciliation in single-stack mode
+     (`"SKIP edge reconcile: single-stack mode (activate-edge phase
+     handles this)"`) — that phase is part of the full teardown-cycle
+     tooling, not something `--stack` runs implicitly. Traefik was
+     silently still routing the test hostname to something stale, which
+     is what made bugs 1–3 so confusing to diagnose (fixing the app-side
+     config produced no visible change at all, because requests through
+     the public hostname were never reaching the new container's
+     corrected code). Fixed by running
+     `terraform/lxc/reconcile-edge.py --apply` scoped to just this stack's
+     manifest (the full run crashes on unrelated stale `comfyui-stack`
+     scaffolding, a pre-existing gap, not touched here), then pushing the
+     generated Traefik config via `deploy-proxy-stack.yml` — the exact
+     steps `reconcile_all_edge()` in `provision.sh` performs, just scoped
+     manually.
+  See `docs/design/lessons-learned.md`'s Authentik section for the durable
+  version of all four findings.
 
 ## Real bugs found and fixed during implementation
 
@@ -114,6 +151,30 @@ not theoretical:
    stale; `mcp-utility-stack` has been live on `pve` since 2026-08-01
    (`git show 4fe9bab9`). Fixed inline since it directly contradicted a
    change being made in the same block.
+8. **`scripts/provision.sh --stack <name>` never reconciles Traefik/DNS/
+   Authentik-app config for that stack.** Every deploy this session used
+   `--stack ai-services-stack`, so the new LXC's edge route was never
+   actually published — Traefik kept routing the public test hostname to
+   something stale the whole time. See the OIDC section above; fixed by
+   running `terraform/lxc/reconcile-edge.py --apply` scoped to this
+   stack's manifest directly, then pushing the result via
+   `deploy-proxy-stack.yml`, replicating what `provision.sh`'s full
+   (non-`--stack`) mode does automatically.
+9. **`authlib`'s real HTTP client (`httpx`) doesn't use the container's
+   system CA trust store at all** — it loads its own bundled `certifi`
+   file exclusively. A bind-mount that correctly fixed `urllib`/`aiohttp`
+   TLS verification left `authlib`'s actual OIDC discovery fetch still
+   failing, silently, with no visible symptom besides the wrong redirect
+   target. Fixed by also mounting the trusted bundle onto `certifi`'s
+   path.
+10. **Authentik's public edge route uses LE staging on `pve-test-vm`
+    (expected, documented) — but the correct response isn't "defer OIDC
+    validation to `pve`", it's "use the internal `authentik-int` endpoint
+    like Grafana/Portainer already do."** An earlier pass at this exact
+    problem wrongly concluded OIDC was unfixable pre-promotion; corrected
+    the same session once the actual internal-TLS consumer pattern was
+    pointed out. Needed a new `ai_seg → mgmt_seg` firewall rule (the first
+    of its kind — see rule 8 in the firewall list above).
 
 See `docs/design/lessons-learned.md` for the durable, generalized version
 of these — this file is the migration-specific record.
@@ -127,14 +188,24 @@ of these — this file is the migration-specific record.
    `terraform/lxc/environments/pve/ai-services-stack/`, re-run the
    data-migration playbook against `pve`'s instance, re-run
    `mikrotik-firewall-ai-services-stack.yml` with `pve`'s
-   `LAB_IP_AI_SERVICES` for the `:80` rule, repoint the
+   `LAB_IP_AI_SERVICES` for the `:80` rule (the other 4 rules already
+   cover both nodes), **run `terraform/lxc/reconcile-edge.py --apply`
+   scoped to `ai-services-stack/edge.yaml` and push via
+   `deploy-proxy-stack.yml`** (don't rely on `provision.sh --stack` alone
+   — see the OIDC section above for why), repoint the
    `openwebui.${LAB_DOMAIN}` edge route. This is a production mutation —
    needs the `with-secrets-prod` approval flow per CLAUDE.md.
-3. Re-verify OIDC login for real once on `pve` (real LE cert, should just
-   work — this was blocked on `pve-test-vm` for the documented reason
-   above, not a code issue).
+3. OIDC login already confirmed working end-to-end on `pve-test-vm` (see
+   above) — on `pve` it should work the same way, just verify the
+   production Authentik app/provider exist post-reconcile.
 4. Step 8: decommission `openwebui`/`searxng` on `framework` after a soak
    period, not immediately.
 5. Open question still unresolved from plan.md: whether the operator wants
    real auth added to llamacpp-router's `:8080` now that it's a formal
    cross-zone dependency. Not blocking.
+6. Unrelated pre-existing gap noticed, not fixed here: `comfyui-stack`'s
+   Authentik proxy provider fails `reconcile-edge.py --apply` with
+   `400: Internal host cannot be empty when forward auth is disabled` —
+   blocks any *full* (non-scoped) edge reconcile run. Worth a look
+   separately since it'll keep blocking full reconciliation for every
+   future stack until fixed.
