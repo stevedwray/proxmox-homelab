@@ -94,6 +94,64 @@ agent/orchestration/UI layers on top of it.
 | Krita AI Diffusion | Client plugin against existing ComfyUI `:8188`; next once ComfyUI Phase 4 closes |
 | SwarmUI | Only if day-to-day generation shows a gap Krita/ComfyUI don't cover |
 
+### Security testing
+
+| Tool | Best use | Status |
+| --- | --- | --- |
+| PentestGPT (`pentestgpt-legacy`) | Interactive, human-in-the-loop pentest copilot against lab targets | Validated 2026-07-24 — see below |
+| DeepHat-V1-7B | Security-fine-tuned 7B, candidate for a faster/weaker comparison run | Not pulled yet — try against PentestGPT if the 32B reasoning latency below is too slow for interactive use |
+
+## PentestGPT (validated 2026-07-24)
+
+Client-side only, same Phase 0 rule as the coding agents above: runs on the
+workstation (`~/git/PentestGPT`, sibling checkout to this repo — not vendored
+in, not an Ansible-managed service), points at framework's already-deployed
+Ollama over the LAN. No change to `framework.gibbsgreatly.xyz` itself, so none
+of the production-node approval flow in `CLAUDE.md` applies here.
+
+- **Install**: `git clone https://github.com/GreyDGL/PentestGPT.git ~/git/PentestGPT`
+  then `make install` (needs `uv` — `curl -LsSf https://astral.sh/uv/install.sh | sh`
+  — and Python 3.12+; both installed 2026-07-24).
+- **Model**: `ollama:deepseek-r1-distill-qwen-32b:q4_k_m`, the same model
+  `benchmarks.md` already names as the best local security-judgment model
+  (19/24 vs. 15/24 correct safe/vulnerable calls vs. LM Studio). Used for all
+  three PentestGPT roles (reasoning/parsing/generation) to start — splitting
+  roles across models is a possible later tuning step, not done now.
+- **Run**:
+  ```bash
+  cd ~/git/PentestGPT
+  uv run pentestgpt-legacy \
+    --reasoning-model ollama:deepseek-r1-distill-qwen-32b:q4_k_m \
+    --parsing-model ollama:deepseek-r1-distill-qwen-32b:q4_k_m \
+    --generation-model ollama:deepseek-r1-distill-qwen-32b:q4_k_m \
+    --base-url http://192.168.1.8:11434/v1
+  ```
+- **`<think>`-stripping turned out unnecessary**: the original plan was to run
+  a stripping proxy in front of Ollama, since PentestGPT's
+  `openai_compatible.py` provider reads only `response.choices[0].message.content`
+  and reasoning models were expected to inline `<think>...</think>` there.
+  Verified directly against this Ollama build: it already returns reasoning in
+  a separate `message.reasoning` field and keeps `content` clean, so no
+  stripping is needed for this model/engine pairing. Confirmed via direct
+  `curl` before wiring PentestGPT up, not assumed.
+- **Proxy kept as an unused fallback, not wired in**: `local-ai-tools/
+  reasoning_strip_proxy.py` in this directory forces `reasoning_effort: "none"`
+  and defensively strips any `<think>` block that does come through. Only
+  needed if a future model/engine combination (e.g. the llama.cpp router,
+  untested here) doesn't split reasoning out the same way — point
+  `--base-url` at `http://127.0.0.1:11435/v1` and run the script if that ever
+  shows up instead of talking to Ollama directly.
+- **Validated end-to-end**: constructed a `pentestGPT` session and drove its
+  three init round-trips (generation/reasoning/parsing `send_new_message`
+  calls) directly, bypassing the interactive REPL's TTY-only prompts — all
+  three completed successfully against the live model over the LAN.
+- **Latency caveat**: `benchmarks.md` measured ~10.5 gen tok/s for this model
+  on this hardware; the three-call init sequence above took several minutes
+  end to end. Expect each interactive turn to feel slow, not chat-speed —
+  this is a real tradeoff of the 32B reasoning model, not a bug. If it's too
+  slow for interactive use, DeepHat-V1-7B (not yet pulled) is the fallback
+  comparison to try, at the cost of the weaker security judgment noted above.
+
 ## MCP layer
 
 Small trusted layer, not a grab-bag of community servers:
