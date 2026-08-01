@@ -143,6 +143,45 @@ attachments:
       gateway: "${lab_gw_pentest}"
       snat: false
 
+  # -------------------------------------------------------------------------
+  # ai_seg — AI/LLM application containers + mcp-utility-stack (VLAN 50, 192.168.50.0/24)
+  #
+  # Originally built for pve-framework only (now retired — that host is
+  # bare-metal Ubuntu, not Proxmox, per docs/framework-ubuntu/plan.md). VLAN
+  # 50 is still tagged on the MikroTik switches, unused since that
+  # retirement. Reactivated here 2026-08-01 for mcp-utility-stack
+  # (cve-mcp-server), which runs on pve-test-vm — a nested VM *inside* pve,
+  # so pve's own vmbr0 must carry VLAN 50 purely to relay pve-test-vm's
+  # traffic to the physical trunk, even though pve itself hosts no direct
+  # tenant here yet. Declaring this zone (even with zero pve-local
+  # containers) is what makes Proxmox's own SDN apply persist a
+  # `vmbr0.50`/`tvai` stanza into /etc/network/interfaces.d/sdn — the same
+  # mechanism that already makes VLAN 70 (pentest_seg, real pve tenants)
+  # survive a reboot. A manual `bridge vlan add ... self` alone does not
+  # persist; this zone object is the actual fix.
+  #
+  # Operator intends to move ai-services-stack (OpenWebUI/SearXNG, currently
+  # flat-LAN on the Ubuntu framework host) onto this VLAN in a future
+  # session — not done here.
+  # -------------------------------------------------------------------------
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters
+    type: sdn_vnet
+    bridge: tvai
+    firewall: false
+    sdn:
+      zone: tvai
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvai
+      vlan_tag: 50
+      alias: pve AI segment
+      subnet: "${lab_subnet_ai_cidr}"
+      gateway: "${lab_gw_ai}"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -177,6 +216,10 @@ zones:
     containers:
       - "pentagi-stack — ${lab_ip_pentagi}"
       - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01, no pve-local containers yet (mcp-utility-stack lives on pve-test-vm; this zone exists on pve purely so pve's vmbr0 relays VLAN 50 for that nested VM)
+    attachment: ai_seg
+    containers: []
 
 policies:
   - from: edge_seg

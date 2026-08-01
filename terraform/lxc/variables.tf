@@ -248,6 +248,12 @@ variable "lab_ip_greenbone" {
   default     = ""
 }
 
+variable "lab_ip_mcp_utility" {
+  description = "mcp-utility-stack (cve-mcp-server) service IPv4 address (ai_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string

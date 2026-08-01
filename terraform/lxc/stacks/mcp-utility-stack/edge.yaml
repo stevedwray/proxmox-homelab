@@ -1,0 +1,32 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: mcp-utility-edge
+  stack: mcp-utility-stack
+spec:
+  routes:
+    - name: mcp-utility
+      host: cve-mcp.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_MCP_UTILITY}:8000
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        # pve-test-vm's LAB_DOMAIN (test.gibbsgreatly.xyz) falls back to LE
+        # staging (see deploy-proxy-stack.yml's caServer conditional) --
+        # operator-confirmed choice 2026-08-01: this is the intended
+        # validation pattern here, becomes real production LE once
+        # promoted to pve (lab.gibbsgreatly.xyz).
+        resolver: letsencrypt
+      auth:
+        # cve-mcp-server is an MCP JSON-RPC endpoint for programmatic
+        # clients (Claude Code, agent workflows), not a browser login --
+        # same reasoning as llm-gpu-stack's route. Traefik terminates TLS
+        # and routes only; access control is the ai_seg MikroTik inbound
+        # rule (lan/pentest_seg only), not an edge auth gate. cve-mcp-server
+        # itself has no built-in auth -- see STACK_CONTRACT.md's "What Must
+        # Not Be Edited Casually" section before widening this.
+        mode: none

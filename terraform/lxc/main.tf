@@ -38,6 +38,7 @@ locals {
     lab_ip_ai_services      = var.lab_ip_ai_services
     lab_ip_pentagi          = var.lab_ip_pentagi
     lab_ip_greenbone        = var.lab_ip_greenbone
+    lab_ip_mcp_utility      = var.lab_ip_mcp_utility
     lab_gw_mgmt             = var.lab_gw_mgmt
     lab_gw_edge             = var.lab_gw_edge
     lab_gw_infra            = var.lab_gw_infra
