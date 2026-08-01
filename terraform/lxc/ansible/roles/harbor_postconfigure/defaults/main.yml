@@ -29,6 +29,8 @@ harbor_postconfigure_proxy_registries:
     url: https://quay.io
   - name: lscr
     url: https://lscr.io
+  - name: greenbone
+    url: https://registry.community.greenbone.net
 
 # CI robot account (system-level, push/pull across all projects)
 harbor_postconfigure_robot_name: "ci-runner"

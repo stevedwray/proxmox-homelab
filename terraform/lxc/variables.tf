@@ -242,6 +242,12 @@ variable "lab_ip_pentagi" {
   default     = ""
 }
 
+variable "lab_ip_greenbone" {
+  description = "greenbone-stack (GVM/OpenVAS) service IPv4 address (pentest_seg)"
+  type        = string
+  default     = ""
+}
+
 variable "lab_gw_mgmt" {
   description = "Management subnet gateway IPv4 address"
   type        = string

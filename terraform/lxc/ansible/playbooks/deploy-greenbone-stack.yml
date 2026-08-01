@@ -1,0 +1,623 @@
+# Greenbone Community Edition (GVM/OpenVAS) -- pentest_seg zone (pve-test-vm).
+# See docs/greenbone-stack/plan.md for the full deployment plan.
+#
+# No interactive installer -- this vendors Greenbone's own official
+# compose.yaml (greenbone.github.io/docs, downloaded from
+# https://greenbone.github.io/docs/latest/_static/compose.yaml) with its
+# ~15 image references rewritten through Harbor's 'greenbone' proxy-cache
+# project (declared in ansible/roles/harbor_postconfigure/defaults/main.yml),
+# matching deploy-pentagi-stack.yml's/deploy-graylog-stack.yml's pattern.
+# Nothing else about the compose's service topology is changed except the
+# nginx port bindings (see below).
+#
+# gvmd/gsad have no native OIDC client -- Traefik forwardAuth (this stack's
+# edge.yaml) gates the UI at the edge instead, same reasoning as PentAGI.
+#
+# Also configures per-user LDAP login (steve, via Authentik's existing LDAP
+# outpost -- same instance graylog-stack uses) underneath that forwardAuth
+# gate. This is correctly wired but currently blocked by an upstream
+# Authentik LDAP outpost bug (mis-encoded successful bind response) --
+# see docs/greenbone-stack/README.md's "LDAP login" section. Local
+# admin/SOPS-password login is the working path until that's fixed
+# upstream.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    greenbone_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    greenbone_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ greenbone_lab_domain, true) }}"
+    docker_registry_host: "{{ greenbone_registry_host }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "7"
+            }
+          }
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy Greenbone Community Edition compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    greenbone_compose_dir: /opt/greenbone-stack
+    greenbone_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    greenbone_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ greenbone_lab_domain, true) }}"
+    greenbone_public_url: "https://gvm.{{ greenbone_lab_domain }}"
+
+    # Secrets -- terraform/secrets.common.enc.yaml (SOPS).
+    greenbone_admin_password: "{{ lookup('env', 'GREENBONE_ADMIN_PASSWORD') | mandatory('GREENBONE_ADMIN_PASSWORD env var is required') }}"
+
+    # Per-user LDAP login via Authentik's existing LDAP outpost (same
+    # instance graylog-stack already uses -- see
+    # docs/monitoring-stack/graylog-migration-plan.md). gvmd does a direct
+    # simple bind as "cn=<username>,ou=users,dc=ldap,dc=goauthentik,dc=io"
+    # with the entered password -- no service-account search+bind needed,
+    # unlike Graylog's LDAP auth service. Requires the
+    # pentest_seg -> mgmt_seg:3389,6636 MikroTik rule (added 2026-08-01,
+    # see docs/greenbone-stack/plan.md).
+    greenbone_ldap_host: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:3389"
+    greenbone_ldap_authdn: "cn=%s,ou=users,dc=ldap,dc=goauthentik,dc=io"
+
+  tasks:
+    - name: Create Greenbone compose directory
+      ansible.builtin.file:
+        path: "{{ greenbone_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    # Confirmed live: setting LDAPTLS_REQCERT=never on gvmd's environment is
+    # NOT sufficient on its own -- gvm-libs sets its own TLS options in
+    # code rather than reading the standard OpenLDAP client env var (a
+    # side-by-side test with real ldap-utils confirmed the same self-signed
+    # cert bind succeeds once cert checking is actually disabled, proving
+    # the DN/StartTLS/port setup itself is correct -- the gap is purely
+    # gvmd's own TLS trust handling). Fetching the outpost's own cert and
+    # feeding it to modify_auth's "cacert" key is Greenbone's documented
+    # mechanism for exactly this case, so this must exist before the
+    # compose file (which bind-mounts it) is written.
+    - name: Fetch Authentik LDAP outpost's self-signed certificate
+      ansible.builtin.shell:
+        cmd: >-
+          echo | openssl s_client -connect {{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:6636
+          -showcerts 2>/dev/null | openssl x509 -outform PEM
+      changed_when: false
+      register: greenbone_ldap_ca_fetch
+      delegate_to: localhost
+      become: false
+
+    - name: Write Authentik LDAP outpost CA cert
+      ansible.builtin.copy:
+        dest: "{{ greenbone_compose_dir }}/authentik-ldap-ca.pem"
+        mode: "0644"
+        content: "{{ greenbone_ldap_ca_fetch.stdout }}\n"
+
+    # Vendored verbatim from Greenbone's own official compose.yaml (confirmed
+    # via https://greenbone.github.io/docs/latest/_static/compose.yaml) --
+    # only two classes of change from upstream:
+    #   1. Every image: line rewritten from registry.community.greenbone.net/*
+    #      to the 'greenbone' Harbor proxy-cache project.
+    #   2. nginx's port bindings changed from 127.0.0.1-only to the
+    #      container's own routable interface, so Traefik can reach it --
+    #      upstream defaults to loopback-only for a bare-host deployment,
+    #      which doesn't work when Traefik lives in a different LXC/zone.
+    - name: Write Greenbone docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ greenbone_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          name: greenbone-community-edition
+
+          services:
+            vulnerability-tests:
+              image: {{ greenbone_registry_host }}/greenbone/community/vulnerability-tests
+              environment:
+                FEED_RELEASE: "24.10"
+                KEEP_ALIVE: 1
+              volumes:
+                - vt_data_vol:/mnt
+
+            notus-data:
+              image: {{ greenbone_registry_host }}/greenbone/community/notus-data
+              environment:
+                KEEP_ALIVE: 1
+              volumes:
+                - notus_data_vol:/mnt
+
+            scap-data:
+              image: {{ greenbone_registry_host }}/greenbone/community/scap-data
+              environment:
+                KEEP_ALIVE: 1
+              volumes:
+                - scap_data_vol:/mnt
+
+            cert-bund-data:
+              image: {{ greenbone_registry_host }}/greenbone/community/cert-bund-data
+              environment:
+                KEEP_ALIVE: 1
+              volumes:
+                - cert_data_vol:/mnt
+
+            dfn-cert-data:
+              image: {{ greenbone_registry_host }}/greenbone/community/dfn-cert-data
+              environment:
+                KEEP_ALIVE: 1
+              volumes:
+                - cert_data_vol:/mnt
+              depends_on:
+                cert-bund-data:
+                  condition: service_healthy
+
+            data-objects:
+              image: {{ greenbone_registry_host }}/greenbone/community/data-objects
+              environment:
+                FEED_RELEASE: "24.10"
+                KEEP_ALIVE: 1
+              volumes:
+                - data_objects_vol:/mnt
+
+            report-formats:
+              image: {{ greenbone_registry_host }}/greenbone/community/report-formats
+              environment:
+                FEED_RELEASE: "24.10"
+                KEEP_ALIVE: 1
+              volumes:
+                - data_objects_vol:/mnt
+              depends_on:
+                data-objects:
+                  condition: service_healthy
+
+            gpg-data:
+              image: {{ greenbone_registry_host }}/greenbone/community/gpg-data
+              volumes:
+                - gpg_data_vol:/mnt
+
+            redis-server:
+              image: {{ greenbone_registry_host }}/greenbone/community/redis-server
+              deploy:
+                restart_policy:
+                  condition: any
+              volumes:
+                - redis_socket_vol:/run/redis/
+
+            pg-gvm:
+              image: {{ greenbone_registry_host }}/greenbone/community/pg-gvm:stable
+              deploy:
+                restart_policy:
+                  condition: any
+              volumes:
+                - psql_data_vol:/var/lib/postgresql
+                - psql_socket_vol:/var/run/postgresql
+              depends_on:
+                pg-gvm-migrator:
+                  condition: service_completed_successfully
+
+            pg-gvm-migrator:
+              image: {{ greenbone_registry_host }}/greenbone/community/pg-gvm-migrator:stable
+              deploy:
+                restart_policy:
+                  condition: none
+              volumes:
+                - psql_data_vol:/var/lib/postgresql
+                - psql_socket_vol:/var/run/postgresql
+
+            gvmd:
+              image: {{ greenbone_registry_host }}/greenbone/community/gvmd:stable
+              deploy:
+                restart_policy:
+                  condition: any
+              environment:
+                # Authentik's LDAP outpost serves a self-signed cert
+                # (AUTHENTIK_INSECURE=true on the outpost itself, matching
+                # graylog-stack's identical setup). Confirmed live: this
+                # standard OpenLDAP client env var is NOT sufficient by
+                # itself -- gvm-libs sets its own TLS options in code,
+                # ignoring it. Kept as harmless defense-in-depth; the real
+                # fix is the explicit cacert file below, which is
+                # Greenbone's own documented mechanism for this
+                # (modify_auth's method:ldap_connect "cacert" key).
+                LDAPTLS_REQCERT: "never"
+              volumes:
+                - gvmd_data_vol:/var/lib/gvm
+                - scap_data_vol:/var/lib/gvm/scap-data/
+                - cert_data_vol:/var/lib/gvm/cert-data
+                - data_objects_vol:/var/lib/gvm/data-objects/gvmd
+                - vt_data_vol:/var/lib/openvas/plugins
+                - psql_data_vol:/var/lib/postgresql
+                - gvmd_socket_vol:/run/gvmd
+                - ospd_openvas_socket_vol:/run/ospd
+                - psql_socket_vol:/var/run/postgresql
+                - {{ greenbone_compose_dir }}/authentik-ldap-ca.pem:/etc/gvm/authentik-ldap-ca.pem:ro
+              depends_on:
+                pg-gvm:
+                  condition: service_started
+                scap-data:
+                  condition: service_healthy
+                cert-bund-data:
+                  condition: service_healthy
+                dfn-cert-data:
+                  condition: service_healthy
+                data-objects:
+                  condition: service_healthy
+                report-formats:
+                  condition: service_healthy
+
+            gsa:
+              image: {{ greenbone_registry_host }}/greenbone/community/gsa:stable-slim
+              environment:
+                MOUNT_PATH: "/mnt/web"
+                KEEP_ALIVE: 1
+              healthcheck:
+                test: [ "CMD-SHELL", "test -e /run/gsa/copying.done" ]
+                start_period: 5s
+              volumes:
+                - gsa_data_vol:/mnt/web
+
+            gsad:
+              image: {{ greenbone_registry_host }}/greenbone/community/gsad:stable
+              deploy:
+                restart_policy:
+                  condition: any
+              environment:
+                GSAD_HTTP_ONLY: "true"
+                GSAD_API_ONLY: "true"
+                GSAD_FOREGROUND: "true"
+              volumes:
+                - gvmd_socket_vol:/run/gvmd
+              depends_on:
+                gvmd:
+                  condition: service_started
+
+            gvm-config:
+              image: {{ greenbone_registry_host }}/greenbone/community/gvm-config:latest
+              environment:
+                ENABLE_NGINX_CONFIG: true
+                ENABLE_TLS_GENERATION: true
+              volumes:
+                - nginx_config_vol:/mnt/nginx/configs
+                - nginx_certificates_vol:/mnt/nginx/certs
+
+            nginx:
+              image: {{ greenbone_registry_host }}/greenbone/community/nginx:latest
+              ports:
+                - 0.0.0.0:443:443
+                - 0.0.0.0:9392:9392
+                - 0.0.0.0:8080:8080
+              volumes:
+                - nginx_config_vol:/etc/nginx/conf.d:ro
+                - nginx_certificates_vol:/etc/nginx/certs:ro
+                - gsa_data_vol:/usr/share/nginx/html:ro
+              deploy:
+                restart_policy:
+                  condition: any
+              depends_on:
+                gvm-config:
+                  condition: service_completed_successfully
+                gsa:
+                  condition: service_healthy
+                gsad:
+                  condition: service_started
+
+            configure-openvas:
+              image: {{ greenbone_registry_host }}/greenbone/community/openvas-scanner:stable
+              volumes:
+                - openvas_data_vol:/mnt
+                - openvas_log_data_vol:/var/log/openvas
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  printf "table_driven_lsc = yes\nopenvasd_server = http://openvasd:80\n" > /mnt/openvas.conf
+                  sed "s/127/128/" /etc/openvas/openvas_log.conf | sed 's/gvm/openvas/' > /mnt/openvas_log.conf
+                  chmod 644 /mnt/openvas.conf
+                  chmod 644 /mnt/openvas_log.conf
+                  touch /var/log/openvas/openvas.log
+                  chmod 666 /var/log/openvas/openvas.log
+
+            openvas:
+              image: {{ greenbone_registry_host }}/greenbone/community/openvas-scanner:stable
+              volumes:
+                - openvas_data_vol:/etc/openvas
+                - openvas_log_data_vol:/var/log/openvas
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  cat /etc/openvas/openvas.conf
+                  tail -f /var/log/openvas/openvas.log
+              depends_on:
+                configure-openvas:
+                  condition: service_completed_successfully
+
+            openvasd:
+              image: {{ greenbone_registry_host }}/greenbone/community/openvas-scanner:stable
+              deploy:
+                restart_policy:
+                  condition: any
+              environment:
+                OPENVASD_MODE: service_notus
+                GNUPGHOME: /etc/openvas/gnupg
+                LISTENING: 0.0.0.0:80
+              volumes:
+                - openvas_data_vol:/etc/openvas
+                - openvas_log_data_vol:/var/log/openvas
+                - gpg_data_vol:/etc/openvas/gnupg
+                - notus_data_vol:/var/lib/notus
+              depends_on:
+                vulnerability-tests:
+                  condition: service_healthy
+                notus-data:
+                  condition: service_healthy
+                configure-openvas:
+                  condition: service_completed_successfully
+                gpg-data:
+                  condition: service_completed_successfully
+              networks:
+                default:
+                  aliases:
+                    - openvasd
+
+            ospd-openvas:
+              image: {{ greenbone_registry_host }}/greenbone/community/ospd-openvas:stable
+              deploy:
+                restart_policy:
+                  condition: any
+              hostname: ospd-openvas.local
+              cap_add:
+                - NET_ADMIN
+                - NET_RAW
+              security_opt:
+                - seccomp=unconfined
+                - apparmor=unconfined
+              command:
+                [
+                  "ospd-openvas",
+                  "-f",
+                  "--config",
+                  "/etc/gvm/ospd-openvas.conf",
+                  "--notus-feed-dir",
+                  "/var/lib/notus/advisories",
+                  "-m",
+                  "666",
+                ]
+              volumes:
+                - gpg_data_vol:/etc/openvas/gnupg
+                - vt_data_vol:/var/lib/openvas/plugins
+                - notus_data_vol:/var/lib/notus
+                - ospd_openvas_socket_vol:/run/ospd
+                - redis_socket_vol:/run/redis/
+                - openvas_data_vol:/etc/openvas/
+                - openvas_log_data_vol:/var/log/openvas
+              depends_on:
+                redis-server:
+                  condition: service_started
+                gpg-data:
+                  condition: service_completed_successfully
+                configure-openvas:
+                  condition: service_completed_successfully
+                vulnerability-tests:
+                  condition: service_healthy
+                notus-data:
+                  condition: service_healthy
+
+            gvm-tools:
+              image: {{ greenbone_registry_host }}/greenbone/community/gvm-tools
+              volumes:
+                - gvmd_socket_vol:/run/gvmd
+                - ospd_openvas_socket_vol:/run/ospd
+              depends_on:
+                - gvmd
+                - ospd-openvas
+
+          volumes:
+            gpg_data_vol:
+            scap_data_vol:
+            cert_data_vol:
+            data_objects_vol:
+            gvmd_data_vol:
+            psql_data_vol:
+            vt_data_vol:
+            notus_data_vol:
+            psql_socket_vol:
+            gvmd_socket_vol:
+            ospd_openvas_socket_vol:
+            redis_socket_vol:
+            openvas_data_vol:
+            openvas_log_data_vol:
+            gsa_data_vol:
+            nginx_config_vol:
+            nginx_certificates_vol:
+      register: greenbone_compose_file
+
+    - name: Bring up Greenbone stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ greenbone_compose_dir }}"
+        state: present
+        pull: always
+        remove_orphans: true
+        recreate: "{{ 'always' if greenbone_compose_file.changed else 'auto' }}"
+
+    - name: Wait for nginx HTTPS (port 443) to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 443
+        timeout: 180
+
+    # Upstream's own generated nginx config (gvm-config's nginx-config
+    # subcommand) hardcodes "listen 9392; return 301 https://...443";
+    # confirmed live -- port 9392 is NOT a usable plain-HTTP passthrough to
+    # gsad, just an HTTP->HTTPS redirect stub. gsad itself has no ports:
+    # mapping in the compose (only reachable via nginx's internal Docker
+    # network), and the static SPA (index.html/JS/CSS, served from
+    # gsa_data_vol) is nginx's job too, not gsad's -- so gsad can't be
+    # exposed directly as a substitute either. This adds a second,
+    # plain-HTTP-only nginx server block (port 8080) that mirrors the
+    # upstream 443 block's location logic (proxy /gmp|system_report|
+    # logout|login to gsad, serve the SPA otherwise), written straight into
+    # nginx_config_vol's host path since gvm-config doesn't expose a way to
+    # customize its generated config. This is the endpoint Traefik's
+    # edge.yaml route actually targets -- matches this platform's
+    # TLS-at-the-edge, plain-HTTP-backend convention instead of needing an
+    # insecureSkipVerify path the EdgeManifest/Traefik-rendering tooling
+    # doesn't support today.
+    - name: Determine nginx_config_vol host path
+      ansible.builtin.command:
+        cmd: docker volume inspect greenbone-community-edition_nginx_config_vol --format '{{ '{{' }}.Mountpoint{{ '}}' }}'
+      register: greenbone_nginx_config_vol_path
+      changed_when: false
+
+    - name: Write plain-HTTP GSA server block (port 8080, Traefik target)
+      ansible.builtin.copy:
+        dest: "{{ greenbone_nginx_config_vol_path.stdout }}/gsad-plain.conf"
+        mode: "0644"
+        content: |
+          server {
+            proxy_read_timeout 1h;
+            client_max_body_size 1000m;
+
+            listen 8080;
+            server_name _;
+
+            include /etc/nginx/conf.d/headers.conf;
+
+            location ~ ^/(gmp|system_report|logout|login) {
+              if ($request_method = OPTIONS) {
+                    add_header Access-Control-Allow-Origin "{{ greenbone_public_url }}" always;
+                    add_header Access-Control-Allow-Credentials "true" always;
+                    add_header Access-Control-Allow-Methods "GET, POST, PUT, DELETE, OPTIONS" always;
+                    add_header Access-Control-Allow-Headers "Content-Type, Authorization" always;
+                    add_header Content-Length 0 always;
+                    return 204;
+              }
+              proxy_pass http://gsad;
+              proxy_hide_header Access-Control-Allow-Origin;
+              proxy_hide_header Content-Security-Policy;
+              proxy_hide_header Strict-Transport-Security;
+              proxy_hide_header X-Frame-Options;
+              proxy_set_header Host $host;
+              proxy_set_header X-Real-IP $remote_addr;
+              proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+              proxy_set_header X-Forwarded-Proto $scheme;
+            }
+
+            location ~ ^/config\.(js|ts) {
+              root /usr/share/nginx/html;
+              try_files $uri =404;
+            }
+
+            location / {
+              root /usr/share/nginx/html;
+              index index.html;
+              try_files $uri $uri/ /index.html;
+            }
+          }
+      register: greenbone_nginx_plain_conf
+
+    - name: Reload nginx to pick up the plain-HTTP GSA server block
+      ansible.builtin.command:
+        cmd: docker exec greenbone-community-edition-nginx-1 nginx -s reload
+      when: greenbone_nginx_plain_conf.changed
+
+    - name: Wait for plain-HTTP GSA (port 8080) to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8080
+        timeout: 60
+
+    # Default install ships with admin/admin -- always reset it, idempotently.
+    # This only rotates the password; it does not block on feed sync (which
+    # can legitimately take minutes to hours per Greenbone's own docs -- see
+    # docs/greenbone-stack/plan.md for how to confirm feed sync completion
+    # before trusting scan results).
+    - name: Set gvmd admin password
+      ansible.builtin.command:
+        cmd: >-
+          docker compose exec -T -u gvmd gvmd
+          gvmd --user=admin --new-password={{ greenbone_admin_password }}
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: true
+      no_log: true
+      register: greenbone_admin_password_set
+      retries: 10
+      delay: 10
+      until: greenbone_admin_password_set is succeeded
+
+    # Enables real per-user logins (e.g. "steve") against Authentik's
+    # directory instead of everyone sharing the local admin account.
+    # gvm-cli's socket backend needs an XML file on disk (no stdin support,
+    # confirmed live), bind-mounted into the throwaway gvm-tools container
+    # via `docker compose run -v` since gvm-tools isn't a long-running
+    # service in this compose.
+    - name: Write modify_auth GMP request (enable LDAP against Authentik)
+      ansible.builtin.copy:
+        dest: "{{ greenbone_compose_dir }}/modify_auth.xml"
+        # 0644, not 0640 -- gvm-tools' container process runs as a
+        # different, unprivileged uid than the one that writes this file,
+        # and needs read access via the bind mount. No secret content here
+        # (just LDAP host/authdn), so world-readable is fine.
+        mode: "0644"
+        content: |
+          <modify_auth>
+            <group name="method:ldap_connect">
+              <auth_conf_setting><key>enable</key><value>true</value></auth_conf_setting>
+              <auth_conf_setting><key>ldaphost</key><value>{{ greenbone_ldap_host }}</value></auth_conf_setting>
+              <auth_conf_setting><key>authdn</key><value>{{ greenbone_ldap_authdn }}</value></auth_conf_setting>
+              <auth_conf_setting><key>cacert</key><value>/etc/gvm/authentik-ldap-ca.pem</value></auth_conf_setting>
+            </group>
+          </modify_auth>
+
+    - name: Enable LDAP authentication against Authentik's outpost
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm
+          -v {{ greenbone_compose_dir }}/modify_auth.xml:/tmp/modify_auth.xml:ro
+          gvm-tools gvm-cli --gmp-username admin --gmp-password {{ greenbone_admin_password }}
+          socket /tmp/modify_auth.xml
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: true
+      no_log: true
+      register: greenbone_ldap_enable
+
+    # gvmd requires a local user record to exist even for LDAP-authenticated
+    # logins -- LDAP only supplies the password check, not the account
+    # itself. The local password --create-user assigns is effectively
+    # unused once LDAP is enabled (gvmd tries LDAP bind first for any
+    # username). 409/"exists already"-style failure on a re-run is the
+    # expected idempotent case, matching this repo's Harbor robot-creation
+    # pattern.
+    - name: Create steve Admin user (idempotent -- ignores 'exists already')
+      ansible.builtin.command:
+        cmd: >-
+          docker compose exec -T -u gvmd gvmd
+          gvmd --create-user=steve --role=Admin
+        chdir: "{{ greenbone_compose_dir }}"
+      register: greenbone_steve_user_create
+      changed_when: "'User created' in greenbone_steve_user_create.stdout"
+      failed_when: >-
+        greenbone_steve_user_create.rc != 0 and
+        'exists already' not in (greenbone_steve_user_create.stderr + greenbone_steve_user_create.stdout)
+      retries: 10
+      delay: 10
+      until: greenbone_admin_password_set is succeeded

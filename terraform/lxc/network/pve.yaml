@@ -114,10 +114,14 @@ attachments:
   # pve-test-vm's instance, shared subnet.
   # Containers: pentagi-stack (192.168.70.10 — canonical; pve-test-vm's own
   # instance uses .110, freed for this purpose 2026-07-26).
+  #   greenbone-stack (192.168.70.11 — canonical; pve-test-vm's own instance
+  #   uses .111, base+100 convention). Not yet deployed here — added to this
+  #   file for parity/documentation ahead of an eventual pve promotion, per
+  #   docs/greenbone-stack/plan.md.
   #
   # See docs/pentagi-stack/plan.md for the pve-test-vm precedent this
   # mirrors, including the real MikroTik containment policy this zone needs
-  # once live (Traefik -> pentest_seg:8443, pentest_seg -> infra_seg
+  # once live (Traefik -> pentest_seg:8443/8080, pentest_seg -> infra_seg
   # apt-cacher, pentest_seg -> edge_seg Harbor, pentest_seg -> LLM_GPU host,
   # pentest_seg -> authorized pentest target, explicit deny to everything
   # else).
@@ -173,6 +177,7 @@ zones:
     attachment: pentest_seg
     containers:
       - "pentagi-stack — ${lab_ip_pentagi}"
+      - "greenbone-stack — ${lab_ip_greenbone} — not yet deployed, see docs/greenbone-stack/plan.md"
 
 policies:
   - from: edge_seg
@@ -219,6 +224,14 @@ policies:
     protocol: tcp
     ports: [8443]
     description: Traefik to the PentAGI UI (mirrors pve-test-vm.yaml)
+  - from: edge_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8080]
+    description: >-
+      Traefik to the Greenbone GSA web UI — a custom plain-HTTP nginx
+      server block, not gsad's own port (mirrors pve-test-vm.yaml; not
+      yet deployed here — see docs/greenbone-stack/plan.md)
   - from: mgmt_seg
     to: pentest_seg
     protocol: tcp
@@ -296,6 +309,13 @@ policies:
       Mirrors the rule above -- explicit outbound leg to the same single
       authorized target, so nothing about port/protocol choice on either
       side of this one host pair can introduce test ambiguity.
+  - from: pentest_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [3389, 6636]
+    description: >-
+      greenbone-stack to Authentik's LDAP outpost (mirrors pve-test-vm.yaml;
+      not yet applied here — greenbone-stack isn't deployed on pve yet).
   - from: pentest_seg
     to: default
     protocol: all
