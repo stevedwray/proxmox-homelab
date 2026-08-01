@@ -508,6 +508,7 @@
                 - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
                 - SPLOITUS_ENABLED=${SPLOITUS_ENABLED:-true}
                 - SEARXNG_URL=${SEARXNG_URL:-}
+                - SEARXNG_LANGUAGE=${SEARXNG_LANGUAGE:-en}
                 - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
                 - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
                 - DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-}
@@ -653,6 +654,11 @@
 
           # Search tools
           SEARXNG_URL=http://{{ pentagi_framework_host }}:8082
+          # PentAGI always sends a `language` query param to SearxNG; an
+          # unset SEARXNG_LANGUAGE means it sends "language=" (empty),
+          # which SearxNG rejects with HTTP 400 "Empty language parameter"
+          # -- confirmed live, this was silently failing every search.
+          SEARXNG_LANGUAGE=en
           DUCKDUCKGO_ENABLED=true
           SPLOITUS_ENABLED=true
 

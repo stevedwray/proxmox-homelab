@@ -512,3 +512,164 @@ in the web UI. Not yet checked in the UI (deliberately deferred).
 Follow-up: find the actual settings screen/mutation and test a custom
 `generator`/`refiner` override requesting one subtask per distinct
 service/vulnerability.
+
+## Laguna S 2.1 as adviser/solo model, autonomous test harness (2026-07-30 to 2026-08-01)
+
+Stood up `scripts/pentagi-test-harness/` (see `test-harness-design.md`)
+to compare Poolside's Laguna S 2.1 (`UD-Q4_K_M`, ~68GiB across 3 GGUF
+shards) against gpt-oss-120b as the `adviser` role, then to run Laguna
+standalone across every PentAGI role. Real GGUF header (parsed directly,
+not from marketing copy): `architecture=laguna`, `block_count=48`
+(real layer count), `expert_count=256`, `expert_used_count=10`,
+`attention.head_count_kv=8`, `key_length=128`, `value_length=128`,
+`embedding_length=3072`, `context_length=262144` (the real max —
+**not** the "1M context" figure in Poolside's marketing),
+`rope.scaling.original_context_length=8192` (the real trained-native
+context before RoPE extension).
+
+### BadAlloc on load: `n-gpu-layers=999` vs Laguna's real 48 layers
+
+Loading Laguna with the router's global `--n-gpu-layers 999` (fine for
+Qwen3.6/gpt-oss, both much deeper networks) failed after reaching
+~97-98% of the weight-loading stage with repeated
+`HSA exception: BadAlloc` / `cudaMalloc failed: out of memory` — even
+with Laguna completely alone in memory, ruling out total-pool
+exhaustion. Passing an uncapped `999` instead of Laguna's real count
+(48) is suspected to size an internal buffer for a hypothetically
+deeper network, triggering an oversized single allocation. Fix: give
+Laguna its own explicit `n-gpu-layers = 48` in `models-preset.ini` —
+this is the same router preset-merge-override bug already documented
+above for `ctx-size` (`common_preset::merge()` always lets the
+router's own top-level `command:` flags win over a per-model preset),
+so `--n-gpu-layers 999` also had to come out of
+`llamacpp-router`'s docker-compose `command:` block entirely, with
+`n-gpu-layers=999` added explicitly to Qwen3.6/gpt-oss's own preset
+sections instead. Confirmed fixed by watching a retry sail past the
+exact progress value (`0.9784`) where the original attempt failed.
+
+Separately confirmed: Ollama holding 3 unrelated models resident
+indefinitely (`keep_alive` effectively infinite) was the real cause of
+an *earlier*, distinct OOM on Laguna's very first load attempt — ~74GB
+held by Ollama left too little free for Laguna's ~68GB footprint even
+though llama.cpp's own `/v1/models` showed everything unloaded. The
+runner's `free_ollama_if_needed()` now stops all Ollama-resident models
+defensively before any Laguna run.
+
+### Max-context load test: 262144 (the real GGUF max) loads clean, with room to spare
+
+With the `n-gpu-layers` fix in place, reloaded Laguna solo at
+`ctx-size=262144` (the real architectural max, not the marketed
+figure) to see whether the large KV-cache allocation this implies would
+reproduce a BadAlloc under a different trigger. It did not: weight
+loading completed cleanly (100%, ~20 minutes, mostly I/O-bound — one
+apparent stall at a fixed progress value for ~5 minutes turned out to
+just be one large tensor loading, CPU time kept climbing the whole
+time), and total memory only grew from ~71GB (weights alone) to ~84GB
+once fully "ready" — far under the ~48GB extra the
+`2 × n_layers × n_kv_heads × head_dim × bytes_per_value` formula
+predicts for a full 262144-token KV cache (`2×48×8×128×2 = 192KiB/token
+≈ 48GB at max context`). This gap strongly suggests llama.cpp commits
+KV-cache pages lazily as context is actually used rather than
+upfront at load time — real memory pressure under a long, heavily-used
+context is still untested. Confirmed serving correctly via a live
+chat-completion round trip (`n_ctx=262144` in the model's own reported
+metadata, cache hit on the second call).
+
+**Editing `ctx-size` in `models-preset.ini` and hitting the hot-reload
+endpoint (`GET /v1/models?reload=1`) alone did not pick up the change**
+for an already-unloaded model — the router's displayed spawn args for
+Laguna kept showing the old value until a full
+`docker compose up -d --force-recreate llamacpp-router` was run,
+mirroring the router-global-flag-change behavior already documented
+above.
+
+### Flow 25 (dual-model, Laguna-as-adviser): traced why the first task never finished
+
+Flow 25 (Qwen3.6 for every role except `adviser`, Laguna as adviser)
+ran 183 minutes and never got past its first task. Root cause, traced
+via direct `psql` queries against `pgvector`: subtask 172 (executed by
+Qwen3.6, not Laguna) opened by **fabricating an entirely different,
+wrong service list** (Apache HTTP Server 2.4.52, Tomcat 9.0.65, MySQL
+8.0.31, OpenSSH 8.9p1 — none of which exist on `harness-target`) as
+its very first tool call, instead of reading the real enumeration data
+its own task description told it to use (Redis 7.4.10 on 6379, Jetty
+9.2.11/Struts2 on 8080). It burned roughly 105 of the subtask's ~183
+minutes chasing fake CVEs for services that don't exist before
+self-correcting (re-ran nmap, read the real file, ran one correct
+`redis-info` NSE check) — but still closed with an **empty** `done`
+call, which PentAGI silently treats as `failed` (the same
+bare-`done`-defaults-to-failed pattern documented earlier in this
+file). Laguna's own `advice` tool calls in this same subtask (the only
+role it served) were all correctly grounded in the real Redis+Struts2
+data throughout — the fabrication and the failure were both Qwen3.6's,
+not Laguna's.
+
+### Flow 27 (Laguna-solo, ctx=8192): confirmed the context-overflow risk directly
+
+Running every role through Laguna at the adviser's original
+`ctx-size=8192` (fine for lightweight advice, not for heavier roles)
+produced a direct, live confirmation of the expected risk: the
+`searcher` role hit
+`API returned unexpected status code: 400: request (8194 tokens)
+exceeds the available context size (8192 tokens), try increasing it`,
+retried into a larger request that still didn't fit, and cascaded into
+`reflector recursion detected: cannot invoke caller reflector again
+after reflector advice failed`. The task never left `created` status
+(no subtasks were ever planned) for 30+ minutes before being killed
+manually. This is the direct motivation for the max-context test above
+— resolved by giving Laguna its real max ctx-size instead of the
+adviser-sized default when it's covering every role.
+
+### Overnight all-Laguna-maxctx run (flows 28-30): two new wheel-spin causes, distinct from flow 25's
+
+With `n-gpu-layers` and `ctx-size=262144` both fixed, ran 3 repeat
+flows overnight, all-roles-Laguna. None completed cleanly, but for two
+new, non-model reasons — neither is a Laguna reasoning failure the way
+flow 25's fabrication was:
+
+- **SearxNG rejected every single query with HTTP 400.** PentAGI's
+  `searxng.go` unconditionally sends a `language` query param
+  (`params.Add("language", s.language())`, no empty check, unlike the
+  `time_range` param a few lines below it which does skip when empty).
+  With no `SEARXNG_LANGUAGE` env var set, this sends a literal
+  `language=` (empty), and SearxNG rejects that outright with
+  `{"error": "Empty language parameter"}` — confirmed by reproducing
+  the exact request by hand. Fix: added `SEARXNG_LANGUAGE=en` to the
+  stack's `.env`/`docker-compose.yml` (both the live deployment and
+  `deploy-pentagi-stack.yml` for future deploys) — no PentAGI code
+  patch needed. **DuckDuckGo also failed on every query**
+  (`context deadline exceeded` reaching `html.duckduckgo.com`), which
+  looks like `pentest_seg` simply has no outbound internet egress by
+  design, not a bug — worth deciding whether external web search
+  should be disabled outright for this stack rather than left to fail
+  and retry. Flow 28 spent ~20 minutes retrying both search tools
+  before ever creating a single subtask; flow 30 hit the same wall
+  later, after 3 real subtasks had already completed.
+- **A guardrail-retry loop, not a search failure**: flow 29 got past
+  its first subtask, then spent the rest of its 120-minute watchdog
+  window retrying near-identical `msfconsole` invocations ending in an
+  interactive `sessions` command — correctly rejected every time by the
+  fork's own terminal guardrail (`"references a session id without the
+  non-interactive '-c' flag -- this enters an interactive mode"`).
+  The guardrail did its job; Laguna did not adapt its approach after
+  repeated identical rejections and never found the correct
+  non-interactive syntax. Distinct from flow 25's fabrication — this is
+  a "doesn't take the hint" failure mode, not a "invents wrong data"
+  one.
+
+All three flows are recoverable evidence of real, if incomplete,
+progress (9-14 real subtasks total completed across the three combined)
+rather than pure wheel-spinning once the two issues above are ruled
+out — worth a repeat run now that SearxNG is fixed, to see whether
+clearing the search-retry loop alone is enough for a clean completion.
+
+### Runner bug: `write_result_file` crashed for `all_roles` runs
+
+`write_result_file()` unconditionally referenced
+`run['qwen_ctx_size']`/`run['qwen_reasoning_budget']`, which don't
+exist on `all_roles` run configs (there's no separate Qwen3.6 in that
+mode) — every `all_roles` run's result file silently failed to write
+(`KeyError: 'qwen_ctx_size'`, logged as `run N FAILED` right after a
+real, complete flow). Fixed by making that line conditional on
+`run.get("all_roles")`; the three missing result files for flows 28-30
+were regenerated directly from the database after the fix landed.

@@ -1,8 +1,14 @@
 # PentAGI Automated Test Harness — Design Sketch
 
-Status: **design only, not implemented; target infra is implemented**,
-see [harness-target.md](./harness-target.md) for the dedicated Struts2 +
-Redis target now standing on `pve-test-vm`. This documents a concrete plan for
+Status: **implemented and run repeatedly** — `scripts/pentagi-test-harness/`
+(runner: `run_sequence.py`, config: `test_sequence.json`, usage:
+`README.md`). See "Implementation notes" below for what changed from
+this design during actual use, and `lessons-learned.md`'s "Laguna S 2.1
+as adviser/solo model, autonomous test harness" section for the bugs
+found and fixed along the way. This document otherwise remains the
+original design rationale — see [harness-target.md](./harness-target.md)
+for the dedicated Struts2 + Redis target on `pve-test-vm` it runs
+against. The rest of this file documents a concrete plan for
 scripting repeated PentAGI flow runs (varying model/config between runs)
 instead of manually starting flows and polling status through the UI, as
 this engagement has done throughout `lessons-learned.md`. Written up
@@ -196,19 +202,58 @@ in-memory state to lose.
   the restrictions in the task prompt itself. No change in authorization
   posture from what's already been running manually.
 
-## Open items before building
+## Open items before building (resolved)
 
-1. Confirm Metasploitable2's actual Proxmox node/VMID and snapshot
-   rollback path (§3).
-2. Confirm whether `createFlow`'s `modelProvider` argument can select
-   between *already-configured* providers (e.g. both the custom and
-   ollama providers registered simultaneously against one PentAGI
-   instance) — if so, some variants might not need a container restart
-   at all, just a different `modelProvider` value per `createFlow` call.
-   Not yet checked in source.
-3. Decide the harness's own auth credentials/session handling — reuse an
-   existing PentAGI user or create a dedicated service account.
-4. Pick the polling transport: GraphQL queries (cleaner, typed) vs. the
-   direct `psql` queries this session already validated (richer detail,
-   more brittle to schema changes). Likely both — GraphQL for the
-   loop's completion check, `psql` for the post-run deep-dive.
+1. ~~Confirm Metasploitable2's actual Proxmox node/VMID and snapshot
+   rollback path (§3).~~ Moot — the harness runs exclusively against
+   `harness-target` (stateless by design, §3), never Metasploitable2.
+2. ~~Confirm whether `createFlow`'s `modelProvider` argument can select
+   between already-configured providers.~~ Not needed in practice —
+   every run so far has used a single `"custom"` provider and swapped
+   which model(s) sit behind each role instead.
+3. Harness auth: reuses the existing PentAGI admin account
+   (`admin@pentagi.com`), password passed via `PENTAGI_ADMIN_PASSWORD`
+   env var (SOPS-backed, `terraform/secrets.common.enc.yaml`), never
+   written to the config file.
+4. Polling transport: GraphQL only in the end (`tasks(flowId: ID!)` —
+   note **`ID!`, not `Int64!`**, a real bug the first live test caught).
+   `psql` against `pgvector` is still used for the post-run toolcall
+   summary and any deep-dive investigation, exactly as anticipated.
+
+## Implementation notes (2026-07-30 to 2026-08-01)
+
+What actually shipped, and where it diverged from the design above:
+
+- **`all_roles` mode, not anticipated in the original design**: beyond
+  swapping just the `adviser` role, the runner supports pointing
+  *every* role at one model (`swap_all_roles_to_model()`), used to test
+  Laguna S 2.1 standalone across the whole flow rather than paired with
+  Qwen3.6. This turned out to be the more interesting comparison in
+  practice — see `lessons-learned.md` for the flow-25 (dual-model) vs
+  flow-27/28-30 (Laguna-solo) results.
+- **Memory-safety gate**: `check_memory()` (min free GiB threshold) plus
+  `free_ollama_if_needed()` guard every Laguna-loading run, added after
+  a real OOM this session traced to Ollama holding unrelated models
+  resident indefinitely — not just llama.cpp's own state.
+- **Watchdog is a hard stop, not just a design note**: `poll_flow()`
+  calls `stopFlow` and returns whatever partial status exists once
+  `watchdog_timeout_minutes` elapses, so a stuck run never blocks the
+  rest of the sequence. Tuned down from 180 to 120 minutes after
+  watching real runs — long enough for genuine multi-subtask progress,
+  short enough that a stuck run doesn't eat the whole night alone.
+- **Result files landed in the wrong place at first**: `RESULTS_DIR`
+  originally assumed the script lived inside a git checkout
+  (`<repo>/scripts/...`); since it's deployed standalone to
+  `/opt/pentagi-test-harness/` on the `pentagi-stack` LXC, that resolved
+  to `/` on the LXC's own filesystem. Fixed to a plain `results/`
+  subdirectory next to the script, synced into
+  `docs/pentagi-stack/artifacts/harness-runs/` manually after each
+  batch.
+- **`write_result_file` crashed for `all_roles` runs** (`KeyError:
+  'qwen_ctx_size'`, since those configs have no separate Qwen3.6) —
+  every `all_roles` run's result file silently failed to write until
+  fixed; see `lessons-learned.md`.
+- **Runs detached via `setsid nohup ... & disown` over SSH survive
+  session/VS Code closure as intended** — confirmed across multiple
+  multi-hour unattended sequences, including one that ran through a
+  full overnight/next-morning gap.

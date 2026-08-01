@@ -19,39 +19,29 @@
     "compose_dir": "/opt/pentagi-stack",
     "pentagi_container": "pentagi"
   },
-  "watchdog_timeout_minutes": 180,
+  "watchdog_timeout_minutes": 120,
   "poll_interval_start_seconds": 60,
   "poll_interval_max_seconds": 300,
   "runs": [
     {
-      "id": 4,
-      "label": "laguna-baseline",
+      "id": 8,
+      "label": "laguna-solo-maxctx-run1",
       "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
-      "adviser_ctx_size": 8192,
-      "qwen_ctx_size": 32768,
-      "qwen_reasoning_budget": 2000
+      "adviser_ctx_size": 262144,
+      "all_roles": true
     },
     {
-      "id": 5,
-      "label": "laguna-high-reasoning-budget",
+      "id": 9,
+      "label": "laguna-solo-maxctx-run2",
       "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
-      "adviser_ctx_size": 8192,
-      "qwen_ctx_size": 32768,
-      "qwen_reasoning_budget": 3500
+      "adviser_ctx_size": 262144,
+      "all_roles": true
     },
     {
-      "id": 6,
-      "label": "laguna-high-ctx",
+      "id": 10,
+      "label": "laguna-solo-maxctx-run3",
       "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
-      "adviser_ctx_size": 8192,
-      "qwen_ctx_size": 49152,
-      "qwen_reasoning_budget": 2000
-    },
-    {
-      "id": 7,
-      "label": "laguna-solo-all-roles",
-      "adviser_model": "Laguna-S-2.1-UD-Q4_K_M-00001-of-00003",
-      "adviser_ctx_size": 8192,
+      "adviser_ctx_size": 262144,
       "all_roles": true
     }
   ]

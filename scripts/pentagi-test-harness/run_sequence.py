@@ -312,7 +312,15 @@ def write_result_file(run, flow_id, tasks, elapsed_s):
         "",
         f"- Flow ID: {flow_id}",
         f"- Adviser model: {run['adviser_model']} (ctx={run['adviser_ctx_size']})",
-        f"- Qwen3.6 ctx-size: {run['qwen_ctx_size']}, reasoning-budget: {run['qwen_reasoning_budget']}",
+    ]
+    if run.get("all_roles"):
+        lines.append("- All roles on adviser model (no separate Qwen3.6)")
+    else:
+        lines.append(
+            f"- Qwen3.6 ctx-size: {run['qwen_ctx_size']}, "
+            f"reasoning-budget: {run['qwen_reasoning_budget']}"
+        )
+    lines += [
         f"- Wall-clock duration: {elapsed_s / 60:.1f} minutes",
         f"- Generated: {datetime.now(timezone.utc).isoformat()}",
         "",
