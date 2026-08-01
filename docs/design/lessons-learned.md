@@ -179,6 +179,37 @@ entirely on a single stale manifest elsewhere), then push the result via
 `ansible-playbook deploy-proxy-stack.yml -e traefik_generated_source_dir=<generated
 dir>`, replicating what `reconcile_all_edge()` in `provision.sh` does for full runs.
 
+## SearXNG
+
+**SearXNG's stock default engine set (`use_default_settings: true`, no
+`engines:` override) is largely non-functional for a self-hosted instance
+behind a residential/lab IP — this looks like a migration regression but
+usually isn't.** Confirmed live 2026-08-02 on `ai-services-stack`: of the
+defaults enabled for the `general` category, `duckduckgo`/`duckduckgo web`
+failed with a hard TCP connect timeout to `html.duckduckgo.com`'s Azure IP
+— reproduced identically from a completely separate workstation on the same
+WAN uplink, proving it's a network-path issue upstream of the lab, not an
+`ai_seg` (or any zone's) firewall gap. `google cse`, `startpage`, `brave`,
+and `qwant` all connect fine but bot-detect and suspend/CAPTCHA scraped
+requests within a query or two (`SearxEngineTooManyRequestsException`,
+`Suspended: CAPTCHA`) — an inherent problem with unauthenticated scraping
+from a small pool of source IPs, present on any SearXNG deployment with
+this engine set, not something a migration introduces. Two engines *not*
+enabled by default came back with real, relevant results and no
+bot-pushback when tested directly: `mwmbl` (independent crowdsourced index)
+and `searchmysite` (indexes personal/independent sites). Practical
+consequence for the app consuming SearXNG: enabled-but-broken engines don't
+fail fast — they eat the full per-engine timeout on every single query, so
+a query that would've had a real answer from a working engine still surfaces
+as "no results" upstream (OpenWebUI: `404: [ERROR: No results found from
+web search]`) because the response never comes back in time. Fix: disable
+the broken/blocked engines and enable ones actually confirmed reachable, via
+an `engines:` block appended to `settings.yml` — reachability is
+network/reputation-dependent, so re-verify with a direct
+`/search?q=X&format=json&engines=<name>` call against the live instance
+before trusting any specific engine list, rather than assuming SearXNG's
+shipped defaults work out of the box.
+
 ## Chainloop
 
 **Chainloop has no Docker Compose self-hosting path.**

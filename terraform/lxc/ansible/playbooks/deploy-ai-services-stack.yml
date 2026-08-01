@@ -163,6 +163,61 @@
             fi
       no_log: true
 
+    - name: Ensure SearXNG's engine selection matches what's actually reachable
+      ansible.builtin.blockinfile:
+        path: "/var/lib/docker/volumes/ai-services-searxng-data/_data/settings.yml"
+        marker: "# {mark} ANSIBLE MANAGED BLOCK - working-engines override"
+        insertafter: EOF
+        block: |
+          engines:
+            # Confirmed live 2026-08-02: TCP connect to duckduckgo's html
+            # endpoint (20.43.x.x, Azure-hosted) times out from this LAN --
+            # reproduced from both pve-test-vm and a separate workstation on
+            # the same WAN uplink, so it's a network-path issue upstream of
+            # this stack, not an ai_seg firewall gap. google cse, startpage,
+            # brave, qwant, and yahoo are all reachable but bot-detect and
+            # suspend/CAPTCHA a self-hosted SearXNG's scraped requests within
+            # a query or two. Left enabled by SearXNG's own defaults
+            # (use_default_settings: true), these don't just fail
+            # silently -- they eat the whole per-engine timeout window on
+            # every query, which is what surfaces to OpenWebUI as
+            # "404: No results found from web search" even though other
+            # engines would have answered in time. See
+            # docs/design/lessons-learned.md's SearXNG entry.
+            - name: duckduckgo
+              disabled: true
+            - name: duckduckgo web
+              disabled: true
+            - name: google cse
+              disabled: true
+            - name: startpage
+              disabled: true
+            - name: brave
+              disabled: true
+            - name: qwant
+              disabled: true
+            - name: yahoo
+              disabled: true
+            - name: presearch
+              disabled: true
+            # Confirmed live 2026-08-02: both return real, relevant results
+            # with no bot-detection pushback from this network -- mwmbl is
+            # an independent crowdsourced index, searchmysite indexes
+            # personal/independent sites. Neither is enabled by SearXNG's
+            # own defaults.
+            - name: mwmbl
+              disabled: false
+            - name: searchmysite
+              disabled: false
+      register: ai_services_searxng_settings_reconciled
+
+    - name: Restart SearXNG after engine settings change
+      community.docker.docker_container:
+        name: searxng
+        state: started
+        restart: true
+      when: ai_services_searxng_settings_reconciled.changed
+
     - name: Install OpenWebUI docker-compose.yml
       ansible.builtin.copy:
         dest: "{{ ai_services_compose_dir }}/docker-compose.yml"

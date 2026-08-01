@@ -54,7 +54,9 @@ cleanly before Step 7 (promote to `stable`, deploy to `pve`).
 - **SearXNG RAG search**: OpenWebUI's own container successfully calls
   `searxng:8080` internally and gets real results — the same integration
   class that was broken for PentAGI's SearXNG this session, confirmed
-  working here.
+  working here. This validated the *network path* (`ai_seg` → `searxng`
+  container), not the *quality* of results — see bug 11 below, found
+  afterward when the operator reported real queries coming back empty.
 - **No regression to `mcp-utility-stack`**: the live `pve` instance still
   responds correctly (`406`, one of its documented-healthy codes). The
   `pve-test-vm` instance being unreachable is pre-existing — it was
@@ -175,6 +177,26 @@ not theoretical:
     the same session once the actual internal-TLS consumer pattern was
     pointed out. Needed a new `ai_seg → mgmt_seg` firewall rule (the first
     of its kind — see rule 8 in the firewall list above).
+11. **OpenWebUI's web search kept failing with `404: No results found`
+    even though the SearXNG network path (bug/validation above) was fine.**
+    Root-caused live: SearXNG's default engine set for `general` queries
+    includes `duckduckgo`/`duckduckgo web` (TCP connect timeout to
+    `html.duckduckgo.com` — reproduced from a separate workstation on the
+    same WAN uplink, so a real network-path issue, not an `ai_seg`
+    firewall gap) and `google cse`/`startpage`/`brave`/`qwant`/`yahoo`/
+    `presearch` (all reachable but bot-detect/CAPTCHA a self-hosted
+    SearXNG's scraped requests). None of these fail fast — they eat the
+    full per-engine timeout every query, so a real answer from a working
+    engine still arrives too late. This isn't something the migration
+    broke; `framework`'s original deployment has the same stock
+    `use_default_settings: true` config and would show the same behavior
+    under real use, it just hadn't been stress-tested there. Fixed by
+    disabling the broken/blocked engines and enabling two confirmed
+    working ones (`mwmbl`, `searchmysite`) via an idempotent
+    `ansible.builtin.blockinfile` task against the SearXNG data volume's
+    `settings.yml` — survives both fresh deploys and a settings file
+    migrated in from `framework`. See
+    `docs/design/lessons-learned.md`'s SearXNG section.
 
 See `docs/design/lessons-learned.md` for the durable, generalized version
 of these — this file is the migration-specific record.

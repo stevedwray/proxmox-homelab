@@ -123,6 +123,20 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   correct but genuinely unreachable at its public hostname — see
   `docs/design/lessons-learned.md`'s Authentik section for the exact
   commands.
+- **SearXNG's `use_default_settings: true` engine set is mostly
+  non-functional for OpenWebUI's RAG web search from this network** —
+  confirmed live 2026-08-02: `duckduckgo`/`duckduckgo web` are TCP-level
+  unreachable (reproduced from a separate workstation on the same WAN
+  uplink, not an `ai_seg` firewall gap), and `google cse`/`startpage`/
+  `brave`/`qwant`/`yahoo`/`presearch` all bot-detect and suspend/CAPTCHA a
+  self-hosted SearXNG's scraped requests. The playbook's "Ensure SearXNG's
+  engine selection matches what's actually reachable" task disables those
+  and enables `mwmbl`/`searchmysite` (confirmed working) via an idempotent
+  `blockinfile` on the volume's `settings.yml` — this survives a settings
+  file migrated in from `framework` (which has the same underlying
+  default-engine problem, just never surfaced because nobody stress-tested
+  web search there). See `docs/design/lessons-learned.md`'s SearXNG
+  section.
 
 ## Playbook
 
