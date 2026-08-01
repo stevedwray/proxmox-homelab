@@ -31,8 +31,24 @@ vendored compose healthy or exited-0 as expected (feed-loader containers).
 Admin login confirmed working via a real HTTP request to the GSA login
 endpoint. `https://gvm.test.gibbsgreatly.xyz` resolved via Technitium,
 routed through Traefik, and returned Authentik's forward-auth challenge —
-the same signature `pentagi-stack`'s route produces. An authorized test
-scan (Phase 4) is still open on both environments — see [plan.md](./plan.md).
+the same signature `pentagi-stack`'s route produces.
+
+**Authorized test scan (Phase 4) done, 2026-08-01** — ran against
+`harness-target` on `pve` (production), 35 real findings (2 critical
+Eclipse Jetty issues, `Redis Server No Password`, etc.), proving the scan
+engine and feed data genuinely work end-to-end. See [plan.md](./plan.md)
+§4 for the full results and two real bugs hit getting there.
+
+**Known limitation: the GSA reports page is currently broken** — a real,
+upstream `gvmd` bug (not this stack's config) crashes `gvmd` on any
+`get_reports` call. Confirmed both server-side (`docker logs` shows
+`gvmd` aborting on a SQL error) and in the browser (`"Failure to receive
+response from manager daemon"`). Matches a known upstream bug class
+already tracked (`greenbone/gvmd` #2273) with a fix in progress upstream,
+not yet in the `:stable` tag this stack uses. **Workaround**: results can
+still be pulled via GMP's `get_results` (see [plan.md](./plan.md) §4) —
+just not through the GSA reports page itself until Greenbone ships a fix.
+Documented and accepted as a known limitation rather than hand-patched.
 
 **Per-user LDAP login (`steve`) is CONFIRMED WORKING, 2026-08-01.** `gvmd`
 authenticates real users against Authentik's existing LDAP outpost
@@ -220,6 +236,16 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 
 ## Key facts up front
 
+- **The GSA reports page is broken by a real, upstream `gvmd` bug** (any
+  `get_reports` call crashes `gvmd`) — known limitation, not this stack's
+  fault, matches `greenbone/gvmd` issue #2273's bug class. Pull results via
+  GMP's `get_results` instead (see plan.md §4) until Greenbone ships a fix.
+- **GVM's default host-alive check needs `alive_tests: Consider Alive`
+  for narrowly-firewalled targets** like `harness-target` (TCP-only
+  firewall rule, no ICMP) — otherwise the alive check fails silently and
+  the scan skips the host entirely in ~30 seconds with zero results,
+  which looks deceptively like "scanned, found nothing." Check
+  `report_hosts` row count to tell the difference.
 - **Per-user LDAP login (`steve`) via Authentik's existing LDAP outpost is
   confirmed working**, on both `pve-test-vm` and `pve`. Hit what looked
   like a hard upstream Authentik outpost bug during initial testing —

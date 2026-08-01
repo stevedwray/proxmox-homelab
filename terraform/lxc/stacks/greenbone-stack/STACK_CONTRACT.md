@@ -80,6 +80,22 @@ pass) would make `pentagi-stack` a consumer of this stack's GMP API.
 
 ## What Must Not Be Edited Casually
 
+- **The GSA reports page is broken by a real, upstream `gvmd` bug** — any
+  `get_reports` GMP call (list or single-report) crashes `gvmd` with a
+  Postgres error (`column "severity_error" does not exist`, an
+  unsubstituted macro in one of gvmd's own query templates). Confirmed via
+  `docker logs` (aborts immediately after the failed query) and in the GSA
+  UI itself. Matches the known upstream bug class in `greenbone/gvmd`
+  issue #2273 (fix in progress, not yet in the `:stable` tag this stack
+  uses). Do not attempt to hand-patch the Postgres schema/views for this —
+  use GMP's `get_results` instead, which takes a different code path and
+  works fine. See `docs/greenbone-stack/plan.md` §4.
+- **New GVM targets need `alive_tests: Consider Alive` if the target's
+  firewall rule doesn't allow ICMP** (e.g. `harness-target`, TCP-only) —
+  otherwise GVM's default host-alive check fails silently and the scan
+  skips the host entirely, finishing in ~30s with zero results that look
+  deceptively like a clean scan rather than a skipped one. Check whether
+  `report_hosts` has any rows for the report to tell the difference.
 - `ospd-openvas` requires `NET_ADMIN`/`NET_RAW` capabilities and
   `seccomp=unconfined`/`apparmor=unconfined` at the Docker level for packet
   capture and raw-socket scanning — this works under the same nested-Docker

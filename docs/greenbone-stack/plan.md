@@ -169,18 +169,57 @@ rendered extra-vars file before using it in an apply), redone correctly.
 
 ## 4. Authorized test scan
 
-**Status: not started — depends on Phases 1–3.**
+**Status: done, 2026-08-01.** Ran against `harness-target` (`192.168.1.55`)
+on `pve` (production) via raw GMP calls (`gvm-cli`, same mechanism used for
+LDAP setup) — created a port list scoped to the target's two authorized
+ports (6379, 8080), a target, and a "Full and fast" task against the
+`OpenVAS Default` scanner.
 
-Run one real scan to prove the engine + feed data actually work, not just
-that containers report "up":
+**35 real findings**, confirming the engine and feed data genuinely work:
+2 critical (Eclipse Jetty EOL, a Jetty security-bypass CVSS 9.8), 5 high
+(3 Jetty DoS CVEs/GHSAs, **Redis Server No Password** — confirms the
+target's deliberately unauthenticated Redis by design, Jetty privilege
+escalation), 8 medium, 4 low, 16 log/informational (including
+`Apache Struts Detection Consolidation`, confirming the Struts2 app itself
+was identified). No result was named specifically for the S2-045 RCE
+`harness-target`'s own docs call out — either that specific old plugin
+isn't in the current feed, or its exact version-match conditions didn't
+fire; the Jetty-server findings found instead are arguably just as
+significant.
 
-1. Create a target in GSA pointing at `harness-target`
-   (`docs/pentagi-stack/harness-target.md`) or `LAB_TARGET` (Metasploitable
-   2, `192.168.1.113`) — both are already-authorized scan targets for
-   `pentest_seg` per its existing firewall policy.
-2. Run a "Full and fast" scan (or equivalent) against it.
-3. Confirm the scan completes and produces findings consistent with the
-   target's known, deliberately-vulnerable services.
+**Two real bugs hit and fixed/worked around:**
+
+1. **First attempt returned 0 results in 34 seconds** — GVM's default
+   host-alive check relies on ICMP, but `harness-target`'s firewall rule
+   only allows TCP 8080/6379 (no ICMP), so the alive check silently
+   concluded the host was down and skipped scanning entirely (confirmed via
+   `report_hosts` having zero rows for that report — not "scanned, found
+   nothing," but "never actually scanned"). Fixed via `modify_target` with
+   `alive_tests: Consider Alive` (skip discovery, scan directly). Same
+   fix will be needed for any other narrowly-firewalled target — `LAB_TARGET`
+   has an unrestricted `protocol: all` rule so likely isn't affected, but
+   worth checking if it ever comes back with unexpectedly clean results.
+2. **A real, upstream `gvmd` bug breaks the entire GSA reports page** —
+   `get_reports` (any call, list or single-report) crashes `gvmd` with a
+   Postgres error: `column "severity_error" does not exist`, from an
+   unsubstituted macro token in one of `gvmd`'s own SQL query templates.
+   Confirmed server-side via `docker logs` (`Received Aborted signal`
+   immediately after the failed query) and confirmed in the GSA UI itself
+   (operator saw "Failure to receive response from manager daemon" trying
+   to view the reports list). This matches a known, already-filed upstream
+   bug class (`greenbone/gvmd` issue #2273, "Incorrect definition for
+   materialized view... with fresh docker deploy", fix PR #2274 open at
+   time of writing) — same root shape (a conditionally-built SQL/view
+   definition takes the wrong branch on a fresh deployment), different
+   specific column. **Not something to hand-patch** — investigated the
+   `gvmd` source looking for a safe, certain fix and didn't find one worth
+   the risk of live-editing production Postgres schema/views based on
+   incomplete certainty. **Workaround**: `get_results` (a different GMP
+   query, same data at the per-finding level) works fine and is what
+   produced the results above — the GSA reports page itself stays broken
+   until Greenbone ships a fix in the `:stable` tag. **Operator decision
+   (2026-08-01): document as a known limitation, move on** — not worth
+   chasing further right now.
 
 ## 5. Per-user LDAP login (steve, via Authentik)
 
