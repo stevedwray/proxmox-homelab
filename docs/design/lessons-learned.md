@@ -34,6 +34,38 @@ The Terraform SDN provisioner handles Simple zones only; VLAN zones are applied 
 Multiple setup and validation steps use it for Harbor and NetBox API checks. Add it to the
 Ansible bootstrap alongside other base tooling.
 
+**Contained zones (`ai_seg`, `pentest_seg`) have no direct route to `infra_seg`.**
+Docker image pulls using the raw `LAB_IP_HARBOR` address time out from these zones —
+confirmed live via a `docker pull` that hung until killed. Use `harbor.${LAB_DOMAIN}`
+(routed through Traefik/`edge_seg`) instead, matching `deploy-pentagi-stack.yml`'s
+`pentagi_framework_host`-style pattern. This reuses whatever `<zone>→edge_seg:443` rule
+the stack likely already needs for other reasons (OIDC, LM Studio), so it's usually not
+an extra firewall rule.
+
+**Live MikroTik state can silently diverge from `network/*.yaml` documentation.**
+A rule documented as an FQDN-based allowlist "the MikroTik must enforce via
+address-lists" turned out, on live inspection via the router's own read-only REST API
+(`MIKROTIK_READONLY_USER`/`MIKROTIK_READONLY_PASSWORD`), to be a flat subnet-wide accept
+rule with zero address-lists configured — the FQDN allowlist was the original intent,
+never the actual enforcement. Read the router's live state via the read-only API before
+extending a zone's firewall policy; don't assume the `.yaml` docs are ground truth.
+
+**`ansible.builtin.fetch` is a poor choice for large files.**
+It uses the `slurp` module internally — base64-encodes the entire remote file and ships
+it through Ansible's JSON result channel, with no streaming. An ~845MB real-world
+tarball took 18+ minutes and never completed. `ansible.posix.synchronize` (an rsync
+wrapper) does an efficient binary/delta transfer instead; the same transfer dropped to
+under 3 minutes. Reserve `fetch`/`copy` for genuinely small files.
+
+**Shared roles with relative-path assumptions break when reused from a different
+playbook location.** `lxc_base`'s CA-install task builds its source path as
+`{{ playbook_dir }}/../../../../certs/homelab-root.<env>.crt` — correct only for
+playbooks 4 directories deep under `terraform/lxc/ansible/playbooks/`. Reusing the role
+from a playbook at a different depth (e.g. `ansible/00-initial-setup/`, 2 deep) silently
+resolves the path outside the repo and skips CA install with no error — no failure, just
+quietly wrong. Don't reuse a shared role outside the directory depth it was written for;
+write correctly-pathed one-off tasks instead if the role can't be generalized.
+
 ## Harbor
 
 **Harbor's own images pull from Docker Hub on the first deployment pass.**
@@ -82,6 +114,21 @@ an API token, create Proxy Providers for Traefik forward-auth, and create OIDC p
 each integrated service (Grafana). This is the main obstacle to a fully automated rebuild.
 The `terraform-provider-authentik` can automate these steps and should be implemented before
 the platform is considered rebuild-safe.
+
+**LE staging on `pve-test-vm` breaks backend-side OIDC discovery, not just browser cert
+warnings — and this applies to Authentik's own edge route, not only individual app
+routes.** `authentik-stack/edge.yaml` uses the standard `letsencrypt` resolver (not the
+`step-ca`-backed override Harbor gets), so on `pve-test-vm` its cert is Let's Encrypt
+*staging* — untrusted by design (see the LE staging CA note above). Any backend service
+doing a server-side OIDC discovery fetch (not a human clicking through a browser
+warning) will hard-fail TLS verification against `authentik.${LAB_DOMAIN}` on
+`pve-test-vm`, confirmed by tracing this through to `authlib`'s actual HTTP client, not
+just inferred. Same root cause already affects the `llm.${LAB_DOMAIN}` (LM Studio)
+route. **Interactive OIDC login cannot be fully validated on `pve-test-vm` for any app**
+— this is expected, not a bug in the app's config — and will work once promoted to
+`pve` (real production LE cert). Don't spend time chasing this as if it were a
+configuration mistake; verify the cert issuer (`openssl s_client ... | openssl x509
+-noout -issuer`) before assuming a config/DB/cache bug.
 
 ## Chainloop
 

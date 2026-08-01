@@ -217,9 +217,11 @@ zones:
       - "pentagi-stack — ${lab_ip_pentagi}"
       - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
   ai_seg:
-    description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01, no pve-local containers yet (mcp-utility-stack lives on pve-test-vm; this zone exists on pve purely so pve's vmbr0 relays VLAN 50 for that nested VM)
+    description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg
-    containers: []
+    containers:
+      - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility} — live, promoted to pve 2026-08-01 (fast-tracked directly from feat/mcp-utility-stack, not through the usual stable promotion step)"
+      - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, planned by docs/ai-services-migration/plan.md, not yet deployed"
 
 policies:
   - from: edge_seg
@@ -231,6 +233,55 @@ policies:
       ai_seg is defined in network/pve-framework.yaml (VLAN 50, on
       fe-pve), not here — see the matching entry there and
       docs/framework-integration/decisions.md Decision 4.
+  - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [8081]
+    description: >-
+      Traefik to ai-services-stack (openwebui.$${LAB_DOMAIN}, HTTPS at the
+      edge, plain HTTP to the backend) — docs/ai-services-migration/plan.md.
+      The generic edge_seg -> ai_seg:[80,443] entry above is not enough on
+      its own, same reasoning as mcp-utility-stack's dedicated :8000 rule
+      on pve-test-vm.yaml.
+  - from: ai_seg
+    to: 192.168.1.8
+    protocol: tcp
+    ports: [8080, 11434]
+    description: >-
+      ai-services-stack to framework.gibbsgreatly.xyz (llamacpp-router,
+      Ollama) — docs/ai-services-migration/plan.md Step 2/3. The one real
+      config change this migration requires: OpenWebUI's backend routes
+      moved from a same-host host.docker.internal shortcut to this real
+      cross-subnet hop.
+  - from: ai_seg
+    to: edge_seg
+    protocol: tcp
+    ports: [443]
+    description: >-
+      ai-services-stack to Traefik — found via live verification, not in
+      the original plan.md draft: both authentik.$${LAB_DOMAIN} (OIDC
+      discovery + token exchange, OPENID_PROVIDER_URL) and
+      llm.$${LAB_DOMAIN} (LM Studio backend route) resolve via DNS to
+      $${LAB_IP_PROXY} (edge_seg), confirmed from authentik-stack/edge.yaml
+      and llm-gpu-stack/edge.yaml's own `dns.target` fields. Without this,
+      OpenWebUI's OIDC login and LM Studio route would both fail. Mirrors
+      pve-test-vm.yaml's identical rule.
+  - from: "${lab_ip_ai_services}"
+    to: internet
+    protocol: tcp
+    ports: [80]
+    description: >-
+      ai-services-stack's own IP only — SearXNG's remaining egress gap.
+      Live-verified 2026-08-02 via the MikroTik REST API (read-only
+      credentials): the live ai_seg -> internet rule on this router is
+      already a flat 192.168.50.0/24 -> !192.168.0.0/16 : tcp/443 accept
+      (whole subnet, not FQDN-scoped despite older docs claiming
+      otherwise, no address-lists configured) -- so 443 needs no new rule
+      for ai-services-stack. This adds only the one real gap, port 80,
+      scoped to this stack's own IP. Operator decision 2026-08-02
+      (docs/ai-services-migration/plan.md Step 4): leave the existing 443
+      posture as-is rather than retroactively tightening it as a side
+      effect of this migration. Mirrors pve-test-vm.yaml's identical rule.
   - from: edge_seg
     to: mgmt_seg
     protocol: tcp

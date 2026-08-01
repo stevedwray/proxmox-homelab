@@ -1,6 +1,9 @@
 # AI Services Migration
 
-Status: **planned, not started.**
+Status: **Steps 1–6 done and validated on `pve-test-vm`, not promoted.**
+See [current-state.md](current-state.md) for the checkpoint: live
+state, what's been validated and how, real bugs found and fixed during
+implementation, and next steps.
 
 Plan to move OpenWebUI + SearXNG off `framework.gibbsgreatly.xyz` (bare-metal
 GPU host, currently running them as flat-LAN Docker containers) onto a
