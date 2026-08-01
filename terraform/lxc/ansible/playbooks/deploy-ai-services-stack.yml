@@ -105,6 +105,10 @@
     # already proven live (Harbor's own hostname pull succeeded the same
     # way during this deployment).
     ai_services_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
+    # See the DEFAULT_MODELS env var below for why this exists at all --
+    # keep in sync with whichever model is actually kept loaded on
+    # framework's llama-swap, not a general "best" default.
+    ai_services_openwebui_default_model: "{{ lookup('env', 'OPENWEBUI_DEFAULT_MODEL') | default('Laguna-S-2.1-UD-Q4_K_M-00001-of-00003', true) }}"
     # Plaintext HTTP across a real subnet hop, not same-host -- unlike the
     # SearXNG vars below. Deliberate, not overlooked: llamacpp-router
     # enforces no auth on :8080 to any caller today (confirmed live
@@ -222,6 +226,20 @@
                 ENABLE_WEB_SEARCH: "true"
                 WEB_SEARCH_ENGINE: "searxng"
                 SEARXNG_QUERY_URL: "{{ ai_services_searxng_query_url }}"
+                # Without this, OpenWebUI defaults new chats to whichever
+                # model sorts first alphabetically among everything
+                # llamacpp-router reports -- not whichever model is
+                # actually loaded in VRAM. llama-swap only keeps
+                # `--models-max` (3) models loaded at once and evicts on
+                # demand; picking an unloaded model from a fresh chat
+                # triggers a real load, which for large models can take
+                # hours (confirmed live 2026-08-02: an accidental request
+                # against an unloaded 30B model started evicting the
+                # then-loaded Laguna model, which takes ~7h to reload).
+                # Keep this in sync with whichever model the operator is
+                # actually keeping warm -- it is not a statement that this
+                # specific model is somehow the "right" default in general.
+                DEFAULT_MODELS: "{{ ai_services_openwebui_default_model }}"
               depends_on:
                 searxng:
                   condition: service_healthy
@@ -291,6 +309,7 @@
                     os.environ["SEARXNG_QUERY_URL"]
                 ),
                 "webui.url": json.dumps(os.environ["WEBUI_URL"]),
+                "ui.default_models": json.dumps(os.environ["DEFAULT_MODELS"]),
             }
             pending = []
             for key, value in desired.items():
