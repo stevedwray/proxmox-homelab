@@ -1,5 +1,24 @@
 # AI Services Migration: OpenWebUI + SearXNG off `framework`, onto `pve` via `pve-test-vm`
 
+Status: **planned, ready to implement.** Both open questions that could
+have blocked starting (free `vmid`, router auth exposure) are resolved
+below — nothing left to research before Step 1.
+
+## Getting started (fresh session)
+
+1. This plan currently lives on `feat/mcp-utility-stack` (the branch's
+   own commit history is hundreds of commits ahead of `main`, which is
+   stale/unmerged in this repo — that's pre-existing repo state, not
+   something to fix as part of this work). Cut a fresh branch for the
+   actual implementation per the normal workflow — e.g.
+   `task/ai-services-migration` — from current HEAD; don't keep piling
+   implementation commits onto `feat/mcp-utility-stack` itself.
+2. Start at Step 1 below. `mcp-utility-stack`'s own directories
+   (`terraform/lxc/stacks/mcp-utility-stack/`,
+   `terraform/lxc/environments/{pve,pve-test-vm}/mcp-utility-stack/`) are
+   the concrete template to copy from — they're real, live, and proven,
+   not just referenced.
+
 ## Goal
 
 After this work, `framework.gibbsgreatly.xyz` (bare-metal Ubuntu, the GPU
@@ -115,11 +134,14 @@ framework.gibbsgreatly.xyz (192.168.1.8, flat LAN)
 1. **Scaffold `ai-services-stack` fresh**, following `mcp-utility-stack`'s
    proven shape (not the stale `pve-framework` version):
    - `terraform/lxc/stacks/ai-services-stack/stack.yaml` — rewrite from
-     scratch: `network.zone: ai_seg`, a fresh unused `vmid` (`50011` is
-     taken by `mcp-utility-stack`; use `50012` or next free), Docker
-     host template (matches the old file's shape here — it was already
-     Docker-based, unlike `llm-gpu-stack`/`comfyui-stack`), no
-     `device_passthrough` (no GPU need). `depends_on: [apt-cacher-stack]`.
+     scratch: `network.zone: ai_seg`, `vmid: 50013` (confirmed free —
+     `50010`/`50011` are the stale `llm-gpu-stack`/`comfyui-stack`
+     entries, `50011` is also live-reused by `mcp-utility-stack`,
+     `50012` is the stale old `ai-services-stack` — `50013` is the next
+     unused slot in this range as of 2026-08-02), Docker host template
+     (matches the old file's shape here — it was already Docker-based,
+     unlike `llm-gpu-stack`/`comfyui-stack`), no `device_passthrough`
+     (no GPU need). `depends_on: [apt-cacher-stack]`.
    - `edge.yaml` — one route, `openwebui.{{LAB_DOMAIN}}` → new LXC's
      `ai_seg` IP:8081, `auth.mode: oidc` unchanged (reuses the existing
      Authentik app). SearXNG itself stays unrouted/no public Traefik
@@ -145,13 +167,17 @@ framework.gibbsgreatly.xyz (192.168.1.8, flat LAN)
 3. **The one real config change, not just a relocation**: point
    OpenWebUI's `OPENAI_API_BASE_URLS`/`OLLAMA_BASE_URL` at
    `http://<framework-lan-ip>:8080/v1` and `:11434` instead of
-   `host.docker.internal`. Confirm the llama.cpp router's own auth
-   (`LLM_GPU_STACK_API_KEY`, already required for the LM Studio route)
-   is enforced identically for a direct `:8080` hit, not just the
-   Traefik-fronted one — if the router currently trusts all localhost
-   traffic without checking the key, moving to cross-network access
-   changes the actual exposure and the router config may need an
-   explicit auth check added, not just firewalled access.
+   `host.docker.internal`. **Checked live (2026-08-02): the llama.cpp
+   router does not enforce `LLM_GPU_STACK_API_KEY` (or any auth) on
+   direct `:8080` access** — a request with no key and a request with a
+   deliberately wrong key both returned `200`. It's already reachable
+   unauthenticated to anything on the flat LAN today (the port is
+   published to `0.0.0.0`); making it reachable from `ai_seg` too is a
+   wider network surface but not a new *authentication* gap — access
+   control here is firewall-only already, same posture as Ollama's
+   `:11434`. Worth flagging to the operator as a "do we want real auth
+   on this now that it's a formal cross-zone dependency" question, but
+   it does not block this migration — no router config change needed.
 
 4. **Egress allowlist for `ai_seg`**: SearXNG needs to reach whatever
    search engines it's configured to query (by default a broad set —
@@ -202,24 +228,20 @@ framework.gibbsgreatly.xyz (192.168.1.8, flat LAN)
 - OpenWebUI on `pve` serves real chat completions through both the
   llama.cpp and Ollama backends, and RAG web search returns real
   SearXNG results — not just "container is up."
-  the existing Authentik OIDC login still works unchanged.
+- The existing Authentik OIDC login still works unchanged.
 - `mcp-utility-stack` (the existing `ai_seg` tenant) shows no regression
   after the new stack and firewall/egress changes land alongside it.
 - Existing OpenWebUI chat history/users are present after the data
   migration, not reset to a fresh install.
 
-## Open questions to resolve before/during implementation
+## Open questions still to resolve during implementation
 
-1. Exact free `vmid` to use for the new `ai-services-stack` (avoid
-   `50011`, taken by `mcp-utility-stack`).
-2. Whether the llama.cpp router currently enforces
-   `LLM_GPU_STACK_API_KEY` on `:8080` for all callers or only trusts it
-   opportunistically — needs a direct check before Step 3, since this
-   changes real exposure once the endpoint is reachable cross-subnet
-   instead of only via `host.docker.internal`.
-3. Broad vs. narrow egress allowlist decision for SearXNG (Step 4) —
+1. Broad vs. narrow egress allowlist decision for SearXNG (Step 4) —
    a real tradeoff, not something to default silently.
-4. Whether to also decommission `cadvisor`/`portainer-agent` on
+2. Whether to also decommission `cadvisor`/`portainer-agent` on
    `framework` as part of this pass or leave them (leaning: leave them,
    they're host tooling, not consumer AI services — but worth a
    deliberate call, not silence).
+3. Whether the operator wants real auth added to the llama.cpp router's
+   `:8080` endpoint now that it's a formal cross-zone dependency (see
+   Step 3) — not required to proceed, but worth a deliberate answer.
