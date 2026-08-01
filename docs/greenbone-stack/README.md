@@ -1,50 +1,66 @@
 # Greenbone Stack
 
 Workspace for deploying [Greenbone Community Edition](https://greenbone.github.io/docs/latest/)
-(GVM/OpenVAS) — a vulnerability scanner — as `greenbone-stack`, a Debian LXC on
-`pve-test-vm`, joining `pentagi-stack`'s existing `pentest_seg` zone (VLAN 70)
-and exposing its web UI (GSA) through Traefik.
+(GVM/OpenVAS) — a vulnerability scanner — as `greenbone-stack`, a Debian LXC
+joining `pentagi-stack`'s existing `pentest_seg` zone (VLAN 70) and exposing
+its web UI (GSA) through Traefik. Deployed on both `pve-test-vm` (validation)
+and `pve` (production).
 
-Status: **Phases 1 and 3 done and verified live on `pve-test-vm`,
-2026-08-01.** `greenbone-stack` (VMID `70011`, `192.168.70.111`,
-`pentest_seg`) is up — all 21 containers from the vendored compose are
-healthy or exited-0 as expected (feed-loader containers). Admin login
-confirmed working via a real HTTP request to the GSA login endpoint.
-`https://gvm.test.gibbsgreatly.xyz` resolves via Technitium, routes through
-Traefik, and returns Authentik's forward-auth challenge — the same
-signature `pentagi-stack`'s route produces. Feed sync (Phase 2) is in
-progress (SCAP/CVE data still loading — can take hours from cold start,
-doesn't block Phase 3). An authorized test scan (Phase 4) is still open —
-see [plan.md](./plan.md).
+Status: **Live in production on `pve`, 2026-08-01.** Full deployment
+(LXC → compose stack → Traefik/Authentik edge route → DNS → per-user LDAP
+login) mirrored from the validated `pve-test-vm` build with zero new
+incidents — every gotcha found during `pve-test-vm` validation (see below)
+was already fixed in the playbook by the time this ran. VMID `70011`,
+`192.168.70.11`, `pentest_seg`. `https://gvm.lab.gibbsgreatly.xyz` resolves,
+routes through Traefik, and returns Authentik's forward-auth challenge.
+**Per-user LDAP login (`steve`) confirmed actually working** — the upstream
+Authentik outpost bug that blocked this on `pve-test-vm` is no longer
+reproducing (see "LDAP login" below).
 
-**Per-user LDAP login: fully configured, but currently BLOCKED by an
-upstream Authentik bug, 2026-08-01.** `gvmd` is correctly wired to
-authenticate real users (starting with `steve`) against Authentik's
-existing LDAP outpost (`ghcr.io/goauthentik/ldap`, part of `authentik-stack`,
-already running for `graylog-stack` — see
-`docs/monitoring-stack/graylog-migration-plan.md`), sitting *underneath*
-the existing Traefik `forwardAuth` gate, not instead of it. Required a new,
-narrowly-scoped MikroTik rule (`pentest_seg → mgmt_seg:3389,6636`, applied
-live via the router's own Safe Mode session) since `pentest_seg` had no
-prior route to `mgmt_seg`'s LDAP outpost — this part works and is verified.
+`greenbone-stack` on `pve-test-vm` has been **shut down** (containers
+stopped, Docker volumes — including the fully-synced feed data — preserved)
+now that production is live; `pve-test-vm` was the validation environment,
+not a second permanent deployment. Bring it back with `provision.sh --stack
+greenbone-stack` (targeting `pve-test-vm`) if further test-tier work is
+needed — no feed re-sync required.
 
-**The actual login does not work yet.** Confirmed via the outpost's own
-logs: every bind attempt with the real Authentik password for `steve`
-returns `"event":"User has access"` server-side — authentication itself
-succeeds, every time, over StartTLS, implicit LDAPS, and even plain
-unencrypted LDAP. But the client (both `gvmd` and a standalone
-`ldapwhoami` test) receives a garbled `"Protocol error"` instead of that
-success response — wrong passwords correctly return a clean "Invalid
-credentials", so this is specific to the *success* path. This matches
-several real, filed upstream bugs in `goauthentik/authentik`'s own issue
-tracker (bind sequences returning protocol/operations errors to
-standards-compliant LDAP clients despite server-side success, including
-reports in 2026.x releases) — not something fixable from `gvmd`'s side.
-**Decision: leave this configuration in place as-is** (it's correct and
-will start working once the outpost bug is fixed/the image is upgraded)
-and use the local `admin`/SOPS-password login day to day for now. See
-"LDAP login" below for full technical detail and the real bugs hit
-along the way to reaching this conclusion.
+Original `pve-test-vm` validation history, for reference: **Phases 1 and 3
+done and verified live, 2026-08-01.** `greenbone-stack` (VMID `70011`,
+`192.168.70.111`, `pentest_seg`) was up — all 21 containers from the
+vendored compose healthy or exited-0 as expected (feed-loader containers).
+Admin login confirmed working via a real HTTP request to the GSA login
+endpoint. `https://gvm.test.gibbsgreatly.xyz` resolved via Technitium,
+routed through Traefik, and returned Authentik's forward-auth challenge —
+the same signature `pentagi-stack`'s route produces. An authorized test
+scan (Phase 4) is still open on both environments — see [plan.md](./plan.md).
+
+**Per-user LDAP login (`steve`) is CONFIRMED WORKING, 2026-08-01.** `gvmd`
+authenticates real users against Authentik's existing LDAP outpost
+(`ghcr.io/goauthentik/ldap`, part of `authentik-stack`, already running for
+`graylog-stack` — see `docs/monitoring-stack/graylog-migration-plan.md`),
+sitting *underneath* the existing Traefik `forwardAuth` gate, not instead
+of it. Required a new, narrowly-scoped MikroTik rule
+(`pentest_seg → mgmt_seg:3389,6636`, applied live via the router's own Safe
+Mode session, and covering both `pve-test-vm` and `pve` since they share
+the same physical MikroTik/VLAN) since `pentest_seg` had no prior route to
+`mgmt_seg`'s LDAP outpost.
+
+**This was blocked for a while, then started working.** Initial testing
+found what looked like a hard upstream Authentik bug: the outpost's own
+logs showed `"event":"User has access"` (server-side success) on every
+bind attempt with the real password, while the client (`gvmd` and a
+standalone `ldapwhoami` test) received a garbled `"Protocol error"`
+instead of the success response, across StartTLS/LDAPS/plain-LDAP — a
+pattern matching several real, filed `goauthentik/authentik` GitHub
+issues. The operator retried the actual browser login later and it
+succeeded, without any further changes on this stack's side — consistent
+with those upstream issues describing intermittent/flaky bind-response
+encoding rather than a hard, permanent failure. Left as a real lesson: the
+mechanism was correctly configured throughout; the failure was transient
+upstream flakiness, not something to keep chasing indefinitely once every
+locally-controllable cause has been ruled out. See "LDAP login" below for
+the full technical detail and the four real bugs fixed getting the
+configuration itself correct.
 
 **Two real problems found and fixed during this rollout, both worth
 remembering:**
@@ -124,11 +140,12 @@ is fetching the outpost's own cert and passing it via `modify_auth`'s
 documented `cacert` key (a file path, bind-mounted into the container).
 Kept the env var anyway as harmless defense-in-depth.
 
-**STATUS: this entire chain is correctly configured, but login still does
-not work — see the last bug below, which is an upstream Authentik issue,
-not something fixable here.**
+**STATUS: confirmed working, 2026-08-01** — after initially hitting what
+looked like a hard upstream Authentik bug (#5 below), a later retry by the
+operator succeeded with no further changes needed. Deployed to both
+`pve-test-vm` and `pve` (production) with identical config.
 
-**Real bugs hit fixing everything up to that point:**
+**Real bugs hit along the way:**
 
 1. **`gvm-cli`'s `socket` backend has no stdin support** — it requires an
    actual file path (its `infile` argument), not piped XML. Every GMP
@@ -160,27 +177,24 @@ not something fixable here.**
    showed the setting had persisted correctly. Not investigated further
    since it didn't recur across several subsequent GMP calls and caused no
    observable harm.
-5. **The actual blocker: Authentik's LDAP outpost mis-encodes its own
-   *successful* bind response.** Not a config issue at all — root-caused
-   by reading the outpost's own logs directly
-   (`docker logs authentik-stack-ldap-1` on `authentik-stack`), which show
-   `"event":"User has access"` for every single attempt with the real
-   password, across StartTLS (3389), implicit LDAPS (6636), and even
-   plain unencrypted LDAP with no TLS at all — ruling out password,
-   DN, network, and cert-trust as the cause (all independently confirmed
-   correct via a standalone `ldapwhoami` test with a real, controlled
-   password read straight from SOPS, never touching disk or a shell
-   string). Every one of those same attempts, the client side receives a
-   garbled `"Protocol error"` instead of the success response — wrong
-   passwords correctly return a clean `"Invalid credentials"`, so this is
-   specific to the success path only. Matches several real, filed issues
-   in `goauthentik/authentik`'s own GitHub tracker describing bind
-   sequences returning protocol/operations errors to standards-compliant
-   LDAP clients despite server-side success, including reports against
-   2026.x releases. **Operator decision (2026-08-01): leave this
-   configuration in place** — it's correct and will start working once
-   the outpost image is fixed/upgraded upstream — and use the local
-   `admin`/SOPS-password login in the meantime.
+5. **Initially looked like a hard blocker: Authentik's LDAP outpost
+   appeared to mis-encode its own *successful* bind response.**
+   Root-caused (at the time) by reading the outpost's own logs directly
+   (`docker logs authentik-stack-ldap-1` on `authentik-stack`), which
+   showed `"event":"User has access"` for every attempt with the real
+   password, across StartTLS (3389), implicit LDAPS (6636), and plain
+   unencrypted LDAP — ruling out password, DN, network, and cert-trust as
+   the cause (independently confirmed correct via a standalone
+   `ldapwhoami` test with a real, controlled password read straight from
+   SOPS, never touching disk or a shell string). Every one of those
+   attempts, the client side received a garbled `"Protocol error"` instead
+   of the success response. This matched several real, filed issues in
+   `goauthentik/authentik`'s own GitHub tracker for exactly this
+   bind-success/client-error pattern. **Turned out not to be a permanent
+   blocker**: the operator retried the actual browser login later (no
+   config changes made in between) and it succeeded — consistent with
+   those upstream issues describing intermittent flakiness rather than a
+   hard failure. Confirmed working on both `pve-test-vm` and `pve`.
 
 **Network note**: this required a genuinely new capability for
 `pentest_seg` — reaching into `mgmt_seg` at all, for anything, which no
@@ -190,16 +204,13 @@ prior rule allowed. Added as a narrowly-scoped `tcp/3389,6636`-only rule
 directly on the MikroTik via its REST API in a Safe Mode session, placed
 immediately before the `pentest_seg` default-deny rule.
 
-**Possible impact on `graylog-stack`, not verified**: Graylog uses this
-exact same Authentik LDAP outpost for its own login. Its documented setup
-(`docs/monitoring-stack/graylog-migration-plan.md`) uses
-`transport_security: "none"` (plain LDAP, no TLS at all) — and this
-session's diagnosis showed the outpost's bind-success encoding bug happens
-independent of TLS (reproduced over plain LDAP too), so it's plausible
-Graylog's LDAP login is silently broken by the same upstream bug if it
-was validated against an older outpost image than what's currently
-running. Not checked during this session — worth a quick login test on
-Graylog if this surfaces again.
+**Note on `graylog-stack`**: Graylog uses this exact same Authentik LDAP
+outpost for its own login. The transient bind-failure pattern seen here
+(server succeeds, client sees a protocol error, then a later retry just
+works) means Graylog's login could occasionally hit the same flakiness —
+not verified either way, but if Graylog login ever fails intermittently,
+this is the same underlying outpost behavior, not a Graylog-specific
+issue. A simple retry is the expected fix, matching what resolved it here.
 
 ## Read in this order
 
@@ -210,13 +221,16 @@ Graylog if this surfaces again.
 ## Key facts up front
 
 - **Per-user LDAP login (`steve`) via Authentik's existing LDAP outpost is
-  fully configured but currently BLOCKED by an upstream Authentik bug** —
-  the outpost mis-encodes its own successful bind response. Use the local
-  `admin`/SOPS-password login for now. See "LDAP login" above for the full
-  diagnosis and the five real bugs hit along the way.
-- **Target host: `pve-test-vm`**, not `pve` — not a production node, so no
-  `TASK_APPROVAL` flow applies. Promotion past `stable` is a separate, later
-  decision, per `CLAUDE.md`'s branch model.
+  confirmed working**, on both `pve-test-vm` and `pve`. Hit what looked
+  like a hard upstream Authentik outpost bug during initial testing —
+  turned out to be transient flakiness, not a permanent blocker. See "LDAP
+  login" above for the full diagnosis and the real bugs hit along the way.
+- **Deployed on both `pve-test-vm` (validation) and `pve` (production)** —
+  `pve-test-vm` is not a production node, so no `TASK_APPROVAL` flow
+  applied there; `pve` deployment went through the full production
+  preflight/approval flow per `CLAUDE.md`. `pve-test-vm`'s instance is now
+  shut down (containers stopped, volumes preserved) since production is
+  live and it was only ever the validation copy.
 - **Joins `pentagi-stack`'s existing `pentest_seg` zone** (VLAN 70,
   `192.168.70.0/24`) rather than a new dedicated zone — same class of
   broad-network-reach security-testing workload as PentAGI, and reuses that

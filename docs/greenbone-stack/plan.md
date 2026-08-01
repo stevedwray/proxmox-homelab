@@ -231,21 +231,61 @@ path). Matches multiple real, filed issues in `goauthentik/authentik`'s
 own GitHub tracker for this exact bind-success/client-error pattern,
 including reports against 2026.x releases.
 
-**Operator decision (2026-08-01)**: leave the LDAP configuration in place
-— it's correct and will start working once the outpost image is
-fixed/upgraded upstream — and use the local `admin`/SOPS-password login
-day to day for now.
+**Update, same day**: the operator retried the actual browser login later
+with no config changes and it succeeded. The bind-response issue was
+transient upstream flakiness, not a hard, permanent bug — consistent with
+the matched GitHub issues describing intermittent failures. **LDAP login
+is confirmed working**, on both `pve-test-vm` and (after promotion) `pve`.
 
-## 6. Future work (explicitly deferred, not in scope for this pass)
+## 6. Production (`pve`) deployment
+
+**Status: done and verified live, 2026-08-01.** Full production preflight/
+approval flow followed per `CLAUDE.md` (Preflight Summary → operator
+"Proceed" → `TASK_APPROVAL` set → `./with-secrets-prod` for every mutating
+step). Mirrored the exact same sequence validated on `pve-test-vm`:
+
+1. Created `terraform/lxc/environments/pve/greenbone-stack/terragrunt.hcl`
+   (same shape as the `pve-test-vm` one).
+2. `terragrunt apply` → LXC created, VMID `70011`, `192.168.70.11`,
+   `pentest_seg` (5 resources added, 0 changed, 0 destroyed).
+3. Re-ran `harbor-stack` on `pve` — **no credential drift this time**
+   (production Harbor's admin password matched SOPS on the first try,
+   unlike `pve-test-vm`). Created the `greenbone` proxy-cache project.
+4. `provision.sh --stack greenbone-stack` targeting `pve` — clean first
+   attempt, `failed=0`, no `scap-data` startup race this time. All 21
+   containers healthy/exited-as-expected; admin login confirmed (`200` on
+   `/login`); LDAP config (`modify_auth`, `cacert`, `steve` user) applied
+   automatically as part of the same playbook run.
+5. Applied `edge.yaml` via `reconcile-edge.py`, scoped to just
+   `greenbone-stack` (same safe pattern as `pve-test-vm`) — created the
+   Authentik application/provider on **production** Authentik, reused the
+   shared forwardAuth outpost.
+6. Pushed the rendered Traefik config to `pve`'s `proxy-stack` — only
+   `greenbone-stack.yml` changed, every other production stack's route
+   was a no-op.
+7. Re-ran `provision.sh --stack technitium-stack` on `pve` to publish the
+   `gvm.lab.gibbsgreatly.xyz` DNS record. Smoke test passed.
+8. **Confirmed end-to-end**: `dig gvm.lab.gibbsgreatly.xyz` →
+   `192.168.30.10` (production Traefik); `curl https://gvm.lab.gibbsgreatly.xyz/`
+   returns a `302` to Authentik's authorize endpoint.
+
+**No new MikroTik rule needed** — `pve` and `pve-test-vm` share the same
+physical router and the same VLAN 70 subnet, so the
+`pentest_seg → mgmt_seg:3389,6636` rule added during `pve-test-vm`
+validation already covered `pve`'s traffic too (confirmed: single
+`MIKROTIK_HOST` in `.env`, and `pve.yaml`'s own comments already
+documented the shared trunk/subnet).
+
+**`pve-test-vm`'s instance was shut down** after `pve` went live
+(`docker compose down`, volumes preserved) — it was the validation copy,
+not a second permanent deployment.
+
+## 7. Future work (explicitly deferred, not in scope for this pass)
 
 - **PentAGI ↔ GVM integration.** Wiring PentAGI to trigger or query GVM
   scans via `gvm-tools`/the GMP API would touch PentAGI's own compose/
   tooling and is materially more work — a separate task, not bundled here.
-- **Production (`pve`) promotion.** `terraform/lxc/network/pve.yaml` has
-  been updated with the container entry and firewall policy for parity/
-  documentation, but nothing has been deployed there. Follow the same
-  `stable` → incremental-deploy-on-`pve` gate as any other stack.
 - **Resource sizing revisit.** If `pve-test-vm`'s 4 GB allocation proves too
-  slow for real validation scans, consider a scoped one-stack-at-a-time
+  slow for future validation work, consider a scoped one-stack-at-a-time
   pass (stop `pentagi-stack` temporarily) rather than raising memory beyond
   what the 16 GB host can actually hold alongside everything else.

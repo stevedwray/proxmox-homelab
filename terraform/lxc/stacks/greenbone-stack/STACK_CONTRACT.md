@@ -18,6 +18,11 @@ is explicitly deferred future work, not part of this contract.
 | Gateway      | `${lab_gw_pentest}`       |
 | VMID         | 70011                     |
 
+Deployed on both `pve-test-vm` (`192.168.70.111`, validation — currently
+shut down, see README.md) and `pve` (`192.168.70.11`, production, live).
+`pve` and `pve-test-vm` share the same physical MikroTik and VLAN 70
+subnet, so network/firewall changes made for one apply to both.
+
 Joins pentagi-stack's existing `pentest_seg` zone rather than a new dedicated
 zone — reuses its containment policy (internet egress for feed sync and image
 pulls, reach to `LAB_TARGET`/`harness-target`, explicit deny-by-default
@@ -105,13 +110,12 @@ pass) would make `pentagi-stack` a consumer of this stack's GMP API.
   NOT sufficient (confirmed live: gvm-libs ignores it, sets its own TLS
   options in code). Do not remove the cert-fetch task assuming the env
   var covers it.
-- **LDAP login does not actually work yet** — confirmed via Authentik's
-  own outpost logs that this is an upstream Authentik LDAP outpost bug
-  (mis-encoded successful bind response, not anything in this stack's
-  config). Everything here is correctly wired and will start working
-  once that's fixed upstream; local `admin`/SOPS-password login is the
-  working path in the meantime. See `docs/greenbone-stack/README.md`'s
-  "LDAP login" section for the full diagnosis.
+- LDAP login is confirmed working on both `pve-test-vm` and `pve`, but hit
+  transient bind-response flakiness in Authentik's LDAP outpost during
+  initial testing (server-side success, client-side "Protocol error",
+  resolved by a later retry with no config changes) — if this recurs,
+  it's known upstream outpost flakiness, not a regression in this stack's
+  config. See `docs/greenbone-stack/README.md`'s "LDAP login" section.
 
 ## Playbook
 
@@ -131,6 +135,7 @@ file.
 |------|------|
 | `terraform/lxc/stacks/greenbone-stack/stack.yaml` | Terraform-side stack definition (Platform Contract fields) |
 | `terraform/lxc/stacks/greenbone-stack/edge.yaml` | Traefik/Authentik ingress intent for the GSA UI |
-| `terraform/lxc/environments/pve-test-vm/greenbone-stack/terragrunt.hcl` | Terragrunt entrypoint |
+| `terraform/lxc/environments/pve-test-vm/greenbone-stack/terragrunt.hcl` | Terragrunt entrypoint (validation) |
+| `terraform/lxc/environments/pve/greenbone-stack/terragrunt.hcl` | Terragrunt entrypoint (production) |
 | `terraform/lxc/ansible/playbooks/deploy-greenbone-stack.yml` | Stack playbook |
 | `terraform/lxc/ansible/roles/harbor_postconfigure/defaults/main.yml` | Shared platform file — declares the `greenbone` Harbor proxy-cache project this stack depends on |

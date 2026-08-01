@@ -115,9 +115,8 @@ attachments:
   # Containers: pentagi-stack (192.168.70.10 — canonical; pve-test-vm's own
   # instance uses .110, freed for this purpose 2026-07-26).
   #   greenbone-stack (192.168.70.11 — canonical; pve-test-vm's own instance
-  #   uses .111, base+100 convention). Not yet deployed here — added to this
-  #   file for parity/documentation ahead of an eventual pve promotion, per
-  #   docs/greenbone-stack/plan.md.
+  #   used .111, base+100 convention, now shut down — pve is the live
+  #   deployment as of 2026-08-01, see docs/greenbone-stack/plan.md §6).
   #
   # See docs/pentagi-stack/plan.md for the pve-test-vm precedent this
   # mirrors, including the real MikroTik containment policy this zone needs
@@ -177,7 +176,7 @@ zones:
     attachment: pentest_seg
     containers:
       - "pentagi-stack — ${lab_ip_pentagi}"
-      - "greenbone-stack — ${lab_ip_greenbone} — not yet deployed, see docs/greenbone-stack/plan.md"
+      - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
 
 policies:
   - from: edge_seg
@@ -230,8 +229,8 @@ policies:
     ports: [8080]
     description: >-
       Traefik to the Greenbone GSA web UI — a custom plain-HTTP nginx
-      server block, not gsad's own port (mirrors pve-test-vm.yaml; not
-      yet deployed here — see docs/greenbone-stack/plan.md)
+      server block, not gsad's own port. Live — deployed 2026-08-01, see
+      docs/greenbone-stack/plan.md §6.
   - from: mgmt_seg
     to: pentest_seg
     protocol: tcp
@@ -314,8 +313,10 @@ policies:
     protocol: tcp
     ports: [3389, 6636]
     description: >-
-      greenbone-stack to Authentik's LDAP outpost (mirrors pve-test-vm.yaml;
-      not yet applied here — greenbone-stack isn't deployed on pve yet).
+      greenbone-stack to Authentik's LDAP outpost. Live — this is the same
+      physical router/VLAN as pve-test-vm.yaml's identical rule, so no
+      separate MikroTik change was needed when greenbone-stack was
+      deployed to pve 2026-08-01.
   - from: pentest_seg
     to: default
     protocol: all
