@@ -526,6 +526,7 @@
                 - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
                 - SPLOITUS_ENABLED=${SPLOITUS_ENABLED:-true}
                 - SEARXNG_URL=${SEARXNG_URL:-}
+                - SEARXNG_LANGUAGE=${SEARXNG_LANGUAGE:-en}
                 - CVE_MCP_URL=${CVE_MCP_URL:-}
                 - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
                 - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
@@ -672,7 +673,15 @@
 
           # Search tools -- ai-services-stack's SearXNG, not framework's
           # original one (moved 2026-08-02, see ai-services-migration docs).
+          # PentAGI always sends a `language` query param to SearXNG; an
+          # unset SEARXNG_LANGUAGE means it sends "language=" (empty),
+          # which SearXNG rejects with HTTP 400 "Empty language parameter"
+          # -- confirmed live twice now (originally against framework's
+          # SearXNG, then again here after this file's SEARXNG_LANGUAGE
+          # line was lost across a branch divergence during the
+          # ai-services-migration/cve-mcp-integration work).
           SEARXNG_URL=http://{{ pentagi_searxng_host }}:8082
+          SEARXNG_LANGUAGE=en
           DUCKDUCKGO_ENABLED=true
           SPLOITUS_ENABLED=true
 
