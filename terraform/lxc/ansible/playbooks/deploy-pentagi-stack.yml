@@ -81,6 +81,12 @@
     # to actually be reachable.
     pentagi_cve_mcp_host: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}"
 
+    # gvm-bridge lives inside greenbone-stack's own compose (same
+    # pentest_seg zone, same node convention: .11 pve, .111 pve-test-vm) --
+    # see docs/greenbone-stack/pentagi-integration.md. No new MikroTik
+    # rule needed: both stacks are already in pentest_seg.
+    pentagi_gvm_bridge_host: "{{ lookup('env', 'LAB_IP_GREENBONE') | mandatory('LAB_IP_GREENBONE env var is required') }}"
+
     # Model policy -- Decision 12: Llama-3.3-70B-Instruct, not Qwen. Confirmed
     # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
     # tool-call preflight is still the first PentAGI-specific confirmation --
@@ -528,6 +534,7 @@
                 - SEARXNG_URL=${SEARXNG_URL:-}
                 - SEARXNG_LANGUAGE=${SEARXNG_LANGUAGE:-en}
                 - CVE_MCP_URL=${CVE_MCP_URL:-}
+                - GVM_BRIDGE_URL=${GVM_BRIDGE_URL:-}
                 - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
                 - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
                 - DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-}
@@ -688,6 +695,11 @@
           # CVE/vulnerability intel -- cve-mcp-server (mcp-utility-stack),
           # see docs/pentagi-stack/cve-mcp-integration-plan.md.
           CVE_MCP_URL=http://{{ pentagi_cve_mcp_host }}:8000/mcp
+
+          # GVM/Greenbone vulnerability scanner -- gvm-bridge (inside
+          # greenbone-stack's own compose), see
+          # docs/greenbone-stack/pentagi-integration.md.
+          GVM_BRIDGE_URL=http://{{ pentagi_gvm_bridge_host }}:8010
 
           # Agent execution settings
           ASK_USER=true

@@ -1,7 +1,9 @@
 # PentAGI ↔ Greenbone (GVM) integration — scoping
 
-**Status: scoped, not started, 2026-08-03.** Architecture decided below;
-no code or infra written yet. Supersedes this file's earlier
+**Status: implemented and deployed to production, 2026-08-03.** See
+"Implementation status" near the end for what was actually built,
+deployed, and validated, and what's still a known gap. Architecture
+decided below; supersedes this file's earlier
 "not implemented, explicitly deferred" pass (`plan.md` §7 and every
 subsequent doc update up to 2026-08-01) — the gap analysis in the next
 section is still accurate and preserved, but the "what would actually
@@ -212,6 +214,58 @@ level rather than left as agent-facing hazards:
   posture here (MikroTik-level access control, no app-layer auth), since
   it's the same zone and same trust model, but worth confirming rather
   than assuming during implementation.
+
+## Implementation status (2026-08-03)
+
+Built and deployed as designed above:
+
+- `gvm-bridge` (`terraform/lxc/ansible/files/gvm-bridge/`) added to
+  `greenbone-stack`'s own compose, built in-repo, live on both
+  `pve-test-vm` and production `pve`.
+- Three new PentAGI Go tools (`start_gvm_scan`, `get_gvm_scan_status`,
+  `get_gvm_scan_results`) wired into the `assistant`, `pentester`, and
+  `searcher` executors, same shape as `triage_cve`/`search_cves`. Unit
+  tests pass; `GVM_BRIDGE_URL` wired into `pentagi-stack`'s compose/`.env`.
+- Confirmed correct at every layer that can be checked deterministically:
+  `gvm-bridge`'s endpoints work against a real scan of `harness-target`
+  (direct `curl`, and one real `start_gvm_scan` tool call from a live
+  PentAGI flow that correctly round-tripped a real gvm-bridge error); the
+  Go registry/executor wiring matches source; a minimal direct request to
+  the local LLM backend with the real tool schema returns a proper
+  structured `tool_calls` response.
+
+**Known gap, not a bug in this integration**: under PentAGI's actual
+production load (full system prompt, full tool roster, conversation
+history), the local models tested (`Qwen3.6-35B`, `Qwen3-Coder-30B`) do
+not reliably choose the structured tool-call path for these new tools —
+they repeatedly reason out the *correct* call and arguments but emit it
+as plain text instead of a real tool call. Confirmed via a clean,
+isolated request to the same backend that the model/router combination
+can produce genuine `tool_calls` output when the request is small; the
+unreliability only appears under PentAGI's much heavier real prompt.
+This is a local-model capacity/reliability limit, not something to fix
+in `gvm-bridge` or the Go tool-wiring.
+
+**Two infra bugs found and fixed along the way, unrelated to the
+integration design**:
+- The `pentagi-integration` gvmd user went missing on production
+  `greenbone-stack` at some point after initial creation (credential
+  drift, same pattern as the `PENTAGI_HARBOR_ROBOT_PASSWORD` issue below)
+  — recreated manually; the ansible task that creates it should be
+  revisited to confirm it's actually idempotent against a user that
+  exists with a stale/wrong password, not just against "user doesn't
+  exist at all".
+- `framework.gibbsgreatly.xyz`'s `llamacpp-router` (`--parallel 2`)
+  broke structured tool-call generation model-agnostically — reverted to
+  `--parallel 1`. The memlock ulimit fix (`ulimits: memlock: -1`,
+  resolving the AMD Strix Halo APU's SVM-mapping/GPU-offload failure
+  documented in `docs/framework-integration/`) is unrelated and stayed
+  applied.
+
+**Follow-up, not yet fixed**: `PENTAGI_HARBOR_ROBOT_PASSWORD` 401s
+against production Harbor; pushes during this work used the
+`HARBOR_ADMIN_PASSWORD` fallback instead. Needs reconciling, not just
+rotating — see git history around 2026-08-02/03 for context.
 
 ## Related documentation
 
