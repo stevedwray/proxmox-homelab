@@ -1,0 +1,198 @@
+# mcp-utility-stack -- ai_seg zone (pve-test-vm).
+# See docs/mcp-stack/plan.md for the full deployment plan. Originally built
+# as a dedicated research_seg (VLAN 81), abandoned mid-build 2026-08-01 when
+# VLAN 81 turned out never to be tagged on the switches -- ai_seg (VLAN 50,
+# already tagged network-wide from pve-framework's now-retired build) was
+# reactivated instead. Shares this zone with future AI/LLM app containers.
+#
+# Runs cve-mcp-server (github.com/mukul975/cve-mcp-server, this operator's
+# local `local-dev` branch merged onto upstream v0.2.0) in its native
+# MCP_TRANSPORT=http mode. Built directly on the host from source copied
+# from the ansible controller's local clone (~/git/cve-mcp-server) --
+# deliberately not pulled through Harbor: this is a single small Python
+# image with no other consumer yet, so a dedicated Harbor project/robot
+# account isn't warranted (unlike pentagi-stack's kali-fixed image, which
+# has an established Harbor project already). Revisit if a second consumer
+# of this image shows up.
+#
+# No app-layer authentication in front of this server -- cve-mcp-server has
+# none built in, unlike Grafana/NetBox/Graylog. Access control for v1 is
+# network-level only: the ai_seg MikroTik inbound rule (lan,
+# pentest_seg -> ai_seg:8000) is the only gate. Do not treat this as
+# equivalent to an authenticated endpoint.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Configure Docker daemon logging
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "7"
+            }
+          }
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy cve-mcp-server compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    mcp_compose_dir: /opt/mcp-utility-stack
+    mcp_build_dir: "{{ mcp_compose_dir }}/cve-mcp-server"
+    # Local clone on the ansible controller (this operator's workstation) --
+    # not part of this repo, a sibling checkout. See
+    # docs/mcp-stack/plan.md and ~/git/cve-mcp-server/docs/api-service-plan.md.
+    mcp_source_dir: "{{ lookup('env', 'CVE_MCP_SOURCE_DIR') | default('/home/steve/git/cve-mcp-server', true) }}"
+
+    # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Full key set per
+    # the operator's 2026-08-01 decision (includes the threat-intel cluster,
+    # not narrowed to core CVE-research sources only).
+    mcp_nvd_api_key: "{{ lookup('env', 'NVD_API_KEY') | mandatory('NVD_API_KEY env var is required') }}"
+    mcp_github_token: "{{ lookup('env', 'GITHUB_TOKEN') | mandatory('GITHUB_TOKEN env var is required') }}"
+    mcp_vulncheck_token: "{{ lookup('env', 'VULNCHECK_TOKEN') | mandatory('VULNCHECK_TOKEN env var is required') }}"
+    mcp_virustotal_key: "{{ lookup('env', 'VIRUSTOTAL_KEY') | mandatory('VIRUSTOTAL_KEY env var is required') }}"
+    mcp_shodan_key: "{{ lookup('env', 'SHODAN_KEY') | mandatory('SHODAN_KEY env var is required') }}"
+    mcp_greynoise_api_key: "{{ lookup('env', 'GREYNOISE_API_KEY') | mandatory('GREYNOISE_API_KEY env var is required') }}"
+
+  tasks:
+    - name: Create mcp-utility-stack compose directory
+      ansible.builtin.file:
+        path: "{{ mcp_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Create cve-mcp-server build directory
+      ansible.builtin.file:
+        path: "{{ mcp_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy cve-mcp-server source files from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ mcp_source_dir }}/{{ item }}"
+        dest: "{{ mcp_build_dir }}/{{ item }}"
+        mode: preserve
+      loop:
+        - Dockerfile
+        - pyproject.toml
+        - README.md
+        - LICENSE
+
+    # dest is the *parent* dir here, not "{{ mcp_build_dir }}/src" -- when
+    # src has no trailing slash, ansible.builtin.copy copies the directory
+    # itself (basename included) into dest, so appending "/src" to dest
+    # doubles it up into mcp_build_dir/src/src/cve_mcp/... (hit live
+    # 2026-08-01: container crash-looped with ModuleNotFoundError because
+    # of exactly this).
+    - name: Copy cve-mcp-server src/ directory from the controller's local clone
+      ansible.builtin.copy:
+        src: "{{ mcp_source_dir }}/src"
+        dest: "{{ mcp_build_dir }}/"
+        mode: preserve
+
+    # Upstream bug, confirmed 2026-08-01: pyproject.toml declares
+    # `license = { file = "LICENSE" }`, but the shipped Dockerfile's
+    # `COPY pyproject.toml README.md ./` never copies LICENSE into the
+    # build context that hatchling actually sees, so `uv sync --no-dev`
+    # fails validating the license field. Nobody had built this image
+    # before this deployment (see cve-mcp-server's own docs/api-service-plan.md).
+    # Patch the copied Dockerfile rather than the upstream source tree.
+    - name: Patch copied Dockerfile to also COPY the LICENSE file (upstream bug)
+      ansible.builtin.replace:
+        path: "{{ mcp_build_dir }}/Dockerfile"
+        regexp: '^COPY pyproject\.toml README\.md \./$'
+        replace: 'COPY pyproject.toml README.md LICENSE ./'
+
+    - name: Write mcp-utility-stack docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ mcp_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            cve-mcp-server:
+              build:
+                context: ./cve-mcp-server
+              container_name: cve-mcp-server
+              restart: unless-stopped
+              ports:
+                - "8000:8000"
+              environment:
+                MCP_TRANSPORT: http
+                HOST: "0.0.0.0"
+                PORT: "8000"
+                # Both the direct IP:port path (lan/pentest_seg -> :8000
+                # directly) and the Traefik hostname path (Traefik forwards
+                # the original Host header, no port, to the backend on
+                # HTTPS) need to be allowed -- confirmed live 2026-08-01,
+                # the direct-IP-only allowlist 421'd every request that
+                # came through cve-mcp.${LAB_DOMAIN}.
+                MCP_ALLOWED_HOSTS: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}:8000,cve-mcp.{{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }},cve-mcp.{{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}:*"
+                NVD_API_KEY: "{{ mcp_nvd_api_key }}"
+                GITHUB_TOKEN: "{{ mcp_github_token }}"
+                VULNCHECK_TOKEN: "{{ mcp_vulncheck_token }}"
+                VIRUSTOTAL_KEY: "{{ mcp_virustotal_key }}"
+                SHODAN_KEY: "{{ mcp_shodan_key }}"
+                GREYNOISE_API_KEY: "{{ mcp_greynoise_api_key }}"
+              # Mounted at /home/app (not a /data subdir) deliberately: the
+              # Dockerfile's `useradd --create-home` already owns this path
+              # as app:app in the image, so Docker correctly copies that
+              # ownership into the fresh named volume on first use. A named
+              # volume at a path the image never created (e.g. /data)
+              # always defaults to root:root, which broke the non-root
+              # `app` user's RotatingFileHandler write to its audit log and
+              # crashed every request mid-response (confirmed live
+              # 2026-08-01: PermissionError writing /data/audit.log, request
+              # returned 200 + correct SSE headers but zero body bytes then
+              # connection close). CACHE_DB_PATH/AUDIT_LOG_PATH are left
+              # unset so the app uses its own defaults
+              # (~/.cve-mcp/cache.db, ~/.cve-mcp/audit.log), which resolve
+              # inside this same correctly-owned volume.
+              volumes:
+                - mcp-home:/home/app
+
+          volumes:
+            mcp-home:
+      no_log: true
+
+    - name: Deploy cve-mcp-server via docker compose (builds image locally)
+      community.docker.docker_compose_v2:
+        project_src: "{{ mcp_compose_dir }}"
+        build: always
+        state: present
+
+    - name: Wait for cve-mcp-server HTTP endpoint to come up
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8000/mcp"
+        status_code: [200, 401, 405, 406]
+      register: mcp_health
+      retries: 12
+      delay: 5
+      until: mcp_health.status is defined and mcp_health.status in [200, 401, 405, 406]
+      failed_when: false
+
+    - name: Fail if cve-mcp-server never came up
+      ansible.builtin.assert:
+        that:
+          - mcp_health.status is defined
+          - mcp_health.status in [200, 401, 405, 406]
+        fail_msg: "cve-mcp-server did not respond on :8000/mcp after retries (last status: {{ mcp_health.status | default('unknown') }})"

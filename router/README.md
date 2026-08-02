@@ -103,10 +103,10 @@ above for the current addresses.
 
 ### Credentials
 
-Stored in SOPS at `terraform/secrets.enc.yaml`. Decrypt with:
+Stored in SOPS at `terraform/secrets.common.enc.yaml`. Decrypt with:
 
 ```bash
-eval "$(sops -d terraform/secrets.enc.yaml | grep ^MIKROTIK | sed 's/: /=/;s/^/export /')"
+eval "$(sops -d terraform/secrets.common.enc.yaml | grep ^MIKROTIK | sed 's/: /=/;s/^/export /')"
 ```
 
 ### Re-scraping
@@ -122,7 +122,7 @@ Two separate bugs, now both fixed:
 2. **The documented `api-user` credential was broken as of 2026-07-03
    (401 Unauthorized in all three SOPS files), but is working again as of a
    follow-up check the same day** — confirmed `HTTP 200` against
-   `/rest/system/identity` with the `secrets.enc.yaml` copy. Root cause of
+   `/rest/system/identity` with the `secrets.common.enc.yaml` copy. Root cause of
    the original 401 (rotated on-device vs. never valid) was never
    identified, so if it recurs, don't assume it's the same bug fixed in
    item 1 above — check auth separately from the script. Other working
@@ -134,7 +134,7 @@ Two separate bugs, now both fixed:
    `/rest` endpoints tested here (returned HTTP 200 with an empty body).
 
 ```bash
-eval "$(sops -d terraform/secrets.enc.yaml | grep -E '^MIKROTIK_(USER|PASSWORD):' | sed 's/: /=/;s/^/export /')"
+eval "$(sops -d terraform/secrets.common.enc.yaml | grep -E '^MIKROTIK_(USER|PASSWORD):' | sed 's/: /=/;s/^/export /')"
 ./router/scripts/scrape-config.sh 192.168.1.1
 ```
 

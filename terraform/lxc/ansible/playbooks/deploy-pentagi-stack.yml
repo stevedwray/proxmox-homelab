@@ -1,0 +1,772 @@
+# PentAGI -- autonomous AI pentesting agent, pentest_seg zone (pve-test-vm).
+# See docs/pentagi-stack/plan.md for the full deployment plan.
+#
+# No interactive installer -- PentAGI is a plain docker-compose.yml + .env
+# app under the hood (confirmed directly from vxcontrol/pentagi's own repo).
+# This playbook vendors that compose file with its four images rewritten
+# through Harbor's dockerhub/quay proxy-cache projects (matching
+# deploy-graylog-stack.yml's pattern) and templates the .env directly,
+# rather than running the console-driven installer.
+#
+# Auth: PentAGI's own login only supports Google/GitHub OAuth (confirmed
+# from backend/pkg/server/oauth/{google,github}.go -- no generic OIDC
+# client exists in the app itself), so OAUTH_GOOGLE_*/OAUTH_GITHUB_* stay
+# blank here. Traefik forwardAuth (this stack's edge.yaml) gates the UI at
+# the edge instead -- see docs/pentagi-stack/plan.md Phase 3.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    pentagi_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    pentagi_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ pentagi_lab_domain, true) }}"
+    docker_registry_host: "{{ pentagi_registry_host }}"
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "50m",
+              "max-file": "7"
+            }
+          }
+      notify: Restart Docker
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Deploy PentAGI compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    pentagi_compose_dir: /opt/pentagi-stack
+    pentagi_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('test.gibbsgreatly.xyz', true) }}"
+    pentagi_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ pentagi_lab_domain, true) }}"
+    pentagi_public_url: "https://pentagi.{{ pentagi_lab_domain }}"
+
+    # Framework backends -- always by DNS name, never the raw IP.
+    pentagi_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
+
+    # Model policy -- Decision 12: Llama-3.3-70B-Instruct, not Qwen. Confirmed
+    # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
+    # tool-call preflight is still the first PentAGI-specific confirmation --
+    # this default is a strong prior, not an assumed-working fact.
+    # Qwen3.6, not Llama-3.3-70B-Instruct -- confirmed live 2026-07-26 that
+    # Llama fails PentAGI's actual tool-call format ("peg-native format")
+    # consistently across independent retry cycles, despite passing a
+    # simpler direct /api/chat preflight test. Decision 12's Qwen ban is
+    # scoped to VSCode/Copilot/Continue's tool-calling integration and
+    # doesn't transfer to PentAGI's own separate parser. Qwen3.6 is the
+    # model the operator's own prior hands-on PentAGI testing actually
+    # used successfully -- see docs/pentagi-stack/original/pentagi/.env.
+    pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('qwen3.6-35b-a3b-ud:q4_k_m', true) }}"
+    pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text', true) }}"
+
+    # llama.cpp's own native multi-model router (llamacpp-router on
+    # framework.gibbsgreatly.xyz, port 8080) -- lets qwen3.6 (fast base
+    # agents) and gpt-oss-120b (stronger adviser model, per PentAGI's own
+    # recommended architecture) stay loaded concurrently as independent
+    # processes, unlike Ollama's OLLAMA_MAX_LOADED_MODELS which is only a
+    # soft ceiling: confirmed live 2026-07-28 that Ollama's own scheduler
+    # still evicted a model rather than risk a 3-model fit, even with the
+    # limit raised and keep-alive disabled. Model IDs are llama.cpp's own
+    # filename-derived names, not Ollama's tag format.
+    pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
+    pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
+    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('gpt-oss-120b', true) }}"
+
+    # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
+    # of stack scaffolding; must exist before this playbook can actually run.
+    pentagi_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
+    pentagi_postgres_password: "{{ lookup('env', 'PENTAGI_POSTGRES_PASSWORD') | mandatory('PENTAGI_POSTGRES_PASSWORD env var is required') }}"
+
+    # cAdvisor -- same pattern every other Docker stack here already uses
+    # (graylog-stack, authentik-stack, harbor-stack, proxy-stack,
+    # portainer-stack), just never added when pentagi-stack was built.
+    pentagi_cadvisor_image: "{{ pentagi_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
+
+    # Custom-built PentAGI backend image -- our private fork
+    # (github.com/stevedwray/pentagi, branch fix/lab-lessons-learned) with
+    # lessons learned baked into the pentester/coder default prompts
+    # (callback address via DOCKER_PUBLIC_IP, exploitation completion
+    # criterion, non-interactive session verification) plus a real fix in
+    # backend/pkg/tools/terminal.go: reject leaked tool-call-format
+    # artifacts (e.g. "<parameter=cwd>") before they reach `sh -c`, since
+    # upstream silently executes them as a shell command that then fails
+    # with a syntax error invisible to the tool-call-fixer retry path.
+    # Built and pushed manually for now (docker build/push from the fork
+    # checkout, not yet wired into this playbook) -- same Harbor project
+    # as the bootsnap-safe Kali image below.
+    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed:latest"
+
+    pentagi_runtime_images:
+      - "{{ pentagi_fixed_image }}"
+      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest"
+      - "{{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest"
+      - "{{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
+      - "{{ pentagi_cadvisor_image }}"
+
+    # Custom-built pentest worker image -- see the "bootsnap-safe Kali
+    # worker image" tasks below. Pushed to a new plain (non-proxy) Harbor
+    # project, since dockerhub/quay are pull-through proxy-cache projects
+    # only and can't accept a direct push of a locally-built image.
+    pentagi_kali_project_name: "pentagi"
+    pentagi_kali_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/kali-linux-fixed:latest"
+    harbor_admin_user: "{{ lookup('env', 'HARBOR_ADMIN') | default('admin', true) }}"
+    harbor_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var is required') }}"
+
+  tasks:
+    - name: Create PentAGI compose directory
+      ansible.builtin.file:
+        path: "{{ pentagi_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    # -----------------------------------------------------------------
+    # Bootsnap-safe Kali worker image.
+    #
+    # vxcontrol/kali-linux:latest ships two self-referential symlinks from
+    # upstream LLVM/Debian packaging: /usr/lib/llvm-18/build/Release and
+    # .../build/Debug+Asserts both point to ".." (their own parent dir),
+    # so recursively walking either is an infinite loop. Confirmed live
+    # 2026-07-26/27 during a real PentAGI Metasploitable 2 assessment:
+    # Ruby's bootsnap gem (Metasploit's require-cache) hit that loop on a
+    # cold cache-build inside the long-lived pentagi-terminal-1 worker
+    # container and crashed msfconsole with Errno::ELOOP, forcing manual
+    # exploitation for the rest of a 13.5-hour run. A fresh pull of the
+    # same image did NOT reproduce it every time (5/5 clean spot-checks),
+    # so the trigger condition is state-dependent, not deterministic on a
+    # bare `msfconsole --version` -- but the two symlinks are a real,
+    # permanent trap regardless of what causes bootsnap to scan into
+    # them, and neither is needed for pentesting (every other path under
+    # llvm-18/build -- include/lib/share/cmake/bin -- is untouched and
+    # left alone). Removing them at the image layer closes the trap for
+    # good instead of chasing the exact trigger.
+    - name: Ensure Harbor 'pentagi' project exists for custom-built images
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/projects?name={{ pentagi_kali_project_name }}"
+        method: GET
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        status_code: 200
+      register: pentagi_harbor_projects
+      delegate_to: localhost
+
+    - name: Create 'pentagi' Harbor project (custom images, not a proxy-cache)
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/projects"
+        method: POST
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          project_name: "{{ pentagi_kali_project_name }}"
+          public: false
+        status_code: 201
+      when: pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
+      delegate_to: localhost
+
+    - name: Write Dockerfile for bootsnap-safe Kali worker image
+      ansible.builtin.file:
+        path: "{{ pentagi_compose_dir }}/kali-fixed"
+        state: directory
+        mode: "0750"
+
+    - name: Write bootsnap-safe Kali worker Dockerfile
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/kali-fixed/Dockerfile"
+        mode: "0640"
+        content: |
+          FROM {{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
+          RUN rm -f /usr/lib/llvm-18/build/Release /usr/lib/llvm-18/build/Debug+Asserts
+
+    # Dedicated, narrowly-scoped robot for this one push -- deliberately NOT
+    # the shared 'robot$ci-runner' system-level robot that signature-gate.yml
+    # /security-scan.yml/supply-chain-signing-proof.yml use for signing and
+    # scanning (sourced from GitHub Actions repo secrets, a separate store
+    # from SOPS). Reusing that shared credential here would mean any secret
+    # rotation done for this stack's sake could silently break those CI
+    # pipelines. This robot can only push/pull the 'pentagi' project.
+    # NOTE: Harbor's GET /api/v2.0/robots (and /robots/{id}) does not
+    # reliably list/return project-scoped (level=project) robots in this
+    # Harbor version -- confirmed live: a robot created successfully here,
+    # whose secret kept authenticating fine against /v2/, still 404'd by
+    # ID and was absent from the full list immediately after. So an
+    # existence pre-check against that endpoint is not trustworthy. Instead,
+    # just attempt creation and treat 409 (name already taken) as the
+    # idempotent case, falling back to the secret already persisted in SOPS
+    # from whichever run first created it. The robot name is deterministic
+    # (Harbor always renders it "robot$<project>+<name>"), so there's no
+    # need to read it back from the API either way.
+    - name: Create project-scoped Harbor robot for the pentagi image push (409 = already exists)
+      ansible.builtin.uri:
+        url: "https://{{ pentagi_registry_host }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ harbor_admin_user }}"
+        url_password: "{{ harbor_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "kali-push"
+          description: "pentagi-stack Ansible only -- push/pull for the pentagi project's custom Kali worker image, not shared with CI"
+          duration: -1
+          level: "project"
+          permissions:
+            - kind: "project"
+              namespace: "{{ pentagi_kali_project_name }}"
+              access:
+                - resource: "repository"
+                  action: "pull"
+                - resource: "repository"
+                  action: "push"
+        status_code: [201, 409]
+      register: pentagi_kali_robot_create
+      delegate_to: localhost
+      no_log: true
+
+    - name: Display new pentagi push robot credentials -- store in SOPS for future runs
+      ansible.builtin.debug:
+        msg:
+          - "ACTION REQUIRED: created a new Harbor robot scoped to the 'pentagi' project only."
+          - "Add to terraform/secrets.common.enc.yaml so future runs don't need to recreate it:"
+          - "  PENTAGI_HARBOR_ROBOT_PASSWORD = {{ pentagi_kali_robot_create.json.secret }}"
+          - "(username is deterministic: robot${{ pentagi_kali_project_name }}+kali-push)"
+          - "This run uses the freshly-created secret directly; it will not be shown again."
+      when: pentagi_kali_robot_create.status == 201
+      delegate_to: localhost
+
+    - name: Set effective pentagi push robot credentials
+      ansible.builtin.set_fact:
+        pentagi_kali_robot_user: "robot${{ pentagi_kali_project_name }}+kali-push"
+        pentagi_kali_robot_password: >-
+          {{ pentagi_kali_robot_create.json.secret
+             if pentagi_kali_robot_create.status == 201
+             else lookup('env', 'PENTAGI_HARBOR_ROBOT_PASSWORD') }}
+      no_log: true
+      delegate_to: localhost
+
+    - name: Log in to Harbor to push the custom Kali worker image
+      community.docker.docker_login:
+        registry_url: "{{ pentagi_registry_host }}"
+        username: "{{ pentagi_kali_robot_user }}"
+        password: "{{ pentagi_kali_robot_password }}"
+      no_log: true
+
+    - name: Build bootsnap-safe Kali worker image
+      community.docker.docker_image_build:
+        name: "{{ pentagi_kali_fixed_image }}"
+        path: "{{ pentagi_compose_dir }}/kali-fixed"
+        pull: true
+        rebuild: always
+
+    - name: Push bootsnap-safe Kali worker image
+      community.docker.docker_image_push:
+        name: "{{ pentagi_kali_fixed_image }}"
+
+    - name: Verify the bootsnap symlink trap is actually gone
+      ansible.builtin.command:
+        cmd: >-
+          docker run --rm {{ pentagi_kali_fixed_image }} bash -c
+          "test ! -e /usr/lib/llvm-18/build/Release && test ! -e /usr/lib/llvm-18/build/Debug+Asserts && msfconsole --version"
+      register: pentagi_kali_fixed_verify
+      changed_when: false
+
+    - name: Placeholder custom provider config (unused -- bind-mount target must be a file, not auto-created dir)
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/example.custom.provider.yml"
+        mode: "0640"
+        content: ""
+        force: false
+
+    # Per-agent-role provider tuning -- this file was a blank placeholder
+    # until 2026-07-27. Without it, every PentAGI agent role (pentester,
+    # reflector, enricher, adviser, ...) ran on undifferentiated Ollama
+    # defaults: no per-role max_tokens cap and no per-role temperature.
+    # Real-world evidence from the first full Metasploitable 2 run
+    # (docs/pentagi-stack/plan.md Phase 4 Test 3): the chatty roles
+    # (reflector, enricher, adviser) dominated tool-call volume (240+63+62
+    # of ~800 total msgchains vs. 11 pentester chains) and repeatedly hit
+    # `stop reason 'length'` -- the model ran out of its generation budget
+    # mid-tool-call and produced unparseable output, triggering retry
+    # loops that burned hours of wall-clock time. Tightening max_tokens on
+    # exactly those roles forces them to stay concise and finish inside
+    # budget; lower temperature reduces the free-text "report" rambling
+    # that was crowding out actual tool calls. generator/pentester/coder
+    # keep more room and higher temperature since they need to plan and
+    # construct non-trivial commands/exploits.
+    # Switched from Ollama to llama.cpp's native multi-model router
+    # (custom/OpenAI-compatible provider) 2026-07-28 -- see the
+    # pentagi_llamacpp_url comment above for why. The adviser role alone
+    # gets the stronger gpt-oss-120b model; every other role stays on the
+    # fast qwen3.6 base model, both loaded concurrently as independent
+    # llama.cpp processes with no shared-scheduler eviction risk between
+    # them.
+    #
+    # IMPORTANT: this file is only read at all if LLM_SERVER_CONFIG_PATH
+    # is set to its in-container mount path -- confirmed live 2026-07-28
+    # that the equivalent OLLAMA_SERVER_CONFIG_PATH was never actually
+    # set in this deploy, so the previous per-role Ollama tuning below
+    # was silently never applied; PentAGI fell back to its embedded
+    # default config.yml (temperature 1.0, much higher max_tokens) the
+    # entire time instead. See LLM_SERVER_CONFIG_PATH in the .env content
+    # further down in this playbook -- do not repeat that mistake here.
+    - name: Write PentAGI per-agent-role llama.cpp provider config
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/example.custom.provider.yml"
+        mode: "0640"
+        content: |
+          simple:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.2
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          simple_json:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.0
+            top_p: 1.0
+            n: 1
+            max_tokens: 2000
+
+          primary_agent:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.2
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          assistant:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          generator:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.4
+            top_p: 0.9
+            n: 1
+            max_tokens: 4000
+
+          refiner:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.3
+            top_p: 0.9
+            n: 1
+            max_tokens: 3000
+
+          adviser:
+            model: "{{ pentagi_llamacpp_adviser_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 2000
+
+          reflector:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.15
+            top_p: 0.8
+            n: 1
+            max_tokens: 1500
+
+          searcher:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.15
+            top_p: 0.85
+            n: 1
+            max_tokens: 3000
+
+          enricher:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.15
+            top_p: 0.85
+            n: 1
+            max_tokens: 8000
+
+          coder:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.1
+            top_p: 0.8
+            n: 1
+            max_tokens: 6000
+
+          installer:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.1
+            top_p: 0.8
+            n: 1
+            max_tokens: 4000
+
+          pentester:
+            model: "{{ pentagi_llamacpp_primary_model }}"
+            temperature: 0.25
+            top_p: 0.85
+            n: 1
+            max_tokens: 6000
+      register: pentagi_custom_provider_file
+
+    # Vendored from vxcontrol/pentagi's own docker-compose.yml (upstream,
+    # confirmed via its repo directly) -- only the four image lines are
+    # rewritten to pull through Harbor; every ${VAR:-default} passthrough
+    # below is native Docker Compose substitution from the .env file this
+    # playbook also writes, not Jinja.
+    - name: Write PentAGI docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          volumes:
+            pentagi-data:
+              driver: local
+            pentagi-ssl:
+              driver: local
+            pentagi-ollama:
+              driver: local
+            scraper-ssl:
+              driver: local
+            pentagi-postgres-data:
+              driver: local
+
+          networks:
+            pentagi-network:
+              driver: bridge
+              name: pentagi-network
+
+          services:
+            pentagi:
+              image: ${PENTAGI_IMAGE:-{{ pentagi_registry_host }}/dockerhub/vxcontrol/pentagi:latest}
+              restart: unless-stopped
+              container_name: pentagi
+              hostname: pentagi
+              expose:
+                - 8443/tcp
+              ports:
+                - ${PENTAGI_LISTEN_IP:-0.0.0.0}:${PENTAGI_LISTEN_PORT:-8443}:8443
+              depends_on:
+                pgvector:
+                  condition: service_healthy
+              environment:
+                - DEBUG=${DEBUG:-false}
+                - DOCKER_GID=998
+                - CORS_ORIGINS=${CORS_ORIGINS:-}
+                - COOKIE_SIGNING_SALT=${COOKIE_SIGNING_SALT:-}
+                - INSTALLATION_ID=${INSTALLATION_ID:-}
+                - LICENSE_KEY=${LICENSE_KEY:-}
+                - ASK_USER=${ASK_USER:-true}
+                - LLM_SERVER_URL=${LLM_SERVER_URL:-}
+                - LLM_SERVER_KEY=${LLM_SERVER_KEY:-}
+                - LLM_SERVER_MODEL=${LLM_SERVER_MODEL:-}
+                - LLM_SERVER_PROVIDER=${LLM_SERVER_PROVIDER:-}
+                - LLM_SERVER_CONFIG_PATH=${LLM_SERVER_CONFIG_PATH:-}
+                - EMBEDDING_URL=${EMBEDDING_URL:-}
+                - EMBEDDING_KEY=${EMBEDDING_KEY:-}
+                - EMBEDDING_MODEL=${EMBEDDING_MODEL:-}
+                - EMBEDDING_PROVIDER=${EMBEDDING_PROVIDER:-}
+                - EMBEDDING_STRIP_NEW_LINES=${EMBEDDING_STRIP_NEW_LINES:-true}
+                - ASSISTANT_USE_AGENTS=${ASSISTANT_USE_AGENTS:-false}
+                - EXECUTION_MONITOR_ENABLED=${EXECUTION_MONITOR_ENABLED:-true}
+                - EXECUTION_MONITOR_SAME_TOOL_LIMIT=${EXECUTION_MONITOR_SAME_TOOL_LIMIT:-5}
+                - EXECUTION_MONITOR_TOTAL_TOOL_LIMIT=${EXECUTION_MONITOR_TOTAL_TOOL_LIMIT:-10}
+                - EXECUTION_MONITOR_STOP_STREAK_LIMIT=${EXECUTION_MONITOR_STOP_STREAK_LIMIT:-2}
+                - MAX_GENERAL_AGENT_TOOL_CALLS=${MAX_GENERAL_AGENT_TOOL_CALLS:-100}
+                - MAX_LIMITED_AGENT_TOOL_CALLS=${MAX_LIMITED_AGENT_TOOL_CALLS:-20}
+                - AGENT_PLANNING_STEP_ENABLED=${AGENT_PLANNING_STEP_ENABLED:-true}
+                - PROXY_URL=${PROXY_URL:-}
+                - HTTP_CLIENT_TIMEOUT=${HTTP_CLIENT_TIMEOUT:-}
+                - TERMINAL_TOOL_TIMEOUT=${TERMINAL_TOOL_TIMEOUT:-}
+                - SCRAPER_PUBLIC_URL=${SCRAPER_PUBLIC_URL:-}
+                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL:-https://someuser:somepass@scraper/}
+                - PUBLIC_URL=${PUBLIC_URL:-}
+                - SERVER_PORT=8443
+                - SERVER_HOST=0.0.0.0
+                - SERVER_USE_SSL=${SERVER_USE_SSL:-false}
+                - OAUTH_GOOGLE_CLIENT_ID=${OAUTH_GOOGLE_CLIENT_ID:-}
+                - OAUTH_GOOGLE_CLIENT_SECRET=${OAUTH_GOOGLE_CLIENT_SECRET:-}
+                - OAUTH_GITHUB_CLIENT_ID=${OAUTH_GITHUB_CLIENT_ID:-}
+                - OAUTH_GITHUB_CLIENT_SECRET=${OAUTH_GITHUB_CLIENT_SECRET:-}
+                - DATABASE_URL=postgres://${PENTAGI_POSTGRES_USER:-postgres}:${PENTAGI_POSTGRES_PASSWORD:-postgres}@pgvector:5432/${PENTAGI_POSTGRES_DB:-pentagidb}?sslmode=disable
+                - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
+                - SPLOITUS_ENABLED=${SPLOITUS_ENABLED:-true}
+                - SEARXNG_URL=${SEARXNG_URL:-}
+                - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
+                - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
+                - DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-}
+                - DOCKER_INSIDE=${DOCKER_INSIDE:-true}
+                - DOCKER_NET_ADMIN=${DOCKER_NET_ADMIN:-true}
+                - DOCKER_SOCKET=${DOCKER_SOCKET:-/var/run/docker.sock}
+                - DOCKER_NETWORK=${DOCKER_NETWORK:-}
+                - DOCKER_PUBLIC_IP=${DOCKER_PUBLIC_IP:-0.0.0.0}
+                - DOCKER_WORK_DIR=${DOCKER_WORK_DIR:-}
+                - DOCKER_DEFAULT_IMAGE=${DOCKER_DEFAULT_IMAGE:-}
+                - DOCKER_DEFAULT_IMAGE_FOR_PENTEST=${DOCKER_DEFAULT_IMAGE_FOR_PENTEST:-}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              volumes:
+                - pentagi-data:/opt/pentagi/data
+                - pentagi-ssl:/opt/pentagi/ssl
+                - pentagi-ollama:/root/.ollama
+                - /var/run/docker.sock:/var/run/docker.sock
+                - ./example.custom.provider.yml:/opt/pentagi/conf/custom.provider.yml
+              user: root:root # while using docker.sock
+              networks:
+                - pentagi-network
+
+            pgvector:
+              image: {{ pentagi_registry_host }}/dockerhub/vxcontrol/pgvector:latest
+              restart: unless-stopped
+              container_name: pgvector
+              hostname: pgvector
+              expose:
+                - 5432/tcp
+              environment:
+                POSTGRES_USER: ${PENTAGI_POSTGRES_USER:-postgres}
+                POSTGRES_PASSWORD: ${PENTAGI_POSTGRES_PASSWORD:-postgres}
+                POSTGRES_DB: ${PENTAGI_POSTGRES_DB:-pentagidb}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U $${PENTAGI_POSTGRES_USER:-postgres}"]
+                interval: 3s
+                timeout: 3s
+                retries: 10
+                start_period: 5s
+              volumes:
+                - pentagi-postgres-data:/var/lib/postgresql/data
+              networks:
+                - pentagi-network
+
+            pgexporter:
+              image: {{ pentagi_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0
+              restart: unless-stopped
+              depends_on:
+                pgvector:
+                  condition: service_healthy
+              container_name: pgexporter
+              hostname: pgexporter
+              expose:
+                - 9187/tcp
+              ports:
+                - "9187:9187"
+              environment:
+                - DATA_SOURCE_NAME=postgresql://${PENTAGI_POSTGRES_USER:-postgres}:${PENTAGI_POSTGRES_PASSWORD:-postgres}@pgvector:5432/${PENTAGI_POSTGRES_DB:-pentagidb}?sslmode=disable
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              networks:
+                - pentagi-network
+
+            scraper:
+              image: {{ pentagi_registry_host }}/dockerhub/vxcontrol/scraper:latest
+              restart: unless-stopped
+              container_name: scraper
+              hostname: scraper
+              expose:
+                - 443/tcp
+              environment:
+                - MAX_CONCURRENT_SESSIONS=${LOCAL_SCRAPER_MAX_CONCURRENT_SESSIONS:-10}
+                - USERNAME=${LOCAL_SCRAPER_USERNAME:-someuser}
+                - PASSWORD=${LOCAL_SCRAPER_PASSWORD:-somepass}
+              logging:
+                options:
+                  max-size: 50m
+                  max-file: "7"
+              volumes:
+                - scraper-ssl:/usr/src/app/ssl
+              networks:
+                - pentagi-network
+              shm_size: 2g
+
+            cadvisor:
+              image: {{ pentagi_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: pentagi_compose_file
+
+    - name: Write PentAGI .env
+      ansible.builtin.copy:
+        dest: "{{ pentagi_compose_dir }}/.env"
+        mode: "0640"
+        content: |
+          # Custom-built backend image (private fork with lab lessons learned
+          # baked in -- see PENTAGI_IMAGE var comment in this playbook).
+          PENTAGI_IMAGE={{ pentagi_fixed_image }}
+
+          # Provider -- llama.cpp's native multi-model router
+          # (llamacpp-router on framework.gibbsgreatly.xyz, port 8080),
+          # not Ollama. LLM_SERVER_MODEL is just the fallback/default;
+          # LLM_SERVER_CONFIG_PATH is what actually applies the per-role
+          # model/temperature/max_tokens tuning below -- do NOT leave this
+          # unset, confirmed live 2026-07-28 that the Ollama-era
+          # equivalent (OLLAMA_SERVER_CONFIG_PATH) was never set here,
+          # so the per-role tuning file was silently never read the
+          # entire time this stack ran on Ollama.
+          LLM_SERVER_URL={{ pentagi_llamacpp_url }}
+          # llama-server enforces no auth at all, but PentAGI's underlying
+          # OpenAI client library requires a non-empty token regardless --
+          # confirmed live 2026-07-28 ("missing the OpenAI API key" crash
+          # loop with this left blank). Placeholder value, not a real secret.
+          LLM_SERVER_KEY=not-needed
+          LLM_SERVER_MODEL={{ pentagi_llamacpp_primary_model }}
+          LLM_SERVER_PROVIDER=
+          LLM_SERVER_CONFIG_PATH=/opt/pentagi/conf/custom.provider.yml
+
+          # Embedding -- stays on Ollama. Its footprint (~300MB) was never
+          # the cause of the multi-model eviction problem the adviser
+          # model split above solves; no reason to move it too.
+          EMBEDDING_URL=http://{{ pentagi_framework_host }}:11434
+          EMBEDDING_MODEL={{ pentagi_embedding_model }}
+          EMBEDDING_PROVIDER=ollama
+          EMBEDDING_STRIP_NEW_LINES=true
+
+          # Search tools
+          SEARXNG_URL=http://{{ pentagi_framework_host }}:8082
+          DUCKDUCKGO_ENABLED=true
+          SPLOITUS_ENABLED=true
+
+          # Agent execution settings
+          ASK_USER=true
+          ASSISTANT_USE_AGENTS=false
+          EXECUTION_MONITOR_ENABLED=true
+          EXECUTION_MONITOR_SAME_TOOL_LIMIT=5
+          EXECUTION_MONITOR_TOTAL_TOOL_LIMIT=10
+          EXECUTION_MONITOR_STOP_STREAK_LIMIT=2
+          MAX_GENERAL_AGENT_TOOL_CALLS=100
+          MAX_LIMITED_AGENT_TOOL_CALLS=20
+          AGENT_PLANNING_STEP_ENABLED=true
+
+          # Server -- Traefik terminates TLS externally (edge.yaml), so
+          # PentAGI serves plain HTTP internally, matching every other web
+          # UI on this platform. No self-signed-cert handling needed at
+          # the Traefik side.
+          PENTAGI_LISTEN_IP=0.0.0.0
+          PENTAGI_LISTEN_PORT=8443
+          PUBLIC_URL={{ pentagi_public_url }}
+          CORS_ORIGINS={{ pentagi_public_url }}
+          SERVER_USE_SSL=false
+          COOKIE_SIGNING_SALT={{ pentagi_cookie_salt }}
+
+          # Postgres (pgvector)
+          PENTAGI_POSTGRES_USER=postgres
+          PENTAGI_POSTGRES_PASSWORD={{ pentagi_postgres_password }}
+          PENTAGI_POSTGRES_DB=pentagidb
+
+          # OAuth -- left blank deliberately. PentAGI's own login only
+          # supports Google/GitHub (confirmed from source); Authentik
+          # integration happens at the Traefik layer (edge.yaml
+          # forwardAuth), not here.
+          OAUTH_GOOGLE_CLIENT_ID=
+          OAUTH_GOOGLE_CLIENT_SECRET=
+          OAUTH_GITHUB_CLIENT_ID=
+          OAUTH_GITHUB_CLIENT_SECRET=
+
+          # Docker -- nested DooD inside this LXC's own Docker daemon, not
+          # a remote worker (Phase 6 is the future split-worker path).
+          DOCKER_HOST=unix:///var/run/docker.sock
+          DOCKER_INSIDE=true
+          DOCKER_NET_ADMIN=true
+          DOCKER_SOCKET=/var/run/docker.sock
+          # Real IP, not the 0.0.0.0 placeholder -- per PentAGI's own docs
+          # (backend/docs/docker.md), this is "the public IP for port
+          # bindings" that gets told to agents for reverse-shell/callback
+          # LHOST use. PentAGI already allocates and host-publishes two
+          # deterministic ports per flow for exactly this; left at the
+          # 0.0.0.0 default, an agent has no way to know pentagi-stack's
+          # real address and falls back to guessing from `ip addr` inside
+          # the worker container, which only shows Docker's internal
+          # bridge IP (172.17.0.2) -- unreachable from any real target.
+          # Confirmed live 2026-07-26: reverse-shell exploit attempts
+          # (UnrealIRCd, distccd) failed exactly this way.
+          DOCKER_PUBLIC_IP={{ ansible_host }}
+
+          # Host network mode for ephemeral worker containers -- confirmed
+          # live 2026-07-27: UnrealIRCd and distccd exploitation attempts
+          # (both needing a reverse callback, unlike the vsftpd bind shell
+          # which doesn't) were blocked by Docker's bridge NAT even with
+          # DOCKER_PUBLIC_IP correctly set to the real host IP above --
+          # the mentor's own diagnosis was "NAT prevents reverse callbacks".
+          # In host mode, worker containers share pentagi-stack's own
+          # network namespace directly (no NAT hop), and PentAGI already
+          # allocates two deterministic ports per flow for exactly this
+          # case (see docker.GetPrimaryContainerPorts) -- this was deferred
+          # until the other lesson-learned fixes were validated first.
+          DOCKER_NETWORK=host
+          DOCKER_DEFAULT_IMAGE_FOR_PENTEST={{ pentagi_kali_fixed_image }}
+      no_log: true
+      register: pentagi_env_file
+
+    # force_source: true is required here -- community.docker.docker_image
+    # treats "an image already exists locally under this tag name" as
+    # satisfied and skips the actual pull, without checking whether the
+    # registry's current digest for that tag has changed. That's fine for
+    # dockerhub/quay upstream tags that rarely change, but pentagi-fixed
+    # and kali-linux-fixed are OUR OWN mutable :latest tags we repeatedly
+    # rebuild and push to the same name -- confirmed live: without this,
+    # a redeploy after pushing a new pentagi-fixed image silently kept
+    # running the stale one (local + running-container digest both still
+    # matched the previous push, despite this task reporting "ok").
+    - name: Pull PentAGI runtime images
+      community.docker.docker_image:
+        name: "{{ item }}"
+        source: pull
+        force_source: true
+      register: pentagi_image_pull
+      retries: 5
+      delay: 10
+      until: pentagi_image_pull is succeeded
+      loop: "{{ pentagi_runtime_images }}"
+
+    - name: Bring up PentAGI stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ pentagi_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: "{{ 'always' if (pentagi_compose_file.changed or pentagi_env_file.changed or pentagi_custom_provider_file.changed) else 'auto' }}"
+
+    - name: Wait for PentAGI web port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8443
+        timeout: 120
+
+    - name: Confirm pgvector container is healthy
+      ansible.builtin.command:
+        cmd: docker inspect --format='{{ '{{' }}.State.Health.Status{{ '}}' }}' pgvector
+      register: pentagi_pgvector_health
+      changed_when: false
+      until: pentagi_pgvector_health.stdout == "healthy"
+      retries: 10
+      delay: 5

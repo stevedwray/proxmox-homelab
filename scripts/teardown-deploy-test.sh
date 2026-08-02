@@ -1579,6 +1579,17 @@ stack_apply() {
     run_logged "provision-${stack}" \
       "${WITH_SECRETS}" "${REPO_ROOT}/scripts/provision.sh" --stack "${stack}"
   fi
+  if [[ "${stack}" == "technitium-stack" && "${TARGET_NODE_EXPECTED}" != "pve" ]]; then
+    # configure-technitium-dhcp-scope-via-api.yml deliberately stays standalone
+    # from deploy-technitium-stack.yml (decisions.md Decision 7), so a fresh
+    # destroy/recreate leaves the DHCP scope unconfigured until this runs.
+    # Scoped to the Stage A throwaway VLAN only -- never point this at `pve`.
+    run_logged "reconcile-dhcp-scope-${stack}" \
+      "${WITH_SECRETS}" ansible-playbook \
+        -i "${REPO_ROOT}/terraform/lxc/stacks/dhcp-test-client-01/inventory.yml" \
+        -e dhcp_test_target_host=dhcp-test-client-01 \
+        "${REPO_ROOT}/terraform/lxc/ansible/playbooks/configure-technitium-dhcp-scope-via-api.yml"
+  fi
   validate_stack_smoke "${spec}"
 }
 
@@ -1597,7 +1608,7 @@ stack_destroy() {
   fi
 
   guard_target
-  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "graylog-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
+  if [[ "${stack}" == "portainer-stack" || "${stack}" == "netbox-stack" || "${stack}" == "monitoring-stack" || "${stack}" == "graylog-stack" || "${stack}" == "harbor-stack" || "${stack}" == "authentik-stack" || "${stack}" == "step-ca-stack" || "${stack}" == "proxy-stack" || "${stack}" == "dns-stack" || "${stack}" == "technitium-stack" || "${stack}" == "ci-runner-01" || "${stack}" == "apt-cacher-stack" ]]; then
     run_logged "destroy-${stack}" \
       bash -lc "cd '${REPO_ROOT}' && REBUILD_GATE_WITH_SECRETS='${WITH_SECRETS}' REBUILD_GATE_TARGET_NODE_EXPECTED='${TARGET_NODE_EXPECTED}' REBUILD_GATE_TERRAGRUNT_WORKSPACE='${TERRAGRUNT_WORKSPACE}' REBUILD_GATE_TARGET_HOST='${TARGET_PVE_HOST}' '${REPO_ROOT}/scripts/rebuild-gate-destroy.sh' --execute --stack '${stack}'"
   else
@@ -1639,6 +1650,33 @@ validate_stack_smoke() {
     dns-stack)
       run_logged "health-${stack}-authoritative" dig "@${ip}" +short "${LAB_FQDN_TRAEFIK}"
       run_logged "health-${stack}-delegated" dig "@${LAB_GW_MGMT}" +short "${LAB_FQDN_TRAEFIK}"
+      ;;
+    technitium-stack)
+      # Confirms dhcp-test-client-01 (Stage A's disposable fixture on the
+      # throwaway test_dhcp_seg VLAN, never destroyed/recreated by this
+      # harness -- see docs/dhcp-refactor/plan.md Stage C) still holds the
+      # exact reserved lease Stage B declares, proving the scope survived
+      # this stack's destroy/recreate cycle intact. This runs during
+      # stack_apply (a mutating phase), not final-validation, so it's not
+      # bound by that phase's read-only contract. It used to skip forcing a
+      # renew, assuming the scope's 10-minute test lease time meant a full
+      # DORA renegotiation had already happened naturally by the time a full
+      # platform cycle reached this check -- confirmed live (2026-07-12)
+      # that assumption doesn't hold: dhclient backs off for minutes between
+      # retry bursts, and this check runs immediately after the scope
+      # reconcile, so it can land mid-backoff and see no address at all even
+      # though the reservation is fine. validate-dhcp-test-client-via-pct.yml
+      # now triggers a single bounded `dhclient -1` renewal itself before
+      # reading interface state, instead of waiting on the client's own
+      # retry schedule.
+      run_logged "health-${stack}-dhcp-lease" \
+        ansible-playbook \
+          -i "${REPO_ROOT}/terraform/lxc/stacks/dhcp-test-client-01/inventory.yml" \
+          -e dhcp_test_target_host=dhcp-test-client-01 \
+          -e dhcp_test_validation_expected_ipv4=192.168.90.61 \
+          -e dhcp_test_validation_expected_gateway=192.168.90.1 \
+          -e '{"dhcp_test_validation_expected_nameservers": ["192.168.90.1"]}' \
+          "${REPO_ROOT}/terraform/lxc/ansible/playbooks/validate-dhcp-test-client-via-pct.yml"
       ;;
     proxy-stack)
       run_logged "health-${stack}" curl -skI --resolve "${LAB_FQDN_TRAEFIK}:443:${LAB_IP_PROXY}" "https://${LAB_FQDN_TRAEFIK}/"
@@ -1763,6 +1801,22 @@ probe_stack_health() {
       else
         PLATFORM_HEALTH_STATUS="failed"
         PLATFORM_HEALTH_DETAIL="authoritative dns failed"
+      fi
+      ;;
+    technitium-stack)
+      # Not authoritative for the live resolver path yet (parity window --
+      # see deploy-technitium-stack.yml's header comment), so this probes
+      # Technitium's own IP directly for the same parity-zone record
+      # dns-stack serves, the same way validate_stack_smoke() does for
+      # this stack elsewhere in this script.
+      PLATFORM_HEALTH_LOG="${LOG_DIR}/platform-status-${stack}-health.log"
+      if run_status_capture "${PLATFORM_HEALTH_LOG}" \
+        bash -lc "dig '@${ip}' +short '${LAB_FQDN_TRAEFIK}' | grep -Fx '${LAB_IP_PROXY}'"; then
+        PLATFORM_HEALTH_STATUS="ok"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns ok"
+      else
+        PLATFORM_HEALTH_STATUS="failed"
+        PLATFORM_HEALTH_DETAIL="parity-zone dns failed"
       fi
       ;;
     proxy-stack)

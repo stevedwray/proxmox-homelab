@@ -26,7 +26,7 @@ LAN_GW_CIDR="${MIKROTIK_LAN_GW_CIDR:?MIKROTIK_LAN_GW_CIDR not set}"
 MGMT_CIDR="${MIKROTIK_MGMT_CIDR:?MIKROTIK_MGMT_CIDR not set}"
 
 # Load credentials from SOPS
-eval "$(sops -d "${REPO_ROOT}/terraform/secrets.enc.yaml" \
+eval "$(sops -d "${REPO_ROOT}/terraform/secrets.common.enc.yaml" \
   | grep -E '^(hAPax3_ADMIN|MIKROTIK_USER):' \
   | sed 's/: /=/;s/^/export /')"
 AUTH_USER="${MIKROTIK_USER}"

@@ -558,7 +558,18 @@ def build_vm_list(proxmox_data=None, stack_yamls=None, portainer=None, runtime_i
         # Resolve the Portainer server's own IP once so we can map the
         # "local" (unix-socket) endpoint to the host container by IP.
         portainer_server_ip = _resolve_portainer_server_ip(portainer_url) if portainer_url else ""
-        for ep in portainer.get_endpoints():
+        try:
+            endpoints = portainer.get_endpoints()
+        except Exception as exc:
+            # Constructing PortainerClient (see _build_portainer_for_node)
+            # already degrades gracefully on failure -- this call is the
+            # first one that actually talks to the network, and had no
+            # equivalent guard, so a momentary Portainer outage crashed the
+            # whole populate run instead of just skipping service discovery
+            # for this node. Found live 2026-07-25 (Connection refused).
+            print(f"  warning: Portainer endpoint discovery failed: {exc}")
+            endpoints = []
+        for ep in endpoints:
             ep_url = ep.get("URL", "")
             raw_ip = ep_url.replace("tcp://", "").split(":")[0]
             # Unix-socket endpoints yield "unix" or empty — not a routable IP.

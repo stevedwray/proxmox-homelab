@@ -6,6 +6,19 @@ This document defines how production credentials are managed and accessed in thi
 
 Production secrets are kept separate from development secrets to prevent accidental exposure and to enforce strict access controls. Production access defaults to read-only and requires explicit operator approval for any mutations.
 
+**As of 2026-07-17 there is more than one production-trust node.** `pve`
+remains the original and best-documented example throughout this file, and
+everything below is still accurate for it — but the mechanism is now
+generic rather than pve-specific. `terraform/PRODUCTION_NODES` declares
+which nodes are production (currently `pve`, `pve-framework`); each has its
+own `.env.<node>` and `terraform/secrets.<node>.enc.yaml`, and its own thin
+`with-secrets-prod*` wrapper (`with-secrets-prod` for `pve`,
+`with-secrets-prod-framework` for `pve-framework`) over the shared engine in
+`scripts/with-secrets-prod-lib.sh`. See
+`docs/framework-integration/decisions.md` Decision 6 for the full rationale
+and what changed. Read `pve` below as "the pattern, illustrated with the
+original node" rather than as the only node it applies to.
+
 ## Current Status
 
 As of May 22, 2026, the production Proxmox API token path has been validated
@@ -26,7 +39,7 @@ What is still incomplete:
 ## Secret Storage
 
 ### Development Secrets
-- **File:** `terraform/secrets.enc.yaml`
+- **File:** `terraform/secrets.common.enc.yaml`
 - **Wrapper:** `./with-secrets`
 - **Environment:** pve-test (default, safe)
 - **Access:** Available to normal development workflows without restriction
@@ -59,7 +72,7 @@ These contain hostnames, node names, IPs, usernames, and workspace settings—ne
 Used for normal pve-test development work.
 
 ```bash
-# Load dev secrets from terraform/secrets.enc.yaml
+# Load dev secrets from terraform/secrets.common.enc.yaml
 # Target pve-test by default
 # Fail if attempting to target pve without ALLOW_PVE=true
 
@@ -70,7 +83,7 @@ Used for normal pve-test development work.
 **Safety rails:**
 - Defaults to `PVE_ENV=pve-test`
 - Refuses any `pve` work unless `ALLOW_PVE=true` is explicitly set
-- Can only reach dev secrets in `terraform/secrets.enc.yaml`
+- Can only reach dev secrets in `terraform/secrets.common.enc.yaml`
 
 **When to use:**
 - All normal infrastructure work

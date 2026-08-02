@@ -2,6 +2,12 @@
 
 ## Current State
 
+- Stage 10 scope defined (2026-07-22): first application-tier stack
+  exemplar, `minecraft-stack` on `pve-test-vm`, LAN bridge (no new SDN
+  zone for this pass). See
+  [stage-10-minecraft-exemplar.md](./stage-10-minecraft-exemplar.md) for
+  full scope, network placement rationale, and the local-agent execution
+  plan. Not yet implemented.
 - Stages 1–5 are complete.
 - Exemplar pair `apt-cacher-stack` and `harbor-stack` validated end-to-end on branch `task/slr-05-exemplar-validation`.
 - Check mode, live reconcile, health checks, and approval-gated post-infra path all pass for both exemplars.

@@ -1,0 +1,105 @@
+# ComfyUI image/video diffusion stack — ai_seg zone (pve-framework).
+# Native (no Docker) ROCm/PyTorch build. Wraps the already-proven ad hoc
+# container 9002 in real Terraform/Ansible, per
+# docs/framework-integration/post-reinstall-plan.md.
+#
+# See docs/framework/comfyui-image-video-gen-findings.md for the deployment
+# recipe and bug fixes this codifies, and
+# docs/framework/proxmox-strix-halo-setup-notes.md for the GPU-enablement
+# background shared with llm-gpu-stack.
+#
+# Kept in its own GPU-passthrough container, separate from llm-gpu-stack,
+# per docs/framework-integration/decisions.md Decision 5 (revised) —
+# different dependency stack and failure/memory profile, validated by a
+# real host-wide OOM incident when both were memory-heavy at once. Prefer
+# restarting this container cleanly between different-model runs over
+# trusting in-process model switching (findings doc §6c).
+
+hostname: comfyui-stack
+ip_address: "${lab_ip_comfyui}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+vmid: 50011
+cores: 8
+# Empirically-validated minimum for the 640x640/49-frame Wan 2.2 14B I2V
+# workload (findings doc §6c/§7: 48GB was loose enough to let host-wide OOM
+# happen before this container's own cgroup intervened; 32GB was too
+# tight; 40GB completed cleanly). Bump only after testing larger frame
+# counts/resolutions, sized against real anon usage, not raw peak.
+memory: 40960
+swap: 2048
+# Model weights live externally on the host's dedicated storage LV
+# (/storage/models/comfyui and /storage/artifacts, bind-mounted below),
+# not inside the container's own rootfs -- see
+# docs/framework-integration/decisions.md Decision 3's 2026-07-18 storage
+# restructure. rootfs only needs to hold the OS, the ROCm/PyTorch venv
+# (~1GB self-contained SDK), and ComfyUI itself, not tens of GB of
+# checkpoints or generated output.
+rootfs_size: 30
+storage_profile: platform-default
+template_profile: ubuntu-native
+template_name: "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+ostype: ubuntu
+
+# Native GPU-passthrough LXC, not Docker-based.
+docker_enabled: false
+
+# unprivileged (true, the default) + device_passthrough is untested on
+# this specific hardware/ROCm combination as of this writing -- the manual
+# bring-up of both container 9001 and 9002 always used the legacy
+# privileged lxc.cgroup2.devices.allow pattern instead. If GPU access fails
+# to initialize inside the container, the next troubleshooting step is
+# setting unprivileged: false here, not immediately assuming the
+# device_passthrough mechanism itself is broken. See the identical note on
+# llm-gpu-stack/stack.yaml.
+unprivileged: true
+device_passthrough:
+  - path: /dev/kfd
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/card1
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/renderD128
+    uid: 0
+    gid: 0
+    mode: "0666"
+
+# Model checkpoints and generated output live on the host's dedicated
+# storage LV, not the container's own rootfs -- see Decision 3's
+# 2026-07-18 update. Bound directly onto the paths comfyui_stack's
+# Ansible role already expects (comfyui_stack_models_dir /
+# ComfyUI's default output/ dir), so the role needed no changes. Own
+# models subdirectory, separate from llm-gpu-stack's -- ComfyUI wants its
+# own structured checkpoints/vae/loras tree, not a flat .gguf directory.
+host_bind_mounts:
+  - host_path: /storage/models/comfyui
+    lxc_path: /opt/ComfyUI/models
+  - host_path: /storage/artifacts
+    lxc_path: /opt/ComfyUI/output
+
+tags:
+  - comfyui-stack
+  - ai
+  - gpu
+  - pve-framework
+
+network:
+  zone: ai_seg
+
+depends_on: []
+provides:
+  - service: comfyui-http
+    port: 8188
+    protocol: tcp
+
+ansible_playbook: "deploy-comfyui-stack"
+deployment_tier: ai
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

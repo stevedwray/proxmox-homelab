@@ -1,0 +1,241 @@
+# DHCP Refactor — MikroTik to Technitium Planning
+
+## Purpose
+
+Plan the future migration of DHCP responsibilities away from the MikroTik and
+toward Technitium, while preserving the current working LAN and accounting for
+the likely move to a more VLAN-centric client network.
+
+This workspace is intentionally separate from `docs/dns-refactor/`. The DNS
+cutover is complete; DHCP migration is a distinct router, client, and IPv6
+validation surface.
+
+## Status
+
+Planning opened on 2026-07-05. Phases 0 and 1 are complete —
+[decisions.md](./decisions.md) holds four settled decisions: IPv4 DHCP is
+relay-based (MikroTik relays to Technitium; Technitium stays off client L2
+segments), IPv6/DHCPv6 stays on MikroTik indefinitely (no Technitium support
+exists yet), `bridgeLocal` migrates first with all 5 static leases and
+DHCP-assigned DNS staying on the Pi-holes, and resiliency is a single
+Technitium instance plus long lease times plus a MikroTik break-glass
+fallback (a real multi-instance redundancy mechanism was found and is
+recorded as a deferred "come back to later" option, not adopted yet).
+
+[plan.md](./plan.md)'s Phase 3 is now a fully staged, step-by-step runbook
+(Stages A–F), each with its own validation and rollback. The key finding
+shaping that structure: `pve-test-vm` is **not** network-isolated from
+production — it shares the same physical VLANs/subnets and the same
+physical `bridgeLocal`, so mechanism testing needs a brand-new, dedicated
+VLAN (Stage A), and the final `bridgeLocal` cutover (Stage E) is inherently
+a production-only action with no rehearsal environment possible.
+
+An independent review (2026-07-05) found the plan was still missing
+statefulness handling: a declarative, repo-owned source of truth for DHCP
+scope/reservation config (the `technitium-config` Docker volume doesn't
+survive a teardown, and nothing analogous to DNS's zone-bootstrap hook
+existed for DHCP), an explicit policy for the network's 8 dynamic (non-static)
+leases, and failure-mode validation (restart/renew, brief outage, and
+renewing a pre-cutover MikroTik-issued lease) beyond first-time lease
+issuance. **Status as of end of day 2026-07-05**: the failure-mode
+validation is now fully done (see Stage A below), config-as-code (Stage B)
+has a working first implementation proven live, and the dynamic-lease
+policy (Stage D) is still genuinely undecided — an operator call, not
+something to resolve unilaterally in this doc.
+
+Stage A has also moved from pure planning into early execution. The additive
+test VLAN (`test_dhcp_seg`, VLAN 90, `192.168.90.0/24`) and disposable client
+stack (`dhcp-test-client-01`, bootstrap `192.168.90.61`) are now defined in
+the repo, and the MikroTik-side VLAN / relay prerequisites have been applied.
+The practical blocker discovered during execution: neither the workstation nor
+the `pve-test-vm` host has routed SSH reachability into the throwaway VLAN, so
+the initial "flip the guest via normal Ansible SSH" approach was wrong in
+practice. Stage A's helper playbooks were therefore reworked to use `pct exec`
+through Proxmox instead. The guest's in-guest DHCP flip is now done and
+confirmed persistent across a reboot — that required a second fix, since
+Proxmox's own container-start network templating was silently reverting the
+guest back to static on every `pct reboot` (see
+[stage-a-execution.md](./stage-a-execution.md)'s Issue 6).
+
+**Stage A's core mechanism is now proven end-to-end (2026-07-05).** A real
+lease issues correctly for the reserved address `192.168.90.61`, with the
+right gateway/DNS/domain options and confirmed forward + reverse DNS.
+Getting there required finding and fixing three more bugs beyond the
+in-guest flip — none about the relay design itself, all about incomplete
+setup: Technitium silently defaulting an unspecified lease time to ~1 day,
+Technitium's Docker container never actually publishing `67:67/udp`
+(decisions.md Decision 1 called for this but it was never implemented), and
+a MikroTik firewall rule that existed but sat after a catch-all drop, plus
+(the actual last blocker) the throwaway VLAN never being added to the
+physical trunk ports the way the other 4 VLANs were — so its traffic never
+crossed the trunk between the router and Proxmox at all. Full detail in
+`stage-a-execution.md` Issues 7–10.
+
+**Restart/renew and brief-outage recovery are also confirmed (2026-07-05)** —
+`stage-a-execution.md` Issues 11–12. Found a second missing-firewall-rule bug
+identical in shape to Issue 9 (VLAN 90 had no ICMP allow rule at all, which
+broke `dhclient`'s own outage-fallback logic), now fixed the same way. Also
+found and accepted a real upstream limitation: Technitium reports its
+Docker-internal IP as the DHCP server-identifier, so renewals always fall
+through to broadcast REBIND rather than a clean unicast RENEW — not a
+connectivity risk, just a minor efficiency cost. Recorded as a deferred item
+to revisit (running Technitium natively on the LXC instead of Docker would
+close it properly) rather than something to fix now by reopening Decision
+1's rejected `network_mode: host` trade-off.
+
+**Stage A is now fully complete (2026-07-05)**, including the last check:
+the simulated-cutover rebind test. Stood up a temporary MikroTik-local DHCP
+server on the throwaway VLAN, got the client a lease from it, then executed
+the real two-part cutover (disable local server, enable relay). The
+client's stale lease was cleanly `DHCPNAK`'d and it immediately recovered
+its correct reservation — no hang, no manual fix needed. This was the one
+check that directly rehearses `bridgeLocal`'s real cutover sequence, and it
+passed cleanly.
+
+**Stage B0 is also now complete (2026-07-06/07)**: `network_mode: host`
+(Decision 5) closes the Docker server-identifier limitation noted above
+properly, rather than just accepting it. Getting there required routing
+around a same-session production-deploy incident (see decisions.md
+Decision 5's incident note; real structural fix tracked separately in
+[docs/environment-isolation/](../environment-isolation/)). Empirically
+confirmed via a `tcpdump` capture of the actual T1 renewal: a direct
+**unicast** exchange with Technitium's real IP
+(`192.168.90.61.68 > 192.168.20.115.67`), not the previous broadcast
+REBIND fallback.
+
+**Stage B is also now complete (2026-07-07)**: DHCP scope/reservation
+config is now genuinely declarative, not just create-once. Reviewing the
+2026-07-05 implementation found it only handled existence (a `when: name
+not in [...]` guard), so a declared value change after the scope already
+existed would never reach the live scope — the same bug shape as
+`stage-a-execution.md` Issue 7. Rewrote it to diff the scope's live config
+against declared values and reconcile on drift, and converted the single
+hardcoded reservation into a declarative list. Proven idempotent live
+against `pve-test-vm`'s real scope twice (`changed=0` on the second run),
+including 5 fake reservations shaped like the real `bridgeLocal` static
+leases. See decisions.md Decision 6 (settled the real 7-day production
+lease time) and Decision 7 (this playbook stays standalone, doesn't merge
+into `deploy-technitium-stack.yml`, for now).
+
+**Stage C is now fully done (2026-07-12)**: after 2026-07-07's prep work
+(fixed the Terraform no-op-plan misclassification bug, added
+`technitium-stack` to the inventory/deploy/destroy order, wired the DHCP
+scope reconcile into deploy and a lease check into the stack's own
+validation), the actual destructive full 12-stack `cycle` was run for
+real against `pve-test-vm` — a genuine from-scratch `destroy` through
+`final-validation`. The first attempt surfaced five real bugs (none
+DHCP-specific — general platform bootstrap-ordering and Ansible
+variable-scoping issues that a true cold full-cycle run was the first
+thing to ever exercise): `technitium-stack`'s image pull routed through
+Harbor before Harbor/Traefik existed yet in the deploy order; the DHCP
+lease check raced `dhclient`'s multi-minute backoff instead of forcing a
+deterministic renewal; the harness's own nameserver-list `-e` argument
+never actually produced a list; `authentik-stack`'s Harbor pre-pull
+gating trusted a bare TCP:80 check that doesn't prove authenticated
+registry access works; and a role-vars variable-shadowing bug in
+`deploy-harbor-stack.yml` silently defeated the guard meant to stop
+Harbor's OIDC auth-mode migration from getting permanently blocked. All
+five fixed and validated live; see `plan.md`'s Stage C section for full
+detail and commit references. A second, completely fresh full cycle then
+passed clean end to end, including the DHCP-specific checks — first time
+ever with `technitium-stack` in the mix.
+
+**Stage D is now fully done too (2026-07-12, see decisions.md Decision
+8)**: 3 of the 8 dynamic leases (`deb13`, `LM-GM17D7CY`, `Compute`) are
+promoted to reservations; the other 5 (phones and two smart-home/IoT-style
+devices) accept address churn after cutover. The stale-DNS-record
+rollback cleanup procedure is also written.
+
+**Stage E's cutover packet is drafted (2026-07-12)**:
+[bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md) has real
+values throughout (relay command, firewall verification, the full
+8-reservation set, lease time, rollback steps with explicit trigger
+thresholds, and the post-rollback DNS cleanup checklist) — **not yet
+executed**. Two small scope-setup details are flagged as still open
+inside the packet itself (the domain-name option and reverse-zone naming
+for Technitium's new `bridgeLocal` scope).
+
+**This workspace's planning is now essentially complete.** What remains
+is real production execution: applying the real scope to Technitium,
+physically preparing the out-of-band admin path, scheduling the window,
+running the cutover, then Stage F's 7-day soak. Per `CLAUDE.md`'s
+Production Credential Controls, that's its own explicitly-approved step —
+see `plan.md`'s "Immediate next step" section for the exact sequence.
+
+Current understanding:
+
+- IPv4 DHCP today is primarily on the flat LAN `bridgeLocal`
+  (`192.168.1.0/24`) on the MikroTik.
+- Most DHCP clients are still on the default LAN / default VLAN.
+- The network direction is toward more client VLANs over time, including
+  separate WiFi / IoT segmentation.
+- IPv6 is not a simple "replace DHCP with Technitium" problem:
+  RouterOS currently receives IPv6 delegation directly from the ISP and is
+  already handling router advertisement and DHCPv6-related functions on the
+  LAN.
+
+That means this workspace must treat IPv4 DHCP migration and IPv6 behavior as
+related but not identical problems.
+
+## Workspace layout
+
+This follows the repo-wide pattern in
+[docs/workflow/documentation-workspaces.md](../workflow/documentation-workspaces.md):
+
+| File | Purpose |
+|---|---|
+| `README.md` | entry point, scope, reading order |
+| `current-state.md` | durable baseline of live MikroTik DHCP and IPv6 handling |
+| `plan.md` | phased migration and investigation plan |
+| `decisions.md` | ADR-style log of Technitium-DHCP-specific design decisions, as they're made |
+| `stage-a-execution.md` | detailed issue-by-issue log of Stage A's live mechanism-proof execution |
+| `bridgelocal-cutover-packet.md` | Stage E's production cutover packet — not yet executed |
+| `artifacts/` | local-only, git-ignored scratch notes, command output, evidence |
+
+## Read these first
+
+1. This file
+2. [current-state.md](./current-state.md)
+3. [decisions.md](./decisions.md)
+4. [plan.md](./plan.md)
+5. [bridgelocal-cutover-packet.md](./bridgelocal-cutover-packet.md) — once ready to execute Stage E
+6. [router/README.md](../../router/README.md)
+7. [router/desired-config.md](../../router/desired-config.md)
+8. [docs/design/network.md](../design/network.md)
+9. [docs/dns-refactor/decisions.md](../dns-refactor/decisions.md)
+
+## Scope
+
+In scope:
+
+- inventory the current MikroTik IPv4 DHCP setup
+- inventory the current MikroTik IPv6 RA / DHCPv6-PD / DHCPv6 behavior
+- define how Technitium could take over IPv4 DHCP
+- define how future client VLANs should obtain DHCP
+- decide what should stay on MikroTik versus move to Technitium
+- design safe cutover and rollback procedures
+
+Out of scope for the first planning pass:
+
+- immediate production router mutation
+- replacing IPv6 behavior before its current model is fully understood
+- changing SDN container addressing, which remains static and Terraform-owned
+
+## Closeout target
+
+This workspace is complete when it produces:
+
+- a verified current-state baseline — **done**, `current-state.md`
+- a clear target architecture for IPv4 DHCP and client VLAN growth —
+  **done**, Decisions 1–4
+- an explicit decision on IPv6 ownership boundaries — **done**, Decision 2
+- a staged execution plan with rollback points — **done**, Stages A–F in
+  `plan.md`, each independently validated except Stage E/F themselves
+
+All four planning-level criteria are now met (2026-07-12) — Stages A
+through D are fully validated live, and Stage E's cutover packet is
+drafted with real values. This workspace's *planning* is effectively
+closed out; what remains is real production execution (Stage E's cutover
+itself, then Stage F's soak period), which is deliberately kept as its
+own explicitly-approved step rather than something this planning
+workspace does on its own — see `plan.md`'s "Immediate next step."

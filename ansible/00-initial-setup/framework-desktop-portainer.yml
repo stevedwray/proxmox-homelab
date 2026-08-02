@@ -1,0 +1,280 @@
+---
+# Registers framework.gibbsgreatly.xyz with the lab's Portainer server so its
+# four Docker Compose stacks (llama.cpp, Ollama, ComfyUI, ai-services-stack)
+# are manageable from the Portainer UI, not just visible as loose containers.
+# See docs/framework-ubuntu/platform-integration-plan.md "Portainer" section.
+#
+# Two things this deliberately does NOT reuse from
+# terraform/lxc/ansible/roles/portainer_agent:
+#   - That role requires a pre-baked "portainer-agent.service" systemd unit
+#     in the LXC OS template. Framework has no such template -- this
+#     playbook writes the same compose file and just runs
+#     `docker compose up -d` directly, matching every other
+#     framework-desktop-*.yml playbook's own style.
+#   - portainer_stack's stack-push task reads compose content via
+#     `lookup('file', stack_dir + '/' + item.compose_file)` -- a local file
+#     in this repo. Framework's four compose files are rendered directly
+#     onto the remote host by their own playbooks (framework-desktop-
+#     {llamacpp,ollama,comfyui,openwebui}.yml), not stored locally, so this
+#     playbook slurps each file back from framework itself before pushing
+#     it to Portainer. This guarantees byte-for-byte identity with what's
+#     actually running -- no second copy that could drift.
+#
+# portainer_api role IS reused as-is (registers/updates the endpoint,
+# delegate_to: localhost for all Portainer API calls -- no changes needed).
+#
+# Run (from repo root):
+#   ANSIBLE_ROLES_PATH=terraform/lxc/ansible/roles ./with-secrets-prod-framework \
+#     ansible-playbook -i ansible/inventory/ \
+#     ansible/00-initial-setup/framework-desktop-portainer.yml
+#
+# Idempotency note (inherited from portainer_stack's own protocol): stack
+# push is create-only -- if compose content changes after a stack is
+# already registered in Portainer, re-running this playbook will NOT
+# update Portainer's copy. Re-deploy the stack from the Portainer UI (or
+# delete and let this playbook recreate it) if that's ever needed.
+
+- name: Register framework with Portainer (agent + all four stacks)
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_portainer_agent_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+    framework_portainer_agent_image: "{{ framework_portainer_agent_registry_host }}/dockerhub/portainer/agent:2.27.3"
+    framework_portainer_agent_dir: /opt/portainer-agent
+    framework_portainer_agent_port: 9001
+    framework_portainer_agent_network_subnet: "172.31.251.0/24"
+    framework_portainer_agent_network_gateway: "172.31.251.1"
+
+    # portainer_api's own role defaults resolve these identically, but role
+    # defaults don't stay in scope after include_role finishes -- declared
+    # here too (same expressions) so the stack-push tasks below can still
+    # see them after the role include completes.
+    portainer_api_server_ip: >-
+      {{
+        portainer_server_ip
+        | default(lookup('env', 'LAB_IP_PORTAINER'), true)
+        | mandatory('portainer_server_ip var or LAB_IP_PORTAINER env var is required')
+      }}
+    portainer_api_server_port: "9000"
+    portainer_api_admin_user: "admin"
+    portainer_api_admin_password: >-
+      {{
+        lookup('env', 'TF_VAR_portainer_admin_password')
+        | default(lookup('env', 'PORTAINER_ADMIN_PASSWORD'), true)
+        | mandatory('TF_VAR_portainer_admin_password environment variable is not set')
+      }}
+
+    # The four already-deployed stacks -- name (used as the Portainer Stack
+    # name, must be unique per endpoint), the compose file path already
+    # written on framework by each stack's own playbook, and the exact
+    # container_name(s) that compose file declares (needed for the
+    # container-removal step below -- Portainer's stack-create actually
+    # runs `docker compose up` itself, which fails outright if a container
+    # with the same name already exists and isn't owned by that stack).
+    framework_portainer_stacks:
+      - name: llamacpp
+        compose_path: /opt/llamacpp-docker/docker-compose.yml
+        container_names: [llamacpp-router]
+      - name: ollama
+        compose_path: /opt/ollama-docker/docker-compose.yml
+        container_names: [ollama]
+      - name: comfyui
+        compose_path: /opt/comfyui-docker/docker-compose.yml
+        container_names: [comfyui]
+      - name: ai-services-stack
+        compose_path: /opt/openwebui-docker/docker-compose.yml
+        container_names: [openwebui, searxng]
+
+    # Safety gate: pushing a stack through Portainer's API makes it
+    # recreate the containers under its own ownership, which means
+    # removing the existing ones first -- real downtime on llama.cpp,
+    # Ollama, ComfyUI, and OpenWebUI/SearXNG while each swaps over.
+    # Confirmed 2026-07-25: registering the agent/environment alone
+    # (the part that always runs, below) causes no downtime and is safe
+    # to re-run any time. Stack push only runs when explicitly requested:
+    #   ... ansible-playbook ... -e framework_portainer_push_stacks=true
+    framework_portainer_push_stacks: false
+
+    # Must be pre-declared: when every stack is already registered (the
+    # normal, fully-idempotent case), the accumulator loop below runs zero
+    # iterations and a set_fact task with zero loop items never executes
+    # at all -- without this, the variable would stay flat-out undefined
+    # rather than resolving to an empty list. Found live 2026-07-25 on the
+    # very next re-run after all four stacks were already pushed.
+    framework_portainer_stack_payloads: []
+
+  tasks:
+    - name: Create Portainer agent compose directory
+      ansible.builtin.file:
+        path: "{{ framework_portainer_agent_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install Portainer agent docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ framework_portainer_agent_dir }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          services:
+            portainer-agent:
+              image: {{ framework_portainer_agent_image }}
+              container_name: portainer-agent
+              hostname: {{ inventory_hostname }}
+              restart: unless-stopped
+              ports:
+                - "{{ framework_portainer_agent_port }}:{{ framework_portainer_agent_port }}"
+              volumes:
+                - /var/run/docker.sock:/var/run/docker.sock
+                - /var/lib/docker/volumes:/var/lib/docker/volumes
+          networks:
+            default:
+              ipam:
+                config:
+                  - subnet: "{{ framework_portainer_agent_network_subnet }}"
+                    gateway: "{{ framework_portainer_agent_network_gateway }}"
+
+    - name: Bring up Portainer agent via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ framework_portainer_agent_dir }}"
+      register: framework_portainer_agent_up
+      changed_when: "'Started' in framework_portainer_agent_up.stderr or 'Created' in framework_portainer_agent_up.stderr"
+
+    - name: Wait for Portainer agent HTTPS ping (self-signed, same as every other agent)
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:{{ framework_portainer_agent_port }}/ping"
+        method: GET
+        status_code: 204
+        validate_certs: false
+      register: framework_portainer_agent_ping
+      retries: 15
+      delay: 2
+      until: framework_portainer_agent_ping.status == 204
+
+    - name: Register framework as a Portainer environment
+      ansible.builtin.include_role:
+        name: portainer_api
+
+    # --- Everything below here recreates containers (real downtime) and
+    # only runs with an explicit -e framework_portainer_push_stacks=true.
+    # Safe to leave this playbook at its default -- re-running it any time
+    # only touches the agent/registration steps above. ---
+    - name: Push stacks to Portainer (opt-in, causes container downtime)
+      when: framework_portainer_push_stacks | bool
+      block:
+        - name: Authenticate to Portainer for stack push
+          ansible.builtin.uri:
+            url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/auth" # nosonar
+            method: POST
+            body_format: json
+            body:
+              Username: "{{ portainer_api_admin_user }}"
+              Password: "{{ portainer_api_admin_password }}"
+            status_code: 200
+          register: framework_portainer_stack_auth
+          delegate_to: localhost
+          no_log: true
+
+        - name: Get existing stacks on this endpoint
+          ansible.builtin.uri:
+            url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks" # nosonar
+            method: GET
+            headers:
+              Authorization: "Bearer {{ framework_portainer_stack_auth.json.jwt }}"
+            status_code: 200
+          register: framework_portainer_existing_stacks
+          delegate_to: localhost
+
+        - name: Determine which stacks aren't yet registered on this endpoint
+          ansible.builtin.set_fact:
+            framework_portainer_stacks_to_push: >-
+              {{
+                framework_portainer_stacks
+                | rejectattr('name', 'in', framework_portainer_existing_stacks.json
+                    | selectattr('EndpointId', 'equalto', portainer_endpoint_id | int)
+                    | map(attribute='Name') | list)
+                | list
+              }}
+
+        # Portainer's stack-create runs `docker compose up` itself and
+        # fails outright if a container with the same name already exists
+        # (see the header comment) -- these are the same containers each
+        # stack's own playbook created via plain `docker compose up -d`,
+        # about to be recreated under Portainer's ownership instead.
+        - name: Remove existing containers so Portainer can recreate them under its own ownership
+          community.docker.docker_container:
+            name: "{{ item.1 }}"
+            state: absent
+          loop: "{{ framework_portainer_stacks_to_push | subelements('container_names') }}"
+          loop_control:
+            label: "{{ item.1 }}"
+
+        - name: Read back each stack's already-deployed compose file from framework
+          ansible.builtin.slurp:
+            src: "{{ item.compose_path }}"
+          loop: "{{ framework_portainer_stacks_to_push }}"
+          loop_control:
+            label: "{{ item.name }}"
+          register: framework_portainer_compose_slurp
+
+        # Found live 2026-07-25: llamacpp's compose has a `build: {context:
+        # .}` section (it's built from source on this host). Portainer's
+        # create-from-string API only transmits the compose YAML text, not
+        # the Dockerfile/build context it refers to, so pushing it as-is
+        # fails ("listing workers for Build ... frame too large") --
+        # structural, not transient. The image (llamacpp-router:hip) is
+        # already built locally by this stack's own playbook, so `build:`
+        # is unnecessary for Portainer's copy specifically: strip it from
+        # every service in every stack before pushing (generic, not just
+        # llamacpp, in case a future stack adds one) and let `image:`
+        # resolve to the already-built local image instead.
+        - name: "Strip build: sections before pushing (image already built locally; string-deploy API has no build context)"
+          ansible.builtin.set_fact:
+            framework_portainer_stack_payloads: >-
+              {{ framework_portainer_stack_payloads | default([]) + [{'name': item.item.name, 'content': framework_portainer_stripped_compose}] }}
+          vars:
+            framework_portainer_compose_parsed: "{{ item.content | b64decode | from_yaml }}"
+            # Jinja has no dict-comprehension syntax (that's Python-only) --
+            # this is the verified-working form: accumulate into a plain
+            # dict via .update() inside a real {% for %} block. Tested
+            # standalone against llamacpp's actual compose file (all keys
+            # survive except build:) and against a build-free compose
+            # (confirmed no-op) before wiring in, given the outage the
+            # first (broken) version of this task caused.
+            framework_portainer_stripped_compose: |-
+              {% set stripped_services = {} %}
+              {% for svc_name, svc in framework_portainer_compose_parsed.services.items() %}
+              {% set _ = stripped_services.update({svc_name: dict(svc.items() | rejectattr('0', 'equalto', 'build'))}) %}
+              {% endfor %}
+              {{ {'services': stripped_services} | to_nice_yaml }}
+          loop: "{{ framework_portainer_compose_slurp.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"
+
+        - name: Push each stack to Portainer
+          ansible.builtin.uri:
+            url: "http://{{ portainer_api_server_ip }}:{{ portainer_api_server_port }}/api/stacks/create/standalone/string?endpointId={{ portainer_endpoint_id }}" # nosonar
+            method: POST
+            headers:
+              Authorization: "Bearer {{ framework_portainer_stack_auth.json.jwt }}"
+              Content-Type: application/json
+            body_format: json
+            body:
+              Name: "{{ item.name }}"
+              StackFileContent: "{{ item.content }}"
+              Env: []
+            status_code: 200
+          loop: "{{ framework_portainer_stack_payloads }}"
+          loop_control:
+            label: "{{ item.name }}"
+          delegate_to: localhost
+          register: framework_portainer_stack_deploy
+
+        - name: Report deployed stacks
+          ansible.builtin.debug:
+            msg: "Deployed stack '{{ item.item.name }}' (ID: {{ item.json.Id }})"
+          loop: "{{ framework_portainer_stack_deploy.results }}"
+          loop_control:
+            label: "{{ item.item.name }}"

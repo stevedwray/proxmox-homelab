@@ -12,7 +12,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 REPO_ROOT="${SCRIPT_DIR}/../.."
 
-eval "$(sops -d "${REPO_ROOT}/terraform/secrets.enc.yaml" \
+eval "$(sops -d "${REPO_ROOT}/terraform/secrets.common.enc.yaml" \
   | grep -E '^(hAPax3_ADMIN|MIKROTIK_USER):' \
   | sed 's/: /=/;s/^/export /')"
 

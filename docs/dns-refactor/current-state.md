@@ -209,3 +209,48 @@ in `plan.md` before attempting a full teardown validation run.
   second FWD rule with the same regexp.
 - The full teardown gate has now exercised the Technitium-backed router
   path successfully on `pve-test-vm`.
+- **Found 2026-07-07 (via a `docs/teardown-test` `platform-status` health
+  probe added during DHCP-refactor work, not this workspace's own testing):
+  the `lab_domain`-forwarder guard in `deploy-technitium-stack.yml` never
+  actually fires.** The task "Create conditional forwarder for live lab
+  domain during bootstrap phase" is meant to skip creating a `Forwarder`
+  zone for `lab_domain` when the later parity-zone logic will manage that
+  same zone name as `Primary` instead (guard: `not
+  (technitium_generated_zone_enabled ... and technitium_generated_zone_name
+  == lab_domain)`). But `technitium_generated_zone_enabled` /
+  `technitium_generated_zone_name` aren't computed until later in the same
+  play, so at the point this guard evaluates they're always undefined —
+  the `and` is always `false`, `not false` is always `true`, and the guard
+  never blocks anything.
+  On `pve-test-vm`, `lab_domain` (`test.gibbsgreatly.xyz`) is *also* the
+  parity zone's name, so the forwarder task creates that zone as
+  `Forwarder` first; the parity-zone logic then finds the name already
+  exists, skips creating it as `Primary`, but still adds A records into it.
+  Technitium then answers direct queries for anything in that zone
+  (`traefik.test.gibbsgreatly.xyz`, `harbor.test.gibbsgreatly.xyz`, etc.)
+  with `NXDOMAIN` — the records exist in its database
+  (`zones/records/get` shows them) but a real DNS query never reaches them
+  because the zone is forward-only.
+  **Impact today: low.** Nothing currently depends on querying
+  Technitium directly for these records — this workspace's own design
+  note already says probes go straight to Technitium's IP specifically
+  to avoid the live resolver path (`dns-stack` still serves real traffic
+  and has its own correct copy of these records, confirmed independently
+  working). **Impact for this workspace's own Phase 3 cutover rehearsal:
+  real** — once Technitium needs to answer for `lab_domain` directly, this
+  collision would actually matter.
+
+  **Fixed 2026-07-12** (found while scoping the DHCP-refactor workspace,
+  fixed here since it's a DNS zone-bootstrap bug): moved the three
+  `set_fact` tasks that compute `technitium_generated_zone_src_effective`
+  / `technitium_generated_zone_enabled` / `technitium_generated_zone_name`
+  / `technitium_parity_zone_enabled` to before the forwarder-creation
+  task — a pure reorder, no logic change, since none of the three tasks
+  depend on anything that previously ran between them and the guard.
+  Validated live against `pve-test-vm`: `test.gibbsgreatly.xyz` is now
+  created as `Primary` (confirmed via `zones/list`), and both
+  `dig @192.168.20.115 harbor.test.gibbsgreatly.xyz` and
+  `traefik.test.gibbsgreatly.xyz` resolve correctly instead of
+  `NXDOMAIN`. Two consecutive `provision.sh --stack technitium-stack`
+  runs against `pve-test-vm` both completed clean (`failed=0`), the
+  second confirming idempotency.

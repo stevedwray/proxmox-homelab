@@ -1,0 +1,65 @@
+---
+# Installs the GPU-workload switch scripts for the Framework Desktop, per
+# docs/framework-ubuntu/plan.md Phase 5 (§9).
+#
+# Confirmed empirically on this host, 2026-07-20 (not carried over from
+# the old LXC-era finding unchanged): both LM Studio's `lms unload --all`
+# and ComfyUI's `/free` API call cleanly release GTT memory, verified via
+# /sys/class/drm/card1/device/mem_info_gtt_used before/after --
+#   - LM Studio unload: 65.1 GiB -> 23.4 GiB (41.7 GiB freed, matching
+#     model + 256K-context KV cache almost exactly)
+#   - ComfyUI /free: 81.1 GiB -> 61.7 GiB (19.4 GiB freed), stable across
+#     a repeat call (no further reduction, no growing residue), container
+#     memory also dropped to an idle baseline (0% CPU, ~4.6GB)
+# This corrects the old ComfyUI finding (comfyui-image-video-gen-findings.md
+# §6c, partial-unload residue) rather than assuming it still holds --
+# different ComfyUI version/image, different host. Neither service needs
+# a restart to release memory; both switch scripts below use each
+# service's own clean unload call.
+#
+# Scope: this only covers the actual real use-case pair (LM Studio for
+# coding vs. ComfyUI for image/video generation) -- native llama.cpp and
+# Ollama are lighter, occasional-use dev backends outside this mechanism
+# (Ollama already self-unloads on its own keep-alive TTL; llama-router
+# can be managed manually if ever needed).
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-gpu-switch.yml
+
+- name: Install GPU workload switch scripts
+  hosts: framework
+  become: true
+  gather_facts: false
+
+  vars:
+    framework_gpu_switch_user: steve
+    framework_gpu_switch_bin_dir: /usr/local/bin
+
+  tasks:
+    - name: Install switch-to-comfyui (frees LM Studio's GPU memory)
+      ansible.builtin.copy:
+        dest: "{{ framework_gpu_switch_bin_dir }}/switch-to-comfyui"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Releases LM Studio's GPU memory before switching to ComfyUI work.
+          # Confirmed clean (no restart needed), 2026-07-20 -- see
+          # docs/framework-ubuntu/plan.md Phase 5.
+          set -euo pipefail
+          export PATH="/home/{{ framework_gpu_switch_user }}/.lmstudio/bin:$PATH"
+          sudo -u {{ framework_gpu_switch_user }} env PATH="$PATH" lms unload --all
+          echo "GTT now: $(($(cat /sys/class/drm/card1/device/mem_info_gtt_used) / 1073741824)) GiB"
+
+    - name: Install switch-to-llm (frees ComfyUI's GPU memory)
+      ansible.builtin.copy:
+        dest: "{{ framework_gpu_switch_bin_dir }}/switch-to-llm"
+        mode: '0755'
+        content: |
+          #!/bin/bash
+          # Releases ComfyUI's GPU memory before switching to LLM/coding work.
+          # Confirmed clean (no restart needed), 2026-07-20 -- see
+          # docs/framework-ubuntu/plan.md Phase 5.
+          set -euo pipefail
+          curl -s -X POST http://localhost:8188/free \
+            -H "Content-Type: application/json" \
+            -d '{"unload_models": true, "free_memory": true}' >/dev/null
+          echo "GTT now: $(($(cat /sys/class/drm/card1/device/mem_info_gtt_used) / 1073741824)) GiB"

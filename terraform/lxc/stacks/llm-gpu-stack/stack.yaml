@@ -1,0 +1,120 @@
+# llama.cpp GPU-passthrough inference stack — ai_seg zone (pve-framework).
+# Native (no Docker) HIP build, llama-server router mode. Wraps the
+# already-proven ad hoc container 9001 in real Terraform/Ansible, per
+# docs/framework-integration/post-reinstall-plan.md.
+#
+# See docs/framework/llamacpp-router-mode-deployment.md for the deployment
+# pattern this implements and
+# docs/framework/proxmox-strix-halo-setup-notes.md for the GPU-enablement
+# recipe this codifies (now via Proxmox's native device_passthrough
+# mechanism instead of hand-edited lxc.cgroup2.devices.allow lines — no
+# more reading the KFD major number live, Proxmox handles that internally).
+#
+# Kept in its own GPU-passthrough container, separate from comfyui-stack,
+# per docs/framework-integration/decisions.md Decision 5 (revised) —
+# different dependency stack and failure/memory profile, validated by a
+# real host-wide OOM incident when both were memory-heavy at once.
+
+hostname: llm-gpu-stack
+ip_address: "${lab_ip_llm_gpu}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+vmid: 50010
+cores: 8
+# Right-sized 2026-07-18 -- do NOT confuse this container's own cgroup
+# ceiling with "how big a model fits." They're governed separately on
+# this hardware:
+#   - GPU-offloaded weights/KV-cache/compute buffers (this role runs
+#     --n-gpu-layers 999, full offload) are allocated via HIP into
+#     GTT-backed memory, which is capped by the HOST-level
+#     ttm.pages_limit boot parameter (~95GB, shared across every
+#     container) -- NOT this container's own memory.dedicated.
+#   - The model file is mmap()'d, not read into a heap buffer, and
+#     --mlock is not set -- host-side page cache backing it is clean and
+#     reclaimable as HIP streams it to the GPU, so cgroup v2 reclaims it
+#     under pressure rather than needing the full file size resident at
+#     once.
+#   - What's actually left as real container-level anon memory is just
+#     the llama-server process itself, HTTP request/response buffers
+#     (KB-scale), and the tokenizer's vocab tables (tens of MB) -- none
+#     of it scales with model size.
+# An earlier version of this comment sized the ceiling off the GGUF file
+# size on disk (~50G, to fit Llama-3.3-70B) -- that was the wrong mental
+# model, conflated with ComfyUI's PyTorch/ROCm sizing (a different
+# framework with a memory-retentive caching allocator, measured on a
+# workload with much larger per-step activation tensors -- not a sound
+# analogy for llama.cpp). 8192 (8G) is sized for the container's actual
+# process footprint with real margin, not the model.
+memory: 8192
+swap: 2048
+# Model weights live externally on the host's dedicated storage LV
+# (/storage/models, bind-mounted below), not inside the container's own
+# rootfs -- see docs/framework-integration/decisions.md Decision 3's
+# 2026-07-18 storage restructure. rootfs only needs to hold the OS, the
+# llama.cpp build, and its HIP/ROCm toolchain, not tens of GB of weights.
+rootfs_size: 30
+storage_profile: platform-default
+template_profile: ubuntu-native
+template_name: "ubuntu-26.04-standard_26.04-1_amd64.tar.zst"
+ostype: ubuntu
+
+# Native GPU-passthrough LXC, not Docker-based.
+docker_enabled: false
+
+# unprivileged (true, the default) + device_passthrough is untested on
+# this specific hardware/ROCm combination as of this writing — the manual
+# bring-up always used privileged containers and explicitly left
+# unprivileged GPU passthrough as an open question
+# (proxmox-strix-halo-setup-notes.md's "Open questions" section). If GPU
+# access fails to initialize inside the container, the next troubleshooting
+# step is setting unprivileged: false here, not immediately assuming the
+# device_passthrough mechanism itself is broken.
+unprivileged: true
+device_passthrough:
+  - path: /dev/kfd
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/card1
+    uid: 0
+    gid: 0
+    mode: "0666"
+  - path: /dev/dri/renderD128
+    uid: 0
+    gid: 0
+    mode: "0666"
+
+# Model weights live on the host's dedicated storage LV, not the
+# container's own rootfs -- see Decision 3's 2026-07-18 update. Matches
+# llm_gpu_stack role's default llm_gpu_stack_models_dir (/data/models).
+# Own subdirectory under /storage/models, separate from comfyui-stack's
+# -- llama.cpp wants a flat directory of .gguf files, ComfyUI wants its
+# own structured checkpoints/vae/loras tree; keeping them apart avoids
+# the two layouts colliding in one shared directory listing.
+host_bind_mounts:
+  - host_path: /storage/models/llm
+    lxc_path: /data/models
+
+tags:
+  - llm-gpu-stack
+  - ai
+  - gpu
+  - pve-framework
+
+network:
+  zone: ai_seg
+
+depends_on: []
+provides:
+  - service: llama-router-http
+    port: 8080
+    protocol: tcp
+
+ansible_playbook: "deploy-llm-gpu-stack"
+deployment_tier: ai
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

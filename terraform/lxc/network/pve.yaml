@@ -102,6 +102,86 @@ attachments:
       gateway: "${lab_gw_build}"
       snat: false
 
+  # -------------------------------------------------------------------------
+  # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
+  #
+  # Mirrors pve-test-vm.yaml's pentest_seg (dedicated, contained zone — not
+  # merged into infra_seg/mgmt_seg per NFR-03 default-deny reasoning, same
+  # precedent as ai_seg on pve-framework, Decision 4). pve and pve-test-vm
+  # are separate standalone Proxmox instances, so the tvpent zone/vnet name
+  # is reused here without conflict.
+  # Gateway: MikroTik VLAN 70 interface (192.168.70.1), same trunk/VLAN as
+  # pve-test-vm's instance, shared subnet.
+  # Containers: pentagi-stack (192.168.70.10 — canonical; pve-test-vm's own
+  # instance uses .110, freed for this purpose 2026-07-26).
+  #   greenbone-stack (192.168.70.11 — canonical; pve-test-vm's own instance
+  #   used .111, base+100 convention, now shut down — pve is the live
+  #   deployment as of 2026-08-01, see docs/greenbone-stack/plan.md §6).
+  #
+  # See docs/pentagi-stack/plan.md for the pve-test-vm precedent this
+  # mirrors, including the real MikroTik containment policy this zone needs
+  # once live (Traefik -> pentest_seg:8443/8080, pentest_seg -> infra_seg
+  # apt-cacher, pentest_seg -> edge_seg Harbor, pentest_seg -> LLM_GPU host,
+  # pentest_seg -> authorized pentest target, explicit deny to everything
+  # else).
+  # -------------------------------------------------------------------------
+  pentest_seg:
+    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    type: sdn_vnet
+    bridge: tvpent
+    firewall: false
+    sdn:
+      zone: tvpent
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvpent
+      vlan_tag: 70
+      alias: pve pentest segment
+      subnet: "${lab_subnet_pentest_cidr}"
+      gateway: "${lab_gw_pentest}"
+      snat: false
+
+  # -------------------------------------------------------------------------
+  # ai_seg — AI/LLM application containers + mcp-utility-stack (VLAN 50, 192.168.50.0/24)
+  #
+  # Originally built for pve-framework only (now retired — that host is
+  # bare-metal Ubuntu, not Proxmox, per docs/framework-ubuntu/plan.md). VLAN
+  # 50 is still tagged on the MikroTik switches, unused since that
+  # retirement. Reactivated here 2026-08-01 for mcp-utility-stack
+  # (cve-mcp-server), which runs on pve-test-vm — a nested VM *inside* pve,
+  # so pve's own vmbr0 must carry VLAN 50 purely to relay pve-test-vm's
+  # traffic to the physical trunk, even though pve itself hosts no direct
+  # tenant here yet. Declaring this zone (even with zero pve-local
+  # containers) is what makes Proxmox's own SDN apply persist a
+  # `vmbr0.50`/`tvai` stanza into /etc/network/interfaces.d/sdn — the same
+  # mechanism that already makes VLAN 70 (pentest_seg, real pve tenants)
+  # survive a reboot. A manual `bridge vlan add ... self` alone does not
+  # persist; this zone object is the actual fix.
+  #
+  # Operator intends to move ai-services-stack (OpenWebUI/SearXNG, currently
+  # flat-LAN on the Ubuntu framework host) onto this VLAN in a future
+  # session — not done here.
+  # -------------------------------------------------------------------------
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters
+    type: sdn_vnet
+    bridge: tvai
+    firewall: false
+    sdn:
+      zone: tvai
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve
+      vnet: tvai
+      vlan_tag: 50
+      alias: pve AI segment
+      subnet: "${lab_subnet_ai_cidr}"
+      gateway: "${lab_gw_ai}"
+      snat: false
+
 zones:
   infra_seg:
     description: Infrastructure services — Harbor, apt-cacher, NetBox
@@ -118,7 +198,8 @@ zones:
       - "Authentik (VMID 20010)  — ${lab_ip_authentik}"
       - "step-ca (VMID 20011)    — ${lab_ip_step_ca}"
       - "Monitoring (VMID 20012) — ${lab_ip_monitoring}"
-      - "dns-stack (VMID 20013)  — ${lab_ip_dns}"
+      - "technitium-stack — ${lab_ip_technitium} — LIVE authoritative DNS for lab.gibbsgreatly.xyz (MikroTik lab-zone-delegate points here; see docs/dns-refactor/README.md)"
+      - "dns-stack (VMID 20013)  — ${lab_ip_dns} — ROLLBACK ONLY, cut over to technitium-stack above; not the active delegate target"
   edge_seg:
     description: Edge ingress — Traefik reverse proxy
     attachment: edge_seg
@@ -129,8 +210,27 @@ zones:
     attachment: seg_c
     containers:
       - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
+  pentest_seg:
+    description: PentAGI autonomous pentesting agent — dedicated, contained zone
+    attachment: pentest_seg
+    containers:
+      - "pentagi-stack — ${lab_ip_pentagi}"
+      - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
+  ai_seg:
+    description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01, no pve-local containers yet (mcp-utility-stack lives on pve-test-vm; this zone exists on pve purely so pve's vmbr0 relays VLAN 50 for that nested VM)
+    attachment: ai_seg
+    containers: []
 
 policies:
+  - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      Traefik to AI-stack web UIs and the llama-server API. Cross-node:
+      ai_seg is defined in network/pve-framework.yaml (VLAN 50, on
+      fe-pve), not here — see the matching entry there and
+      docs/framework-integration/decisions.md Decision 4.
   - from: edge_seg
     to: mgmt_seg
     protocol: tcp
@@ -161,6 +261,110 @@ policies:
     protocol: tcp
     ports: [9000, 9443]
     description: NetBox to Portainer socket proxy and Authentik
+  - from: edge_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8443]
+    description: Traefik to the PentAGI UI (mirrors pve-test-vm.yaml)
+  - from: edge_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8080]
+    description: >-
+      Traefik to the Greenbone GSA web UI — a custom plain-HTTP nginx
+      server block, not gsad's own port. Live — deployed 2026-08-01, see
+      docs/greenbone-stack/plan.md §6.
+  - from: mgmt_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [9187]
+    description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's pgexporter
+  - from: pentest_seg
+    to: infra_seg
+    protocol: tcp
+    ports: [3142]
+    description: pentagi-stack apt proxy (apt-cacher, reached directly at its infra_seg IP)
+  - from: pentest_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      pentagi-stack image pulls (Harbor) — harbor.$${LAB_DOMAIN} resolves to
+      Traefik's edge_seg IP, not Harbor's own infra_seg IP (same gotcha hit
+      live on pve-test-vm — see docs/pentagi-stack/plan.md).
+  - from: pentest_seg
+    to: 192.168.1.8
+    protocol: tcp
+    ports: [11434, 8082, 8080]
+    description: >-
+      pentagi-stack to framework.gibbsgreatly.xyz (Ollama for embeddings,
+      SearXNG, and llamacpp-router's native multi-model OpenAI-compatible
+      endpoint -- the adviser/pentester/coder chat-completion provider as
+      of 2026-07-28, replacing Ollama for that role specifically).
+  - from: pentest_seg
+    to: 192.168.20.14
+    protocol: tcp
+    ports: [514]
+    description: >-
+      pentagi-stack rsyslog forwarding to Graylog. Missed on the first pass --
+      only the inbound mgmt_seg -> pentest_seg:9187 scrape rule was added;
+      this outbound leg is what rsyslog itself needs and was timing out
+      until this was added (confirmed live via journalctl on pentagi-stack).
+  - from: pentest_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      pentagi-stack's node_exporter issuing/renewing its TLS cert from
+      step-ca (node_exporter role's step ca certificate call,
+      node_exporter_step_ca_url defaults to https://<step-ca>, i.e. 443).
+      Other zones reach step-ca without an explicit rule because they
+      aren't contained like pentest_seg is -- this makes it explicit here.
+  - from: mgmt_seg
+    to: pentest_seg
+    protocol: tcp
+    ports: [8080]
+    description: monitoring-stack (VictoriaMetrics) scraping pentagi-stack's cAdvisor
+  - from: 192.168.1.113
+    to: pentest_seg
+    protocol: all
+    ports: []
+    description: >-
+      Authorized lab target (Metasploitable 2) <-> pentagi-stack, fully
+      open both directions for this single host pair. Originally scoped
+      to just PentAGI's deterministic per-flow port range
+      (docker.BaseContainerPortsNumber=28000, 2 ports/flow) for
+      reverse-shell/callback traffic under DOCKER_NETWORK=host, but
+      widened 2026-07-28: confirmed live that an agent picking an
+      arbitrary LPORT outside that range (e.g. testing
+      cmd/unix/reverse_perl on 4444/4445/5555) gets silently dropped by
+      the narrower rule, producing a clean-looking "exploit ran, no
+      errors, but no session" failure that's actually a firewall drop,
+      not a real bug. For active validation testing, that ambiguity
+      costs more than the narrower scope is worth -- still scoped to
+      only this single authorized target, not all of 192.168.1.0/24.
+  - from: pentest_seg
+    to: 192.168.1.113
+    protocol: all
+    ports: []
+    description: >-
+      Mirrors the rule above -- explicit outbound leg to the same single
+      authorized target, so nothing about port/protocol choice on either
+      side of this one host pair can introduce test ambiguity.
+  - from: pentest_seg
+    to: mgmt_seg
+    protocol: tcp
+    ports: [3389, 6636]
+    description: >-
+      greenbone-stack to Authentik's LDAP outpost. Live — this is the same
+      physical router/VLAN as pve-test-vm.yaml's identical rule, so no
+      separate MikroTik change was needed when greenbone-stack was
+      deployed to pve 2026-08-01.
+  - from: pentest_seg
+    to: default
+    protocol: all
+    ports: []
+    description: Explicit deny — pentest_seg has no other reachability beyond the above plus internet egress
 
 inventory:
   proxmox_nodes:
@@ -187,3 +391,28 @@ inventory:
       role: iot
       ip: 192.168.1.23
       description: "Raspberry Pi — argon-02"
+    - name: framework
+      role: ai-workstation
+      ip: 192.168.1.8
+      description: "framework.gibbsgreatly.xyz — bare-metal Ubuntu 26.04, AI/LLM development host (not a Proxmox VM; see docs/framework-ubuntu/plan.md)"
+      services:
+        - name: lmstudio
+          port: 8090
+          protocol: tcp
+          description: "LM Studio — Vulkan backend, interactive Copilot use"
+        - name: llamacpp
+          port: 8080
+          protocol: tcp
+          description: "llama.cpp server — HIP backend, agentic/autonomous use"
+        - name: ollama
+          port: 11434
+          protocol: tcp
+          description: "Ollama — ROCm backend"
+        - name: openwebui
+          port: 8081
+          protocol: tcp
+          description: "OpenWebUI — chat UI, Authentik SSO"
+        - name: searxng
+          port: 8082
+          protocol: tcp
+          description: "SearXNG — web search, used by OpenWebUI RAG and directly by other LAN projects"

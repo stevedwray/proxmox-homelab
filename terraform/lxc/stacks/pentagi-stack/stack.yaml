@@ -1,0 +1,44 @@
+# PentAGI autonomous pentesting agent — dedicated, contained pentest_seg zone.
+# See docs/pentagi-stack/plan.md for the full deployment plan and
+# docs/framework-integration/decisions.md Decision 4 for why this gets its
+# own zone rather than joining infra_seg/mgmt_seg.
+hostname: pentagi-stack
+ip_address: "${lab_ip_pentagi}/24"
+gateway: "${lab_gw_pentest}"
+dns_server: "${lab_gw_pentest}"
+network:
+  zone: pentest_seg
+vmid: 70010
+cores: 2
+memory: 8192
+swap: 2048
+rootfs_size: 30
+storage_profile: platform-default
+docker_storage_size: "50G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "50G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - pentagi
+  - pentest
+  - security
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: pentagi-http
+    port: 8443
+    protocol: tcp
+ansible_playbook: "deploy-pentagi-stack"
+deployment_tier: ai
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

@@ -3,7 +3,7 @@
 # Usage: MIKROTIK_HOST=router.example.test MIKROTIK_USER=api-user MIKROTIK_PASSWORD=xxx ./scrape-config.sh [host]
 #
 # Credentials can also be sourced from SOPS:
-#   eval "$(sops -d terraform/secrets.enc.yaml | grep MIKROTIK | sed 's/: /=/;s/^/export /')"
+#   eval "$(sops -d terraform/secrets.common.enc.yaml | grep MIKROTIK | sed 's/: /=/;s/^/export /')"
 
 set -euo pipefail
 

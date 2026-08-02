@@ -43,7 +43,7 @@ proxmox-homelab/
 ├── scripts/                     # Local helper and validation scripts
 ├── terraform/
 │   ├── lxc/                     # Active Terraform + Ansible LXC pipeline
-│   ├── secrets.enc.yaml         # SOPS-encrypted infrastructure secrets
+│   ├── secrets.common.enc.yaml         # SOPS-encrypted infrastructure secrets
 │   └── terraform-providers/     # Local provider mirror/cache
 ├── .env.template                # Local environment template
 ├── AGENTS.md                    # Codex workflow instructions

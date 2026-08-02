@@ -218,7 +218,7 @@ The following constraints were identified through adversarial analysis and must 
 
 | ID | Asset | STRIDE | Threat | Risk |
 |---|---|---|---|---|
-| TM-01 | Operator workstation | Info Disclosure | The age private key at `~/.config/sops/age/keys.txt` decrypts all infrastructure credentials in `terraform/secrets.enc.yaml`. Workstation compromise = full secret corpus exfiltration. | **Critical** |
+| TM-01 | Operator workstation | Info Disclosure | The age private key at `~/.config/sops/age/keys.txt` decrypts all infrastructure credentials — `terraform/secrets.common.enc.yaml` plus every per-node `terraform/secrets.<node>.enc.yaml`. Workstation compromise = full secret corpus exfiltration across every environment, not just one. | **Critical** |
 | TM-02 | Operator workstation | Info Disclosure | `sync-secrets.sh` populates `.env` at session start. If the `.env` file is not deleted post-session (SEC-03 procedure), static credentials persist on disk indefinitely. The deletion step is manual and therefore unreliable. | **High** |
 | TM-03 | Operator workstation | Spoofing | Bitwarden `bw unlock` session token scope and lifetime are not documented. A long-lived unlock token left in env is equivalent to a plaintext credential cache. | **High** |
 | TM-04 | Operator workstation | Elevation | No workstation hardening policy documented. If the operator account has passwordless sudo, a malicious process running as the operator has immediate access to age key and unlock token material. | **Medium** |

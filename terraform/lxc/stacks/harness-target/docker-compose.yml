@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  struts2:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/vulhub/struts2:2.3.30
+    container_name: harness-target-struts2
+    ports:
+      - "8080:8080/tcp"
+    restart: unless-stopped
+
+  redis:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/library/redis:7.4
+    container_name: harness-target-redis
+    command: ["redis-server", "--protected-mode", "no", "--save", "", "--appendonly", "no"]
+    ports:
+      - "6379:6379/tcp"
+    restart: unless-stopped

@@ -188,6 +188,10 @@
                   labels: {stack: ci-runner-01}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:9100"]
                   labels: {stack: graylog-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:9100"]
+                  labels: {stack: framework}
+                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
+                  labels: {stack: pentagi-stack}
 
             - job_name: cadvisor
               static_configs:
@@ -205,6 +209,10 @@
                   labels: {stack: netbox-stack}
                 - targets: ["{{ lookup('env', 'LAB_IP_GRAYLOG') }}:8080"]
                   labels: {stack: graylog-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_FRAMEWORK') }}:8083"]
+                  labels: {stack: framework}
+                - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
+                  labels: {stack: pentagi-stack}
 
             - job_name: coredns
               scrape_interval: 15s
@@ -290,6 +298,14 @@
                     - "{{ lookup('env', 'LAB_IP_STEP_CA') }}:9443"
                   labels:
                     stack: step-ca-stack
+
+            - job_name: pentagi-postgres
+              static_configs:
+                - targets:
+                    - "{{ lookup('env', 'LAB_IP_PENTAGI') }}:9187"
+                  labels:
+                    stack: pentagi-stack
+                    component: pgexporter
       notify: Restart VictoriaMetrics
 
     - name: Write Grafana datasource provisioning

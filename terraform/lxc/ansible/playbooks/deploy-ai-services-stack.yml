@@ -1,0 +1,139 @@
+# OpenWebUI + SearXNG -- ai_seg zone (pve-framework).
+# See docs/framework-integration/decisions.md Decision 9 for why these two
+# are bundled together (neither needs an external DB) while n8n/Postgres/
+# Redis are a separate stack.
+#
+# OpenWebUI's OIDC integration is pure environment-variable configuration
+# (no post-deploy API dance like Portainer needs) -- the Authentik-side
+# Application/Provider itself is created separately via
+# reconcile-authentik-edge.py against this stack's edge.yaml
+# (auth.mode: oidc), which is what this playbook's client_id/secret vars
+# must match.
+
+---
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  roles:
+    - lxc_base
+    - docker_base
+
+- name: Deploy OpenWebUI + SearXNG compose stack
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    ai_services_compose_dir: /opt/ai-services-stack
+    ai_services_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    ai_services_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ ai_services_lab_domain, true) }}"
+    ai_services_openwebui_version: "main"
+    ai_services_searxng_version: "latest"
+
+    # OIDC -- must match the Provider/Application reconcile-authentik-edge.py
+    # creates from this stack's edge.yaml (auth.mode: oidc). Slug convention
+    # is "edge-<stack>-<route-name>" (see discover-authentik-edge.py
+    # OWNED_NAME_PREFIX/name_base) -- edge-ai-services-stack-openwebui here.
+    ai_services_oidc_client_id: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_ID') | default('openwebui', true) }}"
+    ai_services_oidc_client_secret: "{{ lookup('env', 'OPENWEBUI_OIDC_CLIENT_SECRET') | mandatory('OPENWEBUI_OIDC_CLIENT_SECRET env var is required') }}"
+    ai_services_oidc_provider_url: "https://{{ ai_services_lab_fqdn_authentik }}/application/o/edge-ai-services-stack-openwebui/"
+
+    # llm-gpu-stack backend -- Decision 8: llama-server uses its own
+    # native API-key auth, not Authentik.
+    ai_services_llm_api_base: "{{ lookup('env', 'LLM_GPU_STACK_API_BASE') | default('https://llm.' ~ ai_services_lab_domain ~ '/v1', true) }}"
+    ai_services_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
+
+  tasks:
+    - name: Create compose directory
+      ansible.builtin.file:
+        path: "{{ ai_services_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ ai_services_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            openwebui:
+              image: ghcr.io/open-webui/open-webui:{{ ai_services_openwebui_version }}
+              container_name: openwebui
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /var/lib/openwebui:/app/backend/data
+              environment:
+                OPENAI_API_BASE_URL: "{{ ai_services_llm_api_base }}"
+                OPENAI_API_KEY: "{{ ai_services_llm_api_key }}"
+                ENABLE_OAUTH_SIGNUP: "true"
+                OAUTH_MERGE_ACCOUNTS_BY_EMAIL: "true"
+                OAUTH_CLIENT_ID: "{{ ai_services_oidc_client_id }}"
+                OAUTH_CLIENT_SECRET: "{{ ai_services_oidc_client_secret }}"
+                OPENID_PROVIDER_URL: "{{ ai_services_oidc_provider_url }}.well-known/openid-configuration"
+                OAUTH_PROVIDER_NAME: "Authentik"
+                OAUTH_SCOPES: "openid email profile"
+                ENABLE_RAG_WEB_SEARCH: "true"
+                RAG_WEB_SEARCH_ENGINE: "searxng"
+                SEARXNG_QUERY_URL: "http://searxng:8080/search?q=<query>&format=json"
+              depends_on:
+                - searxng
+
+            searxng:
+              image: docker.io/searxng/searxng:{{ ai_services_searxng_version }}
+              container_name: searxng
+              restart: unless-stopped
+              # Deliberately no ports: -- reached only via OpenWebUI's
+              # internal compose network (http://searxng:8080), never
+              # published externally. Matches the bake-off's own proven
+              # pattern (Postgres/Redis/Qdrant weren't host-published
+              # either).
+              volumes:
+                - /var/lib/searxng:/etc/searxng
+              environment:
+                SEARXNG_BASE_URL: "http://searxng:8080/"
+      register: ai_services_compose_config
+
+    - name: Ensure SearXNG settings allow JSON output format (required for OpenWebUI integration)
+      ansible.builtin.file:
+        path: /var/lib/searxng
+        state: directory
+        mode: "0755"
+
+    - name: Check for existing SearXNG settings.yml
+      ansible.builtin.stat:
+        path: /var/lib/searxng/settings.yml
+      register: ai_services_searxng_settings_stat
+
+    - name: Seed minimal SearXNG settings.yml with JSON format enabled
+      ansible.builtin.copy:
+        dest: /var/lib/searxng/settings.yml
+        mode: "0644"
+        content: |
+          use_default_settings: true
+          server:
+            secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
+          search:
+            formats:
+              - html
+              - json
+      when: not ai_services_searxng_settings_stat.stat.exists
+
+    - name: Pull OpenWebUI image
+      community.docker.docker_image:
+        name: "ghcr.io/open-webui/open-webui:{{ ai_services_openwebui_version }}"
+        source: pull
+
+    - name: Pull SearXNG image
+      community.docker.docker_image:
+        name: "docker.io/searxng/searxng:{{ ai_services_searxng_version }}"
+        source: pull
+
+    - name: Start ai-services-stack via compose
+      community.docker.docker_compose_v2:
+        project_src: "{{ ai_services_compose_dir }}"
+        state: present
+        recreate: "{{ 'always' if ai_services_compose_config.changed else 'never' }}"
+        remove_orphans: true

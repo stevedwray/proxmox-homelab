@@ -37,7 +37,7 @@ Nothing runs on Proxmox during Stage 0. All work is on the operator's local mach
 
 - Retrieve the age private key from Bitwarden (`proxmox-homelab age private key`) and
   install it at `~/.config/sops/age/keys.txt` with mode `0600`
-- Verify `sops --decrypt terraform/secrets.enc.yaml` succeeds
+- Verify `sops --decrypt terraform/secrets.common.enc.yaml` succeeds
 - Confirm the `with-secrets` wrapper exists at the repository root and is executable
 
 ### Secrets posture
@@ -46,7 +46,7 @@ Stage 0 is where the `with-secrets` migration (Phase 03d) lives. From Stage 0 on
 there is no `.env` file and no `sync-secrets.sh`. The age private key at
 `~/.config/sops/age/keys.txt` is the only credential that needs to exist on the
 workstation. `with-secrets` handles all further secret delivery by decrypting
-`terraform/secrets.enc.yaml` in memory via `sops exec-env`. The decrypted values are
+`terraform/secrets.common.enc.yaml` in memory via `sops exec-env`. The decrypted values are
 injected into the subprocess environment only and are never written to disk.
 
 This design is consistent with ADR-06 (secrets runtime delivery via SOPS) and directly
@@ -64,7 +64,7 @@ control that `with-secrets` makes unnecessary by eliminating the file entirely.
 
 ### Exit condition
 
-- `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.enc.yaml`
+- `SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --decrypt terraform/secrets.common.enc.yaml`
   succeeds without error
 - `./with-secrets echo OK` exits 0
 - Phase 03d (Secrets Delivery Hardening) is merged into the active development branch
@@ -107,7 +107,7 @@ All Stage 1 containers pull their images directly from Docker Hub. This is the o
 in which Docker Hub direct pulls are permitted at deployment time. Harbor's proxy cache
 projects are configured immediately after the Harbor LXC is healthy, enabling the
 pre-seeding step. The CI runner registers with GitHub Actions using a repository-scoped
-registration token stored in `terraform/secrets.enc.yaml`.
+registration token stored in `terraform/secrets.common.enc.yaml`.
 
 The critical Stage 1 deliverable is Harbor being pre-seeded with all images that Stage 2
 and Phase 04 will need. This pre-seeding step is the handoff between Stage 1 and Stage 2:
@@ -128,7 +128,7 @@ containers pull from Docker Hub directly rather than via robot account.
 - Stage 0 complete — `with-secrets` works and the age key is on the workstation
 - Proxmox host is running and accessible
 - SDN VLAN zones (`mgmt_seg`, `infra_seg`, `build_seg`) are applied to `pve-test`
-- `terraform/secrets.enc.yaml` contains real values for all Proxmox API credentials
+- The relevant node's `terraform/secrets.<node>.enc.yaml` contains real values for its Proxmox API credentials (these are per-node, not in `secrets.common.enc.yaml` — see `docs/reference/secrets-management.md`)
 
 ### Exit condition
 
@@ -186,7 +186,7 @@ permitted once Stage 2 is complete.
 - Stage 1 complete — Harbor is running with all Stage 2 images available, CI runner is
   registered and has validated at least one pipeline run
 - Robot account credentials (`HARBOR_ROBOT_USER`, `HARBOR_ROBOT_PASSWORD`) are stored in
-  `terraform/secrets.enc.yaml`
+  `terraform/secrets.common.enc.yaml`
 
 ### Exit condition
 

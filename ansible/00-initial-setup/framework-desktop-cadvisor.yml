@@ -1,0 +1,90 @@
+---
+# Deploys a single cAdvisor container on the Framework Desktop, scraped by
+# monitoring-stack's `cadvisor` job (see
+# docs/framework-ubuntu/platform-integration-plan.md). One instance covers
+# every container on this host regardless of which Docker Compose project
+# started it (llama.cpp, Ollama, ComfyUI, ai-services-stack all share one
+# Docker daemon) -- matches how cAdvisor works everywhere else in this repo
+# (it reads /var/run, /sys, and the Docker data root directly, not a
+# per-compose-project view), so this is a standalone playbook rather than
+# being folded into any one of those four.
+#
+# Image and mount set match the existing convention used elsewhere (e.g.
+# terraform/lxc/stacks/netbox-stack/docker-compose.yml) exactly -- gcr.io
+# directly, not through Harbor's dockerhub proxy-cache (gcr.io isn't Docker
+# Hub, and the existing in-repo precedent already pulls it unmirrored).
+#
+# Port 8083: 8080/8081/8082/8090/8188/11434 are already taken on this host
+# by llama.cpp/OpenWebUI/SearXNG/LM Studio/ComfyUI/Ollama respectively.
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-cadvisor.yml
+
+- name: Deploy cAdvisor for Docker container metrics (scraped by monitoring-stack)
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    # v0.49.1 (the version used by every LXC-based cadvisor in this repo)
+    # ships a Docker client speaking API 1.41 -- rejected outright by
+    # Ubuntu 26.04's Docker daemon here, which requires >= 1.44. Confirmed
+    # live 2026-07-25: "Registration of the docker container factory
+    # failed ... client version 1.41 is too old" in `docker logs cadvisor`,
+    # meaning it silently fell back to raw systemd/cgroup metrics with no
+    # `name` label at all -- containers were invisible on the Docker
+    # Containers dashboard even though the scrape itself showed healthy.
+    # v0.60.5 (latest stable, per `gh api repos/google/cadvisor/releases`)
+    # ships a current Docker client instead. Registry moved from
+    # gcr.io/cadvisor/cadvisor to ghcr.io/google/cadvisor at v0.53.0 (per
+    # the project's own README) -- the old gcr.io path 404s for this tag.
+    framework_cadvisor_image: "ghcr.io/google/cadvisor:v0.60.5"
+    framework_cadvisor_port: 8083
+    framework_cadvisor_dir: /opt/cadvisor-docker
+
+  tasks:
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Create cAdvisor docker-compose directory
+      ansible.builtin.file:
+        path: "{{ framework_cadvisor_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Install cAdvisor docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ framework_cadvisor_dir }}/docker-compose.yml"
+        mode: "0644"
+        content: |
+          services:
+            cadvisor:
+              image: {{ framework_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "{{ framework_cadvisor_port }}:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+      register: framework_cadvisor_compose
+
+    - name: Bring up cAdvisor via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ framework_cadvisor_dir }}"
+      register: framework_cadvisor_up
+      changed_when: "'Started' in framework_cadvisor_up.stderr or 'Created' in framework_cadvisor_up.stderr"

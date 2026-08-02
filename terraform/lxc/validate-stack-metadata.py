@@ -20,6 +20,7 @@ ACTIVE_STACKS = (
     "authentik-stack",
     "step-ca-stack",
     "ci-runner-01",
+    "mcp-utility-stack",
 )
 ACTIVE_STACK_SET = frozenset(ACTIVE_STACKS)
 
@@ -27,6 +28,18 @@ REQUIRED_PROVIDES_KEYS = ("service", "port", "protocol")
 REQUIRED_CONTRACT_SECTIONS = ("## Provides", "## Dependencies")
 SERVICE_NAME_PATTERN = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 ALLOWED_PROTOCOLS = ("tcp", "udp")
+
+# Required now per terraform/lxc/PLATFORM_CONTRACT.md's "Platform API —
+# stack.yaml fields" table. All four are flat top-level keys — none of them
+# belong under a nested block. The only legitimate nested network key is
+# `network.zone` / `network.access_path`.
+REQUIRED_TOP_LEVEL_FIELDS = ("hostname", "ip_address", "deployment_tier", "dns_server")
+ALLOWED_DEPLOYMENT_TIERS = ("platform", "apps")
+# Active stacks use either a literal CIDR or a ${lab_ip_*}-style template
+# reference resolved by the selected LAB_IP_* overlay before Terraform reads
+# it (e.g. authentik-stack: "${lab_ip_authentik}/24") — both are valid.
+IP_ADDRESS_CIDR_PATTERN = re.compile(r"^\d{1,3}(?:\.\d{1,3}){3}/\d{1,2}$")
+IP_ADDRESS_TEMPLATE_PATTERN = re.compile(r"^\$\{[^}]+\}/\d{1,2}$")
 LAYER_METADATA = "metadata"
 LAYER_CONTRACT_SECTIONS = "contract-sections"
 LAYER_CONTRACT_DOCS = "contract-docs"
@@ -231,6 +244,68 @@ def build_json_payload(
     }
 
 
+def validate_required_top_level_fields(
+    stack_name: str, data: dict
+) -> list[dict[str, object]]:
+    issues: list[dict[str, object]] = []
+
+    for field in REQUIRED_TOP_LEVEL_FIELDS:
+        value = data.get(field)
+        if not isinstance(value, str) or not value.strip():
+            issues.append(
+                make_issue(
+                    stack_name=stack_name,
+                    code="missing_required_field",
+                    field=field,
+                    message=(
+                        f"{stack_name}: missing required top-level field "
+                        f"'{field}' (see terraform/lxc/PLATFORM_CONTRACT.md "
+                        "'Required now' table — must be a flat top-level "
+                        "key, not nested under a custom 'network:' block)"
+                    ),
+                )
+            )
+
+    ip_address = data.get("ip_address")
+    if (
+        isinstance(ip_address, str)
+        and not IP_ADDRESS_CIDR_PATTERN.fullmatch(ip_address)
+        and not IP_ADDRESS_TEMPLATE_PATTERN.fullmatch(ip_address)
+    ):
+        issues.append(
+            make_issue(
+                stack_name=stack_name,
+                code="ip_address_not_cidr",
+                field="ip_address",
+                value=ip_address,
+                message=(
+                    f"{stack_name}: ip_address must be CIDR notation, e.g. "
+                    "'192.168.1.60/24'"
+                ),
+            )
+        )
+
+    deployment_tier = data.get("deployment_tier")
+    if (
+        isinstance(deployment_tier, str)
+        and deployment_tier not in ALLOWED_DEPLOYMENT_TIERS
+    ):
+        issues.append(
+            make_issue(
+                stack_name=stack_name,
+                code="invalid_deployment_tier",
+                field="deployment_tier",
+                value=deployment_tier,
+                message=(
+                    f"{stack_name}: deployment_tier must be one of "
+                    f"{', '.join(ALLOWED_DEPLOYMENT_TIERS)}"
+                ),
+            )
+        )
+
+    return issues
+
+
 def validate_stack(
     stack_name: str,
     stack_path: Path,
@@ -288,6 +363,10 @@ def validate_stack(
             )
         )
         return {"metadata": metadata, "issues_by_layer": issues_by_layer}
+
+    issues_by_layer[LAYER_METADATA].extend(
+        validate_required_top_level_fields(stack_name=stack_name, data=data)
+    )
 
     depends_on = data.get("depends_on")
     if not isinstance(depends_on, list):

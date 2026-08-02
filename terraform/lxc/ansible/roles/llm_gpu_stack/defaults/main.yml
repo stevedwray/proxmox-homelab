@@ -1,0 +1,99 @@
+---
+llm_gpu_stack_amdgpu_target: gfx1151
+llm_gpu_stack_llamacpp_repo: https://github.com/ggml-org/llama.cpp.git
+llm_gpu_stack_llamacpp_dir: /opt/llama.cpp
+# Pinned commit, not `master` -- the prior `version: master` + `update: true`
+# meant a later provision could silently change the live binary and
+# invalidate any tool-calling comparison mid-experiment (see
+# docs/framework-integration/findings-plan.md section 2.1/5.1). This was
+# upstream `master` and the live build (`b10068`) as of 2026-07-19; bump
+# deliberately, not by drift.
+llm_gpu_stack_llamacpp_version: 571d0d540df04f25298d0e159e520d9fc62ed121
+# /data/models was the LXC-internal bind-mount target for the old
+# Proxmox/LXC deployment (pve-framework, retired -- see
+# docs/framework-ubuntu/plan.md). This role now only targets the bare-metal
+# host directly, so it points at the real host-side path instead of a
+# container-namespace indirection that no longer exists.
+llm_gpu_stack_models_dir: /storage/models/llm
+llm_gpu_stack_models_max: 1
+# Finite generation cap so a repetition/degeneration loop terminates instead
+# of running to the model's full context window. A client may still request
+# fewer tokens; this is only a ceiling. See findings-plan.md section 5.1.
+llm_gpu_stack_n_predict: 8192
+# Emit the server's own prompt/generation timing breakdown per response
+# (`timings` object) so prompt-processing and token-generation throughput
+# stay distinguishable -- conflating them previously produced a misleading
+# "~50 tok/s" figure that was actually prompt-processing speed (findings-plan.md
+# section 2.3).
+llm_gpu_stack_perf: true
+# Shared globally across every model on the router, not per-model. 8192 was
+# fine for straightforward instruct models (Qwen2.5-Coder, Llama-3.3, etc.)
+# but is too small for verbose reasoning models -- confirmed via
+# llama-server's own logs showing Qwen3.6 hitting `truncated = 1` at
+# n_tokens = 8191 mid-reasoning, before it ever reached its actual answer
+# (its reasoning length is non-deterministic -- one run finished cleanly at
+# 2785 completion tokens, another ran to 6351 before getting cut off).
+# Raised to 32768, then to 65536 (2026-07-19) -- the first raise fixed
+# server-side truncation, but VS Code Copilot's own client-side context
+# management (separate maxInputTokens/maxOutputTokens budget, unrelated to
+# the server) started "compacting" conversations almost immediately at
+# 32768 -- its own baseline agent-mode system prompt/tool overhead alone
+# was eating a large enough share of a tightly-split 32768 budget to
+# trigger premature compaction before any real conversation happened.
+# Doubling gives both the server and every client's own budget-splitting
+# logic real headroom instead of requiring a precise split of a scarce
+# pool. GTT capacity analysis showed ample room (largest concurrent
+# scenario tested -- Llama-3.3-70B + a full ComfyUI video job -- still had
+# ~17GB of the 96GB ttm.pages_limit ceiling free at the original 8192
+# ctx-size). Revisit further (128K/256K) only if this proves insufficient.
+llm_gpu_stack_ctx_size: 65536
+llm_gpu_stack_port: 8080
+
+# Concurrent multi-slot decode (llama-server's default n_slots=4) corrupts
+# shared GPU state on this HIP/ROCm build -- confirmed via reproducing
+# garbage/repeated-token output by firing simultaneous requests at the same
+# model (mirrors OpenWebUI's per-message main-chat + title-gen + tag-gen
+# pattern, which was the actual trigger, not any single prompt). Forcing
+# single-slot serialized handling eliminates the race; fine for a
+# single-user homelab where nothing needs true concurrent serving.
+llm_gpu_stack_parallel_slots: 1
+
+# Empty by default -- no Traefik route exists yet (Phase 2 not done), and
+# llamacpp-router-mode-deployment.md documents the router as currently
+# unauthenticated while bound to ai_seg only. Set a real key before this
+# endpoint is ever exposed beyond ai_seg.
+llm_gpu_stack_api_key: ""
+
+# DRY sampling -- llama.cpp's purpose-built sequence-aware sampler against
+# repeated-phrase degenerate loops ("X that is not a Y that is not a Y...").
+# llama-server's plain `repeat_penalty` (default 1.00, i.e. off by default --
+# corrected 2026-07-19; earlier comment here wrongly said 1.1/already-on)
+# only penalizes individual repeated tokens even when enabled; it does not
+# catch multi-token *phrase* repeats, which is what we actually hit --
+# reproduced with two different models (Llama-3.3-70B via Copilot,
+# Devstral-Small-2 via direct API), ruling out a client- or model-specific
+# cause. Ships disabled by default (dry_multiplier 0.0); this role
+# previously turned it on globally, but findings-plan.md section 2.3/5.3
+# found it did not resolve the preserved Copilot/Devstral repetition loops,
+# so it should not be credited as a fix. Confirmed again 2026-07-19 via a
+# one-fixture A/B: at 0.0, `no_tools_control` collapsed into 8192 identical
+# `?` characters (finish_reason: length); at 0.8, the same fixture collapsed
+# into word-level repetition ("that that that is not that...", 17k chars)
+# and actually self-terminated (finish_reason: stop) rather than exhausting
+# the generation cap. DRY changes the *shape* of the collapse, not whether
+# it happens -- back to 0.0 as the controlled baseline value. dry_base/
+# dry_allowed_length/dry_penalty_last_n only take effect once
+# dry_multiplier is non-zero; left set for whenever DRY is revisited as a
+# per-model experiment.
+llm_gpu_stack_dry_multiplier: 0.0
+llm_gpu_stack_dry_base: 1.75
+llm_gpu_stack_dry_allowed_length: 3
+llm_gpu_stack_dry_penalty_last_n: -1
+
+# --jinja makes llama-server render each GGUF's own embedded chat template
+# instead of its generic built-in fallback. Toggleable to test whether a
+# given model's tool-calling failures are a template-rendering mismatch
+# rather than the model itself -- temporarily testable per-deploy, not
+# meant to be a permanent per-model setting in router mode (this flag is
+# global across every model on the router).
+llm_gpu_stack_use_jinja: true

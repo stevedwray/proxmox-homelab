@@ -44,12 +44,14 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("monitoring-stack", "grafana"): ("GRAFANA_OAUTH_CLIENT_ID", "grafana"),
     ("portainer-stack", "portainer"): ("PORTAINER_OAUTH_CLIENT_ID", "portainer"),
     ("technitium-stack", "technitium"): ("TECHNITIUM_OIDC_CLIENT_ID", "technitium"),
+    ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
     ("monitoring-stack", "grafana"): "GRAFANA_OAUTH_CLIENT_SECRET",
     ("portainer-stack", "portainer"): "PORTAINER_OAUTH_CLIENT_SECRET",
     ("technitium-stack", "technitium"): "TECHNITIUM_OIDC_CLIENT_SECRET",
+    ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
 }
 
 
@@ -457,6 +459,8 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         return (base_url,)
     if _oidc_route_key(intent) == ("technitium-stack", "technitium"):
         return (f"{base_url}/sso/callback",)
+    if _oidc_route_key(intent) == ("ai-services-stack", "openwebui"):
+        return (f"{base_url}/oauth/oidc/callback",)
     return ()
 
 

@@ -1,0 +1,48 @@
+# OpenWebUI + SearXNG — ai_seg zone (pve-framework).
+# Standard Docker-based stack (matches monitoring-stack's shape: one
+# container, multiple related Docker services in one compose file) --
+# unlike llm-gpu-stack/comfyui-stack, this needs no GPU passthrough.
+# See docs/framework-integration/decisions.md Decision 9 for why these
+# two are bundled together and n8n/Postgres/Redis are a separate stack.
+
+hostname: ai-services-stack
+ip_address: "${lab_ip_ai_services}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+vmid: 50012
+cores: 2
+memory: 4096
+swap: 1024
+rootfs_size: 16
+storage_profile: platform-default
+docker_storage_size: "24G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "24G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+
+tags:
+  - ai-services-stack
+  - ai
+  - pve-framework
+
+network:
+  zone: ai_seg
+
+depends_on: []
+provides:
+  - service: openwebui-http
+    port: 8080
+    protocol: tcp
+
+ansible_playbook: "deploy-ai-services-stack"
+deployment_tier: ai
+portainer_agent: false
+
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

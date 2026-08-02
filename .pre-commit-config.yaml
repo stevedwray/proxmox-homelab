@@ -27,4 +27,4 @@ repos:
         entry: bash scripts/check-required-sops-keys.sh
         language: system
         pass_filenames: false
-        files: ^terraform/secrets\.enc\.yaml$
+        files: ^terraform/secrets\.common\.enc\.yaml$

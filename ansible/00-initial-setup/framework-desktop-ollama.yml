@@ -1,0 +1,136 @@
+---
+# Deploys Ollama as a Docker container (ollama/ollama:rocm) on the Framework
+# Desktop, per docs/framework-ubuntu/plan.md Phase 3 (§9) -- replaces the
+# earlier native-systemd install (Decision 5 reversed: "dockerise everything
+# that can", 2026-07-20).
+#
+# The native install was previously believed to have a real GPU-in-Docker
+# problem. Re-checked against /home/steve/git/local-ai-testing's own
+# runtime-comparison matrix (docs/framework/runtime-matrix-checkpoint-
+# 2026-07-16.md): all 16 cells (llama.cpp + Ollama, Vulkan + ROCm, host
+# bare-metal / host+Docker / Incus bare / Incus+Docker) came back
+# backend_verified: true, GPU utilization 64-96%. The actual prior bug was
+# in the *benchmark harness*, not Docker itself -- OLLAMA_IGPU_ENABLE was
+# only being set for the Vulkan cells, not ROCm, so Ollama silently dropped
+# the integrated GPU and fell back to CPU for every ROCm cell until that
+# harness bug was fixed. This playbook carries the same fix forward
+# (OLLAMA_IGPU_ENABLE=1, unconditionally -- Strix Halo is an integrated GPU
+# regardless of backend) rather than repeating it.
+#
+# Backend: ROCm (ollama/ollama:rocm), matching the ROCm/HIP choice already
+# validated for native llama.cpp on this hardware, rather than Vulkan.
+# Device passthrough (/dev/kfd, /dev/dri + numeric render/video GIDs) and
+# the env-var set are lifted directly from local-ai-testing's
+# roles/ollama_bench/tasks/main.yml docker-run invocation, which is the
+# exact configuration that produced a verified-on-GPU result on this same
+# gfx1151 hardware.
+#
+# Image pulled through Harbor's dockerhub proxy-cache, matching the
+# established ComfyUI/monitoring-stack pattern (see
+# framework-desktop-comfyui.yml and lessons-learned.md).
+#
+# Run: ansible-playbook -i ansible/inventory/ framework-desktop-ollama.yml
+
+- name: Deploy Ollama via Docker (ROCm) for AI/LLM development use
+  hosts: framework
+  become: true
+  gather_facts: true
+
+  vars:
+    framework_ollama_user: steve
+    framework_ollama_image: "harbor.lab.gibbsgreatly.xyz/dockerhub/ollama/ollama:rocm"
+    framework_ollama_port: 11434
+    framework_ollama_dir: /opt/ollama-docker
+    framework_ollama_models_dir: /storage/models/ollama
+    # Read-only access to the LM Studio/llama.cpp GGUF library so existing
+    # downloads can be imported into Ollama's own catalog (`ollama create`)
+    # without re-downloading. See docs/framework-ubuntu/model-sources/
+    # import-existing-gguf-models-to-ollama.sh for the one-time import step.
+    framework_ollama_llm_models_dir: /storage/models/llm
+
+  tasks:
+    - name: Stop and disable the old native ollama.service, if present
+      ansible.builtin.systemd:
+        name: ollama
+        enabled: false
+        state: stopped
+      failed_when: false
+
+    - name: Install Docker and Compose plugin
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+
+    - name: Ensure docker service is enabled and running
+      ansible.builtin.systemd:
+        name: docker
+        enabled: true
+        state: started
+
+    - name: Add {{ framework_ollama_user }} to the docker group
+      ansible.builtin.user:
+        name: "{{ framework_ollama_user }}"
+        groups: docker
+        append: true
+
+    - name: Determine render/video GIDs on the host
+      ansible.builtin.command: getent group render video
+      register: framework_ollama_gid_result
+      changed_when: false
+
+    - name: Parse render/video GIDs
+      ansible.builtin.set_fact:
+        framework_ollama_render_gid: "{{ (framework_ollama_gid_result.stdout_lines | select('match', '^render:') | first).split(':')[2] }}"
+        framework_ollama_video_gid: "{{ (framework_ollama_gid_result.stdout_lines | select('match', '^video:') | first).split(':')[2] }}"
+
+    - name: Create Ollama docker-compose directory and models path
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: '0755'
+        owner: "{{ framework_ollama_user }}"
+        group: "{{ framework_ollama_user }}"
+      loop:
+        - "{{ framework_ollama_dir }}"
+        - "{{ framework_ollama_models_dir }}"
+
+    - name: Install Ollama docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ framework_ollama_dir }}/docker-compose.yml"
+        mode: '0644'
+        content: |
+          services:
+            ollama:
+              image: {{ framework_ollama_image }}
+              container_name: ollama
+              restart: unless-stopped
+              devices:
+                - /dev/kfd
+                - /dev/dri
+              group_add:
+                - "{{ framework_ollama_render_gid }}"
+                - "{{ framework_ollama_video_gid }}"
+              ports:
+                - "{{ framework_ollama_port }}:11434"
+              volumes:
+                - {{ framework_ollama_models_dir }}:/root/.ollama
+                - {{ framework_ollama_llm_models_dir }}:/mnt/llm-models:ro
+              environment:
+                # Strix Halo's GPU is integrated regardless of backend; Ollama
+                # drops integrated GPUs from candidacy unless told otherwise
+                # (see the header note above -- this is the fix for the prior
+                # false "Ollama can't do GPU in Docker" finding, not new).
+                OLLAMA_IGPU_ENABLE: "1"
+                HIP_VISIBLE_DEVICES: "0"
+                ROCR_VISIBLE_DEVICES: "0"
+      register: framework_ollama_compose
+
+    - name: Bring up Ollama via docker compose
+      ansible.builtin.command: docker compose up -d
+      args:
+        chdir: "{{ framework_ollama_dir }}"
+      register: framework_ollama_up
+      changed_when: "'Started' in framework_ollama_up.stderr or 'Created' in framework_ollama_up.stderr"

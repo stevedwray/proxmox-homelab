@@ -1,6 +1,10 @@
 ---
 rsyslog_forward_target_host: "{{ lookup('env', 'LAB_IP_GRAYLOG') | mandatory('LAB_IP_GRAYLOG env var is required') }}"
 rsyslog_forward_target_port: "514"
+# LXC containers can't reach /proc/kmsg, so imklog is disabled by default.
+# Bare-metal hosts have a real kernel log and should keep it — set false
+# there (see ansible/00-initial-setup/framework-desktop-bootstrap.yml).
+rsyslog_forward_disable_imklog: true
 rsyslog_inbound_enabled: false
 rsyslog_inbound_tcp_port: "514"
 rsyslog_inbound_udp_port: "514"

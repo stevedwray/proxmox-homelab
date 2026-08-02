@@ -33,11 +33,14 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     size         = var.rootfs_size
   }
 
-  mount_point {
-    volume = var.docker_storage
-    size   = var.docker_storage_size
-    path   = "/var/lib/docker"
-    backup = var.docker_mount_backup_enabled
+  dynamic "mount_point" {
+    for_each = var.docker_enabled ? [1] : []
+    content {
+      volume = var.docker_storage
+      size   = var.docker_storage_size
+      path   = "/var/lib/docker"
+      backup = var.docker_mount_backup_enabled
+    }
   }
 
   dynamic "mount_point" {
@@ -50,14 +53,18 @@ resource "proxmox_virtual_environment_container" "docker_host" {
     }
   }
 
-  dynamic "mount_point" {
-    for_each = var.host_bind_mounts
-    content {
-      volume = mount_point.value.host_path
-      path   = mount_point.value.lxc_path
-      backup = false
-    }
-  }
+  # host_bind_mounts (raw host-path bind mounts, as opposed to the two
+  # managed-storage mount_point blocks above) and device_passthrough are
+  # NOT managed here -- Proxmox hardcodes both to root@pam authentication
+  # only, regardless of the API token's RBAC role. Confirmed via two live
+  # 403s: "mount point type bind is only allowed for root@pam" and
+  # "configuring device passthrough is only allowed for root@pam". Same
+  # restriction class as the keyctl feature flag below. Both applied
+  # out-of-band instead, via
+  # ansible/playbooks/configure-device-passthrough.yml (direct root SSH
+  # `pct set`, which runs as true root@pam and isn't subject to this
+  # check) -- see var.host_bind_mounts/var.device_passthrough's
+  # descriptions.
 
   operating_system {
     template_file_id = var.ostemplate

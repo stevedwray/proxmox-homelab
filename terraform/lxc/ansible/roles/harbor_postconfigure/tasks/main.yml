@@ -721,7 +721,7 @@
     msg:
       - "================================================================"
       - "ACTION REQUIRED: Harbor CI robot account created."
-      - "Copy these credentials and store them in terraform/secrets.enc.yaml"
+      - "Copy these credentials and store them in terraform/secrets.common.enc.yaml"
       - "(and terraform/secrets.pve.enc.yaml for production) under the keys:"
       - "  HARBOR_ROBOT_USER  = {{ harbor_postconfigure_robot_result.json.name }}"
       - "  HARBOR_ROBOT_PASSWORD = <secret shown below>"

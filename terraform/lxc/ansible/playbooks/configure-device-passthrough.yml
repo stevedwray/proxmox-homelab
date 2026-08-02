@@ -1,0 +1,85 @@
+# Generic playbook: configure LXC device passthrough (e.g. /dev/kfd,
+# /dev/dri/* for AMD GPU compute) and/or bind-type mount points on a
+# container. Delegates pct commands to the Proxmox host, running as true
+# root@pam (direct SSH), since Proxmox hardcodes both fields to root@pam
+# authentication only -- confirmed via two live 403s ("configuring device
+# passthrough is only allowed for root@pam", "mount point type bind is
+# only allowed for root@pam") when attempted through Terraform's API
+# token, regardless of its RBAC role. Same restriction class, same fix
+# pattern, as configure-keyctl.yml.
+#
+# Required inventory vars: vmid
+# Optional inventory vars:
+#   device_passthrough (list of {path, uid, gid, mode, deny_write} --
+#     matches terraform/lxc/modules/lxc-docker-host's device_passthrough
+#     variable shape, uid/gid/mode/deny_write optional)
+#   host_bind_mounts (list of {host_path, lxc_path} -- matches
+#     terraform/lxc/modules/lxc-docker-host's host_bind_mounts variable
+#     shape)
+#   pve_host, pve_ssh_user (default: root)
+# At least one of device_passthrough/host_bind_mounts must be non-empty.
+---
+- name: Configure LXC device passthrough and bind mounts on container
+  hosts: all
+  gather_facts: false
+  vars:
+    device_passthrough: "{{ device_passthrough | default([]) }}"
+    host_bind_mounts: "{{ host_bind_mounts | default([]) }}"
+    proxmox_delegate_host: "{{ pve_host | default(lookup('env', 'PROXMOX_HOST'), true) | default(lookup('env', 'PVE_TEST_FQDN'), true) | default('pve-test.gibbsgreatly.xyz', true) }}"
+    device_passthrough_args: >-
+      {%- set ns = namespace(result=[]) -%}
+      {%- for dev in device_passthrough -%}
+        {%- set attrs = ['path=' + dev.path] -%}
+        {%- if dev.uid is defined and dev.uid is not none -%}
+          {%- set _ = attrs.append('uid=' + (dev.uid | string)) -%}
+        {%- endif -%}
+        {%- if dev.gid is defined and dev.gid is not none -%}
+          {%- set _ = attrs.append('gid=' + (dev.gid | string)) -%}
+        {%- endif -%}
+        {%- if dev.mode is defined and dev.mode is not none -%}
+          {%- set _ = attrs.append('mode=' + dev.mode) -%}
+        {%- endif -%}
+        {%- if dev.deny_write is defined and dev.deny_write -%}
+          {%- set _ = attrs.append('deny-write=1') -%}
+        {%- endif -%}
+        {%- set _ = ns.result.append('-dev' ~ loop.index0 ~ ' ' ~ attrs | join(',')) -%}
+      {%- endfor -%}
+      {{ ns.result | join(' ') }}
+    bind_mount_args: >-
+      {%- set ns = namespace(result=[]) -%}
+      {%- for mnt in host_bind_mounts -%}
+        {%- set _ = ns.result.append('-mp' ~ loop.index0 ~ ' ' ~ mnt.host_path ~ ',mp=' ~ mnt.lxc_path) -%}
+      {%- endfor -%}
+      {{ ns.result | join(' ') }}
+    pct_set_args: "{{ (device_passthrough_args ~ ' ' ~ bind_mount_args) | trim }}"
+
+  tasks:
+    - name: Fail if neither device_passthrough nor host_bind_mounts is set
+      ansible.builtin.fail:
+        msg: "At least one of device_passthrough/host_bind_mounts must be non-empty."
+      when: pct_set_args | length == 0
+
+    - name: Set device passthrough / bind mounts via pct
+      ansible.builtin.command:
+        cmd: "pct set {{ vmid }} {{ pct_set_args }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Reboot container to apply device passthrough / bind mounts
+      ansible.builtin.command:
+        cmd: "pct reboot {{ vmid }}"
+      delegate_to: "{{ proxmox_delegate_host }}"
+      vars:
+        ansible_user: "{{ pve_ssh_user | default('root') }}"
+        ansible_ssh_private_key_file: "{{ hostvars[inventory_hostname]['ansible_ssh_private_key_file'] }}"
+        ansible_ssh_common_args: '-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null'
+      changed_when: true
+
+    - name: Wait for container to come back online
+      ansible.builtin.wait_for_connection:
+        delay: 5
+        timeout: 120

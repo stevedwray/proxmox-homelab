@@ -2,6 +2,10 @@ generated_from:
   network_intent: /home/steve/git/proxmox-homelab/terraform/lxc/network/pve-test-vm.yaml
   stacks_dir: /home/steve/git/proxmox-homelab/terraform/lxc/stacks
 zones:
+  test_dhcp_seg:
+  - stack_name: dhcp-test-client-01
+    ip_address: 192.168.90.61
+    description: dhcp-test-client-01
   infra_seg:
   - stack_name: apt-cacher-stack
     ip_address: 192.168.40.111

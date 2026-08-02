@@ -11,7 +11,9 @@
     regexp: '^module\(load="imklog"\)'
     line: '#module(load="imklog")   # disabled: LXC containers cannot access /proc/kmsg'
     backrefs: true
+  when: rsyslog_forward_disable_imklog | bool
   notify: Restart rsyslog
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Remove stale victorialogs-named config (renamed to log-forwarding)
   ansible.builtin.file:
@@ -27,6 +29,7 @@
     group: root
     mode: "0644"
   notify: Restart rsyslog
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Enable and start rsyslog
   ansible.builtin.systemd:
@@ -34,6 +37,7 @@
     enabled: true
     state: started
     daemon_reload: false
+  ignore_errors: "{{ ansible_check_mode }}"
 
 - name: Flush handlers to apply rsyslog config before port availability check
   ansible.builtin.meta: flush_handlers
@@ -43,6 +47,7 @@
     host: 127.0.0.1
     port: 10514
     timeout: 15
+  when: not ansible_check_mode
 
 # Optional Graylog inbound relay: accept appliance/host syslog on :514 and
 # forward to the configured rsyslog_forward_target (typically 127.0.0.1:5140).

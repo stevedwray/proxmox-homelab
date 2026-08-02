@@ -1,0 +1,51 @@
+# mcp-utility-stack — external-utility MCP adapter tier.
+#
+# Runs cve-mcp-server (github.com/mukul975/cve-mcp-server, local-dev branch
+# merged onto upstream v0.2.0) in its native MCP_TRANSPORT=http mode. Holds
+# no internal infrastructure credentials; needs real internet egress to
+# public CVE/threat-intel APIs. See docs/mcp-stack/plan.md for the full
+# design (why this is a separate zone/stack from mcp-discovery-stack).
+#
+# Sized small: this is a lightweight Python API server with a SQLite cache,
+# not a scanner.
+hostname: mcp-utility-stack
+ip_address: "${lab_ip_mcp_utility}/24"
+gateway: "${lab_gw_ai}"
+dns_server: "${lab_gw_ai}"
+network:
+  zone: ai_seg
+vmid: 50011
+cores: 2
+memory: 1024
+swap: 512
+rootfs_size: 10
+storage_profile: platform-default
+docker_storage_size: "5G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "5G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - mcp
+  - cve
+  - research
+  - docker
+depends_on:
+  - apt-cacher-stack
+provides:
+  - service: cve-mcp-http
+    port: 8000
+    protocol: tcp
+ansible_playbook: "deploy-mcp-utility-stack"
+deployment_tier: platform
+portainer_agent: false
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+# No registry_host: the cve-mcp-server image is built directly on the host
+# from source copied by the ansible controller, not pulled from Harbor
+# (see deploy-mcp-utility-stack.yml's header comment).
+apt_cacher_host: "${lab_ip_apt_cacher}"

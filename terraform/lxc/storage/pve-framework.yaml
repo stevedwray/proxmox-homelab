@@ -1,0 +1,113 @@
+version: 1
+
+# pve-framework's single 1.8TB NVMe is split so growable data never shares
+# space with the Proxmox root filesystem (see
+# docs/framework-integration/decisions.md Decision 3's 2026-07-18 update):
+#   pve-root (96G, unchanged) -- OS only, nothing else ever writes here.
+#   storage  (~1TB plain ext4 LV, mounted /storage) -- ISOs/templates/
+#     backups as Proxmox dir storage (storage-iso/storage-template/
+#     storage-backup, named to match pve's own convention), plus plain
+#     bind-mounted directories /storage/models and /storage/artifacts
+#     (not Proxmox storage types -- "models"/"artifacts" aren't content
+#     types Proxmox understands, these are just host paths bind-mounted
+#     into containers via host_bind_mounts).
+#   local-lvm (~700G LVM-thin pool, same name/thinpool as before, just
+#     resized) -- container rootfs/volumes, thin-provisioned.
+# `local` (dir, /var/lib/vz on pve-root) still exists in storage.cfg but
+# is no longer used for anything new -- superseded by the storage-*
+# entries above, left alone rather than removed to avoid disturbing any
+# Proxmox-internal assumption that a `local` storage exists.
+# No ZFS pool on this node -- profile names kept for stack.yaml
+# compatibility. Revisit only if snapshot/send-receive features become a
+# real requirement for this box specifically.
+
+defaults:
+  storage_profile: platform-default
+  extra_mount_profile: durable-default
+  template_profile: local-template
+
+templates:
+  default:
+    name: debian-13.1-2-docker-template.tar.gz
+
+storage_backends:
+  local-lvm:
+    content_types: [images, rootdir]
+    backend_type: lvm-thin
+  local:
+    content_types: [backup, iso, snippets, vztmpl]
+    backend_type: dir
+  storage-iso:
+    content_types: [iso]
+    backend_type: dir
+  storage-template:
+    content_types: [vztmpl]
+    backend_type: dir
+  storage-backup:
+    content_types: [backup]
+    backend_type: dir
+
+profiles:
+  platform-default:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  platform-zfs:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  validation-small:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+  ssd-runtime:
+    rootfs_storage: local-lvm
+    docker_storage: local-lvm
+    rootfs_required_content_type: rootdir
+    docker_required_content_type: rootdir
+
+extra_mount_profiles:
+  durable-default:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-zfs:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-small:
+    storage: local-lvm
+    required_content_type: rootdir
+  durable-ssd:
+    storage: local-lvm
+    required_content_type: rootdir
+
+template_profiles:
+  local-template:
+    storage: storage-template
+    required_content_type: vztmpl
+    allowed_templates:
+      - debian-13.1-2-docker-template.tar.gz
+  # Stock Ubuntu template for native (non-Docker) GPU-passthrough stacks
+  # (llm-gpu-stack, comfyui-stack) -- ROCm/Vulkan driver versions are
+  # meaningfully better on Ubuntu than Debian on this hardware, per
+  # docs/framework/proxmox-strix-halo-setup-notes.md §5. No custom
+  # Docker-enhanced build needed since these stacks don't use Docker.
+  ubuntu-native:
+    storage: storage-template
+    required_content_type: vztmpl
+    allowed_templates:
+      - ubuntu-26.04-standard_26.04-1_amd64.tar.zst
+
+legacy_rootfs_storage_profiles:
+  infrastructure-containers: platform-default
+  storage-containers: validation-small
+
+legacy_extra_mount_storage_profiles:
+  infrastructure-containers: durable-default
+  storage-containers: durable-small
+
+legacy_template_storage_profiles:
+  storage-template: local-template
+  local: local-template

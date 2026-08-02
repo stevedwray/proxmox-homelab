@@ -187,5 +187,11 @@ jobs:
         env:
           SOPS_AGE_KEY: ${{ secrets.SOPS_AGE_KEY }}
         run: |
-          sops --decrypt terraform/secrets.enc.yaml > /dev/null
-          echo "Decryption successful"
+          # Check every secrets file, not just the common one — the per-env
+          # delta files (secrets.pve.enc.yaml etc.) are real secrets files
+          # too and were previously untested here. See
+          # docs/framework-integration/decisions.md Decision 6.
+          for f in terraform/secrets*.enc.yaml; do
+            sops --decrypt "$f" > /dev/null
+            echo "Decryption successful: $f"
+          done

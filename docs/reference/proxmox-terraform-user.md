@@ -75,13 +75,15 @@ pveum user token add automation@pve terraform --privsep 0 --output-format json
 The token secret is shown only at creation time. Capture it immediately and
 store it in the correct SOPS file for the target environment.
 
-For the active `pve-test` workflow, `terraform/secrets.enc.yaml` is the source of truth for
-the token secret. Avoid keeping a second long-lived plaintext copy in `.env.pve-test` if the
-SOPS file is available locally; otherwise you must resync `.env.pve-test` immediately after
-rotation.
-
-For production `pve`, `terraform/secrets.pve.enc.yaml` is the source of truth
-for `TF_VAR_pm_api_token_secret`.
+Terraform API tokens are per-node secrets, not common ones — they're
+meaningless against any other node's API — so each node's own
+`terraform/secrets.<node>.enc.yaml` is the source of truth for its token
+secret, never `terraform/secrets.common.enc.yaml`. For the `pve-test-vm`
+workflow that's `terraform/secrets.pve-test-vm.enc.yaml`; for production
+`pve` it's `terraform/secrets.pve.enc.yaml`. Avoid keeping a second
+long-lived plaintext copy in the corresponding `.env.<node>` if the SOPS
+file is available locally; otherwise you must resync that file immediately
+after rotation.
 
 ## Environment variables used by Terraform
 
@@ -94,9 +96,9 @@ export TF_VAR_pm_api_token_id="automation@pve!terraform"
 export TF_VAR_pm_api_token_secret="<TOKEN_SECRET>"
 ```
 
-On the active development workstation, `.env.pve-test` may derive `PROXMOX_TOKEN_SECRET`
-from `terraform/secrets.enc.yaml` at source time so the shell always follows the SOPS-backed
-token source of truth.
+On the active development workstation, `.env.pve-test-vm` may derive `PROXMOX_TOKEN_SECRET`
+from `terraform/secrets.pve-test-vm.enc.yaml` at source time so the shell always follows the
+SOPS-backed token source of truth.
 
 Additional environment values are typically loaded from the project’s local env files
 rather than copied into this document.

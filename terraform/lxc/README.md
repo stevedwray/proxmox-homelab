@@ -240,7 +240,7 @@ configuration path.
 - Central Portainer CE instance only for stacks that use the Tier 2 app path
   (`deploy-stack.yml` / `app_stack`)
 
-Keep real secrets in `terraform/secrets.enc.yaml` and inject them with
+Keep real secrets in `terraform/secrets.common.enc.yaml` and inject them with
 `./with-secrets`. Treat the repo-root `.env` only as non-secret local config.
 
 ## Commands
@@ -264,6 +264,32 @@ terragrunt init
 # Destroy infrastructure
 ./with-secrets terragrunt --working-dir terraform/lxc/stacks --non-interactive run --all -- destroy -auto-approve
 ```
+
+## Scaffolding a new stack with a local coding agent
+
+`./scaffold-stack.sh <stack-name>` authors a new stack's five files
+(`stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`,
+and its Ansible playbook) using five narrow, single-file OpenCode agents
+defined in `.opencode/agent/`, gated by the validators below between every
+step. This exists because a single general-purpose local-model agent asked
+to author all five files in one open-ended task reliably fails in specific,
+repeatable ways (invents an SDN zone that was explicitly ruled out, uses an
+unpinned image tag, wanders into unrequested files); five agents each
+scoped to exactly one file — with `bash`/`glob`/`grep`/`task` denied so
+they can't wander into contaminating examples elsewhere in the repo — does
+not. Full findings: `docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md`.
+
+```bash
+# 1. Copy the example and fill in the new stack's facts
+cp terraform/lxc/stacks/stack-request.example.yaml \
+   terraform/lxc/stacks/<stack-name>/stack-request.yaml
+
+# 2. Run the scaffolder — stops on the first validator failure
+terraform/lxc/scaffold-stack.sh <stack-name>
+```
+
+Not covered: `terragrunt plan`/`apply`, `provision.sh` check/live/rerun, and
+health checks — those are real infrastructure steps and stay manual.
 
 ## Validation
 
@@ -392,6 +418,21 @@ without parsing terminal prose.
 `--check-contract-sections` is a stricter presence/coverage check for active stacks only.
 It verifies that each active stack has a `STACK_CONTRACT.md` and includes the current
 core boundary sections: `## Provides` and `## Dependencies`.
+
+**Convention (not yet enforced by the validator): `## Implementation Files`.**
+Every `STACK_CONTRACT.md` should list the exact repo-relative paths a stack
+touches (`stack.yaml`, playbook, any stack-specific role) and mark each as
+already existing — edit in place, do not recreate under a new path — or new,
+not yet created. `terraform/lxc/STACK_CONTRACT.template.md` has this section
+(and every other required section) pre-filled with placeholders; copy it
+instead of free-writing a contract from an example stack. This
+exists specifically for local/small coding-agent sessions: the Ollama
+coding-agent bake-off (`docs/framework-ubuntu/artifacts/coding-agents-20260721/`)
+found that without an explicit, unambiguous file map, a 30B-class local model
+would sometimes fabricate a replacement file believing it lacked read access,
+or author a new file under a duplicated nested path instead of the real
+module — both silent failures that only surfaced at validation time. See
+`terraform/lxc/stacks/ci-runner-01/STACK_CONTRACT.md` for the worked example.
 
 `--check-contract-docs` is a conservative sync check for active stacks only. It verifies
 that each active stack has a `STACK_CONTRACT.md` and that declared `depends_on` stack

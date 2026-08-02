@@ -120,7 +120,7 @@
 - name: Install node_exporter for OS metrics collection
   ansible.builtin.include_role:
     name: node_exporter
-  when: monitoring_enabled | default(true) | bool
+  when: (monitoring_enabled | default(true) | bool) and (node_exporter_enabled | default(true) | bool)
 
 - name: Install rsyslog and configure forwarding to Graylog
   ansible.builtin.include_role:

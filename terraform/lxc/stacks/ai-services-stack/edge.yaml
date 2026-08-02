@@ -1,0 +1,25 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: ai-services-edge
+  stack: ai-services-stack
+  annotations:
+    repo.auth.oidc.client_id_env: OPENWEBUI_OIDC_CLIENT_ID
+    repo.auth.oidc.client_secret_env: OPENWEBUI_OIDC_CLIENT_SECRET
+spec:
+  routes:
+    - name: openwebui
+      host: openwebui.${LAB_DOMAIN}
+      backend:
+        type: url
+        # Host port 8080 remains assigned to llamacpp-router on the shared
+        # Framework host; OpenWebUI publishes its container port 8080 on 8081.
+        url: http://${LAB_IP_AI_SERVICES}:8081
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc

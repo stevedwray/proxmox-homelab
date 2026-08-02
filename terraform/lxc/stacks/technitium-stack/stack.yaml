@@ -28,6 +28,9 @@ provides:
   - service: dns-authority-udp
     port: 53
     protocol: udp
+  - service: dhcp-server
+    port: 67
+    protocol: udp
 
 network:
   zone: mgmt_seg
