@@ -1,10 +1,23 @@
-# PentAGI ↔ Greenbone (GVM) integration — notes for future work
+# PentAGI ↔ Greenbone (GVM) integration — scoping
 
-**Status: not implemented. Explicitly deferred** in the original plan
-(`plan.md` §7) and every subsequent doc update. This file exists so the
-next pass doesn't have to re-derive the architecture from scratch — it
-records what's actually true today about both stacks, the one real gap
-that blocks integration, and the concrete options for closing it.
+**Status: scoped, not started, 2026-08-03.** Architecture decided below;
+no code or infra written yet. Supersedes this file's earlier
+"not implemented, explicitly deferred" pass (`plan.md` §7 and every
+subsequent doc update up to 2026-08-01) — the gap analysis in the next
+section is still accurate and preserved, but the "what would actually
+need to change" section has been replaced with a decided shape, because
+the situation changed since it was written: PentAGI's fork now has a real,
+working precedent for exactly this kind of integration —
+`triage_cve`/`search_cves`, wired directly into the Go backend against
+`cve-mcp-server` on `mcp-utility-stack` (see
+`docs/pentagi-stack/cve-mcp-integration-plan.md`, implemented and verified
+live 2026-08-02). That precedent changes the recommended shape here
+significantly — see "Decided architecture" below.
+
+This file exists so the next pass doesn't have to re-derive the
+architecture from scratch — it records what's actually true today about
+both stacks, the one real gap that blocks integration, and the decided
+plan for closing it.
 
 ## Why this is not just "point PentAGI at GVM's API"
 
@@ -48,141 +61,181 @@ needs an actual TCP listener before any of that network reach matters.**
 This file supersedes that line; `STACK_CONTRACT.md` should be corrected
 to point here rather than repeat the claim.
 
-## What would actually need to change
+## Decided architecture
 
-### 1. Expose GMP over TCP on `gvmd`
+The 2026-08-01 pass considered exposing raw GMP-over-TCP on `gvmd` and
+having PentAGI's Go backend or Kali worker image speak the protocol
+directly (either a real GMP XML client, or a baked-in Python CLI wrapper
+invoked through the terminal tool). Both are now superseded by a cleaner
+option that wasn't available at the time: **mirror the `cve-mcp-server`
+integration exactly, one layer closer to `gvmd`.**
 
-`gvmd` supports a `--listen=<addr> --port=<port>` GMP TCP listener
-alongside (not instead of) its Unix socket — this is documented upstream
-behavior, not something specific to this compose. Concretely:
+`cvemcp.go`/`triagecve.go`/`searchcves.go` proved the shape that works
+well for this fork: a small, purpose-built network service holds the
+real client/credential complexity server-side, and PentAGI's Go backend
+talks to it over a trivial JSON/HTTP call — no raw protocol, no
+credential inside an ephemeral worker container, no agent-composed
+syntax to get wrong. GVM's real complexity is worse than CVE-MCP's
+(GMP is a stateful, verbose legacy XML protocol, not JSON-RPC), which
+makes this pattern even more valuable here, not less.
 
-- Add a `command:` override to the `gvmd` service in
-  `deploy-greenbone-stack.yml`'s vendored compose, e.g.
-  `--listen=0.0.0.0 --port=9390` in addition to whatever default args the
-  entrypoint already uses for the socket.
-- Add `ports: ["9390:9390"]` to that service (mirroring how `nginx`
-  already does `0.0.0.0:443:443`).
-- No new MikroTik rule needed for `pentagi-stack → greenbone-stack:9390`
-  — both are already in `pentest_seg`, and this repo's firewall model
-  only adds explicit rules for **cross-zone** traffic (see
-  `terraform/lxc/network/pve.yaml`'s existing intra-`pentest_seg` reach
-  between `pentagi-stack` and `greenbone-stack`, which already has no
-  blocking rule between them). Confirm with a live `nc -zv` test from a
-  `pentagi-terminal-*` container before trusting this, though — don't
-  assume the zone's *intent* comment matches live MikroTik state without
-  checking, per this repo's general practice.
-- GMP over plain TCP is unauthenticated-transport (cleartext) unless
-  `--listen-tls`/manual TLS options are added — since this stays entirely
-  inside `pentest_seg` (not crossing to `edge_seg` or the internet), that
-  matches the same trust model this zone already uses for the LDAP outpost
-  reach and `LAB_TARGET`/`harness-target` scanning traffic. Revisit if
-  `pentest_seg`'s threat model ever changes.
+### The new component: `gvm-bridge`
 
-### 2. Give PentAGI its own scoped GVM credential — do not reuse `steve` or `admin`
+A small custom service, **added as a new service inside
+`greenbone-stack`'s own docker-compose stack** (not a new LXC) — it has
+to live there because it needs to mount `gvmd_socket_vol`, the Docker
+named volume `gvmd`'s Unix-socket-only GMP API is exposed on today. This
+also means **raw GMP-over-TCP on `gvmd` is no longer needed at all** —
+the earlier plan's Section 1 (`--listen=0.0.0.0 --port=9390`) is dropped;
+the bridge talks to `gvmd` over the existing socket, in the same Docker
+network, exactly like the playbook's own `gvm-tools` container already
+does for LDAP setup and the Phase 4 test scan.
 
-- Create a dedicated local `gvmd` user for this (e.g.
-  `gvmd --create-user=pentagi-integration --role=...`), **not** the
-  `steve` LDAP account (that's a real person's login) and **not** the
-  SOPS `GREENBONE_ADMIN_PASSWORD` admin account (full admin, no reason to
-  hand that to an autonomous agent).
-- GVM's built-in roles (`Admin`, `Observer`, `User`, etc. — check
-  `get_roles` on the live system for the exact current set) likely need a
-  **custom role** scoped to exactly what integration needs: create
-  targets/tasks, start tasks, read results (`get_results`) — explicitly
-  **not** `get_reports` (see the known crash bug below) and probably not
-  user/role/feed administration.
-- Store the new user's password the same way `GREENBONE_ADMIN_PASSWORD`
-  is stored — SOPS (`terraform/secrets.common.enc.yaml`), a new
-  `GREENBONE_PENTAGI_PASSWORD`-style key, injected into whatever
-  PentAGI-side config ends up holding it (env var into the `pentagi`
-  container's own compose, or a file baked into the pentest worker image
-  — needs its own security review at that point, since it'd be a secret
-  living inside an ephemeral, LLM-driven execution container).
+- **Implementation**: Python, using `python-gvm`'s `UnixSocketConnection`
+  (the same library `gvm-tools`/`gvm-cli` are built on) against
+  `gvmd_socket_vol`. A minimal HTTP framework (plain `http.server` or
+  FastAPI — decide at implementation time, no strong reason either way
+  for 3 endpoints) exposes:
+  - `POST /scan/start` — body `{"target_ip": ..., "ports": [...]}`.
+    Internally: `create_port_list` (scoped to the given ports, matching
+    Phase 4's own pattern), `create_target` with
+    **`alive_tests: Consider Alive` unconditionally** (not
+    conditional on some "is this target ICMP-reachable" check — every
+    target this integration will ever point at is inside `pentest_seg`'s
+    deliberately-firewalled lab targets, so hardcoding the fix for the
+    gotcha that already bit Phase 4 is strictly safer than risking the
+    silent-zero-results failure mode by trying to be clever about when
+    it's needed), `create_task` ("Full and fast" scan config, matching
+    Phase 4), `start_task`. Returns `{"task_id": ...}`.
+  - `GET /scan/status/{task_id}` — wraps `get_tasks(task_id=...)`,
+    returns status/progress.
+  - `GET /scan/results/{task_id}` — wraps **`get_results`, never
+    `get_reports`** (the crash bug in `plan.md` §4 /
+    `STACK_CONTRACT.md`). This is the enforcement mechanism for that
+    gotcha: `get_reports` is simply never called by any code path in the
+    bridge, so it can never surface as a footgun to an LLM composing
+    calls, unlike a raw-GMP approach where the agent could reach for it
+    directly.
+- **Credential**: a dedicated `gvmd` user (e.g.
+  `gvmd --create-user=pentagi-integration`), **not** `steve` (a real
+  person's LDAP login) and **not** the SOPS `GREENBONE_ADMIN_PASSWORD`
+  admin account. Scope its role to target/port-list/task creation and
+  `get_results`/`get_tasks` — check `get_roles` on the live system for
+  the closest built-in role, or define a custom one if none fits tightly
+  enough. Password stored the same way `GREENBONE_ADMIN_PASSWORD` is —
+  a new `GREENBONE_PENTAGI_PASSWORD` SOPS key — injected only into the
+  bridge's own container environment. PentAGI's Go backend and its
+  ephemeral worker containers never see this credential at all, matching
+  how `cve-mcp-server` holds its own NVD/GitHub/etc. keys server-side.
+- **Network exposure**: the bridge binds its HTTP port (e.g. `8010`) to
+  the container's routable interface, reachable from `pentagi-stack`
+  within `pentest_seg` — both stacks are already in the same zone, and
+  the existing doc's own instruction still applies: **confirm live with
+  a `nc -zv` test before assuming no new MikroTik rule is needed**, don't
+  trust the zone's intent comment alone.
+- **Source location — open question, not decided**: `cve-mcp-server` is
+  an external upstream project (`mukul975/cve-mcp-server`), cloned to its
+  own sibling repo (`/home/steve/git/cve-mcp-server`) and copied onto the
+  host by `deploy-mcp-utility-stack.yml`'s `ansible.builtin.copy` tasks
+  from `CVE_MCP_SOURCE_DIR`. `gvm-bridge` has no upstream project to
+  track — it's pure homelab glue code — so it could either (a) get its
+  own sibling repo the same way, for parity with the existing pattern, or
+  (b) live directly inside `proxmox-homelab` (e.g.
+  `terraform/lxc/ansible/files/gvm-bridge/`), copied by the playbook the
+  same way but with no second git repo to maintain. (b) is the simpler
+  default given there's no external identity to preserve; flagging as a
+  decision point rather than deciding unilaterally here.
+- **Target-scope enforcement — open question, not decided**: the bridge's
+  `/scan/start` takes an arbitrary `target_ip` from whatever calls it.
+  Nothing at the bridge level restricts this to `LAB_TARGET`/
+  `harness-target` today — containment currently relies entirely on
+  `pentest_seg`'s network reach (the bridge, like `gvmd`, can only reach
+  hosts this zone's MikroTik policy already allows). Worth deciding
+  whether to add an explicit IP allowlist inside the bridge itself
+  (defense in depth, matching `mcp-utility-stack`'s own stated philosophy
+  that "the egress allowlist is a real security boundary, not a
+  formality") or accept zone-level containment as sufficient, same as
+  everything else PentAGI's terminal tool can already reach.
 
-### 3. Give the PentAGI worker image a GMP client
+### PentAGI side: three new tools, same shape as `triage_cve`/`search_cves`
 
-PentAGI's terminal tool just runs shell commands in whatever image
-`DOCKER_DEFAULT_IMAGE_FOR_PENTEST` points at
-(`{{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest`,
-per `docs/pentagi-stack/plan.md`). That image would need a GMP client
-available for an agent-issued command to actually speak to
-`greenbone-stack:9390`:
+- `start_gvm_scan`, `get_gvm_scan_status`, `get_gvm_scan_results` — new
+  Go tools in `backend/pkg/tools/`, following `cvemcp.go`'s exact
+  plumbing pattern (shared client/base struct, `IsAvailable()` gated on
+  a new `GvmBridgeURL` config field, swallow downstream errors into a
+  formatted result rather than a hard Go error). Since the bridge speaks
+  plain JSON over HTTP (not MCP), the client is simpler than
+  `cveMcpClient` — no SSE-frame parsing, no JSON-RPC envelope, just a
+  `POST`/`GET` and a JSON body.
+- Wired into the same 3 role-executor sites as `triage_cve`/`search_cves`
+  (`GetAssistantExecutor`, `GetPentesterExecutor`, `GetSearcherExecutor`
+  in `tools.go`) — same rationale, same non-touch of `GetEnricherExecutor`.
+- **No new "collation" tool needed.** This directly answers the "is this
+  workable" question that prompted this scoping pass: the user's proposed
+  pipeline (scan → collect → if CVE found, send to `cve-mcp` → collate
+  and use to guide the pentest) doesn't need to be hand-coded as a fixed
+  Go-side pipeline. The pentester/searcher/assistant roles already have
+  `triage_cve`/`search_cves` wired in from the earlier integration. Once
+  they also have `start_gvm_scan`/`get_gvm_scan_status`/
+  `get_gvm_scan_results`, the agent's own reasoning loop can chain them
+  in exactly one turn's worth of tool calls: run the scan, read whatever
+  CVE IDs show up in the results (Phase 4's real findings included named
+  CVEs/GHSAs), call `triage_cve` on the interesting ones, and use both
+  result sets to decide what to do next. This matches how Sploitus,
+  SearXNG, and CVE-MCP are already just parallel tools available to the
+  same role — the agent does the composition, not hard-coded Go logic.
+- **Async handling**: `start_gvm_scan` returns immediately with a
+  `task_id` (scans run for real minutes, per Phase 4 — exact duration for
+  a "Full and fast" scan against a 2-port target wasn't recorded there
+  and should be timed during implementation). The agent polls
+  `get_gvm_scan_status` itself between other actions, the same way it
+  already tolerates other slow operations — no blocking/long-poll needed
+  in the tool call itself.
 
-- **`python-gvm`** (the library `gvm-tools`/`gvm-cli` are themselves built
-  on) is the natural choice — pure Python, pip-installable, no extra
-  system dependencies beyond what Kali already has. Would need adding to
-  whatever provisions the Kali worker image (check whether
-  `pentagi-stack` builds/customizes this image at all today, or pulls it
-  verbatim from `vxcontrol/kali-linux` — if the latter, this either needs
-  a derived image published through Harbor, or a per-task `pip install`
-  step the agent runs itself, which is fragile to rely on).
-- Alternatively, skip a Python client entirely and have PentAGI issue raw
-  GMP XML over a plain TCP socket (`nc`/`python3 -c 'socket...'` one-liners
-  Kali already has) — matches what this stack's own playbook already does
-  via `gvm-cli`'s `socket` backend, just pointed at a TCP port instead of
-  a Unix socket path. Lower setup cost, more fragile/verbose for an LLM
-  agent to compose reliably per-call.
+## Carrying over the two real GVM gotchas (unchanged, now enforced structurally)
 
-### 4. Carry over the two real GVM gotchas already found in this stack
+Both documented in full in `plan.md` §4 and `STACK_CONTRACT.md`'s "What
+Must Not Be Edited Casually", and both are now closed off at the bridge
+level rather than left as agent-facing hazards:
 
-Both are documented in full in [reference material — see
-`plan.md` §4 and `STACK_CONTRACT.md`'s "What Must Not Be Edited Casually")
-and apply identically to any GMP caller, including a future PentAGI
-integration:
-
-- **New targets need `alive_tests: Consider Alive`** if the target's
-  firewall doesn't allow ICMP (true for `harness-target`) — otherwise
-  GVM's default host-alive check fails silently and the scan finishes in
-  ~30s with zero results that look exactly like a clean scan. Any
-  PentAGI-driven target-creation flow needs to set this explicitly, not
-  rely on GVM's default.
-- **Never call `get_reports`** — a real, reproducible upstream `gvmd` bug
-  crashes the daemon on any call to it (`column "severity_error" does not
-  exist`, matches `greenbone/gvmd` issue #2273's bug class). Use
-  `get_results` instead for pulling findings. If PentAGI's own agent
-  loop is composing GMP calls from a natural-language plan rather than a
-  fixed script, there's a real risk it reaches for the more
-  obviously-named `get_reports` command on its own — worth either a
-  system-prompt-level instruction or, better, only ever exposing a
-  purpose-built wrapper tool that internally calls `get_results` and
-  never surfaces `get_reports` as an option at all.
-
-## Recommended shape, if/when this is picked up
-
-Rather than letting a PentAGI agent freehand raw GMP XML per task (fragile,
-easy for an LLM to get wrong syntactically, and exposes `get_reports` as
-a footgun), the lowest-risk integration shape is a **small, purpose-built
-CLI wrapper** (a single Python script using `python-gvm`, baked into the
-worker image or fetched at task start) exposing only a handful of
-narrow, named operations — e.g. `create-scan <target-ip> <ports>`,
-`scan-status <task-id>`, `get-findings <task-id>` — each one internally
-setting `alive_tests` correctly and using `get_results` never
-`get_reports`. This keeps the LLM's job to "call this script with these
-args" rather than "compose correct raw GMP XML," which matches how
-`deploy-greenbone-stack.yml`'s own Ansible tasks are already structured
-(fixed, tested GMP request templates, not freehand XML).
+- **`alive_tests: Consider Alive` is hardcoded into every
+  `/scan/start` call** the bridge makes — not conditional, not something
+  the calling agent has to remember to ask for. Closes the "scan finishes
+  in ~30s with zero results that look like a clean scan" failure mode
+  Phase 4 hit.
+- **`get_reports` is never called by any bridge code path** — only
+  `get_results`. Since the bridge is the only thing that ever speaks GMP
+  on PentAGI's behalf, this fully removes the footgun rather than relying
+  on a system-prompt instruction to avoid it.
 
 ## Open questions, not yet decided
 
-- Whether `pentagi-stack`'s Kali worker image should be customized
-  (published through Harbor with `python-gvm` and the wrapper script
-  baked in) versus having PentAGI's agent `pip install` it per-task —
-  the former is more reliable but means maintaining a derived image; the
-  latter is zero-maintenance but adds a flaky extra step to every task
-  and depends on `pentest_seg`'s internet egress being up.
+- **Source location for `gvm-bridge`** — sibling repo (parity with
+  `cve-mcp-server`) vs. in-repo `terraform/lxc/ansible/files/` (simpler,
+  no upstream identity to preserve). See "Decided architecture" above.
+- **Target-IP scope enforcement** — bridge-level allowlist vs. relying on
+  `pentest_seg`'s existing zone containment. See "Decided architecture"
+  above.
 - Whether GVM scan results should feed back into PentAGI's own reasoning
-  loop automatically (agent reads findings, decides next action) or stay
-  a human-triggered, human-read side channel — this is a product/scope
-  decision, not a technical one, and changes how much of the above is
-  actually worth building.
-- Whether cleartext GMP-over-TCP within `pentest_seg` is acceptable
-  long-term, or whether `--listen-tls` should be set up from the start —
-  leaning toward "acceptable for now, same trust boundary as the rest of
-  the zone," but worth revisiting if `pentest_seg`'s containment model
-  ever changes.
+  loop automatically (now the default assumption, since the agent already
+  has both toolsets once this lands) or whether a human-triggered,
+  human-read path should also stay available as a fallback — leaning
+  toward "automatic is fine, matches how CVE-MCP already works," but not
+  formally decided.
+- Whether the bridge's HTTP endpoint needs any auth at all given
+  `mcp-utility-stack`'s explicit "no built-in auth, network-level access
+  control only" precedent for `cve-mcp-server` — leaning toward the same
+  posture here (MikroTik-level access control, no app-layer auth), since
+  it's the same zone and same trust model, but worth confirming rather
+  than assuming during implementation.
 
 ## Related documentation
 
+- `docs/pentagi-stack/cve-mcp-integration-plan.md` — the direct
+  architectural precedent this scoping pass mirrors: a small network
+  service holding real client/credential complexity, PentAGI's Go backend
+  talking to it over a trivial JSON call, wired into the same 3
+  role-executor sites. Read this first — it's the template.
 - `docs/greenbone-stack/plan.md` §4 — the two GVM gotchas in full detail,
   from this stack's own Phase 4 test scan.
 - `docs/greenbone-stack/STACK_CONTRACT.md` — network/inputs/provides
