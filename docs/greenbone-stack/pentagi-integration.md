@@ -133,29 +133,19 @@ does for LDAP setup and the Phase 4 test scan.
   the existing doc's own instruction still applies: **confirm live with
   a `nc -zv` test before assuming no new MikroTik rule is needed**, don't
   trust the zone's intent comment alone.
-- **Source location — open question, not decided**: `cve-mcp-server` is
-  an external upstream project (`mukul975/cve-mcp-server`), cloned to its
-  own sibling repo (`/home/steve/git/cve-mcp-server`) and copied onto the
-  host by `deploy-mcp-utility-stack.yml`'s `ansible.builtin.copy` tasks
-  from `CVE_MCP_SOURCE_DIR`. `gvm-bridge` has no upstream project to
-  track — it's pure homelab glue code — so it could either (a) get its
-  own sibling repo the same way, for parity with the existing pattern, or
-  (b) live directly inside `proxmox-homelab` (e.g.
-  `terraform/lxc/ansible/files/gvm-bridge/`), copied by the playbook the
-  same way but with no second git repo to maintain. (b) is the simpler
-  default given there's no external identity to preserve; flagging as a
-  decision point rather than deciding unilaterally here.
-- **Target-scope enforcement — open question, not decided**: the bridge's
-  `/scan/start` takes an arbitrary `target_ip` from whatever calls it.
-  Nothing at the bridge level restricts this to `LAB_TARGET`/
-  `harness-target` today — containment currently relies entirely on
-  `pentest_seg`'s network reach (the bridge, like `gvmd`, can only reach
-  hosts this zone's MikroTik policy already allows). Worth deciding
-  whether to add an explicit IP allowlist inside the bridge itself
-  (defense in depth, matching `mcp-utility-stack`'s own stated philosophy
-  that "the egress allowlist is a real security boundary, not a
-  formality") or accept zone-level containment as sufficient, same as
-  everything else PentAGI's terminal tool can already reach.
+- **Source location — decided 2026-08-03: in-repo.** `gvm-bridge` lives
+  inside `proxmox-homelab` (e.g. `terraform/lxc/ansible/files/gvm-bridge/`),
+  copied onto the host by `deploy-greenbone-stack.yml` the same way
+  `deploy-mcp-utility-stack.yml` copies `cve-mcp-server`'s source, but with
+  no second git repo to maintain — there's no external upstream identity
+  to preserve here, unlike `cve-mcp-server` (`mukul975/cve-mcp-server`).
+- **Target-scope enforcement — decided 2026-08-03: no bridge-level
+  allowlist.** `/scan/start` accepts whatever `target_ip` the caller
+  passes; containment relies entirely on `pentest_seg`'s existing network
+  reach (the bridge, like `gvmd`, can only reach hosts this zone's
+  MikroTik policy already allows — the same containment model every other
+  tool in this zone, including PentAGI's terminal tool, already relies on).
+  No additional app-layer restriction.
 
 ### PentAGI side: three new tools, same shape as `triage_cve`/`search_cves`
 
@@ -210,12 +200,6 @@ level rather than left as agent-facing hazards:
 
 ## Open questions, not yet decided
 
-- **Source location for `gvm-bridge`** — sibling repo (parity with
-  `cve-mcp-server`) vs. in-repo `terraform/lxc/ansible/files/` (simpler,
-  no upstream identity to preserve). See "Decided architecture" above.
-- **Target-IP scope enforcement** — bridge-level allowlist vs. relying on
-  `pentest_seg`'s existing zone containment. See "Decided architecture"
-  above.
 - Whether GVM scan results should feed back into PentAGI's own reasoning
   loop automatically (now the default assumption, since the agent already
   has both toolsets once this lands) or whether a human-triggered,
