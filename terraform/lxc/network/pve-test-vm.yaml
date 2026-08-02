@@ -317,6 +317,7 @@ zones:
     attachment: ai_seg
     containers:
       - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility}"
+      - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, validation instance (docs/ai-services-migration/plan.md)"
 
 inventory:
   proxmox_nodes:
@@ -393,10 +394,20 @@ policies:
     protocol: tcp
     ports: [8000]
     description: >-
-      Traefik to mcp-utility-stack (cve-mcp.${LAB_DOMAIN}, HTTPS at the
+      Traefik to mcp-utility-stack (cve-mcp.$${LAB_DOMAIN}, HTTPS at the
       edge, plain HTTP to the backend) — added 2026-08-01 alongside the
       existing lan/pentest_seg direct-IP inbound rules, which stay in
       place; this is an additional path, not a replacement
+  - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [8081]
+    description: >-
+      Traefik to ai-services-stack (openwebui.$${LAB_DOMAIN}, HTTPS at the
+      edge, plain HTTP to the backend) — added for docs/ai-services-migration/plan.md.
+      The zone's existing edge_seg -> ai_seg:[80,443] entry in pve.yaml is
+      not enough on its own, same reasoning as mcp-utility-stack's
+      dedicated :8000 rule above.
   - from: pentest_seg
     to: infra_seg
     protocol: tcp
@@ -481,28 +492,74 @@ policies:
     protocol: tcp
     ports: [443]
     description: >-
-      cve-mcp-server's named egress allowlist — NOT a zone/IP target, this
-      documents an FQDN-based allowlist the MikroTik must enforce (via
-      address-lists or similar, operator's choice of mechanism): nvd.nist.gov,
-      services.nvd.nist.gov, api.first.org, www.cisa.gov, api.osv.dev,
-      api.github.com, raw.githubusercontent.com, gitlab.com, cveawg.mitre.org,
-      crt.sh, access.redhat.com, ubuntu.com, api.msrc.microsoft.com,
-      hashlookup.circl.lu, api.pwnedpasswords.com, haveibeenpwned.com,
-      api.vulncheck.com, docs.vulncheck.com, api.shodan.io, shodan.io,
-      www.virustotal.com, api.greynoise.io — grepped from the server's own
-      source (src/cve_mcp/api/*.py), not assumed. Deliberately excludes
-      api.abuseipdb.com, urlscan.io, www.circl.lu (CIRCL PDNS),
-      mb-api.abuse.ch, threatfox-api.abuse.ch, api.ransomwhe.re — those
-      sources' API keys are intentionally left unconfigured. If/when
-      ai-services-stack (OpenWebUI/SearXNG) also moves onto ai_seg in a
-      future session, this allowlist needs revisiting — it's currently
-      scoped to cve-mcp-server's needs only, not a general ai_seg egress
-      policy.
+      Live-verified 2026-08-02 via the MikroTik REST API (read-only
+      credentials, MIKROTIK_READONLY_USER): this rule is NOT an FQDN-based
+      allowlist despite the name and despite what earlier versions of this
+      doc claimed. The actual live rule is `192.168.50.0/24 ->
+      !192.168.0.0/16 : tcp/443` -- a flat "HTTPS to any non-RFC1918 host"
+      accept for the *entire* ai_seg subnet, not scoped to
+      mcp-utility-stack's IP, and there are zero address-lists configured
+      on the router. The FQDN list originally documented here
+      (nvd.nist.gov, api.github.com, api.shodan.io, etc., grepped from
+      cve-mcp-server's own source) was the intent, never the actual
+      enforcement. Operator decision 2026-08-02: leave this rule as-is
+      rather than retroactively tightening a live production rule as a
+      side effect of the ai-services-stack migration -- ai-services-stack
+      already gets everything it needs on 443 from this existing rule, no
+      new 443 rule needed for it. Revisit broad-vs-narrow as its own
+      deliberate task if desired later.
+  - from: "${lab_ip_ai_services}"
+    to: internet
+    protocol: tcp
+    ports: [80]
+    description: >-
+      ai-services-stack's own IP only — SearXNG's remaining egress gap:
+      the existing zone-wide rule above already covers 443 for the whole
+      subnet, but not port 80. Only add this if a configured search
+      engine actually needs plain HTTP (uncommon for modern engines, but
+      matches the "broader over narrow-named-list, minimal addition"
+      operator decision 2026-08-02 for docs/ai-services-migration/plan.md
+      Step 4).
+  - from: ai_seg
+    to: 192.168.1.8
+    protocol: tcp
+    ports: [8080, 11434]
+    description: >-
+      ai-services-stack to framework.gibbsgreatly.xyz (llamacpp-router,
+      Ollama) — docs/ai-services-migration/plan.md Step 2/3. The one real
+      config change this migration requires: OpenWebUI's backend routes
+      moved from a same-host host.docker.internal shortcut to this real
+      cross-subnet hop.
+  - from: ai_seg
+    to: edge_seg
+    protocol: tcp
+    ports: [443]
+    description: >-
+      ai-services-stack to Traefik — found via live verification, not in
+      the original plan.md draft: both authentik.$${LAB_DOMAIN} (OIDC
+      discovery + token exchange, OPENID_PROVIDER_URL) and
+      llm.$${LAB_DOMAIN} (LM Studio backend route) resolve via DNS to
+      $${LAB_IP_PROXY} (edge_seg), confirmed from authentik-stack/edge.yaml
+      and llm-gpu-stack/edge.yaml's own `dns.target` fields. Without this,
+      OpenWebUI's OIDC login and LM Studio route would both fail —
+      mcp-utility-stack never needed this because it does neither.
+  - from: "${lab_ip_ai_services}"
+    to: internet
+    protocol: tcp
+    ports: [80, 443]
+    description: >-
+      ai-services-stack's own IP only (NOT the whole ai_seg zone —
+      mcp-utility-stack keeps its narrow FQDN allowlist above, unaffected)
+      — broad internet egress for SearXNG's arbitrary search-engine
+      queries. Operator decision 2026-08-02 (docs/ai-services-migration/plan.md
+      Step 4): broader-with-logging over a hand-maintained named-engine
+      allowlist, since SearXNG's engine list changes independently of this
+      repo. Enable MikroTik connection logging on this rule specifically.
   - from: ai_seg
     to: default
     protocol: all
     ports: []
     description: >-
-      Explicit deny — beyond apt-cacher (above) and the named internet
-      allowlist, ai_seg has no other reachability: no Proxmox, MikroTik,
-      Harbor, Authentik, or any other internal infra API
+      Explicit deny — beyond apt-cacher, the two named allowlists above,
+      framework, and edge_seg:443, ai_seg has no other reachability: no
+      Proxmox, MikroTik, or any other internal infra API

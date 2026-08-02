@@ -1,0 +1,338 @@
+---
+# One-time data migration for docs/ai-services-migration/plan.md Step 5:
+# moves OpenWebUI's webui.db (chat history, users, settings) and SearXNG's
+# settings.yml off framework onto ai-services-stack's own Docker named
+# volumes, before that stack's first `docker compose up` -- so the new LXC
+# starts with the real, existing data instead of a fresh empty install.
+#
+# Run BEFORE `scripts/provision.sh --stack ai-services-stack` (or the
+# underlying deploy-ai-services-stack.yml playbook): this playbook installs
+# Docker on the target LXC itself (same lxc_base/docker_base roles
+# deploy-ai-services-stack.yml's own first play uses, safe/idempotent to
+# run twice) and creates the two named volumes
+# (ai-services-openwebui-data, ai-services-searxng-data -- must match the
+# explicit `name:` pins in deploy-ai-services-stack.yml's compose file
+# exactly, or compose will create its own differently-prefixed empty
+# volumes instead of finding these) pre-populated with framework's data.
+# The subsequent app deploy then finds non-empty volumes already in place.
+#
+# Two plays: framework (source, read-only tar of the live data dirs, no
+# changes to the running openwebui/searxng containers there) and the new
+# ai-services-stack LXC (destination). Requires both
+# ansible/inventory/ (for framework) and this stack's own generated
+# inventory.yml (for the LXC) on the command line:
+#
+#   ./with-secrets ansible-playbook \
+#     -i ansible/inventory/ \
+#     -i terraform/lxc/environments/pve-test-vm/ai-services-stack/inventory.yml \
+#     ansible/00-initial-setup/ai-services-data-migration.yml
+
+- name: Stage OpenWebUI/SearXNG data archives from framework
+  hosts: framework
+  become: true
+  gather_facts: false
+
+  vars:
+    ai_services_migration_openwebui_src: /mnt/container-storage/openwebui-data
+    ai_services_migration_searxng_src: /mnt/container-storage/searxng-data
+    ai_services_migration_openwebui_archive: /tmp/ai-services-migration-openwebui-data.tar.gz
+    ai_services_migration_searxng_archive: /tmp/ai-services-migration-searxng-data.tar.gz
+
+  tasks:
+    # owner: {{ ansible_user }} + mode 0600, not world-readable: this
+    # become:true task creates the archive as root, but the plain-SSH-user
+    # rsync pull below (no become) needs to read it -- chowning to the
+    # connecting user and keeping it owner-only is enough for that, and
+    # tighter than a world-readable mode. Real user data (webui.db chat
+    # history, hashed passwords/API keys), not the CA-cert case elsewhere
+    # in this playbook where world-readable is actually required.
+    - name: Archive openwebui-data on framework
+      ansible.builtin.archive:
+        path: "{{ ai_services_migration_openwebui_src }}"
+        dest: "{{ ai_services_migration_openwebui_archive }}"
+        format: gz
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+
+    - name: Archive searxng-data on framework
+      ansible.builtin.archive:
+        path: "{{ ai_services_migration_searxng_src }}"
+        dest: "{{ ai_services_migration_searxng_archive }}"
+        format: gz
+        owner: "{{ ansible_user }}"
+        mode: "0600"
+
+    # ansible.builtin.fetch was tried first and abandoned: it uses the
+    # `slurp` module internally, which base64-encodes the entire file and
+    # ships it through Ansible's JSON result channel -- for the real
+    # openwebui-data.tar.gz (~845MB compressed chat history, confirmed
+    # live 2026-08-02) that's ~1.1GB of base64 text with no streaming,
+    # and took 18+ minutes without finishing. rsync (via
+    # ansible.posix.synchronize) does an efficient binary/delta transfer
+    # instead. become: false -- rsync here runs locally as this task's
+    # actual work (per the module's own docs: "run and originates on the
+    # local host"), reading the now-world-readable archive over a plain
+    # SSH connection; no privilege escalation needed for either side.
+    - name: Fetch openwebui-data archive to controller
+      ansible.posix.synchronize:
+        mode: pull
+        src: "{{ ai_services_migration_openwebui_archive }}"
+        dest: /tmp/ai-services-migration/openwebui-data.tar.gz
+      become: false
+
+    - name: Fetch searxng-data archive to controller
+      ansible.posix.synchronize:
+        mode: pull
+        src: "{{ ai_services_migration_searxng_archive }}"
+        dest: /tmp/ai-services-migration/searxng-data.tar.gz
+      become: false
+
+    - name: Remove staged archives from framework
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - "{{ ai_services_migration_openwebui_archive }}"
+        - "{{ ai_services_migration_searxng_archive }}"
+
+- name: Trust the homelab root CA on ai-services-stack
+  hosts: ai_services_stack
+  become: true
+  gather_facts: false
+
+  vars:
+    # Deliberately NOT reusing the lxc_base role here: its own CA-install
+    # task builds this same path as
+    # "{{ playbook_dir }}/../../../../certs/homelab-root.<env>.crt",
+    # hardcoded for playbooks living 4 directories deep
+    # (terraform/lxc/ansible/playbooks/, where deploy-ai-services-stack.yml
+    # itself lives). This playbook lives at ansible/00-initial-setup/, only
+    # 2 directories deep -- reusing that role from here silently resolved
+    # outside the repo entirely and skipped the CA install with no error
+    # (confirmed live 2026-08-02: Harbor's pve-test-vm cert is issued by
+    # the real internal Homelab CA, not an inherently-untrusted LE staging
+    # cert as first suspected -- docker pull failed with
+    # "x509: certificate signed by unknown authority" purely because this
+    # LXC never got the CA file lxc_base's path bug silently skipped).
+    # Docker/lxc_base's other setup (node_exporter, rsyslog, etc.) isn't
+    # needed just to populate a volume, so this only fixes the one thing
+    # actually required here rather than duplicating those heavier roles.
+    ai_services_migration_env_ca_path: "{{ playbook_dir }}/../../certs/homelab-root.{{ lookup('env', 'PVE_ENV') }}.crt"
+    ai_services_migration_shared_ca_path: "{{ playbook_dir }}/../../certs/homelab-root.crt"
+
+  tasks:
+    - name: Check for env-specific homelab root CA on control node
+      ansible.builtin.stat:
+        path: "{{ ai_services_migration_env_ca_path }}"
+      delegate_to: localhost
+      become: false
+      register: ai_services_migration_env_ca_stat
+      when: lookup('env', 'PVE_ENV') | length > 0
+
+    - name: Check whether shared homelab root CA exists on control node
+      ansible.builtin.stat:
+        path: "{{ ai_services_migration_shared_ca_path }}"
+      delegate_to: localhost
+      become: false
+      register: ai_services_migration_shared_ca_stat
+
+    - name: Resolve root CA source path (env-specific if available, else shared)
+      ansible.builtin.set_fact:
+        ai_services_migration_root_ca_src: >-
+          {{
+            ai_services_migration_env_ca_path
+            if (ai_services_migration_env_ca_stat.stat.exists | default(false))
+            else ai_services_migration_shared_ca_path
+          }}
+        ai_services_migration_root_ca_exists: >-
+          {{
+            (ai_services_migration_env_ca_stat.stat.exists | default(false))
+            or ai_services_migration_shared_ca_stat.stat.exists
+          }}
+
+    - name: Install homelab root CA on ai-services-stack
+      ansible.builtin.copy:
+        src: "{{ ai_services_migration_root_ca_src }}"
+        dest: /usr/local/share/ca-certificates/homelab-root.crt
+        mode: "0644"  # nosonar: ansible:S2612 — public root CA cert, not a secret; world-readable is required for the system trust store, matches lxc_base role's identical pattern
+      when: ai_services_migration_root_ca_exists | bool
+      register: ai_services_migration_root_ca_copy
+
+    - name: Refresh CA trust store after root CA update
+      ansible.builtin.command:
+        cmd: update-ca-certificates
+      when:
+        - ai_services_migration_root_ca_exists | bool
+        - ai_services_migration_root_ca_copy.changed
+
+    - name: Assert a homelab root CA was actually found and installed
+      ansible.builtin.assert:
+        that:
+          - ai_services_migration_root_ca_exists | bool
+        fail_msg: >-
+          No homelab root CA found at {{ ai_services_migration_env_ca_path }}
+          or {{ ai_services_migration_shared_ca_path }} -- Harbor image pulls
+          via harbor.${LAB_DOMAIN} will fail TLS verification without it.
+
+    - name: Restart Docker to pick up the updated CA trust store
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+      when:
+        - ai_services_migration_root_ca_exists | bool
+        - ai_services_migration_root_ca_copy.changed
+
+- name: Populate ai-services-stack Docker volumes from framework's data
+  hosts: ai_services_stack
+  become: true
+  gather_facts: false
+
+  vars:
+    ai_services_migration_openwebui_volume: ai-services-openwebui-data
+    ai_services_migration_searxng_volume: ai-services-searxng-data
+    # ai_seg has no direct route to Harbor's infra_seg IP (confirmed live
+    # 2026-08-02: a raw LAB_IP_HARBOR pull timed out with "context
+    # deadline exceeded"). Same fix as deploy-ai-services-stack.yml:
+    # pull via harbor.${LAB_DOMAIN} through Traefik/edge_seg, matching
+    # pentagi-stack/greenbone-stack's proven pattern for the other
+    # contained zone (pentest_seg).
+    ai_services_migration_registry_host: >-
+      {{
+        lookup('env', 'LAB_FQDN_HARBOR')
+        | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required')), true)
+      }}
+
+  tasks:
+    - name: Create ai-services-stack Docker volumes if missing
+      community.docker.docker_volume:
+        name: "{{ item }}"
+        state: present
+      loop:
+        - "{{ ai_services_migration_openwebui_volume }}"
+        - "{{ ai_services_migration_searxng_volume }}"
+
+    - name: Check whether openwebui volume already has data (idempotency guard)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_openwebui_volume }}:/data"
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - sh
+          - -c
+          - "[ -f /data/webui.db ] && echo present || echo empty"
+      register: ai_services_migration_openwebui_state
+      changed_when: false
+
+    - name: Check whether searxng volume already has data (idempotency guard)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_searxng_volume }}:/data"
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - sh
+          - -c
+          - "[ -f /data/settings.yml ] && echo present || echo empty"
+      register: ai_services_migration_searxng_state
+      changed_when: false
+
+    - name: Copy openwebui-data archive to the LXC
+      ansible.builtin.copy:
+        src: /tmp/ai-services-migration/openwebui-data.tar.gz
+        dest: /tmp/openwebui-data.tar.gz
+        mode: "0600"
+      when: "'empty' in ai_services_migration_openwebui_state.stdout"
+
+    - name: Copy searxng-data archive to the LXC
+      ansible.builtin.copy:
+        src: /tmp/ai-services-migration/searxng-data.tar.gz
+        dest: /tmp/searxng-data.tar.gz
+        mode: "0600"
+      when: "'empty' in ai_services_migration_searxng_state.stdout"
+
+    # ansible.builtin.archive keeps only the source directory's own
+    # basename in the tar, not its full path (verified locally: archiving
+    # /mnt/container-storage/openwebui-data produces member names like
+    # "openwebui-data/webui.db", not the full "mnt/container-storage/..."
+    # path) -- so --strip-components=1 is what lands webui.db directly at
+    # the volume root, not =2.
+    - name: Extract openwebui-data into its Docker volume
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_openwebui_volume }}:/data"
+          - -v
+          - /tmp/openwebui-data.tar.gz:/openwebui-data.tar.gz:ro
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - tar
+          - xzf
+          - /openwebui-data.tar.gz
+          - -C
+          - /data
+          - --strip-components=1
+      when: "'empty' in ai_services_migration_openwebui_state.stdout"
+      changed_when: true
+
+    - name: Extract searxng-data into its Docker volume
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_searxng_volume }}:/data"
+          - -v
+          - /tmp/searxng-data.tar.gz:/searxng-data.tar.gz:ro
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - tar
+          - xzf
+          - /searxng-data.tar.gz
+          - -C
+          - /data
+          - --strip-components=1
+      when: "'empty' in ai_services_migration_searxng_state.stdout"
+      changed_when: true
+
+    - name: Remove staged archives from the LXC
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /tmp/openwebui-data.tar.gz
+        - /tmp/searxng-data.tar.gz
+
+    - name: Assert openwebui-data volume now contains webui.db
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_openwebui_volume }}:/data"
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - sh
+          - -c
+          - "[ -f /data/webui.db ]"
+      changed_when: false
+
+    - name: Assert searxng-data volume now contains settings.yml
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ ai_services_migration_searxng_volume }}:/data"
+          - "{{ ai_services_migration_registry_host }}/dockerhub/library/busybox:1.36"
+          - sh
+          - -c
+          - "[ -f /data/settings.yml ]"
+      changed_when: false

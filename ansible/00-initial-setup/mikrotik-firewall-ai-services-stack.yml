@@ -1,0 +1,234 @@
+---
+# ai-services-stack firewall rules -- ai_seg (VLAN 50) needs five new
+# cross-zone paths for OpenWebUI/SearXNG that don't exist on the live
+# router today (confirmed via a live read-only audit, 2026-08-02 --
+# GET /rest/ip/firewall/filter showed only the pre-existing
+# mcp-utility-stack rules: apt-cacher egress, lan/pentest_seg ingress on
+# :8000, and a flat ai_seg -> !192.168.0.0/16:443 accept for the whole
+# subnet -- no address-lists configured at all, despite older docs
+# describing that 443 rule as an FQDN allowlist). See
+# docs/ai-services-migration/plan.md and network/{pve,pve-test-vm}.yaml's
+# `policies:` block, which this playbook makes real:
+#
+#   1. edge_seg -> ai_seg:8081   (Traefik to OpenWebUI, ingress)
+#   2. ai_seg -> framework:8080,11434  (llamacpp-router, Ollama, egress)
+#   3. ai_seg -> edge_seg:443    (LM Studio backend route -- llm.${LAB_DOMAIN}
+#      resolves to Traefik's edge_seg IP, confirmed from llm-gpu-stack's
+#      own edge.yaml `dns.target` field. Not in the original plan.md
+#      draft; found via live verification.)
+#   4. ai-services-stack's own IP -> internet:80  (SearXNG's one real
+#      egress gap -- port 443 already has zone-wide reach via the
+#      existing rule above, deliberately left as-is per operator decision
+#      2026-08-02 rather than retroactively tightened as a side effect of
+#      this migration)
+#   5. ai_seg -> mgmt_seg (Authentik's own IP, LAB_IP_AUTHENTIK):443  (OIDC
+#      discovery/token exchange with Authentik -- corrected 2026-08-02:
+#      the public authentik.${LAB_DOMAIN} route was tried first (rule 3's
+#      original scope also covered it), but its cert on pve-test-vm is
+#      Let's Encrypt *staging* -- untrusted by design, breaks backend TLS
+#      verification even though a human can click through it in a
+#      browser. Fixed by pointing OpenWebUI's OPENID_PROVIDER_URL at
+#      authentik-int.${LAB_DOMAIN} instead (step-ca-issued, real trust),
+#      which lives in mgmt_seg, not edge_seg -- a genuinely new cross-zone
+#      path, the first of its kind into mgmt_seg from a contained zone.
+#      Scoped to Authentik's own IP specifically, not the whole mgmt_seg
+#      subnet. See docs/design/lessons-learned.md's Authentik section.)
+#
+# pve and pve-test-vm share one physical MikroTik and one 192.168.50.0/24
+# subnet (confirmed: MIKROTIK_HOST/.env has no per-node override, and
+# mcp-utility-stack's own promotion commit notes "the existing ai_seg
+# firewall rules already cover the whole subnet, shared between pve and
+# pve-test-vm") -- these rules take effect for both nodes at once, there
+# is no separate "test" instance of this router.
+#
+# Same idempotent pattern as mikrotik-firewall-build-to-infra-apt-cacher.yml:
+# check by comment, insert before the first forward drop/reject rule so
+# new accepts land ahead of any catch-all deny, then re-read and assert.
+
+- name: Ensure ai-services-stack firewall rules exist on the live MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    lab_subnet_edge_cidr: "{{ lookup('env', 'LAB_SUBNET_EDGE_CIDR') | mandatory('LAB_SUBNET_EDGE_CIDR env var is required') }}"
+    lab_subnet_ai_cidr: "{{ lookup('env', 'LAB_SUBNET_AI_CIDR') | mandatory('LAB_SUBNET_AI_CIDR env var is required') }}"
+    lab_ip_framework: "{{ lookup('env', 'LAB_IP_FRAMEWORK') | mandatory('LAB_IP_FRAMEWORK env var is required') }}"
+    lab_ip_ai_services: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
+    lab_ip_authentik: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}"
+
+    ai_services_firewall_rules:
+      - comment: "ai-services-stack: edge_seg to ai_seg openwebui 8081"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_edge_cidr }}"
+        dst-address: "{{ lab_subnet_ai_cidr }}"
+        dst-port: "8081"
+      - comment: "ai-services-stack: ai_seg to framework llamacpp-router/ollama"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_ip_framework }}"
+        dst-port: "8080,11434"
+      - comment: "ai-services-stack: ai_seg to edge_seg (Traefik) for OIDC + LM Studio route"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_subnet_edge_cidr }}"
+        dst-port: "443"
+      - comment: "ai-services-stack: own IP to internet, searxng http"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_ip_ai_services }}"
+        dst-address: "!192.168.0.0/16"
+        dst-port: "80"
+      - comment: "ai-services-stack: ai_seg to Authentik direct TLS (mgmt_seg) for OIDC"
+        chain: "forward"
+        action: "accept"
+        protocol: "tcp"
+        src-address: "{{ lab_subnet_ai_cidr }}"
+        dst-address: "{{ lab_ip_authentik }}"
+        dst-port: "443"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add each missing ai-services-stack rule before the first forward drop/reject
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ item | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ ai_services_firewall_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | list) | length == 0
+      no_log: true
+
+    - name: Add each missing ai-services-stack rule when no forward drop/reject anchor exists
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ item }}"
+        status_code: [200, 201]
+      loop: "{{ ai_services_firewall_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+      when:
+        - forward_drop_anchor == {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert every ai-services-stack rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
+            | list | length > 0
+        fail_msg: "Expected MikroTik forward allow rule '{{ item.comment }}' was not found after apply."
+      loop: "{{ ai_services_firewall_rules }}"
+      loop_control:
+        label: "{{ item.comment }}"
+
+    - name: Report ai-services-stack firewall rules are present
+      ansible.builtin.debug:
+        msg: "All 4 ai-services-stack MikroTik firewall rules confirmed present."
