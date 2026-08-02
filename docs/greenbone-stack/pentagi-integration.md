@@ -226,23 +226,37 @@ Built and deployed as designed above:
   `get_gvm_scan_results`) wired into the `assistant`, `pentester`, and
   `searcher` executors, same shape as `triage_cve`/`search_cves`. Unit
   tests pass; `GVM_BRIDGE_URL` wired into `pentagi-stack`'s compose/`.env`.
-- Confirmed correct at every layer that can be checked deterministically:
-  `gvm-bridge`'s endpoints work against a real scan of `harness-target`
-  (direct `curl`, and one real `start_gvm_scan` tool call from a live
-  PentAGI flow that correctly round-tripped a real gvm-bridge error); the
-  Go registry/executor wiring matches source; a minimal direct request to
-  the local LLM backend with the real tool schema returns a proper
-  structured `tool_calls` response.
+- **Full end-to-end chain confirmed live**, via PentAGI's Assistant mode
+  (`createAssistant`/`callAssistant`, `useAgents: false`) on
+  `Qwen3-Coder-30B-A3B-Instruct-Q4_K_M`: `start_gvm_scan` (real task/report
+  IDs against `harness-target`) → `get_gvm_scan_status` (polled through
+  real `Requested`/`Queued` states) → `get_gvm_scan_results` (10 real
+  findings — Redis 7.4.10 and Jetty 9.2.11 detected on port 8080, Apache
+  Struts, missing security headers/cookie attributes) → `triage_cve`
+  (called twice for real, for CVE-2015-2080 and CVE-2015-2081, both
+  returning genuine structured risk assessments) → a coherent final
+  natural-language summary with patch recommendations. This is the
+  complete proof that the no-hard-coded-pipeline premise this integration
+  rests on actually holds: the agent chained scan → results → CVE triage
+  itself, from one instruction, using only its own tool-calling.
+  (One minor, non-blocking observation: the model's own prose summary
+  mislabeled CVE-2015-2081's risk tier, contradicting `triage_cve`'s own
+  correct LOW/20.59 output — a synthesis quirk in the model's final
+  write-up, not a data or tool-call problem.)
 
-**Known gap, not a bug in this integration**: under PentAGI's actual
+**Known reliability caveat, not a bug in this integration**: getting to
+that successful run took multiple attempts. Under PentAGI's actual
 production load (full system prompt, full tool roster, conversation
-history), the local models tested (`Qwen3.6-35B`, `Qwen3-Coder-30B`) do
-not reliably choose the structured tool-call path for these new tools —
-they repeatedly reason out the *correct* call and arguments but emit it
-as plain text instead of a real tool call. Confirmed via a clean,
-isolated request to the same backend that the model/router combination
-can produce genuine `tool_calls` output when the request is small; the
-unreliability only appears under PentAGI's much heavier real prompt.
+history), local models — including `Qwen3.6-35B` and, on earlier
+attempts, `Qwen3-Coder-30B` itself — intermittently reason out the
+*correct* call and arguments but emit them as plain text instead of a
+real tool call, especially in the multi-agent `pentester`/subtask-
+decomposition path. The simpler single-agent Assistant mode proved
+markedly more reliable than the autonomous pentester/subtask path for
+this. Confirmed via a clean, isolated request to the same backend that
+the model/router combination can produce genuine `tool_calls` output
+when the request is small — the unreliability scales with prompt/context
+complexity, not a fixed model incapability.
 This is a local-model capacity/reliability limit, not something to fix
 in `gvm-bridge` or the Go tool-wiring.
 
