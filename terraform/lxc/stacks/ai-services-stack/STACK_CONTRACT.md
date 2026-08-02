@@ -49,6 +49,7 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
+| `BRAVE_SEARCH_API_KEY` | SOPS, optional | Enables SearXNG's `braveapi` engine (official API, no bot-detection issues) for OpenWebUI's RAG web search. Web search works without it, just via `bing`/`mwmbl`/`searchmysite` only — see "What Must Not Be Edited Casually" below |
 
 ## Provides
 
@@ -127,16 +128,21 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   non-functional for OpenWebUI's RAG web search from this network** —
   confirmed live 2026-08-02: `duckduckgo`/`duckduckgo web` are TCP-level
   unreachable (reproduced from a separate workstation on the same WAN
-  uplink, not an `ai_seg` firewall gap), and `google cse`/`startpage`/
-  `brave`/`qwant`/`yahoo`/`presearch` all bot-detect and suspend/CAPTCHA a
-  self-hosted SearXNG's scraped requests. The playbook's "Ensure SearXNG's
-  engine selection matches what's actually reachable" task disables those
-  and enables `mwmbl`/`searchmysite` (confirmed working) via an idempotent
-  `blockinfile` on the volume's `settings.yml` — this survives a settings
-  file migrated in from `framework` (which has the same underlying
-  default-engine problem, just never surfaced because nobody stress-tested
-  web search there). See `docs/design/lessons-learned.md`'s SearXNG
-  section.
+  uplink, and confirmed at the router level — this isn't an `ai_seg`
+  firewall gap), and `google cse`/`startpage`/`brave`/`qwant`/`yahoo`/
+  `presearch` all bot-detect and suspend/CAPTCHA a self-hosted SearXNG's
+  scraped requests. The playbook's "Ensure SearXNG's engine selection
+  matches what's actually reachable" task disables those and enables
+  `mwmbl`/`searchmysite`/`bing` (confirmed working) plus `braveapi` (the
+  official Brave Search API, if `BRAVE_SEARCH_API_KEY` is set — optional,
+  not mandatory) via an idempotent `blockinfile` on the volume's
+  `settings.yml` — this survives a settings file migrated in from
+  `framework` (which has the same underlying default-engine problem, just
+  never surfaced because nobody stress-tested web search there). Google
+  Custom Search was evaluated and rejected: Google no longer allows new
+  Programmable Search Engines to enable "search the entire web", which
+  makes it useless as a general search backend. See
+  `docs/design/lessons-learned.md`'s SearXNG section.
 
 ## Playbook
 

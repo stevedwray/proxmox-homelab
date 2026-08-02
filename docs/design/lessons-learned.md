@@ -210,6 +210,33 @@ network/reputation-dependent, so re-verify with a direct
 before trusting any specific engine list, rather than assuming SearXNG's
 shipped defaults work out of the box.
 
+**Prefer official APIs over scraped engines wherever one exists — it's a
+structural fix, not a reputation gamble.** `braveapi` (needs a Brave Search
+API key, has a free tier) returned clean results with zero bot-detection
+pushback, unlike the scraped `brave` engine. Confirmed live 2026-08-02.
+Also worth trying before assuming a whole domain is unreachable: `bing`
+(scraped, not enabled by SearXNG's own defaults) worked cleanly too —
+default-disabled doesn't mean broken, it can just mean untested by
+upstream's own defaults for this use case.
+
+**Google Custom Search's "search the entire web" mode is not available for
+newly-created Programmable Search Engines** — Google restricted it to
+already-grandfathered accounts. A new CSE can only search the specific
+sites/domains you explicitly list, which makes it useless as a general web
+search backend (the whole point of the SearXNG integration). This is a
+dead end for this use case, not a "needs more setup" item — don't
+re-attempt without a grandfathered CSE.
+
+**When hand-patching a live container's config file mid-session and later
+also managing the same file with `ansible.builtin.blockinfile`, clean up
+the manual edits first.** `blockinfile` only recognizes content between its
+own markers — a prior plain-append (e.g. `cat >> file <<EOF`) leaves a
+second, unmarked copy of the same top-level YAML key in the file.
+Duplicate top-level keys are likely tolerated by most YAML loaders
+(last-key-wins), so it can silently keep working, but it's undefined
+behavior to rely on and gets confusing fast. Strip the stale manual block
+down to a single instance of the key once the managed block exists.
+
 ## Chainloop
 
 **Chainloop has no Docker Compose self-hosting path.**

@@ -129,6 +129,13 @@
     # Docker network -- unrelated to the LAN-facing port below.
     ai_services_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
     ai_services_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
+    # Optional, unlike the mandatory secrets above -- web search works
+    # without it, just with fewer/lower-quality engines. See
+    # docs/design/lessons-learned.md's SearXNG entry for why the default
+    # scraped engines mostly don't work from this network and this
+    # API-backed one was added. Google Custom Search was evaluated and
+    # rejected, not just deferred -- see the same lessons-learned entry.
+    ai_services_brave_search_api_key: "{{ lookup('env', 'BRAVE_SEARCH_API_KEY') | default('', true) }}"
 
   tasks:
     - name: Create ai-services-stack compose directory
@@ -215,7 +222,18 @@
             # SearXNG's own defaults.
             - name: bing
               disabled: false
+            {% if ai_services_brave_search_api_key %}
+            # Real API, not the scraped `brave` engine (left disabled
+            # above) -- structurally avoids the CAPTCHA problem instead of
+            # hoping this network's IP reputation improves.
+            - name: braveapi
+              engine: braveapi
+              shortcut: bra
+              api_key: "{{ ai_services_brave_search_api_key }}"
+              disabled: false
+            {% endif %}
       register: ai_services_searxng_settings_reconciled
+      no_log: true
 
     - name: Restart SearXNG after engine settings change
       community.docker.docker_container:
