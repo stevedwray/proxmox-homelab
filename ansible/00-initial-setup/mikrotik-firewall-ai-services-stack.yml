@@ -42,8 +42,10 @@
 # is no separate "test" instance of this router.
 #
 # Same idempotent pattern as mikrotik-firewall-build-to-infra-apt-cacher.yml:
-# check by comment, insert before the first forward drop/reject rule so
-# new accepts land ahead of any catch-all deny, then re-read and assert.
+# check by full match criteria (not comment alone -- see the "Add each
+# missing" tasks' comment below for why), insert before the first forward
+# drop/reject rule so new accepts land ahead of any catch-all deny, then
+# re-read and assert.
 
 - name: Ensure ai-services-stack firewall rules exist on the live MikroTik
   hosts: localhost
@@ -151,6 +153,22 @@
             | first | default({})
           }}
 
+    # Matches on full criteria, not comment alone -- confirmed live
+    # 2026-08-02 deploying to pve after pve-test-vm: rules 4 ("own IP to
+    # internet") and 5 ("Authentik direct TLS") are genuinely per-node,
+    # not shared. Rule 4's src-address is literally the calling node's
+    # own ai-services-stack IP (.111 for pve-test-vm, .11 for pve). Rule
+    # 5's dst-address is authentik-int.${LAB_DOMAIN}'s resolved IP, which
+    # is also genuinely different per domain -- confirmed via DNS,
+    # authentik-int.test.gibbsgreatly.xyz resolves to 192.168.20.110,
+    # authentik-int.lab.gibbsgreatly.xyz resolves to 192.168.20.10, two
+    # real endpoints, not a typo. Both nodes' comment text is identical
+    # (MikroTik allows duplicate comments), so matching by comment alone
+    # made the pve run silently skip adding its own correct rule because
+    # a same-commented rule already existed for pve-test-vm's different
+    # IPs -- the final assertion then failed because no single rule
+    # matched every field simultaneously. Rules 1-3 are genuinely
+    # zone-wide/shared and match correctly either way.
     - name: Add each missing ai-services-stack rule before the first forward drop/reject
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
@@ -171,6 +189,12 @@
           (firewall_filters.json
             | selectattr('comment', 'defined')
             | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
             | list) | length == 0
       no_log: true
 
@@ -194,6 +218,12 @@
           (firewall_filters.json
             | selectattr('comment', 'defined')
             | selectattr('comment', 'equalto', item.comment)
+            | selectattr('chain', 'equalto', item.chain)
+            | selectattr('action', 'equalto', item.action)
+            | selectattr('protocol', 'equalto', item.protocol)
+            | selectattr('src-address', 'equalto', item['src-address'])
+            | selectattr('dst-address', 'equalto', item['dst-address'])
+            | selectattr('dst-port', 'equalto', item['dst-port'])
             | list) | length == 0
       no_log: true
 
