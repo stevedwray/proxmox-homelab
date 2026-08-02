@@ -245,6 +245,18 @@
               shortcut: bra
               api_key: "{{ ai_services_brave_search_api_key }}"
               disabled: false
+              # Confirmed live 2026-08-02: scraped `bing` returns
+              # completely unrelated content (NZ regional news) for
+              # recency-flavored queries like "latest X 2026" -- looks
+              # like its scraper is picking up Bing's "top stories" news
+              # carousel instead of organic results for that query shape
+              # (it's fine on other queries, see the mwmbl/searchmysite
+              # comment above). braveapi gave genuinely on-topic results
+              # for the same query. Weighted above bing's default (1.0)
+              # so its results rank higher when both contribute, rather
+              # than disabling bing outright -- it's still a free/
+              # unlimited fallback for when braveapi's quota is hit.
+              weight: 2.0
             {% endif %}
             {% if ai_services_google_cse_id and ai_services_google_cse_api_key %}
             # Real Custom Search JSON API via a custom engine module

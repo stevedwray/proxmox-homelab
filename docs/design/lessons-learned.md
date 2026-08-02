@@ -262,6 +262,38 @@ in `settings.yml` just works). Two gotchas hit writing one:
   file to its own destination path inside that directory instead, the
   same pattern already used for the CA-cert bind mounts.
 
+**The word "latest" (and likely similar temporal-trigger words like
+"recent", a bare year) in a query gets classified as a recency/news-intent
+signal by both Bing's and Brave's search backends, surfacing generic
+region-locked trending news instead of substantive results** — confirmed
+live 2026-08-02: "openssl CVE vulnerability details" returned genuinely
+relevant results from both `bing` and `braveapi`; the identical query with
+"latest" prepended returned New Zealand regional news outlets (`stuff.co.nz`,
+`nzherald.co.nz`) from both engines instead, matching this server's
+geo-located egress IP. Not fixable at the SearXNG config layer -- it's
+inherent to how these engines interpret query intent, independent of engine
+choice or API vs scraped access. If a RAG pipeline's tool-calling model
+tends to phrase its own search queries with "latest X <year>" (a common
+pattern), expect this noise regardless of which engines are enabled;
+weighting one engine over another only helps when the higher-weighted
+engine actually returns better content for that specific query, which
+isn't guaranteed here since both mainstream engines share the same
+"latest" quirk.
+
+**When testing SearXNG's actual engine-specific behavior, don't use
+"cache-busting" nonsense suffixes on real queries.** SearXNG appears to
+cache results by query text regardless of `engines=` scoping -- re-running
+the *same* query text scoped to a different single engine can silently
+return the previous (different-engine) cached response instead of a fresh
+one, making it look like an engine returned something it didn't. Worse,
+appending genuinely nonsense tokens (random strings, or accidentally real
+but unrelated product names) to "bust" that cache produces query text no
+real search engine can meaningfully match, so it falls back to loosely
+associated or even viral/trending content -- this is normal search-engine
+behavior for garbled queries, not a bug in the integration. Use fresh,
+realistic, single-purpose query strings to test engine behavior, not
+mangled ones.
+
 **When hand-patching a live container's config file mid-session and later
 also managing the same file with `ansible.builtin.blockinfile`, clean up
 the manual edits first.** `blockinfile` only recognizes content between its
