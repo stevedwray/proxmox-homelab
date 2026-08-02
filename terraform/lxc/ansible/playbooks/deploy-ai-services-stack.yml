@@ -273,12 +273,26 @@
       register: ai_services_searxng_settings_reconciled
       no_log: true
 
+    - name: Check whether the searxng container already exists
+      community.docker.docker_container_info:
+        name: searxng
+      register: ai_services_searxng_container_info
+
     - name: Restart SearXNG after engine settings change
       community.docker.docker_container:
         name: searxng
         state: started
         restart: true
-      when: ai_services_searxng_settings_reconciled.changed
+      when:
+        - ai_services_searxng_settings_reconciled.changed
+        - ai_services_searxng_container_info.exists
+      # On a genuinely fresh LXC (confirmed live 2026-08-02 deploying to
+      # pve) the searxng container doesn't exist yet at this point in the
+      # playbook -- "Deploy ... via docker compose" below is what creates
+      # it. Without the exists guard, docker_container tries to create a
+      # container with no image specified and fails outright. Redeploys
+      # (container already exists) still restart correctly to pick up
+      # the new settings.yml.
 
     - name: Install OpenWebUI docker-compose.yml
       ansible.builtin.copy:
@@ -503,23 +517,18 @@
           - |
             import json
             import os
-            import ssl
             import urllib.error
             import urllib.request
 
-            # The LM Studio route (https://llm.{lab_domain}/v1, via Traefik)
-            # is handled separately from llamacpp/Ollama below: on
-            # non-production LAB_DOMAIN values (pve-test-vm), Traefik's
-            # `letsencrypt` resolver deliberately falls back to Let's
-            # Encrypt STAGING certs -- documented, intended behavior (see
-            # docs/design/lessons-learned.md, "LE staging CA for all
-            # pve-test dev passes... this is correct and expected"), not
-            # trusted by anything, including this container. That's an
-            # existing platform property this migration doesn't change --
-            # the plan's own Step 6 validation criteria names llamacpp and
-            # Ollama specifically as the routes this migration must prove
-            # work, not LM Studio. So an LM Studio TLS-trust failure here
-            # is reported but not fatal; llamacpp/Ollama failures still are.
+            # Only llamacpp is a hard requirement for this migration --
+            # operator confirmed 2026-08-02 that Ollama and LM Studio
+            # aren't in active operational use right now, so failures on
+            # either are reported as warnings, not fatal. This isn't
+            # theoretical: LM Studio's route returned untrusted LE staging
+            # certs on pve-test-vm and a clean HTTP 502 on `pve` itself
+            # (its own backend/Traefik route state, unrelated to anything
+            # this migration touches) -- both would have failed the whole
+            # deploy under the old all-or-nothing check.
             discovered = {}
             warnings = []
             openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
@@ -538,21 +547,23 @@
                             if model.get("id")
                         ]
                 except urllib.error.URLError as error:
-                    if base_url == lmstudio_base_url and isinstance(
-                        error.reason, ssl.SSLCertVerificationError
-                    ):
-                        warnings.append(f"{base_url}: {error.reason} (expected on non-production LAB_DOMAIN)")
+                    if base_url == lmstudio_base_url:
+                        warnings.append(f"{base_url}: {error} (LM Studio not in active use, not fatal)")
                         continue
                     raise
 
-            with urllib.request.urlopen(
-                f"{os.environ['OLLAMA_BASE_URL']}/api/tags", timeout=15
-            ) as response:
-                discovered[os.environ["OLLAMA_BASE_URL"]] = [
-                    model.get("name")
-                    for model in json.load(response).get("models", [])
-                    if model.get("name")
-                ]
+            ollama_base_url = os.environ["OLLAMA_BASE_URL"]
+            try:
+                with urllib.request.urlopen(
+                    f"{ollama_base_url}/api/tags", timeout=15
+                ) as response:
+                    discovered[ollama_base_url] = [
+                        model.get("name")
+                        for model in json.load(response).get("models", [])
+                        if model.get("name")
+                    ]
+            except urllib.error.URLError as error:
+                warnings.append(f"{ollama_base_url}: {error} (Ollama not in active use, not fatal)")
 
             empty_routes = [
                 base_url for base_url, models in discovered.items() if not models
