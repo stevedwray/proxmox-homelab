@@ -391,7 +391,7 @@
             temperature: 0.3
             top_p: 0.9
             n: 1
-            max_tokens: 3000
+            max_tokens: 8000
 
           adviser:
             model: "{{ pentagi_llamacpp_adviser_model }}"
