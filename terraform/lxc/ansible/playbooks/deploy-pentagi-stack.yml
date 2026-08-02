@@ -72,6 +72,15 @@
     # to actually be reachable.
     pentagi_searxng_host: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
 
+    # cve-mcp-server (mcp-utility-stack, ai_seg) -- backs the fork's
+    # triage_cve/search_cves tools, see
+    # docs/pentagi-stack/cve-mcp-integration-plan.md. LAB_IP_MCP_UTILITY
+    # already resolves per-environment (.10 on pve, .110 on pve-test-vm);
+    # needs the pentest_seg -> mcp-utility-stack:8000 MikroTik rule (added
+    # via ansible/00-initial-setup/mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml)
+    # to actually be reachable.
+    pentagi_cve_mcp_host: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}"
+
     # Model policy -- Decision 12: Llama-3.3-70B-Instruct, not Qwen. Confirmed
     # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
     # tool-call preflight is still the first PentAGI-specific confirmation --
@@ -517,6 +526,7 @@
                 - DUCKDUCKGO_ENABLED=${DUCKDUCKGO_ENABLED:-true}
                 - SPLOITUS_ENABLED=${SPLOITUS_ENABLED:-true}
                 - SEARXNG_URL=${SEARXNG_URL:-}
+                - CVE_MCP_URL=${CVE_MCP_URL:-}
                 - DOCKER_HOST=${DOCKER_HOST:-unix:///var/run/docker.sock}
                 - DOCKER_TLS_VERIFY=${DOCKER_TLS_VERIFY:-}
                 - DOCKER_CERT_PATH=${DOCKER_CERT_PATH:-}
@@ -665,6 +675,10 @@
           SEARXNG_URL=http://{{ pentagi_searxng_host }}:8082
           DUCKDUCKGO_ENABLED=true
           SPLOITUS_ENABLED=true
+
+          # CVE/vulnerability intel -- cve-mcp-server (mcp-utility-stack),
+          # see docs/pentagi-stack/cve-mcp-integration-plan.md.
+          CVE_MCP_URL=http://{{ pentagi_cve_mcp_host }}:8000/mcp
 
           # Agent execution settings
           ASK_USER=true
