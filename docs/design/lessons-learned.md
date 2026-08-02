@@ -222,10 +222,45 @@ upstream's own defaults for this use case.
 **Google Custom Search's "search the entire web" mode is not available for
 newly-created Programmable Search Engines** — Google restricted it to
 already-grandfathered accounts. A new CSE can only search the specific
-sites/domains you explicitly list, which makes it useless as a general web
-search backend (the whole point of the SearXNG integration). This is a
-dead end for this use case, not a "needs more setup" item — don't
-re-attempt without a grandfathered CSE.
+sites/domains you explicitly list. That rules it out as a *general* web
+search backend, but a curated-site CSE (a deliberate small site list) is
+still a legitimate targeted supplement, if you actually want that.
+
+**SearXNG's built-in `google_cse` engine is not the real Google Custom
+Search JSON API and ignores any `api_key`/`cx` you configure** — it's
+hardcoded to a shared third-party CSE token (`partner-pub-...`, belongs to
+blackle.com) and scrapes Google's CSE JSONP frontend. Confirmed by reading
+the actual module source in both the deployed image and upstream
+SearXNG's current `master` branch (a GitHub code search for
+`googleapis.com/customsearch` across the whole repo returns nothing) —
+this isn't version lag, no release has ever implemented the real API.
+Using a real Google Cloud API key + CSE ID requires a custom engine
+module (SearXNG dynamically imports `searx.engines.<name>` from whatever
+`.py` files exist in that directory — no static whitelist/`__all__`, so
+dropping in a new module and referencing it via `engine: <module_name>`
+in `settings.yml` just works). Two gotchas hit writing one:
+- **SearXNG rejects duplicate engine shortcuts even when the other engine
+  using that shortcut is `disabled: true`.** Picking an already-used
+  two/three-letter shortcut (e.g. `goc`, already claimed by the built-in
+  disabled `google cse` engine) crashes every worker on startup with
+  `Engine config error: ambiguous shortcut: <x>` — check the full engine
+  list's shortcuts first, not just the ones you're actively using.
+- **SearXNG's own HTTP error handling swallows the real API error body**
+  for any non-2xx response, raising a generic `SearxEngineAccessDenied
+  Exception` before your engine's `response()` function ever runs — the
+  UI/JSON output just says `"Suspended: access denied"` with no detail.
+  To see the actual provider error message (e.g. Google's specific
+  `PERMISSION_DENIED` reason), make the same request manually from
+  inside the container using the real configured credentials (read them
+  out of the running `settings.yml`, don't re-derive from SOPS on the
+  operator's own machine — decrypting a secret and building a command
+  with the plaintext value inline is a red flag worth avoiding even when
+  the intent is benign) and inspect the raw response body directly.
+- **A directory bind-mount over `/usr/local/searxng/searx/engines/`
+  itself would mask every built-in engine module** (bing, braveapi,
+  mwmbl, the works), not just add one. Bind-mount the single new `.py`
+  file to its own destination path inside that directory instead, the
+  same pattern already used for the CA-cert bind mounts.
 
 **When hand-patching a live container's config file mid-session and later
 also managing the same file with `ansible.builtin.blockinfile`, clean up
