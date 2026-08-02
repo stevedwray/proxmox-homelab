@@ -1,10 +1,47 @@
 # Current State — Checkpoint 2026-08-02
 
-Status: **Steps 1–6 done and validated on `pve-test-vm`. Not promoted.**
-Branch: `task/ai-services-migration` (cut from `feat/mcp-utility-stack` per
-plan.md's "Getting started" section). Nothing has touched `pve` or
-`framework` yet — this checkpoint exists so a fresh session can pick up
-cleanly before Step 7 (promote to `stable`, deploy to `pve`).
+Status: **Steps 1–7 done. Live in production on `pve`.** Promoted
+`task/ai-services-migration` → `stable` → deployed to `pve`:
+`openwebui.lab.gibbsgreatly.xyz` now serves from the new `ai-services-stack`
+LXC (VMID `50013`, `192.168.50.11`), confirmed live (`200`, real
+OpenWebUI/uvicorn response, Traefik route freshly reconciled to point
+there). `framework`'s original `openwebui`/`searxng` containers are
+untouched (Step 8, decommission after a soak period — not done yet).
+
+Operator explicitly accepted skipping the full-teardown-cycle validation
+tier CLAUDE.md calls for on this change class (Authentik/Traefik/
+cross-stack integration), promoting on today's live testing alone instead
+— recorded here for the record, not itself a reason to distrust this
+deploy, but a full teardown cycle is still owed before this stack is
+considered rebuild-safe.
+
+Three real bugs found deploying to `pve` that weren't (and couldn't have
+been) caught on `pve-test-vm` alone, each fixed on its own branch and
+merged into `stable`:
+1. SearXNG's "restart after engine settings change" task assumed the
+   container already existed (true on `pve-test-vm` from prior deploys) —
+   failed outright on `pve`'s genuinely fresh LXC. Fixed with an
+   existence check.
+2. The model-discovery verification only excused LM Studio failures that
+   were specifically an SSL cert error (the `pve-test-vm` LE-staging
+   case) — `pve`'s LM Studio route returned a clean HTTP 502 instead, a
+   different failure shape, and failed the whole deploy. Broadened to
+   excuse any failure on LM Studio *and* Ollama (operator confirmed
+   neither is in active operational use right now, only llama.cpp is —
+   both stay fully configured in OpenWebUI, this only changes what the
+   deploy-time check treats as fatal).
+3. `mikrotik-firewall-ai-services-stack.yml`'s idempotency check matched
+   existing rules by comment text alone. Two of its five rules are
+   genuinely per-node (own-IP-to-internet, and Authentik's
+   `authentik-int.${LAB_DOMAIN}` address, confirmed via DNS to
+   legitimately differ per domain — `.110` for `test.gibbsgreatly.xyz`,
+   `.10` for `lab.gibbsgreatly.xyz`), but shared identical comment text,
+   so the `pve` run silently skipped adding its own correct rule because
+   a same-commented rule already existed for `pve-test-vm`. Fixed by
+   matching on full criteria instead of comment alone.
+
+See `docs/design/lessons-learned.md` for anything from this pass judged
+durable/generalizable beyond this migration.
 
 ## Live state right now
 
