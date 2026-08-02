@@ -129,9 +129,9 @@ evaluates health-gated dependencies once at start time.
 
 Scope for this pass is **standalone GVM only** — a working scanner reachable
 through Traefik, able to run an authorized scan against `harness-target` or
-`LAB_TARGET`. Wiring PentAGI to trigger/query GVM scans (via `gvm-tools`/GMP)
-is **explicitly deferred**, not silently dropped — see "Related documentation"
-below.
+`LAB_TARGET`. Wiring PentAGI to trigger/query GVM scans is **scoped but not
+implemented** (a `gvm-bridge` service + 3 new PentAGI tools, mirroring the
+now-live `cve-mcp-server` integration) — see "Related documentation" below.
 
 ## LDAP login (steve, via Authentik)
 
@@ -232,11 +232,13 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 
 1. [plan.md](./plan.md) — the phased deployment plan: stack scaffolding
    (done) → apply + first boot → feed sync validation → Traefik + Authentik
-   exposure → an authorized test scan → future PentAGI integration (deferred).
-2. [pentagi-integration.md](./pentagi-integration.md) — notes for the
-   deferred PentAGI↔GVM integration: the real technical gap (GVM's GMP API
-   is Unix-socket-only today, not network-reachable from another LXC),
-   what would need to change, and a recommended shape if it's picked up.
+   exposure → an authorized test scan → future PentAGI integration (scoped,
+   see below).
+2. [pentagi-integration.md](./pentagi-integration.md) — scoping for the
+   PentAGI↔GVM integration: the real technical gap (GVM's GMP API is
+   Unix-socket-only today, not network-reachable from another LXC), and
+   the decided architecture (a `gvm-bridge` service mirroring the
+   `cve-mcp-server` integration) — not yet implemented.
 
 ## Key facts up front
 
@@ -313,9 +315,10 @@ issue. A simple retry is the expected fix, matching what resolved it here.
 
 ## Related documentation
 
-- [pentagi-integration.md](./pentagi-integration.md) — deferred
-  PentAGI↔GVM integration notes: current architecture of both stacks, the
-  real gap (GMP is socket-only, not network-reachable), and options.
+- [pentagi-integration.md](./pentagi-integration.md) — PentAGI↔GVM
+  integration scoping: current architecture of both stacks, the real gap
+  (GMP is socket-only, not network-reachable), and the decided
+  `gvm-bridge` shape — scoped, not yet implemented.
 - `docs/pentagi-stack/` — the sibling `pentest_seg` stack this one joins;
   its `plan.md`, `README.md`, and `harness-target.md` document the zone's
   real MikroTik containment and the authorized scan targets

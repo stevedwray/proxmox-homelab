@@ -81,12 +81,38 @@
     greenbone_ldap_host: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}:3389"
     greenbone_ldap_authdn: "cn=%s,ou=users,dc=ldap,dc=goauthentik,dc=io"
 
+    # gvm-bridge: a small network-facing service giving PentAGI a way to
+    # drive GVM scans (see docs/greenbone-stack/pentagi-integration.md).
+    # Lives in this repo (terraform/lxc/ansible/files/gvm-bridge/), not a
+    # sibling clone like cve-mcp-server -- pure homelab glue code, no
+    # external upstream identity to preserve.
+    gvm_bridge_source_dir: "{{ playbook_dir }}/../files/gvm-bridge"
+    gvm_bridge_build_dir: "{{ greenbone_compose_dir }}/gvm-bridge"
+    gvm_bridge_username: "pentagi-integration"
+    gvm_bridge_password: "{{ lookup('env', 'GREENBONE_PENTAGI_PASSWORD') | mandatory('GREENBONE_PENTAGI_PASSWORD env var is required') }}"
+
   tasks:
     - name: Create Greenbone compose directory
       ansible.builtin.file:
         path: "{{ greenbone_compose_dir }}"
         state: directory
         mode: "0750"
+
+    - name: Create gvm-bridge build directory
+      ansible.builtin.file:
+        path: "{{ gvm_bridge_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy gvm-bridge source files from this repo
+      ansible.builtin.copy:
+        src: "{{ gvm_bridge_source_dir }}/{{ item }}"
+        dest: "{{ gvm_bridge_build_dir }}/{{ item }}"
+        mode: preserve
+      loop:
+        - Dockerfile
+        - requirements.txt
+        - app.py
 
     # Confirmed live: setting LDAPTLS_REQCERT=never on gvmd's environment is
     # NOT sufficient on its own -- gvm-libs sets its own TLS options in
@@ -431,6 +457,30 @@
                 - gvmd
                 - ospd-openvas
 
+            # gvm-bridge: not part of upstream's compose -- a small
+            # first-party service (terraform/lxc/ansible/files/gvm-bridge/,
+            # built locally, not pulled through Harbor) giving PentAGI a
+            # network-reachable way to drive GVM scans. Reaches gvmd over
+            # the same Unix socket gvm-tools already uses; needs no TCP
+            # listener on gvmd itself. See
+            # docs/greenbone-stack/pentagi-integration.md.
+            gvm-bridge:
+              build:
+                context: ./gvm-bridge
+              deploy:
+                restart_policy:
+                  condition: any
+              environment:
+                GVM_BRIDGE_USERNAME: "{{ gvm_bridge_username }}"
+                GVM_BRIDGE_PASSWORD: "{{ gvm_bridge_password }}"
+              ports:
+                - 0.0.0.0:8010:8010
+              volumes:
+                - gvmd_socket_vol:/run/gvmd
+              depends_on:
+                gvmd:
+                  condition: service_started
+
           volumes:
             gpg_data_vol:
             scap_data_vol:
@@ -450,10 +500,12 @@
             nginx_config_vol:
             nginx_certificates_vol:
       register: greenbone_compose_file
+      no_log: true
 
     - name: Bring up Greenbone stack
       community.docker.docker_compose_v2:
         project_src: "{{ greenbone_compose_dir }}"
+        build: always
         state: present
         pull: always
         remove_orphans: true
@@ -621,3 +673,68 @@
       retries: 10
       delay: 10
       until: greenbone_admin_password_set is succeeded
+
+    # A dedicated, narrowly-scoped account for gvm-bridge -- NOT steve
+    # (a real person's LDAP login) and NOT admin (full admin, no reason
+    # to hand that to an autonomous agent's supporting service). "User"
+    # is GVM's standard non-admin role (confirmed present on this live
+    # system via get_roles, 2026-08-03) with rights to create/manage its
+    # own targets/tasks/port lists and read results -- exactly what
+    # gvm-bridge needs, nothing more. See
+    # docs/greenbone-stack/pentagi-integration.md.
+    - name: Create pentagi-integration user (idempotent -- ignores 'exists already')
+      ansible.builtin.command:
+        cmd: >-
+          docker compose exec -T -u gvmd gvmd
+          gvmd --create-user={{ gvm_bridge_username }} --role=User
+        chdir: "{{ greenbone_compose_dir }}"
+      register: greenbone_gvm_bridge_user_create
+      changed_when: "'User created' in greenbone_gvm_bridge_user_create.stdout"
+      failed_when: >-
+        greenbone_gvm_bridge_user_create.rc != 0 and
+        'exists already' not in (greenbone_gvm_bridge_user_create.stderr + greenbone_gvm_bridge_user_create.stdout)
+      retries: 10
+      delay: 10
+      until: greenbone_admin_password_set is succeeded
+
+    # gvmd --create-user only sets a password if given one interactively;
+    # explicitly (re)set it here, idempotently, same as "Set gvmd admin
+    # password" above -- this is also global auth's actual authority
+    # for this account, since LDAP (method:ldap_connect, enabled above)
+    # has no directory entry for pentagi-integration and only applies to
+    # real Authentik-backed users.
+    - name: Set pentagi-integration user password
+      ansible.builtin.command:
+        cmd: >-
+          docker compose exec -T -u gvmd gvmd
+          gvmd --user={{ gvm_bridge_username }} --new-password={{ gvm_bridge_password }}
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: true
+      no_log: true
+      register: greenbone_gvm_bridge_password_set
+      retries: 10
+      delay: 10
+      until: greenbone_gvm_bridge_password_set is succeeded
+
+    - name: Wait for gvm-bridge (port 8010) to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8010
+        timeout: 60
+
+    - name: Check gvm-bridge health endpoint
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8010/health"
+        status_code: 200
+      register: gvm_bridge_health
+      retries: 12
+      delay: 5
+      until: gvm_bridge_health.status is defined and gvm_bridge_health.status == 200
+      failed_when: false
+
+    - name: Fail if gvm-bridge never came up healthy
+      ansible.builtin.assert:
+        that:
+          - gvm_bridge_health.status is defined
+          - gvm_bridge_health.status == 200
+        fail_msg: "gvm-bridge did not respond healthy on :8010/health after retries (last status: {{ gvm_bridge_health.status | default('unknown') }})"
