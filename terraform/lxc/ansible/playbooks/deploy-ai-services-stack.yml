@@ -209,6 +209,12 @@
               disabled: false
             - name: searchmysite
               disabled: false
+            # Confirmed live 2026-08-02: scraped Bing, unlike the other
+            # scraped engines above, returns clean results with zero
+            # bot-detection pushback from this network. Not enabled by
+            # SearXNG's own defaults.
+            - name: bing
+              disabled: false
       register: ai_services_searxng_settings_reconciled
 
     - name: Restart SearXNG after engine settings change
