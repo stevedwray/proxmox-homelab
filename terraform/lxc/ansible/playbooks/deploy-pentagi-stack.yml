@@ -63,6 +63,15 @@
     # Framework backends -- always by DNS name, never the raw IP.
     pentagi_framework_host: "{{ lookup('env', 'FRAMEWORK_HOST') | default('framework.gibbsgreatly.xyz', true) }}"
 
+    # SearXNG moved off framework onto ai-services-stack (ai_seg) as part
+    # of the ai-services-migration -- see docs/ai-services-migration/.
+    # LAB_IP_AI_SERVICES already resolves per-environment (.11 on pve,
+    # .111 on pve-test-vm), so this follows automatically; needs the
+    # pentest_seg -> ai-services-stack:8082 MikroTik rule (added via
+    # ansible/00-initial-setup/mikrotik-firewall-pentagi-to-ai-services-searxng.yml)
+    # to actually be reachable.
+    pentagi_searxng_host: "{{ lookup('env', 'LAB_IP_AI_SERVICES') | mandatory('LAB_IP_AI_SERVICES env var is required') }}"
+
     # Model policy -- Decision 12: Llama-3.3-70B-Instruct, not Qwen. Confirmed
     # pulled live on framework.gibbsgreatly.xyz's Ollama 2026-07-26. Phase 2's
     # tool-call preflight is still the first PentAGI-specific confirmation --
@@ -651,8 +660,9 @@
           EMBEDDING_PROVIDER=ollama
           EMBEDDING_STRIP_NEW_LINES=true
 
-          # Search tools
-          SEARXNG_URL=http://{{ pentagi_framework_host }}:8082
+          # Search tools -- ai-services-stack's SearXNG, not framework's
+          # original one (moved 2026-08-02, see ai-services-migration docs).
+          SEARXNG_URL=http://{{ pentagi_searxng_host }}:8082
           DUCKDUCKGO_ENABLED=true
           SPLOITUS_ENABLED=true
 
