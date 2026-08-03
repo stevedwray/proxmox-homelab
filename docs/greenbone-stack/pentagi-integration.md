@@ -281,6 +281,64 @@ against production Harbor; pushes during this work used the
 `HARBOR_ADMIN_PASSWORD` fallback instead. Needs reconciling, not just
 rotating — see git history around 2026-08-02/03 for context.
 
+### Deeper validation against Metasploitable2 (2026-08-03) — three real bugs found and fixed
+
+The `harness-target` run above validated the pipeline shape, but
+`harness-target`'s own findings never happened to carry a GVM-tagged CVE
+(all severity 0.0 version/banner detections), so the `nvt/cve` extraction
+path in `gvm-bridge`'s `/scan/results` was never actually exercised
+end-to-end. Re-running the same validation against Metasploitable2
+(`192.168.1.113`, well-documented CVEs, an existing authorized target
+from earlier PentAGI harness work — see `docs/pentagi-stack/lessons-learned.md`)
+surfaced three real, previously-invisible bugs in `app.py`, all now
+fixed and confirmed live:
+
+1. **Wrong task scoping.** `gmp.get_results(task_id=task_id, ...)` looks
+   like it filters by task, but per python-gvm's own docstring `task_id`
+   there only affects note/override handling — it did nothing to scope
+   which results came back. Confirmed by reproducing it: a query for the
+   Metasploitable2 task returned stale results from an unrelated
+   `harness-target` task. Fixed with `filter_string=f"task_id={task_id}"`.
+2. **Silent pagination truncation.** GMP defaults `get_results` to
+   `rows=10`. The Metasploitable2 task had 72 raw results; every query
+   was silently capped at the first 10, which happened to exclude the
+   critical finding. Fixed by adding `rows=-1` to the filter string.
+3. **Wrong CVE extraction XPath.** `r.findtext("nvt/cve")` was always
+   `None` — that node doesn't exist in this GMP schema. The real CVE
+   reference lives at `nvt/refs/ref[@type="cve"]`, with the CVE ID as
+   that element's `id` attribute, confirmed by dumping the raw result XML
+   for the critical finding. Fixed with an explicit `find()` + `.get("id")`.
+
+All three were live on production `greenbone-stack` (`pve`) until fixed
+in place (`docker compose build && up` against the same in-repo
+`gvm-bridge/` source, then committed). Post-fix, `gvm-bridge` correctly
+returned all 27 results for the Metasploitable2 task, including
+`CVE-2011-2523` (the vsftpd 2.3.4 backdoor, CVSS 9.8) at both port 21/tcp
+and 6200/tcp — and a fresh PentAGI Assistant run correctly called
+`get_gvm_scan_results`, picked up that real CVE ID (not a model-recalled
+one this time), called `triage_cve`, and got back a genuine HIGH-risk
+assessment (69.59/100, EPSS 96.2%, patch within 72 hours), concluding
+with an accurate natural-language summary. This is the clean, complete
+confirmation that both the GVM-side detection and the CVE-MCP triage
+path work correctly with real GVM-tagged data, not just model-recalled
+CVE knowledge.
+
+**One more infra gotcha found along the way, not yet fixed in code**:
+PentAGI has a built-in guard that aborts an agent chain after a tool is
+called 7 times consecutively with identical arguments — a sensible
+anti-infinite-loop protection in general, but it structurally conflicts
+with `get_gvm_scan_status`'s own documented usage pattern ("poll until
+Done"), since a legitimately longer-running scan's poll calls look
+identical every time. `harness-target`'s narrow 2-port scan finished
+within ~2 polls and never tripped it; Metasploitable2's broader scan did,
+aborting the assistant mid-poll. Workaround used during testing: instruct
+the model to vary the poll call's free-text `message` argument each time
+(e.g. an incrementing attempt count) so consecutive calls aren't
+byte-identical. A real fix belongs in the PentAGI fork itself — either
+exempt designated polling-style tools from this guard, or use a smarter
+heuristic (e.g. only guard identical calls that also return identical
+results) — not something to solve from the `gvm-bridge` side.
+
 ## Related documentation
 
 - `docs/pentagi-stack/cve-mcp-integration-plan.md` — the direct
