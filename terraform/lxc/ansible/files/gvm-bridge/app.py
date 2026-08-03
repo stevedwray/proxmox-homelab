@@ -150,20 +150,28 @@ def scan_results(task_id):
     # any get_reports call (greenbone/gvmd #2273); get_results returns
     # the same per-finding data via a different code path that works
     # fine. See docs/greenbone-stack/STACK_CONTRACT.md.
+    # get_results' own task_id= kwarg only affects note/override handling,
+    # not which results are returned (confirmed against python-gvm's own
+    # docstring) -- scoping to this task requires the GMP filter DSL
+    # instead, or every call silently returns results across all tasks.
+    # rows=-1 disables GMP's default page size (10), which otherwise
+    # silently truncates larger result sets.
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
-        response = gmp.get_results(task_id=task_id, details=True)
+        response = gmp.get_results(filter_string=f"task_id={task_id} rows=-1", details=True)
 
-    results = [
-        {
-            "host": r.findtext("host"),
-            "port": r.findtext("port"),
-            "severity": r.findtext("severity"),
-            "cve_id": r.findtext("nvt/cve"),
-            "description": r.findtext("description"),
-        }
-        for r in response.findall("result")
-    ]
+    results = []
+    for r in response.findall("result"):
+        cve_ref = r.find('nvt/refs/ref[@type="cve"]')
+        results.append(
+            {
+                "host": r.findtext("host"),
+                "port": r.findtext("port"),
+                "severity": r.findtext("severity"),
+                "cve_id": cve_ref.get("id") if cve_ref is not None else None,
+                "description": r.findtext("description"),
+            }
+        )
 
     return jsonify({"results": results})
 
