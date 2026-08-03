@@ -262,6 +262,48 @@ in `settings.yml` just works). Two gotchas hit writing one:
   file to its own destination path inside that directory instead, the
   same pattern already used for the CA-cert bind mounts.
 
+**Follow-up, 2026-08-03: the real Custom Search JSON API call still
+fails with `PERMISSION_DENIED — "This project does not have the access
+to Custom Search JSON API."` even when every checkable condition on the
+Google Cloud side is correct** — confirmed via `gcloud` (installed for
+this specific investigation), not just the Cloud Console UI, which can
+show stale/misleading state:
+- Billing is linked to the project.
+- The calling account holds `roles/owner` on the project.
+- The project has no GCP organization/folder above it, and both
+  `constraints/gcp.restrictApiKeyCreation` and
+  `...restrictApiKeyUsage` come back with no override set — so it's not
+  an org policy either (this also explained a separate red herring:
+  Cloud Console's "Create credentials" dropdown was missing the "API
+  key" option entirely, which looked like a hard restriction but turned
+  out to be a console UI quirk — `gcloud services api-keys create`
+  worked fine from the CLI).
+- `gcloud services list --enabled` confirms `customsearch.googleapis.com`
+  is actually enabled for the project (ground truth, independent of
+  what the Console's "Enable API" page displays).
+- The API key itself lives in the same project and is correctly
+  restricted to `customsearch.googleapis.com` only (`gcloud services
+  api-keys describe`).
+- Programmable Search Engine's own control panel
+  (`programmablesearchengine.google.com`, where `cx` lives) no longer
+  exposes a separate "Custom Search JSON API" activation step in its
+  current UI — so there's no separate per-engine toggle to be missing.
+- Forced a full `gcloud services disable customsearch.googleapis.com
+  --force` / `enable` cycle on the project and polled the real API
+  every 20s for 10 attempts (~3.5 minutes) — identical `PERMISSION_DENIED`
+  on every attempt, ruling out simple propagation delay too.
+
+Every lever available from this side (billing, IAM, org policy, API
+enablement, key scoping, forced re-enable) is exhausted and consistent;
+this now looks like a genuine state inconsistency on Google's backend,
+not a local config problem. Not re-attempted further without an actual
+fix from Google's side (check `issuetracker.google.com` for this exact
+symptom before filing new — "service shows enabled via API but calls
+still get PERMISSION_DENIED" is a commonly-reported pattern). Low
+priority: `google-curated` degrades gracefully to zero results when it
+fails, so it doesn't break search for OpenWebUI/PentAGI, it's just
+inert.
+
 **The word "latest" (and likely similar temporal-trigger words like
 "recent", a bare year) in a query gets classified as a recency/news-intent
 signal by both Bing's and Brave's search backends, surfacing generic
