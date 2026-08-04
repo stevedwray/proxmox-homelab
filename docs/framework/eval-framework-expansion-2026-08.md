@@ -1,6 +1,6 @@
 # Local-model eval framework expansion — 2026-08
 
-## Status: in progress (paused 2026-08-05, safe to resume)
+## Status: in progress
 
 ## Context
 
@@ -131,7 +131,7 @@ Smoke tests (both `--limit 3`, plumbing-only, not real scores):
   access requires successfully pulling an actual data file, which failed
   with `Access denied. This repository requires approval.`
 
-### τ²-bench (`sierra-research/tau2-bench`) — installed; smoke test paused after a real runaway-generation finding
+### τ²-bench (`sierra-research/tau2-bench`) — installed and smoke-tested successfully
 
 Host: `framework`, `~/eval-harnesses/tau2-bench`, `uv` venv pinned to
 Python 3.12 (repo requires `>=3.12,<3.14`; framework's system Python is
@@ -187,16 +187,30 @@ end its turn on its own — so generation just ran on unbounded. This is a
 genuine small-model behavioral limitation in the user-simulator role, not
 a harness or connectivity bug.
 
-Killed the run, retried with an explicit cap
-(`"max_tokens": 200` added to both `--agent-llm-args` and
-`--user-llm-args`) — that retry was itself stopped partway through
-(operator asked to stop all in-flight work cleanly before a result came
-back). **Confirmed clean shutdown**: no `tau2`/`uv` processes left on
-`framework`, router idle, Ollama empty. τ²-bench is therefore installed
-and its connectivity/config path is proven (the first attempt did
-successfully complete the agent's opening turn and start the
-user-simulator's), but **no completed smoke-test result yet** — re-running
-the `max_tokens`-capped command above is the next step, not yet done.
+Killed the run, retried with an explicit cap (`"max_tokens": 200` added to
+both `--agent-llm-args` and `--user-llm-args`). That retry was itself
+stopped partway through on 2026-08-05 (operator asked to stop all
+in-flight work cleanly before a result came back) — confirmed clean
+shutdown at the time (no stray processes, router idle, Ollama empty).
+
+**Re-ran after resuming — passed.** Full command:
+
+```bash
+uv run tau2 run --domain airline --user user_simulator --agent llm_agent \
+  --agent-llm 'openai/Llama-3.2-3B-Instruct-Q4_K_M' \
+  --agent-llm-args '{"api_base": "http://localhost:8080/v1", "api_key": "EMPTY", "max_tokens": 200}' \
+  --user-llm 'openai/Llama-3.2-3B-Instruct-Q4_K_M' \
+  --user-llm-args '{"api_base": "http://localhost:8080/v1", "api_key": "EMPTY", "max_tokens": 200}' \
+  --num-tasks 1 --num-trials 1 --max-steps 4
+```
+
+Completed in 11.5s, `TerminationReason.MAX_STEPS` (expected — 4 steps
+isn't enough to actually resolve a real airline task, this was a plumbing
+check, not a capability run), zero errors. The `max_tokens` cap fully
+resolved the earlier runaway-generation issue. One harmless cosmetic
+warning: LiteLLM doesn't have `Llama-3.2-3B-Instruct-Q4_K_M` in its
+pricing table, so cost always reports as `$0.0000` — fine, since these
+are local/free calls anyway.
 
 ### ARC-AGI (`arc-agi-benchmarking`) — installed and smoke-tested successfully
 
@@ -370,14 +384,8 @@ data-file pull test before relying on it.
    [huggingface.co/datasets/Idavidrein/gpqa](https://huggingface.co/datasets/Idavidrein/gpqa)
    and GAIA's dataset page — this is a web click-through, not something
    automatable from here.
-2. τ²-bench airline smoke test — connectivity/config path proven, but no
-   completed run yet. Root cause of the first stall identified (unbounded
-   generation — small model doesn't reliably emit `###STOP###`-style
-   control tokens without a `max_tokens` cap) and a fix in hand
-   (`max_tokens: 200` on both `--agent-llm-args`/`--user-llm-args`); the
-   capped retry was stopped mid-run at operator request (2026-08-05,
-   "stop what you are doing cleanly and safely") before finishing —
-   re-running it is the next step.
+2. τ²-bench airline smoke test — **done, passed** (11.5s, `max_tokens`
+   cap resolved the earlier runaway-generation stall).
 3. AgentBench `agent_test` connectivity check — **done, passed**.
 4. CyberSecEval — not started.
 5. GAIA — cloned only; needs install, SearXNG tool wiring, and a real
@@ -396,8 +404,7 @@ data-file pull test before relying on it.
 
 ## Next steps
 
-1. Re-run the `max_tokens`-capped τ²-bench airline smoke test (command in
-   its section above) to get a completed result.
+1. CyberSecEval setup on `garuda`.
 2. Operator accepts GPQA/GAIA gating terms on HF.
 3. CyberSecEval setup on `garuda`.
 4. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in place
