@@ -331,13 +331,54 @@ tasks) not yet attempted; AgentBench ships a **"Lite preset"**
 explicitly for "laptops / limited RAM" that's the right next step now
 that basic connectivity is confirmed.
 
-### CyberSecEval (Meta PurpleLlama) — not started
+### CyberSecEval (Meta PurpleLlama) — installed and smoke-tested successfully
 
-Host: `garuda` (planned). Known from research before setup began: the
-`AutoPatch` sub-benchmark needs Podman (already installed on `garuda`) and
-is explicitly compute-intensive; its LLM-client abstraction's support for
-a custom `base_url` has not yet been verified against actual source —
-flagged as a check to do at setup time, not assumed.
+Host: `garuda`, `~/eval-harnesses/PurpleLlama`, `uv` venv pinned Python
+3.12 (no explicit `requires-python` found; 3.12 chosen for consistency
+with the other `garuda` harnesses, installed clean).
+
+Confirmed directly in the README (not assumed): custom OpenAI-compatible
+endpoints are natively supported via a 4-part `--llm-under-test` spec —
+`<PROVIDER>::<MODEL>::<API_KEY>::<BASE_URL>` — no adapter code needed,
+same pattern as ARC-AGI and AgentBench.
+
+**Real finding: `--help`'s benchmark list is stale.** It advertises
+"Currently supported benchmarks are: autocomplete, instruct, mitre" —
+`mitre-frr` (and others: `autopatch`, `interpreter`,
+`prompt-injection`, etc.) aren't mentioned there but are genuinely
+registered in code (`mitre_frr_benchmark.py`'s `MitreFRRBenchmark.
+return_kind()` returns `["mitre-frr"]`). Don't trust the `--help` text
+as the authoritative list — checked the `benchmark/*.py` registrations
+directly instead.
+
+Chose **`mitre-frr`** (False Refusal Rate) for the smoke test
+specifically because it needs no judge/expansion LLM — refusal detection
+is local keyword-matching, not a second model call, so there's no extra
+API dependency to wire up just to prove connectivity:
+
+```bash
+export DATASETS=$PWD/CybersecurityBenchmarks/datasets
+.venv/bin/python -m CybersecurityBenchmarks.benchmark.run \
+  --benchmark=mitre-frr \
+  --prompt-path="$DATASETS/mitre_frr/mitre_frr.json" \
+  --response-path="/tmp/mitre_frr_responses.json" \
+  --stat-path="/tmp/mitre_frr_stat.json" \
+  --llm-under-test="OPENAI::Llama-3.2-3B-Instruct-Q4_K_M::EMPTY::http://framework.gibbsgreatly.xyz:8080/v1" \
+  --num-test-cases=2
+```
+
+**Passed** — 2 prompts processed (~10s/prompt), judged locally
+(`accept`/`refuse`), stats aggregated correctly
+(`{"accept_count": 2, "refusal_count": 0, "refusal_rate": 0.0}`). One
+harmless warning: the model isn't in OPENAI provider's hardcoded
+`valid_models` convenience list (`gpt-3.5-turbo`, `gpt-4`, etc.) — logged
+as a `WARNING`, not enforced, run proceeded normally regardless.
+
+Not yet tested: `mitre` proper (needs judge + expansion LLM — could
+point both at a local model too, not yet tried), `autopatch` (needs
+Podman, compute-intensive, per README), and secure-code-generation
+(`instruct`/`autocomplete` — README notes these are "temporarily removed
+from the default list" upstream pending an import-path fix).
 
 ### GAIA — repo cloned, not yet configured
 
@@ -387,7 +428,8 @@ data-file pull test before relying on it.
 2. τ²-bench airline smoke test — **done, passed** (11.5s, `max_tokens`
    cap resolved the earlier runaway-generation stall).
 3. AgentBench `agent_test` connectivity check — **done, passed**.
-4. CyberSecEval — not started.
+4. CyberSecEval — **done, passed** (`mitre-frr` sub-benchmark). `mitre`
+   proper, `autopatch`, and the secure-code-gen benchmarks not yet tried.
 5. GAIA — cloned only; needs install, SearXNG tool wiring, and a real
    gating check.
 6. SWE-rebench — Docker/grading side proven; model-inference wiring
@@ -404,7 +446,8 @@ data-file pull test before relying on it.
 
 ## Next steps
 
-1. CyberSecEval setup on `garuda`.
+1. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in
+   place of a paid search API, verify gating, run a 1-task smoke test).
 2. Operator accepts GPQA/GAIA gating terms on HF.
 3. CyberSecEval setup on `garuda`.
 4. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in place
