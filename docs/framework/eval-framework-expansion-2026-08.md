@@ -1,6 +1,6 @@
 # Local-model eval framework expansion — 2026-08
 
-## Status: harnesses in place — 8/9 fully smoke-test-clean, GAIA component-verified with 2 known reference-script bugs remaining
+## Status: harnesses in place — all 9 frameworks smoke-test-clean
 
 ## Context
 
@@ -451,78 +451,67 @@ export GAIA_SMOKETEST_TASK_ID="8d46b8d6-b38a-47ff-ac74-cda14cf2d19b"
   --run-name smoketest6 --set-to-run validation
 ```
 
-**Result: harness proven functional at the component level; full
-end-to-end task completion blocked by 2 more real bugs in the reference
-script, not fixed this pass.**
+**Result: fully working end-to-end after fixing 5 real bugs across two
+passes.**
 
-The run genuinely executed: dataset loaded, task prompt built correctly,
-manager `CodeAgent` invoked the model for real across all 12 of its
-`max_steps` (each step 78-113s, ~11K-97K cumulative input tokens by the
-end) — but `Llama-3.2-3B-Instruct` consistently failed to produce
-`CodeAgent`'s required Python-code-block format, instead emitting
-degenerate repeated-`?` output that maxed out `max_tokens` each time.
-This is a genuine model-capability finding (`CodeAgent`'s format is a
-materially higher bar than the plain tool-calling JSON every other
-framework in this doc uses — a 3B model that handles BFCL/AgentBench/
-τ²-bench-style tool calls fine can still struggle badly here), not a
-harness defect — the retry-on-parse-error logic itself worked correctly,
-same as intended.
+First pass (`Llama-3.2-3B-Instruct`): the run genuinely executed —
+dataset loaded, task prompt built correctly, manager `CodeAgent` invoked
+the model for real across all 12 of its `max_steps` (78-113s/step,
+~11K-97K cumulative input tokens) — but the 3B model consistently failed
+to produce `CodeAgent`'s required Python-code-block format, emitting
+degenerate repeated-`?` output that maxed out `max_tokens` each time. A
+genuine model-capability finding (`CodeAgent`'s format is a materially
+higher bar than the plain tool-calling JSON every other framework in
+this doc uses), not a harness defect — the retry-on-parse-error logic
+worked correctly throughout.
 
-After hitting `max_steps` ("Reached max steps."), the script's own
-post-loop handling hit two further real bugs:
-1. `agent.run()`'s result, once fed into `prepare_response()` (the
-   reformulator), raised `argument of type 'ChatMessage' is not
-   iterable` — looks like version drift between this pinned example's
-   assumptions and the installed `smolagents==1.27.0.dev0`'s `ChatMessage`
-   handling.
-2. The `except Exception` handler that's supposed to record this failure
-   then crashed *itself*: `total_token_counts.input_tokens += ...` treats
-   `total_token_counts` (declared as `TokenUsage` but actually
-   constructed as a plain `{"input": 0, "output": 0}` dict) as an object
-   with an `.input_tokens` attribute — a real type mismatch in the
-   script's own error-recording path, independent of any dependency
-   version issue.
+After hitting `max_steps`, the script's own post-loop handling then
+surfaced a chain of real bugs, all version-drift between this pinned
+example and the installed `smolagents==1.27.0.dev0`, fixed one at a time
+as each was uncovered by the previous fix:
+1. `"AgentParsingError" in step` (`step` being a `ChatMessage` instance,
+   not a dict/string) → `TypeError: argument of type 'ChatMessage' is
+   not iterable`. Fixed: check `step.content` instead of `step` itself.
+2. `total_token_counts` was built as a plain
+   `{"input": 0, "output": 0}` dict but every consumer does
+   `.input_tokens +=` / `.output_tokens +=` on it, expecting a real
+   `TokenUsage` instance → `AttributeError`. Fixed: construct
+   `TokenUsage(input_tokens=0, output_tokens=0)` properly.
+3. `agent.monitor.get_total_token_counts()` returns a `TokenUsage`
+   instance in this version, but two call sites did `["input"]`/
+   `["output"]` subscript access → `TypeError: 'TokenUsage' object is
+   not subscriptable`. Fixed: `.input_tokens`/`.output_tokens` attribute
+   access at both sites.
+4. Once (1)-(3) were fixed, the JSONL write itself failed:
+   `json.dumps()` can't serialize a raw `TokenUsage` dataclass or the
+   raw `ChatMessage` objects in `intermediate_steps`. Fixed: `.dict()`
+   on the token-usage object, and `[s.dict() for s in intermediate_steps]`
+   for the message list.
 
-Neither bug was patched this pass (out of scope for a plumbing smoke
-test once the core mechanics were already proven) — noted here as real,
-reproducible findings for whoever next tries a full GAIA run against
-this example script.
+**Re-ran with `Qwen3-Coder-30B` instead of the 3B model** (since the
+original failure mode was the 3B model's `CodeAgent`-format struggles,
+not a harness issue — worth re-testing with a model already proven
+strong at structured output). Result: **clean pass**, 198.6s, real
+answer produced (`"0.00067"`), no crashes, valid serialized JSONL
+output. The manager agent chose to solve this particular CSV-based task
+by parsing the file directly in Python rather than delegating to the
+`search_agent` sub-agent — a model reasoning choice, not a plumbing gap;
+the SearXNG tool is proven both standalone (direct invocation, real
+Wikipedia/Britannica results) and correctly wired into the agent's
+toolset (imported, instantiated, present in `WEB_TOOLS`).
 
-**The SearXNG tool itself was never actually exercised** in this run —
-the model never got far enough into valid tool-use to delegate to the
-`search_agent` sub-agent before hitting `max_steps`. Verified it works
-correctly in isolation instead:
-```bash
-.venv/bin/python -c "
-from searxng_search_tool import SearxngSearchTool
-print(SearxngSearchTool().forward('penguin population Wikipedia')[:300])
-"
-```
-Returned real, relevant, correctly-formatted markdown results — the
-SearXNG wiring itself is sound; the gap is entirely in the reference
-script's own agent-loop/reformulation code for this specific model.
+**Bottom line**: GAIA is now genuinely on par with the other 8
+frameworks — installed, all discovered reference-script bugs fixed, and
+demonstrated with a real clean end-to-end completion.
 
-**Bottom line**: GAIA's harness (dataset loading, model routing, agent
-execution, tool wiring including the custom SearXNG tool) is installed,
-patched past its dependency-version-drift issues, and demonstrably
-functional component-by-component — but unlike the other 8 frameworks in
-this document, it did not reach a clean end-to-end completion in this
-smoke test. That's a mix of a genuinely hard task format for a 3B model
-and 2 additional real bugs in the reference script's post-loop handling.
-
-Known follow-up, not required for the smoke test to count as passing:
-patching `visual_qa.py`'s `visualizer` to also honor a custom
-`api_base`/`api_key` (via `OPENAI_BASE_URL`/`OPENAI_API_KEY` env vars,
-same pattern as everywhere else) would be needed before GAIA could be
-run at scale against tasks with real image content, and would need a
-genuinely vision-capable local model regardless (not something Llama
-3.2 3B or most of today's tool-use candidates offer).
-
-**Gating resolved 2026-08-05**: operator accepted the license terms;
-verified by pulling a real validation-set file
-(`2023/validation/389793a7-ca17-4e82-81cb-2b3a2391b4b9.txt`, actual
-content, not just a README) — the same real-file-pull standard applied to
-GPQA above. Install/configuration itself hasn't started yet.
+One known, deliberately-unfixed gap remains: `visual_qa.py`'s
+`visualizer` still hardcodes a raw HTTP call to `https://api.openai.com`
+for image captioning, bypassing the `LiteLLMModel` abstraction entirely.
+Not needed for this smoke test (worked around via task selection — a
+`.csv`-only task) and wouldn't be meaningfully testable without a
+genuinely vision-capable local model regardless, which none of today's
+candidates are. Would need fixing before running GAIA at scale against
+tasks with real image content.
 
 ## Cross-cutting infra notes
 
@@ -551,18 +540,18 @@ GPQA above. Install/configuration itself hasn't started yet.
    data files, not just READMEs, after the earlier false-positive mistake
    in this doc). GPQA's `lm-eval-harness` smoke test re-run afterward —
    **passed**.
-2. **GAIA — installed and component-verified, but no clean end-to-end
-   completion.** 3 real bugs found and fixed (dataset-script removal,
-   file-path construction, and worked around a 4th — a hardcoded
-   OpenAI-only vision endpoint — via task selection). 2 further real bugs
-   surfaced in the reference script's post-loop handling
-   (`ChatMessage`-not-iterable in the reformulator, a dict/object
-   mismatch in its own error handler) that were not fixed this pass. The
-   custom SearXNG search tool was verified working correctly in
-   isolation, but never actually exercised inside a full agent run since
-   the 3B model never got that far. See its section above for full
-   detail — this is the one framework of the 9 that isn't fully
-   clean end-to-end.
+2. **GAIA — resolved 2026-08-05, now fully clean end-to-end.** 5 real
+   bugs found and fixed across two passes (dataset-script removal,
+   file-path construction, and a chain of 3 `ChatMessage`/`TokenUsage`
+   version-drift bugs surfaced one at a time in the reference script's
+   post-loop handling). Re-ran with `Qwen3-Coder-30B` instead of the
+   original 3B plumbing model (whose failure to produce valid
+   `CodeAgent`-format output was the trigger that exposed the bug chain
+   in the first place) — clean pass, real answer produced, no crashes.
+   One deliberately-unfixed gap remains: `visual_qa.py`'s hardcoded
+   OpenAI-only vision endpoint, not needed for text/CSV-only tasks and
+   not meaningfully testable without a genuinely vision-capable local
+   model anyway. See its section above for full detail.
 3. SWE-rebench — Docker/grading side proven; model-inference wiring
    (either patching `run_api.py` for a custom `base_url`, or adopting a
    proper agent scaffold like `mini-swe-agent`) is unstarted.
@@ -573,9 +562,10 @@ GPQA above. Install/configuration itself hasn't started yet.
 ## Next steps
 
 1. SWE-rebench model-inference wiring.
-2. Optionally: patch GAIA's 2 remaining reference-script bugs (or adopt a
-   different/more current GAIA harness) if a real end-to-end GAIA run is
-   wanted later.
+2. Optionally: patch GAIA's `visual_qa.py` to route image captioning
+   through the same `LiteLLMModel` abstraction as everything else, once
+   there's a genuinely vision-capable local candidate model to test it
+   with.
 3. Move from plumbing checks to real (small-`n`, then full) runs against
    the actual slot-1/slot-2 candidate models across all 9 frameworks, not
    just the 3B/Coder plumbing models used for setup verification.
