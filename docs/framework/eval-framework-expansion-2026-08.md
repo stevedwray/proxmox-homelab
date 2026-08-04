@@ -1,6 +1,6 @@
 # Local-model eval framework expansion — 2026-08
 
-## Status: in progress
+## Status: in progress (paused 2026-08-05, safe to resume)
 
 ## Context
 
@@ -131,7 +131,7 @@ Smoke tests (both `--limit 3`, plumbing-only, not real scores):
   access requires successfully pulling an actual data file, which failed
   with `Access denied. This repository requires approval.`
 
-### τ²-bench (`sierra-research/tau2-bench`) — installed, smoke test in progress
+### τ²-bench (`sierra-research/tau2-bench`) — installed; smoke test paused after a real runaway-generation finding
 
 Host: `framework`, `~/eval-harnesses/tau2-bench`, `uv` venv pinned to
 Python 3.12 (repo requires `>=3.12,<3.14`; framework's system Python is
@@ -175,10 +175,28 @@ uv run tau2 run --domain airline --user user_simulator --agent llm_agent \
   --num-tasks 1 --num-trials 1 --max-steps 6
 ```
 
-**Still running at time of writing** (>15 min for a 6-step, 1-task
-conversation with a 3B model — sequential agent↔user-simulator turn-taking
-means multiple full generations per step, plausible but not yet confirmed
-complete). Result pending.
+**Real finding: runaway generation, not a plumbing hang.** The first
+attempt sat with no new log output for 35+ minutes. `docker logs
+llamacpp-router` showed it wasn't stuck at all — the router was actively
+decoding the entire time, `n_decoded` climbing past 3300+ tokens for a
+single user-simulator turn and still rising (~15 t/s, steady). Root
+cause: neither `--agent-llm-args` nor `--user-llm-args` capped
+`max_tokens`, and the 3B model doesn't reliably emit τ²-bench's expected
+control tokens (`###STOP###` / `###TRANSFER###` / `###OUT-OF-SCOPE###`) to
+end its turn on its own — so generation just ran on unbounded. This is a
+genuine small-model behavioral limitation in the user-simulator role, not
+a harness or connectivity bug.
+
+Killed the run, retried with an explicit cap
+(`"max_tokens": 200` added to both `--agent-llm-args` and
+`--user-llm-args`) — that retry was itself stopped partway through
+(operator asked to stop all in-flight work cleanly before a result came
+back). **Confirmed clean shutdown**: no `tau2`/`uv` processes left on
+`framework`, router idle, Ollama empty. τ²-bench is therefore installed
+and its connectivity/config path is proven (the first attempt did
+successfully complete the agent's opening turn and start the
+user-simulator's), but **no completed smoke-test result yet** — re-running
+the `max_tokens`-capped command above is the next step, not yet done.
 
 ### ARC-AGI (`arc-agi-benchmarking`) — installed and smoke-tested successfully
 
@@ -254,7 +272,7 @@ harness/grading side only):
 **Passed** — built the Docker image, ran the instance, `Instances
 resolved: 1`, 47.54s.
 
-### AgentBench — installed, connectivity smoke test in progress
+### AgentBench — installed, connectivity smoke-tested successfully
 
 Host: `garuda`, `~/eval-harnesses/AgentBench`, `uv` venv pinned Python 3.9
 (repo's own README explicitly recommends 3.9 for its pinned
@@ -278,16 +296,26 @@ framework-llama3-3b:
     return_format: "{response[choices][0][message][content]}"
 ```
 
-Connectivity check launched:
+Real gotcha on the first invocation: `agent_test` is an **interactive
+REPL** (`input(">>> ")` in a `while True` loop) — piping it through
+`| tail -40` in the background left it blocked waiting on stdin forever,
+which looked like a hang but wasn't one (confirmed via `ps`: alive,
+~0% CPU, no error). Not a bug — just the wrong invocation for a
+non-interactive smoke test. Fixed by piping a single line in instead of
+backgrounding it open-ended:
+
 ```bash
-.venv/bin/python -m src.client.agent_test --config configs/agents/framework-llama3-3b.yaml --agent framework-llama3-3b
+echo "Say hello in one word." | .venv/bin/python -m src.client.agent_test \
+  --config configs/agents/framework-llama3-3b.yaml --agent framework-llama3-3b
 ```
-**Still running at time of writing** — result pending. Full task-server +
-assigner pipeline (the actual Docker-sandboxed os/db/web tasks) not yet
-attempted; AgentBench ships a **"Lite preset"**
+
+**Passed** — got back a clean `"Hello."` from `Llama-3.2-3B` through the
+custom `HTTPAgent` config, then exited on EOF as expected. Full
+task-server + assigner pipeline (the actual Docker-sandboxed os/db/web
+tasks) not yet attempted; AgentBench ships a **"Lite preset"**
 (`configs/start_task_lite.yaml` / `configs/assignments/lite.yaml`)
-explicitly for "laptops / limited RAM" that's the right next step once
-basic connectivity is confirmed.
+explicitly for "laptops / limited RAM" that's the right next step now
+that basic connectivity is confirmed.
 
 ### CyberSecEval (Meta PurpleLlama) — not started
 
@@ -342,9 +370,15 @@ data-file pull test before relying on it.
    [huggingface.co/datasets/Idavidrein/gpqa](https://huggingface.co/datasets/Idavidrein/gpqa)
    and GAIA's dataset page — this is a web click-through, not something
    automatable from here.
-2. τ²-bench airline smoke test — result pending (long-running, not
-   failed).
-3. AgentBench `agent_test` connectivity check — result pending.
+2. τ²-bench airline smoke test — connectivity/config path proven, but no
+   completed run yet. Root cause of the first stall identified (unbounded
+   generation — small model doesn't reliably emit `###STOP###`-style
+   control tokens without a `max_tokens` cap) and a fix in hand
+   (`max_tokens: 200` on both `--agent-llm-args`/`--user-llm-args`); the
+   capped retry was stopped mid-run at operator request (2026-08-05,
+   "stop what you are doing cleanly and safely") before finishing —
+   re-running it is the next step.
+3. AgentBench `agent_test` connectivity check — **done, passed**.
 4. CyberSecEval — not started.
 5. GAIA — cloned only; needs install, SearXNG tool wiring, and a real
    gating check.
@@ -354,10 +388,16 @@ data-file pull test before relying on it.
 7. No PentAGI configuration has been touched by any of this — that
    remains a deliberate, separate, not-yet-taken step once the fuller
    picture (this framework buildout + BFCL) is in.
+8. Session paused 2026-08-05 at operator request, mid-way through the
+   τ²-bench retry. Confirmed clean state on stop: no stray `tau2`/`uv`/
+   `agent_test`/`swebench` processes on either host, llama.cpp router
+   idle, Ollama empty. Nothing destructive or partially-written was in
+   flight — safe to resume from here.
 
 ## Next steps
 
-1. Resolve pending τ²-bench and AgentBench smoke-test results.
+1. Re-run the `max_tokens`-capped τ²-bench airline smoke test (command in
+   its section above) to get a completed result.
 2. Operator accepts GPQA/GAIA gating terms on HF.
 3. CyberSecEval setup on `garuda`.
 4. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in place
