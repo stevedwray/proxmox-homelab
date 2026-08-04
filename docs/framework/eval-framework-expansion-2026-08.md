@@ -121,15 +121,18 @@ Smoke tests (both `--limit 3`, plumbing-only, not real scores):
   `Llama-3.2-3B-Instruct-Q4_K_M`.
 - GPQA (`gpqa_diamond_cot_zeroshot` — the `generate_until` CoT variant,
   since chat-completion APIs can't expose logprobs for the raw
-  multiple-choice scorer) — **blocked**. `Idavidrein/gpqa` is gated on HF;
-  copied `~/.cache/huggingface/token` from `garuda` to `framework` (same
-  `GibbsGreatly` account) so both hosts share auth, but the account itself
-  has not actually clicked through the dataset's license terms yet — see
-  "Open items" below. **Correction to an earlier claim in this session**:
-  a successful `hf download ... --include "README.md"` is *not* proof of
-  gated-dataset access — READMEs are often visible pre-approval. Real
-  access requires successfully pulling an actual data file, which failed
-  with `Access denied. This repository requires approval.`
+  multiple-choice scorer) — was **blocked** on gating; `Idavidrein/gpqa`
+  is gated on HF, and the account had not actually clicked through the
+  license terms yet at the time. **Correction to an earlier claim in this
+  session**: a successful `hf download ... --include "README.md"` is
+  *not* proof of gated-dataset access — READMEs are often visible
+  pre-approval. Real access requires successfully pulling an actual data
+  file, which failed at the time with
+  `Access denied. This repository requires approval.`
+  **Resolved 2026-08-05**: operator accepted the license terms; verified
+  by pulling the real `gpqa_diamond.csv` (1.37MB, actual question data).
+  The `lm-eval-harness` smoke test itself hasn't been re-run yet — that's
+  the next action, not done as of this writing.
 
 ### τ²-bench (`sierra-research/tau2-bench`) — installed and smoke-tested successfully
 
@@ -392,9 +395,11 @@ Known open item: the reference agent's default web-search tool
 the existing SearXNG instance (already deployed for PentAGI) instead of
 paying for a new search API — real infra reuse, not yet implemented.
 
-**Gating status genuinely unconfirmed** (same false-positive risk as GPQA
-above — a README-only download proves nothing) — needs an actual
-data-file pull test before relying on it.
+**Gating resolved 2026-08-05**: operator accepted the license terms;
+verified by pulling a real validation-set file
+(`2023/validation/389793a7-ca17-4e82-81cb-2b3a2391b4b9.txt`, actual
+content, not just a README) — the same real-file-pull standard applied to
+GPQA above. Install/configuration itself hasn't started yet.
 
 ## Cross-cutting infra notes
 
@@ -418,40 +423,28 @@ data-file pull test before relying on it.
 
 ## Open items / blockers
 
-1. **GPQA and GAIA gated-dataset access**: neither is actually confirmed
-   accepted under the `GibbsGreatly` HF account despite an earlier
-   (incorrect) claim in this session that it was. Needs the operator to
-   click through license terms at
-   [huggingface.co/datasets/Idavidrein/gpqa](https://huggingface.co/datasets/Idavidrein/gpqa)
-   and GAIA's dataset page — this is a web click-through, not something
-   automatable from here.
-2. τ²-bench airline smoke test — **done, passed** (11.5s, `max_tokens`
-   cap resolved the earlier runaway-generation stall).
-3. AgentBench `agent_test` connectivity check — **done, passed**.
-4. CyberSecEval — **done, passed** (`mitre-frr` sub-benchmark). `mitre`
-   proper, `autopatch`, and the secure-code-gen benchmarks not yet tried.
-5. GAIA — cloned only; needs install, SearXNG tool wiring, and a real
-   gating check.
-6. SWE-rebench — Docker/grading side proven; model-inference wiring
+1. **GPQA and GAIA gated-dataset access — resolved 2026-08-05.** Operator
+   accepted both license terms on HF; verified for real this time (pulled
+   actual data files — `gpqa_diamond.csv` and a real GAIA validation task
+   file — not just READMEs, after the earlier false-positive mistake in
+   this doc). GPQA's `lm-eval-harness` smoke test has not been re-run
+   since unblocking — still an open action, not yet done.
+2. GAIA — cloned only; needs install, SearXNG tool wiring, and a smoke
+   test. Gating is no longer the blocker; setup itself just hasn't
+   started.
+3. SWE-rebench — Docker/grading side proven; model-inference wiring
    (either patching `run_api.py` for a custom `base_url`, or adopting a
    proper agent scaffold like `mini-swe-agent`) is unstarted.
-7. No PentAGI configuration has been touched by any of this — that
+4. No PentAGI configuration has been touched by any of this — that
    remains a deliberate, separate, not-yet-taken step once the fuller
    picture (this framework buildout + BFCL) is in.
-8. Session paused 2026-08-05 at operator request, mid-way through the
-   τ²-bench retry. Confirmed clean state on stop: no stray `tau2`/`uv`/
-   `agent_test`/`swebench` processes on either host, llama.cpp router
-   idle, Ollama empty. Nothing destructive or partially-written was in
-   flight — safe to resume from here.
 
 ## Next steps
 
-1. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in
-   place of a paid search API, verify gating, run a 1-task smoke test).
-2. Operator accepts GPQA/GAIA gating terms on HF.
-3. CyberSecEval setup on `garuda`.
-4. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in place
-   of a paid search API, verify gating, run a 1-task smoke test).
+1. Re-run the GPQA smoke test on `framework` now that gating is accepted.
+2. GAIA setup on `garuda` (install smolagents deps, wire SearXNG in
+   place of a paid search API, run a 1-task smoke test).
+3. SWE-rebench model-inference wiring.
 5. Once all 9 are smoke-test-clean: move from plumbing checks to real
    (small-`n`, then full) runs against the actual slot-1/slot-2 candidate
    models, not just the 3B plumbing model.
