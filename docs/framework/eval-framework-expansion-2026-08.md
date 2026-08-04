@@ -383,17 +383,88 @@ Podman, compute-intensive, per README), and secure-code-generation
 (`instruct`/`autocomplete` — README notes these are "temporarily removed
 from the default list" upstream pending an import-path fix).
 
-### GAIA — repo cloned, not yet configured
+### GAIA — installed, patched, smoke test in progress
 
-Host: `garuda`, `~/eval-harnesses/smolagents` cloned (reference agent
-implementation lives at
-`examples/open_deep_research/run_gaia.py`, since GAIA has no
-purpose-built harness of its own). Not yet installed/configured.
+Host: `garuda`, `~/eval-harnesses/smolagents` (`uv` venv pinned Python
+3.12; `requires-python = ">=3.10"`), reference agent implementation at
+`examples/open_deep_research/run_gaia.py` (GAIA has no purpose-built
+harness of its own). Needed the `smolagents[litellm]` extra installed
+separately (base install doesn't pull `litellm`, and `LiteLLMModel`
+fails at construction time without it).
 
-Known open item: the reference agent's default web-search tool
-(`GoogleSearchTool`) expects a paid SerpApi/Serper key. Plan is to swap in
-the existing SearXNG instance (already deployed for PentAGI) instead of
-paying for a new search API — real infra reuse, not yet implemented.
+**SearXNG wired in place of the paid default**, confirmed reachable
+first (`curl` to `http://192.168.50.11:8082/search?q=test&format=json` —
+same instance PentAGI itself uses, see
+`terraform/lxc/ansible/playbooks/deploy-pentagi-stack.yml`; reachable
+directly from `garuda`, no MikroTik rule needed unlike PentAGI's
+Docker-network case). Wrote a small `SearxngSearchTool(Tool)` in
+`examples/open_deep_research/searxng_search_tool.py` matching
+`GoogleSearchTool`'s interface, and swapped it in for
+`GoogleSearchTool(provider="serper")` in `create_agent_team`.
+
+**Real bugs found and fixed in the reference script** (this is the
+oldest/least-maintained-looking of the 9 frameworks, consistent with
+being an "example," not a first-class package):
+
+1. **`datasets>=4.0` dropped script-based dataset loading entirely**
+   (`RuntimeError: Dataset scripts are no longer supported, but found
+   GAIA.py`) — a real, deliberate security hardening upstream (loader
+   scripts are arbitrary code execution), not a bug in `datasets` itself.
+   `load_gaia_dataset` still called
+   `datasets.load_dataset("data/gaia/GAIA.py", name="2023_all", ...)`.
+   Fixed by loading the already-downloaded `metadata.jsonl` directly via
+   `datasets.load_dataset("json", data_files=..., split="train")` — same
+   columns, and arguably a better security posture regardless (no code
+   execution from a downloaded script at all).
+2. **Path-construction bug this exposed**: `preprocess_file_paths` built
+   file paths as `data/gaia/{set_to_run}/...`, missing the `2023/`
+   directory component that the (now-bypassed) loader script apparently
+   handled internally. Fixed to `data/gaia/2023/{set_to_run}/...`,
+   confirmed against the actual downloaded directory layout.
+3. **`get_single_file_description` routes non-image documents through
+   the same image-captioning path whenever a sibling pre-rendered `.png`
+   exists** (`.pdf`/`.xlsx`/`.docx`/etc. → checks for `<uuid>.png` next
+   to the real file, many GAIA validation tasks ship one). That path
+   (`visual_qa.py`'s `visualizer`) makes a **hardcoded raw HTTP call to
+   `https://api.openai.com`**, completely bypassing the `LiteLLMModel`
+   abstraction (and thus our `api_base`/`api_key` override) — real
+   architectural gap in the reference script, not something to patch
+   around for a plumbing smoke test, especially since our smoke-test
+   model (`Llama-3.2-3B-Instruct`, text-only) couldn't do image
+   captioning even if the endpoint were fixed. Worked around by targeting
+   a specific task via a new `GAIA_SMOKETEST_TASK_ID` env-var patch
+   (added alongside a `GAIA_SMOKETEST_LIMIT` var — the script has no
+   built-in single-task/limit flag) whose attached file is a plain
+   `.csv` — falls through `get_single_file_description`'s safe `else`
+   branch (`" - Attached file: ..."`, no tool call at all), avoiding both
+   the vision-API gap and any audio-transcription path.
+
+Command (once past setup):
+```bash
+export HF_TOKEN=$(cat ~/.cache/huggingface/token)
+export LITELLM_API_BASE="http://framework.gibbsgreatly.xyz:8080/v1"
+export LITELLM_API_KEY="EMPTY"
+export SEARXNG_URL="http://192.168.50.11:8082"
+export GAIA_SMOKETEST_TASK_ID="8d46b8d6-b38a-47ff-ac74-cda14cf2d19b"
+.venv/bin/python run_gaia.py --concurrency 1 \
+  --model-id "openai/Llama-3.2-3B-Instruct-Q4_K_M" \
+  --run-name smoketest6 --set-to-run validation
+```
+
+**Result pending** — this is a real multi-agent loop (a `CodeAgent`
+manager with a `ToolCallingAgent` web-search sub-agent, up to 12 + 20
+steps respectively, planning intervals), the heaviest single-task
+pipeline of all 9 frameworks, so a 3B model working through it will take
+real wall-clock time. Being monitored, not yet complete as of this
+writing.
+
+Known follow-up, not required for the smoke test to count as passing:
+patching `visual_qa.py`'s `visualizer` to also honor a custom
+`api_base`/`api_key` (via `OPENAI_BASE_URL`/`OPENAI_API_KEY` env vars,
+same pattern as everywhere else) would be needed before GAIA could be
+run at scale against tasks with real image content, and would need a
+genuinely vision-capable local model regardless (not something Llama
+3.2 3B or most of today's tool-use candidates offer).
 
 **Gating resolved 2026-08-05**: operator accepted the license terms;
 verified by pulling a real validation-set file
