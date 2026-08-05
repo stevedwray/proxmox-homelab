@@ -162,6 +162,37 @@ undiscovered bug burning more unsupervised hours. Pending operator
 decision on whether/how to redo the compromised Qwen3.6-35B battery and
 both models' GAIA runs.
 
+### Interpretation for real use cases (2026-08-06)
+
+AgentBench's real pass rate (`overall.json`, not just "800/800
+completed" which only means no crash): **27% (216/800 pass, 76.9%
+ran-to-completion, 16.4% invalid/malformed actions, 6.75% ran out of
+turns)**.
+
+**Strong, confirmed**: BFCL tool-calling (96.25%, fastest — already won
+`framework`'s slot-2 role), IFEval (79-88%, reliable structured output),
+CyberSecEval mitre-frr (99% accept/1% refuse — low friction in a
+pentesting context, though this only measures false refusals on benign
+prompts, not correct refusal of genuinely malicious ones).
+
+**Weak, confirmed — the important finding**: GPQA 11.62%/0%, *below*
+the 25% random-guess baseline for 4-choice questions — not a
+general-reasoning model, narrowly coding-specialized. AgentBench 27%
+pass and τ²-bench's 4.4%-correct read-actions (despite 0.46 avg reward)
+both point the same direction: strong at atomic, well-specified tool
+calls (BFCL's exact shape), but reliability drops sharply on sustained
+multi-step agentic sequences — exactly PentAGI's terminal/pentester
+role shape, not BFCL's.
+
+**Practical read**: slot-2 tool-use role stands (matches BFCL's atomic
+shape). PentAGI adviser role — poor fit (weak general reasoning), keep
+routing through a stronger model there as already established.
+PentAGI terminal-operator/pentester role — real caution, ~3-in-4
+multi-step OS-interaction attempts failed; would need tight supervision
+or short subtasks, not open-ended autonomous pentesting. Coder/
+report-writing role — still genuinely unknown, SWE-rebench (the actual
+code-gen benchmark) isn't wired up yet; don't extrapolate from IFEval.
+
 **Operator directive (2026-08-05): fully autonomous from this point.**
 No more pausing between stages for confirmation — chain straight through
 the remaining plan (Qwen3-Coder-30B Tier 2/3, then Qwen3.6-35B Tier
