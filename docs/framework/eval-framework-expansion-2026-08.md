@@ -59,6 +59,52 @@ operator's qualitative recollection. `Laguna-XS-2-1-Ollama-FC` also
 scored 90.0% (360/400) in this same log set, but has no llama.cpp
 counterpart — its runtime comparison remains genuinely untested.
 
+### Real bug found: `eval-qwen3-coder-30b-a3b:q4_k_m-ctx163k` degenerates on long prompts (2026-08-05)
+
+While running ARC-AGI's real 120-task battery, both of the first two
+tasks (each with a ~13-14k-token prompt) failed every retry identically
+— the model producing pure repeated `?` characters until hitting
+`max_tokens`/`finish_reason: length`, never a real answer. Root-caused
+by bypassing the harness and hitting Ollama directly:
+
+- Replaying the exact same prompt via raw curl against
+  `eval-qwen3-coder-30b-a3b:q4_k_m-ctx163k` (`num_ctx=163840`)
+  reproduced the bug deterministically (100% `?` output,
+  `finish_reason: length`).
+- A repetition penalty (`frequency_penalty`/`presence_penalty` via the
+  OpenAI-compat endpoint, and native `repeat_penalty`/`repeat_last_n`
+  via `/api/chat`) had **zero effect** — ruling out a simple
+  token-repeat-loop explanation.
+- A content-independent control (generic filler text padded to
+  ~18,000 tokens, trivial instruction) reproduced the same 100% `?`
+  failure — proving it's **not ARC-AGI-specific content**, purely a
+  long-prompt trigger on this one Ollama tag.
+- The exact same 18,019-token prompt against
+  `eval-qwen3-coder-30b-a3b:q4_k_m-ctx32k` (`num_ctx=32768`) returned a
+  clean, correct, instant response. Against
+  `eval-qwen3-coder-30b-a3b:q4_k_m-ctx147k` (`num_ctx=147456`) it also
+  returned real, coherent (if rambling) text — not degenerate.
+
+**Conclusion: the `-ctx163k` tag specifically is broken** (likely a
+RoPE-scaling/extended-context misconfiguration baked into that
+Modelfile at build time — `num_ctx=163840` vs `147456`'s working value
+is the only difference in the Modelfile), not a general model or
+Ollama-runtime limitation. Switched both ARC-AGI's `models.yml` and
+AgentBench's `configs/agents/qwen3-coder-30b.yaml` from `-ctx163k` to
+`-ctx147k`. GPQA/IFEval's already-completed results are unaffected —
+their prompts are far too short to have hit this (single questions, not
+the 13k+ token grids/trajectories ARC-AGI/AgentBench produce) — so
+those are not being re-run. Any future framework needing a large-context
+Qwen3-Coder-30B tag on Ollama should use `-ctx147k`, not `-ctx163k`,
+until/unless the `-ctx163k` tag itself gets rebuilt and re-verified.
+
+Also noted in passing: this tag's Modelfile has `TEMPLATE {{ .Prompt }}`
+— a bare passthrough template with no chat-role formatting baked in.
+Ollama's OpenAI-compat layer still applies its own chat templating on
+top of the `messages` array for API calls, so this didn't block GPQA/
+IFEval/the diagnosis above, but it's worth knowing this tag doesn't
+have a custom `TEMPLATE` doing anything special.
+
 ## Context
 
 Follow-on to `docs/framework/model-quality-and-vuln-bench-2026-07-17.md`.
