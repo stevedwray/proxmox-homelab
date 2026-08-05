@@ -2,6 +2,25 @@
 
 ## Status: harnesses in place — all 9 frameworks smoke-test-clean
 
+## Overnight budget cap (2026-08-05, operator directive)
+
+ARC-AGI's real battery revealed a genuine, task-content-dependent
+degenerate-output failure mode in `eval-qwen3-coder-30b-a3b` (see below)
+that made unbounded per-framework runs impractical — the full 120-task
+ARC-AGI set alone projected to ~14-15 hours at observed pace. Operator
+capped scope: **13 hours total, overnight, covering both Qwen models**
+(Qwen3-Coder-30B's remaining Tier 2/3 + Qwen3.6-35B's full Tier 1-3).
+
+Caps applied to the three open-ended frameworks (GPQA/IFEval run at
+full size — cheap and valuable, not capped):
+- **ARC-AGI**: 30 tasks (`--max-tasks-per-run`), 5-min per-task timeout
+  (`--max-task-timeout 300`)
+- **GAIA**: 15 tasks (`GAIA_SMOKETEST_LIMIT`)
+- **AgentBench**: 15 episodes (`AGENTBENCH_SAMPLE_LIMIT`)
+
+τ²-bench/CyberSecEval run at a reasonable full/near-full scale — both
+are naturally fast (seconds per trial), not worth capping.
+
 ## Runtime policy: Ollama only (2026-08-05, superseding earlier mixed policy)
 
 **`llamacpp-router` is stopped on `framework`.** Earlier in this phase the
