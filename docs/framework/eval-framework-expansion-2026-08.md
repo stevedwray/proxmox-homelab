@@ -218,6 +218,37 @@ documented above, which affected an unquantified fraction of attempts.
 Not re-run at larger scale given the overnight time budget — treat this
 as a directional result, not a precise measurement.
 
+### Qwen3.6-35B vs Qwen3-Coder-30B: direct AgentBench os-std comparison (2026-08-06)
+
+Operator flagged AgentBench os-std results as weak and asked for a
+direct, controlled comparison between the two Qwen models before doing
+anything else. Ran Qwen3.6-35B against the identical standardized
+sample (`AGENTBENCH_SAMPLE_LIMIT=100`, `AGENTBENCH_SAMPLE_SEED=42`) that
+Coder's 24/100 baseline (from its earlier full-800 run) was drawn from,
+this time with the `num_predict=8192`/`max_tokens=3072` fixes already
+in place — so unlike the overnight run's compromised Tier 1 results,
+this one is real capability data, not an infra-failure artifact.
+
+| Model | Pass | Acc | Notes |
+|---|---|---|---|
+| Qwen3-Coder-30B | 24/100 | 24% | full-800 baseline, seed=42/limit=100 subsample |
+| Qwen3.6-35B | 22/100 | 22% | clean run, token-budget fixes applied |
+
+Essentially tied (within noise at n=100) — Qwen3.6-35B is **not** a
+meaningfully better fit for sustained multi-step OS-interaction agentic
+tasks despite being the larger/newer model. Its validation breakdown
+also surfaced a genuine (non-infra) weakness: **71% "agent invalid
+action"**, only 26% "completed" cleanly — the model frequently fails to
+produce a parseable Think:/Act:-formatted action on these tasks, a real
+formatting/instruction-following gap, not truncation (token budget was
+already generous here).
+
+**Practical read**: neither Qwen model is a safe fit for open-ended
+autonomous multi-step agentic operation (PentAGI terminal/pentester
+role) without tight supervision or short subtasks — reconfirms and
+sharpens the "Interpretation for real use cases" conclusion above rather
+than changing it.
+
 ## Runtime policy: Ollama only (2026-08-05, superseding earlier mixed policy)
 
 **`llamacpp-router` is stopped on `framework`.** Earlier in this phase the
@@ -341,6 +372,72 @@ Also noted in passing: all three tags' Modelfiles have
 formatting baked in. Ollama's OpenAI-compat layer still applies its own
 chat templating on top of the `messages` array for API calls
 regardless, so this didn't block any of the diagnosis above.
+
+## Garuda RX 9070 XT BFCL pilot (2026-08-06)
+
+An independent, bounded BFCL pilot was run on Garuda while the Framework
+Desktop remained untouched.  It is **not** a replacement for the existing
+400-case comparisons above: this is a labeled 20-case `simple` subset,
+selected every 20 IDs from `simple_0` through `simple_380`, and must not be
+reported as a leaderboard score.
+
+The service was a separate `ollama-rx9070xt-eval` container running Ollama
+0.32.6 with one model/request slot, 4096-token context, and only
+`127.0.0.1:11435` published.  It was restricted to Garuda's RX 9070 XT via
+`ROCR_VISIBLE_DEVICES`; all BFCL requests targeted that loopback endpoint.
+No Framework hostname, process, port, model store, or result directory was
+used or modified.  The original local Ollama container was not replaced.
+
+The host's prior Ollama 0.24.0 could not load either requested GGUF because
+its llama runtime did not recognize `qwen35moe`; the isolated current runtime
+did.  BFCL 2025.8.6.2 was installed in a separate Garuda venv.  Its Qwen XML
+tool prompt/result parser was retained while transport was adapted to the
+already-running local GGUF service; the subset was then scored with BFCL's
+own AST checker.
+
+| Model / quantization | BFCL `simple` pilot | Client request time | GPU residency |
+|---|---:|---:|---|
+| Qwen3.6-35B-A3B `UD-Q4_K_M` | **20/20 (100%)** | 234.8s total; 11.7s mean/case | 65% GPU / 35% CPU; ~16.0GB VRAM |
+| KAT-Coder-V2.5-Dev `Q4_K_M` | **19/20 (95%)** | 381.1s total; 19.1s mean/case | 69% GPU / 31% CPU; ~15.8GB VRAM |
+
+Both models loaded and generated correctly on the RX 9070 XT.  KAT's single
+failure was `simple_100`: it reasoned at length about whether a tool call was
+necessary, answered in prose instead, and emitted no call (`Wrong number of
+functions`).  Its pilot also generated more tokens on average (448.5 versus
+Qwen's 318.3), including a several-thousand-token deliberation; this accounts
+for the slower elapsed time.  The runtime did emit a non-fatal
+`TensileLibrary_lazy_gfx1201.dat` rocBLASLt warning, but GPU offload, memory
+residency, and all requests completed successfully.
+
+Raw commands, adapter, generated responses, and per-case official BFCL scores
+are intentionally kept under ignored
+`docs/framework/artifacts/rx9070xt-bfcl/`.  Before a larger run, fix or
+suppress the rocBLASLt gfx1201 warning and set a reviewed response-length
+policy for KAT; retain the one-model serial setting so the pilot's isolation
+and timing remain valid.
+
+### Parallel AgentBench `os-std` controller (2026-08-06)
+
+An independent AgentBench service is prepared for the two RX 9070 XT models,
+without modifying the already-running Framework/Qwen3.6 run.  The latter
+continues to own controller port 5098, worker port 5001, its 100-case cap,
+and its assignment/output directory.  The new service is a separate copy at
+`~/eval-harnesses/AgentBench-rx9070xt`, with controller port **5198**, worker
+port **5101**, its own `outputs/rx9070xt/...` paths, and separate local-model
+agent configs targeting `127.0.0.1:11435` only.
+
+The new worker was started with `AGENTBENCH_SAMPLE_LIMIT=10` and
+`AGENTBENCH_SAMPLE_SEED=9070` *before* worker initialization.  It advertises
+a deterministic, randomly selected ten-episode `os-std` set and has zero
+active sessions.  The dedicated loopback-only Ollama service is running but
+has no model resident, so no GPU VRAM is currently occupied by this setup.
+No assigner was started; a model episode begins only when deliberately
+launched against either dedicated pilot assignment.
+
+The isolated config/assignment sources live under ignored
+`docs/framework/artifacts/rx9070xt-agentbench/`; the active harness copy is
+runtime tooling under `~/eval-harnesses/`, consistent with the existing
+AgentBench setup.
 
 ## Context
 
