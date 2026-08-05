@@ -19,7 +19,60 @@ full size — cheap and valuable, not capped):
 - **AgentBench**: 15 episodes (`AGENTBENCH_SAMPLE_LIMIT`)
 
 τ²-bench/CyberSecEval run at a reasonable full/near-full scale — both
-are naturally fast (seconds per trial), not worth capping.
+are naturally fast (seconds per trial), not worth capping. **Correction
+mid-run**: CyberSecEval's `mitre-frr` (750 prompts) is *not* naturally
+fast against a local model — the first prompt alone climbed past 4,000
+generated tokens with no sign of stopping. Root cause: PurpleLlama's
+`OPENAI` adapter (`CybersecurityBenchmarks/benchmark/llms/openai.py`)
+only sends `max_completion_tokens` when the model name matches one of
+OpenAI's own hardcoded reasoning-model strings (`o1`, `o3`, etc.) — for
+any other model, including ours, the field is `NOT_GIVEN` and omitted
+from the request entirely. OpenAI's real API applies a sane default
+when that happens; Ollama does not, so it just generates until it
+exhausts context. Real bug in a third-party dependency, not something
+to patch in that dependency's own code — fixed at the Ollama layer
+instead by baking `PARAMETER num_predict 2048` into both Qwen ctx32k
+tags as a safety net (a client-set `max_tokens` still overrides this
+per normal Ollama precedence, so nothing that already caps its own
+tokens is affected). Also capped the CyberSecEval prompt set itself to
+100 (`mitre_frr_100.json`, first 100 of 750) given the overnight budget.
+
+## Autonomous overnight execution (2026-08-05)
+
+Operator will not stay at the machine overnight and does not want
+`this session's own liveness` (tied to VSCode staying open) to be a
+dependency for the rest of the Qwen battery. Sequencing was moved out
+of the interactive session and into two self-contained driver scripts,
+launched via `setsid nohup ... &; disown` so they survive both this
+session ending and any SSH/VSCode disconnect:
+
+- **`~/eval-harnesses/overnight-framework.sh`** (on `framework`) —
+  Qwen3.6-35B's GPQA → IFEval → ARC-AGI (capped 30/5min) → τ²-bench,
+  sequentially. Touches `~/eval-harnesses/FRAMEWORK_SEQUENCE_DONE` when
+  finished. Driver's own stdout/stderr: `overnight-framework-driver.log`;
+  each step logs to its usual `qwen36-35b_<step>.log`.
+- **`~/eval-harnesses/overnight-garuda.sh`** (on `garuda`) —
+  Qwen3-Coder-30B's remaining CyberSecEval → GAIA → AgentBench, then
+  the same three for Qwen3.6-35B (AgentBench's task server is started
+  once and reused across both models' runs rather than restarted).
+  Touches `GARUDA_CODER_DONE` after Coder's three, `GARUDA_ALL_DONE` at
+  the very end. Driver's own stdout/stderr:
+  `overnight-garuda-driver.log`; each step logs to its usual
+  `<model>_<step>.log`.
+
+Both scripts use `set -x` and `cd ... || exit 1` throughout (fail loud
+and stop rather than silently continue in the wrong directory
+unattended). Repo copies of both scripts are *not* committed — they're
+transient session tooling in `~/eval-harnesses/`, not project source;
+if this pattern proves durable it should move into
+`scripts/pentagi-test-harness/`-style tracked tooling later.
+
+**To check progress on a resumed session**: `ssh framework.gibbsgreatly.xyz`
+and check for `FRAMEWORK_SEQUENCE_DONE`; on `garuda`, check for
+`GARUDA_ALL_DONE`. Absence of either marker + a live `pgrep` for the
+driver script means still running; absence of the marker + no live
+process means it crashed partway — check the driver's own log first
+for a Python traceback or `cd` failure.
 
 **Operator directive (2026-08-05): fully autonomous from this point.**
 No more pausing between stages for confirmation — chain straight through
