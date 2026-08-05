@@ -399,7 +399,7 @@ rather than more hand-rolled scripts.
 | GPQA | Graduate-level reasoning (via lm-eval-harness) | `framework` |
 | IFEval | Instruction-following adherence (via lm-eval-harness) | `framework` |
 | τ²-bench (successor to tau-bench) | Multi-turn tool-agent-user interaction | `framework` |
-| ARC-AGI (`arc-agi-benchmarking`) | Abstract reasoning, contamination-resistant | `framework` |
+| ~~ARC-AGI (`arc-agi-benchmarking`)~~ | **Dropped from scope 2026-08-06** (operator call) — even frontier models score near-zero on ARC-AGI-2, not a useful differentiator between local models either; also the source of the real ctx163k/ctx147k degeneration bugs documented below, which is now moot since it's out of scope | ~~`framework`~~ |
 | SWE-rebench (`SWE-bench-fork`) | Real-repo issue-fix patches, Docker-executed test grading | `garuda` |
 | AgentBench | Multi-environment agent tasks (OS, DB, web, etc.) | `garuda` |
 | CyberSecEval (Meta PurpleLlama) | Security-specific: insecure-code gen, exploit capability | `garuda` |
