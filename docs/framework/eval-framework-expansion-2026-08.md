@@ -21,6 +21,31 @@ full size — cheap and valuable, not capped):
 τ²-bench/CyberSecEval run at a reasonable full/near-full scale — both
 are naturally fast (seconds per trial), not worth capping.
 
+**Operator directive (2026-08-05): fully autonomous from this point.**
+No more pausing between stages for confirmation — chain straight through
+the remaining plan (Qwen3-Coder-30B Tier 2/3, then Qwen3.6-35B Tier
+1-3), only stopping for a genuine blocker (permission-classifier denial,
+destructive/production action, or a decision only the operator can make
+— not routine config/sample-size choices already covered by this plan).
+
+### Qwen3-Coder-30B — Tier 1 final results (Ollama)
+
+| Test | Metric | Score |
+|---|---|---|
+| GPQA (198 q) | flexible-extract | 11.62% |
+| GPQA (198 q) | strict-match | 0.0% |
+| IFEval (541 q) | inst-level, loose | 88.01% |
+| IFEval (541 q) | inst-level, strict | 85.37% |
+| IFEval (541 q) | prompt-level, loose | 82.62% |
+| IFEval (541 q) | prompt-level, strict | 79.11% |
+| ARC-AGI-2 (30 attempted, 18 scored, capped) | accuracy | **0.00%** (0/18) |
+
+ARC-AGI's 0% reflects both genuine task difficulty (ARC-AGI-2 is hard
+even for frontier models) and the degenerate-output failure mode
+documented above, which affected an unquantified fraction of attempts.
+Not re-run at larger scale given the overnight time budget — treat this
+as a directional result, not a precise measurement.
+
 ## Runtime policy: Ollama only (2026-08-05, superseding earlier mixed policy)
 
 **`llamacpp-router` is stopped on `framework`.** Earlier in this phase the
