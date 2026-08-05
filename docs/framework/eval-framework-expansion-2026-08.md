@@ -85,25 +85,46 @@ by bypassing the harness and hitting Ollama directly:
   `eval-qwen3-coder-30b-a3b:q4_k_m-ctx147k` (`num_ctx=147456`) it also
   returned real, coherent (if rambling) text — not degenerate.
 
-**Conclusion: the `-ctx163k` tag specifically is broken** (likely a
-RoPE-scaling/extended-context misconfiguration baked into that
-Modelfile at build time — `num_ctx=163840` vs `147456`'s working value
-is the only difference in the Modelfile), not a general model or
-Ollama-runtime limitation. Switched both ARC-AGI's `models.yml` and
-AgentBench's `configs/agents/qwen3-coder-30b.yaml` from `-ctx163k` to
-`-ctx147k`. GPQA/IFEval's already-completed results are unaffected —
-their prompts are far too short to have hit this (single questions, not
-the 13k+ token grids/trajectories ARC-AGI/AgentBench produce) — so
-those are not being re-run. Any future framework needing a large-context
-Qwen3-Coder-30B tag on Ollama should use `-ctx147k`, not `-ctx163k`,
-until/unless the `-ctx163k` tag itself gets rebuilt and re-verified.
+**Revised conclusion, after further testing exposed the first fix as
+incomplete:** relaunching ARC-AGI's real battery on `-ctx147k` still
+failed 2/2 tasks (100%, all retries) — including a *small*, 3,179-token
+task, not just the huge outlier. Direct diagnostic requests isolated the
+real pattern:
 
-Also noted in passing: this tag's Modelfile has `TEMPLATE {{ .Prompt }}`
-— a bare passthrough template with no chat-role formatting baked in.
-Ollama's OpenAI-compat layer still applies its own chat templating on
-top of the `messages` array for API calls, so this didn't block GPQA/
-IFEval/the diagnosis above, but it's worth knowing this tag doesn't
-have a custom `TEMPLATE` doing anything special.
+| Tag | `num_ctx` | Generic filler text (18k tok) | Real ARC-AGI content (3.2k tok) |
+|---|---|---|---|
+| `-ctx163k` | 163840 | fails (100% `?`) | fails (100% `?`) |
+| `-ctx147k` | 147456 | **works** | fails (100% `?`) |
+| `-ctx32k` | 32768 | works | **works** (coherent, correct reasoning) |
+
+So it's not purely a length trigger — my first "control test" used
+generic repetitive filler text, which is far more forgiving than
+ARC-AGI's dense, structured grid content, and that masked the real
+problem on `-ctx147k`. Only `-ctx32k` — the sole clean power-of-2 value
+among the three tags — is reliable on real dense content. Working
+hypothesis: RoPE-scaling numerics for the two non-power-of-2 extended
+context sizes (147456 = 144×1024, 163840 = 160×1024) are unstable on
+information-dense input specifically, not just long input; `32768`
+(2¹⁵) doesn't hit the same instability. Not fully proven, but consistent
+with everything observed.
+
+**Practical fix: use `-ctx32k`.** Switched both ARC-AGI's `models.yml`
+and AgentBench's `configs/agents/qwen3-coder-30b.yaml` to
+`eval-qwen3-coder-30b-a3b:q4_k_m-ctx32k`. This means the rare
+oversized ARC-AGI-2 tasks (one seen at 69,454 tokens) will now fail
+cleanly with a prompt-too-long-style error instead of silently
+producing degenerate garbage scored as a wrong answer — an honest
+failure signal, acceptable for Tier 1. GPQA/IFEval's already-completed
+results are unaffected (prompts far too short to hit any of this) and
+are not being re-run. AgentBench's `os-std` transcripts could plausibly
+grow past 32k tokens over many tool-call turns — worth re-checking when
+Tier 3 actually runs, not assumed fixed by this change alone.
+
+Also noted in passing: all three tags' Modelfiles have
+`TEMPLATE {{ .Prompt }}` — a bare passthrough with no chat-role
+formatting baked in. Ollama's OpenAI-compat layer still applies its own
+chat templating on top of the `messages` array for API calls
+regardless, so this didn't block any of the diagnosis above.
 
 ## Context
 
