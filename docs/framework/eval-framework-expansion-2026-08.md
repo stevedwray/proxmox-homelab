@@ -2,6 +2,63 @@
 
 ## Status: harnesses in place — all 9 frameworks smoke-test-clean
 
+## Runtime policy: Ollama only (2026-08-05, superseding earlier mixed policy)
+
+**`llamacpp-router` is stopped on `framework`.** Earlier in this phase the
+runtime was mixed per-model (see the BFCL table below), on the theory that
+each model should use whichever runtime it scored best on. The operator
+overruled this: mixing runtimes within one comparison makes the
+comparison itself untrustworthy, since a runtime-driven quality/config
+difference can't be distinguished from a genuine model-capability
+difference. **All models in this project now run on Ollama
+(`http://framework.gibbsgreatly.xyz:11434`), no exceptions.**
+
+Consequence: every result recorded under the old mixed policy
+(Qwen3-Coder-30B's GPQA, IFEval, and AgentBench runs, all on llama.cpp)
+was deleted, not just superseded — see "Stale results cleared
+2026-08-05" below. All framework configs (`arc-agi-benchmarking`'s
+`models.yml`, AgentBench's `configs/agents/qwen3-coder-30b.yaml`) were
+rewritten from `localhost:8080`/llama.cpp model names to Ollama's
+`:11434` endpoint and Ollama tag names (e.g.
+`eval-qwen3-coder-30b-a3b:q4_k_m-ctx163k`). lm-eval-harness invocations
+(GPQA/IFEval) take `base_url` on the command line, not a config file, so
+those just get the new endpoint at launch time going forward.
+
+### Stale results cleared 2026-08-05
+
+- `~/eval-harnesses/results/qwen3-coder-30b/{gpqa,ifeval}` (framework) — deleted
+- `~/eval-harnesses/qwen3-coder-30b_{gpqa,ifeval,ifeval_retry}.log` (framework) — deleted
+- `~/eval-harnesses/AgentBench/outputs/2026-08-05-12-4{2,3}-*` (garuda) — deleted (the real 93.35s/episode llama.cpp result)
+
+The IFEval run that triggered this whole re-think crashed twice with a
+hard llama.cpp 500 (`"model produced output that does not match the
+expected peg-native format"` — Qwen3-Coder-30B briefly generating
+unrelated Kannada-script text, which llama.cpp's grammar-enforcing
+parser couldn't recover from). That crash plus the operator's
+independent, stronger observation that Laguna S 2.1 scored
+significantly better on Ollama than llama.cpp are what prompted
+abandoning llama.cpp for this project entirely, not just working around
+the crash.
+
+**The Laguna S 2.1 runtime gap, quantified (found 2026-08-05):** raw
+BFCL `simple`-category run logs and scores existed on `framework` in
+`~/bfcl-eval/venv/lib/python3.14/site-packages/{result,score}/` (BFCL's
+default output location — never copied into this repo, which is why an
+earlier repo-only doc search for this comparison came up empty) but were
+never folded into the table above. The real numbers:
+
+| Laguna S 2.1 config | Runtime | Accuracy | Time (400 cases) |
+|---|---|---|---|
+| `Laguna-S-2-1-UD-Q4-K-M-FC` | **llama.cpp** | **75.5%** (302/400) | 1:23:31 |
+| `Laguna-S-2-1-Ollama-FC` | Ollama | **92.75%** (371/400) | 51:23 |
+| `Laguna-S-2-1-Ollama-Ctx131k-FC` | Ollama (131k ctx) | **92.75%** (371/400) | 48:48 |
+
+17.25-point accuracy gap, and llama.cpp took nearly 2x as long. This is
+the hard data behind the runtime-policy change above, not just the
+operator's qualitative recollection. `Laguna-XS-2-1-Ollama-FC` also
+scored 90.0% (360/400) in this same log set, but has no llama.cpp
+counterpart — its runtime comparison remains genuinely untested.
+
 ## Context
 
 Follow-on to `docs/framework/model-quality-and-vuln-bench-2026-07-17.md`.
@@ -19,6 +76,7 @@ Leaderboard) bakeoff answered the tool-calling question for `framework`'s
 | Gemma4-26B | Ollama | 29m57s | 94.0% |
 | Laguna S 2.1 (131k ctx) | Ollama | 48m48s | 92.75% |
 | Laguna S 2.1 | Ollama | 51m23s | 92.75% |
+| Laguna S 2.1 | llama.cpp | 1h23m31s | 75.5% |
 | DavidAU Fable-Fusion | Ollama | killed at 43% (~1h39m elapsed, ~34s/it and still climbing) | not scored — killed, clearly not competitive on latency regardless of eventual accuracy |
 
 **Decision (2026-08-05): Qwen3-Coder-30B wins slot 2.** Highest accuracy
