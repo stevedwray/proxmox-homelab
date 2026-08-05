@@ -26,6 +26,17 @@ Leaderboard) bakeoff answered the tool-calling question for `framework`'s
 killed; its 34GB Ollama load was also unloaded. No PentAGI config has been
 changed as a result — that's a separate, deliberate step, not yet taken.
 
+**Runtime is per-model, not uniform.** The "Path" column above is mixed
+deliberately, not incidentally: Laguna (both XS and S 2.1) produced
+significantly better results on Ollama than on llama.cpp, so Ollama is
+Laguna's correct runtime going forward, including for this framework
+expansion's later phases (Laguna S 2.1's Tier 1 + SWE-rebench battery).
+Qwen3-Coder-30B, Qwen3.6-35B, and gpt-oss-120b ran on the llama.cpp
+router in both BFCL and this phase — no switch for those. Don't default
+every model in this project to llama.cpp just because it's `framework`'s
+primary intended runtime per `project-brief.md` — match each model to
+whichever runtime it actually scored well on.
+
 This document covers the next phase: broadening evaluation past BFCL's
 single-turn tool-calling focus into coding, agentic multi-step, reasoning,
 and security-specific benchmarks, using established third-party frameworks
