@@ -74,6 +74,94 @@ driver script means still running; absence of the marker + no live
 process means it crashed partway — check the driver's own log first
 for a Python traceback or `cd` failure.
 
+### Overnight run outcome (2026-08-06): budget blown ~2x, real bugs found
+
+The driver scripts did survive the session interruption exactly as
+designed — that part worked. But the run itself overshot the 13-hour
+ceiling badly (launched 2026-08-05 07:52, still running unintended work
+at 2026-08-06 07:57 — **~24 hours elapsed**) due to two independent bugs
+found only once real (non-capped-by-design) execution exposed them.
+Stopped all further autonomous runs once this was clear rather than
+risk compounding the overrun with an undiscovered third bug.
+
+**Bug 1 — `AGENTBENCH_SAMPLE_LIMIT` never applied.** The env var was
+exported right before launching the *assigner*, but `get_indices()`
+(the code that reads it) executes in the **task-server worker
+process**, which the driver script starts earlier — before that env
+var was ever set in its environment. The cap silently never took
+effect. Consequence: Qwen3-Coder-30B's AgentBench ran the full 800/800
+episodes (not the intended 15) — **took 7h25m instead of an intended
+~15min**. The result itself is genuinely valid (800/800 completed
+successfully, real data, just far more of it than intended). Qwen3.6-35B's
+AgentBench was still at 123/800 (~2h08m in, projecting ~14 more hours)
+when caught and killed — no usable result.
+
+**Bug 2 — Qwen3.6-35B needed a much larger token budget than assumed.**
+Confirmed via direct testing: this tag is a genuine reasoning model with
+a separate `reasoning` field distinct from `content` — even a trivial
+one-word-answer question burned 160 completion tokens, and a
+moderately complex question hit `finish_reason: length` at 2048 tokens
+with its `content` field cut off mid-sentence. The `num_predict=2048`
+safety net (sized for CyberSecEval's short prompts, and reasonable for
+Qwen3-Coder-30B which isn't nearly as verbose) starved Qwen3.6-35B of
+room to reach a parseable final answer on anything non-trivial. Bumped
+to `num_predict=8192` on the Ollama tag once found, but this was
+**not** re-run before stopping — every framework that used the old
+2048 cap (or, for τ²-bench, an even smaller explicit `max_tokens: 500`
+in the driver script itself) for Qwen3.6-35B produced compromised
+results:
+
+- **GPQA**: 0% (both metrics) — see Bug 2, not a real capability result
+- **IFEval**: ~15-18% across metrics — same
+- **ARC-AGI**: 0.00%, but "Average Prompt/Output/Total Tokens per Task:
+  0.0" across all 30 attempted/92 total attempts — essentially zero
+  real generations succeeded, pure infra failure, not a capability result
+- **τ²-bench**: 47/50 marked "Infra Errors", only 3 tasks actually
+  evaluated (0.33 avg reward on that tiny n=3) — not usable
+- **AgentBench**: killed at 123/800, likely also affected by its own
+  agent config's `max_tokens: 1024` cap — not usable
+
+**Bug 3 (separate, smaller) — GAIA never ran at all, either model.**
+The driver script's `run_gaia()` function never activated
+`smolagents`' venv (unlike `run_agentbench()`, which correctly does)
+— bare `python3` doesn't have the `smolagents` package installed,
+so both GAIA invocations crashed immediately with
+`ModuleNotFoundError: No module named 'smolagents'`. Zero GAIA data
+for either model tonight.
+
+**What's actually valid from tonight, in full:**
+
+| Test | Qwen3-Coder-30B | Qwen3.6-35B |
+|---|---|---|
+| GPQA | 11.62% flex / 0% strict ✅ | 0% / 0% — compromised, not real ❌ |
+| IFEval | 79-88% across metrics ✅ | 15-18% — compromised, not real ❌ |
+| ARC-AGI-2 | 0.00% (0/18 scored, real) ✅ | 0.00% (pure infra failure) ❌ |
+| τ²-bench (airline) | 0.46 avg reward, 50/50 evaluated ✅ | 0.33 avg reward, only 3/50 evaluated ❌ |
+| CyberSecEval (mitre-frr, 100) | 99% accept / 1% refusal ✅ | not yet run |
+| GAIA | crashed, 0 data ❌ | crashed, 0 data ❌ |
+| AgentBench (os-std) | 800/800 completed (real, just way over the intended 15-sample cap) ✅ | killed at 123/800, not usable ❌ |
+
+**Fixes already made, ready for a clean re-run:**
+- `AGENTBENCH_SAMPLE_LIMIT` needs to be exported *before* the task
+  server (`python -m src.start_task -a`) is launched, not just before
+  the assigner — the driver script needs restructuring, not just a
+  reorder of two lines in the same function.
+- Qwen3.6-35B's Ollama tag (`eval-qwen36-35b-a3b:q4_k_m-ctx32k`) now has
+  `num_predict=8192` (was 2048) — needs GPQA/IFEval/ARC-AGI re-run
+  against the fixed tag.
+- τ²-bench's driver invocation needs `max_tokens` raised well past 500
+  for Qwen3.6-35B specifically (its agent-llm-args, not the tag default).
+- AgentBench's `configs/agents/qwen36-35b.yaml` `max_tokens: 1024` likely
+  needs raising too, unverified.
+- `run_gaia()` in `overnight-garuda.sh` needs `source
+  ~/eval-harnesses/smolagents/.venv/bin/activate` (or wherever its venv
+  actually lives — not yet confirmed) added before invocation.
+
+**Not re-run tonight** — stopping here rather than risk a third
+undiscovered bug burning more unsupervised hours. Pending operator
+decision on whether/how to redo the compromised Qwen3.6-35B battery and
+both models' GAIA runs.
+
 **Operator directive (2026-08-05): fully autonomous from this point.**
 No more pausing between stages for confirmation — chain straight through
 the remaining plan (Qwen3-Coder-30B Tier 2/3, then Qwen3.6-35B Tier
