@@ -289,7 +289,7 @@ harness/grading side only):
 **Passed** — built the Docker image, ran the instance, `Instances
 resolved: 1`, 47.54s.
 
-### AgentBench — installed, connectivity smoke-tested successfully
+### AgentBench — full task-server + assigner pipeline working end-to-end
 
 Host: `garuda`, `~/eval-harnesses/AgentBench`, `uv` venv pinned Python 3.9
 (repo's own README explicitly recommends 3.9 for its pinned
@@ -327,12 +327,85 @@ echo "Say hello in one word." | .venv/bin/python -m src.client.agent_test \
 ```
 
 **Passed** — got back a clean `"Hello."` from `Llama-3.2-3B` through the
-custom `HTTPAgent` config, then exited on EOF as expected. Full
-task-server + assigner pipeline (the actual Docker-sandboxed os/db/web
-tasks) not yet attempted; AgentBench ships a **"Lite preset"**
-(`configs/start_task_lite.yaml` / `configs/assignments/lite.yaml`)
-explicitly for "laptops / limited RAM" that's the right next step now
-that basic connectivity is confirmed.
+custom `HTTPAgent` config, then exited on EOF as expected.
+
+**Full pipeline (2026-08-05): a genuine, significant upstream gap, resolved by switching to an older fork.**
+Building the real task-server + assigner pipeline (the actual
+Docker-sandboxed os/db/web tasks) surfaced something much bigger than
+version drift — **THUDM/AgentBench's `main` branch is missing its entire
+server-orchestration layer.** `src/start_task.py`,
+`src/server/task_controller.py`, `src/server/task_worker.py`, and
+`src/server/task.py` (defining the base `Session`/`Task` classes) don't
+exist anywhere in the repo, despite being referenced throughout the
+README, `docs/Entrance_en.md`, and even the "Lite suite" PR
+(`d1e4a10`, merge of #213) that added `configs/start_task_lite.yaml` —
+that PR's own new config files reference a `src.start_task` module that
+was already absent *before* the PR landed. Not a bug I introduced or a
+config issue — genuinely missing core infrastructure in the published
+repo.
+
+Found a fix rather than reconstructing this from scratch: **`Eugleo/agent-bench`**, a
+legitimate fork directly off `THUDM/AgentBench` (0 stars, personal fork,
+last pushed Feb 2024 — predates whatever later removed these files
+upstream) still has all four missing files, confirmed via GitHub's tree
+API before trusting it. Recovering just those 4 files onto our existing
+clone worked partway (`start_task.py` and `task_controller.py` ran) but
+then two more real gaps appeared:
+- `uvicorn`/`fastapi` were in `requirements.txt` but genuinely not
+  installed (reinstalling fixed it) — then a second issue: the fork's
+  `start_task.py` hardcodes bare `python` for subprocess spawning
+  (not `sys.executable`), so it needs the venv actually **activated**
+  (`source .venv/bin/activate`) rather than just invoked via its binary
+  path — otherwise subprocess workers resolve `python` from the wrong
+  PATH entry and miss the venv's packages entirely.
+- The real task implementations (`dbbench`, `os_interaction`, and every
+  other task type in this upstream checkout) import
+  `from agentrl.worker.environment import create_controller` — an
+  undocumented dependency not in `requirements.txt` at all. The PyPI
+  package literally named `agentrl` turned out to be a **completely
+  unrelated reinforcement-learning library** (submodules `agents`,
+  `common/buffers`, `common/policy_networks` — nothing resembling
+  `worker.environment`) — a name collision, not the real dependency,
+  which appears to be an internal/unpublished THUDM package.
+
+Given upstream's actual task implementations are unusable without an
+unpublished dependency, **switched entirely to the `Eugleo/agent-bench`
+fork** rather than continuing to patch a partially-broken tree — its
+`os_interaction/task.py` is self-contained (uses the `docker` package
+directly, no `agentrl`), and being a complete, internally-consistent
+snapshot is much lower-risk than cherry-picking further. Re-applied the
+Lite-preset-equivalent config (the fork predates that PR, so recreated
+`configs/assignments/framework.yaml` + a `qwen3-coder-30b` HTTPAgent
+config against its schema) and rebuilt the venv/Docker images.
+
+Two more small real bugs before it ran clean:
+- The controller hardcodes port 5000 internally (not configurable via
+  YAML) — same conflict as SearXNG's earlier port story, except this
+  time with `lxconsole`, a pre-existing unrelated container on `garuda`.
+  Confirmed via `docker ps` before doing anything, then patched every
+  hardcoded `5000` reference (`start_task.py`, `task_controller.py`,
+  `task_worker.py`, `src/client/task.py`'s default, and my own
+  definition file) to `5098` instead of touching the other service.
+- My own definition file initially had a stale `4000` (copied from an
+  unrelated value seen earlier) instead of the real default — my `sed`
+  replace targeting `5000` silently found nothing to change there. Fixed
+  by hand once the mismatch was traced.
+
+**Result: fully working.** Controller up, `os-std` worker registered
+with a successful heartbeat, assigner correctly dispatched real episodes
+to `qwen3-coder-30b`, and **sample #1 of the `os-std` task set completed
+cleanly in 93.35s** (sample #2 was underway when stopped). Confirmed
+clean shutdown after — no stray processes, sandbox container removed,
+`docker ps` showing only `garuda`'s own pre-existing unrelated services
+(`comfyui`, `lxconsole`).
+
+**Real scale note**: `os-std` alone has 800 episodes; at ~90-100s each
+with `--parallel 1` concurrency, a full run is ~20+ hours for a single
+model — nowhere near smoke-test scale. Patched `get_indices()` in
+`os_interaction/task.py` with an `AGENTBENCH_SAMPLE_LIMIT` env var
+(same pattern as GAIA's `GAIA_SMOKETEST_LIMIT`) so future real runs can
+be deliberately subsampled rather than accidentally kicking off a
+day-long run.
 
 ### CyberSecEval (Meta PurpleLlama) — installed and smoke-tested successfully
 
