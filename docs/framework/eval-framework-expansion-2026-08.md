@@ -497,10 +497,10 @@ rather than more hand-rolled scripts.
 | IFEval | Instruction-following adherence (via lm-eval-harness) | `framework` |
 | τ²-bench (successor to tau-bench) | Multi-turn tool-agent-user interaction | `framework` |
 | ~~ARC-AGI (`arc-agi-benchmarking`)~~ | **Dropped from scope 2026-08-06** (operator call) — even frontier models score near-zero on ARC-AGI-2, not a useful differentiator between local models either; also the source of the real ctx163k/ctx147k degeneration bugs documented below, which is now moot since it's out of scope | ~~`framework`~~ |
-| SWE-rebench (`SWE-bench-fork`) | Real-repo issue-fix patches, Docker-executed test grading | `garuda` |
+| ~~SWE-rebench (`SWE-bench-fork`)~~ | **Dropped from scope 2026-08-06** (operator call: "drop SWE-rebench for now") — model-inference wiring was never actually built; deferred, not abandoned, but off the active list | ~~`garuda`~~ |
 | AgentBench | Multi-environment agent tasks (OS, DB, web, etc.) | `garuda` |
 | CyberSecEval (Meta PurpleLlama) | Security-specific: insecure-code gen, exploit capability | `garuda` |
-| GAIA | Real-world multi-step tool-use + web search | `garuda` |
+| ~~GAIA~~ | **Dropped from scope 2026-08-06** (operator call) — never produced usable data for any model attempted (crashed both times on a venv bug); dropped rather than debugged further | ~~`garuda`~~ |
 
 ## Host-split rationale
 
@@ -1091,11 +1091,70 @@ tasks with real image content.
 
 ## Next steps
 
-1. SWE-rebench model-inference wiring.
-2. Optionally: patch GAIA's `visual_qa.py` to route image captioning
-   through the same `LiteLLMModel` abstraction as everything else, once
-   there's a genuinely vision-capable local candidate model to test it
-   with.
+1. ~~SWE-rebench model-inference wiring.~~ Dropped from scope 2026-08-06
+   (operator call: "drop SWE-rebench for now") — deferred, not abandoned.
+2. ~~Optionally: patch GAIA's `visual_qa.py`...~~ Moot — GAIA itself
+   dropped from scope 2026-08-06 (see below).
 3. Move from plumbing checks to real (small-`n`, then full) runs against
-   the actual slot-1/slot-2 candidate models across all 9 frameworks, not
-   just the 3B/Coder plumbing models used for setup verification.
+   the actual slot-1/slot-2 candidate models across all 9 frameworks —
+   superseded by the narrower active battery below (GAIA/ARC-AGI/
+   SWE-rebench all dropped).
+
+## Scope changes, 2026-08-06 (operator calls, all same session)
+
+- **GAIA dropped.** Never produced usable data for any model attempted
+  — crashed both times in the overnight run on a venv-activation bug.
+  That bug is fixed in `overnight-garuda.sh`'s `run_gaia()`, but rather
+  than spend more time on a framework that's produced zero real results
+  so far, it's off the active list.
+- **Laguna XS 2.1 dropped.** Operator: "it didn't get anywhere near good
+  enough results on the tests we did run" — its only real data point is
+  BFCL 90.0% (Ollama), the weakest of the models tested there, and not
+  worth carrying through the rest of the battery.
+- **SWE-rebench dropped for now.** Model-inference wiring was never
+  built (see "Open items" above); deferred rather than built out at this
+  point.
+- **Gemma4-26B confirmed in scope** — comparative battery, same shape as
+  the two Qwen models (GPQA/IFEval/τ²-bench/CyberSecEval/AgentBench).
+- **Active battery going forward, per model**: BFCL (already have real
+  Ollama numbers for every model below), GPQA, IFEval, τ²-bench,
+  CyberSecEval, AgentBench os-std (standardized `limit=100`/`seed=42`
+  sample for cross-model comparability).
+
+### Qwen3.6-35B re-run + Laguna S 2.1 comparative battery — launched 2026-08-06
+
+Two chained, fully-detached driver scripts (`setsid nohup ...; disown`,
+same survival pattern verified the previous night):
+
+- **`~/eval-harnesses/overnight-framework.sh`** (on `framework`) — two
+  parts in sequence:
+  1. Re-runs Qwen3.6-35B's GPQA/IFEval/τ²-bench against the fixed
+     `eval-qwen36-35b-a3b:q4_k_m-ctx32k` tag (`num_predict=8192`) — the
+     overnight run's numbers for these were infra-failure artifacts
+     (see "Overnight run outcome" above), this produces the first real
+     data for them. Touches `QWEN36_RERUN_DONE`.
+  2. Stops the two Qwen Ollama models (frees ~43GB; `eval-llama-3.2-3b`
+     deliberately stays resident — small, and needed again immediately
+     as τ²-bench's user-simulator LLM), loads the new
+     `eval-laguna-s2-1:q4_k_m-ctx131k` tag (created 2026-08-06, reuses
+     the existing 73GB blob from `laguna-s-2.1:q4_k_m-ctx131k`, adds a
+     `num_predict=8192` safety net that tag never had — same fix class
+     as the Qwen3.6-35B CyberSecEval/GPQA bug), warms it with a polled
+     curl probe before handing it to any harness, then runs
+     GPQA/IFEval/τ²-bench for Laguna S 2.1. Touches
+     `LAGUNA_FRAMEWORK_DONE` then `FRAMEWORK_SEQUENCE_DONE`.
+- **`~/eval-harnesses/overnight-garuda-laguna.sh`** (on `garuda`) —
+  polls `framework` over ssh for `LAGUNA_FRAMEWORK_DONE` (up to ~5h,
+  30s interval) so AgentBench traffic doesn't hit Laguna S 2.1 before
+  it's loaded and warm, then runs its `os-std` battery on the same
+  standardized `limit=100`/`seed=42` sample used for the Qwen
+  comparison (new configs: `configs/agents/laguna-s2-1.yaml`,
+  `configs/assignments/{definition-,}framework-laguna-s21.yaml`).
+  Touches `GARUDA_LAGUNA_DONE`.
+
+**Resuming after these finish**: check for `FRAMEWORK_SEQUENCE_DONE`
+and `GARUDA_LAGUNA_DONE`; read `qwen36-35b_{gpqa,ifeval,tau2}_rerun.log`
+and `laguna-s21_{gpqa,ifeval,tau2}.log` on `framework`, and
+`laguna-s21_agentbench.log` / its `outputs/<timestamp>/laguna-s2-1/
+os-std/overall.json` on `garuda`, then fold real numbers into the
+tables above and the BFCL comparison table.
