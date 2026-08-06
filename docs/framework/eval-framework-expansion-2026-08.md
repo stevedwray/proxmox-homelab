@@ -1319,11 +1319,46 @@ is waiting on. The original `~/eval-harnesses/recover-qwen36-ifeval.sh`
 and `~/eval-harnesses/overnight-garuda-laguna.sh` (which were polling
 for markers this new flow no longer produces) were killed as stale.
 
-**Resuming after these finish**: check for `QWEN36_FULL_RERUN_DONE` and
-`INTERCEPTED_BEFORE_LAGUNA` on `framework`, and `LAGUNA_TIER1_DONE` /
-`LAGUNA_BATTERY_DONE` on `192.168.1.27`; read
-`qwen36-35b_{gpqa,tau2}_rerun.log` and `qwen36-35b_ifeval_rerun2.log` on
-`framework`, and `laguna-s21_{gpqa,ifeval,tau2,agentbench}.log` /
+**Real bug (2026-08-06): the interceptor's own poll loop timed out and
+raced the thing it was built to prevent.** `intercept-before-laguna.sh`'s
+`for _ in $(seq 1 5000); do ...; sleep 2; done` caps its own wait at
+5000×2s ≈ 2h47m — but τ²-bench's rerun (the very last step of Part 1)
+took ~3h20m in practice. The loop exhausted its iteration budget and
+fell through to the post-loop IFEval-recovery code *without* ever
+detecting `QWEN36_RERUN_DONE`, killing the main script, or touching
+`INTERCEPTED_BEFORE_LAGUNA` — so when `overnight-framework.sh` finished
+Part 1 for real ~15 minutes later, nothing stopped it from proceeding
+into Part 2 on its own: it stopped both Qwen models and started loading
+Laguna S 2.1 itself, *while* the interceptor's now-stale fallback was
+simultaneously trying to run IFEval against the Qwen tag it had just
+unloaded. Caught via the "status?" check that showed `ollama ps` missing
+Coder and the IFEval log stuck against a model no longer resident.
+Resolved by killing all four processes involved (`overnight-framework.sh`,
+`intercept-before-laguna.sh`, the orphaned IFEval `lm_eval` call, and a
+leftover `llama-server` subprocess `ollama serve` had already spawned
+mid-load) and reassessing from a clean read of actual state — Laguna S
+2.1 turned out to already be genuinely loaded and warm (a harmless
+side-effect of the race, not wasted), so rather than unwind that, a
+simplified `laguna-battery-v2.sh` (no wait-for-marker, no model-stop
+step — those preconditions were already true) was launched directly
+from `192.168.1.27` against the already-warm model, and Qwen3.6-35B's
+IFEval recovery was relaunched separately and directly on `framework`
+(confirmed 43Gi available with both 73GB Laguna and a reloaded 22GB
+Qwen3.6-35B resident simultaneously — unified memory has the headroom,
+no need to serialize the two). Stale scripts (`intercept-before-laguna.sh`,
+`recover-qwen36-ifeval.sh`, the original `laguna-battery.sh` v1) deleted
+on both hosts. Lesson for any future poll-loop-with-timeout: size the
+timeout with real margin above the measured/estimated wait, or better,
+make it unbounded (`while true`) when there's no independent reason to
+ever give up — a timeout that's shorter than the thing it's waiting for
+is worse than no timeout at all, since it fails silently into exactly
+the race it existed to prevent.
+
+**Resuming after these finish**: check for `LAGUNA_TIER1_DONE` /
+`LAGUNA_BATTERY_DONE` on `192.168.1.27`, and the IFEval recovery log on
+`framework`; read `qwen36-35b_{gpqa,tau2}_rerun.log` and
+`qwen36-35b_ifeval_rerun2.log` on `framework`, and
+`laguna-s21_{gpqa,ifeval,tau2,agentbench}.log` /
 `AgentBench/outputs/<timestamp>/laguna-s2-1/os-std/overall.json` on
 `192.168.1.27`, then fold real numbers into the tables above and the
 BFCL comparison table.
