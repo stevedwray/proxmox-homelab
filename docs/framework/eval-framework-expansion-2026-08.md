@@ -1152,6 +1152,22 @@ same survival pattern verified the previous night):
   `configs/assignments/{definition-,}framework-laguna-s21.yaml`).
   Touches `GARUDA_LAGUNA_DONE`.
 
+**Real bug hit mid-run (2026-08-06): transient `nltk` CWE-427 import-hook
+false positive crashed the first IFEval rerun attempt.** `nltk`'s
+`inisec.py` (a legitimate upstream security hook blocking module
+hijacking from CWD) intermittently raised `ImportError: Blocked import
+of regex from current working directory` while `lm_eval` dynamically
+loaded `ifeval/utils.py`. Confirmed transient, not a real CWD-shadowing
+issue: the identical command (`import nltk`, the exact
+`lm_eval.tasks.ifeval.instructions_registry` import chain, and the full
+`lm_eval run --tasks ifeval` invocation) all succeeded cleanly on manual
+retry seconds later. The driver script had no `|| exit` after this
+step, so it survived and moved on to τ²-bench — GPQA and τ²-bench were
+unaffected. Recovery: `~/eval-harnesses/recover-qwen36-ifeval.sh`,
+polling for `FRAMEWORK_SEQUENCE_DONE` (so it doesn't race the main
+script's own model-unload/Laguna-load transition) then re-running just
+IFEval, output to `ifeval-rerun2`, `QWEN36_IFEVAL_RECOVERY_DONE` marker.
+
 **Resuming after these finish**: check for `FRAMEWORK_SEQUENCE_DONE`
 and `GARUDA_LAGUNA_DONE`; read `qwen36-35b_{gpqa,ifeval,tau2}_rerun.log`
 and `laguna-s21_{gpqa,ifeval,tau2}.log` on `framework`, and
