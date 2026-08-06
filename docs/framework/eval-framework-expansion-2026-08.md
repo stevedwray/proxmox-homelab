@@ -169,6 +169,18 @@ completed" which only means no crash): **27% (216/800 pass, 76.9%
 ran-to-completion, 16.4% invalid/malformed actions, 6.75% ran out of
 turns)**.
 
+**Scope correction (2026-08-06, see the "os-std scope correction" note
+under the RX 9070 XT section below for full detail)**: this 800-task
+os-std set is not general multi-category OS-interaction — the active
+task config in this fork only exercises 14 ordinary sysadmin-style
+tasks replayed with the environment's tool output laced with injected
+adversarial content (660/800 have `injection_present: true`). Read
+every "AgentBench 27%/22%/24%" figure in this doc as "task completion
+under adversarial tool-output content," which if anything is a more
+demanding, more pentesting-relevant test than plain os-std would have
+been — not a weaker one — but it's not measuring what the original
+"Frameworks in scope" table description implied.
+
 **Strong, confirmed**: BFCL tool-calling (96.25%, fastest — already won
 `framework`'s slot-2 role), IFEval (79-88%, reliable structured output),
 CyberSecEval mitre-frr (99% accept/1% refuse — low friction in a
@@ -234,6 +246,9 @@ this one is real capability data, not an infra-failure artifact.
 | Qwen3-Coder-30B | 24/100 | 24% | full-800 baseline, seed=42/limit=100 subsample |
 | Qwen3.6-35B | 22/100 | 22% | clean run, token-budget fixes applied |
 
+(Same os-std scope-correction note as above applies: this is task
+completion under adversarial/injected tool-output content, not generic
+multi-category OS interaction — see the RX 9070 XT section below.)
 Essentially tied (within noise at n=100) — Qwen3.6-35B is **not** a
 meaningfully better fit for sustained multi-step OS-interaction agentic
 tasks despite being the larger/newer model. Its validation breakdown
@@ -448,15 +463,36 @@ anything tested on `framework` itself so far. Same caution as the BFCL
 pilot above: small-`n`, not a leaderboard score, informative direction
 only.
 
-**AgentBench os-std here is a different, narrower benchmark than the
-framework-side comparison above** — `AgentBench-rx9070xt/configs/tasks/os.yaml`
-has categories 1/2/3/5/6/7 commented out, leaving only the
-`prompt_injection` subset active (confirmed by reading the file directly,
-not assumed). So these numbers measure prompt-injection resistance
-specifically, not general OS-interaction capability — **do not
-compare directly against Qwen3.6-35B's 22/100 or Coder's 24/100** from
-the main `limit=100/seed=42` os-std comparison earlier in this doc; that
-drew from all 7 categories.
+**Correction (2026-08-06, superseding an earlier mistake in this doc):**
+originally wrote that this pilot's os-std was "different, narrower" than
+the main framework-side comparison and not comparable to it. That was
+wrong — checked directly this pass: `~/eval-harnesses/AgentBench`'s own
+`configs/tasks/os.yaml` (the one behind Qwen3.6-35B's 22/100 and Coder's
+24/100 numbers) has the *identical* categories 1/2/3/5/6/7 commented
+out, leaving only `data/os_interaction/data/prompt_injection/experiments.json`
+active — this isn't specific to the RX 9070 XT copy, it's baked into the
+`Eugleo/agent-bench` fork itself (confirmed via `git diff HEAD` showing
+no local edit to this file) and has been the active os-std definition
+for every AgentBench number in this entire project, including Coder's
+original 27%/800 run. So **these RX 9070 XT numbers and the main
+Qwen3.6-35B/Coder comparison numbers are on the same scope after all** —
+directly comparable, not a different benchmark.
+
+What that scope actually is, checked directly against the 800-entry
+`experiments.json`: 14 real, ordinary OS-interaction task templates
+(`check-weather`, `recent-file`, `exec-permissions`, `count-files`,
+`parse-matrix`, etc. — genuinely representative everyday sysadmin-style
+tasks, not synthetic injection puzzles), each replayed up to 70 times
+with the environment's own tool output laced with injected adversarial
+content (`injection_present: true` for 660/800; 140 are clean
+no-injection controls). So "os-std" throughout this project has been
+measuring **task completion under adversarial tool-output content**, not
+generic multi-category OS capability — arguably a *more* relevant test
+for a pentesting-adjacent agent (which will read untrusted scan/log/web
+output) than the plain multi-category os-std the "Frameworks in scope"
+table originally implied, but it does mean every "AgentBench 27%" /
+"22/100" / "24/100" reference elsewhere in this doc should be read as
+"under this injection-augmented task suite," not "general OS-interaction."
 
 | Test | Model | Runtime | Result | Notes |
 |---|---|---|---|---|
@@ -554,7 +590,7 @@ rather than more hand-rolled scripts.
 | τ²-bench (successor to tau-bench) | Multi-turn tool-agent-user interaction | `framework` |
 | ~~ARC-AGI (`arc-agi-benchmarking`)~~ | **Dropped from scope 2026-08-06** (operator call) — even frontier models score near-zero on ARC-AGI-2, not a useful differentiator between local models either; also the source of the real ctx163k/ctx147k degeneration bugs documented below, which is now moot since it's out of scope | ~~`framework`~~ |
 | ~~SWE-rebench (`SWE-bench-fork`)~~ | **Dropped from scope 2026-08-06** (operator call: "drop SWE-rebench for now") — model-inference wiring was never actually built; deferred, not abandoned, but off the active list | ~~`garuda`~~ |
-| AgentBench | Multi-environment agent tasks (OS, DB, web, etc.) | `garuda` |
+| AgentBench | In practice, only `os-std` has been run, and its active task config is narrower than the framework name suggests — see the "os-std scope correction" note below | `garuda` |
 | CyberSecEval (Meta PurpleLlama) | Security-specific: insecure-code gen, exploit capability | `garuda` |
 | ~~GAIA~~ | **Dropped from scope 2026-08-06** (operator call) — never produced usable data for any model attempted (crashed both times on a venv bug); dropped rather than debugged further | ~~`garuda`~~ |
 
