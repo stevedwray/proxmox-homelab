@@ -1362,3 +1362,61 @@ the race it existed to prevent.
 `AgentBench/outputs/<timestamp>/laguna-s2-1/os-std/overall.json` on
 `192.168.1.27`, then fold real numbers into the tables above and the
 BFCL comparison table.
+
+### Real OOM crash, root cause, and recovery plan (2026-08-07)
+
+The "43Gi available, safe to run in parallel" decision above was wrong
+in a way that took hours to surface. My `kill -9` on the stuck
+`llama-server` during the race above didn't actually take — that PID
+kept running and leaked to **97.7GB virtual memory over ~8 hours**,
+until a cascading OOM at 16:04 UTC killed processes in a 22-minute
+death spiral (`llama-server` and `python3` repeatedly killed and
+auto-respawned by `ollama serve`, immediately killed again) and left
+the box swap-thrashing unresponsive — SSH actively resetting
+connections, not just hanging, journald itself running ~29 minutes
+behind real time near the end. Operator power-cycled it.
+
+**Lesson**: after any emergency process kill, verify it's actually gone
+via a repeated check over time (RSS/VSZ growth, or `ollama ps` polled
+more than once), not a single follow-up read — a process can look
+"replaced" (new PID pattern matches, fresh-looking `ollama ps` entry)
+while the old one is still alive and leaking in the background.
+
+**Corruption assessment**: Laguna S 2.1's GPQA (ran 08:00-08:54, early
+in the leak) and IFEval (ran 08:54-16:03 — the *entire* leak-accumulation
+window, ending at the literal onset of the crash) are being treated as
+unreliable and redone fresh. Not conclusively proven corrupted (IFEval's
+per-request pacing didn't show an obvious monotonic collapse — 541
+examples at a fairly consistent 30-80s/it, consistent with genuine
+model slowness rather than escalating degradation) but the timeline
+overlap with an actively-growing leak is real enough not to trust the
+0%/0% GPQA and the IFEval numbers as clean data. Qwen3.6-35B's GPQA and
+τ²-bench reruns both predate the leak's start (~07:58 UTC) entirely and
+are treated as clean — no redo needed for those.
+
+**Sequencing (operator decision 2026-08-07)**: Qwen3.6-35B's IFEval
+(moved to run from `192.168.1.27` instead of `framework` directly, per
+operator request to continue moving all orchestration off both
+`framework` and `garuda`) → **Gemma4-26B's full battery**, slotted in
+here per operator request, also from the LXC → operator reboots
+`framework` → Laguna S 2.1's full battery redone fresh from the LXC
+(GPQA + IFEval genuinely redone; τ²-bench/AgentBench run clean from
+scratch rather than continuing anything that spanned the crash).
+
+New tag: `eval-gemma4-26b:q4-ctx32k` (`num_ctx=32768`,
+`num_predict=8192` — same safety-net convention as every other model in
+this project). New AgentBench configs: `configs/agents/gemma4-26b.yaml`,
+`configs/assignments/{definition-,}gemma4-26b.yaml`. Its driver
+(`~/eval-harnesses/gemma4-battery.sh` on `192.168.1.27`) waits for
+Qwen3.6-35B's IFEval completion marker, then **explicitly stops
+Qwen3.6-35B and polls `ollama ps` in a loop to verify it's actually
+unloaded** before proceeding — a direct fix for the exact failure class
+above, not just a fire-and-forget `ollama stop`.
+
+**Also caught mid-flight**: a τ²-bench client process (same PID from
+before the crash) survived a `pkill -f 'tau2 run'` call and silently
+reloaded Laguna behind the scenes while memory was being freed for
+Qwen3.6-35B's IFEval — pattern-based `pkill` is not fully reliable; had
+to find and kill it by exact PID. Prefer PID-based kills when precision
+matters, or verify the pattern-based kill actually worked before trusting
+it.
