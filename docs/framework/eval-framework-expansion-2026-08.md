@@ -1260,9 +1260,70 @@ polling for `FRAMEWORK_SEQUENCE_DONE` (so it doesn't race the main
 script's own model-unload/Laguna-load transition) then re-running just
 IFEval, output to `ifeval-rerun2`, `QWEN36_IFEVAL_RECOVERY_DONE` marker.
 
-**Resuming after these finish**: check for `FRAMEWORK_SEQUENCE_DONE`
-and `GARUDA_LAGUNA_DONE`; read `qwen36-35b_{gpqa,ifeval,tau2}_rerun.log`
-and `laguna-s21_{gpqa,ifeval,tau2}.log` on `framework`, and
-`laguna-s21_agentbench.log` / its `outputs/<timestamp>/laguna-s2-1/
-os-std/overall.json` on `garuda`, then fold real numbers into the
-tables above and the BFCL comparison table.
+**Superseded 2026-08-06, same session: Laguna S 2.1's battery moved off
+`overnight-framework.sh`/`garuda` entirely, onto a new dedicated
+eval-harness box.** Before Laguna's Part 2 actually launched, the
+operator asked to re-architect: a legacy, disposable LXC at
+`192.168.1.27` ("ai-stack", Debian 13, root SSH) exists specifically to
+take this off both `framework`'s own driver script and the operator's
+own workstation (`garuda`) for long-running batteries going forward.
+Rationale, confirmed by the numbers: τ²-bench alone was averaging
+~8 min/episode for Qwen3.6-35B, and Laguna S 2.1 is ~3x slower per-call
+per the existing BFCL timing data — running its full GPQA/IFEval/
+τ²-bench/AgentBench battery the same way could easily have run another
+10-20+ hours on top of what was already elapsed, repeating the earlier
+budget blowout.
+
+**192.168.1.27 setup**: 2 CPU / 2GB RAM / 100GB disk (ZFS `gaming` pool
+— a separate, personal Proxmox host, not tracked in this repo's
+Terraform). Had 8 already-running legacy Docker containers (n8n,
+searxng, postgres, litellm, redis, flowise, qdrant, anythingllm — up
+30h) eating most of the 2GB; operator stopped them (`docker stop`, not
+removed) to free ~1.9GB, and is bumping the LXC's own RAM allocation
+directly via Proxmox. Installed `python3.13-venv`, `docker.io`, `rsync`,
+`uv`. Synced `AgentBench` (from `garuda`, `Eugleo/agent-bench` fork,
+already carries the `AGENTBENCH_SAMPLE_SEED` patch) and `tau2-bench`
+(from `framework`) via `rsync`, rebuilt venvs fresh on-box (`uv venv
+--python 3.9` for AgentBench per its pinned old dependency set, `--python
+3.12` for τ²-bench and a new `venv-lmeval` for `lm_eval[api]`). Copied
+`framework`'s HF token to `~/.cache/huggingface/token` (needed for
+GPQA's gated dataset) — this specific step was blocked by the session's
+auto-mode classifier as credential-handling and done manually by the
+operator instead. Set up bidirectional SSH key auth between
+`192.168.1.27` and `framework` (new `ed25519` keypair, added to
+`framework:~/.ssh/authorized_keys`) so the driver script can poll and
+issue `ollama stop`/warm-up commands remotely. New AgentBench configs:
+`configs/agents/laguna-s2-1.yaml` (points at `192.168.1.8:11434`,
+`framework`'s LAN IP — the `framework` hostname alias only exists in
+`garuda`'s own SSH config, not on the LXC), `configs/assignments/
+{definition-,}laguna-s21.yaml`.
+
+**`~/eval-harnesses/laguna-battery.sh`** (on `192.168.1.27`, launched
+2026-08-06): polls `framework` over SSH for `QWEN36_FULL_RERUN_DONE`
+(so it doesn't touch model residency while the Qwen3.6-35B rerun is
+still using the GPU), then stops the Qwen Ollama models, warms
+`eval-laguna-s2-1:q4_k_m-ctx131k`, and runs GPQA → IFEval → τ²-bench →
+AgentBench os-std (`limit=100`/`seed=42`, same standardized sample as
+the Qwen comparison) sequentially, all as HTTP calls against
+`framework:11434` — no inference happens on the LXC itself. Touches
+`LAGUNA_TIER1_DONE` after τ²-bench, `LAGUNA_BATTERY_DONE` at the end.
+
+**On `framework` itself**, a matching interceptor —
+`~/eval-harnesses/intercept-before-laguna.sh` — was launched to poll for
+`QWEN36_RERUN_DONE` and kill the original `overnight-framework.sh`
+process *before* it could reach its own Part 2 (which would otherwise
+race the new LXC-driven Part 2 for the same Ollama model-swap). It then
+runs the IFEval recovery itself (the `nltk` transient-crash step above)
+and touches `QWEN36_FULL_RERUN_DONE` — the signal `laguna-battery.sh`
+is waiting on. The original `~/eval-harnesses/recover-qwen36-ifeval.sh`
+and `~/eval-harnesses/overnight-garuda-laguna.sh` (which were polling
+for markers this new flow no longer produces) were killed as stale.
+
+**Resuming after these finish**: check for `QWEN36_FULL_RERUN_DONE` and
+`INTERCEPTED_BEFORE_LAGUNA` on `framework`, and `LAGUNA_TIER1_DONE` /
+`LAGUNA_BATTERY_DONE` on `192.168.1.27`; read
+`qwen36-35b_{gpqa,tau2}_rerun.log` and `qwen36-35b_ifeval_rerun2.log` on
+`framework`, and `laguna-s21_{gpqa,ifeval,tau2,agentbench}.log` /
+`AgentBench/outputs/<timestamp>/laguna-s2-1/os-std/overall.json` on
+`192.168.1.27`, then fold real numbers into the tables above and the
+BFCL comparison table.
