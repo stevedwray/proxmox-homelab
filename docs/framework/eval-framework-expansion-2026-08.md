@@ -439,6 +439,62 @@ The isolated config/assignment sources live under ignored
 runtime tooling under `~/eval-harnesses/`, consistent with the existing
 AgentBench setup.
 
+### RX 9070 XT pilot results: Ollama/ROCm vs llama.cpp/Vulkan (2026-08-06)
+
+Operator ran both models against the RX 9070 XT (16GB) directly, across
+two runtimes, to see what a single consumer-class 16GB card can offer for
+`framework`'s "slot 2" role — a smaller/cheaper candidate class than
+anything tested on `framework` itself so far. Same caution as the BFCL
+pilot above: small-`n`, not a leaderboard score, informative direction
+only.
+
+**AgentBench os-std here is a different, narrower benchmark than the
+framework-side comparison above** — `AgentBench-rx9070xt/configs/tasks/os.yaml`
+has categories 1/2/3/5/6/7 commented out, leaving only the
+`prompt_injection` subset active (confirmed by reading the file directly,
+not assumed). So these numbers measure prompt-injection resistance
+specifically, not general OS-interaction capability — **do not
+compare directly against Qwen3.6-35B's 22/100 or Coder's 24/100** from
+the main `limit=100/seed=42` os-std comparison earlier in this doc; that
+drew from all 7 categories.
+
+| Test | Model | Runtime | Result | Notes |
+|---|---|---|---|---|
+| BFCL `simple` (20-case pilot) | Qwen3.6-35B `UD-Q4_K_M` | Ollama/ROCm | **20/20 (100%)** | 11.7s mean/case |
+| BFCL `simple` (20-case pilot) | KAT-Coder-V2.5-Dev `Q4_K_M` | Ollama/ROCm | **19/20 (95%)** | 1 failure: answered in prose instead of calling the tool |
+| BFCL `simple` (20-case pilot) | either model | llama.cpp/Vulkan | not run | no Vulkan BFCL data exists yet |
+| AgentBench os-std (`prompt_injection` only, n=10, seed=9070) | Qwen3.6-35B | Ollama/ROCm | **3/10 (30%)**, repeat run **1/10 (10%)** | same config both times — real run-to-run variance at this n, not a config change |
+| AgentBench os-std (`prompt_injection` only, n=10, seed=9070) | Qwen3.6-35B | llama.cpp/Vulkan | **2/10 (20%)** | single run |
+| AgentBench os-std (`prompt_injection` only, n=10, seed=9070) | KAT-Coder-V2.5-Dev | Ollama/ROCm | **4/10 (40%)** | 1 earlier attempt crashed (`AGENT_FAILED`, service still warming up) |
+| AgentBench os-std (`prompt_injection` only, n=10, seed=9070) | KAT-Coder-V2.5-Dev | llama.cpp/Vulkan | **3/10 (30%)** | 4 earlier attempts crashed the same way before this one completed |
+
+**Reading this honestly**: n=10 is too small to call a runtime winner —
+ROCm and Vulkan land within a task or two of each other for both models,
+and Qwen3.6-35B's own ROCm repeat (30%→10%) swung further than the
+ROCm/Vulkan gap did. KAT-Coder edges Qwen3.6-35B on both runtimes here,
+loosely consistent with its narrower BFCL gap (95% vs 100%). The
+repeated crash-then-succeed pattern on both Vulkan attempts (especially
+KAT-Coder's 4 failed launches) suggests the Vulkan backend or the
+loopback service needs a longer warm-up/retry window before its results
+should be trusted at face value — a service-readiness artifact, not
+necessarily a capability signal.
+
+**Plan to flesh this out** (not started): the framework-side project
+converged on Ollama-only specifically because mixing runtimes made
+comparisons untrustworthy (see "Runtime policy" above) — the same logic
+applies here once this pilot moves past exploratory status. Before
+treating RX 9070 XT numbers as comparable to `framework`'s Qwen3.6-35B/
+Coder results: (1) re-run AgentBench os-std here against the full
+7-category task set (uncomment categories 1/2/3/5/6/7 in
+`AgentBench-rx9070xt/configs/tasks/os.yaml`) on the standardized
+`limit=100/seed=42` sample, matching the main harness's methodology
+exactly; (2) run a real BFCL pass on Vulkan to fill that gap; (3) pick
+one runtime for this card the same deliberate way `framework` picked
+Ollama, rather than carrying both forward; (4) once numbers are
+genuinely comparable, decide whether a 16GB RX 9070 XT is a viable
+*cheaper* "slot 2" host alongside or instead of `framework`'s own GPU —
+that's the real question motivating this pilot.
+
 ## Context
 
 Follow-on to `docs/framework/model-quality-and-vuln-bench-2026-07-17.md`.
