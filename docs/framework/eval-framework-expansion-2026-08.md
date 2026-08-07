@@ -1627,3 +1627,42 @@ token cap during the warmup probe). Its `eval-gemma4-26b:q4-ctx32k` tag
 already carries the `num_predict=8192` safety net that fixed this for
 Qwen3.6-35B; watching the real GPQA/IFEval/AgentBench results for
 truncation regardless, not assuming the tag alone guarantees it's fine.
+
+### Fully autonomous overnight pipeline (2026-08-07): Gemma4-26B → reboot → Laguna S 2.1 redo
+
+Operator will be asleep, so the reboot step needed to be automatic
+rather than requiring a manual trigger as it did earlier. Confirmed
+`steve` has `NOPASSWD:ALL` sudo on `framework` (`sudo -n -l`) — the
+earlier "no passwordless sudo" read in this doc was wrong, caused by
+testing with `sudo -n reboot --dry-run` (an invalid flag for `reboot`
+itself, not a permission failure).
+
+**`~/eval-harnesses/laguna-redo-full-pipeline.sh`** (launched on
+`192.168.1.27`):
+1. Waits for `GEMMA4_BATTERY_DONE`.
+2. `sudo reboot`s `framework`.
+3. Verifies the reboot actually happened, robustly — not just "ssh
+   works again = good," which could mask a network blip that never
+   really took the box down, or a half-booted state. Confirms **down**
+   (repeated failed pings, not a single one) before waiting for **up**
+   (ping *and* SSH *and* `/proc/uptime` under 10 minutes — a genuinely
+   fresh boot). If this doesn't resolve within ~20 minutes, it aborts
+   cleanly with `LAGUNA_REDO_ABORTED_REBOOT_FAILED` rather than
+   pressing on into an uncertain state unattended overnight.
+4. Runs Laguna S 2.1's full battery fresh: GPQA and IFEval **redone**
+   (the originals overlapped the OOM leak window), τ²-bench and
+   AgentBench as genuinely clean first runs (τ²-bench's earlier attempt
+   spanned the crash; AgentBench never got a clean run for Laguna at
+   all). Markers: `LAGUNA_REDO_TIER1_DONE`, `LAGUNA_REDO_BATTERY_DONE`.
+
+**Real ETA math, computed not guessed (2026-08-07, ~16:24 local)**:
+Gemma4-26B had ~6-8h remaining at launch time (τ²-bench pace measured
+at ~5.97min/episode, AgentBench estimated from Qwen3.6-35B's comparable
+100-sample run). Laguna's redo, extrapolating from its established
+~2-3x slowness vs Qwen3.6-35B on GPQA/IFEval pacing: GPQA ~1h, IFEval
+4-7h, τ²-bench 4-10h, AgentBench (no prior Laguna data, extrapolated)
+4-8h — **13-26h total**, wide because most of it is extrapolated
+rather than measured. Combined queue: roughly **20-34h** from launch,
+likely spanning into the next day. Laguna was always flagged in the
+original plan as the "big, slow, overnight-scale" step — this isn't a
+surprise, just now quantified honestly rather than left vague.
