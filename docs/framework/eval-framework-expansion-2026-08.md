@@ -1666,3 +1666,53 @@ rather than measured. Combined queue: roughly **20-34h** from launch,
 likely spanning into the next day. Laguna was always flagged in the
 original plan as the "big, slow, overnight-scale" step — this isn't a
 surprise, just now quantified honestly rather than left vague.
+
+### Scope change + third pipeline stage added (2026-08-07): gpt-oss-120b/DavidAU dropped, Gemma 4 26B-A4B QAT Q4_0 queued as a slot-2 challenger
+
+Operator dropped the conditional gpt-oss-120b/DavidAU tail entirely
+("Remove gpt-oss and davidau") — not deprioritized, gone. In its place:
+**Gemma 4 26B-A4B official QAT Q4_0**
+([`google/gemma-4-26B-A4B-it-qat-q4_0-gguf`](https://huggingface.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf)),
+queued as a direct slot-2 challenger to Qwen3-Coder-30B-A3B, chained
+after Laguna S 2.1's redo.
+
+**Why this is a genuinely new test, not redundant with the already-running
+Gemma4-26B battery**: the existing `gemma4:26b` Ollama tag (currently
+running its own GPQA/IFEval/τ²-bench/AgentBench battery) turned out to
+already be the same 26B-A4B MoE architecture (`Gemma4OllamaFCHandler`'s
+own docstring says so) — but quantized **Q4_K_M**, a general
+post-training quantization, not the official **QAT Q4_0** build. Given
+the RX 9070 XT pilot's 12B QAT result (90% BFCL, the best injection-
+resistance result of the whole project) already showed QAT materially
+outperforms comparable PTQ, this is a real, motivated second data point
+at 26B scale, not a duplicate.
+
+**Setup done directly (2026-08-07)**:
+- Downloaded via `docker exec ollama ollama pull hf.co/google/gemma-4-26B-A4B-it-qat-q4_0-gguf` (15GB, ~90MB/s).
+- Tagged `eval-gemma4-26b-a4b-qat:q4_0-ctx32k` (`num_ctx=32768`,
+  `num_predict=8192` — same safety-net convention as every other model).
+- New BFCL handler `gemma4_a4b_qat_ollama.py` (mirrors the existing
+  `Gemma4OllamaFCHandler` pattern exactly, just a different
+  `OLLAMA_MODEL_ID`), registered as `Gemma4-26B-A4B-QAT-Ollama-FC` in
+  `model_config.py` — verified importable (`MODEL_CONFIG_MAPPING`
+  contains the new key) before trusting it to anything unattended.
+- **Smoke-tested directly via curl before queuing anything overnight**:
+  a real tool-definition request returned a clean, correctly-formatted
+  native `tool_calls` response (`finish_reason: tool_calls`) — confirms
+  the integration works, not just that the tag loads.
+
+**`~/eval-harnesses/gemma4-a4b-qat-slot2-test.sh`** (launched on
+`192.168.1.27`, third stage in the same chain): waits for
+`LAGUNA_REDO_BATTERY_DONE` (aborts cleanly with
+`GEMMA4_A4B_QAT_ABORTED_UPSTREAM_FAILURE` if the upstream reboot
+verification failed instead of guessing at an uncertain framework
+state), confirms real headroom, then runs the **full 400-case BFCL
+`simple`** (`bfcl generate` + `bfcl evaluate`, blocking via ssh to
+`framework` where the harness lives) — matching exactly how Coder's
+96.25% slot-2-winning score was measured, not the 20-case pilot — then
+the standardized AgentBench `limit=100/seed=42` sample from this LXC.
+Marker: `GEMMA4_A4B_QAT_ALL_DONE`.
+
+Full chain is now three stages deep, all unattended: **Gemma4-26B
+(Q4_K_M) battery → auto-reboot → Laguna S 2.1 redo → Gemma 4 26B-A4B
+QAT Q4_0 slot-2 test**.
