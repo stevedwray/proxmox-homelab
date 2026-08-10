@@ -35,6 +35,7 @@ doc.
 | 3 | Qwen3-Coder-Next corrupts long-form generation (~85-100%) | Try chunked generation (smaller `num_predict` per call, stitched together — same pattern the article-cleaner already uses) as a real attempt before accepting permanent exclusion. | Low | Only worth it if DeepResearch Bench turns out to matter for a decision this model is actually a candidate for |
 | 4 | Kimi-Dev-72B tool-calling broken (real upstream Ollama bug) | Try `volker-mauel/Kimi-Dev-72B-GGUF` — untested alternate conversion that might ship a working chat template. One download + smoke-test, not a big commitment. | Low-medium | If it doesn't work, drop Kimi-Dev-72B from this project for good rather than revisiting again |
 | 5 | Every multi-hour test currently runs at full size with no early-abort | Build `--pilot` support (see Phase 3) | Medium | Prerequisite for running Phase 1/2 efficiently, do alongside #1 |
+| 6 | `lm_eval`'s own client sends `max_tokens: 256` by default, independent of the Ollama tag's `num_predict` -- silently truncates reasoning models regardless of tag-level fixes | Always pass `--gen_kwargs max_gen_toks=8192` on every `lm_eval` GPQA/IFEval invocation | **Highest** -- found 2026-08-10 while validating the Tier A pilot; **retroactively invalidates Qwen3.6-35B's previously-"final, clean" IFEval numbers** (14.75%/17.74%, recorded 2026-08-07) since that run never passed this flag either | Fixed in `gpqa-ifeval-battery.sh`; confirmed via pilot A/B on Gemma4-26B: IFEval ~40%→95%, GPQA flexible-extract 0%→57.5% |
 
 ## Phase 1 — coverage gaps
 
@@ -60,6 +61,12 @@ compute time not engineering):
 - Laguna S2.1: GPQA, IFEval, CyberSecEval — genuinely rerun, not
   resumed (the earlier attempt overlapped the OOM-crash leak window and
   was never trusted)
+
+**Tier A.5 — redo, not new** (added 2026-08-10, Bug #6 fallout):
+- Qwen3.6-35B: IFEval redo. Its 2026-08-07 "final, clean" numbers were
+  actually truncated by the same lm_eval client-side bug that hit
+  Gemma4-26B's pilot -- never a real capability measurement despite
+  being recorded as one at the time.
 
 **Tier B — new coverage** (never tested at all on these axes; matters
 because BFCL/AgentBench alone don't tell you general-reasoning fit for
