@@ -39,15 +39,17 @@ doc.
 
 ## Phase 1 — coverage gaps
 
-Current state (✅ = real number exists, ⬜ = missing, — = out of scope for this model):
+Current state as of 2026-08-13 (✅ = real number exists, 🔄 = running
+now, ⬜ = missing, ⚠️ = a number exists but is invalidated (Bug 6
+truncation) and needs a redo, — = out of scope for this model):
 
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
 | Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| Qwen3.6-35B | ✅ | ✅ | ✅ | ✅ | ⬜ | — |
-| Gemma4-26B (dense) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Gemma4-26B-A4B-QAT | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
-| Laguna S2.1 (base) | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ⬜ |
+| Qwen3.6-35B | ✅ | ✅ | ⚠️ redo needed | ⚠️ redo needed | ⬜ | — |
+| Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
+| Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
+| Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | 🔄 running | ⬜ queued | ⬜ |
 | Qwen3-Coder-Next | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ✅ |
 | Laguna-Heretic | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ✅ |
 
@@ -63,10 +65,14 @@ compute time not engineering):
   was never trusted)
 
 **Tier A.5 — redo, not new** (added 2026-08-10, Bug #6 fallout):
-- Qwen3.6-35B: IFEval redo. Its 2026-08-07 "final, clean" numbers were
-  actually truncated by the same lm_eval client-side bug that hit
-  Gemma4-26B's pilot -- never a real capability measurement despite
-  being recorded as one at the time.
+- Qwen3.6-35B: IFEval **and GPQA** redo, both invalidated by the same
+  lm_eval client-side bug. Confirmed 2026-08-13 by inspecting the raw
+  result files directly: both the 2026-08-05 GPQA run and its
+  2026-08-06 rerun used `gen_kwargs: {}` (no `max_gen_toks` override)
+  and both scored a flat 0.0%/0.0% (flexible-extract/strict-match) --
+  the exact truncated-to-empty signature diagnosed for Bug 6, not a
+  real capability measurement. IFEval's 2026-08-07 "final, clean"
+  numbers (14.75%/17.74%) share the identical root cause.
 
 **Tier B — new coverage** (never tested at all on these axes; matters
 because BFCL/AgentBench alone don't tell you general-reasoning fit for
