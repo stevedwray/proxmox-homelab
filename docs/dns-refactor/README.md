@@ -59,7 +59,19 @@ resolver-path checks through `192.168.1.1` succeeded for:
 - public recursion: `github.com` -> non-empty answer
 
 CoreDNS is no longer the active production delegate target; it remains
-deployed only as the old parallel authority/rollback point. One follow-up
+deployed only as the old parallel authority/rollback point.
+
+**2026-08-13:** two incidents (MikroTik delegate found reverted to
+CoreDNS; new DNS records landed in CoreDNS's zone instead of Technitium's)
+showed that "not the delegate target" isn't enough — CoreDNS is still
+actively reconciled by `provision.sh`/`reconcile-edge.py` and still looks
+like a normal place to add a record. **Phase 6 below is now a real, staged
+decommission plan** (freeze reconciliation → soak → terraform destroy →
+code/doc cleanup), not just a stub. The immediate incident fixes (delegate
+repointed, stray records reverted, `LAB_IP_TECHNITIUM` made the primary
+var) are already done; Phase 6 itself has not been started.
+
+One follow-up
 was identified immediately after cutover: the Technitium browser route
 returned a Traefik `404`, which traced back to unpublished production edge
 output for `technitium-stack`. Republishing the generated Traefik config to
