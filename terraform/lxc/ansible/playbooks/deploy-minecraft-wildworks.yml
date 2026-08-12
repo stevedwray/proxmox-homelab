@@ -288,7 +288,6 @@
               volumes:
                 - ./:/data
               restart: unless-stopped
-              mem_limit: 16g
 
             minecraft-monitor:
               image: {{ minecraft_monitor_image }}
@@ -435,7 +434,6 @@
                 volumes:
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
-                mem_limit: 16g
 
               minecraft-monitor:
                 image: {{ minecraft_monitor_image }}
@@ -501,7 +499,6 @@
                 volumes:
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
-                mem_limit: 16g
 
               minecraft-monitor:
                 image: {{ minecraft_monitor_image }}
