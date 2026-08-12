@@ -2,7 +2,7 @@ $ORIGIN ${LAB_DOMAIN}.
 $TTL 5m
 
 @               IN  SOA ns1.${LAB_DOMAIN}. admin.${LAB_DOMAIN}. (
-						2026053003 ; serial
+						2026053004 ; serial
 					1h         ; refresh
 					15m        ; retry
 					30d        ; expire
@@ -37,3 +37,7 @@ proxy-bg        IN  A   ${LAB_IP_PROXY}     ; traefik dashboard direct (breakgla
 ; pihole       A   10.60.0.10          (Pi-hole, migrated in Phase 06)
 ; arr          A   10.60.0.20          (arr stack, migrated in Phase 06)
 ; jellyfin     A   10.60.0.30          (Jellyfin, migrated in Phase 06)
+
+; game_seg services — direct game ports, not routed through Traefik
+gaming-stack   IN  A   192.168.60.10    ; gaming-stack-lab LXC
+foreverworld   IN  A   192.168.60.10    ; NeoForge Minecraft server (TCP/25565)
