@@ -25,3 +25,20 @@ version, then create a reviewed compose project below
 `/srv/docker/minecraft/foreverworld/`. Copy only the UUID-based `ops.json` and
 `whitelist.json` handover settings from `gaming-stack-legacy`; do not copy the
 legacy world or its RCON credential by default.
+
+## Observability
+
+Foreverworld uses the shared Grafana/VictoriaMetrics and Graylog services:
+
+| Signal | Producer | Endpoint / destination |
+| --- | --- | --- |
+| LXC host health | `node_exporter` from `lxc_base` | HTTPS `:9100` |
+| Per-container CPU, memory, disk and network | cAdvisor sidecar | HTTP `:8080` |
+| Minecraft availability, status latency and player count | `itzg/mc-monitor` sidecar | HTTP `:8081` |
+| System and Docker logs | rsyslog forwarding from `lxc_base` | Graylog TCP `:514` |
+
+Only the monitoring stack may reach the three metrics endpoints through
+`game_seg`. The provisioned Grafana dashboard is named **Foreverworld**.
+These signals deliberately cover infrastructure and Minecraft protocol status;
+JVM internals and mod/game tick timings require separately approved server or
+modpack instrumentation.

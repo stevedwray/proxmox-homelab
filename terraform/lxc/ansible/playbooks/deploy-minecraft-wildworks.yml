@@ -13,6 +13,8 @@
     minecraft_previous_project_dir: /srv/docker/minecraft/wildworks
     minecraft_portainer_stack_name: foreverworld
     minecraft_server_image: itzg/minecraft-server:java21
+    minecraft_monitor_image: itzg/mc-monitor:latest
+    minecraft_cadvisor_image: ghcr.io/google/cadvisor:v0.60.5
     minecraft_heap: 16G
     minecraft_gc_log_options: >-
       -Xlog:gc*:file=logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20M
@@ -224,6 +226,30 @@
               restart: unless-stopped
               mem_limit: 16g
 
+            minecraft-monitor:
+              image: {{ minecraft_monitor_image }}
+              container_name: foreverworld-monitor
+              command: export-for-prometheus
+              environment:
+                EXPORT_SERVERS: "foreverworld:25565"
+                EXPORT_PORT: "8080"
+              ports:
+                - "8081:8080"
+              restart: unless-stopped
+
+            cadvisor:
+              image: {{ minecraft_cadvisor_image }}
+              container_name: cadvisor
+              restart: unless-stopped
+              ports:
+                - "8080:8080"
+              volumes:
+                - /:/rootfs:ro
+                - /var/run:/var/run:ro
+                - /sys:/sys:ro
+                - /var/lib/docker:/var/lib/docker:ro
+                - /etc/machine-id:/etc/machine-id:ro
+
     - name: Start Foreverworld directly when Portainer ownership is not requested
       ansible.builtin.command:
         cmd: docker compose up -d
@@ -345,6 +371,30 @@
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
                 mem_limit: 16g
+
+              minecraft-monitor:
+                image: {{ minecraft_monitor_image }}
+                container_name: foreverworld-monitor
+                command: export-for-prometheus
+                environment:
+                  EXPORT_SERVERS: "foreverworld:25565"
+                  EXPORT_PORT: "8080"
+                ports:
+                  - "8081:8080"
+                restart: unless-stopped
+
+              cadvisor:
+                image: {{ minecraft_cadvisor_image }}
+                container_name: cadvisor
+                restart: unless-stopped
+                ports:
+                  - "8080:8080"
+                volumes:
+                  - /:/rootfs:ro
+                  - /var/run:/var/run:ro
+                  - /sys:/sys:ro
+                  - /var/lib/docker:/var/lib/docker:ro
+                  - /etc/machine-id:/etc/machine-id:ro
           Env: []
         status_code: 200
       delegate_to: localhost
@@ -386,6 +436,30 @@
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
                 mem_limit: 16g
+
+              minecraft-monitor:
+                image: {{ minecraft_monitor_image }}
+                container_name: foreverworld-monitor
+                command: export-for-prometheus
+                environment:
+                  EXPORT_SERVERS: "foreverworld:25565"
+                  EXPORT_PORT: "8080"
+                ports:
+                  - "8081:8080"
+                restart: unless-stopped
+
+              cadvisor:
+                image: {{ minecraft_cadvisor_image }}
+                container_name: cadvisor
+                restart: unless-stopped
+                ports:
+                  - "8080:8080"
+                volumes:
+                  - /:/rootfs:ro
+                  - /var/run:/var/run:ro
+                  - /sys:/sys:ro
+                  - /var/lib/docker:/var/lib/docker:ro
+                  - /etc/machine-id:/etc/machine-id:ro
           Env: []
           Prune: true
           PullImage: false
