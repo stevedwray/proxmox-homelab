@@ -49,6 +49,7 @@
       - { comment: "game-stack syslog to Graylog", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_GRAYLOG') }}", dst-port: "514" }
       - { comment: "game-stack node_exporter TLS from step-ca", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_STEP_CA') }}", dst-port: "443" }
       - { comment: "game_seg to infra Harbor and apt-cacher", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_subnet }}", dst-address: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') }}", dst-port: "80,443,3142" }
+      - { comment: "game-stack to Harbor through Traefik", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_PROXY') }}", dst-port: "443" }
       - { comment: "game_seg internet package and image egress", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_subnet }}", dst-address: "!192.168.0.0/16", dst-port: "80,443" }
       - { comment: "game_seg default-deny to LAN and other zones", chain: forward, action: drop, src-address: "{{ game_subnet }}" }
 

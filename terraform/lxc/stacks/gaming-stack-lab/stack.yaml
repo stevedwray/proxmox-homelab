@@ -9,7 +9,7 @@ network:
 
 # Reserved after checking CT 103 and the existing production conventions.
 # Confirm that it remains unused immediately before the first apply.
-vmid: 163
+vmid: 60010
 cores: 8
 memory: 24576
 swap: 2048

@@ -329,7 +329,7 @@ zones:
     description: Game services — Minecraft and future dedicated game servers
     attachment: game_seg
     containers:
-      - "gaming-stack-lab (VMID 163) — 192.168.60.10"
+      - "gaming-stack-lab (VMID 60010) — 192.168.60.10"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
