@@ -225,6 +225,12 @@
                   labels:
                     stack: gaming-stack-lab
                     server: foreverworld
+              # mc-monitor omits server_version when a status request fails.
+              # Dropping it keeps healthy and failed samples in one stable
+              # series, so a Grafana stat panel cannot render two statuses.
+              metric_relabel_configs:
+                - action: labeldrop
+                  regex: server_version
 
             - job_name: coredns
               scrape_interval: 15s

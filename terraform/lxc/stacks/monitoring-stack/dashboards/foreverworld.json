@@ -10,7 +10,7 @@
       "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [{ "color": "red", "value": null }, { "color": "green", "value": 1 }] } }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 0, "y": 0 },
       "options": { "colorMode": "background", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
-      "targets": [{ "expr": "minecraft_status_healthy{job=\"minecraft-status\",server=\"foreverworld\"}", "legendFormat": "Minecraft status", "refId": "A" }],
+      "targets": [{ "expr": "minecraft_status_healthy{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Minecraft status", "refId": "A" }],
       "title": "Minecraft Status", "type": "stat"
     },
     {
@@ -18,7 +18,7 @@
       "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 6, "y": 0 },
       "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
-      "targets": [{ "expr": "minecraft_status_response_time_seconds{job=\"minecraft-status\",server=\"foreverworld\"}", "legendFormat": "Status latency", "refId": "A" }],
+      "targets": [{ "expr": "minecraft_status_response_time_seconds{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Status latency", "refId": "A" }],
       "title": "Status Response Time", "type": "stat"
     },
     {
@@ -26,7 +26,7 @@
       "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 12, "y": 0 },
       "options": { "colorMode": "value", "graphMode": "area", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
-      "targets": [{ "expr": "minecraft_status_players_online_count{job=\"minecraft-status\",server=\"foreverworld\"}", "legendFormat": "Online", "refId": "A" }],
+      "targets": [{ "expr": "minecraft_status_players_online_count{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Online", "refId": "A" }],
       "title": "Players Online", "type": "stat"
     },
     {
@@ -34,7 +34,7 @@
       "fieldConfig": { "defaults": { "decimals": 0 }, "overrides": [] },
       "gridPos": { "h": 5, "w": 6, "x": 18, "y": 0 },
       "options": { "colorMode": "value", "graphMode": "none", "justifyMode": "center", "orientation": "auto", "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }, "textMode": "value_and_name" },
-      "targets": [{ "expr": "minecraft_status_players_max_count{job=\"minecraft-status\",server=\"foreverworld\"}", "legendFormat": "Maximum", "refId": "A" }],
+      "targets": [{ "expr": "minecraft_status_players_max_count{job=\"minecraft-status\",server=\"foreverworld\",server_version=\"\"}", "legendFormat": "Maximum", "refId": "A" }],
       "title": "Player Capacity", "type": "stat"
     },
     {
