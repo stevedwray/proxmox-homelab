@@ -12,13 +12,11 @@
     minecraft_project_dir: /srv/docker/minecraft/foreverworld
     minecraft_previous_project_dir: /srv/docker/minecraft/wildworks
     minecraft_portainer_stack_name: foreverworld
-    minecraft_portainer_image: foreverworld-neoforge:local
-    # The initial archive build happens on the endpoint. Portainer's
-    # create-from-string API cannot transport a Docker build context, so the
-    # managed Stack references that resulting local image instead.
+    minecraft_server_image: itzg/minecraft-server:latest
     minecraft_portainer_push_stack: false
     minecraft_regenerate_world: false
     minecraft_restart_for_configuration: false
+    minecraft_portainer_update_stack: false
     minecraft_world_dir: "{{ minecraft_project_dir }}/world"
     minecraft_world_backup_dir: "{{ minecraft_project_dir }}/world.pre-regenerate"
     minecraft_release_archive: "{{ minecraft_release_tarball | mandatory('minecraft_release_tarball is required') }}"
@@ -129,20 +127,20 @@
         dest: "{{ item.dest }}"
         mode: "0640"
       loop:
-        - { src: "{{ minecraft_legacy_ops_source }}", dest: "{{ minecraft_project_dir }}/runtime/ops.json" }
-        - { src: "{{ minecraft_legacy_whitelist_source }}", dest: "{{ minecraft_project_dir }}/runtime/whitelist.json" }
+        - { src: "{{ minecraft_legacy_ops_source }}", dest: "{{ minecraft_project_dir }}/ops.json" }
+        - { src: "{{ minecraft_legacy_whitelist_source }}", dest: "{{ minecraft_project_dir }}/whitelist.json" }
 
     - name: Seed mutable server properties from the release
       ansible.builtin.copy:
         src: "{{ minecraft_project_dir }}/server.properties"
-        dest: "{{ minecraft_project_dir }}/runtime/server.properties"
+        dest: "{{ minecraft_project_dir }}/server.properties"
         remote_src: true
         force: false
         mode: "0640"
 
     - name: Configure Wildworks server access and port
       ansible.builtin.lineinfile:
-        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        path: "{{ minecraft_project_dir }}/server.properties"
         regexp: "^{{ item.key }}="
         line: "{{ item.key }}={{ item.value }}"
       loop:
@@ -164,17 +162,17 @@
 
     - name: Restrict mutable server properties containing the RCON password
       ansible.builtin.file:
-        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        path: "{{ minecraft_project_dir }}/server.properties"
         mode: "0600"
 
     - name: Set the RCON password in mutable server properties
       ansible.builtin.lineinfile:
-        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        path: "{{ minecraft_project_dir }}/server.properties"
         regexp: "^rcon.password="
         line: "rcon.password={{ minecraft_rcon_password }}" # gitleaks:allow
       no_log: true
 
-    - name: Install runtime-safe server entrypoint
+    - name: Restore the release-native entrypoint
       ansible.builtin.copy:
         dest: "{{ minecraft_project_dir }}/docker-entrypoint.sh"
         mode: "0750"
@@ -188,6 +186,11 @@
           sed -i 's/^eula=.*/eula=true/' eula.txt
           exec ./run.sh nogui
 
+    - name: Remove the superseded custom-image Dockerfile
+      ansible.builtin.file:
+        dest: "{{ minecraft_project_dir }}/Dockerfile"
+        state: absent
+
     - name: Install Wildworks Docker Compose project
       ansible.builtin.copy:
         dest: "{{ minecraft_project_dir }}/compose.yaml"
@@ -195,27 +198,26 @@
         content: |
           services:
             foreverworld:
-              image: foreverworld-neoforge:local
-              build: .
-              container_name: foreverworld-neoforge
+              image: {{ minecraft_server_image }}
+              container_name: foreverworld-minecraft
+              tty: true
+              stdin_open: true
+              tmpfs:
+                - /tmp:rw,exec,size=2g
               environment:
                 EULA: "TRUE"
+                TYPE: "NEOFORGE"
+                VERSION: "1.21.1"
+                NEOFORGE_VERSION: "21.1.234"
+                SERVER_PORT: "25565"
+                OVERRIDE_SERVER_PROPERTIES: "false"
+                MEMORY: "16G"
               ports:
                 - "25565:25565/tcp"
               volumes:
-                - ./world:/data/world
-                - ./runtime/server.properties:/data/server.properties
-                - ./runtime/ops.json:/data/ops.json
-                - ./runtime/whitelist.json:/data/whitelist.json
+                - ./:/data
               restart: unless-stopped
               mem_limit: 16g
-
-    - name: Build the Foreverworld image on the game server
-      ansible.builtin.command:
-        cmd: docker compose build
-        chdir: "{{ minecraft_project_dir }}"
-      register: wildworks_compose_build
-      changed_when: "'Built' in wildworks_compose_build.stderr or 'naming to' in wildworks_compose_build.stderr"
 
     - name: Start Foreverworld directly when Portainer ownership is not requested
       ansible.builtin.command:
@@ -279,6 +281,13 @@
 
     - name: Determine whether Foreverworld is already Portainer-managed
       ansible.builtin.set_fact:
+        wildworks_portainer_stack: >-
+          {{
+            wildworks_portainer_stacks.json
+            | selectattr('Name', 'equalto', minecraft_portainer_stack_name)
+            | selectattr('EndpointId', 'equalto', wildworks_portainer_endpoint.Id | int)
+            | list | first | default({})
+          }}
         wildworks_portainer_stack_exists: >-
           {{
             wildworks_portainer_stacks.json
@@ -309,17 +318,24 @@
           StackFileContent: |
             services:
               foreverworld:
-                image: {{ minecraft_portainer_image }}
-                container_name: foreverworld-neoforge
+                image: {{ minecraft_server_image }}
+                container_name: foreverworld-minecraft
+                tty: true
+                stdin_open: true
+                tmpfs:
+                  - /tmp:rw,exec,size=2g
                 environment:
                   EULA: "TRUE"
+                  TYPE: "NEOFORGE"
+                  VERSION: "1.21.1"
+                  NEOFORGE_VERSION: "21.1.234"
+                  SERVER_PORT: "25565"
+                  OVERRIDE_SERVER_PROPERTIES: "false"
+                  MEMORY: "16G"
                 ports:
                   - "25565:25565/tcp"
                 volumes:
-                  - {{ minecraft_project_dir }}/world:/data/world
-                  - {{ minecraft_project_dir }}/runtime/server.properties:/data/server.properties
-                  - {{ minecraft_project_dir }}/runtime/ops.json:/data/ops.json
-                  - {{ minecraft_project_dir }}/runtime/whitelist.json:/data/whitelist.json
+                  - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
                 mem_limit: 16g
           Env: []
@@ -329,8 +345,50 @@
         - minecraft_portainer_push_stack | bool
         - not wildworks_portainer_stack_exists | bool
 
+    - name: Update the Portainer Foreverworld stack to mount the full server directory
+      ansible.builtin.uri:
+        url: "http://{{ portainer_server_ip }}:9000/api/stacks/{{ wildworks_portainer_stack.Id }}?endpointId={{ wildworks_portainer_endpoint.Id }}" # nosonar
+        method: PUT
+        headers:
+          Authorization: "Bearer {{ wildworks_portainer_auth.json.jwt }}"
+          Content-Type: application/json
+        body_format: json
+        body:
+          StackFileContent: |
+            services:
+              foreverworld:
+                image: {{ minecraft_server_image }}
+                container_name: foreverworld-minecraft
+                tty: true
+                stdin_open: true
+                tmpfs:
+                  - /tmp:rw,exec,size=2g
+                environment:
+                  EULA: "TRUE"
+                  TYPE: "NEOFORGE"
+                  VERSION: "1.21.1"
+                  NEOFORGE_VERSION: "21.1.234"
+                  SERVER_PORT: "25565"
+                  OVERRIDE_SERVER_PROPERTIES: "false"
+                  MEMORY: "16G"
+                ports:
+                  - "25565:25565/tcp"
+                volumes:
+                  - {{ minecraft_project_dir }}:/data
+                restart: unless-stopped
+                mem_limit: 16g
+          Env: []
+          Prune: true
+          PullImage: false
+        status_code: 200
+      delegate_to: localhost
+      when:
+        - minecraft_portainer_push_stack | bool
+        - minecraft_portainer_update_stack | bool
+        - wildworks_portainer_stack_exists | bool
+
     - name: Restart the Portainer-managed server for property changes
-      ansible.builtin.command: docker restart foreverworld-neoforge
+      ansible.builtin.command: docker restart foreverworld-minecraft
       when: minecraft_restart_for_configuration | bool
 
     - name: Wait for Foreverworld Minecraft port
