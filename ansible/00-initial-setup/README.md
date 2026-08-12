@@ -100,6 +100,20 @@ Expected VLAN SDN objects:
 - zone `tvinfra`, VNet `tvinfra`, VLAN `40`
 - zone `tvgames`, VNet `tvgames`, VLAN `60`
 
+### `mikrotik-game-seg.yml`
+
+Purpose:
+
+- create RouterOS VLAN interface `vlan60-games` and gateway `192.168.60.1/24`
+- add the VLAN 60 tagged membership on `bridgeLocal`, `ether1`, and `ether5`
+- install the bounded game-stack policy for Minecraft, Portainer, monitoring, Graylog, step-ca, Harbor, apt-cacher, and package/image egress
+
+The physical switch trunks must be configured first. Run intentionally against the live router:
+
+```bash
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-game-seg.yml
+```
+
 ### `build-debian-13-template.yml`
 
 Purpose:
