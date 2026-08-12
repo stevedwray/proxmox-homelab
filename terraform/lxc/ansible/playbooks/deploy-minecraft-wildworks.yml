@@ -18,6 +18,7 @@
     # managed Stack references that resulting local image instead.
     minecraft_portainer_push_stack: false
     minecraft_regenerate_world: false
+    minecraft_restart_for_configuration: false
     minecraft_world_dir: "{{ minecraft_project_dir }}/world"
     minecraft_world_backup_dir: "{{ minecraft_project_dir }}/world.pre-regenerate"
     minecraft_release_archive: "{{ minecraft_release_tarball | mandatory('minecraft_release_tarball is required') }}"
@@ -147,6 +148,15 @@
       loop:
         - { key: server-port, value: "25565" }
         - { key: level-seed, value: "8829189879763754536" }
+        - { key: difficulty, value: hard }
+        - { key: allow-flight, value: "true" }
+        - { key: pvp, value: "false" }
+        - { key: max-players, value: "3" }
+        - { key: view-distance, value: "32" }
+        - { key: simulation-distance, value: "12" }
+        - { key: spawn-protection, value: "0" }
+        - { key: level-type, value: bclib }
+        - { key: motd, value: Foreverworld }
         - { key: enable-rcon, value: "true" }
         - { key: rcon.port, value: "25575" }
         - { key: white-list, value: "true" }
@@ -318,6 +328,10 @@
       when:
         - minecraft_portainer_push_stack | bool
         - not wildworks_portainer_stack_exists | bool
+
+    - name: Restart the Portainer-managed server for property changes
+      ansible.builtin.command: docker restart foreverworld-neoforge
+      when: minecraft_restart_for_configuration | bool
 
     - name: Wait for Foreverworld Minecraft port
       ansible.builtin.wait_for:
