@@ -50,8 +50,8 @@ truncation) and needs a redo, — = out of scope for this model):
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | 🔄 running | ⬜ queued | ⬜ |
-| Qwen3-Coder-Next | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ✅ |
-| Laguna-Heretic | ✅ | ✅ | ⬜ | ⬜ | ⬜ | ✅ |
+| Qwen3-Coder-Next | ✅ | ✅ | — dropped | ⬜ | ⬜ | ✅ |
+| Laguna-Heretic | ✅ | ✅ | — dropped | ⬜ | ⬜ | ✅ |
 
 **Tier A — fill first** (the 3 models whose battery was mid-flight when
 the project pivoted; harness and methodology already proven, this is
@@ -77,11 +77,19 @@ compute time not engineering):
 **Tier B — new coverage** (never tested at all on these axes; matters
 because BFCL/AgentBench alone don't tell you general-reasoning fit for
 the adviser role):
-- Qwen3-Coder-Next: GPQA, IFEval
-- Laguna-Heretic: GPQA, IFEval — also directly answers whether
-  decensoring cost anything on general reasoning, not just tool-call
-  format (see the BFCL/AgentBench split-signal finding already on
-  record)
+- Qwen3-Coder-Next: IFEval only
+- Laguna-Heretic: IFEval only
+
+GPQA dropped from Tier B for both (operator call, 2026-08-13): this
+project's own Tier A timings put full GPQA anywhere from ~7h
+(Gemma4-26B) to ~14h+ (Laguna S2.1, a similarly reasoning-heavy
+model), and neither of these two is a general-reasoning candidate --
+Qwen3-Coder-Next is a coding specialist, Laguna-Heretic is a decensored
+variant of a base model already scored on GPQA at Tier A. Low expected
+signal, high time cost -- not worth it. IFEval is cheap by comparison
+and still answers real questions (instruction-following fit, and for
+Laguna-Heretic specifically whether decensoring cost anything there
+too, alongside the existing BFCL/AgentBench split-signal finding).
 
 **Tier C — RepoBench expansion** (currently only 2 of 7 models tested):
 - Qwen3-Coder-30B — the actual production pick has never been measured
