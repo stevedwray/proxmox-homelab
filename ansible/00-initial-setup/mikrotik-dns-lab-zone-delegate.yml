@@ -1,15 +1,25 @@
 ---
 # mikrotik-dns-lab-zone-delegate.yml
 #
-# Phase 2 DNS delegation: switches MikroTik from static A records (Phase 1)
-# to a type=FWD entry for lab.gibbsgreatly.xyz that forwards to CoreDNS.
+# Switches MikroTik from static A records (Phase 1) to a type=FWD entry for
+# lab.gibbsgreatly.xyz that forwards to Technitium, the live production DNS
+# authority.
 #
-# Prerequisite: CoreDNS deployed and authoritative on the configured LAB_IP_DNS endpoint (Phase 04b).
+# Historically (Phase 2) this forwarded to CoreDNS. The 2026-07-05
+# production cutover (docs/dns-refactor/production-cutover-packet.md)
+# repointed the live delegate to Technitium and CoreDNS has not been the
+# live target since -- it is kept deployed only as a rollback point. This
+# playbook now targets Technitium directly via LAB_IP_TECHNITIUM so a rerun
+# can never silently revert the delegate back to CoreDNS the way a stale
+# LAB_IP_DNS value once did (see incident: MikroTik lab-zone-delegate found
+# reverted to CoreDNS 2026-08-13, root-caused to this gap).
+#
+# Prerequisite: Technitium deployed and authoritative on the configured LAB_IP_TECHNITIUM endpoint.
 # Run AFTER: mikrotik-dns-lab-zone-baseline.yml has been applied.
 #
 # What it does:
 #   1. Removes all static DNS entries tagged comment=lab-zone-baseline from MikroTik.
-#   2. Adds a single type=FWD regexp entry delegating lab.gibbsgreatly.xyz to the configured CoreDNS endpoint.
+#   2. Adds a single type=FWD regexp entry delegating lab.gibbsgreatly.xyz to the configured Technitium endpoint.
 #   3. Validates resolution of a lab-zone name via all four SDN gateway resolvers.
 #   4. Validates that non-lab names still resolve (public recursion path preserved).
 #
@@ -27,7 +37,7 @@
 # After running this playbook, delegated queries should resolve via the configured LAB_GW_* resolvers,
 # and public recursion should still succeed through the configured management resolver.
 
-- name: Delegate lab.gibbsgreatly.xyz from MikroTik static A records to CoreDNS FWD
+- name: Delegate lab.gibbsgreatly.xyz from MikroTik static A records to Technitium FWD
   hosts: localhost
   gather_facts: false
 
@@ -48,7 +58,7 @@
         | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
       }}
 
-    coredns_ip: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
+    technitium_ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') | mandatory('LAB_IP_TECHNITIUM env var is required') }}"
     fwd_regexp: "(^|\\.){{ lab_domain | replace('.', '\\.') }}$"
     fwd_comment: "lab-zone-delegate"
     baseline_comment: "lab-zone-baseline"
@@ -161,14 +171,14 @@
               existing_fwd_entries
               | selectattr('type', 'equalto', 'FWD')
               | selectattr('regexp', 'equalto', fwd_regexp)
-              | rejectattr('forward-to', 'equalto', coredns_ip)
+              | rejectattr('forward-to', 'equalto', technitium_ip)
               | list
             )
           }}
 
     # ── Step 4: Add FWD delegation entry ──────────────────────────────────────
 
-    - name: Add FWD delegation entry for {{ lab_domain }} → CoreDNS # noqa: name[template]
+    - name: Add FWD delegation entry for {{ lab_domain }} → Technitium # noqa: name[template]
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/dns/static/add"
         method: POST
@@ -180,14 +190,14 @@
         body:
           regexp: "{{ fwd_regexp }}"
           type: "FWD"
-          forward-to: "{{ coredns_ip }}"
+          forward-to: "{{ technitium_ip }}"
           ttl: "5m"
           comment: "{{ fwd_comment }}"
         status_code: [200, 201]
       when: existing_fwd_entries | length == 0
       no_log: true
 
-    - name: Update stale FWD delegation entries to current CoreDNS target
+    - name: Update stale FWD delegation entries to current Technitium target
       ansible.builtin.uri:
         url: "{{ mikrotik_rest_base_url }}/ip/dns/static/{{ item['.id'] }}"
         method: PATCH
@@ -199,7 +209,7 @@
         body:
           regexp: "{{ fwd_regexp }}"
           type: "FWD"
-          forward-to: "{{ coredns_ip }}"
+          forward-to: "{{ technitium_ip }}"
           ttl: "5m"
           comment: "{{ fwd_comment }}"
         status_code: [200, 204]
@@ -212,7 +222,7 @@
         msg: >-
           FWD entry for {{ lab_domain }} already exists.
           stale_entries={{ stale_fwd_entries | length }}
-          forward_to_expected={{ coredns_ip }}
+          forward_to_expected={{ technitium_ip }}
       when: existing_fwd_entries | length > 0
 
     # ── Step 5: Validate delegated resolution through all SDN resolvers ───────
@@ -231,7 +241,7 @@
         fail_msg: >-
           Resolver {{ item.item.resolver }} returned '{{ item.stdout | trim }}'
           for {{ item.item.name }}, expected {{ item.item.expected }}.
-          Check MikroTik FWD entry and that CoreDNS ({{ coredns_ip }}) is reachable
+          Check MikroTik FWD entry and that Technitium ({{ technitium_ip }}) is reachable
           from MikroTik with UDP/TCP 53.
         success_msg: >-
           {{ item.item.resolver }} → {{ item.item.name }} = {{ item.stdout | trim }} ✓
@@ -260,8 +270,8 @@
     - name: Print validation summary
       ansible.builtin.debug:
         msg:
-          - "=== Phase 2 DNS delegation validation ==="
-          - "FWD entry: {{ lab_domain }} → {{ coredns_ip }} (CoreDNS)"
+          - "=== DNS delegation validation ==="
+          - "FWD entry: {{ lab_domain }} → {{ technitium_ip }} (Technitium)"
           - "Delegated resolution:"
           - "  @{{ delegated_probes[0].resolver }} {{ delegated_probes[0].name }} = {{ delegated_results.results[0].stdout | trim }}"
           - "  @{{ delegated_probes[1].resolver }} {{ delegated_probes[1].name }} = {{ delegated_results.results[1].stdout | trim }}"
