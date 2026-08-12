@@ -12,7 +12,10 @@
     minecraft_project_dir: /srv/docker/minecraft/foreverworld
     minecraft_previous_project_dir: /srv/docker/minecraft/wildworks
     minecraft_portainer_stack_name: foreverworld
-    minecraft_server_image: itzg/minecraft-server:latest
+    minecraft_server_image: itzg/minecraft-server:java21
+    minecraft_heap: 16G
+    minecraft_gc_log_options: >-
+      -Xlog:gc*:file=logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20M
     minecraft_portainer_push_stack: false
     minecraft_regenerate_world: false
     minecraft_restart_for_configuration: false
@@ -211,7 +214,9 @@
                 NEOFORGE_VERSION: "21.1.234"
                 SERVER_PORT: "25565"
                 OVERRIDE_SERVER_PROPERTIES: "false"
-                MEMORY: "16G"
+                INIT_MEMORY: "{{ minecraft_heap }}"
+                MAX_MEMORY: "{{ minecraft_heap }}"
+                JVM_OPTS: "{{ minecraft_gc_log_options }}"
               ports:
                 - "25565:25565/tcp"
               volumes:
@@ -331,7 +336,9 @@
                   NEOFORGE_VERSION: "21.1.234"
                   SERVER_PORT: "25565"
                   OVERRIDE_SERVER_PROPERTIES: "false"
-                  MEMORY: "16G"
+                  INIT_MEMORY: "{{ minecraft_heap }}"
+                  MAX_MEMORY: "{{ minecraft_heap }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }}"
                 ports:
                   - "25565:25565/tcp"
                 volumes:
@@ -370,7 +377,9 @@
                   NEOFORGE_VERSION: "21.1.234"
                   SERVER_PORT: "25565"
                   OVERRIDE_SERVER_PROPERTIES: "false"
-                  MEMORY: "16G"
+                  INIT_MEMORY: "{{ minecraft_heap }}"
+                  MAX_MEMORY: "{{ minecraft_heap }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }}"
                 ports:
                   - "25565:25565/tcp"
                 volumes:
