@@ -69,8 +69,8 @@ directory must be preserved. It is potentially large.
 2. Provision `gaming-stack-lab` alongside the legacy LXC with its dedicated
    `gaming-containers` volume.
 3. Register its agent with lab Portainer.
-4. Inspect the supplied Minecraft tarball and write a NeoForge compose project
-   under `/srv/docker/minecraft/wildworks/`.
+4. Inspect the supplied Wildworks Minecraft tarball and write the NeoForge
+   Foreverworld compose project under `/srv/docker/minecraft/foreverworld/`.
 5. Carry forward ops and whitelist settings, then test TCP/25565 from the LAN.
 6. Retain the legacy LXC as the rollback target; do not decommission it in
    this phase.
