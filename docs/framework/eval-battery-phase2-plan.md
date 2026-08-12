@@ -93,19 +93,49 @@ large-context code/research work") is actually live.
 
 Once Tier A lands, produce one focused comparison table:
 
-| Test | Gemma4-26B (Q4_K_M) | Gemma4-26B-A4B-QAT |
-|---|---|---|
-| BFCL | 94% (376/400) | 92.5% (370/400) |
-| AgentBench | 47% | 42% |
-| GPQA | TBD | TBD |
-| IFEval | TBD | TBD |
-| CyberSecEval | TBD | TBD |
-| RepoBench | TBD | TBD |
+| Test | Gemma4-26B (Q4_K_M) | Gemma4-26B-A4B-QAT | Delta |
+|---|---|---|---|
+| BFCL | 94% (376/400) | 92.5% (370/400) | -1.5 pts |
+| AgentBench | 47% | 42% | -5 pts |
+| GPQA (flexible-extract) | 43.94% (±3.54) | 27.27% (±3.17) | **-16.67 pts** |
+| IFEval (prompt-strict / loose) | 92.98% / 93.90% | 89.83% / 91.13% | -3.15 / -2.77 pts |
+| CyberSecEval (refusal rate) | 6% (94/100 accepted) | 6% (94/100 accepted) | 0 (identical) |
+| RepoBench | TBD | TBD | — |
 
-This directly answers the question the A4B-QAT test was built for
-(does official QAT beat general PTQ at 26B, the way it clearly did at
-12B in the RX 9070 XT pilot) — currently unanswerable with only 2 of 6
-axes filled in.
+5 of 6 axes now filled in, and the picture is consistent and
+directionally clear: **A4B-QAT trails the dense Q4_K_M checkpoint on
+every capability axis measured so far**, but the size of the gap
+varies a lot by task shape:
+
+- **GPQA is by far the biggest gap** (-16.67 pts, ~5x the IFEval gap)
+  — free-form multi-step domain reasoning is where the A4B
+  architecture's reduced active-parameter count (4B active vs the
+  dense model's ~26B active per token) appears to bite hardest.
+  Because A4B and QAT/Q4_0 are bundled in one released checkpoint, this
+  project cannot yet separate "MoE active-capacity cost" from "QAT/Q4_0
+  quantization cost" as the cause — flagged as an open attribution
+  question, not resolved.
+- **IFEval and BFCL show smaller, closer gaps** (-3 and -1.5 pts) —
+  mechanical instruction-following and structured tool-calling seem
+  much less sensitive to the reduced active capacity than open-ended
+  reasoning is.
+- **AgentBench sits in between** (-5 pts), consistent with its
+  injection-augmented-agentic-task profile needing more reasoning than
+  IFEval/BFCL but less sustained multi-step reasoning than GPQA.
+- **CyberSecEval shows zero difference** — refusal behavior on
+  security-adjacent prompts appears to be governed by
+  safety-tuning/instruction-following rather than raw reasoning
+  capacity, matching the IFEval-adjacent pattern above.
+
+**Working conclusion for PentAGI model selection**: A4B-QAT's
+size/speed advantage is not "free" the way the RX 9070 XT 12B pilot
+suggested official QAT could be — at 26B, it costs real capability,
+concentrated specifically in domain-reasoning-heavy tasks like GPQA.
+For roles leaning on adviser-style reasoning, prefer the dense Q4_K_M
+checkpoint; for roles that are more tool-calling/instruction-following
+shaped (where the gap is 5x smaller), A4B-QAT's efficiency trade may
+still be worth it. RepoBench (Tier C, not yet run) will add a
+code-specific data point before this conclusion is treated as final.
 
 ## Phase 3 — pilot testing (build once, use throughout Phase 1/2)
 
