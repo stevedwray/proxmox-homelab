@@ -1,0 +1,65 @@
+# New game-services host. It is intentionally separate from gaming-stack-legacy
+# (CT 103) so the existing Dockge and game data remain available for rollback.
+hostname: gaming-stack-lab
+ip_address: "192.168.60.10/24"
+gateway: "192.168.60.1"
+dns_server: "192.168.60.1"
+network:
+  zone: game_seg
+
+# Reserved after checking CT 103 and the existing production conventions.
+# Confirm that it remains unused immediately before the first apply.
+vmid: 163
+cores: 8
+memory: 24576
+swap: 2048
+rootfs_size: 16
+storage_profile: platform-zfs
+
+# Docker engine state is distinct from game-server state. The latter is the
+# dedicated gaming-containers ZFS volume mounted at /srv/docker below.
+docker_storage_size: "24G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "24G"
+  backup_policy: include
+  mutation_policy: grow-only
+  resize_control_plane: operational
+
+# All current and future game-service compose directories and persistent data
+# live below this mount. On pve, profile game-data resolves to
+# gaming-containers; test environments resolve to their ZFS validation pool.
+extra_mount:
+  logical_name: game-data
+  path: /srv/docker
+  size: "500G"
+  profile: game-data
+  backup_policy: include
+  mutation_policy: grow-only
+  resize_control_plane: operational
+
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - gaming
+  - minecraft
+  - game-seg
+  - docker
+  - portainer
+
+depends_on:
+  - portainer-stack
+provides:
+  - service: minecraft-primary
+    port: 25565
+    protocol: tcp
+
+# This playbook establishes Docker and the Portainer agent only. Minecraft is
+# not deployed until its supplied server tarball has been inspected and its
+# NeoForge compose contract has been reviewed.
+ansible_playbook: "deploy-portainer-agent"
+deployment_tier: application
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
+registry_host: "${lab_ip_harbor}"
+apt_cacher_host: "${lab_ip_apt_cacher}"

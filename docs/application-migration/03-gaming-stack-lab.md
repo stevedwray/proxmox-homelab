@@ -1,6 +1,8 @@
 # Sprint 03: gaming-stack-lab
 
-Deploy gaming stack (Dockge + Minecraft/ARK servers) into `game_seg` (VLAN 60).
+Deploy the replacement gaming stack into `game_seg` (VLAN 60). The first
+service is Minecraft; future AzerothCore and DayZ services are intentionally
+out of scope.
 Dockge UI behind Traefik + Authentik. Game server ports direct via MikroTik.
 
 **Detail level:** Sketch — flesh out before starting this sprint.
@@ -9,7 +11,8 @@ Dockge UI behind Traefik + Authentik. Game server ports direct via MikroTik.
 
 ## Current state
 
-**Live stack:** `gaming-stack` at `192.168.1.7`, Portainer endpoint `tcp://192.168.1.7:9001`
+**Legacy stack:** `gaming-stack-legacy` (CT 103) at `192.168.1.7`, Portainer
+endpoint `tcp://192.168.1.7:9001`
 
 | Container | State | Data |
 |---|---|---|
@@ -31,47 +34,43 @@ directory must be preserved. It is potentially large.
 - `gaming-stack-lab` at `192.168.60.10/24`, gateway `192.168.60.1`
 - Zone: `game_seg`, VLAN 60
 - Dockge UI: `dockge.lab.gibbsgreatly.xyz` → Traefik + Authentik forwardAuth
-- Minecraft: tcp+udp/25565 — direct LAN access (no Traefik)
-- ARK: udp/7777, 7778, 27015 per server — direct LAN access (no Traefik)
-- No internet exposure for game ports (LAN-only; ARK WAN port-forward deferred)
+- Minecraft: TCP/25565 — direct LAN access (no Traefik)
+- No internet exposure for game ports (LAN-only)
 
 ---
 
 ## Pre-conditions (to flesh out)
 
 - [ ] `game_seg` (VLAN 60) defined and applied
-- [ ] MikroTik rules: `LAN → game_seg tcp+udp/25565`, `LAN → game_seg udp/7777,7778,27015`
-- [ ] `edge_seg → game_seg tcp/5001,2375` and `mgmt_seg → game_seg tcp/9001`
-- [ ] Harbor images mirrored: `louislam/dockge:1`, `itzg/minecraft-server:stable-java21`
-- [ ] ARK image SHA256 digests identified and tagged — check live LXC `docker images`
-- [ ] `/ark/` size estimated — this is a large copy, plan for downtime or sequential copy
+- [ ] MikroTik rules: `LAN → game_seg tcp/25565` and `mgmt_seg → game_seg tcp/9001`
+- [ ] Lab Portainer is reachable from `game_seg` for agent registration
+- [ ] Minecraft tarball inspected and its NeoForge/Java/runtime requirements recorded
 
 ---
 
 ## Key considerations
 
-- **`/ark/` migration**: game world data is LXC-local, no NFS. Options:
-  - Rsync `/ark/` from live LXC to lab LXC while servers are stopped (safe)
-  - Or: provision new LXC alongside, rsync, then freeze live and do final rsync
-- **Dockge**: manages ARK stacks via compose files in `/opt/stacks/`. The compose files
-  reference ARK image digests — update to Harbor-mirrored images with proper tags
-- **ARK port ranges**: multiple ARK servers need separate port assignments; map current
-  port usage from the live stack before migrating
-- **Minecraft servers**: most are exited on the live stack; confirm which worlds are
-  active before migration
-- Traefik is not involved in game server ports; only Dockge UI goes through Traefik
+- **Dedicated storage**: `/srv/docker` is a backup-included, grow-only ZFS
+  mount from `gaming-containers`, separate from Docker engine state.
+- **Compose layout**: Minecraft projects live in
+  `/srv/docker/minecraft/<server-name>/`; future game types use their own
+  top-level directories but are not implemented now.
+- **Legacy handover**: copy `ops.json` and `whitelist.json` from
+  `/minecraft/foreverworld`; do not migrate the legacy world unless explicitly
+  requested.
+- Traefik is not involved in game server ports, and Dockge is not part of the
+  replacement architecture.
 
 ---
 
 ## Steps (to be detailed)
 
-1. Inventory ARK image digests and map to tags (`docker inspect` on live LXC)
-2. Identify active Minecraft worlds
-3. Size `/ark/` directory
-4. Freeze live stack, snapshot LXC
-5. Rsync `/opt/dockge/` and `/ark/` to staging
-6. Provision `gaming-stack-lab` LXC in `game_seg`
-7. Transfer data, deploy Dockge via Portainer
-8. Verify game server configs, update image references to Harbor
-9. Start one server at a time, test connectivity from LAN
-10. Cutover and decommission
+1. Validate `game_seg` end-to-end on pve-test-vm.
+2. Provision `gaming-stack-lab` alongside the legacy LXC with its dedicated
+   `gaming-containers` volume.
+3. Register its agent with lab Portainer.
+4. Inspect the supplied Minecraft tarball and write a NeoForge compose project
+   under `/srv/docker/minecraft/foreverworld/`.
+5. Carry forward ops and whitelist settings, then test TCP/25565 from the LAN.
+6. Retain the legacy LXC as the rollback target; do not decommission it in
+   this phase.

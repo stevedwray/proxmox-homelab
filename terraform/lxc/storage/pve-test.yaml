@@ -55,6 +55,11 @@ extra_mount_profiles:
   durable-zfs:
     storage: infrastructure-containers
     required_content_type: rootdir
+  # pve-test has no gaming pool; retain the same ZFS mount contract for
+  # validation while production resolves game-data to gaming-containers.
+  game-data:
+    storage: infrastructure-containers
+    required_content_type: rootdir
   durable-small:
     storage: local-lvm
     required_content_type: rootdir
