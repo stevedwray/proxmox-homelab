@@ -1,0 +1,149 @@
+---
+# Deploys the inspected Wildworks NeoForge release. The archive and legacy
+# access-control JSON files are operator-provided runtime inputs, never source
+# files in this repository.
+
+- name: Deploy Wildworks NeoForge Minecraft server
+  hosts: all
+  become: true
+  gather_facts: false
+
+  vars:
+    minecraft_project_dir: /srv/docker/minecraft/wildworks
+    minecraft_release_archive: "{{ minecraft_release_tarball | mandatory('minecraft_release_tarball is required') }}"
+    minecraft_legacy_ops_source: "{{ minecraft_legacy_ops | mandatory('minecraft_legacy_ops is required') }}"
+    minecraft_legacy_whitelist_source: "{{ minecraft_legacy_whitelist | mandatory('minecraft_legacy_whitelist is required') }}"
+    minecraft_rcon_password: "{{ lookup('env', 'MINECRAFT_FOREVERWORLD_RCON_PASSWORD') | mandatory('MINECRAFT_FOREVERWORLD_RCON_PASSWORD is required') }}"
+
+  pre_tasks:
+    - name: Assert controller release and access-control files are present
+      ansible.builtin.stat:
+        path: "{{ item }}"
+      loop:
+        - "{{ minecraft_release_archive }}"
+        - "{{ minecraft_legacy_ops_source }}"
+        - "{{ minecraft_legacy_whitelist_source }}"
+      delegate_to: localhost
+      become: false
+      register: minecraft_controller_sources
+
+    - name: Fail when a required controller source is missing
+      ansible.builtin.assert:
+        that: item.stat.exists
+        fail_msg: "Required Minecraft deployment source is missing: {{ item.item }}"
+      loop: "{{ minecraft_controller_sources.results }}"
+
+  tasks:
+    - name: Create Wildworks project directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ minecraft_project_dir }}"
+        - "{{ minecraft_project_dir }}/runtime"
+        - "{{ minecraft_project_dir }}/world"
+        - /srv/docker/minecraft/releases
+
+    - name: Upload inspected Wildworks release archive
+      ansible.builtin.copy:
+        src: "{{ minecraft_release_archive }}"
+        dest: /srv/docker/minecraft/releases/Wildworks-Server-NeoForge-1.21.1.tar.gz
+        mode: "0640"
+
+    - name: Extract Wildworks release into its compose build context
+      ansible.builtin.unarchive:
+        src: /srv/docker/minecraft/releases/Wildworks-Server-NeoForge-1.21.1.tar.gz
+        dest: "{{ minecraft_project_dir }}"
+        remote_src: true
+        extra_opts: [--strip-components=1]
+        creates: "{{ minecraft_project_dir }}/run.sh"
+
+    - name: Preserve legacy Foreverworld operator and whitelist data
+      ansible.builtin.copy:
+        src: "{{ item.src }}"
+        dest: "{{ item.dest }}"
+        mode: "0640"
+      loop:
+        - { src: "{{ minecraft_legacy_ops_source }}", dest: "{{ minecraft_project_dir }}/runtime/ops.json" }
+        - { src: "{{ minecraft_legacy_whitelist_source }}", dest: "{{ minecraft_project_dir }}/runtime/whitelist.json" }
+
+    - name: Seed mutable server properties from the release
+      ansible.builtin.copy:
+        src: "{{ minecraft_project_dir }}/server.properties"
+        dest: "{{ minecraft_project_dir }}/runtime/server.properties"
+        remote_src: true
+        force: false
+        mode: "0640"
+
+    - name: Configure Wildworks server access and port
+      ansible.builtin.lineinfile:
+        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        regexp: "^{{ item.key }}="
+        line: "{{ item.key }}={{ item.value }}"
+      loop:
+        - { key: server-port, value: "25565" }
+        - { key: enable-rcon, value: "true" }
+        - { key: rcon.port, value: "25575" }
+        - { key: white-list, value: "true" }
+        - { key: enforce-whitelist, value: "true" }
+
+    - name: Restrict mutable server properties containing the RCON password
+      ansible.builtin.file:
+        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        mode: "0600"
+
+    - name: Set the RCON password in mutable server properties
+      ansible.builtin.lineinfile:
+        path: "{{ minecraft_project_dir }}/runtime/server.properties"
+        regexp: "^rcon.password="
+        line: "rcon.password={{ minecraft_rcon_password }}" # gitleaks:allow
+      no_log: true
+
+    - name: Install runtime-safe server entrypoint
+      ansible.builtin.copy:
+        dest: "{{ minecraft_project_dir }}/docker-entrypoint.sh"
+        mode: "0750"
+        content: |
+          #!/bin/sh
+          set -eu
+          if [ "${EULA:-}" != "TRUE" ]; then
+            echo "Set EULA=TRUE after accepting the Minecraft EULA to start this server." >&2
+            exit 1
+          fi
+          sed -i 's/^eula=.*/eula=true/' eula.txt
+          exec ./run.sh nogui
+
+    - name: Install Wildworks Docker Compose project
+      ansible.builtin.copy:
+        dest: "{{ minecraft_project_dir }}/compose.yaml"
+        mode: "0640"
+        content: |
+          services:
+            wildworks:
+              build: .
+              container_name: wildworks-neoforge
+              environment:
+                EULA: "TRUE"
+              ports:
+                - "25565:25565/tcp"
+              volumes:
+                - ./world:/data/world
+                - ./runtime/server.properties:/data/server.properties
+                - ./runtime/ops.json:/data/ops.json
+                - ./runtime/whitelist.json:/data/whitelist.json
+              restart: unless-stopped
+              mem_limit: 16g
+
+    - name: Build and start Wildworks
+      ansible.builtin.command:
+        cmd: docker compose up -d --build
+        chdir: "{{ minecraft_project_dir }}"
+      register: wildworks_compose_up
+      changed_when: "'Started' in wildworks_compose_up.stderr or 'Created' in wildworks_compose_up.stderr or 'Built' in wildworks_compose_up.stderr"
+
+    - name: Wait for Wildworks Minecraft port
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 25565
+        timeout: 180

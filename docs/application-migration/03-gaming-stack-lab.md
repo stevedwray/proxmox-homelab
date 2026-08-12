@@ -70,7 +70,7 @@ directory must be preserved. It is potentially large.
    `gaming-containers` volume.
 3. Register its agent with lab Portainer.
 4. Inspect the supplied Minecraft tarball and write a NeoForge compose project
-   under `/srv/docker/minecraft/foreverworld/`.
+   under `/srv/docker/minecraft/wildworks/`.
 5. Carry forward ops and whitelist settings, then test TCP/25565 from the LAN.
 6. Retain the legacy LXC as the rollback target; do not decommission it in
    this phase.
