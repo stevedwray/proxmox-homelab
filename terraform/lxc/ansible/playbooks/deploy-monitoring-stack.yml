@@ -232,6 +232,14 @@
                 - action: labeldrop
                   regex: server_version
 
+            - job_name: minecraft-jvm
+              scrape_interval: 15s
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:9404"]
+                  labels:
+                    stack: gaming-stack-lab
+                    server: foreverworld
+
             - job_name: coredns
               scrape_interval: 15s
               static_configs:

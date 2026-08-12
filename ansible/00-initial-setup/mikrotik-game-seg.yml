@@ -47,6 +47,7 @@
       - { comment: "mgmt_seg Portainer to game-stack agent", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_PORTAINER') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9001" }
       - { comment: "monitoring-stack scrapes game-stack metrics", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9100,8080" }
       - { comment: "monitoring-stack scrapes Minecraft status", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "8081" }
+      - { comment: "monitoring-stack scrapes Minecraft JVM metrics", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9404" }
       - { comment: "game-stack syslog to Graylog", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_GRAYLOG') }}", dst-port: "514" }
       - { comment: "game-stack node_exporter TLS from step-ca", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_STEP_CA') }}", dst-port: "443" }
       - { comment: "game_seg to infra Harbor and apt-cacher", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_subnet }}", dst-address: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') }}", dst-port: "80,443,3142" }

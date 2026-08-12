@@ -78,13 +78,41 @@
     {
       "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
       "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "Bps" }, "overrides": [] },
-      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 21 },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 29 },
       "options": { "legend": { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
       "targets": [
         { "expr": "rate(container_fs_reads_bytes_total{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}[5m])", "legendFormat": "Read", "refId": "A" },
         { "expr": "rate(container_fs_writes_bytes_total{job=\"cadvisor\",stack=\"gaming-stack-lab\",name=~\".*foreverworld-minecraft.*\"}[5m])", "legendFormat": "Write", "refId": "B" }
       ],
       "title": "Minecraft Container Disk I/O", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "bytes" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 21 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [
+        { "expr": "jvm_heap_memory_used_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Used", "refId": "A" },
+        { "expr": "jvm_heap_memory_committed_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Committed", "refId": "B" },
+        { "expr": "jvm_heap_memory_max_bytes{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Maximum", "refId": "C" }
+      ],
+      "title": "JVM Heap", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "s" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 21 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "rate(jvm_gc_collection_seconds_sum{job=\"minecraft-jvm\",server=\"foreverworld\"}[5m])", "legendFormat": "{{gc}} GC seconds/s", "refId": "A" }],
+      "title": "JVM GC Time Rate", "type": "timeseries"
+    },
+    {
+      "datasource": { "type": "prometheus", "uid": "VictoriaMetrics" },
+      "fieldConfig": { "defaults": { "custom": { "drawStyle": "line", "fillOpacity": 10, "lineWidth": 1 }, "unit": "short" }, "overrides": [] },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 29 },
+      "options": { "legend": { "calcs": ["lastNotNull", "max"], "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
+      "targets": [{ "expr": "jvm_threads_current{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Live threads", "refId": "A" }, { "expr": "jvm_threads_daemon{job=\"minecraft-jvm\",server=\"foreverworld\"}", "legendFormat": "Daemon threads", "refId": "B" }],
+      "title": "JVM Threads", "type": "timeseries"
     }
   ],
   "refresh": "30s",

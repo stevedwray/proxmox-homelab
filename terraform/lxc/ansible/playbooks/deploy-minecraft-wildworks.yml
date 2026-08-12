@@ -15,6 +15,12 @@
     minecraft_server_image: itzg/minecraft-server:java21
     minecraft_monitor_image: itzg/mc-monitor:latest
     minecraft_cadvisor_image: ghcr.io/google/cadvisor:v0.60.5
+    minecraft_jmx_exporter_version: "1.6.0"
+    minecraft_jmx_exporter_dir: "{{ minecraft_project_dir }}/jmx-exporter"
+    minecraft_jmx_exporter_jar: "{{ minecraft_jmx_exporter_dir }}/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar"
+    minecraft_jmx_exporter_config: "{{ minecraft_jmx_exporter_dir }}/config.yaml"
+    minecraft_jmx_javaagent_options: >-
+      -javaagent:/data/jmx-exporter/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar=9404:/data/jmx-exporter/config.yaml
     minecraft_heap: 16G
     minecraft_gc_log_options: >-
       -Xlog:gc*:file=logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20M
@@ -79,8 +85,16 @@
       loop:
         - "{{ minecraft_project_dir }}"
         - "{{ minecraft_project_dir }}/runtime"
+        - "{{ minecraft_jmx_exporter_dir }}"
         - "{{ minecraft_project_dir }}/world"
         - /srv/docker/minecraft/releases
+
+    - name: Allow the Minecraft process to read its JMX exporter files
+      ansible.builtin.file:
+        path: "{{ minecraft_jmx_exporter_dir }}"
+        owner: automation
+        group: automation
+        mode: "0750"
 
     - name: Stop Foreverworld before regenerating its world
       ansible.builtin.command:
@@ -177,6 +191,55 @@
         line: "rcon.password={{ minecraft_rcon_password }}" # gitleaks:allow
       no_log: true
 
+    - name: Install the Prometheus JMX Java agent
+      ansible.builtin.get_url:
+        url: "https://github.com/prometheus/jmx_exporter/releases/download/{{ minecraft_jmx_exporter_version }}/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar"
+        dest: "{{ minecraft_jmx_exporter_jar }}"
+        owner: automation
+        group: automation
+        mode: "0644"
+
+    - name: Configure the Minecraft JVM Prometheus exporter
+      ansible.builtin.copy:
+        dest: "{{ minecraft_jmx_exporter_config }}"
+        owner: automation
+        group: automation
+        mode: "0644"
+        content: |
+          lowercaseOutputName: true
+          lowercaseOutputLabelNames: true
+          rules:
+            - pattern: 'java.lang<type=Memory><HeapMemoryUsage>(used|committed|max): (.*)'
+              name: jvm_heap_memory_$1_bytes
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionCount>: (.*)'
+              name: jvm_gc_collection_count
+              value: '$2'
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=GarbageCollector, name=(.+)><CollectionTime>: (.*)'
+              name: jvm_gc_collection_seconds_total
+              value: '$2'
+              valueFactor: 0.001
+              labels:
+                collector: '$1'
+              type: COUNTER
+            - pattern: 'java.lang<type=Threading><(ThreadCount|PeakThreadCount|DaemonThreadCount)>: (.*)'
+              name: jvm_threads_$1
+              value: '$2'
+              type: GAUGE
+            - pattern: 'java.lang<type=OperatingSystem><ProcessCpuLoad>: (.*)'
+              name: jvm_process_cpu_load_ratio
+              value: '$1'
+              type: GAUGE
+            - pattern: 'java.lang<type=Runtime><Uptime>: (.*)'
+              name: jvm_uptime_seconds
+              value: '$1'
+              valueFactor: 0.001
+              type: GAUGE
+
     - name: Restore the release-native entrypoint
       ansible.builtin.copy:
         dest: "{{ minecraft_project_dir }}/docker-entrypoint.sh"
@@ -218,9 +281,10 @@
                 OVERRIDE_SERVER_PROPERTIES: "false"
                 INIT_MEMORY: "{{ minecraft_heap }}"
                 MAX_MEMORY: "{{ minecraft_heap }}"
-                JVM_OPTS: "{{ minecraft_gc_log_options }}"
+                JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
               ports:
                 - "25565:25565/tcp"
+                - "9404:9404/tcp"
               volumes:
                 - ./:/data
               restart: unless-stopped
@@ -364,9 +428,10 @@
                   OVERRIDE_SERVER_PROPERTIES: "false"
                   INIT_MEMORY: "{{ minecraft_heap }}"
                   MAX_MEMORY: "{{ minecraft_heap }}"
-                  JVM_OPTS: "{{ minecraft_gc_log_options }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
                 ports:
                   - "25565:25565/tcp"
+                  - "9404:9404/tcp"
                 volumes:
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
@@ -429,9 +494,10 @@
                   OVERRIDE_SERVER_PROPERTIES: "false"
                   INIT_MEMORY: "{{ minecraft_heap }}"
                   MAX_MEMORY: "{{ minecraft_heap }}"
-                  JVM_OPTS: "{{ minecraft_gc_log_options }}"
+                  JVM_OPTS: "{{ minecraft_gc_log_options }} {{ minecraft_jmx_javaagent_options }}"
                 ports:
                   - "25565:25565/tcp"
+                  - "9404:9404/tcp"
                 volumes:
                   - {{ minecraft_project_dir }}:/data
                 restart: unless-stopped
