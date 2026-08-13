@@ -45,12 +45,12 @@ truncation) and needs a redo, — = out of scope for this model):
 
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
-| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ | ✅ | ⬜ |
-| Qwen3.6-35B | ✅ | ✅ | ⚠️ redo needed | ⚠️ redo needed | ⬜ | — |
+| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ⚠️ 79.11%/82.62% but unverified (no `--log_samples`, `gen_kwargs: {}` — redo queued, Tier B) | ✅ | ⬜ |
+| Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | 🔄 running (redo) | ⬜ | — |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
-| Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | 🔄 running | ⬜ queued | ⬜ |
-| Qwen3-Coder-Next | ✅ | ✅ | — dropped | ⬜ | ⬜ | ✅ |
+| Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
+| Qwen3-Coder-Next | ✅ | ✅ | — dropped | — dropped (swapped for Qwen3-Coder-30B redo) | ⬜ | ✅ |
 | Laguna-Heretic | ✅ | ✅ | — dropped | ⬜ | ⬜ | ✅ |
 
 **Tier A — fill first** (the 3 models whose battery was mid-flight when
@@ -77,19 +77,35 @@ compute time not engineering):
 **Tier B — new coverage** (never tested at all on these axes; matters
 because BFCL/AgentBench alone don't tell you general-reasoning fit for
 the adviser role):
-- Qwen3-Coder-Next: IFEval only
+- Qwen3-Coder-30B (production): IFEval **redo**, not new coverage --
+  swapped in for Qwen3-Coder-Next's slot (operator call, 2026-08-13).
+  Its existing 2026-08-05 numbers (79.11%/82.62% strict/loose) used
+  `gen_kwargs: {}`, the same missing-flag condition Bug 6 exploited on
+  Gemma4-26B/Qwen3.6-35B -- but scored real, plausible numbers rather
+  than the flat-zero truncation signature those runs showed. Working
+  read: Qwen3-Coder-30B likely isn't a reasoning-preamble model the way
+  those two are, so a 256-token cap probably didn't starve it -- but
+  that run also has no `--log_samples` output to check directly, so
+  it's a plausible inference, not a verified-clean number. Rerun with
+  `--gen_kwargs max_gen_toks=8192` to settle it properly rather than
+  leave an unverified assumption on the books, same standard applied
+  to every other model in this project.
 - Laguna-Heretic: IFEval only
 
-GPQA dropped from Tier B for both (operator call, 2026-08-13): this
-project's own Tier A timings put full GPQA anywhere from ~7h
-(Gemma4-26B) to ~14h+ (Laguna S2.1, a similarly reasoning-heavy
-model), and neither of these two is a general-reasoning candidate --
-Qwen3-Coder-Next is a coding specialist, Laguna-Heretic is a decensored
-variant of a base model already scored on GPQA at Tier A. Low expected
-signal, high time cost -- not worth it. IFEval is cheap by comparison
-and still answers real questions (instruction-following fit, and for
-Laguna-Heretic specifically whether decensoring cost anything there
-too, alongside the existing BFCL/AgentBench split-signal finding).
+GPQA dropped from Tier B for both Qwen3-Coder-Next and Laguna-Heretic
+(operator call, 2026-08-13): this project's own Tier A timings put
+full GPQA anywhere from ~7h (Gemma4-26B) to ~14h+ (Laguna S2.1, a
+similarly reasoning-heavy model), and neither of these two is a
+general-reasoning candidate -- Qwen3-Coder-Next is a coding specialist,
+Laguna-Heretic is a decensored variant of a base model already scored
+on GPQA at Tier A. Low expected signal, high time cost -- not worth it.
+IFEval is cheap by comparison and still answers real questions
+(instruction-following fit, and for Laguna-Heretic specifically
+whether decensoring cost anything there too, alongside the existing
+BFCL/AgentBench split-signal finding). Qwen3-Coder-Next's IFEval was
+then dropped entirely in favor of the Qwen3-Coder-30B redo above --
+30B is the actual production pick, so verifying its one questionable
+number takes priority over new coverage on a non-production model.
 
 **Tier C — RepoBench expansion** (currently only 2 of 7 models tested):
 - Qwen3-Coder-30B — the actual production pick has never been measured
