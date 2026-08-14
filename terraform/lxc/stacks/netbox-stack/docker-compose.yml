@@ -148,7 +148,7 @@ services:
     restart: unless-stopped
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ${REGISTRY_HOST}/gcr/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
     ports:
       - "8081:8080"
