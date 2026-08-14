@@ -16,7 +16,9 @@ deployed stack were routing its pulls through Harbor's proxy-cache projects.
 Transient investigation notes, if any accumulate while this plan is worked,
 belong under `docs/harbor-stack/artifacts/` (git-ignored) per
 `docs/workflow/documentation-workspaces.md`. This file holds only durable
-conclusions and the plan itself.
+conclusions and the plan itself. Reusable operational gotchas from this
+work (not specific to any one finding) are split out into
+[lessons-learned.md](lessons-learned.md).
 
 ## Status (2026-08-15)
 
