@@ -20,14 +20,15 @@ conclusions and the plan itself.
 
 ## Status (2026-08-15)
 
-**Stage A, Stage B, and Stage C are complete** (16 commits on
-`task/harbor-image-sourcing-enforcement`, not yet pushed or merged to
-`stable`). All ten Stage B violations are fixed and, where they can be
-deployed on pve-test-vm, live-validated there. Stage C's scheduled re-pull
-job is live on pve-test-vm's `ci-runner-01`, validated end to end through
-the real systemd timer path. See Findings 5–10 for what implementation
-turned up beyond the original four findings, and the Decisions Log for
-what got fixed vs. deliberately deferred. Stage D is not yet started.
+**Stages A through D are all complete**, merged to `stable`, and pushed.
+All ten Stage B violations are fixed and, where they can be deployed on
+pve-test-vm, live-validated there. Stage C's scheduled re-pull job is live
+on pve-test-vm's `ci-runner-01`, validated end to end through the real
+systemd timer path. Stage D's dormant registry-mirror scaffolding is
+retired. See Findings 5–11 for what implementation turned up beyond the
+original four findings, and the Decisions Log for what got fixed vs.
+deliberately deferred. **Only Stage E (network-layer enforcement) remains,
+intentionally scoped as a later, separate, higher-validation-tier effort.**
 
 ## Verified Findings (2026-08-14)
 
@@ -502,24 +503,37 @@ Verification:
 Exit criteria: a stack that hasn't been redeployed in weeks still shows a
 recent scan timestamp in Harbor.
 
-### Stage D — Docker Hub registry-mirror as defense-in-depth (not enforcement)
+### Stage D — Docker Hub registry-mirror decision — ✅ complete, retired (2026-08-15)
 
 Goal: use the existing dormant scaffolding for what it's actually good for.
 
-Work:
-- Either (a) finish wiring `docker_base`'s `registry-mirrors` config against
-  a small dedicated `registry:2` pull-through-cache instance configured
-  with Harbor's `dockerhub` project as its remote (the shape Docker's
-  daemon-level mirror protocol actually expects), or (b) explicitly retire
-  the dormant scaffolding if the value isn't judged worth a second moving
-  part.
-- Document clearly, wherever this lands, that this mechanism is a
-  performance/redundancy nicety for Docker Hub pulls only, silently falls
-  back to the origin on miss, and is not a substitute for Stage A/B's
-  routing correctness or Stage E's enforcement.
+**Decided: retire, not finish.** Two things settled it:
 
-Exit criteria: either the mirror is live and documented as opportunistic
-caching only, or the dead code is removed with that decision recorded here.
+1. Harbor's proxy-cache projects (`dockerhub`, `gcr`, `ghcr`, `quay`) are
+   Harbor's own documented, intended mechanism for this — pulling via an
+   explicit `harbor-host/<project>/<upstream-path>:<tag>` reference isn't
+   a workaround, it's how Harbor's proxy-cache feature is designed to be
+   used. There's no Harbor mode where a client pulls with no project
+   prefix and Harbor transparently intercepts it.
+2. Confirmed that mechanism is genuinely load-bearing before removing the
+   alternative: 27 running containers across 7 stacks on pve-test-vm right
+   now are on Harbor-routed images (checked live via `docker ps`, not
+   inferred from code).
+
+Docker's `registry-mirrors` daemon setting was always the wrong tool
+regardless — a generic, root-scoped mirror mechanism designed for a plain
+`registry:2`-shaped server answering at its root with no path prefix,
+fundamentally incompatible with Harbor's project-scoped proxy-cache paths.
+That mismatch is *why* it was never finished, not just an oversight.
+
+Removed: the gated task block in `docker_base/tasks/main.yml`
+(`enable_registry_mirror`/`docker_registry_mirror`/
+`docker_base_configure_mirror`, confirmed dead via repo-wide grep — never
+set to `true`/defined anywhere), the now-unused `daemon.json.j2` template,
+and the now-unused restart-docker handler. The role's real Docker
+install/setup logic is untouched. Verified live on pve-test-vm
+(`apt-cacher-stack`, a `docker_base` consumer): clean run, smoke test
+passes.
 
 ### Stage E — Network-layer image firewall (separate, later, higher-risk phase)
 
@@ -673,16 +687,15 @@ hit and worked around/flagged along the way.
 7. Promote to `pve`'s `ci-runner-01` only after the pve-test-vm timer has
    run cleanly, unattended, at least once.
 
-### Stage D — registry-mirror decision
+### Stage D — registry-mirror decision — ✅ complete (2026-08-15)
 
-- If finishing the mirror: stand up the small `registry:2` companion on
-  pve-test-vm, point `docker_base`'s mirror config at it, confirm a Docker
-  Hub pull is cached/faster on repeat, and confirm it falls back cleanly to
-  the origin when the mirror is deliberately stopped.
-- If retiring: confirm removing the dead scaffolding doesn't change
-  `docker_base` behavior anywhere (`docker_base_configure_mirror` was
-  always `false` in practice) — a syntax-check is sufficient, no host
-  validation needed.
+Decided: retire. Confirmed the proxy-cache mechanism it would have
+duplicated is genuinely in live use (27 running containers across 7
+pve-test-vm stacks) before removing the alternative. Verified removing the
+dead scaffolding doesn't change `docker_base` behavior anywhere
+(`docker_base_configure_mirror` was always `false` in practice) via both
+`--syntax-check` and a live `provision.sh` run against `apt-cacher-stack`
+(a `docker_base` consumer) — clean, `failed=0`, smoke test passed.
 
 ### Stage E — network-layer image firewall
 
@@ -720,7 +733,7 @@ promotion pass given the higher validation tier and blast radius.
 | B (standard stacks) | `scripts/provision.sh --stack <name>` on pve-test-vm per touched stack | container starts using Harbor-routed image; Stage A grep clean |
 | B (`minecraft-wildworks`) | offline syntax/template check only | image strings resolve correctly offline; **live rollout on hold indefinitely per operator directive, not attempted** |
 | C | manual run + unattended scheduled run on pve-test-vm's `ci-runner-01` | Harbor artifact timestamp refreshes; container `StartedAt` unchanged; tolerates cold/empty Harbor |
-| D | mirror reachability + fallback check, or removal commit | mirror documented as opportunistic-only, or scaffolding removed |
+| D | removal commit + live `docker_base`-consumer provision run | dead scaffolding removed; `apt-cacher-stack` clean run, smoke test passed |
 | E | direct-pull test from blocked zone vs. Harbor-routed pull, full teardown cycle | direct fails, Harbor-routed succeeds, Harbor cache-fill unaffected, teardown cycle passed |
 
 ## Out of Scope (this document)
