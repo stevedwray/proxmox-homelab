@@ -18,15 +18,16 @@ belong under `docs/harbor-stack/artifacts/` (git-ignored) per
 `docs/workflow/documentation-workspaces.md`. This file holds only durable
 conclusions and the plan itself.
 
-## Status (2026-08-14)
+## Status (2026-08-15)
 
-**Stage A and Stage B are complete and merged into this branch** (11
-commits on `task/harbor-image-sourcing-enforcement`). All ten stacks with
-real violations are fixed and, where they can be deployed on pve-test-vm,
-live-validated there. See Findings 5–8 below for what implementation
+**Stage A, Stage B, and Stage C are complete** (16 commits on
+`task/harbor-image-sourcing-enforcement`, not yet pushed or merged to
+`stable`). All ten Stage B violations are fixed and, where they can be
+deployed on pve-test-vm, live-validated there. Stage C's scheduled re-pull
+job is live on pve-test-vm's `ci-runner-01`, validated end to end through
+the real systemd timer path. See Findings 5–10 for what implementation
 turned up beyond the original four findings, and the Decisions Log for
-what got fixed vs. deliberately deferred. Stage C and Stage D are not yet
-started.
+what got fixed vs. deliberately deferred. Stage D is not yet started.
 
 ## Verified Findings (2026-08-14)
 
@@ -254,6 +255,45 @@ Fixed (`export TF_WORKSPACE='pve-test-vm'`, matching `.env.pve`/
 `.env.pve-framework`'s existing pattern) and verified: `apt-cacher-stack`'s
 container resource now shows zero diff instead of a phantom full recreate.
 
+### Finding 10 — the homelab root CA isn't consistently distributed across the fleet (worked around, not fixed)
+
+Discovered while validating Stage C's re-pull job on `ci-runner-01`: its
+`docker pull` against Harbor's FQDN failed with `x509: certificate signed
+by unknown authority`, even though `ci-runner-01` has the "Homelab CA Root
+CA" installed and correctly trusted at the OS level (identical
+`update-ca-certificates` symlink structure to a working host). Root cause:
+**two different certificates, both named "Homelab CA Root CA," with
+different SHA1 fingerprints, exist across the fleet** — `ci-runner-01`'s
+copy (`notBefore=Jul 12 04:17:54`) predates the one on stacks redeployed
+during this session's Stage B work (`notBefore=Jul 12 05:56:27`, ~1.5
+hours later same day). The root CA was rotated at some point and only
+propagated to hosts that got redeployed after the rotation — `ci-runner-01`
+hadn't been touched since, so it kept trusting the old one, which no
+longer matches what step-ca/Traefik actually presents.
+
+Worked around narrowly to unblock Stage C's validation: copied the
+currently-active cert from a working host to `ci-runner-01`, ran
+`update-ca-certificates`, restarted Docker. **The underlying propagation
+gap is not fixed** — any other not-recently-redeployed host likely has the
+same stale-CA problem, and there's no mechanism in this repo that pushes a
+CA rotation out to already-provisioned hosts without a full redeploy. Out
+of scope for this task; flagging for separate attention.
+
+### Finding 11 — `deploy-ci-runner.yml`'s runner-registration step needs interactive `gh` auth (not fixed, blocks the playbook entirely)
+
+Running `provision.sh --stack ci-runner-01` to validate Stage C the normal
+way failed immediately, before reaching any of this task's own changes:
+its "Generate runner registration token when one is not provided" task
+shells out to `gh api` on the controller (this workstation), and `gh auth
+status` here reports the cached token as invalid. This blocks the *entire*
+`deploy-ci-runner.yml` playbook for anyone, not just this task — needs an
+interactive `gh auth login` re-authentication from the operator (a device-flow
+browser confirmation, not something scriptable). Stage C's actual code was
+instead deployed and validated directly via SSH (see Decisions Log) — the
+files on `ci-runner-01` now are byte-identical to what the role produces,
+so a future successful `provision.sh` run will just idempotently confirm
+them, not change anything.
+
 ## Assessment of the Operator's Target State
 
 Restating the position to respond to it point by point:
@@ -390,7 +430,7 @@ container starts using the Harbor-routed image.
 Exit criteria: Finding 1's table is empty except the one documented
 bootstrap exception.
 
-### Stage C — Non-destructive scheduled re-pull / rescan job
+### Stage C — Non-destructive scheduled re-pull / rescan job — ✅ complete (2026-08-15)
 
 Goal: Harbor's artifact/scan state reflects what's actually running, not
 just what happened to be freshly deployed recently.
@@ -577,7 +617,16 @@ recreate the exact "exists on pve-test-vm" state that's been ruled out, even
 if torn down right after. Flagging this as a deliberate choice, not an
 oversight — say the word if you'd actually prefer that tradeoff.
 
-### Stage C — `ci-runner-01` re-pull job
+### Stage C — `ci-runner-01` re-pull job — ✅ complete (2026-08-15)
+
+Actual verification ended up simpler than step 3 below assumed: the job
+runs on `ci-runner-01`, a completely different host from every stack it
+refreshes, so it structurally cannot touch their containers at all (no
+SSH, no remote docker socket access — just `docker pull` against Harbor,
+locally, on `ci-runner-01` itself). Verified instead: same Docker daemon
+ID and same active GitHub Actions runner service on `ci-runner-01` itself,
+before and after. See Finding 10/11 for two unrelated pre-existing issues
+hit and worked around/flagged along the way.
 
 1. Confirm pve-test-vm's `ci-runner-01` is up (`192.168.10.163`).
 2. First run the job manually (not via timer) against pve-test-vm's Harbor
@@ -677,17 +726,38 @@ promotion pass given the higher validation tier and blast radius.
 - `harbor-stack`'s cadvisor sidecar: confirmed *not* a genuine bootstrap
   exception (Harbor is already up by the time that play runs) — fixed like
   every other stack, CI allowlist for it removed (2026-08-14).
-- 11 commits landed on `task/harbor-image-sourcing-enforcement`: the
-  TF_WORKSPACE fix, the Stage A CI rewrite, and one commit per stack fixed
-  in Stage B. Not yet pushed to `origin` or merged to `stable`.
+- 16 commits landed on `task/harbor-image-sourcing-enforcement`: the
+  TF_WORKSPACE fix, the Stage A CI rewrite, one commit per stack fixed in
+  Stage B, and the Stage C re-pull job. Not yet pushed to `origin` or
+  merged to `stable`.
+- Stage C's `ci-runner-01` deployment: applied and validated directly via
+  SSH rather than through `provision.sh`, because that playbook's
+  runner-registration step is blocked by an unrelated invalid `gh` CLI
+  token in this session (Finding 11) — needs the operator to
+  `gh auth login` before `provision.sh --stack ci-runner-01` will work
+  again for anyone, not just this task.
+- The homelab root CA rotation/propagation gap (Finding 10): worked around
+  narrowly on `ci-runner-01` to unblock Stage C validation, not fixed at
+  the root. Flagged as a separate, real platform issue.
 
 ## Open Questions for Operator
 
 - Stage E is intentionally scoped as a later, separate effort — confirm
   that's the right sequencing before any network/firewall work is
   scheduled, given its full-teardown-cycle validation cost.
-- Ready to start Stage C (scheduled re-pull job) and/or Stage D
-  (registry-mirror finish-or-retire decision) now, or hold here?
+- Ready to start Stage D (registry-mirror finish-or-retire decision) now,
+  or hold here?
+- `gh auth login` needs re-running (Finding 11) — blocks
+  `provision.sh --stack ci-runner-01` for anyone until re-authenticated.
+  Not something this session can do (interactive browser device-flow).
+- The homelab root CA propagation gap (Finding 10) needs a real fix
+  eventually — worked around only on `ci-runner-01`, other
+  not-recently-redeployed hosts likely have the same stale-CA problem.
+  Worth its own follow-up, separate from this task.
+- Stage C's manifest (`terraform/lxc/ansible/roles/harbor_repull/files/manifest.txt`)
+  covers the stacks touched in Stage B only — extend it with
+  ai-services-stack/graylog-stack/greenbone-stack/pentagi-stack once their
+  exact live tags are confirmed, rather than transcribed from source.
 
 Resolved (2026-08-15): `harness-target`'s hardcoded hostname (confirmed
 intentional, no fix) and `minecraft-wildworks`'s production rollout (not
