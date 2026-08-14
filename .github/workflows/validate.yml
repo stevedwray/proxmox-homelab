@@ -99,11 +99,11 @@ jobs:
           #  - roles/app_stack/: confirmed zero live consumers (no
           #    stack.yaml points ansible_playbook at deploy-stack) — see
           #    docs/harbor-stack/image-sourcing-enforcement.md Finding 1.
-          #  - stacks/harness-target/: a separate, already-flagged bug
-          #    (hardcodes the production Harbor's FQDN instead of
-          #    ${REGISTRY_HOST}, so it doesn't route through whichever
-          #    environment's Harbor it's actually deployed against) —
-          #    tracked as its own follow-up, not folded into this pass.
+          #  - stacks/harness-target/: intentionally pinned to production
+          #    Harbor's FQDN rather than ${REGISTRY_HOST}, confirmed by the
+          #    operator — it only ever pulls (read-only) through prod
+          #    Harbor's proxy cache, never mutates it, so this is accepted
+          #    as-is, not a violation to fix.
           passes_registry_host() {
             local v="$1"
             [[ "${v}" =~ \{\{[^}]*registry_host[^}]*\}\} ]] && return 0

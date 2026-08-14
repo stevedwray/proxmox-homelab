@@ -42,14 +42,14 @@ why that distinction matters.
 | `proxy-stack` (Traefik) | `traefik:{{version}}`, `gcr.io/cadvisor/cadvisor` | `deploy-proxy-stack.yml:57,231` | ✅ fixed, live-validated |
 | `monitoring-stack` | `gcr.io/cadvisor/cadvisor` + an unguarded task actively stripping the other 3 (see Finding 7) | `deploy-monitoring-stack.yml:80,557` | ✅ fixed, live-validated |
 | `technitium-stack` | `technitium/dns-server` | `deploy-technitium-stack.yml:118` | ✅ fixed, live-validated |
-| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed, offline-validated only — live prod validation pending approval |
+| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed, offline-validated only — **live deployment on hold indefinitely, operator directive: do not touch the live Minecraft server** |
 | `docker_socket_proxy` role — shared sidecar, **6 consumers** (authentik, harbor, monitoring, netbox, portainer, proxy) | `tecnativa/docker-socket-proxy:latest` | `roles/docker_socket_proxy/defaults/main.yml:4` | ✅ fixed, live-validated on all 4 currently-enabled consumers deployed on pve-test-vm |
 | `harbor-stack` itself (cadvisor sidecar) | `gcr.io/cadvisor/cadvisor` | `deploy-harbor-stack.yml:230` | ✅ fixed, live-validated — turned out *not* to be a real bootstrap exception, see Finding 5's note below |
 | `authentik-stack` (found via Finding 6, not this table originally) | `postgres:16-alpine`, `redis:alpine`, `gcr.io/cadvisor/cadvisor` | `stacks/authentik-stack/docker-compose.yml:8,20,96` | ✅ fixed, live-validated; also fixed `authentik_registry_host`'s IP-on-non-pve special case |
 | `netbox-stack` (found via Finding 6) | `gcr.io/cadvisor/cadvisor` | `stacks/netbox-stack/docker-compose.yml:151` | ✅ fixed, live-validated |
 | `test-docker` (found via Finding 6) | `traefik/whoami`, `nginx:alpine` | `stacks/test-docker/docker-compose.yml:3,10` | ✅ fixed, not live-validated (not currently deployed) |
 | `docker-socket-proxy-test` (found via Finding 6) | `nginx:stable-alpine`, `traefik/whoami`, `redis:alpine` | `stacks/docker-socket-proxy-test/docker-compose.yml:5,10,15` | ✅ fixed, not live-validated (not currently deployed) |
-| `harness-target` (found via Finding 6) | hardcodes `harbor.lab.gibbsgreatly.xyz` literally, not `${REGISTRY_HOST}` | `stacks/harness-target/docker-compose.yml:5,12` | 🚩 flagged, not fixed — see Finding 8, different bug class |
+| `harness-target` (found via Finding 6) | hardcodes `harbor.lab.gibbsgreatly.xyz` literally, not `${REGISTRY_HOST}` | `stacks/harness-target/docker-compose.yml:5,12` | ✅ confirmed intentional, no fix — see Finding 8 |
 
 Stacks confirmed correctly routed through `{{ *_registry_host }}` → Harbor
 from the start: `ai-services-stack`, `graylog-stack`, `greenbone-stack`,
@@ -232,19 +232,17 @@ reachable. Fixed by adding the missing `when:` guard; grepped the rest of
 the repo for the same `dependency-tolerant`/`Rewrite compose images`
 pattern — it's isolated to this one file, not copy-pasted elsewhere.
 
-### Finding 8 — `harness-target` hardcodes production's Harbor FQDN literally (flagged, not fixed)
+### Finding 8 — `harness-target` hardcodes production's Harbor FQDN literally (confirmed intentional)
 
 `terraform/lxc/stacks/harness-target/docker-compose.yml` routes its two
 images through `harbor.lab.gibbsgreatly.xyz` — a literal, hardcoded
 hostname, not `${REGISTRY_HOST}`. That's `pve` production's Harbor FQDN;
 on pve-test-vm (where `harness-target` is actually deployed, per live
-inventory) this doesn't route through the local Harbor at all — it's the
-one stack in this whole pass that isn't a "bypass Harbor" bug so much as a
-"points at the wrong Harbor" bug, a different (environment-isolation)
-failure class. Deliberately excluded from the CI check's enforcement scope
-and left unfixed pending your input — it's a pentest-harness/target stack,
-which may have deliberate reasons for a pinned target, and that's not
-something to guess at.
+inventory) this doesn't route through the local Harbor at all. **Confirmed
+intentional by the operator (2026-08-15):** it only ever *pulls* (read-only)
+through prod Harbor's proxy cache — never mutates it — which is an
+accepted design choice, not a bug. Excluded from the CI check's enforcement
+scope permanently, not pending further input.
 
 ### Finding 9 — `TF_WORKSPACE` gap for pve-test-vm (fixed, cross-referenced)
 
@@ -552,6 +550,9 @@ revert the `image:` line, redeploy, confirm health restored, and stop; don't
 proceed to the next stack until root-caused.
 
 **`minecraft-wildworks` / `gaming-stack-lab`** (the pve-only exception):
+**Step 1 is done. Steps 2–4 are on hold indefinitely — operator directive
+(2026-08-15): do not touch the live Minecraft server.** Left documented
+below for if/when that changes, not as a live plan.
 
 1. Offline check first, no live host anywhere: `ansible-playbook
    deploy-minecraft-wildworks.yml --syntax-check`, plus a template-render
@@ -640,7 +641,7 @@ promotion pass given the higher validation tier and blast radius.
 |---|---|---|
 | A | extended CI grep run against current `main`/branch | surfaces every known Finding 1 violation; clean once Stage B lands |
 | B (standard stacks) | `scripts/provision.sh --stack <name>` on pve-test-vm per touched stack | container starts using Harbor-routed image; Stage A grep clean |
-| B (`minecraft-wildworks`) | offline syntax/template check, then approved live change on `pve` only | image strings resolve correctly offline; production change matches preflight scope exactly |
+| B (`minecraft-wildworks`) | offline syntax/template check only | image strings resolve correctly offline; **live rollout on hold indefinitely per operator directive, not attempted** |
 | C | manual run + unattended scheduled run on pve-test-vm's `ci-runner-01` | Harbor artifact timestamp refreshes; container `StartedAt` unchanged; tolerates cold/empty Harbor |
 | D | mirror reachability + fallback check, or removal commit | mirror documented as opportunistic-only, or scaffolding removed |
 | E | direct-pull test from blocked zone vs. Harbor-routed pull, full teardown cycle | direct fails, Harbor-routed succeeds, Harbor cache-fill unaffected, teardown cycle passed |
@@ -664,9 +665,15 @@ promotion pass given the higher validation tier and blast radius.
 - `*_registry_host` vars repo-wide: standardized on preferring
   `LAB_FQDN_HARBOR` over `registry_host`/`LAB_IP_HARBOR` in every stack
   touched this pass, per Finding 5 (2026-08-14).
-- `harness-target`'s hardcoded-hostname bug (Finding 8): excluded from the
-  CI check and left unfixed, pending your input — not folded into this
-  pass (2026-08-14).
+- `harness-target`'s hardcoded-hostname bug (Finding 8): confirmed
+  intentional by the operator — it only ever pulls (read-only) through
+  prod Harbor's proxy cache, never mutates it. Permanently excluded from
+  the CI check, no fix needed (2026-08-15).
+- `minecraft-wildworks`'s production rollout: operator confirmed **do not
+  touch the live Minecraft server** — `gaming-stack-lab` is intentionally
+  `pve`-only due to pve-test-vm's RAM ceiling, and that's staying that way.
+  The code fix (Stage B, already committed) stays as prepared-but-not-
+  deployed; there is no live rollout planned or pending (2026-08-15).
 - `harbor-stack`'s cadvisor sidecar: confirmed *not* a genuine bootstrap
   exception (Harbor is already up by the time that play runs) — fixed like
   every other stack, CI allowlist for it removed (2026-08-14).
@@ -679,12 +686,10 @@ promotion pass given the higher validation tier and blast radius.
 - Stage E is intentionally scoped as a later, separate effort — confirm
   that's the right sequencing before any network/firewall work is
   scheduled, given its full-teardown-cycle validation cost.
-- `minecraft-wildworks`'s production rollout (Stage B's one remaining
-  live-validation gap) needs a specific low-traffic window named when the
-  time comes, plus the standard preflight/approval exchange since it's a
-  `pve` mutation.
-- `harness-target`'s hardcoded-hostname bug (Finding 8): confirm whether
-  this is intentional (a pinned pentest target) or should be fixed to
-  `${REGISTRY_HOST}` like everything else.
 - Ready to start Stage C (scheduled re-pull job) and/or Stage D
   (registry-mirror finish-or-retire decision) now, or hold here?
+
+Resolved (2026-08-15): `harness-target`'s hardcoded hostname (confirmed
+intentional, no fix) and `minecraft-wildworks`'s production rollout (not
+happening — do not touch the live Minecraft server; the code fix stays
+committed but undeployed indefinitely). See Decisions Log.
