@@ -148,6 +148,37 @@ than Harbor specifically and apply repo-wide.
   gives the same live player-count answer without needing RCON credentials
   at all — prefer it for a quick "is anyone on" check.
 
+### 9. Ad-hoc `ansible -m shell -a "..."` commands leak fully-expanded secrets to Graylog — use `environment:`/`args` + `no_log: true` instead
+
+- `ansible <host> -m shell -a "docker exec -e PGPASSWORD=${SECRET} ..."`
+  gets its **fully expanded** command line — including any interpolated
+  secret value — logged via the target host's own syslog forwarding
+  (`rsyslog_forward` → Graylog), tagged `application_name:
+  ansible-ansible.legacy.command`, `"Invoked with _raw_params=..."`. This
+  happens regardless of `with-secrets`/`with-secrets-prod` scoping, because
+  the leak is on the *target* host's side, not the controller's — the
+  wrapper correctly keeps the secret out of your own shell history and
+  process list, but the moment it's interpolated into a `command`/`shell`
+  module's raw text and sent to a managed host, that host's own audit
+  logging can capture it independent of anything the controller does.
+  `HARBOR_DB_PASSWORD` was exposed this way during the scan-coverage
+  investigation above (2026-08-15) — required rotating it on both `pve` and
+  pve-test-vm (shared value) same day.
+- **Fix, verified empirically before trusting it:** write a real task (not
+  an ad-hoc `-a` string) using the module's structured `environment:` and
+  `args:` (e.g. `args: stdin: "..."`) keywords instead of concatenating the
+  secret into `cmd`/`_raw_params`, with `no_log: true` on the task. Tested
+  with an obviously-fake marker value first (searched Graylog afterward,
+  zero results), *then* used the identical pattern for the real password
+  rotation — the ad-hoc form doesn't support `no_log` at all, which is
+  what made it unsafe by construction, not just unlucky.
+- General takeaway: any command whose args a managed host would echo to
+  its own log/audit path (not just `ansible -m shell -a`, potentially also
+  interactive `ssh host 'cmd with $SECRET'`) carries the same risk. Prefer
+  a proper module + `no_log: true`, or a file transferred out-of-band
+  (`copy`/`template` with `no_log: true`) read server-side, over building
+  a secret directly into a shell command string sent to a remote host.
+
 ## Suggested Use
 
 - Read this document before starting the next piece of Harbor-adjacent
