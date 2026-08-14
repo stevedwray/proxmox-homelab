@@ -51,7 +51,7 @@ truncation) and needs a redo, — = out of scope for this model):
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
 | Qwen3-Coder-Next | ✅ | ✅ | — dropped | — dropped (swapped for Qwen3-Coder-30B redo) | ⬜ | ✅ |
-| Laguna-Heretic | ✅ | ✅ | — dropped | ⬜ | ⬜ | ✅ |
+| Laguna-Heretic | ✅ | ✅ | — dropped | — cancelled | ⬜ | ✅ |
 
 **Tier A — fill first** (the 3 models whose battery was mid-flight when
 the project pivoted; harness and methodology already proven, this is
@@ -90,7 +90,6 @@ the adviser role):
   `--gen_kwargs max_gen_toks=8192` to settle it properly rather than
   leave an unverified assumption on the books, same standard applied
   to every other model in this project.
-- Laguna-Heretic: IFEval only
 
 GPQA dropped from Tier B for both Qwen3-Coder-Next and Laguna-Heretic
 (operator call, 2026-08-13): this project's own Tier A timings put
@@ -99,13 +98,15 @@ similarly reasoning-heavy model), and neither of these two is a
 general-reasoning candidate -- Qwen3-Coder-Next is a coding specialist,
 Laguna-Heretic is a decensored variant of a base model already scored
 on GPQA at Tier A. Low expected signal, high time cost -- not worth it.
-IFEval is cheap by comparison and still answers real questions
-(instruction-following fit, and for Laguna-Heretic specifically
-whether decensoring cost anything there too, alongside the existing
-BFCL/AgentBench split-signal finding). Qwen3-Coder-Next's IFEval was
-then dropped entirely in favor of the Qwen3-Coder-30B redo above --
-30B is the actual production pick, so verifying its one questionable
-number takes priority over new coverage on a non-production model.
+Qwen3-Coder-Next's IFEval was then dropped entirely in favor of the
+Qwen3-Coder-30B redo above -- 30B is the actual production pick, so
+verifying its one questionable number takes priority over new coverage
+on a non-production model. Laguna-Heretic's IFEval was then also
+cancelled outright (operator call, 2026-08-14) -- Tier B now covers
+only the Qwen3-Coder-30B IFEval redo; Laguna-Heretic gets no new Tier B
+coverage. Its existing BFCL/AgentBench split-signal finding
+(decensoring cost tool-call format but not agentic task completion)
+stands as its only post-Tier-A data point.
 
 **Tier C — RepoBench expansion** (currently only 2 of 7 models tested):
 - Qwen3-Coder-30B — the actual production pick has never been measured
