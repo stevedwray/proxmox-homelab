@@ -47,7 +47,7 @@ truncation) and needs a redo, — = out of scope for this model):
 |---|---|---|---|---|---|---|
 | Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ | ⚠️ EM 1.67%/ES 15.18% — see Tier C note, 36% of responses were non-compliant commentary, not a real code-quality score |
 | Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | 🔄 running (redo) | ⬜ | — |
-| Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
+| Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ✅ EM 9.67%/ES 26.35% (9.3% non-compliant, far less than Qwen3-Coder-30B's 36%) |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
 | Qwen3-Coder-Next | ✅ | ✅ | — dropped | — dropped (swapped for Qwen3-Coder-30B redo) | ⬜ | ✅ |
@@ -141,6 +141,22 @@ code-quality-only signal, or whether the compliance-failure rate
 itself is the more operationally relevant finding for PentAGI (which
 also needs the model to follow strict output-format instructions in
 its own tool-calling/code-generation prompts).
+
+**Gemma4-26B result (2026-08-14): EM 9.67%, ES 26.35%**
+(cross_file_first/cross_file_random/in_file: EM 6.0/16.0/7.0, ES
+25.15/30.14/23.77), **zero generation failures** (vs Qwen3-Coder-30B's
+7/300 reload-race failures). Checked its compliance rate too, same
+method as above: **28/300 rows (9.3%)** conversational instead of a
+completion -- present, but far less than Qwen3-Coder-30B's 36%. This
+lines up cleanly with the IFEval ordering (Gemma4-26B 92.98%/93.90% >
+Qwen3-Coder-30B 81.33%/85.03%) and gives a real cross-benchmark
+validation: the model that follows strict-format instructions best on
+IFEval also drifts into commentary least often on RepoBench's
+raw-completion prompt. Qwen3-Coder-Next (0/300, the coding specialist)
+sits at one end of this spectrum, Qwen3-Coder-30B (36%) at the other,
+Gemma4-26B (9.3%) in between -- instruction-following capability, not
+architecture or coding-specialization, appears to be the actual driver
+of RepoBench compliance rate here.
 
 Not proposed: running every test against every model. IFEval/GPQA are
 cheap enough to extend broadly; RepoBench/BrowseComp/DeepResearch Bench
