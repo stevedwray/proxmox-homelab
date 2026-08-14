@@ -347,6 +347,10 @@ PORTAINER_MIGRATION_KEYS = (
     "portainer_migration_legacy_ip",
 )
 
+HARBOR_REPULL_KEYS = (
+    "harbor_repull_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -402,6 +406,10 @@ if extra_vars.get("enable_docker_socket_proxy") is True:
         die(f"{stack_file}: unresolved docker_socket_proxy_bind_addr placeholder: {bind_addr}")
 
 for key in PORTAINER_MIGRATION_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in HARBOR_REPULL_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 

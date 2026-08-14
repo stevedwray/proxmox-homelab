@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for harbor-repull.service
+
+[Timer]
+OnCalendar={{ harbor_repull_on_calendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,47 @@
+# Known Harbor-routed images to periodically re-pull (see
+# docs/harbor-stack/image-sourcing-enforcement.md Stage C).
+#
+# One `<project>/<repo>:<tag>` reference per line — REGISTRY_HOST is
+# prefixed at run time by harbor_repull.py, do not include it here.
+# Comment lines and blank lines are ignored.
+#
+# v1 scope: every entry below is a tag confirmed live via `docker ps` on
+# pve-test-vm during the Stage B validation pass (2026-08-15), so these are
+# known-correct, not guessed. ai-services-stack, graylog-stack,
+# greenbone-stack, and pentagi-stack were already confirmed Harbor-routed
+# in code during this same pass but not re-verified against their exact
+# live tags in this session — add them here once similarly confirmed,
+# rather than transcribing from source and risking a stale/wrong tag.
+
+# portainer-stack
+dockerhub/portainer/portainer-ce:2.27.3
+
+# proxy-stack / monitoring-stack / netbox-stack / authentik-stack cadvisor
+# sidecar (same image, shared across every stack that runs one)
+gcr/cadvisor/cadvisor:v0.49.1
+
+# proxy-stack
+dockerhub/library/traefik:v3.1.6
+
+# monitoring-stack
+dockerhub/victoriametrics/victoria-metrics:v1.102.1
+dockerhub/grafana/grafana-oss:11.6.0
+dockerhub/library/python:3.12-alpine
+
+# technitium-stack
+dockerhub/technitium/dns-server:15.2.0
+
+# docker_socket_proxy role (shared sidecar across 6 stacks)
+dockerhub/tecnativa/docker-socket-proxy:latest
+
+# authentik-stack
+ghcr/goauthentik/server:2026.2.4
+ghcr/goauthentik/ldap:2026.2.4
+dockerhub/library/nginx:1.27-alpine
+dockerhub/library/postgres:16-alpine
+dockerhub/library/redis:alpine
+
+# netbox-stack
+dockerhub/netboxcommunity/netbox:v4.5-4.0.2
+dockerhub/library/postgres:18-alpine
+dockerhub/valkey/valkey:9.0-alpine

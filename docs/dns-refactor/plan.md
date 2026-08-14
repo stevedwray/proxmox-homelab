@@ -460,16 +460,136 @@ Status: **complete**.
 3. Execute the production delegate cutover only after the parity packet is
    green and the router mutation is explicitly approved.
 
-## Phase 6 — Decommission and doc closeout
+## Phase 6 — Decommission `dns-stack`
 
-- Remove `dns-stack` once Technitium is validated on `pve` and the operator
-  confirms no rollback is needed.
-- Update `docs/design/network.md`'s DNS section, rewrite
-  `docs/plan/phase-04b-internal-dns.md` for Technitium (or replace it),
-  update `docs/teardown-test/inventory.md`'s deploy/destroy order and
-  service list.
-- Fold this workspace's durable conclusions into those tracked docs, then
-  archive or delete `docs/dns-refactor/` per the workspace closeout pattern.
+**Why now:** two real incidents on 2026-08-13 (documented in the session
+that added this plan) both trace back to CoreDNS still being reachable and
+still looking "live" to a session that doesn't know better: the MikroTik
+delegate was found reverted to CoreDNS (root-caused to a stale `LAB_IP_DNS`
+default in `mikrotik-dns-lab-zone-delegate.yml`, since fixed), and new
+`gaming-stack`/`foreverworld` DNS records were added to CoreDNS's zone file
+instead of Technitium (since reverted). CoreDNS being merely "not the
+delegate target" isn't enough — as long as the container exists, is
+actively reconciled by automation, and its zone file/API look like normal
+places to add a record, this class of mistake will recur.
+
+**Why this isn't a one-step "terraform destroy":** CoreDNS is not inert
+today. Three things actively keep it in sync, independent of the router
+delegate:
+
+- `scripts/provision.sh` (~line 611) regenerates `dns-stack`'s zone from
+  every stack's `edge.yaml` via `render-edge-coredns.py` and deploys it
+  *every time `dns-stack` is provisioned* — i.e. on every full-tier
+  `provision.sh` run, not just DNS-specific ones.
+- `terraform/lxc/reconcile-edge.py` renders CoreDNS unconditionally
+  (`RENDER_COREDNS`) as part of every stack's edge reconciliation, and a
+  CoreDNS render failure is a hard-failing issue (`EGR131`) — this is not
+  gated behind a flag, so it can't be skipped without a code change.
+- `docs/teardown-test/inventory.md`'s dependency graph still lists
+  `dns-stack` (not `technitium-stack`) as the `depends_on` for
+  `harbor-stack` and `authentik-stack`, and includes it in the approved
+  deploy/destroy order (position 3 of 13 deploy, 10 of 12 destroy).
+
+Ripping all of that out in one pass is a bigger, riskier change than
+today's incident response warrants. This phase is staged so the highest-value,
+lowest-risk step (stop CoreDNS from looking/being live) happens first,
+and the actual resource deletion happens last, after a soak period.
+
+### Phase 6a — Freeze: stop active reconciliation, keep the container inert
+
+Goal: nothing writes to CoreDNS anymore, so it stops being a place a future
+session could plausibly land a change. The container stays deployed and
+answering queries (still usable as a manual rollback target) but is no
+longer part of the routine provisioning/reconciliation path.
+
+1. Remove the `dns-stack`-specific regenerate-and-deploy block from
+   `scripts/provision.sh` (~line 611-627) so `provision.sh --stack dns-stack`
+   either no-ops with a clear message or is removed as a valid `--stack`
+   target entirely.
+2. Make `reconcile-edge.py`'s CoreDNS render path opt-in (a flag, default
+   off) instead of unconditional, and stop treating a CoreDNS render
+   failure as a blocking `EGR131` issue by default. Technitium's render
+   path (`RENDER_TECHNITIUM` / `render-edge-technitium.py`) becomes the
+   only one that runs by default.
+3. Update `docs/teardown-test/inventory.md`: change `harbor-stack` and
+   `authentik-stack`'s `depends_on` from `dns-stack` to `technitium-stack`,
+   and drop `dns-stack` from the approved deploy/destroy order (keep
+   `technitium-stack` where it is).
+4. Validation (Ansible/script tier, per `CLAUDE.md`):
+   `scripts/provision.sh --tier platform` on `pve-test-vm`, confirming edge
+   reconciliation still passes with CoreDNS render skipped and nothing
+   regresses for Traefik/Technitium-routed stacks.
+
+At the end of 6a, CoreDNS is a frozen, read-only artifact — still running,
+still a valid manual rollback target, but no longer touched by anything a
+future session or automation run would do by default.
+
+### Phase 6b — Soak period
+
+Run with CoreDNS frozen (6a merged and promoted through `stable` → `main`)
+for an operator-chosen window (suggest 2+ weeks) to confirm nothing
+unexpectedly still depends on it being reachable or current. No code
+changes in this sub-phase — it's observation only.
+
+### Phase 6c — Terraform destroy
+
+1. Confirm the Phase 6b soak period found no issues; get explicit operator
+   sign-off that rollback is no longer needed (this is the actual
+   decommission decision point, not a technical gate).
+2. `terragrunt destroy` on `terraform/lxc/stacks/dns-stack/` for
+   `pve-test-vm` first. This removes a member from the existing `mgmt_seg`
+   zone but not the zone/vnet/subnet itself — per `CLAUDE.md`'s Validation
+   Tiers table this doesn't strictly require a full teardown cycle, but
+   given DNS's historical foundational position (deploy-order 3rd of 13),
+   run a full teardown/redeploy cycle on `pve-test-vm` anyway as
+   confirmation, matching the rigor the original Phase 4 migration gate
+   used.
+3. Remove `dns-stack` from `terraform/lxc/network/pve-test-vm.yaml` and
+   `pve.yaml`'s `mgmt_seg` zone member list, regenerate
+   `*.zone-members.yaml`.
+4. After `pve-test-vm` validation passes clean, repeat the `terragrunt
+   destroy` for `dns-stack` on `pve` (production mutation — full
+   Preflight Summary + operator approval per `CLAUDE.md`'s Production
+   Credential Controls, same as any other production destroy).
+
+### Phase 6d — Code and doc cleanup, workspace closeout
+
+1. Decide (operator call, flag as an open question below): delete
+   `render-edge-coredns.py` + `test_render_edge_coredns.py` +
+   `terraform/lxc/ansible/playbooks/deploy-coredns.yml` +
+   `terraform/lxc/ansible/files/coredns-lab.zone` outright, or move them
+   under an explicitly-named `legacy/` path kept for reference. Either way,
+   finish removing the `RENDER_COREDNS` wiring left over from 6a in
+   `reconcile-edge.py` rather than leaving it as permanently-disabled dead
+   code.
+2. Monitoring: remove the `coredns` scrape target (`192.168.20.13:9153`)
+   and CoreDNS dashboard panels from `monitoring-stack`
+   (`docs/monitoring-stack/design.md`). **Prerequisite, not simultaneous:**
+   confirm Technitium exposes equivalent metrics (query rate, NXDOMAIN
+   rate, cache hit %) and build the replacement scrape target + dashboard
+   panels *before* removing CoreDNS's, so DNS observability doesn't have a
+   gap. As of this plan, Technitium is not yet scraped by monitoring-stack
+   at all — this is new work, not a swap.
+3. Update `docs/design/network.md`'s DNS section and rewrite
+   `docs/plan/phase-04b-internal-dns.md` for Technitium (or replace it).
+4. Fold this workspace's durable conclusions into those tracked docs, then
+   archive or delete `docs/dns-refactor/` per the workspace closeout
+   pattern in `docs/workflow/documentation-workspaces.md`.
+5. Remove `LAB_IP_DNS` from `.env`/`.env.template`/`.env.pve*` once nothing
+   references it (grep clean after steps 1-2), or repurpose the name if a
+   CoreDNS-shaped probe var is still wanted for some other rollback
+   tooling — decide at execution time based on what's still standing.
+
+### Open questions for Phase 6
+
+- Keep `render-edge-coredns.py` etc. archived indefinitely for a possible
+  future rollback story, or delete outright once 6c's soak period has
+  passed with no issues? Leaning delete (Technitium has now been the sole
+  live authority since 2026-07-05 with no rollback ever exercised), but
+  this is the operator's call, not a default.
+- Does Technitium have a Prometheus-compatible metrics endpoint at all in
+  the version this repo runs? Not yet confirmed — verify before starting
+  6d step 2, this blocks that step regardless of the rest of the phase.
 
 ## Future: DHCP takeover from MikroTik (explicitly out of scope here)
 

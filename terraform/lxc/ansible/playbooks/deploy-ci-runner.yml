@@ -23,6 +23,8 @@
 
   roles:
     - lxc_base
+    - role: harbor_repull
+      when: harbor_repull_enabled | default(false) | bool
 
   pre_tasks:
     - name: Derive the GitHub repository slug for runner registration

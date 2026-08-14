@@ -531,7 +531,6 @@ resource "local_file" "network_sdn_vars" {
     network_sdn_expected_target   = local.effective_target_node
     network_sdn_expected_pve_host = local.effective_pve_host
     network_sdn_allow_destroy     = local.effective_target_node == "pve-test"
-    network_sdn_vmid              = try(local.stack.vmid, null)
     network_sdn_zone              = try(local.resolved_sdn_attachment.zone, null)
     network_sdn_zone_type         = try(local.resolved_sdn_attachment.zone_type, null)
     network_sdn_bridge            = try(local.resolved_sdn_attachment.bridge, null)
@@ -555,7 +554,6 @@ resource "null_resource" "configure_network_sdn_attachment" {
     ansible_roles_path = local.ansible_roles_path
     sdn_vars           = local_file.network_sdn_vars[0].content
     sdn_vars_file      = local_file.network_sdn_vars[0].filename
-    vmid               = tostring(try(local.stack.vmid, ""))
   }
 
   provisioner "local-exec" {

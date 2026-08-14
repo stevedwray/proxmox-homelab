@@ -23,13 +23,15 @@ adding a new segment.
     ├── VLAN 20: 192.168.20.1/24  (mgmt_seg)
     ├── VLAN 30: 192.168.30.1/24  (edge_seg)
     └── VLAN 40: 192.168.40.1/24  (infra_seg)
+    └── VLAN 60: 192.168.60.1/24  (game_seg)
          |
     pve-test-vm (trunk port — all VLANs tagged)
     ├── vmbr0 (VLAN-aware bridge)
     ├── tvnetc   → VLAN 10 → containers in build_seg
     ├── tvmgmt   → VLAN 20 → containers in mgmt_seg
     ├── tvedge   → VLAN 30 → containers in edge_seg
-    └── tvinfra  → VLAN 40 → containers in infra_seg
+    ├── tvinfra  → VLAN 40 → containers in infra_seg
+    └── tvgames  → VLAN 60 → containers in game_seg
 ```
 
 Each container uses its zone's MikroTik interface as its default gateway
@@ -64,6 +66,7 @@ any container at `192.168.<vlan-id>.x` directly via the MikroTik.
 | `mgmt_seg` | `tvmgmt` | 20 | `192.168.20.0/24` | `192.168.20.1` | Authentik (192.168.20.10), step-ca (192.168.20.11), Monitoring (192.168.20.12) |
 | `edge_seg` | `tvedge` | 30 | `192.168.30.0/24` | `192.168.30.1` | Traefik (192.168.30.10) |
 | `infra_seg` | `tvinfra` | 40 | `192.168.40.0/24` | `192.168.40.1` | Harbor (192.168.40.10), apt-cacher (192.168.40.11), NetBox (192.168.40.12) |
+| `game_seg` | `tvgames` | 60 | `192.168.60.0/24` | `192.168.60.1` | gaming-stack-lab (192.168.60.10) |
 
 ---
 
@@ -78,6 +81,7 @@ zone:
 | `mgmt_seg` | `192.168.20.1` |
 | `edge_seg` | `192.168.30.1` |
 | `infra_seg` | `192.168.40.1` |
+| `game_seg` | `192.168.60.1` |
 
 This is the intended platform contract. Public resolvers such as `1.1.1.1` are not the
 target architecture for normal LXC operation.

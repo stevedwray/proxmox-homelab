@@ -1,0 +1,20 @@
+---
+# Defaults for harbor_repull role — see
+# docs/harbor-stack/image-sourcing-enforcement.md Stage C.
+
+# Explicit opt-in, matching portainer_backup_enabled's pattern — this role
+# should only ever be included on the one host running the job (ci-runner-01),
+# not on every stack that happens to include shared roles.
+harbor_repull_enabled: false
+
+harbor_repull_dir: /opt/harbor-repull
+harbor_repull_manifest_path: "{{ harbor_repull_dir }}/manifest.txt"
+harbor_repull_log_path: /var/log/harbor-repull.log
+
+# Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+# docs/harbor-stack/image-sourcing-enforcement.md Finding 5.
+harbor_repull_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
+
+# systemd OnCalendar expression. Default: once daily, off-the-hour to avoid
+# a thundering-herd alignment with other scheduled jobs.
+harbor_repull_on_calendar: "*-*-* 03:17:00"

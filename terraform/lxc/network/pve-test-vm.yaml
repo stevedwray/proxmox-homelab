@@ -173,6 +173,25 @@ attachments:
       gateway: "${lab_gw_build}"
       snat: false
 
+  # game_seg — Game services (VLAN 60, 192.168.60.0/24)
+  game_seg:
+    description: Game services — Minecraft and future dedicated game servers
+    type: sdn_vnet
+    bridge: tvgames
+    firewall: false
+    sdn:
+      zone: tvgames
+      zone_type: vlan
+      bridge: vmbr0
+      nodes:
+        - pve-test-vm
+      vnet: tvgames
+      vlan_tag: 60
+      alias: pve-test-vm game segment
+      subnet: "192.168.60.0/24"
+      gateway: "192.168.60.1"
+      snat: false
+
   # -------------------------------------------------------------------------
   # pentest_seg — PentAGI autonomous pentesting agent (VLAN 70, 192.168.70.0/24)
   #
@@ -306,6 +325,11 @@ zones:
     attachment: seg_c
     containers:
       - "ci-runner-01 (VMID 10063) — ${lab_ip_ci_runner}"
+  game_seg:
+    description: Game services — Minecraft and future dedicated game servers
+    attachment: game_seg
+    containers:
+      - "gaming-stack-lab (VMID 60010) — 192.168.60.10"
   pentest_seg:
     description: PentAGI autonomous pentesting agent — dedicated, contained zone
     attachment: pentest_seg
@@ -374,6 +398,11 @@ policies:
     protocol: tcp
     ports: [80, 443, 3142]
     description: All zones and LAN → Harbor (80/443) and apt-cacher (3142)
+  - from: mgmt_seg
+    to: game_seg
+    protocol: tcp
+    ports: [9001]
+    description: Lab Portainer management plane to the gaming-stack-lab agent
   - from: edge_seg
     to: pentest_seg
     protocol: tcp

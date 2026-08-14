@@ -1,0 +1,88 @@
+---
+- name: Remove scheduled Harbor re-pull when not explicitly enabled
+  when: not (harbor_repull_enabled | bool)
+  block:
+    - name: Stop and disable harbor-repull timer
+      ansible.builtin.systemd:
+        name: harbor-repull.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop harbor-repull service if present
+      ansible.builtin.systemd:
+        name: harbor-repull.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove harbor-repull units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/harbor-repull.timer
+        - /etc/systemd/system/harbor-repull.service
+        - "{{ harbor_repull_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale harbor-repull service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed harbor-repull.service harbor-repull.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled Harbor re-pull when explicitly enabled
+  when: harbor_repull_enabled | bool
+  block:
+    - name: Create harbor-repull directory
+      ansible.builtin.file:
+        path: "{{ harbor_repull_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy harbor-repull script
+      ansible.builtin.copy:
+        src: harbor_repull.py
+        dest: "{{ harbor_repull_dir }}/harbor_repull.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy known-image manifest
+      ansible.builtin.copy:
+        src: manifest.txt
+        dest: "{{ harbor_repull_manifest_path }}"
+        owner: root
+        group: root
+        mode: "0644"
+
+    - name: Write harbor-repull systemd service
+      ansible.builtin.template:
+        src: harbor-repull.service.j2
+        dest: /etc/systemd/system/harbor-repull.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write harbor-repull systemd timer
+      ansible.builtin.template:
+        src: harbor-repull.timer.j2
+        dest: /etc/systemd/system/harbor-repull.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start harbor-repull timer
+      ansible.builtin.systemd:
+        name: harbor-repull.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

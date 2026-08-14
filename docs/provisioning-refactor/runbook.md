@@ -1,5 +1,17 @@
 # Stack-Owned Edge Validation Runbook
 
+> **Superseded, historical reference only.** Written before the Technitium
+> cutover (docs/dns-refactor/README.md, 2026-07-05) and before the current
+> per-environment IP addressing split (pve vs pve-test-vm each get their own
+> range) — the `192.168.20.13` literals below are production's CoreDNS
+> address despite this doc claiming pve-test-vm-only scope. CoreDNS is no
+> longer the live DNS delegate target in any environment; do not copy DNS
+> commands from this file. Section 4 in particular describes the CoreDNS
+> zone-file publish flow, which Technitium does not use (it's published via
+> its REST API — see terraform/lxc/ansible/playbooks/configure-*-dns-records.yml
+> for the current pattern). Left as-is rather than rewritten so as not to
+> invent an unverified "current" procedure.
+
 This runbook is the shared validation and rollback contract for Task 15 through
 Task 21 route migrations.
 

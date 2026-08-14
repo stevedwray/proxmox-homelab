@@ -2,16 +2,16 @@ version: "3.8"
 
 services:
   nginx:
-    image: nginx:stable-alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/nginx:stable-alpine
     container_name: docker-socket-proxy-test-nginx
     restart: unless-stopped
 
   whoami:
-    image: traefik/whoami:latest
+    image: ${REGISTRY_HOST}/dockerhub/traefik/whoami:latest
     container_name: docker-socket-proxy-test-whoami
     restart: unless-stopped
 
   redis:
-    image: redis:alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/redis:alpine
     container_name: docker-socket-proxy-test-redis
     restart: unless-stopped

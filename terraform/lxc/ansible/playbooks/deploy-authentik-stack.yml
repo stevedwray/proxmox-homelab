@@ -39,7 +39,13 @@
     authentik_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
     authentik_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
     authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
-    authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    # Must be the FQDN (routed through Traefik) on every environment, not
+    # just pve -- Harbor's registry auth realm always echoes back
+    # external_url's https scheme regardless of which host/port the client
+    # connected on, so docker login/push against the raw container IP fails
+    # the same way on pve-test-vm as it would anywhere else. See
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
     authentik_insecure_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
     authentik_image_version: "2026.2.4"
     authentik_nginx_version: "1.27-alpine"
@@ -246,6 +252,92 @@
             owner: root
             group: root
             mode: "0600"
+
+        # Standing renewal: the block above only runs when this playbook is
+        # re-run, and the cert's --not-after 720h (30d) lifetime means it
+        # silently expires if nothing re-runs it in time (incident:
+        # authentik-int cert expired 2026-08-04, broke every Traefik route
+        # using the authentik forwardAuth middleware until noticed
+        # 2026-08-13). This installs a systemd timer on the host so renewal
+        # happens on its own from here on, independent of provisioning.
+        - name: Write Authentik direct TLS certificate renewal script
+          ansible.builtin.copy:
+            dest: "{{ authentik_compose_dir }}/renew-direct-tls.sh"
+            mode: "0750"
+            content: |
+              #!/bin/bash
+              set -euo pipefail
+
+              CERT_FILE="{{ authentik_step_cli_cert_file }}"
+              KEY_FILE="{{ authentik_step_cli_key_file }}"
+
+              if [[ ! -s "${CERT_FILE}" || ! -s "${KEY_FILE}" ]]; then
+                issue_needed=1
+              elif ! openssl x509 -checkend 2592000 -noout -in "${CERT_FILE}" >/dev/null 2>&1; then
+                issue_needed=1
+              else
+                issue_needed=0
+              fi
+
+              if [[ "${issue_needed}" -eq 0 ]]; then
+                echo "authentik direct TLS cert still valid for >30d, nothing to do"
+                exit 0
+              fi
+
+              /usr/local/bin/step ca certificate "{{ authentik_internal_tls_fqdn }}" "${CERT_FILE}" "${KEY_FILE}" \
+                --san "{{ authentik_internal_tls_fqdn }}" \
+                --ca-url "{{ authentik_step_ca_url }}" \
+                --root "{{ authentik_step_cli_root_cert }}" \
+                --provisioner "{{ authentik_step_ca_provisioner }}" \
+                --provisioner-password-file "{{ authentik_step_cli_password_file }}" \
+                --not-after 720h \
+                --force
+              chown root:root "${KEY_FILE}"
+              chmod 0600 "${KEY_FILE}"
+
+              docker compose -f "{{ authentik_compose_path }}" restart direct_tls
+              echo "authentik direct TLS cert renewed and direct_tls reloaded"
+
+        - name: Write systemd service unit for Authentik direct TLS renewal
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/authentik-direct-tls-renew.service
+            mode: "0644"
+            content: |
+              [Unit]
+              Description=Renew Authentik direct TLS certificate from step-ca
+              After=network-online.target docker.service
+              Wants=network-online.target
+
+              [Service]
+              Type=oneshot
+              ExecStart={{ authentik_compose_dir }}/renew-direct-tls.sh
+              WorkingDirectory={{ authentik_compose_dir }}
+
+        - name: Write systemd timer unit for Authentik direct TLS renewal
+          ansible.builtin.copy:
+            dest: /etc/systemd/system/authentik-direct-tls-renew.timer
+            mode: "0644"
+            content: |
+              [Unit]
+              Description=Daily check/renewal of the Authentik direct TLS certificate
+
+              [Timer]
+              OnCalendar=daily
+              RandomizedDelaySec=1h
+              Persistent=true
+
+              [Install]
+              WantedBy=timers.target
+
+        - name: Reload systemd units after installing renewal timer
+          ansible.builtin.systemd:
+            daemon_reload: true
+
+        - name: Enable and start Authentik direct TLS renewal timer
+          ansible.builtin.systemd:
+            name: authentik-direct-tls-renew.timer
+            enabled: true
+            state: started
 
     - name: Write Authentik direct TLS nginx config (TLS — step-ca cert issued)
       ansible.builtin.copy:

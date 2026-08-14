@@ -16,6 +16,9 @@ storage_backends:
   storage-containers:
     content_types: [rootdir]
     backend_type: zfs
+  gaming-containers:
+    content_types: [rootdir]
+    backend_type: zfs
   local-zfs:
     content_types: [images, rootdir]
   storage-template:
@@ -69,6 +72,9 @@ extra_mount_profiles:
     required_content_type: rootdir
   durable-zfs:
     storage: storage-containers
+    required_content_type: rootdir
+  game-data:
+    storage: gaming-containers
     required_content_type: rootdir
 
 template_profiles:

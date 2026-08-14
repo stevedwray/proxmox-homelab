@@ -81,6 +81,14 @@
   vars:
     portainer_compose_dir: /opt/portainer
     portainer_version: "2.27.3"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR: Harbor's
+    # registry auth realm always echoes back external_url's scheme (https),
+    # so a pull against the raw container IP gets handed an HTTPS token
+    # realm on a host that only serves HTTP internally and fails outright.
+    # Matches the convention already used by ai-services/graylog/pentagi/
+    # greenbone/monitoring's *_registry_host vars — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    docker_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   tasks:
     - name: Create Portainer compose directory
@@ -96,7 +104,7 @@
         content: |
           services:
             portainer:
-              image: portainer/portainer-ce:{{ portainer_version }}
+              image: "{{ docker_registry_host }}/dockerhub/portainer/portainer-ce:{{ portainer_version }}"
               restart: unless-stopped
               ports:
                 - "9000:9000"
@@ -108,7 +116,7 @@
                 - /etc/ssl/certs:/etc/ssl/certs:ro
 
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ docker_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
               container_name: cadvisor
               restart: unless-stopped
               ports:

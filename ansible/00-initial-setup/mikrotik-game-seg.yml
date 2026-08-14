@@ -1,0 +1,184 @@
+---
+# Creates the RouterOS L3 gateway and constrained policy for game_seg.
+# Physical switch trunking is intentionally outside this playbook.
+
+- name: Configure game_seg on the live MikroTik
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: "{{ lookup('env', 'MIKROTIK_ADMIN') | default(lookup('env', 'MIKROTIK_USER'), true) | mandatory('MIKROTIK_ADMIN or MIKROTIK_USER env var is required') }}"
+    mikrotik_password: "{{ lookup('env', 'MIKROTIK_ADMIN_PASSWORD') | default(lookup('env', 'MIKROTIK_PASSWORD'), true) | mandatory('MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD env var is required') }}"
+
+    game_subnet: "192.168.60.0/24"
+    game_gateway: "192.168.60.1/24"
+    game_stack_ip: "192.168.60.10"
+    game_vlan_interface:
+      name: vlan60-games
+      interface: bridgeLocal
+      vlan-id: "60"
+      comment: game_seg gw
+    game_bridge_vlan:
+      bridge: bridgeLocal
+      vlan-ids: "60"
+      tagged: bridgeLocal,ether1,ether5
+      comment: game_seg VLAN 60 trunk tagging
+    game_gateway_address:
+      address: "{{ game_gateway }}"
+      interface: vlan60-games
+      network: 192.168.60.0
+      comment: game_seg gw
+
+    game_input_rules:
+      - { comment: "allow game_seg ping to router", chain: input, action: accept, protocol: icmp, in-interface: vlan60-games, src-address: "{{ game_subnet }}" }
+      - { comment: "allow game_seg DNS UDP to router", chain: input, action: accept, protocol: udp, in-interface: vlan60-games, src-address: "{{ game_subnet }}", dst-address: 192.168.60.1, dst-port: "53" }
+      - { comment: "allow game_seg DNS TCP to router", chain: input, action: accept, protocol: tcp, in-interface: vlan60-games, src-address: "{{ game_subnet }}", dst-address: 192.168.60.1, dst-port: "53" }
+
+    # Keep the established rule ahead of the game-segment deny. The rules are
+    # inserted as an ordered block before the first existing forward deny.
+    game_forward_rules:
+      # RouterOS rejects connection-state combined with src-address through its
+      # REST endpoint. This intentionally mirrors the router's existing
+      # established/related rule, but is ordered before game_seg's deny.
+      - { comment: "game_seg established and related", chain: forward, action: accept, connection-state: established,related }
+      - { comment: "game-stack LAN administration and Minecraft", chain: forward, action: accept, protocol: tcp, src-address: 192.168.1.0/24, dst-address: "{{ game_stack_ip }}", dst-port: "22,25565" }
+      - { comment: "mgmt_seg Portainer to game-stack agent", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_PORTAINER') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9001" }
+      - { comment: "monitoring-stack scrapes game-stack metrics", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9100,8080" }
+      - { comment: "monitoring-stack scrapes Minecraft status", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "8081" }
+      - { comment: "monitoring-stack scrapes Minecraft JVM metrics", chain: forward, action: accept, protocol: tcp, src-address: "{{ lookup('env', 'LAB_IP_MONITORING') }}", dst-address: "{{ game_stack_ip }}", dst-port: "9404" }
+      - { comment: "game-stack syslog to Graylog", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_GRAYLOG') }}", dst-port: "514" }
+      - { comment: "game-stack node_exporter TLS from step-ca", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_STEP_CA') }}", dst-port: "443" }
+      - { comment: "game_seg to infra Harbor and apt-cacher", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_subnet }}", dst-address: "{{ lookup('env', 'LAB_SUBNET_INFRA_CIDR') }}", dst-port: "80,443,3142" }
+      - { comment: "game-stack to Harbor through Traefik", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_stack_ip }}", dst-address: "{{ lookup('env', 'LAB_IP_PROXY') }}", dst-port: "443" }
+      - { comment: "game_seg internet package and image egress", chain: forward, action: accept, protocol: tcp, src-address: "{{ game_subnet }}", dst-address: "!192.168.0.0/16", dst-port: "80,443" }
+      - { comment: "game_seg default-deny to LAN and other zones", chain: forward, action: drop, src-address: "{{ game_subnet }}" }
+
+  tasks:
+    - name: Read current game-segment RouterOS objects
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        return_content: true
+        status_code: 200
+      loop: [/interface/vlan, /interface/bridge/vlan, /ip/address, /ip/firewall/filter]
+      register: routeros_reads
+      no_log: true
+
+    - name: Set RouterOS current-state facts
+      ansible.builtin.set_fact:
+        vlan_interfaces: "{{ (routeros_reads.results | selectattr('item', 'equalto', '/interface/vlan') | first).json }}"
+        bridge_vlans: "{{ (routeros_reads.results | selectattr('item', 'equalto', '/interface/bridge/vlan') | first).json }}"
+        ip_addresses: "{{ (routeros_reads.results | selectattr('item', 'equalto', '/ip/address') | first).json }}"
+        firewall_filters: "{{ (routeros_reads.results | selectattr('item', 'equalto', '/ip/firewall/filter') | first).json }}"
+
+    - name: Create VLAN 60 RouterOS interface when absent
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/vlan/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        body_format: json
+        body: "{{ game_vlan_interface }}"
+        status_code: [200, 201]
+      when: vlan_interfaces | selectattr('name', 'equalto', game_vlan_interface.name) | list | length == 0
+      no_log: true
+
+    - name: Create VLAN 60 bridge trunk membership when absent
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/interface/bridge/vlan/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        body_format: json
+        body: "{{ game_bridge_vlan }}"
+        status_code: [200, 201]
+      when: bridge_vlans | selectattr('vlan-ids', 'equalto', '60') | list | length == 0
+      no_log: true
+
+    - name: Create VLAN 60 gateway address when absent
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/address/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        body_format: json
+        body: "{{ game_gateway_address }}"
+        status_code: [200, 201]
+      when: ip_addresses | selectattr('address', 'equalto', game_gateway_address.address) | list | length == 0
+      no_log: true
+
+    - name: Find input and forward deny insertion anchors
+      ansible.builtin.set_fact:
+        input_drop_anchor: "{{ (firewall_filters | selectattr('chain', 'equalto', 'input') | selectattr('action', 'in', ['drop', 'reject']) | list | first) | default({}) }}"
+        forward_drop_anchor: "{{ (firewall_filters | selectattr('chain', 'equalto', 'forward') | selectattr('action', 'in', ['drop', 'reject']) | list | first) | default({}) }}"
+
+    - name: Add missing input policy rules before the input deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        body_format: json
+        body: "{{ item | combine({'place-before': input_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ game_input_rules }}"
+      loop_control: { label: "{{ item.comment }}" }
+      when:
+        - input_drop_anchor != {}
+        - firewall_filters | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.comment) | list | length == 0
+      no_log: true
+
+    - name: Add missing forward policy rules before the forward deny
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        body_format: json
+        body: "{{ item | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      loop: "{{ game_forward_rules }}"
+      loop_control: { label: "{{ item.comment }}" }
+      when:
+        - forward_drop_anchor != {}
+        - firewall_filters | selectattr('comment', 'defined') | selectattr('comment', 'equalto', item.comment) | list | length == 0
+      no_log: true
+
+    - name: Re-read RouterOS state after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}{{ item }}"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 -- self-signed private-router certificate
+        return_content: true
+        status_code: 200
+      loop: [/interface/vlan, /interface/bridge/vlan, /ip/address, /ip/firewall/filter]
+      register: routeros_final
+      no_log: true
+
+    - name: Assert all game-segment objects and policy rules are present
+      ansible.builtin.assert:
+        that:
+          - (routeros_final.results | selectattr('item', 'equalto', '/interface/vlan') | first).json | selectattr('name', 'equalto', game_vlan_interface.name) | list | length == 1
+          - (routeros_final.results | selectattr('item', 'equalto', '/interface/bridge/vlan') | first).json | selectattr('vlan-ids', 'equalto', '60') | list | length == 1
+          - (routeros_final.results | selectattr('item', 'equalto', '/ip/address') | first).json | selectattr('address', 'equalto', game_gateway_address.address) | list | length == 1
+          - (routeros_final.results | selectattr('item', 'equalto', '/ip/firewall/filter') | first).json | selectattr('comment', 'defined') | selectattr('comment', 'in', (game_input_rules + game_forward_rules) | map(attribute='comment') | list) | list | length == (game_input_rules | length + game_forward_rules | length)
+        fail_msg: "MikroTik game_seg configuration is incomplete after apply."

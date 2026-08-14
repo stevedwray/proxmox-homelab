@@ -211,7 +211,14 @@
 
   vars:
     harbor_cadvisor_compose_dir: /opt/harbor-cadvisor
-    harbor_cadvisor_registry_host: "{{ registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host or LAB_IP_HARBOR is required') }}"
+    # By the time this play runs, harbor_installer (Play 2) and
+    # harbor_postconfigure (Play 3) have already brought Harbor itself up
+    # earlier in this same playbook run -- there is no actual chicken-and-egg
+    # bootstrap problem here, so this routes through Harbor like every other
+    # image rather than pulling gcr.io directly. Must be the FQDN (routed
+    # through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    harbor_cadvisor_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
 
   tasks:
     - name: Create cAdvisor compose directory
@@ -227,7 +234,7 @@
         content: |
           services:
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ harbor_cadvisor_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
               container_name: cadvisor
               restart: unless-stopped
               ports:

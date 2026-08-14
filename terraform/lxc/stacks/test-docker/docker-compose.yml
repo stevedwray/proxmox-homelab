@@ -1,13 +1,13 @@
 services:
   whoami:
-    image: traefik/whoami:latest
+    image: ${REGISTRY_HOST}/dockerhub/traefik/whoami:latest
     container_name: test-docker-whoami
     ports:
       - "8080:80"
     restart: unless-stopped
 
   nginx:
-    image: nginx:alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/nginx:alpine
     container_name: test-docker-nginx
     ports:
       - "80:80"

@@ -77,7 +77,7 @@
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.49.1"
-    cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
+    cadvisor_image: "{{ monitoring_registry_host }}/gcr/cadvisor/cadvisor:{{ cadvisor_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -192,6 +192,8 @@
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:9100"]
                   labels: {stack: pentagi-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:9100"]
+                  labels: {stack: gaming-stack-lab}
 
             - job_name: cadvisor
               static_configs:
@@ -213,6 +215,30 @@
                   labels: {stack: framework}
                 - targets: ["{{ lookup('env', 'LAB_IP_PENTAGI') }}:8080"]
                   labels: {stack: pentagi-stack}
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:8080"]
+                  labels: {stack: gaming-stack-lab}
+
+            - job_name: minecraft-status
+              scrape_interval: 15s
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:8081"]
+                  labels:
+                    stack: gaming-stack-lab
+                    server: foreverworld
+              # mc-monitor omits server_version when a status request fails.
+              # Dropping it keeps healthy and failed samples in one stable
+              # series, so a Grafana stat panel cannot render two statuses.
+              metric_relabel_configs:
+                - action: labeldrop
+                  regex: server_version
+
+            - job_name: minecraft-jvm
+              scrape_interval: 15s
+              static_configs:
+                - targets: ["{{ lookup('env', 'LAB_IP_GAME_STACK') | default('192.168.60.10', true) }}:9404"]
+                  labels:
+                    stack: gaming-stack-lab
+                    server: foreverworld
 
             - job_name: coredns
               scrape_interval: 15s
@@ -533,6 +559,16 @@
         path: "{{ monitoring_compose_dir }}/docker-compose.yml"
         regexp: "{{ monitoring_registry_host | regex_escape }}/dockerhub/"
         replace: ""
+      # This task was unconditional -- every sibling DNS-fallback task in this
+      # block (resolv.conf backup, /etc/hosts entry, temporary public DNS) is
+      # correctly gated on monitoring_dns_fallback_needed, but this one, the
+      # consequential one, was not. It stripped the Harbor prefix from every
+      # /dockerhub/ image on every single deploy regardless of whether Harbor
+      # was actually reachable, defeating monitoring-stack's otherwise-correct
+      # Harbor routing for vm_image/grafana_image/harbor_findings_exporter_image
+      # unconditionally. See
+      # docs/harbor-stack/image-sourcing-enforcement.md Finding 3.
+      when: monitoring_dns_fallback_needed
       failed_when: false
 
     - name: Validate monitoring compose configuration
