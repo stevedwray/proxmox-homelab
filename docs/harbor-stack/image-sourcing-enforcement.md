@@ -56,7 +56,7 @@ see the Decisions Log.
 | 4 | `monitoring-stack` | ✅ done | `cadvisor`/`docker-socket-proxy` recreated, Harbor findings exporter and Grafana restarted (`changed=11`). Smoke test passed ("required core targets up"). Finding 7's guard confirmed correct live — the DNS-fallback bypass task stayed skipped, Harbor was reachable throughout. |
 | 5 | `netbox-stack` | ✅ done | `cadvisor`/`docker-socket-proxy` recreated (`changed=15`). Smoke test passed ("netbox: responding"). Dry-run's only failure was the documented `--check` mode limitation (lesson #6 — `docker inspect` health-poll against a container check mode never created); not a real issue, live run was clean. |
 | 6 | `authentik-stack` | ✅ done | `postgresql`/`redis`/`cadvisor`/`docker-socket-proxy` recreated on Harbor-routed images (`changed=9`). Smoke test passed ("authentik: API responding"). LDAP outpost/Graylog integration checks all came back `ok`, unaffected — did not re-run the full teardown cycle here, relying on the one already done during Stages A–D on pve-test-vm. |
-| 7 | `technitium-stack` | pending | |
+| 7 | `technitium-stack` | ✅ done | `technitium/dns-server` container recreated on the Harbor-routed image (`changed=3`). Not a `docker_socket_proxy` consumer, nothing else rides along. Dry-run's only failure was the known `--check` mode artifact (lesson #6 — zone-bootstrap play needs a live API login). Smoke test's parity-zone checks all passed; independently confirmed with a `dig` from the workstation against `192.168.20.15` post-deploy since this is the live authoritative DNS. |
 | 8 | `proxy-stack` (Traefik) | pending | |
 | 9 | `gaming-stack-lab`/`minecraft-wildworks` | pending | Live game server — needs a specific low-traffic window, not just slotted in blind. |
 
