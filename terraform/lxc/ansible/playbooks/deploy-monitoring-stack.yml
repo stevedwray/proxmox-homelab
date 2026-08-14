@@ -77,7 +77,7 @@
     grafana_image: "{{ monitoring_registry_host }}/dockerhub/grafana/grafana-oss:{{ grafana_version }}"
     harbor_findings_exporter_image: "{{ monitoring_registry_host }}/dockerhub/library/python:{{ python_version }}"
     cadvisor_version: "v0.49.1"
-    cadvisor_image: "gcr.io/cadvisor/cadvisor:{{ cadvisor_version }}"
+    cadvisor_image: "{{ monitoring_registry_host }}/gcr/cadvisor/cadvisor:{{ cadvisor_version }}"
     grafana_admin_password: "{{ lookup('env', 'GRAFANA_ADMIN_PASSWORD') | mandatory('GRAFANA_ADMIN_PASSWORD env var is not set') }}"
     grafana_admin_user: "{{ lookup('env', 'GRAFANA_ADMIN_USER') | default('admin', true) }}"
     grafana_breakglass_username: "{{ lookup('env', 'GRAFANA_BREAKGLASS_USERNAME') | default('breakglass', true) }}"
@@ -559,6 +559,16 @@
         path: "{{ monitoring_compose_dir }}/docker-compose.yml"
         regexp: "{{ monitoring_registry_host | regex_escape }}/dockerhub/"
         replace: ""
+      # This task was unconditional -- every sibling DNS-fallback task in this
+      # block (resolv.conf backup, /etc/hosts entry, temporary public DNS) is
+      # correctly gated on monitoring_dns_fallback_needed, but this one, the
+      # consequential one, was not. It stripped the Harbor prefix from every
+      # /dockerhub/ image on every single deploy regardless of whether Harbor
+      # was actually reachable, defeating monitoring-stack's otherwise-correct
+      # Harbor routing for vm_image/grafana_image/harbor_findings_exporter_image
+      # unconditionally. See
+      # docs/harbor-stack/image-sourcing-enforcement.md Finding 3.
+      when: monitoring_dns_fallback_needed
       failed_when: false
 
     - name: Validate monitoring compose configuration
