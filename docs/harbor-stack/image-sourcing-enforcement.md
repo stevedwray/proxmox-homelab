@@ -52,7 +52,7 @@ see the Decisions Log.
 |---|---|---|---|
 | 1 | `harbor_repull` (Stage C) on `ci-runner-01` | ✅ done | New timer active, confirmed via `systemctl list-timers` and GitHub API runner-online status. Runner briefly re-registered as a side effect (expected, harmless). |
 | 2 | `harbor-stack` | ✅ done | Only `cadvisor`/`docker-socket-proxy` recreated (seconds/48s uptime post-deploy); every Harbor core component confirmed still "Up 5 weeks", untouched. Smoke test passed. |
-| 3 | `portainer-stack` | ⏳ preflight given, awaiting "Proceed" | |
+| 3 | `portainer-stack` | ✅ done | `cadvisor`/`docker-socket-proxy`/`portainer` recreated (`changed=4`), smoke test passed ("portainer: API responding"). Re-run a second time by mistake (idempotent, `changed=0` — no double-apply). Post-deploy automation also does a best-effort Portainer app-endpoint re-pair pass across `gaming-stack`, `management-stack`, `media-stack`, `torrent-stack`; it halted on the first entry because `gaming-stack` (VMID 103 — DayZ/Foreverworld/NewWorld/TestWorld, **not** the in-scope `gaming-stack-lab`/`minecraft-wildworks`) is currently unreachable (SSH + ping both fail from the workstation). Confirmed pre-existing and unrelated to this change, not something this rollout caused — flagged to the operator, not investigated further (out of scope). `management-stack`/`media-stack`/`torrent-stack` did not get their re-pair attempt as a result; worth a manual check later if their Portainer endpoints look stale. |
 | 4 | `monitoring-stack` | pending | |
 | 5 | `netbox-stack` | pending | |
 | 6 | `authentik-stack` | pending | |
@@ -64,6 +64,13 @@ see the Decisions Log.
 automatically with steps 2–6's own redeploy. `test-docker` exists on `pve`
 (VMID 131) but is currently stopped, so no live impact either way —
 deprioritized, not scheduled.
+
+Separate note: the Portainer app-endpoint repair loop in
+`scripts/provision.sh` runs under `set -e` with no per-stack error
+isolation — one unreachable host in the list aborts the whole repair pass,
+silently skipping every stack after it. Not fixed here (out of scope for
+this task), but worth hardening (`|| true` + summary at the end) before it
+next needs to repair more than one stack unattended.
 
 ## Verified Findings (2026-08-14)
 
