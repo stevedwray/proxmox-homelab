@@ -22,22 +22,26 @@ work (not specific to any one finding) are split out into
 
 ## Status (2026-08-15)
 
-**Stages A through D are all complete**, merged to `stable`, and pushed.
-All ten Stage B violations are fixed and, where they can be deployed on
-pve-test-vm, live-validated there. Stage C's scheduled re-pull job is live
-on pve-test-vm's `ci-runner-01`, validated end to end through the real
-systemd timer path. Stage D's dormant registry-mirror scaffolding is
-retired. See Findings 5–11 for what implementation turned up beyond the
-original four findings, and the Decisions Log for what got fixed vs.
-deliberately deferred. **Only Stage E (network-layer enforcement) remains,
-intentionally scoped as a later, separate, higher-validation-tier effort.**
+**Stages A through D are all complete.** All ten Stage B violations are
+fixed and, where they can be deployed on pve-test-vm, live-validated
+there. Stage C's scheduled re-pull job is live on pve-test-vm's
+`ci-runner-01`, validated end to end through the real systemd timer path.
+Stage D's dormant registry-mirror scaffolding is retired. See Findings
+5–11 for what implementation turned up beyond the original four findings,
+and the Decisions Log for what got fixed vs. deliberately deferred.
 
-## `pve` Production Rollout (2026-08-15, in progress)
+**The `pve` production rollout is also complete** — all 9 steps below
+landed live, including `gaming-stack-lab`/Foreverworld, the one stack that
+needed a live-player safety check first. **Only Stage E (network-layer
+enforcement) remains**, intentionally scoped as a later, separate,
+higher-validation-tier effort — see Stage E below.
 
-Stages A–D validated on pve-test-vm above are now being rolled out to
-`pve` production, one stack at a time, each under its own preflight +
-explicit operator "Proceed" per this repo's Production Credential
-Controls — no blanket approval. Pre-rollout read-only check passed
+## `pve` Production Rollout — ✅ complete (2026-08-15)
+
+Stages A–D validated on pve-test-vm above were rolled out to `pve`
+production, one stack at a time, each under its own preflight + explicit
+operator "Proceed" per this repo's Production Credential Controls — no
+blanket approval used at any point. Pre-rollout read-only check passed
 cleanly: Harbor healthy (Trivy default scanner, `auto_scan: true` on
 proxy-cache projects, TLS validates natively from the operator's
 workstation), and — importantly — **no CA-fingerprint mismatch across the
@@ -46,7 +50,9 @@ Production does not have that propagation gap.
 
 `gaming-stack-lab`/`minecraft-wildworks` was added to the rollout scope by
 the operator on 2026-08-15, reversing the earlier "do not touch" stance —
-see the Decisions Log.
+see the Decisions Log. It turned out to already be live and actively
+played, not on hold as this document previously (incorrectly) stated —
+see step 9's notes and Finding 1's table for the full correction.
 
 | # | Stack | Status | Notes |
 |---|---|---|---|
@@ -86,7 +92,7 @@ why that distinction matters.
 | `proxy-stack` (Traefik) | `traefik:{{version}}`, `gcr.io/cadvisor/cadvisor` | `deploy-proxy-stack.yml:57,231` | ✅ fixed, live-validated |
 | `monitoring-stack` | `gcr.io/cadvisor/cadvisor` + an unguarded task actively stripping the other 3 (see Finding 7) | `deploy-monitoring-stack.yml:80,557` | ✅ fixed, live-validated |
 | `technitium-stack` | `technitium/dns-server` | `deploy-technitium-stack.yml:118` | ✅ fixed, live-validated |
-| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed. **Correction (2026-08-15): this doc previously said "live deployment on hold indefinitely" — that was wrong.** Direct inspection of `gaming-stack-lab` found Foreverworld already deployed and actively live (`docker ps` shows `foreverworld-minecraft`/`cadvisor`/`foreverworld-monitor` all running the un-fixed direct-pull images, uptime 3h; `portainer-agent` already Harbor-routed). It was deployed outside this branch's tracked process at some point. World data shows real, very recent activity (`level.dat` written 15s before the check). Rollout still not attempted live — now correctly understood as "apply an already-written fix to an actively-played live server," not "first deploy to an empty host." Needs a genuine low-traffic window, confirmed with a live player-count check immediately beforehand, not just scheduled blind. |
+| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ fixed, live-validated on `pve` (rollout step 9, 2026-08-15). Applied as a targeted 3-line `image:` edit to the live `compose.yaml` rather than a full playbook run — see step 9's notes in the Production Rollout table and lessons-learned #8 for why. Note for anyone reading this table historically: an earlier version of this row said the live deployment was "on hold indefinitely" — that was **wrong about ground truth**, not just superseded by a later decision. Foreverworld was already live and actively played the whole time; see the Decisions Log for the full correction. |
 | `docker_socket_proxy` role — shared sidecar, **6 consumers** (authentik, harbor, monitoring, netbox, portainer, proxy) | `tecnativa/docker-socket-proxy:latest` | `roles/docker_socket_proxy/defaults/main.yml:4` | ✅ fixed, live-validated on all 4 currently-enabled consumers deployed on pve-test-vm |
 | `harbor-stack` itself (cadvisor sidecar) | `gcr.io/cadvisor/cadvisor` | `deploy-harbor-stack.yml:230` | ✅ fixed, live-validated — turned out *not* to be a real bootstrap exception, see Finding 5's note below |
 | `authentik-stack` (found via Finding 6, not this table originally) | `postgres:16-alpine`, `redis:alpine`, `gcr.io/cadvisor/cadvisor` | `stacks/authentik-stack/docker-compose.yml:8,20,96` | ✅ fixed, live-validated; also fixed `authentik_registry_host`'s IP-on-non-pve special case |
@@ -469,10 +475,13 @@ Work, per stack:
 - `minecraft-wildworks` (`pve`-only, see environment-scoping note above):
   route all three images (`itzg/minecraft-server`, `itzg/mc-monitor`,
   `ghcr.io/google/cadvisor`) through their respective `dockerhub`/`ghcr`
-  Harbor projects. Code change and validation approach are otherwise
-  identical to the other stacks in this list — only *where* it gets tested
-  differs, since it cannot be deployed on pve-test-vm at all. See the Test
-  & Verification Plan.
+  Harbor projects. The playbook's code was fixed and syntax/template
+  checked offline, matching the other stacks — but its **live rollout**
+  needed a different validation path in practice: it turned out to already
+  be running live outside this branch's tracked process, so the actual fix
+  was applied by hand-editing the live `compose.yaml`'s image lines rather
+  than re-running the deploy playbook. See rollout step 9 and lessons-
+  learned #8 for the full story and why.
 - `docker_socket_proxy` role: this is a single-file fix
   (`roles/docker_socket_proxy/defaults/main.yml`) that cascades correctly
   to all 6 stacks that consume the role, since they all pull the default
@@ -613,12 +622,15 @@ approval flow (preflight summary → operator says "Proceed" → `TASK_APPROVAL`
 set → `./with-secrets-prod` → after-action summary) — no standing approval,
 each stage's production rollout is its own ask.
 
-**The one exception is `gaming-stack-lab`/`minecraft-wildworks`**, which
+**The one exception was `gaming-stack-lab`/`minecraft-wildworks`**, which
 cannot be deployed on pve-test-vm at all (24 GB requested vs. 16 GB total
-available) — its test path is split into an offline/dry-run half on
-pve-test-vm-or-local plus a narrowly-scoped, approved production validation,
-detailed under Stage B below. No other stack in this plan has this
-restriction.
+available) — its test path split into an offline/dry-run half on
+pve-test-vm-or-local plus a narrowly-scoped, approved production
+validation, detailed under Stage B below. No other stack in this plan had
+this restriction. **Now complete** (rollout step 9) — the actual live fix
+ended up being a targeted `compose.yaml` edit rather than the offline-
+validated playbook path originally planned, once it turned out the server
+was already live. See Stage B below and lessons-learned #8.
 
 Suggested branch: cut a dedicated `task/harbor-image-sourcing-enforcement`
 branch from current HEAD when implementation starts, separate from
@@ -673,10 +685,20 @@ post-change health check fails, or Harbor doesn't show the new artifact —
 revert the `image:` line, redeploy, confirm health restored, and stop; don't
 proceed to the next stack until root-caused.
 
-**`minecraft-wildworks` / `gaming-stack-lab`** (the pve-only exception):
-**Step 1 is done. Steps 2–4 are on hold indefinitely — operator directive
-(2026-08-15): do not touch the live Minecraft server.** Left documented
-below for if/when that changes, not as a live plan.
+**`minecraft-wildworks` / `gaming-stack-lab`** (the pve-only exception) —
+✅ **complete (2026-08-15, rollout step 9).** Step 1 (offline syntax/
+template check) was done as planned. Steps 2–4 below describe the
+*originally planned* approach and were superseded once live investigation
+found the server already deployed and actively played — kept here for the
+historical record of what was planned, not what actually happened. **See
+the Production Rollout table's step 9 row and lessons-learned #8 for what
+was actually done:** a targeted 3-line `image:` edit to the live
+`compose.yaml`, after confirming 0 players online via `mc-monitor`'s
+metrics, rather than a full `deploy-minecraft-wildworks.yml` run (which
+turned out to be the wrong tool — it needs from-scratch-deploy inputs and
+unconditionally rewrites `server.properties`).
+
+Originally planned steps (not what happened, see above):
 
 1. Offline check first, no live host anywhere: `ansible-playbook
    deploy-minecraft-wildworks.yml --syntax-check`, plus a template-render
@@ -695,11 +717,11 @@ below for if/when that changes, not as a live plan.
    artifact, container health) but run against `pve` under
    `./with-secrets-prod`, not `./with-secrets`.
 
-Explicitly not doing: standing up a temporary/disposable clone of
+Explicitly not done: standing up a temporary/disposable clone of
 `gaming-stack-lab` on pve-test-vm to get a pre-prod live test. That would
-recreate the exact "exists on pve-test-vm" state that's been ruled out, even
-if torn down right after. Flagging this as a deliberate choice, not an
-oversight — say the word if you'd actually prefer that tradeoff.
+have recreated the exact "exists on pve-test-vm" state that was ruled out,
+even if torn down right after. This stayed a deliberate choice throughout,
+not an oversight.
 
 ### Stage C — `ci-runner-01` re-pull job — ✅ complete (2026-08-15)
 
@@ -773,7 +795,7 @@ promotion pass given the higher validation tier and blast radius.
 |---|---|---|
 | A | extended CI grep run against current `main`/branch | surfaces every known Finding 1 violation; clean once Stage B lands |
 | B (standard stacks) | `scripts/provision.sh --stack <name>` on pve-test-vm per touched stack | container starts using Harbor-routed image; Stage A grep clean |
-| B (`minecraft-wildworks`) | offline syntax/template check only | image strings resolve correctly offline; **live rollout not yet attempted — see 2026-08-15 correction in Finding 1's table: the server is already live and actively played, this is not a from-scratch deploy** |
+| B (`minecraft-wildworks`) | offline syntax/template check, then a live targeted `compose.yaml` image-line edit on `pve` (rollout step 9) | ✅ complete: image strings resolve correctly offline; live fix applied and verified — both containers `(healthy)`, world data/version/mod loader confirmed unchanged. See Finding 1's table and lessons-learned #8. |
 | C | manual run + unattended scheduled run on pve-test-vm's `ci-runner-01` | Harbor artifact timestamp refreshes; container `StartedAt` unchanged; tolerates cold/empty Harbor |
 | D | removal commit + live `docker_base`-consumer provision run | dead scaffolding removed; `apt-cacher-stack` clean run, smoke test passed |
 | E | direct-pull test from blocked zone vs. Harbor-routed pull, full teardown cycle | direct fails, Harbor-routed succeeds, Harbor cache-fill unaffected, teardown cycle passed |
@@ -793,10 +815,9 @@ promotion pass given the higher validation tier and blast radius.
 
 - `gaming-stack-lab`/`minecraft-wildworks` on `pve` (2026-08-15): operator
   reversed the earlier "do not touch the live Minecraft server" stance —
-  now explicitly included in the `pve` rollout, scheduled last, pending a
-  named low-traffic window. Supersedes the "not deploying" note elsewhere
-  in this document (kept below for the historical record of why it was
-  originally excluded).
+  included in the `pve` rollout as its final step. **Completed same day**
+  (rollout step 9) — see the three entries below for the full sequence of
+  what was believed vs. what was actually found, and lessons-learned #8.
 - Finding 11's `GITHUB_TOKEN` shadowing (2026-08-15): operator approved
   and completed both parts —
   1. `deploy-ci-runner.yml`'s three `gh api` calls clear
@@ -817,35 +838,49 @@ promotion pass given the higher validation tier and blast radius.
   intentional by the operator — it only ever pulls (read-only) through
   prod Harbor's proxy cache, never mutates it. Permanently excluded from
   the CI check, no fix needed (2026-08-15).
-- `minecraft-wildworks`'s production rollout (original entry, superseded
-  below): operator confirmed **do not touch the live Minecraft server** —
-  `gaming-stack-lab` is intentionally `pve`-only due to pve-test-vm's RAM
-  ceiling, and that's staying that way. The code fix (Stage B, already
-  committed) stays as prepared-but-not-deployed; there is no live rollout
-  planned or pending (2026-08-15).
-- **Correction, same day:** the "no live rollout planned or pending" entry
-  above was wrong about ground truth, not just superseded by the operator's
-  later scope reversal. Direct inspection of `gaming-stack-lab` (2026-08-15,
-  during Step 9 preflight) found Foreverworld already deployed and actively
-  live — outside this branch's tracked process — running the un-fixed
-  direct-pull images on 3 of 4 containers, with real recent player activity
-  in the world save. Step 9 is "apply an already-written fix to a live,
-  actively-played server," not a first deploy. See Finding 1's table for
-  the full correction. Not proceeding until a confirmed low-traffic window
-  with a live player-count check immediately beforehand.
+- `minecraft-wildworks`'s production rollout — timeline of what was
+  believed vs. found, kept in full because each step corrected the last:
+  1. **Original entry (superseded):** operator confirmed **do not touch
+     the live Minecraft server** — `gaming-stack-lab` is intentionally
+     `pve`-only due to pve-test-vm's RAM ceiling, and that's staying that
+     way. The code fix (Stage B, already committed) stays as prepared-
+     but-not-deployed; there is no live rollout planned or pending
+     (2026-08-15).
+  2. **Correction, same day (superseded):** the "no live rollout planned
+     or pending" entry above was wrong about ground truth, not just
+     superseded by the operator's later scope reversal. Direct inspection
+     of `gaming-stack-lab` (during Step 9 preflight) found Foreverworld
+     already deployed and actively live — outside this branch's tracked
+     process — running the un-fixed direct-pull images on 3 of 4
+     containers, with real recent player activity in the world save. Step
+     9 is "apply an already-written fix to a live, actively-played
+     server," not a first deploy. Held for a confirmed low-traffic window
+     with a live player-count check immediately beforehand.
+  3. **Final outcome (current):** operator confirmed no players were
+     active. `mc-monitor`'s Prometheus metrics independently confirmed 0
+     players online. The full `deploy-minecraft-wildworks.yml` playbook
+     was judged the wrong tool (needs from-scratch-deploy inputs,
+     unconditionally rewrites `server.properties`) since the live
+     `compose.yaml`/`server.properties` already matched what that
+     playbook would generate except for the 3 image references. Fixed
+     instead with a targeted 3-line `image:` edit + `docker compose up
+     -d`. Verified: both containers `(healthy)`, `server_version`/
+     `max-players` unchanged, world files intact. **Rollout step 9 done,
+     the `pve` rollout is fully complete.**
 - `harbor-stack`'s cadvisor sidecar: confirmed *not* a genuine bootstrap
   exception (Harbor is already up by the time that play runs) — fixed like
   every other stack, CI allowlist for it removed (2026-08-14).
-- 16 commits landed on `task/harbor-image-sourcing-enforcement`: the
-  TF_WORKSPACE fix, the Stage A CI rewrite, one commit per stack fixed in
-  Stage B, and the Stage C re-pull job. Not yet pushed to `origin` or
-  merged to `stable`.
-- Stage C's `ci-runner-01` deployment: applied and validated directly via
-  SSH rather than through `provision.sh`, because that playbook's
-  runner-registration step is blocked by an unrelated invalid `gh` CLI
-  token in this session (Finding 11) — needs the operator to
-  `gh auth login` before `provision.sh --stack ci-runner-01` will work
-  again for anyone, not just this task.
+- `task/harbor-image-sourcing-enforcement` landed in stages: Stages A–D
+  plus this doc's own tracking were merged to `stable` and pushed
+  (2026-08-15); the `pve` rollout's per-step commits (steps 3–9 plus the
+  minecraft-wildworks correction) followed on the same branch and were
+  merged to `stable` once the rollout finished — see below.
+- Stage C's `ci-runner-01` deployment: initially applied and validated
+  directly via SSH (not through `provision.sh`) because Finding 11's
+  `gh` CLI shadowing blocked the normal path at the time. **Finding 11 was
+  fixed same day** — Stage C was then re-verified end to end through the
+  real `provision.sh --stack ci-runner-01` path, not just the manual SSH
+  workaround. See Finding 11.
 - The homelab root CA rotation/propagation gap (Finding 10): worked around
   narrowly on `ci-runner-01` to unblock Stage C validation, not fixed at
   the root. Flagged as a separate, real platform issue.
@@ -855,11 +890,6 @@ promotion pass given the higher validation tier and blast radius.
 - Stage E is intentionally scoped as a later, separate effort — confirm
   that's the right sequencing before any network/firewall work is
   scheduled, given its full-teardown-cycle validation cost.
-- Ready to start Stage D (registry-mirror finish-or-retire decision) now,
-  or hold here?
-- `gh auth login` needs re-running (Finding 11) — blocks
-  `provision.sh --stack ci-runner-01` for anyone until re-authenticated.
-  Not something this session can do (interactive browser device-flow).
 - The homelab root CA propagation gap (Finding 10) needs a real fix
   eventually — worked around only on `ci-runner-01`, other
   not-recently-redeployed hosts likely have the same stale-CA problem.
@@ -868,8 +898,17 @@ promotion pass given the higher validation tier and blast radius.
   covers the stacks touched in Stage B only — extend it with
   ai-services-stack/graylog-stack/greenbone-stack/pentagi-stack once their
   exact live tags are confirmed, rather than transcribed from source.
+- The Portainer app-endpoint repair loop in `scripts/provision.sh` aborts
+  on the first unreachable stack instead of continuing (found during
+  rollout step 3) — `management-stack`/`media-stack`/`torrent-stack` never
+  got their re-pair attempt as a result. Worth a manual check and/or
+  hardening the loop, separate from this task.
 
-Resolved (2026-08-15): `harness-target`'s hardcoded hostname (confirmed
-intentional, no fix) and `minecraft-wildworks`'s production rollout (not
-happening — do not touch the live Minecraft server; the code fix stays
-committed but undeployed indefinitely). See Decisions Log.
+Resolved: `harness-target`'s hardcoded hostname (confirmed intentional, no
+fix, 2026-08-15). Stage D's registry-mirror finish-or-retire decision
+(retired, 2026-08-15). `gh auth login`/Finding 11's `GITHUB_TOKEN`
+shadowing (fixed and closed, 2026-08-15). `minecraft-wildworks`'s
+production rollout (done, 2026-08-15 — see Decisions Log for the full
+sequence of what was believed vs. found before the actual live fix). The
+entire `pve` production rollout, all 9 steps (2026-08-15). See Decisions
+Log and the Production Rollout table above.
