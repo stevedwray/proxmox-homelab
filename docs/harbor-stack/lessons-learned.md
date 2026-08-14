@@ -119,6 +119,35 @@ than Harbor specifically and apply repo-wide.
   `.env.pve-test-vm` was the one missing it, now fixed) before trusting an
   ad hoc plan's output.
 
+### 8. A stack's "deploy" playbook can be the wrong tool for a narrow live fix — and planning docs can go stale about ground truth, not just decisions
+
+- This doc itself claimed `minecraft-wildworks`'s live rollout was "on hold
+  indefinitely... no live rollout planned or pending." That was wrong about
+  actual state: Foreverworld had already been deployed to `gaming-stack-lab`
+  outside this branch's tracked process, and was actively being played
+  (`level.dat` written 15 seconds before a live check). A stale doc read as
+  confidently as a correct one — the only way to catch it was direct
+  inspection of the live host (`docker ps`, file timestamps) immediately
+  before acting, not trusting the doc's own prior "not deployed" note.
+- Separately: `deploy-minecraft-wildworks.yml` is written as a from-scratch
+  release deploy (mandatory release-tarball/legacy-ops/whitelist file
+  inputs, unconditional `server.properties` rewrite, full compose-file
+  replacement). Running it against an already-live, already-correctly-
+  configured server to fix nothing but an image registry path would have
+  been the wrong tool — it risks resetting live settings that may have
+  drifted from the hardcoded template, or changing the pinned mod/loader
+  version if the release differs from what's actually running. Compare the
+  live compose/config against what the "deploy" playbook would produce
+  *before* running it; if they already match apart from the one thing
+  you're fixing, a targeted hand-edit (with a preflight and post-verify)
+  is safer and easier to reason about than the general-purpose deploy path.
+- RCON auth failed on an ad-hoc `rcon-cli` check because the password lives
+  in `server.properties`/an env secret that isn't available to a bare
+  `docker exec` from an unrelated shell session. `mc-monitor`'s own
+  Prometheus metrics endpoint (`/metrics`, `minecraft_status_players_online_count`)
+  gives the same live player-count answer without needing RCON credentials
+  at all — prefer it for a quick "is anyone on" check.
+
 ## Suggested Use
 
 - Read this document before starting the next piece of Harbor-adjacent
