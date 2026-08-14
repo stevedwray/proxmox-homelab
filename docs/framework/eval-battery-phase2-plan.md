@@ -45,7 +45,7 @@ truncation) and needs a redo, — = out of scope for this model):
 
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
-| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ⚠️ 79.11%/82.62% but unverified (no `--log_samples`, `gen_kwargs: {}` — redo queued, Tier B) | ✅ | ⬜ |
+| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ | ⬜ |
 | Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | 🔄 running (redo) | ⬜ | — |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
