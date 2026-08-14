@@ -18,6 +18,16 @@ belong under `docs/harbor-stack/artifacts/` (git-ignored) per
 `docs/workflow/documentation-workspaces.md`. This file holds only durable
 conclusions and the plan itself.
 
+## Status (2026-08-14)
+
+**Stage A and Stage B are complete and merged into this branch** (11
+commits on `task/harbor-image-sourcing-enforcement`). All ten stacks with
+real violations are fixed and, where they can be deployed on pve-test-vm,
+live-validated there. See Findings 5–8 below for what implementation
+turned up beyond the original four findings, and the Decisions Log for
+what got fixed vs. deliberately deferred. Stage C and Stage D are not yet
+started.
+
 ## Verified Findings (2026-08-14)
 
 ### Finding 1 — Several stacks/roles hardcode direct upstream pulls
@@ -26,20 +36,24 @@ Confirmed by grepping every `image:` reference under `terraform/lxc/ansible/`
 (playbooks and roles) — not just `terraform/lxc/stacks/`, see Finding 2 for
 why that distinction matters.
 
-| Stack / role | Image(s) | Reference |
-|---|---|---|
-| `portainer-stack` | `portainer/portainer-ce`, `gcr.io/cadvisor/cadvisor` | `deploy-portainer-stack.yml:99,111` |
-| `proxy-stack` (Traefik) | `traefik:{{version}}`, `gcr.io/cadvisor/cadvisor` | `deploy-proxy-stack.yml:57,231` |
-| `monitoring-stack` | `gcr.io/cadvisor/cadvisor` (VM/Grafana/exporter images *are* correctly routed) | `deploy-monitoring-stack.yml:80` |
-| `technitium-stack` | `technitium/dns-server` | `deploy-technitium-stack.yml:118` |
-| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` |
-| `docker_socket_proxy` role — shared sidecar deployed by **6 production stacks** (authentik, harbor, monitoring, netbox, portainer, proxy) | `tecnativa/docker-socket-proxy:latest` | `roles/docker_socket_proxy/defaults/main.yml:4` |
-| `harbor-stack` itself (bootstrap sidecar) | `gcr.io/cadvisor/cadvisor` | `deploy-harbor-stack.yml:230` — **legitimate exception**, see Design Principles |
+| Stack / role | Image(s) | Reference | Status |
+|---|---|---|---|
+| `portainer-stack` | `portainer/portainer-ce`, `gcr.io/cadvisor/cadvisor` | `deploy-portainer-stack.yml:99,111` | ✅ fixed, live-validated |
+| `proxy-stack` (Traefik) | `traefik:{{version}}`, `gcr.io/cadvisor/cadvisor` | `deploy-proxy-stack.yml:57,231` | ✅ fixed, live-validated |
+| `monitoring-stack` | `gcr.io/cadvisor/cadvisor` + an unguarded task actively stripping the other 3 (see Finding 7) | `deploy-monitoring-stack.yml:80,557` | ✅ fixed, live-validated |
+| `technitium-stack` | `technitium/dns-server` | `deploy-technitium-stack.yml:118` | ✅ fixed, live-validated |
+| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed, offline-validated only — live prod validation pending approval |
+| `docker_socket_proxy` role — shared sidecar, **6 consumers** (authentik, harbor, monitoring, netbox, portainer, proxy) | `tecnativa/docker-socket-proxy:latest` | `roles/docker_socket_proxy/defaults/main.yml:4` | ✅ fixed, live-validated on all 4 currently-enabled consumers deployed on pve-test-vm |
+| `harbor-stack` itself (cadvisor sidecar) | `gcr.io/cadvisor/cadvisor` | `deploy-harbor-stack.yml:230` | ✅ fixed, live-validated — turned out *not* to be a real bootstrap exception, see Finding 5's note below |
+| `authentik-stack` (found via Finding 6, not this table originally) | `postgres:16-alpine`, `redis:alpine`, `gcr.io/cadvisor/cadvisor` | `stacks/authentik-stack/docker-compose.yml:8,20,96` | ✅ fixed, live-validated; also fixed `authentik_registry_host`'s IP-on-non-pve special case |
+| `netbox-stack` (found via Finding 6) | `gcr.io/cadvisor/cadvisor` | `stacks/netbox-stack/docker-compose.yml:151` | ✅ fixed, live-validated |
+| `test-docker` (found via Finding 6) | `traefik/whoami`, `nginx:alpine` | `stacks/test-docker/docker-compose.yml:3,10` | ✅ fixed, not live-validated (not currently deployed) |
+| `docker-socket-proxy-test` (found via Finding 6) | `nginx:stable-alpine`, `traefik/whoami`, `redis:alpine` | `stacks/docker-socket-proxy-test/docker-compose.yml:5,10,15` | ✅ fixed, not live-validated (not currently deployed) |
+| `harness-target` (found via Finding 6) | hardcodes `harbor.lab.gibbsgreatly.xyz` literally, not `${REGISTRY_HOST}` | `stacks/harness-target/docker-compose.yml:5,12` | 🚩 flagged, not fixed — see Finding 8, different bug class |
 
-Stacks confirmed correctly routed through `{{ *_registry_host }}` → Harbor:
-`ai-services-stack`, `graylog-stack`, `greenbone-stack`, `pentagi-stack`,
-`monitoring-stack` (core images only), `authentik-stack` (via retag-and-push),
-`netbox-stack`.
+Stacks confirmed correctly routed through `{{ *_registry_host }}` → Harbor
+from the start: `ai-services-stack`, `graylog-stack`, `greenbone-stack`,
+`pentagi-stack`.
 
 `app_stack` role / `deploy-stack.yml` was in an earlier pass of this table
 (hardcoded `nginx:alpine` placeholder) — **dropped after confirming it has
@@ -128,6 +142,119 @@ cannot be plugged in directly as a `registry-mirrors` target** — that config
 shape only works against a plain `registry:2` mirror pointed at Docker Hub,
 which is a different piece of software than what's deployed. This matters
 for the plan below.
+
+### Finding 5 — The real reason most pulls through Harbor were failing: FQDN vs. raw IP
+
+Discovered while live-validating the very first Stage B fix
+(`portainer-stack`) on pve-test-vm: a pull against Harbor's raw container IP
+(`LAB_IP_HARBOR`) fails outright, every time, regardless of
+`insecure-registries`. Root cause, confirmed via nginx access logs and
+direct curl:
+
+- Harbor's `external_url` (`terraform/lxc/ansible/roles/harbor_installer/templates/harbor.yml.j2`)
+  is deliberately HTTPS, terminated by Traefik — Harbor's own nginx only
+  ever serves plain HTTP internally (`http.port`, no `https:` block; the
+  template's own comment says so explicitly).
+- Harbor's registry always answers a pull's initial `401` with
+  `WWW-Authenticate: Bearer realm="<external_url scheme+host>/service/token"`
+  — regardless of which host/port the client actually connected to.
+- A client pulling against the raw IP (`192.168.40.110`, plain HTTP, works
+  fine for the initial request) gets handed back an **HTTPS** token realm,
+  which Harbor doesn't serve on that IP at all (TLS lives at Traefik, not
+  Harbor) — the token fetch fails with `connection refused` on port 443,
+  and the whole pull fails.
+- Pulling against Harbor's **FQDN** (`LAB_FQDN_HARBOR`, routed through
+  Traefik, real TLS) works end-to-end: the realm URL matches the host the
+  client already successfully connected to.
+
+This is why some Finding 1 fixes needed a second pass: several playbooks
+had a `docker_registry_host`/`*_registry_host` var that resolved to
+`LAB_IP_HARBOR` rather than `LAB_FQDN_HARBOR` (`portainer-stack`,
+`proxy-stack`, `harbor-stack`'s own cadvisor sidecar, and
+`authentik-stack`'s `authentik_registry_host`, which explicitly used the IP
+on every environment except `pve`). All four now prefer
+`LAB_FQDN_HARBOR`, matching the convention already used correctly by
+`ai-services-stack`/`graylog-stack`/`pentagi-stack`/`monitoring-stack`/
+`netbox-stack`. **Every stack fixed in this pass now confirmed pulling
+successfully through Harbor's FQDN, live, on pve-test-vm** — this is
+strong direct evidence for what was actually suppressing Harbor's artifact
+count, on top of Findings 1–4.
+
+### Finding 6 — The corrected CI check surfaced real violations Finding 1 missed
+
+Testing Stage A's widened check against the live repo (before fixing
+anything) surfaced more than Finding 1's original table:
+
+- **`authentik-stack`'s `docker-compose.yml`**: its own header comment
+  claimed "All images are routed through Harbor proxy cache" — but
+  `postgresql` (`postgres:16-alpine`) and `redis` (`redis:alpine`) were
+  hardcoded directly the whole time, alongside the same `gcr.io/cadvisor`
+  bypass every other stack had. Missed by the original Finding 1 pass
+  because that grep was scoped to `terraform/lxc/ansible/`, not
+  `terraform/lxc/stacks/*/docker-compose.yml` — the same class of
+  directory-scope blind spot as Finding 2 itself.
+- **`netbox-stack`'s `docker-compose.yml`**: same `gcr.io/cadvisor` bypass,
+  same reason it was missed.
+- **`test-docker` and `docker-socket-proxy-test`**: both disposable/test-tier
+  stacks had every image hardcoded, with no `REGISTRY_HOST` substitution
+  wired in at all (not even the plumbing existed).
+- **`docker_socket_proxy`'s own template** (`roles/docker_socket_proxy/templates/docker-compose.yml.j2`)
+  wasn't scanned at all — the check's `--include` list only covered
+  `*.yml`/`*.yaml`, not `*.j2`.
+- A pure line-level check also cannot distinguish a good indirected
+  `*_image:` var (`{{ vm_image }}`, correctly Harbor-routed) from a bad one
+  (`{{ minecraft_server_image }}`, hardcoded upstream) without resolving
+  the var's own definition — the widened check now does this (one hop,
+  same file or that role's `defaults/main.yml`), which is what actually
+  caught `minecraft-wildworks`'s three images despite their `image:` lines
+  looking like normal Jinja references.
+
+All of the above are now fixed (see Decisions Log) except `test-docker`/
+`docker-socket-proxy-test`, which got the code fix but not live validation
+(neither is currently deployed on pve-test-vm).
+
+### Finding 7 — `monitoring-stack` was *actively* stripping its own correct Harbor routing, every run
+
+Discovered live: after fixing `monitoring-stack`'s cadvisor line, its other
+three images (`vm_image`, `grafana_image`, `harbor_findings_exporter_image`
+— already correctly Harbor-routed in code) were still running old, plain
+upstream images on pve-test-vm. Root cause was not Finding 3's staleness —
+it was active, ongoing sabotage:
+`terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml`'s "Rewrite
+compose images to use upstream Docker Hub (dependency-tolerant mode)" task
+had **no `when:` clause**, unlike every sibling task in the same
+DNS-fallback block (`resolv.conf` backup, `/etc/hosts` entry, temporary
+public DNS), which all correctly gate on `monitoring_dns_fallback_needed`.
+This one — the consequential one — ran unconditionally on *every single
+deploy*, regex-stripping the Harbor prefix from every `/dockerhub/` image
+in the rendered compose file regardless of whether Harbor was actually
+reachable. Fixed by adding the missing `when:` guard; grepped the rest of
+the repo for the same `dependency-tolerant`/`Rewrite compose images`
+pattern — it's isolated to this one file, not copy-pasted elsewhere.
+
+### Finding 8 — `harness-target` hardcodes production's Harbor FQDN literally (flagged, not fixed)
+
+`terraform/lxc/stacks/harness-target/docker-compose.yml` routes its two
+images through `harbor.lab.gibbsgreatly.xyz` — a literal, hardcoded
+hostname, not `${REGISTRY_HOST}`. That's `pve` production's Harbor FQDN;
+on pve-test-vm (where `harness-target` is actually deployed, per live
+inventory) this doesn't route through the local Harbor at all — it's the
+one stack in this whole pass that isn't a "bypass Harbor" bug so much as a
+"points at the wrong Harbor" bug, a different (environment-isolation)
+failure class. Deliberately excluded from the CI check's enforcement scope
+and left unfixed pending your input — it's a pentest-harness/target stack,
+which may have deliberate reasons for a pinned target, and that's not
+something to guess at.
+
+### Finding 9 — `TF_WORKSPACE` gap for pve-test-vm (fixed, cross-referenced)
+
+Found and fixed during the pre-implementation methodology smoke test, not
+this plan's own investigation, but directly relevant to it: `.env.pve-test-vm`
+never set `TF_WORKSPACE`, so any ad hoc `terragrunt plan`/`apply` against
+pve-test-vm silently operated against the wrong, empty Terraform workspace.
+Fixed (`export TF_WORKSPACE='pve-test-vm'`, matching `.env.pve`/
+`.env.pve-framework`'s existing pattern) and verified: `apt-cacher-stack`'s
+container resource now shows zero diff instead of a phantom full recreate.
 
 ## Assessment of the Operator's Target State
 
@@ -534,12 +661,30 @@ promotion pass given the higher validation tier and blast radius.
 - `app_stack` role / `deploy-stack.yml`: confirmed zero live consumers,
   dropped from scope (2026-08-14).
 - Stage C execution host: `ci-runner-01`, decided (2026-08-14).
+- `*_registry_host` vars repo-wide: standardized on preferring
+  `LAB_FQDN_HARBOR` over `registry_host`/`LAB_IP_HARBOR` in every stack
+  touched this pass, per Finding 5 (2026-08-14).
+- `harness-target`'s hardcoded-hostname bug (Finding 8): excluded from the
+  CI check and left unfixed, pending your input — not folded into this
+  pass (2026-08-14).
+- `harbor-stack`'s cadvisor sidecar: confirmed *not* a genuine bootstrap
+  exception (Harbor is already up by the time that play runs) — fixed like
+  every other stack, CI allowlist for it removed (2026-08-14).
+- 11 commits landed on `task/harbor-image-sourcing-enforcement`: the
+  TF_WORKSPACE fix, the Stage A CI rewrite, and one commit per stack fixed
+  in Stage B. Not yet pushed to `origin` or merged to `stable`.
 
 ## Open Questions for Operator
 
 - Stage E is intentionally scoped as a later, separate effort — confirm
   that's the right sequencing before any network/firewall work is
   scheduled, given its full-teardown-cycle validation cost.
-- `minecraft-wildworks`'s production rollout (Stage B) needs a specific
-  low-traffic window named when the time comes — flag when you'd like that
-  scheduled rather than leaving it open-ended.
+- `minecraft-wildworks`'s production rollout (Stage B's one remaining
+  live-validation gap) needs a specific low-traffic window named when the
+  time comes, plus the standard preflight/approval exchange since it's a
+  `pve` mutation.
+- `harness-target`'s hardcoded-hostname bug (Finding 8): confirm whether
+  this is intentional (a pinned pentest target) or should be fixed to
+  `${REGISTRY_HOST}` like everything else.
+- Ready to start Stage C (scheduled re-pull job) and/or Stage D
+  (registry-mirror finish-or-retire decision) now, or hold here?
