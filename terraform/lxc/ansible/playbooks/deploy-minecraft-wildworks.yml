@@ -12,9 +12,13 @@
     minecraft_project_dir: /srv/docker/minecraft/foreverworld
     minecraft_previous_project_dir: /srv/docker/minecraft/wildworks
     minecraft_portainer_stack_name: foreverworld
-    minecraft_server_image: itzg/minecraft-server:java21
-    minecraft_monitor_image: itzg/mc-monitor:latest
-    minecraft_cadvisor_image: ghcr.io/google/cadvisor:v0.60.5
+    minecraft_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    minecraft_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ minecraft_lab_domain, true) }}"
+    minecraft_server_image: "{{ minecraft_registry_host }}/dockerhub/itzg/minecraft-server:java21"
+    minecraft_monitor_image: "{{ minecraft_registry_host }}/dockerhub/itzg/mc-monitor:latest"
+    minecraft_cadvisor_image: "{{ minecraft_registry_host }}/ghcr/google/cadvisor:v0.60.5"
     minecraft_jmx_exporter_version: "1.6.0"
     minecraft_jmx_exporter_dir: "{{ minecraft_project_dir }}/jmx-exporter"
     minecraft_jmx_exporter_jar: "{{ minecraft_jmx_exporter_dir }}/jmx_prometheus_javaagent-{{ minecraft_jmx_exporter_version }}.jar"
