@@ -26,6 +26,52 @@ doc.
 - **RepoBench and IFEval get broader coverage** — both currently sit on
   2-3 models when they're cheap/informative enough to justify more.
 
+## Current status (as of 2026-08-15 — check this section first)
+
+**Fully complete:** Phase 0 bug fixes (all closed, see table below), Tier
+A (Gemma4-26B, Gemma4-26B-A4B-QAT, Laguna S2.1 — all 3 tests each), Tier
+A.5 (Qwen3.6-35B GPQA+IFEval redo), Tier B (Qwen3-Coder-30B IFEval redo;
+Laguna-Heretic IFEval cancelled per operator call), Tier C (RepoBench for
+Qwen3-Coder-30B/Gemma4-26B/Gemma4-26B-A4B-QAT), and Phase 2 (A4B-QAT vs
+Q4_K_M table, all 6/6 axes in, final conclusion written).
+
+**Currently running (launched 2026-08-14/15, operator-requested
+follow-up):** CyberSecEval + RepoBench against Qwen3.6-35B and
+Qwen3-Coder-30B, run as two model-paired batches to avoid contending
+both scripts' reload-before-every-call pattern against the *same*
+model at once:
+- **Pair 1 (running now):** Qwen3.6-35B CyberSecEval (garuda →
+  framework) + Qwen3-Coder-30B RepoBench redo (ai-stack → framework,
+  output dir `results/qwen3-coder-30b-redo/repobench`). The redo uses
+  identical methodology to the original contaminated run (EM 1.67%/ES
+  15.18%, 36% non-compliant) -- expect a similar result, which would
+  *confirm* that finding as reproducible model behavior rather than a
+  fluke, not indicate a new problem.
+- **Pair 2 (queued, launch automatically once Pair 1 finishes):**
+  Qwen3.6-35B RepoBench (ai-stack) + Qwen3-Coder-30B CyberSecEval redo
+  (garuda) -- Qwen3-Coder-30B's existing CyberSecEval number predates
+  this session's methodology, being redone for consistency.
+
+**Still pending after that (not started):**
+- Real DeepResearch Bench rerun at full-batch scale, to validate the
+  Bug 4 JSON-extraction fix (`deepresearch_bench_race.py`) beyond the
+  single-task-ID spot check already done.
+- Phase 0.3 (low priority): try chunked generation to fix
+  Qwen3-Coder-Next's DRB long-form corruption, only worth it if DRB
+  turns out to matter for a live model decision.
+
+**Operational notes for picking this up fresh:** all four
+CyberSecEval/RepoBench jobs above use the same launch pattern as
+everywhere else in this doc -- `cyberseceval-battery.sh <model_tag>
+<short_name>` from `~/eval-harnesses` on garuda; `repobench_generate.py
+--model <tag> --output-dir .../results/<name>/repobench
+--sample-per-level 100` then `repobench_eval_local.py --path
+<same-dir>` from `~/eval-harnesses/benchmarks` on ai-stack. Always use
+the `ctx32k` Ollama tag variant for any model that has one (`ctx163k`/
+`ctx147k` tags are confirmed broken on dense content). Check
+`~/eval-harnesses/cyberseceval-battery.log` (garuda) and
+`gpqa-ifeval-battery.log` (framework) for cross-model run history.
+
 ## Phase 0 — bug fixes (do first; running more tests on broken infra wastes time)
 
 | # | Bug | Fix | Priority | Notes |
