@@ -48,7 +48,7 @@ truncation) and needs a redo, — = out of scope for this model):
 | Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ | ⚠️ EM 1.67%/ES 15.18% — see Tier C note, 36% of responses were non-compliant commentary, not a real code-quality score |
 | Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | 🔄 running (redo) | ⬜ | — |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ✅ EM 9.67%/ES 26.35% (9.3% non-compliant, far less than Qwen3-Coder-30B's 36%) |
-| Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
+| Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ✅ EM 6.33%/ES 17.7% (4% non-compliant, lower than dense — score gap here is real, not compliance-driven) |
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
 | Qwen3-Coder-Next | ✅ | ✅ | — dropped | — dropped (swapped for Qwen3-Coder-30B redo) | ⬜ | ✅ |
 | Laguna-Heretic | ✅ | ✅ | — dropped | — cancelled | ⬜ | ✅ |
@@ -158,6 +158,24 @@ Gemma4-26B (9.3%) in between -- instruction-following capability, not
 architecture or coding-specialization, appears to be the actual driver
 of RepoBench compliance rate here.
 
+**Gemma4-26B-A4B-QAT result (2026-08-14): EM 6.33%, ES 17.7%**
+(cross_file_first/cross_file_random/in_file: EM 6.0/8.0/5.0, ES
+18.03/17.03/18.04), zero generation failures, **12/300 rows (4%)**
+conversational -- notably *lower* than Gemma4-26B's own 9.3%, which
+breaks the clean IFEval-compliance correlation above (A4B-QAT's IFEval
+of 89.83%/91.13% is below Gemma4-26B's, so a strict correlation would
+predict *more* drift, not less). Worth being honest about rather than
+force-fitting: the correlation above is a real, useful trend, not a
+strict law. What it does confirm is that **A4B-QAT's lower RepoBench
+score isn't a compliance artifact** the way Qwen3-Coder-30B's was --
+with equal-or-better compliance than the dense model, A4B-QAT still
+scores meaningfully lower (EM -3.34pts, ES -8.65pts), pointing to a
+genuine code-completion capability gap. This is consistent with the
+large GPQA gap already found (-16.67pts) -- another data point for the
+Phase 2 working conclusion that A4B-QAT's efficiency costs real
+reasoning/completion capability, not just instruction-following
+polish.
+
 Not proposed: running every test against every model. IFEval/GPQA are
 cheap enough to extend broadly; RepoBench/BrowseComp/DeepResearch Bench
 stay targeted at models where the question ("is this good for
@@ -174,11 +192,11 @@ Once Tier A lands, produce one focused comparison table:
 | GPQA (flexible-extract) | 43.94% (±3.54) | 27.27% (±3.17) | **-16.67 pts** |
 | IFEval (prompt-strict / loose) | 92.98% / 93.90% | 89.83% / 91.13% | -3.15 / -2.77 pts |
 | CyberSecEval (refusal rate) | 6% (94/100 accepted) | 6% (94/100 accepted) | 0 (identical) |
-| RepoBench | TBD | TBD | — |
+| RepoBench (weighted EM / ES) | 9.67% / 26.35% | 6.33% / 17.7% | -3.34 / -8.65 pts |
 
-5 of 6 axes now filled in, and the picture is consistent and
+**All 6 of 6 axes now filled in.** The picture is consistent and
 directionally clear: **A4B-QAT trails the dense Q4_K_M checkpoint on
-every capability axis measured so far**, but the size of the gap
+every capability axis measured**, but the size of the gap
 varies a lot by task shape:
 
 - **GPQA is by far the biggest gap** (-16.67 pts, ~5x the IFEval gap)
@@ -200,16 +218,25 @@ varies a lot by task shape:
   security-adjacent prompts appears to be governed by
   safety-tuning/instruction-following rather than raw reasoning
   capacity, matching the IFEval-adjacent pattern above.
+- **RepoBench shows a real, non-compliance-driven gap** (-3.34 EM /
+  -8.65 ES pts) — checked directly via the same conversational-response
+  audit used for Qwen3-Coder-30B: A4B-QAT actually had *lower*
+  non-compliance than the dense model (4% vs 9.3%), so this gap can't
+  be explained away as A4B-QAT ignoring the completion instruction more
+  often. It's a genuine code-completion capability difference,
+  consistent with GPQA's large gap.
 
-**Working conclusion for PentAGI model selection**: A4B-QAT's
-size/speed advantage is not "free" the way the RX 9070 XT 12B pilot
-suggested official QAT could be — at 26B, it costs real capability,
-concentrated specifically in domain-reasoning-heavy tasks like GPQA.
-For roles leaning on adviser-style reasoning, prefer the dense Q4_K_M
-checkpoint; for roles that are more tool-calling/instruction-following
-shaped (where the gap is 5x smaller), A4B-QAT's efficiency trade may
-still be worth it. RepoBench (Tier C, not yet run) will add a
-code-specific data point before this conclusion is treated as final.
+**Working conclusion for PentAGI model selection (final, all 6 axes
+in)**: A4B-QAT's size/speed advantage is not "free" the way the RX
+9070 XT 12B pilot suggested official QAT could be — at 26B, it costs
+real capability, concentrated in domain-reasoning-heavy and
+code-completion tasks (GPQA, RepoBench) rather than instruction-format
+compliance (IFEval, BFCL, CyberSecEval, and RepoBench's own compliance
+rate all show small-or-zero gaps). For roles leaning on adviser-style
+reasoning or code completion, prefer the dense Q4_K_M checkpoint; for
+roles that are more tool-calling/instruction-following shaped, A4B-QAT's
+efficiency trade may still be worth it. This conclusion is now based on
+a complete data set, not an extrapolation from partial coverage.
 
 ## Phase 3 — pilot testing (build once, use throughout Phase 1/2)
 
