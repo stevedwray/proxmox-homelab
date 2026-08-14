@@ -726,5 +726,9 @@ This plan does not include:
 - full CI supply-chain redesign
 - Harbor content trust / Cosign policy enforcement changes
 - broad Harbor project taxonomy changes unrelated to scan reliability
+- whether every platform image actually gets routed through Harbor in the
+  first place, and whether that routing can be enforced rather than left to
+  convention — see
+  [docs/harbor-stack/image-sourcing-enforcement.md](image-sourcing-enforcement.md)
 
 Those can be planned later once Harbor scan coverage is reliable and visible.
