@@ -730,5 +730,6 @@ This plan does not include:
   first place, and whether that routing can be enforced rather than left to
   convention — see
   [docs/harbor-stack/image-sourcing-enforcement.md](image-sourcing-enforcement.md)
+  (durable gotchas from that work: [lessons-learned.md](lessons-learned.md))
 
 Those can be planned later once Harbor scan coverage is reliable and visible.

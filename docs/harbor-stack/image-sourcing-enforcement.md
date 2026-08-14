@@ -16,7 +16,9 @@ deployed stack were routing its pulls through Harbor's proxy-cache projects.
 Transient investigation notes, if any accumulate while this plan is worked,
 belong under `docs/harbor-stack/artifacts/` (git-ignored) per
 `docs/workflow/documentation-workspaces.md`. This file holds only durable
-conclusions and the plan itself.
+conclusions and the plan itself. Reusable operational gotchas from this
+work (not specific to any one finding) are split out into
+[lessons-learned.md](lessons-learned.md).
 
 ## Status (2026-08-15)
 
@@ -29,6 +31,39 @@ retired. See Findings 5–11 for what implementation turned up beyond the
 original four findings, and the Decisions Log for what got fixed vs.
 deliberately deferred. **Only Stage E (network-layer enforcement) remains,
 intentionally scoped as a later, separate, higher-validation-tier effort.**
+
+## `pve` Production Rollout (2026-08-15, in progress)
+
+Stages A–D validated on pve-test-vm above are now being rolled out to
+`pve` production, one stack at a time, each under its own preflight +
+explicit operator "Proceed" per this repo's Production Credential
+Controls — no blanket approval. Pre-rollout read-only check passed
+cleanly: Harbor healthy (Trivy default scanner, `auto_scan: true` on
+proxy-cache projects, TLS validates natively from the operator's
+workstation), and — importantly — **no CA-fingerprint mismatch across the
+6 `pve` hosts checked**, unlike pve-test-vm's `ci-runner-01` (Finding 10).
+Production does not have that propagation gap.
+
+`gaming-stack-lab`/`minecraft-wildworks` was added to the rollout scope by
+the operator on 2026-08-15, reversing the earlier "do not touch" stance —
+see the Decisions Log.
+
+| # | Stack | Status | Notes |
+|---|---|---|---|
+| 1 | `harbor_repull` (Stage C) on `ci-runner-01` | ✅ done | New timer active, confirmed via `systemctl list-timers` and GitHub API runner-online status. Runner briefly re-registered as a side effect (expected, harmless). |
+| 2 | `harbor-stack` | ✅ done | Only `cadvisor`/`docker-socket-proxy` recreated (seconds/48s uptime post-deploy); every Harbor core component confirmed still "Up 5 weeks", untouched. Smoke test passed. |
+| 3 | `portainer-stack` | ⏳ preflight given, awaiting "Proceed" | |
+| 4 | `monitoring-stack` | pending | |
+| 5 | `netbox-stack` | pending | |
+| 6 | `authentik-stack` | pending | |
+| 7 | `technitium-stack` | pending | |
+| 8 | `proxy-stack` (Traefik) | pending | |
+| 9 | `gaming-stack-lab`/`minecraft-wildworks` | pending | Live game server — needs a specific low-traffic window, not just slotted in blind. |
+
+`docker_socket_proxy`'s fix isn't its own step — it rides along
+automatically with steps 2–6's own redeploy. `test-docker` exists on `pve`
+(VMID 131) but is currently stopped, so no live impact either way —
+deprioritized, not scheduled.
 
 ## Verified Findings (2026-08-14)
 
@@ -749,6 +784,12 @@ promotion pass given the higher validation tier and blast radius.
 
 ## Decisions Log
 
+- `gaming-stack-lab`/`minecraft-wildworks` on `pve` (2026-08-15): operator
+  reversed the earlier "do not touch the live Minecraft server" stance —
+  now explicitly included in the `pve` rollout, scheduled last, pending a
+  named low-traffic window. Supersedes the "not deploying" note elsewhere
+  in this document (kept below for the historical record of why it was
+  originally excluded).
 - Finding 11's `GITHUB_TOKEN` shadowing (2026-08-15): operator approved
   and completed both parts —
   1. `deploy-ci-runner.yml`'s three `gh api` calls clear
