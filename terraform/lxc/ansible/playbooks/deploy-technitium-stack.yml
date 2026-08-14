@@ -115,7 +115,7 @@
               # both proxy-stack and harbor-stack in the Approved Deploy
               # Order, so a Harbor-routed pull has no route to a Traefik/
               # Harbor front door that doesn't exist yet on a cold cycle.
-              image: technitium/dns-server:{{ technitium_image_tag }}
+              image: "{{ effective_registry_host }}/dockerhub/technitium/dns-server:{{ technitium_image_tag }}"
               container_name: technitium
               restart: unless-stopped
               env_file: .env
