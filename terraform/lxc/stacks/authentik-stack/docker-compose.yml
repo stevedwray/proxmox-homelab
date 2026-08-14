@@ -5,7 +5,7 @@
 
 services:
   postgresql:
-    image: postgres:16-alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/postgres:16-alpine
     restart: unless-stopped
     env_file:
       - .env
@@ -17,7 +17,7 @@ services:
       - authentik-postgresql:/var/lib/postgresql/data
 
   redis:
-    image: redis:alpine
+    image: ${REGISTRY_HOST}/dockerhub/library/redis:alpine
     restart: unless-stopped
     command:
       - sh
@@ -93,7 +93,7 @@ services:
       - server
 
   cadvisor:
-    image: gcr.io/cadvisor/cadvisor:v0.49.1
+    image: ${REGISTRY_HOST}/gcr/cadvisor/cadvisor:v0.49.1
     restart: unless-stopped
     ports:
       - "8080:8080"

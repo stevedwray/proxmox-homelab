@@ -39,7 +39,13 @@
     authentik_step_ca_url: "https://{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}"
     authentik_step_ca_provisioner: "{{ lookup('env', 'STEP_CA_PROVISIONER_NAME') | default('homelab-admin', true) }}"
     authentik_step_ca_provisioner_password: "{{ lookup('env', 'STEP_CA_PROVISIONER_PASSWORD') | mandatory('STEP_CA_PROVISIONER_PASSWORD env var is not set') }}"
-    authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') if lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' else registry_host | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('registry_host var or LAB_IP_HARBOR env var is required') }}"
+    # Must be the FQDN (routed through Traefik) on every environment, not
+    # just pve -- Harbor's registry auth realm always echoes back
+    # external_url's https scheme regardless of which host/port the client
+    # connected on, so docker login/push against the raw container IP fails
+    # the same way on pve-test-vm as it would anywhere else. See
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
     authentik_insecure_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
     authentik_image_version: "2026.2.4"
     authentik_nginx_version: "1.27-alpine"
