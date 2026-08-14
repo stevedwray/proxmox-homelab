@@ -313,14 +313,14 @@ succeed, the runner re-registers and comes back online, `harbor_repull`
 converges idempotently (zero `changed` — confirms the manually-deployed
 files were already correct), smoke test passes.
 
-**Still pending, operator action required:** the SOPS secret itself is
-still named `GITHUB_TOKEN` in `terraform/secrets.common.enc.yaml`, which
-remains a live footgun for any *other* `gh`/GitHub-Actions-flavored
-tooling run through `with-secrets` in the future. Renaming it to
-`MCP_GITHUB_TOKEN` (and updating `deploy-mcp-utility-stack.yml`'s one
-reference) needs a `sops --set`/`unset` pair that this session's
-permission classifier blocked from being run automatically — see the
-Decisions Log for the exact commands to run.
+**Resolved (2026-08-15):** the operator renamed the SOPS secret to
+`MCP_GITHUB_TOKEN` (value unchanged, key only), and
+`deploy-mcp-utility-stack.yml`'s one reference was updated to match and
+verified live on pve-test-vm — `cve-mcp-server` rebuilds and comes up
+healthy, `mandatory()` resolves cleanly, idempotent rerun clean.
+`with-secrets` no longer injects a bare `GITHUB_TOKEN` at all, so this
+class of collision can't recur for future `gh`/GitHub-Actions-flavored
+tooling either. Finding 11 is fully closed.
 
 ## Assessment of the Operator's Target State
 
@@ -737,29 +737,15 @@ promotion pass given the higher validation tier and blast radius.
 ## Decisions Log
 
 - Finding 11's `GITHUB_TOKEN` shadowing (2026-08-15): operator approved
-  both parts —
-  1. **Done:** `deploy-ci-runner.yml`'s three `gh api` calls now clear
+  and completed both parts —
+  1. `deploy-ci-runner.yml`'s three `gh api` calls clear
      `GH_TOKEN`/`GITHUB_TOKEN` per-task.
-  2. **Pending operator action:** rename the SOPS secret from
-     `GITHUB_TOKEN` to `MCP_GITHUB_TOKEN` and update
-     `deploy-mcp-utility-stack.yml`'s one reference. This session's
-     permission classifier blocked the automated `sops --set`/`unset`
-     commands (they embed the decrypted value inline), so it needs to be
-     run manually:
-     ```bash
-     cd /home/steve/git/proxmox-homelab
-     VALUE=$(SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops -d \
-       --extract '["GITHUB_TOKEN"]' terraform/secrets.common.enc.yaml)
-     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --set \
-       "[\"MCP_GITHUB_TOKEN\"] \"${VALUE}\"" terraform/secrets.common.enc.yaml
-     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops unset \
-       '["GITHUB_TOKEN"]' terraform/secrets.common.enc.yaml
-     unset VALUE
-     ```
-     Once that's done, the follow-up code change is a one-line swap in
-     `deploy-mcp-utility-stack.yml`
-     (`lookup('env', 'GITHUB_TOKEN')` → `lookup('env', 'MCP_GITHUB_TOKEN')`)
-     — say the word and it'll be committed and validated the same session.
+  2. The SOPS secret was renamed `GITHUB_TOKEN` → `MCP_GITHUB_TOKEN`
+     (value unchanged, run manually by the operator since the permission
+     classifier blocked the automated version), and
+     `deploy-mcp-utility-stack.yml`'s one reference updated and validated
+     live to match. Both committed
+     (`855c3286`/`caeedcc0`). Finding 11 fully closed.
 - `app_stack` role / `deploy-stack.yml`: confirmed zero live consumers,
   dropped from scope (2026-08-14).
 - Stage C execution host: `ci-runner-01`, decided (2026-08-14).
