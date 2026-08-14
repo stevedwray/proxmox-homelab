@@ -45,7 +45,7 @@ truncation) and needs a redo, — = out of scope for this model):
 
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
-| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ | ⬜ |
+| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ | ⚠️ EM 1.67%/ES 15.18% — see Tier C note, 36% of responses were non-compliant commentary, not a real code-quality score |
 | Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | 🔄 running (redo) | ⬜ | — |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ⬜ |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ⬜ |
@@ -114,6 +114,33 @@ stands as its only post-Tier-A data point.
   code completion; establishes a real baseline against Qwen3-Coder-Next
 - Gemma4-26B + Gemma4-26B-A4B-QAT — cheap enough to add, gives the
   A4B-QAT comparison a code-completion data point too
+
+**Qwen3-Coder-30B result (2026-08-14): EM 1.67%, ES 15.18%
+(cross_file_first/cross_file_random/in_file: EM 2.0/3.0/0.0, ES
+15.18/16.67/13.69) -- badly misleading if read as a raw code-quality
+score.** Root-caused via direct sample inspection, not assumed:
+compared against Qwen3-Coder-Next's saved raw predictions using the
+identical prompt template (`COMPLETION_INSTRUCTION`, "Output ONLY the
+next line of code -- no explanation") -- Qwen3-Coder-Next complied on
+300/300 rows, Qwen3-Coder-30B replied with conversational commentary
+("Looking at your code, I can see...") instead of a completion on
+**108/300 rows (36%)**. This is a real, model-specific
+instruction-following weakness, not a corruption bug or a script
+issue -- and it's consistent with Qwen3-Coder-30B already having the
+weakest IFEval score (81.33%/85.03%) of any general-purpose model
+tested. The raw EM/ES numbers are a legitimate measurement of "how
+this model behaves under this exact strict-format prompt," but
+substantially understate its actual code-completion quality, since
+over a third of responses never attempt a completion at all. Treat
+this as "Qwen3-Coder-30B struggles to comply with strict
+no-commentary output constraints," not "Qwen3-Coder-30B writes bad
+code" -- those are different findings and only the former is what this
+result actually measures. Not yet decided: whether a stricter
+prompt/few-shot pass is worth a re-run to get a cleaner
+code-quality-only signal, or whether the compliance-failure rate
+itself is the more operationally relevant finding for PentAGI (which
+also needs the model to follow strict output-format instructions in
+its own tool-calling/code-generation prompts).
 
 Not proposed: running every test against every model. IFEval/GPQA are
 cheap enough to extend broadly; RepoBench/BrowseComp/DeepResearch Bench
