@@ -279,20 +279,48 @@ same stale-CA problem, and there's no mechanism in this repo that pushes a
 CA rotation out to already-provisioned hosts without a full redeploy. Out
 of scope for this task; flagging for separate attention.
 
-### Finding 11 — `deploy-ci-runner.yml`'s runner-registration step needs interactive `gh` auth (not fixed, blocks the playbook entirely)
+### Finding 11 — `deploy-ci-runner.yml`'s `gh api` calls were shadowed by `with-secrets`' `GITHUB_TOKEN` (fixed 2026-08-15)
 
 Running `provision.sh --stack ci-runner-01` to validate Stage C the normal
 way failed immediately, before reaching any of this task's own changes:
 its "Generate runner registration token when one is not provided" task
 shells out to `gh api` on the controller (this workstation), and `gh auth
-status` here reports the cached token as invalid. This blocks the *entire*
-`deploy-ci-runner.yml` playbook for anyone, not just this task — needs an
-interactive `gh auth login` re-authentication from the operator (a device-flow
-browser confirmation, not something scriptable). Stage C's actual code was
-instead deployed and validated directly via SSH (see Decisions Log) — the
-files on `ci-runner-01` now are byte-identical to what the role produces,
-so a future successful `provision.sh` run will just idempotently confirm
-them, not change anything.
+status` here reported the cached token as invalid. Assumed at first to be
+a simple stale-credential problem needing operator re-authentication — the
+operator did re-run `gh auth login` successfully, but the exact same
+`provision.sh` run still failed the same way.
+
+**Real root cause, found by stripping the task's `no_log: true` and
+reproducing directly:** `gh api ... registration-token` returned a genuine
+`403` — *not* an auth failure. `with-secrets` injects a `GITHUB_TOKEN` env
+var repo-wide, sourced from `terraform/secrets.common.enc.yaml`, for an
+entirely unrelated, narrowly-scoped purpose (`mcp-utility-stack`'s
+read-only CVE lookups against the GitHub API). `gh` CLI prioritizes
+`GH_TOKEN`/`GITHUB_TOKEN` env vars over its own keyring-stored login by
+design — so every `gh api` call in this playbook was silently using that
+low-privilege token instead of the operator's actual, correctly-scoped
+session, regardless of how well `gh auth login` had just gone. Confirmed
+by running the identical command outside `with-secrets` (worked instantly)
+versus inside it (403).
+
+**Fixed:** all three `gh api` invocations in `deploy-ci-runner.yml`
+(registration token, removal token, online-status check) now explicitly
+clear `GH_TOKEN`/`GITHUB_TOKEN` via the task's own `environment:` block,
+falling back to the real keyring-stored session. Verified live end to end
+through the actual `provision.sh --stack ci-runner-01` path (not the
+manual SSH workaround used earlier this session): all three `gh` calls
+succeed, the runner re-registers and comes back online, `harbor_repull`
+converges idempotently (zero `changed` — confirms the manually-deployed
+files were already correct), smoke test passes.
+
+**Still pending, operator action required:** the SOPS secret itself is
+still named `GITHUB_TOKEN` in `terraform/secrets.common.enc.yaml`, which
+remains a live footgun for any *other* `gh`/GitHub-Actions-flavored
+tooling run through `with-secrets` in the future. Renaming it to
+`MCP_GITHUB_TOKEN` (and updating `deploy-mcp-utility-stack.yml`'s one
+reference) needs a `sops --set`/`unset` pair that this session's
+permission classifier blocked from being run automatically — see the
+Decisions Log for the exact commands to run.
 
 ## Assessment of the Operator's Target State
 
@@ -708,6 +736,30 @@ promotion pass given the higher validation tier and blast radius.
 
 ## Decisions Log
 
+- Finding 11's `GITHUB_TOKEN` shadowing (2026-08-15): operator approved
+  both parts —
+  1. **Done:** `deploy-ci-runner.yml`'s three `gh api` calls now clear
+     `GH_TOKEN`/`GITHUB_TOKEN` per-task.
+  2. **Pending operator action:** rename the SOPS secret from
+     `GITHUB_TOKEN` to `MCP_GITHUB_TOKEN` and update
+     `deploy-mcp-utility-stack.yml`'s one reference. This session's
+     permission classifier blocked the automated `sops --set`/`unset`
+     commands (they embed the decrypted value inline), so it needs to be
+     run manually:
+     ```bash
+     cd /home/steve/git/proxmox-homelab
+     VALUE=$(SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops -d \
+       --extract '["GITHUB_TOKEN"]' terraform/secrets.common.enc.yaml)
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops --set \
+       "[\"MCP_GITHUB_TOKEN\"] \"${VALUE}\"" terraform/secrets.common.enc.yaml
+     SOPS_AGE_KEY_FILE=~/.config/sops/age/keys.txt sops unset \
+       '["GITHUB_TOKEN"]' terraform/secrets.common.enc.yaml
+     unset VALUE
+     ```
+     Once that's done, the follow-up code change is a one-line swap in
+     `deploy-mcp-utility-stack.yml`
+     (`lookup('env', 'GITHUB_TOKEN')` → `lookup('env', 'MCP_GITHUB_TOKEN')`)
+     — say the word and it'll be committed and validated the same session.
 - `app_stack` role / `deploy-stack.yml`: confirmed zero live consumers,
   dropped from scope (2026-08-14).
 - Stage C execution host: `ci-runner-01`, decided (2026-08-14).
