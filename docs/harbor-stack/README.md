@@ -22,6 +22,76 @@ Working note:
   workstream belongs under `docs/harbor-stack/artifacts/`
 - that directory is local-only and git-ignored
 
+## Open Investigation — Proxy-Cache Artifact Registration Gap (2026-08-15)
+
+Triggered by `image-sourcing-enforcement.md`'s rollout: after confirming every
+in-use image actually routes through Harbor, checked whether Harbor was
+actually scanning all of them. It isn't.
+
+**Confirmed at the database level** (`SELECT repository_name, count(*) FROM
+artifact GROUP BY repository_name` against `harbor-db`'s own Postgres): on
+`pve`, only the `dockerhub` project (native `docker-hub` adapter type) and
+`pentagi` (push-based, not proxy-cache at all) have any artifact rows.
+`gcr`, `ghcr`, `quay`, `greenbone` — all using the generic `docker-registry`
+adapter type — have **zero** artifact rows despite real, successful pulls
+(`pull_count` climbing, and for `greenbone` specifically, 1.8GB of real blob
+storage consumed). Trivy never scans what Harbor never registers as an
+artifact.
+
+Ruled out, with direct evidence for each:
+- **Not a registry-adapter-type limitation** — the identical generic
+  `docker-registry` adapter type works correctly on pve-test-vm's Harbor
+  (confirmed real scan data for `gcr/cadvisor/cadvisor` and
+  `ghcr/goauthentik/ldap` there). Only `quay` fails on both instances,
+  which looks like a separate, quay.io-specific issue.
+- **Not a multi-arch/OCI-image-index issue** — `dockerhub/library/postgres`
+  (which scans fine) is also an OCI image index, same media type as the
+  broken `greenbone` repos.
+- **Not Harbor version, component health, quota, or system-level config** —
+  both instances run identical v2.14.3, `pve`'s `/api/v2.0/health` reports
+  every component healthy, quotas are unlimited on both, and a full
+  `/api/v2.0/configurations` diff between the two instances showed no
+  functional difference.
+- **Not stale runtime state** — restarted `harbor-core` on `pve` and forced
+  a genuinely fresh (non-cached) pull afterward; still zero DB rows.
+
+**Still unresolved.** `harbor-jobservice` shows zero queued activity for
+these pulls at all — whatever triggers proxy-cache artifact registration on
+a successful pull isn't firing on `pve` for these registries, and `pve`'s
+`harbor-core` log level is filtered to WARNING-only so the actual code path
+isn't visible without enabling debug logging (not attempted — a further,
+even more invasive step). pve-test-vm working correctly for the same
+adapter type on the same Harbor version means this is environment-specific,
+not a hard Harbor limitation — but the precise trigger difference between
+the two instances hasn't been found.
+
+**Options considered for actually fixing this** (not yet decided or
+implemented):
+- **Pull-then-push job**, extending the existing `harbor_repull` role
+  (`terraform/lxc/ansible/roles/harbor_repull/`) to explicitly `docker push`
+  affected images into a plain, non-proxy-cache project — mirrors the
+  `pentagi` project's already-proven-working pattern. Most certain to work,
+  most custom code.
+- **Harbor native Replication**, using the purpose-built `google-gcr`/
+  `github-ghcr` adapter types (confirmed available in this Harbor version's
+  `/api/v2.0/replication/adapterinfos`) instead of the generic type. Less
+  custom code, but untested, and `quay`/`greenbone` have no dedicated
+  adapter so may need the pull-then-push approach regardless.
+- Enable debug logging on `pve`'s `harbor-core` + restart, to actually catch
+  the registration attempt (or its absence) in the act.
+
+**Security finding from this investigation, already fixed:** ad-hoc
+`ansible -m shell -a "..."` commands against a target host get their fully
+expanded command line (including any interpolated secret) logged via
+syslog and forwarded to Graylog — `HARBOR_DB_PASSWORD` was exposed this way
+during this investigation. Rotated on both `pve` and pve-test-vm (shared
+value in `terraform/secrets.common.enc.yaml`) same day; both Harbor
+instances redeployed and verified healthy afterward. See
+[lessons-learned.md](lessons-learned.md) for the safe pattern
+(`environment:`/`args: stdin:` + `no_log: true`) verified to actually
+prevent this leak, empirically tested with a dummy value before use on the
+real password.
+
 ## Verified Current State
 
 ### Code state
