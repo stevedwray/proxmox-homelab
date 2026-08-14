@@ -58,7 +58,7 @@ see the Decisions Log.
 | 6 | `authentik-stack` | ✅ done | `postgresql`/`redis`/`cadvisor`/`docker-socket-proxy` recreated on Harbor-routed images (`changed=9`). Smoke test passed ("authentik: API responding"). LDAP outpost/Graylog integration checks all came back `ok`, unaffected — did not re-run the full teardown cycle here, relying on the one already done during Stages A–D on pve-test-vm. |
 | 7 | `technitium-stack` | ✅ done | `technitium/dns-server` container recreated on the Harbor-routed image (`changed=3`). Not a `docker_socket_proxy` consumer, nothing else rides along. Dry-run's only failure was the known `--check` mode artifact (lesson #6 — zone-bootstrap play needs a live API login). Smoke test's parity-zone checks all passed; independently confirmed with a `dig` from the workstation against `192.168.20.15` post-deploy since this is the live authoritative DNS. |
 | 8 | `proxy-stack` (Traefik) | ✅ done | `traefik`/`cadvisor`/`docker-socket-proxy` recreated on Harbor-routed images (`changed=5`). Smoke test passed (Traefik metrics ok). Given this fronts every other stack's HTTPS ingress, went beyond the standard smoke test: sampled 5 backend routes post-deploy (`harbor`/`netbox`/`portainer`/`authentik`/`technitium` FQDNs) — all returned sane HTTP codes (200s, 302 login redirects on netbox/authentik). Also confirmed the TLS chain validates without `-k` (no cert regression). |
-| 9 | `gaming-stack-lab`/`minecraft-wildworks` | pending | Live game server — needs a specific low-traffic window, not just slotted in blind. |
+| 9 | `gaming-stack-lab`/`minecraft-wildworks` | pending, confirmed live | Preflight investigation (2026-08-15) confirmed Foreverworld is actively deployed and being played right now on `gaming-stack-lab` — 3 of 4 containers still bypass Harbor (`foreverworld-minecraft`, `cadvisor`, `foreverworld-monitor`; `portainer-agent` already fixed). Recent world-save activity (`level.dat` written 15s before the check) confirms real, current play. Holding for an explicit low-traffic window from the operator, with a live RCON player-count check immediately before executing. |
 
 `docker_socket_proxy`'s fix isn't its own step — it rides along
 automatically with steps 2–6's own redeploy. `test-docker` exists on `pve`
@@ -86,7 +86,7 @@ why that distinction matters.
 | `proxy-stack` (Traefik) | `traefik:{{version}}`, `gcr.io/cadvisor/cadvisor` | `deploy-proxy-stack.yml:57,231` | ✅ fixed, live-validated |
 | `monitoring-stack` | `gcr.io/cadvisor/cadvisor` + an unguarded task actively stripping the other 3 (see Finding 7) | `deploy-monitoring-stack.yml:80,557` | ✅ fixed, live-validated |
 | `technitium-stack` | `technitium/dns-server` | `deploy-technitium-stack.yml:118` | ✅ fixed, live-validated |
-| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed, offline-validated only — **live deployment on hold indefinitely, operator directive: do not touch the live Minecraft server** |
+| `minecraft-wildworks` (`gaming-stack-lab`, **`pve`-production only**) | `itzg/minecraft-server`, `itzg/mc-monitor`, `ghcr.io/google/cadvisor` | `deploy-minecraft-wildworks.yml:15-17` | ✅ code fixed. **Correction (2026-08-15): this doc previously said "live deployment on hold indefinitely" — that was wrong.** Direct inspection of `gaming-stack-lab` found Foreverworld already deployed and actively live (`docker ps` shows `foreverworld-minecraft`/`cadvisor`/`foreverworld-monitor` all running the un-fixed direct-pull images, uptime 3h; `portainer-agent` already Harbor-routed). It was deployed outside this branch's tracked process at some point. World data shows real, very recent activity (`level.dat` written 15s before the check). Rollout still not attempted live — now correctly understood as "apply an already-written fix to an actively-played live server," not "first deploy to an empty host." Needs a genuine low-traffic window, confirmed with a live player-count check immediately beforehand, not just scheduled blind. |
 | `docker_socket_proxy` role — shared sidecar, **6 consumers** (authentik, harbor, monitoring, netbox, portainer, proxy) | `tecnativa/docker-socket-proxy:latest` | `roles/docker_socket_proxy/defaults/main.yml:4` | ✅ fixed, live-validated on all 4 currently-enabled consumers deployed on pve-test-vm |
 | `harbor-stack` itself (cadvisor sidecar) | `gcr.io/cadvisor/cadvisor` | `deploy-harbor-stack.yml:230` | ✅ fixed, live-validated — turned out *not* to be a real bootstrap exception, see Finding 5's note below |
 | `authentik-stack` (found via Finding 6, not this table originally) | `postgres:16-alpine`, `redis:alpine`, `gcr.io/cadvisor/cadvisor` | `stacks/authentik-stack/docker-compose.yml:8,20,96` | ✅ fixed, live-validated; also fixed `authentik_registry_host`'s IP-on-non-pve special case |
@@ -773,7 +773,7 @@ promotion pass given the higher validation tier and blast radius.
 |---|---|---|
 | A | extended CI grep run against current `main`/branch | surfaces every known Finding 1 violation; clean once Stage B lands |
 | B (standard stacks) | `scripts/provision.sh --stack <name>` on pve-test-vm per touched stack | container starts using Harbor-routed image; Stage A grep clean |
-| B (`minecraft-wildworks`) | offline syntax/template check only | image strings resolve correctly offline; **live rollout on hold indefinitely per operator directive, not attempted** |
+| B (`minecraft-wildworks`) | offline syntax/template check only | image strings resolve correctly offline; **live rollout not yet attempted — see 2026-08-15 correction in Finding 1's table: the server is already live and actively played, this is not a from-scratch deploy** |
 | C | manual run + unattended scheduled run on pve-test-vm's `ci-runner-01` | Harbor artifact timestamp refreshes; container `StartedAt` unchanged; tolerates cold/empty Harbor |
 | D | removal commit + live `docker_base`-consumer provision run | dead scaffolding removed; `apt-cacher-stack` clean run, smoke test passed |
 | E | direct-pull test from blocked zone vs. Harbor-routed pull, full teardown cycle | direct fails, Harbor-routed succeeds, Harbor cache-fill unaffected, teardown cycle passed |
@@ -817,11 +817,22 @@ promotion pass given the higher validation tier and blast radius.
   intentional by the operator — it only ever pulls (read-only) through
   prod Harbor's proxy cache, never mutates it. Permanently excluded from
   the CI check, no fix needed (2026-08-15).
-- `minecraft-wildworks`'s production rollout: operator confirmed **do not
-  touch the live Minecraft server** — `gaming-stack-lab` is intentionally
-  `pve`-only due to pve-test-vm's RAM ceiling, and that's staying that way.
-  The code fix (Stage B, already committed) stays as prepared-but-not-
-  deployed; there is no live rollout planned or pending (2026-08-15).
+- `minecraft-wildworks`'s production rollout (original entry, superseded
+  below): operator confirmed **do not touch the live Minecraft server** —
+  `gaming-stack-lab` is intentionally `pve`-only due to pve-test-vm's RAM
+  ceiling, and that's staying that way. The code fix (Stage B, already
+  committed) stays as prepared-but-not-deployed; there is no live rollout
+  planned or pending (2026-08-15).
+- **Correction, same day:** the "no live rollout planned or pending" entry
+  above was wrong about ground truth, not just superseded by the operator's
+  later scope reversal. Direct inspection of `gaming-stack-lab` (2026-08-15,
+  during Step 9 preflight) found Foreverworld already deployed and actively
+  live — outside this branch's tracked process — running the un-fixed
+  direct-pull images on 3 of 4 containers, with real recent player activity
+  in the world save. Step 9 is "apply an already-written fix to a live,
+  actively-played server," not a first deploy. See Finding 1's table for
+  the full correction. Not proceeding until a confirmed low-traffic window
+  with a live player-count check immediately beforehand.
 - `harbor-stack`'s cadvisor sidecar: confirmed *not* a genuine bootstrap
   exception (Harbor is already up by the time that play runs) — fixed like
   every other stack, CI allowlist for it removed (2026-08-14).
