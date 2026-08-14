@@ -54,8 +54,11 @@
   vars:
     proxy_compose_dir: /opt/proxy-stack
     traefik_version: "v3.1.6"
-    traefik_image: "traefik:{{ traefik_version }}"
     proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    proxy_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ proxy_lab_domain, true) }}"
+    traefik_image: "{{ proxy_registry_host }}/dockerhub/library/traefik:{{ traefik_version }}"
     proxy_lab_fqdn_authentik_internal: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK_INTERNAL') | default('authentik-int.' ~ proxy_lab_domain, true) }}"
     # Control-node source dir for generated per-stack Traefik files.
     # When PVE_ENV is set, defaults to the env-scoped directory so a
@@ -228,7 +231,7 @@
                 - ./certs/combined-ca.crt:/certs/combined-ca.crt:ro
 
             cadvisor:
-              image: gcr.io/cadvisor/cadvisor:v0.49.1
+              image: "{{ proxy_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
               container_name: cadvisor
               restart: unless-stopped
               ports:
