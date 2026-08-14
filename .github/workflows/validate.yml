@@ -79,10 +79,8 @@ jobs:
           # so an indirected bad value (like minecraft-wildworks's
           # minecraft_server_image, or docker_socket_proxy's template
           # referencing its role default) can't hide behind the
-          # indirection. Or the line is the one documented harbor-stack
-          # bootstrap exception (its first-ever cold start has no Harbor yet
-          # to route through — see the plan doc's Design Principles).
-          # Anything else — a literal upstream registry reference or a bare
+          # indirection. Anything else — a literal upstream registry
+          # reference or a bare
           # Docker Hub shorthand like "portainer/portainer-ce" — fails,
           # rather than only rejecting a fixed list of known registry
           # hostnames.
@@ -141,11 +139,6 @@ jobs:
 
             lower_value="${effective_value,,}"
             passes_registry_host "${lower_value}" && continue
-
-            if [[ "${file}" == "terraform/lxc/ansible/playbooks/deploy-harbor-stack.yml" \
-               && "${value}" == *"gcr.io/cadvisor/cadvisor"* ]]; then
-              continue
-            fi
 
             echo "VIOLATION: ${file}:${lineno}:${content}   [resolved: ${effective_value}]"
             violations=$((violations + 1))
