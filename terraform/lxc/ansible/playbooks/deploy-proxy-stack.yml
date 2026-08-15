@@ -167,6 +167,7 @@
           metrics:
             prometheus:
               entryPoint: metrics
+      register: traefik_static_config
 
     - name: Write shared Authentik middleware config
       ansible.builtin.copy:
@@ -258,6 +259,7 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: traefik_compose_definition
 
     - name: Check requested generated Traefik source directory on control node
       ansible.builtin.stat:
@@ -324,6 +326,19 @@
       community.docker.docker_compose_v2:
         project_src: "{{ proxy_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live: the v3.7.10 bump left the old container
+        # running with failed=0/changed=true reported). Force recreation
+        # whenever the compose file or the static traefik.yml (entryPoints/
+        # providers/certificatesResolvers are startup-only, not hot-
+        # reloaded like the dynamic/ directory) actually changed content,
+        # not just when the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed or traefik_compose_definition.changed
+                or traefik_static_config.changed)
+            else 'auto'
+          }}
         remove_orphans: true
       when: not ansible_check_mode

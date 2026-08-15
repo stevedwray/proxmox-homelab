@@ -82,6 +82,7 @@
         dest: "{{ authentik_compose_path }}"
         mode: "0640"
         content: "{{ authentik_compose_content }}"
+      register: authentik_compose_definition
 
     - name: Create direct TLS asset directories
       ansible.builtin.file:
@@ -592,7 +593,16 @@
         project_src: "{{ authentik_compose_dir }}"
         state: present
         pull: "{{ 'never' if (authentik_harbor_reachable.rc is not defined or authentik_harbor_reachable.rc != 0 or (authentik_docker_login is defined and authentik_docker_login.failed)) else 'policy' }}"
-        recreate: "{{ 'always' if authentik_docker_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live elsewhere this session). Force
+        # recreation whenever the compose file's own content changed,
+        # not just when the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (authentik_docker_daemon_config.changed or authentik_compose_definition.changed)
+            else 'auto'
+          }}
         remove_orphans: true
       when: not ansible_check_mode
 

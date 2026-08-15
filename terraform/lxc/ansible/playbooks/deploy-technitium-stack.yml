@@ -143,6 +143,7 @@
 
           volumes:
             technitium-config:
+      register: technitium_compose_definition
 
     - name: Validate Technitium compose configuration
       ansible.builtin.command:
@@ -155,7 +156,20 @@
       community.docker.docker_compose_v2:
         project_src: "{{ technitium_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if docker_daemon_config.changed | default(false) else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live elsewhere this session). Force
+        # recreation whenever the compose file's own content changed,
+        # not just when the Docker daemon config changed. Live DNS —
+        # this is a code-correctness fix only, not a trigger to redeploy;
+        # see the network_mode: host caution above before running this
+        # anywhere.
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed | default(false)
+                or technitium_compose_definition.changed | default(false))
+            else 'auto'
+          }}
         remove_orphans: true
       when: not ansible_check_mode
 

@@ -245,9 +245,19 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: harbor_cadvisor_compose_definition
 
     - name: Deploy cAdvisor via compose
       community.docker.docker_compose_v2:
         project_src: "{{ harbor_cadvisor_compose_dir }}"
         state: present
-        recreate: "{{ 'always' if harbor_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only compose
+        # change (confirmed live elsewhere this session). Force
+        # recreation whenever the compose file's own content changed,
+        # not just when the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (harbor_daemon_config.changed or harbor_cadvisor_compose_definition.changed)
+            else 'auto'
+          }}
