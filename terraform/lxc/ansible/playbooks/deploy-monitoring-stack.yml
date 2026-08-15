@@ -69,7 +69,7 @@
     monitoring_lab_ip_dns: "{{ lookup('env', 'LAB_IP_DNS') | mandatory('LAB_IP_DNS env var is required') }}"
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
-    vm_version: "v1.102.1"
+    vm_version: "v1.148.0"
     grafana_version: "13.0.2"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
@@ -602,7 +602,17 @@
         project_src: "{{ monitoring_compose_dir }}"
         state: present
         remove_orphans: true
-        recreate: "{{ 'always' if docker_daemon_config.changed else 'auto' }}"
+        # 'auto' does not reliably recreate on an image-tag-only change
+        # (confirmed live during the traefik v3.7.10 rollout: a clean,
+        # failed=0 run left the old container running). Force recreation
+        # whenever the compose file's own content changed, not just when
+        # the Docker daemon config changed.
+        recreate: >-
+          {{
+            'always'
+            if (docker_daemon_config.changed or monitoring_compose_definition.changed)
+            else 'auto'
+          }}
       when: not ansible_check_mode
 
     - name: Restart Harbor findings exporter after script updates
