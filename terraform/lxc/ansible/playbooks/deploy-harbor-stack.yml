@@ -234,7 +234,7 @@
         content: |
           services:
             cadvisor:
-              image: "{{ harbor_cadvisor_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
+              image: "{{ harbor_cadvisor_registry_host }}/ghcr/google/cadvisor:v0.60.5"
               container_name: cadvisor
               restart: unless-stopped
               ports:
