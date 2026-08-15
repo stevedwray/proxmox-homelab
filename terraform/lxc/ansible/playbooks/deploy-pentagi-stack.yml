@@ -123,7 +123,7 @@
     # cAdvisor -- same pattern every other Docker stack here already uses
     # (graylog-stack, authentik-stack, harbor-stack, proxy-stack,
     # portainer-stack), just never added when pentagi-stack was built.
-    pentagi_cadvisor_image: "{{ pentagi_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
+    pentagi_cadvisor_image: "{{ pentagi_registry_host }}/ghcr/google/cadvisor:v0.60.5"
 
     # Custom-built PentAGI backend image -- our private fork
     # (github.com/stevedwray/pentagi, branch fix/lab-lessons-learned) with

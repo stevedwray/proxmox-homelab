@@ -93,7 +93,7 @@ services:
       - server
 
   cadvisor:
-    image: ${REGISTRY_HOST}/gcr/cadvisor/cadvisor:v0.49.1
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
     restart: unless-stopped
     ports:
       - "8080:8080"
