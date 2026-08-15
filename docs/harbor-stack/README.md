@@ -249,16 +249,41 @@ where the same image via the proxy-cache path has zero tagged artifacts.
 Gracefully degrades to pull-only if the mirror credential isn't
 provisioned yet (e.g. a rebuild before `harbor_repull` has run once).
 
+**Rolled out to `pve` and closed out (2026-08-15).** `harbor_postconfigure`
+created the `mirror` project on `pve`; `harbor_repull`'s push robot
+provisioned the same way on `ci-runner-01`. A real repull run against
+`pve` confirmed 16/16 pulls and 16/16 mirror pushes — every currently
+manifest-tracked image, including `dockerhub` entries (see below).
+
+**dockerhub included too, not skipped.** The original assumption that
+dockerhub's native adapter always tags correctly didn't survive contact
+with a full production audit: `grafana-oss`, `victoria-metrics`, `traefik`,
+and `portainer-ce` all turned up as a single untagged artifact despite
+using the "safe" adapter. Root cause not fully chased down (retention's
+tag_selectors likely can't protect an artifact that loses its tag for any
+reason, regardless of adapter), but the fix already built is
+adapter-agnostic — `harbor_repull_mirror_skip_projects` now defaults to
+empty, mirroring everything.
+
+**Full vulnerability audit run against `pve`'s Harbor, all 61 artifacts
+across 8 projects.** Two images are deliberately vulnerable (pentest
+targets) and now carry a Harbor-native CVE allowlist — `dockerhub`
+(`vulhub/struts2`, 257 CVE IDs) and `pentagi` (`kali-linux-fixed`, 131 CVE
+IDs) — each list hand-cross-checked against every other image sharing that
+project first, since Harbor's allowlist has no per-repository granularity.
+Everything else got a real upstream-version check; full findings, fix
+targets, and the allowlist rationale are in the published report.
+
 **Next steps, in order:**
-1. Roll this to `pve`: `harbor_postconfigure` creates the `mirror` project
-   as part of the next `harbor-stack` deploy; `harbor_repull`'s own deploy
-   to `ci-runner-01` on `pve` provisions its push robot the same way. Then
-   trigger (or wait for) a repull run and confirm the same tag+scan result
-   against `pve`'s Harbor for all in-use images, not just the sample
-   tested on pve-test-vm.
-2. Expand `manifest.txt` — it's still v1 scope (confirmed live tags for a
-   subset of stacks only). Every image actually in use should be in this
-   manifest for scan coverage to be complete, not just tracked.
+1. Expand `manifest.txt` — it's still v1 scope (confirmed live tags for a
+   subset of stacks only, e.g. `itzg/minecraft-server` and
+   `portainer/agent` aren't tracked yet). Every image actually in use
+   should be in this manifest for scan coverage to be complete, not just
+   tracked.
+2. Work through the fix/upgrade list from the audit report, starting with
+   `goauthentik/server`/`ldap` (highest Critical count, core auth infra)
+   and `cadvisor` (already confirmed pullable at a newer tag, low-risk
+   sidecar — good first one to actually execute).
 3. Optional, independent of the above: file the upstream Harbor bug
    report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
    worth an update/new issue with this session's specific findings:
