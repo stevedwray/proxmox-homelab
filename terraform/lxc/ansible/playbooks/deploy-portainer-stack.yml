@@ -80,7 +80,7 @@
 
   vars:
     portainer_compose_dir: /opt/portainer
-    portainer_version: "2.27.3"
+    portainer_version: "2.39.5"
     # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR: Harbor's
     # registry auth realm always echoes back external_url's scheme (https),
     # so a pull against the raw container IP gets handed an HTTPS token

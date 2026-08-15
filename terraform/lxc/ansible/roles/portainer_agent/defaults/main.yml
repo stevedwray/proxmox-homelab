@@ -6,7 +6,7 @@ portainer_agent_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('h
 portainer_agent_compose_dir: "/opt/portainer"
 portainer_agent_compose_path: "/opt/portainer/docker-compose.yml"
 portainer_agent_service_unit: "portainer-agent.service"
-portainer_agent_image: "{{ portainer_agent_registry_host }}/dockerhub/portainer/agent:2.27.3"
+portainer_agent_image: "{{ portainer_agent_registry_host }}/dockerhub/portainer/agent:2.39.5"
 portainer_agent_port: 9001
 portainer_agent_fqdn: "{{ inventory_hostname }}"
 portainer_agent_network_subnet: "172.31.250.0/24"
