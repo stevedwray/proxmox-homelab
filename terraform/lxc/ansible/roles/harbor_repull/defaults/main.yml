@@ -25,11 +25,19 @@ harbor_repull_on_calendar: "*-*-* 03:17:00"
 # harbor_repull_mirror_skip_projects also gets docker-tagged and pushed
 # into harbor_repull_mirror_project, so it ends up durably tagged and
 # scan-tracked instead of relying on the broken proxy-cache tag-creation
-# path. dockerhub is skipped because its native docker-hub adapter already
-# tags correctly on its own.
+# path.
+#
+# Originally skipped dockerhub here, on the assumption its native
+# docker-hub adapter always tags correctly. A full production vulnerability
+# audit (2026-08-15) disproved that: grafana-oss, victoria-metrics, traefik,
+# and portainer-ce -- all dockerhub, all pulled nightly by this same role --
+# showed up with a single untagged artifact each. Root cause not fully
+# chased down (retention's tag_selectors likely can't protect an artifact
+# that loses its tag for any reason, regardless of adapter type), but the
+# fix already built here is adapter-agnostic, so mirror everything instead
+# of trying to special-case which adapters are "safe".
 harbor_repull_mirror_project: mirror
-harbor_repull_mirror_skip_projects:
-  - dockerhub
+harbor_repull_mirror_skip_projects: []
 
 # Harbor admin API access, needed only to provision this role's own
 # project-scoped push robot (see tasks/main.yml) -- never used at runtime

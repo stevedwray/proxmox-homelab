@@ -20,16 +20,21 @@ Investigation"): Harbor's generic docker-registry proxy-cache adapter
 (gcr/ghcr/quay/greenbone/lscr) has a confirmed upstream bug where pulled
 artifacts are scanned but never tagged, leaving them invisible by tag and
 unprotected from each project's daily retention job. dockerhub's native
-docker-hub adapter isn't affected and is skipped. For every other project,
-after a successful pull this also `docker tag`s and `docker push`es the
-same image into HARBOR_REPULL_MIRROR_PROJECT (a plain, non-proxy-cache
-project) -- mirroring the pentagi project's already-proven-working push
-path, which never touches the broken tag-creation code at all. Requires
-HARBOR_REPULL_MIRROR_USER/PASSWORD (a project-scoped robot provisioned by
-this role's tasks/main.yml); mirroring is skipped entirely, with a clear
-log line, if those aren't set -- so this script still degrades gracefully
-to pull-only behavior on a host where that credential hasn't been
-provisioned yet.
+docker-hub adapter was originally assumed unaffected and skipped, but a
+full production audit (2026-08-15) found several dockerhub images
+(grafana-oss, victoria-metrics, traefik, portainer-ce) in the same
+untagged state despite the "safe" adapter -- so by default nothing is
+skipped; HARBOR_REPULL_MIRROR_SKIP_PROJECTS is available to opt specific
+projects back out if a real reason to trust them shows up later. For every
+mirrored project, after a successful pull this also `docker tag`s and
+`docker push`es the same image into HARBOR_REPULL_MIRROR_PROJECT (a plain,
+non-proxy-cache project) -- mirroring the pentagi project's
+already-proven-working push path, which never touches the broken
+tag-creation code at all. Requires HARBOR_REPULL_MIRROR_USER/PASSWORD (a
+project-scoped robot provisioned by this role's tasks/main.yml); mirroring
+is skipped entirely, with a clear log line, if those aren't set -- so this
+script still degrades gracefully to pull-only behavior on a host where
+that credential hasn't been provisioned yet.
 
 Tolerant of a cold/empty Harbor (a rebuild with nothing cached yet) and of
 individual image failures -- each pull and each mirror push is attempted
@@ -156,8 +161,8 @@ def main() -> int:
     )
     parser.add_argument(
         "--mirror-skip-projects",
-        default=os.environ.get("HARBOR_REPULL_MIRROR_SKIP_PROJECTS", "dockerhub"),
-        help="Comma-separated project prefixes to pull-only, never mirror (native adapters that already tag correctly).",
+        default=os.environ.get("HARBOR_REPULL_MIRROR_SKIP_PROJECTS", ""),
+        help="Comma-separated project prefixes to pull-only, never mirror. Empty by default -- see module docstring.",
     )
     parser.add_argument(
         "--mirror-user",
