@@ -146,9 +146,23 @@ ask, per CLAUDE.md and [[feedback_avoid_full_teardown_scale]].
 
 ## Phase 2 — Target inventory & scan-config tiers
 
+**Status: code written, syntax-checked, not yet run.**
+`terraform/lxc/ansible/files/greenbone-scan-setup/setup_scan_program.py`
+creates all 14 Targets/Tasks (one Discovery + one Full-and-fast pair per
+zone/LAN) idempotently via python-gvm, mirroring `gvm-bridge/app.py`'s
+already-live-proven call shapes (`create_target`/`create_task`,
+`alive_test` as a plain string, scan config/scanner resolved by name
+filter rather than a hardcoded UUID). Wired into
+`deploy-greenbone-stack.yml` as new tasks at the end of the existing play
+(copies the script in, runs it once via the same throwaway `gvm-tools`
+container pattern already used for `modify_auth.xml`). `--syntax-check`
+passes. **Simplification found while implementing**: GVM ships a built-in
+`Discovery` scan config (host-alive + port sweep, no vulnerability NVTs) —
+used that directly rather than authoring a new custom config from scratch.
+
 - **Two GVM Scan Configs**, not one:
-  - `Discovery Only` — host-alive + port sweep, no vulnerability NVTs. Safe
-    against fragile/production hosts.
+  - `Discovery` — GVM's own built-in config; host-alive + port sweep, no
+    vulnerability NVTs. Safe against fragile/production hosts.
   - `Full and fast` — the existing config already used for the authorized
     Phase 4 test scan and the `gvm-bridge` integration. Real vulnerability
     probes; not guaranteed non-disruptive.
@@ -175,9 +189,13 @@ ask, per CLAUDE.md and [[feedback_avoid_full_teardown_scale]].
   `Consider Alive` — that was justified specifically because the lab targets
   are deliberately ICMP-firewalled. Most LAN/VLAN hosts do respond to ICMP
   normally; verify per zone rather than assuming.
-- **Targets**: one GVM Target per zone (by CIDR) is the likely right grain
-  to keep task count manageable, rather than one per host — revisit if a
-  zone's scan time or noise level argues for splitting it up.
+- **Targets**: implemented as *two* GVM Targets per zone (by CIDR), not
+  one — a zone can contain a mix of Tier A and Tier B hosts (e.g.
+  `mgmt_seg` has Authentik/step-ca alongside Portainer/monitoring/DNS), so
+  the Discovery Target covers the whole zone CIDR while the Full-and-fast
+  Target for that same zone uses GMP's `exclude_hosts` to carve out its
+  Tier A members. Revisit target grain if a zone's scan time or noise
+  level argues for splitting further.
 - **Real open capacity question, not yet answered**: `greenbone-stack` is
   sized at Greenbone's stated *minimum* (2 cores / 4096 MB), justified
   originally for one-off authorized-target scans. Daily discovery sweeps
