@@ -197,22 +197,41 @@ pve-test-vm, then the same for 1–2 stacks that actually pull through it
 regression. Full platform teardown stays reserved for changes that would
 actually break something currently running.
 
+**Rollout complete (2026-08-15).** `pve` and pve-test-vm both confirmed
+running `v2.15.2-a97e7b83`, all 8 components healthy on both
+(`/api/v2.0/health`). Scoped validation (this section, above) ran clean on
+pve-test-vm: `harbor-stack` itself, plus `portainer-stack` (dockerhub/
+native-adapter consumer) and `netbox-stack` (gcr/proxy-cache consumer via
+its cAdvisor sidecar), all redeployed and smoke-tested with `failed=0`.
+
+**Real recurrence of the idempotency bug, worth fixing at the source.**
+The first `pve` upgrade attempt reported a clean `changed=4` run but
+`systeminfo` still showed `v2.14.3` afterward — the exact
+role-level idempotency-check gap from lessons-learned #10, reproducing on
+a second, independent environment exactly as that lesson predicted. Fixed
+the same way (remove `/opt/harbor/harbor` scaffold, re-run — `changed=7`
+the second time, version genuinely moved). Since this has now recurred
+across both environments this same change touched, it's no longer just a
+one-off gotcha to remember — the role's "Check if Harbor installer has
+already been extracted" task should compare the extracted version against
+`harbor_installer_version` and force re-extraction on a mismatch, instead
+of relying on an operator remembering to blow away the scaffold by hand.
+Not yet implemented; added as next-step 1 below.
+
 **Next steps, in order:**
-1. Run the scoped validation above on pve-test-vm (harbor-stack is already
-   on 2.15.2 and was confirmed healthy during the earlier upgrade test;
-   still need the 1–2 dependent-stack pull check to close this out cleanly
-   under the new tier), then merge to `stable`.
-2. Roll the same version to `pve` under the normal production approval
-   flow (preflight summary → operator "Proceed" → `TASK_APPROVAL` →
-   `./with-secrets-prod`).
-3. Implement the pull-then-push extension to `harbor_repull`
+1. Fix `harbor_installer`'s idempotency check
+   (`terraform/lxc/ansible/roles/harbor_installer/tasks/main.yml`) to key
+   off the requested vs. actually-installed version, not just presence of
+   `install.sh` — so a version bump can't silently no-op again the way it
+   did twice this session.
+2. Implement the pull-then-push extension to `harbor_repull`
    (`terraform/lxc/ansible/roles/harbor_repull/`) — pull each affected
    `gcr`/`ghcr`/`quay`/`greenbone` image, then `docker push` it into a
    plain, non-proxy-cache project (mirroring `pentagi`'s working pattern).
    This is what actually fixes the scan-coverage gap; the version bump
    above does not. Validate on pve-test-vm first, then roll out to `pve`
    under the usual approval flow.
-4. Optional, independent of the above: file the upstream Harbor bug
+3. Optional, independent of the above: file the upstream Harbor bug
    report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
    worth an update/new issue with this session's specific findings:
    `controller/proxy/controller.go:216`, confirmed still broken in

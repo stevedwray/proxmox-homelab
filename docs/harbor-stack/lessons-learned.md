@@ -201,6 +201,14 @@ than Harbor specifically and apply repo-wide.
   at the installer scaffold only, never the separate data volume
   (`harbor_installer_data_volume`, a different path specifically so this
   stays safe).
+- **Recurred identically on `pve`, a second independent environment,
+  during the same session's production rollout** — same silent no-op
+  (`changed=4`, version unchanged), same fix (`changed=7` once the
+  scaffold was removed). Two-for-two is enough to call this a real bug in
+  the role rather than a one-off gotcha to remember by hand each time —
+  tracked as next-step 1 in `README.md`'s Open Investigation section: key
+  the idempotency check off requested-vs-installed version instead of mere
+  presence of `install.sh`.
 
 ### 11. A Harbor major-version upgrade can be a one-way door — verify rollback works *before* trusting it's available, not after you need it
 
