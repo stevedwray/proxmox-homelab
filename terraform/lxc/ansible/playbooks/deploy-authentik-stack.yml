@@ -517,13 +517,25 @@
           ansible.builtin.command:
             cmd: "docker pull postgres:16-alpine"
 
+        - name: Tag postgres with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag postgres:16-alpine {{ authentik_registry_host }}/dockerhub/library/postgres:16-alpine"
+
         - name: Pull redis image from Docker Hub
           ansible.builtin.command:
             cmd: "docker pull redis:alpine"
 
+        - name: Tag redis with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag redis:alpine {{ authentik_registry_host }}/dockerhub/library/redis:alpine"
+
         - name: Pull cadvisor image from gcr.io
           ansible.builtin.command:
             cmd: "docker pull gcr.io/cadvisor/cadvisor:v0.49.1"
+
+        - name: Tag cadvisor with Harbor proxy cache path
+          ansible.builtin.command:
+            cmd: "docker tag gcr.io/cadvisor/cadvisor:v0.49.1 {{ authentik_registry_host }}/gcr/cadvisor/cadvisor:v0.49.1"
 
         - name: Pull Authentik LDAP outpost image from ghcr.io
           ansible.builtin.command:
