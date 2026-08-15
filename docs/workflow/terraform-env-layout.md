@@ -450,8 +450,43 @@ worktree per environment:
 - use a separate checkout for pve-test-vm rebuild and validation work
 - do not alternate pve and pve-test-vm Terraform/provision runs in the same
   checkout without re-verifying inventories, generated edge files, and root CA
+- **always drive deploys through `scripts/provision.sh --stack <name>`**
+  (with `./with-secrets` or `./with-secrets-prod` and the right `PVE_ENV`),
+  never a hand-typed `ansible-playbook -i <path>` call. `provision.sh`
+  resolves `terraform/lxc/environments/<env>/<stack>/inventory.yml` first
+  and runs `assert_inventory_matches_env()` as a guard; a manual invocation
+  gets neither, even for a stack (like `proxy-stack`) that's already fully
+  migrated to the per-environment layout. See the incident below for what
+  bypassing it costs.
 
 This is a mitigation only. The target state is structural isolation in one repo.
+
+### Incident: 2026-08-16, prod-intended deploy landed on pve-test-vm
+
+While upgrading `proxy-stack` (Traefik) on `pve`, a hand-typed
+`ansible-playbook -i terraform/lxc/stacks/proxy-stack/inventory.yml ...`
+call was used instead of `scripts/provision.sh`. That path is the stale,
+gitignored, non-environment-scoped fallback file (last written by whichever
+environment's Terraform ran most recently in that checkout) — not
+`terraform/lxc/environments/pve/proxy-stack/inventory.yml`, which already
+existed and was correct. The deploy ran with `pve` secrets/domain but
+against pve-test-vm's real host, overwriting its Docker registry trust,
+full Traefik dynamic router table, and ACME resolvers with `pve`'s values.
+Real DNS-01 challenges were attempted against the production Cloudflare
+zone for two hostnames using the shared `CF_DNS_API_TOKEN` (both failed
+validation; 4 stale `_acme-challenge` TXT records were left behind and
+required manual cleanup via the Cloudflare API — `dig` against public
+resolvers lagged the actual zone state, so confirm cleanup via the
+Cloudflare API directly, not `dig`), and 11 real certificates were issued
+by production's step-ca for production hostnames, left inert in
+pve-test-vm's `acme.json` (step-ca is internal-only; no public trust/CT-log
+exposure). Both environments were fully restored and re-verified after the
+fact. `proxy-stack` was already on the per-environment layout — the
+guardrail (`assert_inventory_matches_env()`) that would have caught this
+was simply never invoked, because `provision.sh` itself was bypassed.
+
+Full incident writeup: `feedback_env_isolation_rules` in the operator's
+Claude Code memory (Recurrence, 2026-08-16).
 
 ---
 
