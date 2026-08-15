@@ -205,10 +205,23 @@ than Harbor specifically and apply repo-wide.
   during the same session's production rollout** — same silent no-op
   (`changed=4`, version unchanged), same fix (`changed=7` once the
   scaffold was removed). Two-for-two is enough to call this a real bug in
-  the role rather than a one-off gotcha to remember by hand each time —
-  tracked as next-step 1 in `README.md`'s Open Investigation section: key
-  the idempotency check off requested-vs-installed version instead of mere
-  presence of `install.sh`.
+  the role rather than a one-off gotcha to remember by hand each time.
+- **Fixed at the source (2026-08-15).** The `stat`-on-`install.sh` gate is
+  replaced with a version marker file
+  (`{{ harbor_installer_install_dir }}/.installed_version`, written only
+  after a successful unpack, so a failed/interrupted download is never
+  mistaken for a completed install). The scaffold is now removed
+  automatically on any marker mismatch — including "no marker at all",
+  which covers installs that predate this fix — instead of needing the
+  manual `file: state=absent` workaround. Validated on pve-test-vm across
+  all three paths: missing marker forces a real reinstall (`changed=7`),
+  matching marker stays a true no-op (`changed=1`, all download/extract/
+  unpack/marker-write tasks report `skipping`), and a deliberately
+  corrupted marker forces reinstall and self-heals back to the correct
+  version — tested by writing a fake `9.9.9-fake` marker and confirming
+  Harbor came back reporting the real, correct version (`2.15.2`)
+  afterward, at zero risk since it's reinstalling the version already
+  running.
 
 ### 11. A Harbor major-version upgrade can be a one-way door — verify rollback works *before* trusting it's available, not after you need it
 

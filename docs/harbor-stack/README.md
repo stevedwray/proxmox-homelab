@@ -216,14 +216,13 @@ one-off gotcha to remember — the role's "Check if Harbor installer has
 already been extracted" task should compare the extracted version against
 `harbor_installer_version` and force re-extraction on a mismatch, instead
 of relying on an operator remembering to blow away the scaffold by hand.
-Not yet implemented; added as next-step 1 below.
+**Fixed (2026-08-15)** — see lessons-learned.md #10 for the version-marker
+mechanism and how it was validated on pve-test-vm without any risk to the
+running install.
 
 **Next steps, in order:**
-1. Fix `harbor_installer`'s idempotency check
-   (`terraform/lxc/ansible/roles/harbor_installer/tasks/main.yml`) to key
-   off the requested vs. actually-installed version, not just presence of
-   `install.sh` — so a version bump can't silently no-op again the way it
-   did twice this session.
+1. Roll the idempotency fix to `pve` (validated on pve-test-vm; not yet
+   applied to `pve`).
 2. Implement the pull-then-push extension to `harbor_repull`
    (`terraform/lxc/ansible/roles/harbor_repull/`) — pull each affected
    `gcr`/`ghcr`/`quay`/`greenbone` image, then `docker push` it into a
