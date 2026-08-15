@@ -32,6 +32,19 @@ harbor_postconfigure_proxy_registries:
   - name: greenbone
     url: https://registry.community.greenbone.net
 
+# Push-based mirror project (pull-then-push fix for the proxy-cache
+# tag-creation bug -- see docs/harbor-stack/README.md Open Investigation).
+# harbor_repull pulls through the proxy-cache projects above, then pushes
+# into this plain project so the artifact is durably tagged, retention-
+# safe, and scan-tracked -- mirrors how the pentagi project already works.
+# The push credential is managed entirely by the harbor_repull role itself
+# (a project-scoped robot with a unique generated name, persisted only on
+# ci-runner-01) -- not here, and not through SOPS, specifically to avoid
+# the kind of stale-credential drift already seen with the shared
+# robot$ci-runner account (HARBOR_ROBOT_PASSWORD).
+harbor_postconfigure_mirror_project_name: "mirror"
+harbor_postconfigure_mirror_project_auto_scan: "{{ harbor_postconfigure_scan_on_push }}"
+
 # CI robot account (system-level, push/pull across all projects)
 harbor_postconfigure_robot_name: "ci-runner"
 harbor_postconfigure_robot_description: "CI/CD robot account for automated push and pull"

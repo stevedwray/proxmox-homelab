@@ -220,21 +220,51 @@ of relying on an operator remembering to blow away the scaffold by hand.
 mechanism and how it was validated on pve-test-vm without any risk to the
 running install.
 
+**Idempotency fix rolled to `pve` (2026-08-15).** Same outcome as
+pve-test-vm: marker missing on first run (`changed=7`, safe same-version
+reinstall, marker written), second run a true no-op. Version and health
+unchanged (`v2.15.2-a97e7b83`, all 8 components healthy).
+
+**Scan-coverage gap actually fixed (2026-08-15).** Implemented the
+pull-then-push extension to `harbor_repull`
+(`terraform/lxc/ansible/roles/harbor_repull/`): a new plain, non-proxy-cache
+`mirror` project (created by `harbor_postconfigure`), and a project-scoped
+push robot provisioned entirely by `harbor_repull`'s own tasks (unique
+generated name, secret written only to `ci-runner-01`, no SOPS round-trip —
+deliberately avoids the kind of drift already seen with the shared
+`robot$ci-runner` credential, see
+[[project_harbor_ci_robot_credential_mismatch]]). After each successful
+pull through a proxy-cache project (everything except `dockerhub`, whose
+native adapter already tags correctly), `harbor_repull.py` now also
+`docker tag`s and pushes the same image into `mirror/<original-path>` —
+the exact push flow `pentagi` already proves works, since it never touches
+the broken tag-creation code path at all.
+
+Validated on pve-test-vm with a real manual trigger of the systemd
+service: 16/16 pulls succeeded, 3/3 mirror pushes succeeded (the two
+`ghcr` and one `gcr` entries currently in the manifest). Confirmed at the
+API level, not just a clean run — `mirror/gcr/cadvisor/cadvisor` came back
+tagged (`v0.49.1`) with `scan_status: Success` and real severity data,
+where the same image via the proxy-cache path has zero tagged artifacts.
+Gracefully degrades to pull-only if the mirror credential isn't
+provisioned yet (e.g. a rebuild before `harbor_repull` has run once).
+
 **Next steps, in order:**
-1. Roll the idempotency fix to `pve` (validated on pve-test-vm; not yet
-   applied to `pve`).
-2. Implement the pull-then-push extension to `harbor_repull`
-   (`terraform/lxc/ansible/roles/harbor_repull/`) — pull each affected
-   `gcr`/`ghcr`/`quay`/`greenbone` image, then `docker push` it into a
-   plain, non-proxy-cache project (mirroring `pentagi`'s working pattern).
-   This is what actually fixes the scan-coverage gap; the version bump
-   above does not. Validate on pve-test-vm first, then roll out to `pve`
-   under the usual approval flow.
+1. Roll this to `pve`: `harbor_postconfigure` creates the `mirror` project
+   as part of the next `harbor-stack` deploy; `harbor_repull`'s own deploy
+   to `ci-runner-01` on `pve` provisions its push robot the same way. Then
+   trigger (or wait for) a repull run and confirm the same tag+scan result
+   against `pve`'s Harbor for all in-use images, not just the sample
+   tested on pve-test-vm.
+2. Expand `manifest.txt` — it's still v1 scope (confirmed live tags for a
+   subset of stacks only). Every image actually in use should be in this
+   manifest for scan coverage to be complete, not just tracked.
 3. Optional, independent of the above: file the upstream Harbor bug
    report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
    worth an update/new issue with this session's specific findings:
    `controller/proxy/controller.go:216`, confirmed still broken in
-   2.15.2).
+   2.15.2). Explicitly declined for this session — the operator doesn't
+   want it filed.
 
 **Security finding from this investigation, already fixed:** ad-hoc
 `ansible -m shell -a "..."` commands against a target host get their fully

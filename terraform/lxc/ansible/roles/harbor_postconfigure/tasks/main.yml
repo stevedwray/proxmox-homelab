@@ -669,6 +669,55 @@
   delegate_to: localhost
 
 # -----------------------------------------------------------------------
+# Push-based mirror project (pull-then-push fix for the proxy-cache
+# tag-creation bug -- see docs/harbor-stack/README.md Open Investigation)
+# -----------------------------------------------------------------------
+
+- name: Get existing projects (mirror check)
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects?name={{ harbor_postconfigure_mirror_project_name }}"
+    method: GET
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    status_code: 200
+  register: harbor_postconfigure_mirror_project_lookup
+  delegate_to: localhost
+
+- name: Check if mirror project already exists
+  ansible.builtin.set_fact:
+    harbor_postconfigure_mirror_project_exists: true
+  when: harbor_postconfigure_mirror_project_lookup.json | selectattr('name', 'equalto', harbor_postconfigure_mirror_project_name) | list | length > 0
+  delegate_to: localhost
+
+- name: Create push-based mirror project
+  ansible.builtin.uri:
+    url: "http://{{ harbor_postconfigure_host }}:{{ harbor_postconfigure_port }}/api/v2.0/projects"
+    method: POST
+    url_username: "{{ harbor_postconfigure_admin_user }}"
+    url_password: "{{ harbor_postconfigure_admin_password }}"
+    force_basic_auth: true
+    body_format: json
+    body:
+      project_name: "{{ harbor_postconfigure_mirror_project_name }}"
+      public: true
+      metadata:
+        auto_scan: "{{ 'true' if harbor_postconfigure_mirror_project_auto_scan else 'false' }}"
+    status_code: 201
+  when: harbor_postconfigure_mirror_project_exists is not defined
+  delegate_to: localhost
+
+- name: Display mirror project status
+  ansible.builtin.debug:
+    msg: >-
+      Push-based mirror project '{{ harbor_postconfigure_mirror_project_name }}'
+      {{ 'created' if harbor_postconfigure_mirror_project_exists is not defined else 'already exists' }}
+      (harbor_repull pushes here after pulling through the proxy-cache
+      projects above, so artifacts are durably tagged and scan-tracked;
+      push credential is provisioned by the harbor_repull role, not here)
+  delegate_to: localhost
+
+# -----------------------------------------------------------------------
 # CI robot account (system-level push/pull)
 # -----------------------------------------------------------------------
 

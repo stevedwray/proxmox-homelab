@@ -59,6 +59,74 @@
         group: root
         mode: "0644"
 
+    # ---------------------------------------------------------------
+    # Mirror-push credential (pull-then-push fix -- see
+    # docs/harbor-stack/README.md Open Investigation)
+    # ---------------------------------------------------------------
+
+    - name: Check for existing harbor-repull mirror push credential
+      ansible.builtin.stat:
+        path: "{{ harbor_repull_dir }}/mirror-push.env"
+      register: harbor_repull_mirror_credential_stat
+
+    - name: Generate a unique name for this role's mirror-push robot
+      ansible.builtin.set_fact:
+        harbor_repull_mirror_robot_suffix: "{{ now(fmt='%s') }}-{{ 9999 | random }}"
+      when: not harbor_repull_mirror_credential_stat.stat.exists
+
+    # Deliberately a fresh, uniquely-named robot rather than a fixed name
+    # reused across deploys -- Harbor's GET /robots does not reliably
+    # list/return project-scoped robots (confirmed in
+    # deploy-pentagi-stack.yml), so an existence check or delete-by-lookup
+    # before recreating isn't trustworthy. A unique name sidesteps that
+    # entirely: this task only ever runs when the local credential file is
+    # missing, so POST always succeeds with 201 the first time -- no 409
+    # case to handle, and no dependency on SOPS, since the secret only ever
+    # needs to exist on this one host. Deliberately NOT the shared
+    # 'robot$ci-runner' system-level robot -- its SOPS secret is already
+    # known stale (see docs/harbor-stack/README.md,
+    # [[project_harbor_ci_robot_credential_mismatch]] in memory) and that
+    # credential is also shared with GitHub Actions CI workflows.
+    - name: Create project-scoped Harbor robot for harbor-repull mirror pushes
+      ansible.builtin.uri:
+        url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/robots"
+        method: POST
+        url_username: "{{ harbor_repull_admin_user }}"
+        url_password: "{{ harbor_repull_admin_password }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          name: "repull-push-{{ harbor_repull_mirror_robot_suffix }}"
+          description: "harbor_repull role only (ci-runner-01) -- push/pull for the mirror project's pull-then-push artifacts, not shared with CI"
+          duration: -1
+          level: "project"
+          permissions:
+            - kind: "project"
+              namespace: "{{ harbor_repull_mirror_project }}"
+              access:
+                - resource: "repository"
+                  action: "pull"
+                - resource: "repository"
+                  action: "push"
+        status_code: 201
+      register: harbor_repull_mirror_robot_create
+      when: not harbor_repull_mirror_credential_stat.stat.exists
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write harbor-repull mirror push credential file
+      ansible.builtin.copy:
+        dest: "{{ harbor_repull_dir }}/mirror-push.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # harbor-repull mirror push credential - managed by Ansible, do not edit by hand
+          HARBOR_REPULL_MIRROR_USER={{ harbor_repull_mirror_robot_create.json.name }}
+          HARBOR_REPULL_MIRROR_PASSWORD={{ harbor_repull_mirror_robot_create.json.secret }}
+      when: not harbor_repull_mirror_credential_stat.stat.exists
+      no_log: true
+
     - name: Write harbor-repull systemd service
       ansible.builtin.template:
         src: harbor-repull.service.j2
