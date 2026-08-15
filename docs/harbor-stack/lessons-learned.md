@@ -179,6 +179,51 @@ than Harbor specifically and apply repo-wide.
   (`copy`/`template` with `no_log: true`) read server-side, over building
   a secret directly into a shell command string sent to a remote host.
 
+### 10. `harbor_installer`'s idempotency check looks at whether *any* installer is extracted, not whether it's the *requested* version
+
+- Passing `-e harbor_installer_version=2.15.2` to `deploy-harbor-stack.yml`
+  silently did nothing the first time — the role's very first task (`Check
+  if Harbor installer has already been extracted`) only checks whether
+  `{{ install_dir }}/harbor/install.sh` exists at all, and every subsequent
+  download/extract task is gated on that single `stat` being false. Since
+  2.14.3 was already extracted there, the whole download-a-different-version
+  block was skipped, `harbor.yml` got templated with the new version string
+  but nothing else changed, and Harbor kept running the old binary — while
+  `ansible-playbook` still reported `changed` and a clean run.
+- The tell was checking `GET /api/v2.0/systeminfo` afterward and seeing the
+  version hadn't actually moved, despite a "successful," `changed=N` run.
+  Don't trust a clean playbook run alone as proof a version bump took
+  effect — verify the running version directly.
+- To force a genuine re-download, remove the extracted installer directory
+  first (`ansible.builtin.file: path=.../harbor state=absent` — **not**
+  `rm -rf` via ad-hoc shell, which the permission classifier correctly
+  treats as more dangerous-looking even when the target is safe) — targeted
+  at the installer scaffold only, never the separate data volume
+  (`harbor_installer_data_volume`, a different path specifically so this
+  stays safe).
+
+### 11. A Harbor major-version upgrade can be a one-way door — verify rollback works *before* trusting it's available, not after you need it
+
+- Upgraded pve-test-vm's Harbor 2.14.3 → 2.15.2 to test a suspected fix
+  (see `image-sourcing-enforcement.md`'s scan-coverage investigation).
+  Confirmed the upgrade doesn't even fix the thing it was tested for, so
+  tried reverting to 2.14.3 — and that broke Harbor outright: `harbor-db`'s
+  schema had migrated forward, and — not mentioned in anything read
+  beforehand — **2.15.2 replaced Redis with Valkey** as the cache backend.
+  2.14.3's older `redis-photon` image couldn't read the now-Valkey-formatted
+  data; both `redis` and `harbor-jobservice` crash-looped, `harbor-core`
+  never reported healthy through a full 300s retry window.
+- Recovered by moving forward to 2.15.2 again (not backward) — full health
+  restored within a minute, since that state had already been proven to
+  work moments earlier.
+- General takeaway: a version bump that "should" be reversible by just
+  re-pointing at the old version tag often isn't, once the app has touched
+  its own persistent state (DB schema, cache format) on first boot at the
+  new version. If a test upgrade might need reverting, that reversibility
+  is itself something to verify empirically, ideally on a disposable/
+  snapshotted target — not something to assume from the version numbers
+  alone. This is exactly why the test happened on pve-test-vm and not `pve`.
+
 ## Suggested Use
 
 - Read this document before starting the next piece of Harbor-adjacent

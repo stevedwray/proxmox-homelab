@@ -171,6 +171,31 @@ upgrade test:**
   wasn't actually closed by it) is worth doing independent of which local
   fix gets picked.
 
+**Next steps, in order (none started yet as of 2026-08-15):**
+1. Implement the pull-then-push extension to `harbor_repull`
+   (`terraform/lxc/ansible/roles/harbor_repull/`) — pull each affected
+   `gcr`/`ghcr`/`quay`/`greenbone` image, then `docker push` it into a
+   plain, non-proxy-cache project (mirroring `pentagi`'s working pattern).
+   Validate on pve-test-vm first per this repo's normal discipline, then
+   roll out to `pve` under the usual production approval flow.
+2. Decide and reconcile the pve-test-vm Harbor version divergence: it's
+   genuinely running v2.15.2 right now, while the repo's
+   `harbor_installer_version` default still says `"2.14.3"` (`pve` is
+   still actually on 2.14.3, untouched). Either bump the repo default to
+   2.15.2 deliberately (it's a strict improvement even though it doesn't
+   fix this bug — newer Harbor, Valkey instead of Redis) or explicitly
+   plan to revert pve-test-vm back to 2.14.3 to match `pve` and the repo
+   default (note: a straight version-tag revert is **not safe** per the
+   Redis/Valkey incompatibility found above — would need the full
+   remove-scaffold-and-reinstall dance done here, and only after
+   confirming that path doesn't lose anything on pve-test-vm's actual
+   data). Don't leave this as silent drift.
+3. Optional, independent of the above: file the upstream Harbor bug
+   report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
+   worth an update/new issue with this session's specific findings:
+   `controller/proxy/controller.go:216`, confirmed still broken in
+   2.15.2).
+
 **Security finding from this investigation, already fixed:** ad-hoc
 `ansible -m shell -a "..."` commands against a target host get their fully
 expanded command line (including any interpolated secret) logged via

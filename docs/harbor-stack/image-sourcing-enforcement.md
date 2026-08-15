@@ -36,6 +36,14 @@ needed a live-player safety check first. **Only Stage E (network-layer
 enforcement) remains**, intentionally scoped as a later, separate,
 higher-validation-tier effort — see Stage E below.
 
+**Separate, active follow-up work:** rolling every image's pulls through
+Harbor surfaced a real gap in whether Harbor actually *scans* what it
+proxies — tracked in `README.md`'s "Open Investigation" section, not here
+(that document owns Harbor scan-policy/coverage; this one owns routing).
+Root cause is fully confirmed (a real Harbor bug, not a config error here);
+fix (extend `harbor_repull`) not yet implemented — see README.md for the
+full writeup and next steps.
+
 ## `pve` Production Rollout — ✅ complete (2026-08-15)
 
 Stages A–D validated on pve-test-vm above were rolled out to `pve`
