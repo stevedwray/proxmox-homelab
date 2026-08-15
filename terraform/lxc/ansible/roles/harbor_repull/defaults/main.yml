@@ -18,3 +18,24 @@ harbor_repull_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('har
 # systemd OnCalendar expression. Default: once daily, off-the-hour to avoid
 # a thundering-herd alignment with other scheduled jobs.
 harbor_repull_on_calendar: "*-*-* 03:17:00"
+
+# Push-based mirror project (fixes the proxy-cache tag-creation bug -- see
+# docs/harbor-stack/README.md Open Investigation). After a successful pull,
+# any manifest entry whose project prefix isn't in
+# harbor_repull_mirror_skip_projects also gets docker-tagged and pushed
+# into harbor_repull_mirror_project, so it ends up durably tagged and
+# scan-tracked instead of relying on the broken proxy-cache tag-creation
+# path. dockerhub is skipped because its native docker-hub adapter already
+# tags correctly on its own.
+harbor_repull_mirror_project: mirror
+harbor_repull_mirror_skip_projects:
+  - dockerhub
+
+# Harbor admin API access, needed only to provision this role's own
+# project-scoped push robot (see tasks/main.yml) -- never used at runtime
+# by harbor_repull.py itself, which only ever uses the robot credential
+# written to harbor_repull_dir.
+harbor_repull_admin_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var not set') }}"
+harbor_repull_admin_port: "{{ lookup('env', 'HARBOR_HTTP_PORT') | default(80, true) }}"
+harbor_repull_admin_user: admin
+harbor_repull_admin_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var not set') }}"

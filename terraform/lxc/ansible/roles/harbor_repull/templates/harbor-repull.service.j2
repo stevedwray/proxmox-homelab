@@ -7,6 +7,9 @@ Wants=network-online.target
 Type=oneshot
 Environment=REGISTRY_HOST={{ harbor_repull_registry_host }}
 Environment=HARBOR_REPULL_MANIFEST={{ harbor_repull_manifest_path }}
+Environment=HARBOR_REPULL_MIRROR_PROJECT={{ harbor_repull_mirror_project }}
+Environment=HARBOR_REPULL_MIRROR_SKIP_PROJECTS={{ harbor_repull_mirror_skip_projects | join(',') }}
+EnvironmentFile=-{{ harbor_repull_dir }}/mirror-push.env
 ExecStart=/usr/bin/python3 {{ harbor_repull_dir }}/harbor_repull.py
 StandardOutput=append:{{ harbor_repull_log_path }}
 StandardError=append:{{ harbor_repull_log_path }}
