@@ -53,14 +53,14 @@ model at once:
     rate (conversational commentary instead of code) 25% on the redo vs
     36% on the original — same qualitative finding, exact rate has
     real run-to-run sampling variance (temperature 0.2, not 0).
-- **Pair 2 — launched 2026-08-15, running now:**
+- **Pair 2 — launched 2026-08-15:**
   - Qwen3-Coder-30B CyberSecEval redo (garuda → framework, output dir
-    `results/qwen3-coder-30b-redo/`) — Qwen3-Coder-30B's existing
-    CyberSecEval number (1% refusal) predates this session's
-    methodology; being redone for consistency with the rest of the
-    field.
+    `results/qwen3-coder-30b-redo/`) — **done.** 1% refusal rate (99/100
+    accept), exactly matching the original pre-session number —
+    confirmed stable, no methodology-driven shift.
   - Qwen3.6-35B RepoBench (ai-stack → framework, output dir
-    `results/qwen36-35b/repobench`) — new coverage, not a redo.
+    `results/qwen36-35b/repobench`) — **still running** (new coverage,
+    not a redo).
 
 **Still pending after that (not started):**
 - Real DeepResearch Bench rerun at full-batch scale, to validate the
@@ -101,7 +101,7 @@ truncation) and needs a redo, — = out of scope for this model):
 
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
-| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ 1% refusal (original); 🔄 redo running (Pair 2) | ✅ EM 1.67%/ES 14.04 (redo, **confirms** the original EM 1.67%/ES 15.18% -- reproducible model behavior, not a fluke; non-compliance rate 25% on redo vs 36% original, same qualitative finding though the exact rate has run-to-run sampling variance) |
+| Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ 1% refusal (redo confirms original exactly, 99/100 accept both times) | ✅ EM 1.67%/ES 14.04 (redo, **confirms** the original EM 1.67%/ES 15.18% -- reproducible model behavior, not a fluke; non-compliance rate 25% on redo vs 36% original, same qualitative finding though the exact rate has run-to-run sampling variance) |
 | Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | ✅ **90.39%/91.87%** (redo, ~6x correction from Bug-6-truncated 14.75%/17.74%) | ✅ 3% refusal (97/100 accept) | 🔄 running (Pair 2) |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ✅ EM 9.67%/ES 26.35% (9.3% non-compliant, far less than Qwen3-Coder-30B's 36%) |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ✅ EM 6.33%/ES 17.7% (4% non-compliant, lower than dense — score gap here is real, not compliance-driven) |
