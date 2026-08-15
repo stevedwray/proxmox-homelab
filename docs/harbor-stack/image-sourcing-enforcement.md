@@ -36,13 +36,16 @@ needed a live-player safety check first. **Only Stage E (network-layer
 enforcement) remains**, intentionally scoped as a later, separate,
 higher-validation-tier effort — see Stage E below.
 
-**Separate, active follow-up work:** rolling every image's pulls through
-Harbor surfaced a real gap in whether Harbor actually *scans* what it
-proxies — tracked in `README.md`'s "Open Investigation" section, not here
-(that document owns Harbor scan-policy/coverage; this one owns routing).
-Root cause is fully confirmed (a real Harbor bug, not a config error here);
-fix (extend `harbor_repull`) not yet implemented — see README.md for the
-full writeup and next steps.
+**Separate follow-up work, resolved (2026-08-15):** rolling every image's
+pulls through Harbor surfaced a real gap in whether Harbor actually
+*scans* what it proxies — tracked in `README.md`'s "Open Investigation"
+section, not here (that document owns Harbor scan-policy/coverage; this
+one owns routing). Root cause was a real Harbor bug (not a config error
+here); fixed by extending `harbor_repull` to pull-then-push into a durably
+tagged mirror project, now live on both `pve` and pve-test-vm with 100%
+scan coverage confirmed across a full production audit. See README.md for
+the full writeup, the published vulnerability report, and the remaining
+follow-ups (expand `manifest.txt`, work through the fix/upgrade list).
 
 ## `pve` Production Rollout — ✅ complete (2026-08-15)
 
