@@ -53,7 +53,7 @@
 
   vars:
     proxy_compose_dir: /opt/proxy-stack
-    traefik_version: "v3.1.6"
+    traefik_version: "v3.7.10"
     proxy_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
     # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR — see
     # docs/harbor-stack/image-sourcing-enforcement.md.
@@ -118,8 +118,18 @@
                   entryPoint:
                     to: websecure
                     scheme: https
+                # CVE-2026-54763 mitigation: default is "keep", which
+                # leaves underscore-variant headers on the wire for
+                # backends that normalize dash/underscore identically
+                # (e.g. NetBox's REMOTE_AUTH_HEADER trusting
+                # HTTP_X_AUTHENTIK_USERNAME) to collide with Traefik's
+                # own stripped/rewritten identity headers from the
+                # authentik forwardAuth middleware.
+                underscoreHeadersStrategy: reject
             websecure:
               address: ":443"
+              http:
+                underscoreHeadersStrategy: reject
             metrics:
               address: ":8082"
 
@@ -171,6 +181,12 @@
                   tls:
                     ca: /certs/combined-ca.crt
                   trustForwardHeader: true
+                  # v3.6.9+ warns on every router using this middleware
+                  # when unset ("unlimited response body size ... DoS
+                  # attacks and memory exhaustion"). The outpost's real
+                  # response is small (headers + at most a short
+                  # redirect/error body); 1MiB is generous headroom.
+                  maxResponseBodySize: 1048576
                   authResponseHeaders:
                     - X-authentik-username
                     - X-authentik-groups
