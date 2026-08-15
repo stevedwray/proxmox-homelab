@@ -100,25 +100,76 @@ these specific artifacts (would need to observe across a retention cycle),
 but it's a second reason not to treat "it got scanned once" as durable
 coverage.
 
-**Fix options, reassessed with the confirmed root cause:**
+**Upgrade to Harbor 2.15.2 tested directly on pve-test-vm (2026-08-15) —
+does not fix it, and is a one-way door.** Online research surfaced a real,
+matching upstream issue
+([goharbor/harbor#17135](https://github.com/goharbor/harbor/issues/17135),
+["Proxy cache isn't tagging images"](https://knowledge.broadcom.com/external/article/398201/proxy-cache-isnt-tagging-images.html))
+and a stated fix landing in Harbor 2.15 (2.15.0 shipped its own unrelated
+proxy-cache regression, fixed in
+[2.15.1](https://github.com/goharbor/harbor/issues/23025); 2.15.2 is
+current). Worth testing directly rather than trusting the changelog:
+
+- Upgraded pve-test-vm's `harbor-stack` to v2.15.2 (the role's own
+  idempotency check only looks at whether *any* installer is already
+  extracted, not whether it's the *requested* version — had to remove
+  `/opt/harbor/harbor` first, leaving `/var/lib/harbor`'s actual data
+  volume untouched, to force a genuine re-download).
+- All 8 components came up healthy; the Docker Hub/Cloudflare health-check
+  issue that originally forced the 2.14.3 downgrade did **not** resurface
+  (the `harbor_postconfigure` fix removing Docker Hub credentials from that
+  check is apparently still sufficient).
+- **The live bug is not fixed.** Pulled two more genuinely fresh tags
+  (`v0.54.1`, `v0.52.1`) after the upgrade — both still registered
+  **untagged**, identical to pre-upgrade behavior. What Harbor 2.15's
+  migration actually does is a **one-time backfill of tags on artifacts
+  that already existed at upgrade time** (confirmed: the earlier
+  pre-upgrade `v0.55.1` untagged artifact acquired a tag, under a new
+  digest, right after the upgrade) — it does not fix the live
+  registration path for anything pulled afterward.
+- **Attempting to revert to 2.14.3 broke Harbor outright.** `harbor-db`'s
+  schema had moved forward, and — unexpectedly — Harbor 2.15.2 replaced
+  Redis with Valkey as the cache backend; 2.14.3's older `redis-photon`
+  image couldn't read the now-Valkey-formatted data. Both `redis` and
+  `harbor-jobservice` crash-looped, `harbor-core` never went healthy
+  (`502` for the full 300s retry window). Recovered by moving forward to
+  2.15.2 again (not backward) — full health restored within a minute.
+  **Conclusion: upgrading past 2.14.3 is a one-way door on this Harbor
+  install** — don't attempt it against `pve` without accepting that a
+  rollback isn't a safe option if something else goes wrong.
+- **Net result:** pve-test-vm's `harbor-stack` is now genuinely running
+  v2.15.2, diverged from the repo's committed `harbor_installer_version:
+  "2.14.3"` default. Not yet reconciled either direction — an open decision
+  (adopt 2.15.2 as the new default given it's a strict improvement even
+  though it doesn't fix this specific bug, or document pve-test-vm's state
+  as a deliberate, called-out test-only divergence) rather than something
+  to silently drift on.
+
+**Fix options, reassessed with both the confirmed root cause and the
+upgrade test:**
 - **Pull-then-push job** (recommended), extending the existing
   `harbor_repull` role (`terraform/lxc/ansible/roles/harbor_repull/`) to
   explicitly `docker push` affected images into a plain, non-proxy-cache
   project — mirrors the `pentagi` project's already-proven-working pattern,
-  which never touches the proxy-cache tag-creation step at all. Now the
-  clearly better option: it sidesteps both the missing-tag bug *and* the
-  retention-sweep risk, since a normal pushed artifact gets tagged
-  correctly and isn't subject to the same untagged-artifact cleanup
-  concern.
-- **Harbor native Replication** is now a weaker option than previously
-  thought — replication still relies on Harbor creating a real, tagged
-  artifact on the target side, and there's no confirmed reason to expect
-  it avoids the same tag-creation gap for a generic-adapter-type source,
-  since the underlying proxy/tag-creation code is what's actually broken,
-  not the registry connection itself.
-- Filing this as an upstream Harbor bug (v2.14.3, generic `docker-registry`
-  proxy-cache adapter fails to tag on the "manifest list cache" code path)
-  is also worth doing independent of which local fix gets picked.
+  which never touches the proxy-cache tag-creation step at all. The clearly
+  right option now: it's the only one confirmed to actually work, on the
+  Harbor version actually in use, without a risky one-way upgrade.
+- **Harbor native Replication** — same weaker assessment as before, now
+  reinforced: the 2.15.2 test confirms the underlying tag-creation code is
+  broken regardless of Harbor version, so there's no reason to expect
+  Replication (which still relies on that same tag-creation step) fares any
+  better.
+- **Upgrading Harbor** is no longer a live option for fixing this
+  specifically — confirmed not to work, and confirmed to be a one-way
+  migration. Might still be worth doing *eventually* for its own reasons
+  (newer Harbor, Valkey instead of Redis), but as a separate, deliberately
+  staged decision — not a fix for this bug, and not safe to attempt on
+  `pve` without accepting the rollback risk demonstrated here.
+- Filing this as an upstream Harbor bug (confirmed still present in 2.15.2,
+  generic `docker-registry` proxy-cache adapter fails to tag on the
+  "manifest list cache" code path — existing issue #17135 predates 2.15 and
+  wasn't actually closed by it) is worth doing independent of which local
+  fix gets picked.
 
 **Security finding from this investigation, already fixed:** ad-hoc
 `ansible -m shell -a "..."` commands against a target host get their fully
