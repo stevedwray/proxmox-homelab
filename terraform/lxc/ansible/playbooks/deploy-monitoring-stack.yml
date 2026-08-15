@@ -70,7 +70,7 @@
     monitoring_lab_admin_username: "{{ lookup('env', 'LAB_ADMIN_USERNAME') | default('steve', true) }}"
     monitoring_compose_dir: /opt/monitoring-stack
     vm_version: "v1.102.1"
-    grafana_version: "11.6.0"
+    grafana_version: "13.0.2"
     python_version: "3.12-alpine"
     monitoring_registry_host: "{{ lookup('env', 'MONITORING_REGISTRY_HOST') | default(monitoring_lab_fqdn_harbor, true) }}"
     vm_image: "{{ monitoring_registry_host }}/dockerhub/victoriametrics/victoria-metrics:{{ vm_version }}"
