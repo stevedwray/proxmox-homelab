@@ -43,9 +43,10 @@ Match validation depth to change risk. A full teardown is required only for high
 | Ansible task or role changes | `scripts/provision.sh --stack <affected-stack>` on pve-test-vm |
 | Terraform / network / SDN / firewall — additive only (new zone/vnet/subnet, new narrowly-scoped cross-zone rule; `terragrunt plan` shows zero changes/deletions to existing resources) | Apply, then `scripts/provision.sh --stack <affected-stack>` against 1–2 existing stacks in adjacent zones to confirm no regression. Full teardown still owed before promotion past `stable`, but not required per iteration. |
 | Terraform / network / SDN / firewall — modifying or removing an existing zone, vnet, subnet, or cross-zone rule | Full teardown cycle on pve-test-vm |
-| Authentik, Traefik, or cross-stack integration changes | Full teardown cycle on pve-test-vm |
+| Authentik, Traefik, or other changes where an outage would break login or routing for stacks that are already running (not just new deploys) | Full teardown cycle on pve-test-vm |
+| Harbor (or another shared internal registry/cache) — version bump or config change that doesn't alter what consumers pull or push against | `scripts/provision.sh --stack harbor-stack` on pve-test-vm, then re-run `scripts/provision.sh --stack <name>` for 1–2 stacks that actually pull through it (cover at least one native-adapter project and one proxy-cache project) to confirm no regression. Full teardown not required — unlike Authentik/Traefik, a Harbor outage doesn't break stacks that are already running (their images are already resident locally); it only blocks new pulls, deploys, and scans. |
 
-Batch related changes during development and run the appropriate tier.
+Batch related changes during development and run the appropriate tier. As the platform matures, prefer narrowing a shared-service tier like Harbor's over reflexively defaulting to full teardown — the goal is validation depth matched to actual blast radius, not maximum caution by default.
 
 **Ansible changes are not low-risk even when they appear comment-only.** A `# nosonar` comment placed inside a Jinja `{{ }}` expression block or a `content: |` env file block becomes runtime-evaluated content that can silently break deployments. Always run `--syntax-check` on the affected playbooks after any Ansible edit, no matter how trivial it looks. See `docs/teardown-test/lessons-learned.md` §12–13 for specific failure modes.
 
