@@ -1,7 +1,10 @@
 ---
 # harbor_installer — downloads, configures, and starts Harbor.
-# Idempotent: skips download/extract if already present; re-runs prepare
-# and restarts the service only when harbor.yml content changes.
+# Idempotent: skips download/extract only if the *requested* version is
+# already extracted (tracked via a version marker file, not just presence
+# of install.sh — see docs/harbor-stack/lessons-learned.md #10, which this
+# fixes); re-runs prepare and restarts the service only when harbor.yml
+# content changes or the version actually moved.
 
 - name: Validate required variable harbor_installer_hostname is set
   ansible.builtin.fail:
@@ -20,23 +23,47 @@
     state: directory
     mode: '0750'
 
-- name: Check if Harbor installer has already been extracted
+- name: Check for existing Harbor installer version marker
   ansible.builtin.stat:
-    path: "{{ harbor_installer_install_dir }}/harbor/install.sh"
-  register: harbor_installer_stat
+    path: "{{ harbor_installer_install_dir }}/.installed_version"
+  register: harbor_installer_version_marker_stat
+
+- name: Read existing Harbor installer version marker
+  ansible.builtin.slurp:
+    src: "{{ harbor_installer_install_dir }}/.installed_version"
+  register: harbor_installer_version_marker_content
+  when: harbor_installer_version_marker_stat.stat.exists
+
+- name: Determine whether the requested Harbor version is already extracted
+  ansible.builtin.set_fact:
+    harbor_installer_version_matches: >-
+      {{ harbor_installer_version_marker_stat.stat.exists and
+         (harbor_installer_version_marker_content.content | b64decode | trim) == harbor_installer_version }}
+
+# A version marker mismatch (including "no marker at all", e.g. an install
+# that predates this check) means whatever's in {{ install_dir }}/harbor is
+# not trustworthy for the requested version — clear it so the download/
+# unpack tasks below run for real instead of silently no-opping against
+# stale contents. Never touches harbor_installer_data_volume (the actual
+# persisted registry data), only this scaffold directory.
+- name: Remove stale Harbor installer scaffold on version change
+  ansible.builtin.file:
+    path: "{{ harbor_installer_install_dir }}/harbor"
+    state: absent
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Download Harbor md5sum file
   ansible.builtin.get_url:
     url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_installer_version }}/md5sum"
     dest: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
     mode: '0640'
-  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Read Harbor md5sum file
   ansible.builtin.slurp:
     src: "{{ harbor_installer_install_dir }}/md5sum-v{{ harbor_installer_version }}"
   register: harbor_installer_checksum_file
-  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Extract online installer MD5 checksum
   ansible.builtin.set_fact:
@@ -44,7 +71,7 @@
       md5:{{ (harbor_installer_checksum_file.content | b64decode).splitlines()
         | select('search', 'harbor-online-installer-v' + harbor_installer_version + '.tgz')
         | first | split() | first }}
-  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Download Harbor online installer
   ansible.builtin.get_url:
@@ -53,14 +80,23 @@
     checksum: "{{ harbor_installer_checksum }}"
     mode: '0640'
     timeout: 120
-  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Unpack Harbor installer
   ansible.builtin.unarchive:
     src: "{{ harbor_installer_install_dir }}/harbor-online-installer-v{{ harbor_installer_version }}.tgz"
     dest: "{{ harbor_installer_install_dir }}/"
     remote_src: true
-  when: not harbor_installer_stat.stat.exists and not ansible_check_mode
+  when: not harbor_installer_version_matches and not ansible_check_mode
+
+# Written only after a successful unpack, so a failed/interrupted download
+# never gets mistaken for a completed install of that version.
+- name: Write Harbor installer version marker
+  ansible.builtin.copy:
+    content: "{{ harbor_installer_version }}\n"
+    dest: "{{ harbor_installer_install_dir }}/.installed_version"
+    mode: '0640'
+  when: not harbor_installer_version_matches and not ansible_check_mode
 
 - name: Template harbor.yml configuration
   ansible.builtin.template:
