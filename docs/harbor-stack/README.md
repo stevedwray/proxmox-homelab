@@ -39,11 +39,8 @@ storage consumed). Trivy never scans what Harbor never registers as an
 artifact.
 
 Ruled out, with direct evidence for each:
-- **Not a registry-adapter-type limitation** — the identical generic
-  `docker-registry` adapter type works correctly on pve-test-vm's Harbor
-  (confirmed real scan data for `gcr/cadvisor/cadvisor` and
-  `ghcr/goauthentik/ldap` there). Only `quay` fails on both instances,
-  which looks like a separate, quay.io-specific issue.
+- **Not a registry-adapter-type limitation** in the "some registries just
+  don't work" sense — see the corrected root cause below.
 - **Not a multi-arch/OCI-image-index issue** — `dockerhub/library/postgres`
   (which scans fine) is also an OCI image index, same media type as the
   broken `greenbone` repos.
@@ -53,55 +50,75 @@ Ruled out, with direct evidence for each:
   `/api/v2.0/configurations` diff between the two instances showed no
   functional difference.
 - **Not stale runtime state** — restarted `harbor-core` on `pve` and forced
-  a genuinely fresh (non-cached) pull afterward; still zero DB rows.
+  a genuinely fresh (non-cached) pull afterward; still zero DB rows at that
+  point.
+- **Not an environment difference between `pve` and pve-test-vm at all** —
+  see below. This was the working hypothesis for a while and was wrong;
+  corrected the same day once tested directly.
 
-**Root cause narrowed to a specific code path (2026-08-15, follow-up).**
-Temporarily enabled `harbor-core` debug logging on `pve` (`harbor.yml`
-`log.level: debug`, applied and later reverted via the normal
-`harbor_installer` role/`provision.sh` path — not a raw edit) and forced a
-fresh, non-cached `docker pull` of `gcr/cadvisor/cadvisor:v0.49.1` while
-watching `harbor-core`'s logs in real time. Compared directly against a
-concurrent, successful `dockerhub/library/alpine` scan-smoke pull in the
-same log window:
+**Root cause, confirmed (2026-08-15, final).** Debug logging on `pve`'s
+`harbor-core` (temporarily enabled via the normal `harbor_installer` role
+path, reverted after) showed a working `dockerhub` pull running through
+`controller/proxy/local.go` (full artifact-registration flow: blob checks,
+manifest `PUT`, `PUSH_ARTIFACT` event, Trivy trigger, `SCANNING_COMPLETED`)
+versus a broken `gcr` pull running through a different path,
+`controller/proxy/controller.go:216` ("manifest list cache"), which logged
+almost nothing and triggered no scan — even though the `docker pull` itself
+succeeded a second later. That narrowed *where* the gap was, but not why
+pve-test-vm appeared unaffected for the same adapter type.
 
-- The working `dockerhub` pull runs through `controller/proxy/local.go`:
-  dozens of log lines — blob dependency checks, a manifest `PUT`, "artifact
-  already exist", a `PUSH_ARTIFACT` event, a Trivy scan trigger, and a
-  `SCANNING_COMPLETED` event.
-- The broken `gcr` pull runs through a **different code path entirely**:
-  `controller/proxy/controller.go:216`, logging only `"Digest is not found
-  in manifest list cache"` and one `WARNING` about token cache, then
-  **nothing else** — no push event, no scan trigger — even though the
-  `docker pull` itself completed successfully a second later. Harbor's
-  "manifest list cache" proxy path appears to serve the client correctly
-  without ever registering an artifact, for at least this registry/project.
+Testing that directly resolved it: **pulling a genuinely new tag that
+neither Harbor instance had ever seen** (`gcr/cadvisor/cadvisor:v0.55.1`,
+vs. the long-standing `v0.49.1` every stack actually uses) produced an
+identical result on **both** `pve` and pve-test-vm — a real artifact gets
+created, and Trivy scans it successfully (`scan_status: Success`, real
+severity data) within seconds. **The artifact is just never tagged.**
+Confirmed Harbor deliberately disallows fixing this by hand: `POST
+.../artifacts/{digest}/tags` on a proxy-cache project returns `405
+METHOD_NOT_ALLOWED`, `"the operation isn't supported for a proxy cache
+project"` — tag creation for proxy-cache pulls is meant to happen
+automatically as part of the pull-through flow, and for the generic
+`docker-registry` adapter type, that automatic step doesn't fire.
 
-This is real evidence of *where* the gap is (a specific, named Harbor
-internal code path), not just *that* there's a gap — useful either for a
-precise upstream Harbor bug report or for deciding between the fix options
-below with more confidence. It doesn't yet explain *why* pve-test-vm's
-identical adapter type doesn't hit the same code path — that would need
-either reproducing the same debug-log comparison there, or reading Harbor's
-own source for `controller/proxy/controller.go` to see what selects between
-the manifest-list-cache path and the artifact-registering path.
+So: **there is no environment difference.** `gcr/cadvisor/cadvisor:v0.49.1`
+looking "fine" earlier was misleading — it was tagged once, long enough ago
+to predate whatever changed, and every pull since (by any of the 6+ stacks
+using it) has been silently creating fresh untagged, invisible-by-default
+artifacts that genuinely were scanned, just impossible to find by tag.
+`repo.artifact_count` does correctly count untagged artifacts (confirmed:
+went from `0` to `1` after the `v0.55.1` test pull), so the original "zero
+artifacts" finding for these projects, before any of today's test pulls,
+was accurate — this isn't a case of the scans existing all along and just
+being hidden from view.
 
-**Options considered for actually fixing this** (not yet decided or
-implemented):
-- **Pull-then-push job**, extending the existing `harbor_repull` role
-  (`terraform/lxc/ansible/roles/harbor_repull/`) to explicitly `docker push`
-  affected images into a plain, non-proxy-cache project — mirrors the
-  `pentagi` project's already-proven-working pattern (which never touches
-  the manifest-list-cache path at all, so it sidesteps this gap entirely
-  rather than needing to fix it). Most certain to work, most custom code.
-- **Harbor native Replication**, using the purpose-built `google-gcr`/
-  `github-ghcr` adapter types (confirmed available in this Harbor version's
-  `/api/v2.0/replication/adapterinfos`) instead of the generic type. Less
-  custom code, but untested, and `quay`/`greenbone` have no dedicated
-  adapter so may need the pull-then-push approach regardless.
-- Reproduce the same debug-log comparison on pve-test-vm to see whether a
-  *working* `gcr`/`ghcr` pull there also hits `controller.go:216`, or goes
-  through `local.go` instead — would directly confirm or rule out an
-  adapter/config difference driving which code path Harbor selects.
+One more wrinkle found the same way: every project has a **daily retention
+schedule** (`0 0 0 * * *`, confirmed via `/api/v2.0/schedules`) — retention
+policies commonly prune untagged artifacts, so even a scan that *does*
+happen via a fresh pull may not survive past the next retention run, since
+nothing (no tag) protects it from cleanup. Not confirmed to actually delete
+these specific artifacts (would need to observe across a retention cycle),
+but it's a second reason not to treat "it got scanned once" as durable
+coverage.
+
+**Fix options, reassessed with the confirmed root cause:**
+- **Pull-then-push job** (recommended), extending the existing
+  `harbor_repull` role (`terraform/lxc/ansible/roles/harbor_repull/`) to
+  explicitly `docker push` affected images into a plain, non-proxy-cache
+  project — mirrors the `pentagi` project's already-proven-working pattern,
+  which never touches the proxy-cache tag-creation step at all. Now the
+  clearly better option: it sidesteps both the missing-tag bug *and* the
+  retention-sweep risk, since a normal pushed artifact gets tagged
+  correctly and isn't subject to the same untagged-artifact cleanup
+  concern.
+- **Harbor native Replication** is now a weaker option than previously
+  thought — replication still relies on Harbor creating a real, tagged
+  artifact on the target side, and there's no confirmed reason to expect
+  it avoids the same tag-creation gap for a generic-adapter-type source,
+  since the underlying proxy/tag-creation code is what's actually broken,
+  not the registry connection itself.
+- Filing this as an upstream Harbor bug (v2.14.3, generic `docker-registry`
+  proxy-cache adapter fails to tag on the "manifest list cache" code path)
+  is also worth doing independent of which local fix gets picked.
 
 **Security finding from this investigation, already fixed:** ad-hoc
 `ansible -m shell -a "..."` commands against a target host get their fully
