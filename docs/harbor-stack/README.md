@@ -55,30 +55,53 @@ Ruled out, with direct evidence for each:
 - **Not stale runtime state** — restarted `harbor-core` on `pve` and forced
   a genuinely fresh (non-cached) pull afterward; still zero DB rows.
 
-**Still unresolved.** `harbor-jobservice` shows zero queued activity for
-these pulls at all — whatever triggers proxy-cache artifact registration on
-a successful pull isn't firing on `pve` for these registries, and `pve`'s
-`harbor-core` log level is filtered to WARNING-only so the actual code path
-isn't visible without enabling debug logging (not attempted — a further,
-even more invasive step). pve-test-vm working correctly for the same
-adapter type on the same Harbor version means this is environment-specific,
-not a hard Harbor limitation — but the precise trigger difference between
-the two instances hasn't been found.
+**Root cause narrowed to a specific code path (2026-08-15, follow-up).**
+Temporarily enabled `harbor-core` debug logging on `pve` (`harbor.yml`
+`log.level: debug`, applied and later reverted via the normal
+`harbor_installer` role/`provision.sh` path — not a raw edit) and forced a
+fresh, non-cached `docker pull` of `gcr/cadvisor/cadvisor:v0.49.1` while
+watching `harbor-core`'s logs in real time. Compared directly against a
+concurrent, successful `dockerhub/library/alpine` scan-smoke pull in the
+same log window:
+
+- The working `dockerhub` pull runs through `controller/proxy/local.go`:
+  dozens of log lines — blob dependency checks, a manifest `PUT`, "artifact
+  already exist", a `PUSH_ARTIFACT` event, a Trivy scan trigger, and a
+  `SCANNING_COMPLETED` event.
+- The broken `gcr` pull runs through a **different code path entirely**:
+  `controller/proxy/controller.go:216`, logging only `"Digest is not found
+  in manifest list cache"` and one `WARNING` about token cache, then
+  **nothing else** — no push event, no scan trigger — even though the
+  `docker pull` itself completed successfully a second later. Harbor's
+  "manifest list cache" proxy path appears to serve the client correctly
+  without ever registering an artifact, for at least this registry/project.
+
+This is real evidence of *where* the gap is (a specific, named Harbor
+internal code path), not just *that* there's a gap — useful either for a
+precise upstream Harbor bug report or for deciding between the fix options
+below with more confidence. It doesn't yet explain *why* pve-test-vm's
+identical adapter type doesn't hit the same code path — that would need
+either reproducing the same debug-log comparison there, or reading Harbor's
+own source for `controller/proxy/controller.go` to see what selects between
+the manifest-list-cache path and the artifact-registering path.
 
 **Options considered for actually fixing this** (not yet decided or
 implemented):
 - **Pull-then-push job**, extending the existing `harbor_repull` role
   (`terraform/lxc/ansible/roles/harbor_repull/`) to explicitly `docker push`
   affected images into a plain, non-proxy-cache project — mirrors the
-  `pentagi` project's already-proven-working pattern. Most certain to work,
-  most custom code.
+  `pentagi` project's already-proven-working pattern (which never touches
+  the manifest-list-cache path at all, so it sidesteps this gap entirely
+  rather than needing to fix it). Most certain to work, most custom code.
 - **Harbor native Replication**, using the purpose-built `google-gcr`/
   `github-ghcr` adapter types (confirmed available in this Harbor version's
   `/api/v2.0/replication/adapterinfos`) instead of the generic type. Less
   custom code, but untested, and `quay`/`greenbone` have no dedicated
   adapter so may need the pull-then-push approach regardless.
-- Enable debug logging on `pve`'s `harbor-core` + restart, to actually catch
-  the registration attempt (or its absence) in the act.
+- Reproduce the same debug-log comparison on pve-test-vm to see whether a
+  *working* `gcr`/`ghcr` pull there also hits `controller.go:216`, or goes
+  through `local.go` instead — would directly confirm or rule out an
+  adapter/config difference driving which code path Harbor selects.
 
 **Security finding from this investigation, already fixed:** ad-hoc
 `ansible -m shell -a "..."` commands against a target host get their fully
