@@ -963,6 +963,10 @@
       ((item.1.json | first).cve_allowlist['items'] | default([]) | map(attribute='cve_id') | list | sort)
       != (item.0.cve_ids | sort)
     )
+  # ansible.builtin.uri never reports changed on its own; the `when` above
+  # already gates this to only run on a real diff, so treat every actual
+  # run as a change for accurate reporting in the debug task below.
+  changed_when: true
   register: harbor_postconfigure_cve_allowlist_update_result
   delegate_to: localhost
 
