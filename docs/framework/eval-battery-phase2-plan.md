@@ -71,6 +71,21 @@ model-paired batches, both now fully done):**
     tendency, not a law, consistent with A4B-QAT already having broken
     monotonicity once.
 
+**New this round (2026-08-15/16, operator-requested):**
+- **SWE-rebench (real agentic coding, not code completion) — Phase A
+  pilot complete on ai-stack's current specs, no resize needed at this
+  scale.** Full methodology, bugs found/fixed, and results in the new
+  `## Phase 4 — SWE-rebench` section below. Headline: 2/4 real
+  instances resolved (marshmallow-1343, rustenv-12), 1 wrong fix
+  (openapi3-94), 1 invalid patch from the model losing the thread
+  mid-task (dvc-2421) — believable real-world numbers for a local 30B
+  model, plus a genuine finding (same output-format-compliance weakness
+  already seen on RepoBench, now confirmed in a real agentic context).
+- **Qwen3.8-27B** (new Alibaba release, ~2026-08-13/14, Apache 2.0) —
+  pulled and tagged `eval-qwen3.8-27b:q4_k_m-ctx32k`, real specs
+  confirmed directly (27.3B dense, Q4_K_M, 262144 native ctx). BFCL/
+  GPQA/IFEval queued to run next.
+
 **Still pending (not started):**
 - Real DeepResearch Bench rerun at full-batch scale, to validate the
   Bug 4 JSON-extraction fix (`deepresearch_bench_race.py`) beyond the
@@ -78,6 +93,12 @@ model-paired batches, both now fully done):**
 - Phase 0.3 (low priority): try chunked generation to fix
   Qwen3-Coder-Next's DRB long-form corruption, only worth it if DRB
   turns out to matter for a live model decision.
+- SWE-rebench Phase B: scale up ai-stack's resources (currently 4GB
+  RAM/2 cores/78GB free — official guidance is ~16GB/8 cores/120GB+)
+  before running a meaningful sample size (~20-50 instances) across
+  multiple models. Blocked on an operator decision about who performs
+  the resize (mirrors the earlier AgentBench RAM bump, done manually by
+  the operator via Proxmox rather than by the agent).
 
 **Operational notes for picking this up fresh:** all four
 CyberSecEval/RepoBench jobs above use the same launch pattern as
@@ -329,6 +350,127 @@ reasoning or code completion, prefer the dense Q4_K_M checkpoint; for
 roles that are more tool-calling/instruction-following shaped, A4B-QAT's
 efficiency trade may still be worth it. This conclusion is now based on
 a complete data set, not an extrapolation from partial coverage.
+
+## Phase 4 — SWE-rebench (real agentic coding, operator-requested 2026-08-15/16)
+
+**Why this exists:** the operator's real coding workflow isn't code
+completion (RepoBench) — it's agentic: the model generates code, creates
+files, and runs tests itself. This project had no benchmark for that
+loop. SWE-rebench (a continuously-refreshed, contamination-resistant
+fork of SWE-bench — real GitHub issues, real repos, real test suites)
+was scoped once already in this project's earlier 9-framework battery,
+then dropped "for now" because the model-generation side ("wiring")
+was never built. This phase finishes that wiring.
+
+**Architecture:** two separate pieces, both on `ai-stack`
+(192.168.1.27), Docker already installed there:
+- **[mini-swe-agent](https://github.com/SWE-agent/mini-swe-agent)**
+  (`~/eval-harnesses/swe-rebench/mini-swe-agent`) generates patches —
+  a real multi-step agent loop (up to 250 steps) that reads the repo,
+  edits files, runs commands, and submits a `git diff` patch, all
+  inside a real per-instance Docker sandbox (`docker/api` env class).
+  Has a built-in `--subset rebench` mapping straight to
+  `nebius/SWE-rebench` on HuggingFace, and its own `mini-extra
+  swebench`/`swebench-single` CLI commands.
+- **[SWE-bench-fork](https://github.com/SWE-rebench/SWE-bench-fork)**
+  (`~/eval-harnesses/swe-rebench/SWE-bench-fork`, SWE-rebench's own
+  fork of the official harness) actually *evaluates* those patches —
+  applies the patch in a fresh container, runs the repo's real test
+  suite, reports pass/fail. Pre-built Docker images (no from-scratch
+  image builds), which is what makes this viable on ai-stack's current
+  small specs.
+
+Config: `~/eval-harnesses/swe-rebench/swe-rebench-ollama.yaml` — merged
+on top of mini-swe-agent's own `swebench_xml.yaml` benchmark config
+(see "4 real bugs" below for why `swebench_xml.yaml`, not the plain
+`swebench.yaml`). Model registry:
+`~/eval-harnesses/swe-rebench/swe-rebench-registry.json`.
+
+**4 real bugs found and fixed getting this working (all now baked into
+the working config, not just worked around once):**
+1. **litellm's bare `ollama` provider can't reliably tool-call.**
+   Confirmed via research (a documented litellm gotcha — `ollama`
+   causes unpredictable behavior including infinite loops; `ollama_chat`
+   is the reliable one) and reproduced directly: with `ollama`, the
+   model never once produced a valid tool call across 3 turns
+   (`RepeatedFormatError`). Fix: `custom_llm_provider: ollama_chat` +
+   `ollama_chat/<tag>` model name prefix.
+2. **Declaring a model in a `litellm_model_registry` JSON file isn't
+   enough on its own** — mini-swe-agent's `model.litellm_model_registry`
+   config key has to actually point at the file (env var
+   `LITELLM_MODEL_REGISTRY_PATH` also works), and the registry entry
+   needs `"supports_function_calling": true` explicitly, or litellm
+   silently never sends `tools` to the model at all. Verified via an
+   isolated `litellm.completion()` call before and after — no tool
+   calls at all, then a correctly-formed one.
+3. **`max_tokens` has to be passed as a real request kwarg, not just
+   declared in the registry** — same shape as this project's earlier
+   Bug 6 (`lm_eval`'s silent `max_tokens: 256` default). Registry-only
+   declaration let responses get cut off mid-answer
+   (`finish_reason=length`) before a tool call ever formed. Fix:
+   `model_kwargs.max_tokens: 8192`, verified via `finish_reason`
+   flipping from `length` to `tool_calls`/`stop`.
+4. **The XML-fallback prompt template (`swebench_xml.yaml`) needs its
+   own paired model class (`litellm_textbased`), not plain `litellm`.**
+   `litellm` only ever looks for native `.tool_calls` on the response
+   and will never find one in this template's plain-text
+   `<mswea_bash_command>` format — so it fails exactly the same way as
+   bug #1, for a completely different reason, if left on the default
+   class. (Also caught along the way: `swebench_xml.yaml` itself
+   hardcodes `model_class: openrouter` as its own template default,
+   which silently wins if you don't override it — a real footgun for
+   anyone reusing this template with a different backend.)
+
+**Methodology note, not a bug:** `mini-extra swebench-single` runs
+*interactively* by default (useful for its intended debugging purpose)
+and will hang waiting on a terminal prompt at the very end ("Agent wants
+to finish...") in any non-interactive/background invocation. Pass
+`--exit-immediately` for batch/background use.
+
+**Results, 4 real instances total across 2 runs:**
+
+| Instance | Source | Result |
+|---|---|---|
+| `marshmallow-code__marshmallow-1343` | SWE-bench Lite dev[0] (wiring smoke test) | ✅ Resolved |
+| `chriskuehl__rustenv-12` | real SWE-rebench (picked for smallest patch size, as a simplicity proxy) | ✅ Resolved |
+| `Dorthu__openapi3-94` | real SWE-rebench | ❌ Patch applied cleanly but the real test suite still failed — a genuinely wrong fix, not a pipeline issue |
+| `iterative__dvc-2421` | real SWE-rebench | ❌ **Invalid patch** — the model lost the thread mid-task (spun up a stray throwaway git repo, reasoned in circles about a "version mismatch"), and at submission time dumped raw file content into `patch.txt` instead of running `git diff`, producing unparseable "garbage" (harness's own words) |
+
+**2/4 resolved (50%)** — a believable real-world SWE-bench-class number
+for a local 30B model (frontier proprietary models often land in the
+30-70% range on SWE-bench Lite/Verified), not a red flag on its own.
+
+**The `dvc-2421` failure is a real, useful finding, not noise**: it's
+the same output-format-compliance weakness already measured on
+RepoBench (Qwen3-Coder-30B ignoring "output only code" ~25-36% of the
+time) — now confirmed in a genuine multi-step agentic context, where
+the cost of non-compliance is worse (a fully invalid submission, not
+just a docked completion score). Also worth flagging for future
+instance selection: `dvc-2421`'s small patch size looked like an "easy"
+pick, but the task actually needed broader repo-wiring context than the
+single file it touched — patch size alone is not a reliable difficulty
+proxy.
+
+**Phase B (not started, blocked on an operator decision):** ai-stack's
+current specs (4GB RAM/2 cores/78GB free disk) proved sufficient for
+this small pilot (pre-built images, no from-scratch builds, one worker
+at a time), but official SWE-bench guidance is ~16GB RAM/8 cores/120GB+
+free disk for a real sample size. Before running anything past a
+handful of instances, ai-stack needs a resize — same class of decision
+as the AgentBench RAM bump earlier in this project, which the operator
+handled directly via Proxmox rather than delegating it. Not yet decided
+who performs this one.
+
+**To resume:** `~/eval-harnesses/swe-rebench/` on ai-stack has both
+repos + working config. Pattern for a new batch:
+`mini-extra swebench --subset rebench --split test --filter '<regex of
+instance_ids>' -m <ollama tag> -c
+src/minisweagent/config/benchmarks/swebench_xml.yaml -c
+../swe-rebench-ollama.yaml -w 1 -o <output-dir>` (from
+`mini-swe-agent/`), then `python3 -m swebench.harness.run_evaluation
+--dataset_name nebius/SWE-rebench --split test --instance_ids <ids>
+--predictions_path <output-dir>/preds.json --max_workers 1
+--cache_level base --run_id <name>` (from `SWE-bench-fork/`).
 
 ## Phase 3 — pilot testing (build once, use throughout Phase 1/2)
 
