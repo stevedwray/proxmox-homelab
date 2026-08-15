@@ -47,7 +47,7 @@
     # docs/harbor-stack/image-sourcing-enforcement.md.
     authentik_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default(registry_host, true) | default(lookup('env', 'LAB_IP_HARBOR'), true) | mandatory('LAB_FQDN_HARBOR env var, registry_host var, or LAB_IP_HARBOR env var is required') }}"
     authentik_insecure_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
-    authentik_image_version: "2026.2.4"
+    authentik_image_version: "2026.5.6"
     authentik_nginx_version: "1.27-alpine"
     authentik_secret_key: "{{ lookup('env', 'AUTHENTIK_SECRET_KEY') | mandatory('AUTHENTIK_SECRET_KEY env var is not set') }}"
     authentik_postgres_password: "{{ lookup('env', 'AUTHENTIK_POSTGRES_PASSWORD') | mandatory('AUTHENTIK_POSTGRES_PASSWORD env var is not set') }}"
