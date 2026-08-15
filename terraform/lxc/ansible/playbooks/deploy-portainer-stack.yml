@@ -127,6 +127,7 @@
                 - /sys:/sys:ro
                 - /var/lib/docker:/var/lib/docker:ro
                 - /etc/machine-id:/etc/machine-id:ro
+      register: portainer_compose_write
 
     - name: Pull Portainer image
       community.docker.docker_image:
@@ -140,7 +141,8 @@
         recreate: >-
           {{
             'always'
-            if (portainer_docker_daemon_config.changed or (portainer_force_recreate | default(false) | bool))
+            if (portainer_docker_daemon_config.changed or portainer_compose_write.changed
+                or (portainer_force_recreate | default(false) | bool))
             else 'never'
           }}
         remove_orphans: true
