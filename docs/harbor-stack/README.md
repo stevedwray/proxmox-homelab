@@ -171,26 +171,48 @@ upgrade test:**
   wasn't actually closed by it) is worth doing independent of which local
   fix gets picked.
 
-**Next steps, in order (none started yet as of 2026-08-15):**
-1. Implement the pull-then-push extension to `harbor_repull`
+**Version divergence, decided (2026-08-15):** adopting 2.15.2 deliberately
+rather than reverting pve-test-vm back to 2.14.3. Reasoning: the one-way
+Redis/Valkey boundary is inherent to crossing 2.14→2.15, not something that
+gets easier by waiting — it'll be forced eventually by some future
+CVE/security fix that only ships in 2.15+, so taking it now, tested, on a
+deliberate schedule beats taking it later under pressure. Once on 2.15.2,
+the *next* bump (whenever the proxy-cache tagging bug is actually fixed
+upstream) is an ordinary forward move, not a second one-way door. The
+residual cost is real but narrow: no cheap revert below 2.15 if something
+unrelated surfaces later — accepted, not eliminated. Repo default
+(`harbor_installer_version` in
+`terraform/lxc/ansible/roles/harbor_installer/defaults/main.yml`) bumped to
+`"2.15.2"` to match.
+
+**Validation approach for this change, also decided (2026-08-15):** not a
+full teardown cycle. A Harbor version bump that doesn't change what
+consumers pull/push against has a narrower blast radius than
+Authentik/Traefik — a Harbor outage doesn't break stacks that are already
+running (their images are already resident locally), it only blocks new
+pulls/deploys/scans. `CLAUDE.md`'s Validation Tiers table now has a
+dedicated row for this: `scripts/provision.sh --stack harbor-stack` on
+pve-test-vm, then the same for 1–2 stacks that actually pull through it
+(one native-adapter project, one proxy-cache project) to confirm no
+regression. Full platform teardown stays reserved for changes that would
+actually break something currently running.
+
+**Next steps, in order:**
+1. Run the scoped validation above on pve-test-vm (harbor-stack is already
+   on 2.15.2 and was confirmed healthy during the earlier upgrade test;
+   still need the 1–2 dependent-stack pull check to close this out cleanly
+   under the new tier), then merge to `stable`.
+2. Roll the same version to `pve` under the normal production approval
+   flow (preflight summary → operator "Proceed" → `TASK_APPROVAL` →
+   `./with-secrets-prod`).
+3. Implement the pull-then-push extension to `harbor_repull`
    (`terraform/lxc/ansible/roles/harbor_repull/`) — pull each affected
    `gcr`/`ghcr`/`quay`/`greenbone` image, then `docker push` it into a
    plain, non-proxy-cache project (mirroring `pentagi`'s working pattern).
-   Validate on pve-test-vm first per this repo's normal discipline, then
-   roll out to `pve` under the usual production approval flow.
-2. Decide and reconcile the pve-test-vm Harbor version divergence: it's
-   genuinely running v2.15.2 right now, while the repo's
-   `harbor_installer_version` default still says `"2.14.3"` (`pve` is
-   still actually on 2.14.3, untouched). Either bump the repo default to
-   2.15.2 deliberately (it's a strict improvement even though it doesn't
-   fix this bug — newer Harbor, Valkey instead of Redis) or explicitly
-   plan to revert pve-test-vm back to 2.14.3 to match `pve` and the repo
-   default (note: a straight version-tag revert is **not safe** per the
-   Redis/Valkey incompatibility found above — would need the full
-   remove-scaffold-and-reinstall dance done here, and only after
-   confirming that path doesn't lose anything on pve-test-vm's actual
-   data). Don't leave this as silent drift.
-3. Optional, independent of the above: file the upstream Harbor bug
+   This is what actually fixes the scan-coverage gap; the version bump
+   above does not. Validate on pve-test-vm first, then roll out to `pve`
+   under the usual approval flow.
+4. Optional, independent of the above: file the upstream Harbor bug
    report (issue #17135 predates 2.15 and evidently wasn't fixed by it —
    worth an update/new issue with this session's specific findings:
    `controller/proxy/controller.go:216`, confirmed still broken in

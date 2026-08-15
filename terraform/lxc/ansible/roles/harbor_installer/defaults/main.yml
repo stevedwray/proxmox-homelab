@@ -1,5 +1,5 @@
 ---
-harbor_installer_version: "2.14.3"
+harbor_installer_version: "2.15.2"
 harbor_installer_install_dir: "/opt/harbor"
 harbor_installer_data_volume: "/var/lib/harbor"
 harbor_installer_http_port: 80
