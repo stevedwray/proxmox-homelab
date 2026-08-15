@@ -93,3 +93,18 @@ harbor_postconfigure_verify_scan_smoke_registry_url: >-
 # The controller used for live verification may not trust Harbor's external
 # certificate chain yet. Keep smoke verification tolerant by default.
 harbor_postconfigure_verify_scan_smoke_registry_insecure: true
+
+# Per-project CVE allowlists, for images that are DELIBERATELY vulnerable
+# (pentesting targets, tooling) rather than accidentally so -- see
+# docs/harbor-stack/README.md Open Investigation, docs/pentagi-stack/
+# harness-target.md. Each `file` is one CVE ID per line (comments/blanks
+# ignored), derived from a real Trivy scan and hand-checked against every
+# other image sharing that project to avoid silently suppressing a real
+# finding elsewhere -- see the header comment in each file for the exact
+# derivation. Project-level is Harbor's only granularity for this (no
+# per-repository allowlist), which is exactly why that cross-check matters.
+harbor_postconfigure_cve_allowlists:
+  - project: dockerhub
+    file: cve_allowlist_dockerhub.txt
+  - project: pentagi
+    file: cve_allowlist_pentagi.txt
