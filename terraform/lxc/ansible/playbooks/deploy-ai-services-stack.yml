@@ -419,11 +419,18 @@
               name: ai-services-openwebui-data
             ai-services-searxng-data:
               name: ai-services-searxng-data
+      register: ai_services_compose_definition
 
     - name: Deploy OpenWebUI and SearXNG via docker compose
       community.docker.docker_compose_v2:
         project_src: "{{ ai_services_compose_dir }}"
         state: present
+        # No recreate: at all here previously means the module's own
+        # default ('auto') always applied -- 'auto' does not reliably
+        # recreate on an image-tag-only compose change (confirmed live
+        # elsewhere this session). Force recreation whenever the compose
+        # file's own content changed.
+        recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
 
     - name: Reconcile infrastructure-managed OpenWebUI connection settings
       ansible.builtin.command:
