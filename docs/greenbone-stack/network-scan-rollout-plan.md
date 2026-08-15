@@ -68,18 +68,42 @@ asset until it's been observed tolerating a scan cleanly at least once.
 
 ## Phase 1 — Firewall: broaden `greenbone-stack`'s reach
 
-**Status: playbook written, not yet applied.**
-`ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml`
-implements the table below — idempotent, loops all 7 destinations, inserts
-each rule before the first forward-chain drop/reject found (same pattern as
-`mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml`), re-reads and
-asserts after. `terraform/lxc/network/pve.yaml`'s `policies:` block has the
-matching documented-intent entry, marked NOT YET APPLIED. `--syntax-check`
-passes. **Not run against the live router yet** — this is a live change to
-the one physical MikroTik shared by `pve` and `pve-test-vm`, and the
-playbook's own header explains why it needs an explicit go-ahead rather
-than being applied as a matter of course. See "What's next" at the end of
-this file for the exact live-verification steps once approved.
+**Status: DONE, applied and independently confirmed live, 2026-08-16.**
+Applied manually via the router's own Safe Mode console (operator-run, not
+the Ansible playbook) after a live read-only inspection corrected an
+assumption: the actual `pentest_seg` containment mechanism is
+`in-interface=vlan70-pentest` on rule `*3B` (`pentest_seg default-deny to
+LAN/other zones`), not a `src-address` match — none of the six destination
+zones have their own inbound-side deny, so `*3B` was the only anchor that
+mattered. All 7 rules were placed immediately before it via
+`place-before=[find comment="pentest_seg default-deny to LAN/other zones"]`.
+
+**Independently re-verified after the fact** (fresh `GET /rest/ip/firewall/filter`
+from outside the console session, not an in-session check — see
+[[reference_routeros_safe_mode]] on why that distinction matters): all 7
+rules present at `*6D`–`*73`, `src-address=192.168.70.11` (confirmed this is
+`pve` production's IP, not `pve-test-vm`'s `.111` — `with-secrets` defaults
+`PVE_ENV=pve-test-vm`, checked `.env.pve` directly to be sure), correct
+destination CIDR each, all sitting directly before `*3B` at its new
+position. Total rule count went 90 → 97 (exactly +7), disabled-rule count
+unchanged at 6 — nothing else in the table was disturbed.
+
+`terraform/lxc/network/pve.yaml`'s `policies:` block documents this as
+live (see below the table). The Ansible playbook
+(`mikrotik-firewall-greenbone-lan-scan-reach.yml`) was written first but
+wasn't the tool actually used to apply this — its anchor-selection logic
+has been corrected to match the real mechanism discovered live (see the
+file itself) so it stays a valid idempotent path for any future
+re-application, rather than describing a different, looser assumption
+than what's actually live.
+
+**Not yet done**: an actual reachability spot-check (`nc -zv`/`ping`) from
+inside `greenbone-stack` into 2–3 destination zones. The firewall rule
+being present and correctly placed is strong evidence but not the same as
+observed traffic — this needs either the operator running a couple of
+commands directly on `greenbone-stack`, or an SSH session against
+production `pve` on my end, which needs the standard `TASK_APPROVAL` flow
+per CLAUDE.md before I'd run it myself.
 
 Add new MikroTik rules, all **scoped by source IP = `greenbone-stack`'s own
 address only**, one rule per destination zone (mirrors the existing
@@ -259,25 +283,17 @@ actually running:
 
 ## What's next (2026-08-16 checkpoint)
 
-`task/gvm-lan-scan-rollout` has Phase 1's playbook and documented-intent
-policy entry, both written but not yet applied. Before running the
-playbook against the live router:
+`task/gvm-lan-scan-rollout` has Phase 1 **done and live** — see above.
+Remaining before Phase 1 is fully closed out, then moving on:
 
-1. Operator confirms go-ahead to apply Phase 1 live (this is the one step
-   in this whole project with an immediate, network-wide, hard-to-fully-
-   preview effect — every other phase is either local to `greenbone-stack`
-   itself or additive documentation).
-2. Run `./with-secrets ansible-playbook ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml`.
-3. **Manually re-read `/ip/firewall/filter` in rule order** (not just "did
-   the assert pass") to confirm each new rule actually sits before the
-   catch-all that would otherwise apply to its specific destination zone —
-   the playbook's own header explains why its automated assertions aren't
-   sufficient proof of correct placement on their own, per the
-   `harness-target.md` precedent.
-4. Spot-check reachability from `greenbone-stack` into 2–3 zones (e.g. a
-   `nc -zv`/`ping` against one host per zone) before trusting the whole set.
-5. Once Phase 1 is confirmed live, move to Phase 2 (scan configs/targets/
-   tiers) — not started yet.
+1. Optional but recommended: an actual reachability spot-check
+   (`nc -zv`/`ping`) from inside `greenbone-stack` into 2–3 destination
+   zones, to confirm real traffic, not just rule presence. Not done yet.
+2. Start Phase 2 — scan configs (`Discovery Only` vs `Full and fast`),
+   Tier A/B target classification, per-zone GVM Targets. Not started.
+   Everything in Phase 2 onward is local to `greenbone-stack` itself (GMP
+   calls against its own GVM instance), not a shared-infrastructure change
+   like Phase 1 was — lower-stakes to iterate on.
 
 ## Related documentation
 

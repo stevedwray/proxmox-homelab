@@ -445,17 +445,19 @@ policies:
     protocol: all
     ports: []
     description: >-
-      NOT YET APPLIED — scoped 2026-08-16, see
+      Live — applied 2026-08-16 via the router's own Safe Mode console
+      (rules *6D-*73), independently reverified after the fact. See
       docs/greenbone-stack/network-scan-rollout-plan.md Phase 1. Broadens
       only greenbone-stack's own IP (not blanket pentest_seg — pentagi-stack's
       containment is unchanged), one rule per destination, for the routine
       LAN/VLAN discovery+vulnerability scanning program. Deliberately scoped
       by destination CIDR rather than port list, same reasoning as the
       Metasploitable2 rule above (open-ended port enumeration is the whole
-      point). Playbook:
-      ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml
-      (written, not yet run against the live router — awaiting explicit
-      operator confirmation before applying, per that file's own header).
+      point). Anchor is *3B (`pentest_seg default-deny to LAN/other zones`,
+      matched on `in-interface=vlan70-pentest`, not src-address — confirmed
+      live, corrected from this rule's original draft assumption). Ansible
+      equivalent for any future re-application:
+      ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml.
   - from: pentest_seg
     to: default
     protocol: all

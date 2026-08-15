@@ -15,29 +15,34 @@
 #
 # Same idempotent read-check-insert-before-anchor-reread-assert pattern as
 # mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml, looped over
-# multiple destinations sharing one source and one anchor. Each rule is
-# inserted before the first forward drop/reject rule found at read time --
-# per the rule-ordering gotcha in docs/pentagi-stack/harness-target.md (a
-# rule appended after an existing catch-all is silently dead despite being
-# correctly written). This reuses that same playbook's simplifying
-# assumption (the *first* forward drop/reject encountered is a usable
-# anchor for every new rule) rather than resolving per-destination-zone
-# catch-alls individually -- confirmed workable for a single new rule
-# there, but not yet proven for a rule set spanning this many destination
-# zones. Manually re-read `/ip/firewall/filter` in order after applying to
-# confirm every new rule actually sits before whatever catch-all would
-# otherwise match its own destination zone, not just before the first one
-# found -- do not trust the automated assertions below as the final word
-# on placement correctness the way harness-target.md's incident shows a
-# "rule exists" check alone can't.
+# multiple destinations sharing one source and one anchor.
 #
-# NOT applied yet -- see docs/greenbone-stack/network-scan-rollout-plan.md
-# Phase 1. Run only after explicit operator confirmation: this is a live
-# change to the one physical MikroTik shared by pve and pve-test-vm, and
-# broadens greenbone-stack's blast radius to the whole network by design
-# (the accepted tradeoff of the Phase 1 vantage-point decision) -- treat
-# with the same seriousness CLAUDE.md gives production credential
-# mutations even though this isn't a Proxmox API call.
+# CORRECTED 2026-08-16 after live inspection, before this playbook was ever
+# run: the original draft anchored on "the first forward drop/reject rule
+# found," copying mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml's
+# assumption unchanged. A live GET against /ip/firewall/filter showed that
+# assumption was imprecise here -- the *actual* pentest_seg containment
+# mechanism is `in-interface=vlan70-pentest` on one specific rule
+# (comment "pentest_seg default-deny to LAN/other zones"), not a generic
+# "first drop encountered" (the real first forward drop/reject on this
+# router is game_seg's own outbound deny, `src-address=192.168.60.0/24`,
+# which doesn't match greenbone-stack's traffic at all and would have been
+# a harmless-but-sloppy anchor -- correct by luck, not by design). None of
+# the six destination zones have their own inbound-side deny, so this one
+# rule is the only anchor that actually matters. The 7 rules described here
+# were applied live via the router's own Safe Mode console (operator-run,
+# not this playbook) using the corrected anchor, and independently
+# reverified afterward -- see docs/greenbone-stack/network-scan-rollout-plan.md
+# Phase 1 for the full record. This playbook is kept, corrected to match,
+# as the idempotent path for any future re-application (e.g. if a rule is
+# ever individually removed and needs recreating) rather than left
+# describing a different, looser anchor than what's actually live.
+#
+# Re-read `/ip/firewall/filter` in order after any future run of this
+# playbook to confirm placement, not just that the assert passed -- per
+# the rule-ordering gotcha in docs/pentagi-stack/harness-target.md (a rule
+# appended after an existing catch-all is silently dead despite being
+# correctly written).
 
 - name: Ensure greenbone-stack -> every zone/LAN discovery+vuln-scan firewall reach exists
   hosts: localhost
@@ -92,7 +97,7 @@
       register: firewall_filters
       no_log: true
 
-    - name: Find first forward drop/reject rule for ordered insertion
+    - name: Find the pentest_seg default-deny rule for ordered insertion
       ansible.builtin.set_fact:
         forward_drop_anchor: >-
           {{
@@ -101,18 +106,21 @@
               | selectattr('chain', 'equalto', 'forward')
               | selectattr('action', 'defined')
               | selectattr('action', 'in', ['drop', 'reject'])
+              | selectattr('in-interface', 'defined')
+              | selectattr('in-interface', 'equalto', 'vlan70-pentest')
               | list)
             | first | default({})
           }}
 
-    - name: Assert a forward drop/reject anchor exists
+    - name: Assert the pentest_seg default-deny anchor exists
       ansible.builtin.assert:
         that:
           - forward_drop_anchor != {}
         fail_msg: >-
-          No forward-chain drop/reject rule found to insert before -- this
-          playbook only knows how to insert ordered rules relative to an
-          existing catch-all; if the router genuinely has none, add these
+          No forward-chain drop/reject rule with in-interface=vlan70-pentest
+          found -- this is the actual pentest_seg containment mechanism
+          (confirmed live 2026-08-16, see this file's header), not a
+          src-address match. If it's genuinely gone or renamed, add these
           rules manually and update this playbook's assumption.
 
     - name: Add each destination's accept rule, if missing
