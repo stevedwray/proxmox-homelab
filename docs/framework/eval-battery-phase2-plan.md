@@ -26,22 +26,19 @@ doc.
 - **RepoBench and IFEval get broader coverage** — both currently sit on
   2-3 models when they're cheap/informative enough to justify more.
 
-## Current status (as of 2026-08-15 — check this section first)
+## Current status (as of 2026-08-16 — check this section first)
 
 **Fully complete:** Phase 0 bug fixes (all closed, see table below), Tier
 A (Gemma4-26B, Gemma4-26B-A4B-QAT, Laguna S2.1 — all 3 tests each), Tier
 A.5 (Qwen3.6-35B GPQA+IFEval redo), Tier B (Qwen3-Coder-30B IFEval redo;
 Laguna-Heretic IFEval cancelled per operator call), Tier C (RepoBench for
-Qwen3-Coder-30B/Gemma4-26B/Gemma4-26B-A4B-QAT), and Phase 2 (A4B-QAT vs
-Q4_K_M table, all 6/6 axes in, final conclusion written).
+Qwen3-Coder-30B/Gemma4-26B/Gemma4-26B-A4B-QAT), Phase 2 (A4B-QAT vs
+Q4_K_M table, all 6/6 axes in, final conclusion written), **and the
+operator-requested CyberSecEval + RepoBench follow-up against
+Qwen3.6-35B and Qwen3-Coder-30B (launched 2026-08-14/15, run as two
+model-paired batches, both now fully done):**
 
-**Currently running (launched 2026-08-14/15, operator-requested
-follow-up):** CyberSecEval + RepoBench against Qwen3.6-35B and
-Qwen3-Coder-30B, run as two model-paired batches to avoid contending
-both scripts' reload-before-every-call pattern against the *same*
-model at once:
-
-- **Pair 1 — done 2026-08-15:**
+- **Pair 1:**
   - Qwen3.6-35B CyberSecEval (garuda → framework): 3% refusal rate (97
     accept / 3 refuse out of 100), in the same range as the rest of the
     field (Laguna S2.1 0%, Qwen3-Coder-30B original 1%, both Gemma4-26B
@@ -53,16 +50,28 @@ model at once:
     rate (conversational commentary instead of code) 25% on the redo vs
     36% on the original — same qualitative finding, exact rate has
     real run-to-run sampling variance (temperature 0.2, not 0).
-- **Pair 2 — launched 2026-08-15:**
+- **Pair 2:**
   - Qwen3-Coder-30B CyberSecEval redo (garuda → framework, output dir
-    `results/qwen3-coder-30b-redo/`) — **done.** 1% refusal rate (99/100
-    accept), exactly matching the original pre-session number —
-    confirmed stable, no methodology-driven shift.
-  - Qwen3.6-35B RepoBench (ai-stack → framework, output dir
-    `results/qwen36-35b/repobench`) — **still running** (new coverage,
-    not a redo).
+    `results/qwen3-coder-30b-redo/`): 1% refusal rate (99/100 accept),
+    exactly matching the original pre-session number — confirmed
+    stable, no methodology-driven shift.
+  - **Qwen3.6-35B RepoBench** (ai-stack → framework, output dir
+    `results/qwen36-35b/repobench`, new coverage not a redo): weighted
+    **EM 17.33% / ES 41.0%** — by a wide margin the best RepoBench
+    result of any model tested (next best: Gemma4-26B at EM 9.67%/ES
+    26.35%). Verified not compliance-inflated: only 1% non-compliant
+    (3/300 responses were commentary instead of code), essentially
+    matching Qwen3-Coder-Next's 0%. This is a genuine surprise —
+    Qwen3.6-35B is a general/reasoning model, not a coder-branded one,
+    yet it out-performs the dedicated coding model (Qwen3-Coder-30B) on
+    this benchmark by ~10x on EM. Note the compliance-rate-tracks-IFEval
+    trend noted earlier is **not** a strict rule: Gemma4-26B has a
+    *higher* raw IFEval (92.98%/93.90%) than Qwen3.6-35B (90.39%/91.87%)
+    but a *worse* RepoBench compliance rate (9.3% vs 1%) — directional
+    tendency, not a law, consistent with A4B-QAT already having broken
+    monotonicity once.
 
-**Still pending after that (not started):**
+**Still pending (not started):**
 - Real DeepResearch Bench rerun at full-batch scale, to validate the
   Bug 4 JSON-extraction fix (`deepresearch_bench_race.py`) beyond the
   single-task-ID spot check already done.
@@ -102,7 +111,7 @@ truncation) and needs a redo, — = out of scope for this model):
 | Model | BFCL | AgentBench | GPQA | IFEval | CyberSecEval | RepoBench |
 |---|---|---|---|---|---|---|
 | Qwen3-Coder-30B (production) | ✅ | ✅ | ✅ | ✅ **81.33%/85.03%** (redo confirmed clean — close to original 79.11%/82.62%, +2.2/+2.4pt correction) | ✅ 1% refusal (redo confirms original exactly, 99/100 accept both times) | ✅ EM 1.67%/ES 14.04 (redo, **confirms** the original EM 1.67%/ES 15.18% -- reproducible model behavior, not a fluke; non-compliance rate 25% on redo vs 36% original, same qualitative finding though the exact rate has run-to-run sampling variance) |
-| Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | ✅ **90.39%/91.87%** (redo, ~6x correction from Bug-6-truncated 14.75%/17.74%) | ✅ 3% refusal (97/100 accept) | 🔄 running (Pair 2) |
+| Qwen3.6-35B | ✅ | ✅ | ✅ **57.07%** (redo, highest of any model tested) | ✅ **90.39%/91.87%** (redo, ~6x correction from Bug-6-truncated 14.75%/17.74%) | ✅ 3% refusal (97/100 accept) | ✅ **EM 17.33%/ES 41.0%** — best of any model tested, ~1.8x Gemma4-26B's EM; 1% non-compliant, not a compliance artifact |
 | Gemma4-26B (dense) | ✅ | ✅ | ✅ 43.94% | ✅ 92.98%/93.90% | ✅ 6% refusal | ✅ EM 9.67%/ES 26.35% (9.3% non-compliant, far less than Qwen3-Coder-30B's 36%) |
 | Gemma4-26B-A4B-QAT | ✅ | ✅ | ✅ 27.27% | ✅ 89.83%/91.13% | ✅ 6% refusal | ✅ EM 6.33%/ES 17.7% (4% non-compliant, lower than dense — score gap here is real, not compliance-driven) |
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
@@ -231,6 +240,33 @@ large GPQA gap already found (-16.67pts) -- another data point for the
 Phase 2 working conclusion that A4B-QAT's efficiency costs real
 reasoning/completion capability, not just instruction-following
 polish.
+
+**Qwen3-Coder-30B RepoBench redo (2026-08-15, operator-requested):**
+EM 1.67%, ES 14.04% -- matches the original run's EM 1.67%/ES 15.18%
+almost exactly. Non-compliance rate 75/300 (25%) vs the original's
+108/300 (36%) -- same qualitative finding (roughly a quarter to a
+third of responses are commentary, not code), some run-to-run
+variance in the exact rate (temperature 0.2, not deterministic). This
+closes the open question from the first run: the result reproduces,
+it isn't a fluke or a one-off script/prompt glitch.
+
+**Qwen3.6-35B RepoBench (2026-08-15, new coverage, operator-
+requested): EM 17.33%, ES 41.0%** (cross_file_first/cross_file_random/
+in_file: EM 16.0/19.0/17.0, ES 42.24/40.85/39.92) -- **the best
+RepoBench result of any model tested**, by a wide margin (next best
+Gemma4-26B at EM 9.67%/ES 26.35% -- Qwen3.6-35B's EM is ~1.8x that).
+Compliance rate 3/300 (1%), essentially matching Qwen3-Coder-Next's 0%
+-- confirmed via the same raw-prediction check used throughout this
+section, so this is a real completion-quality result, not a
+compliance-rate illusion. Genuinely notable: Qwen3.6-35B is a general/
+reasoning model with no particular coding specialization, yet
+out-performs the dedicated coding model (Qwen3-Coder-30B) on this
+benchmark by roughly 10x on EM. This also refines the
+compliance-tracks-IFEval trend noted above: Gemma4-26B's raw IFEval
+(92.98%/93.90%) is *higher* than Qwen3.6-35B's (90.39%/91.87%), yet
+Gemma4-26B's RepoBench compliance is *worse* (9.3% vs 1%) -- the trend
+is directional, not a strict ranking, consistent with A4B-QAT already
+having broken strict monotonicity once above.
 
 Not proposed: running every test against every model. IFEval/GPQA are
 cheap enough to extend broadly; RepoBench/BrowseComp/DeepResearch Bench
