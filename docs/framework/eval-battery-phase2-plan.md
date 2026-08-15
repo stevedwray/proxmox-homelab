@@ -93,12 +93,9 @@ model-paired batches, both now fully done):**
 - Phase 0.3 (low priority): try chunked generation to fix
   Qwen3-Coder-Next's DRB long-form corruption, only worth it if DRB
   turns out to matter for a live model decision.
-- SWE-rebench Phase B: scale up ai-stack's resources (currently 4GB
-  RAM/2 cores/78GB free — official guidance is ~16GB/8 cores/120GB+)
-  before running a meaningful sample size (~20-50 instances) across
-  multiple models. Blocked on an operator decision about who performs
-  the resize (mirrors the earlier AgentBench RAM bump, done manually by
-  the operator via Proxmox rather than by the agent).
+- SWE-rebench Phase B: run a real sample (~20-50 instances) across
+  multiple models now that ai-stack has room for it. Not started yet
+  (resize just landed) — the actual runs are the remaining work.
 
 **Operational notes for picking this up fresh:** all four
 CyberSecEval/RepoBench jobs above use the same launch pattern as
@@ -451,15 +448,20 @@ pick, but the task actually needed broader repo-wiring context than the
 single file it touched — patch size alone is not a reliable difficulty
 proxy.
 
-**Phase B (not started, blocked on an operator decision):** ai-stack's
-current specs (4GB RAM/2 cores/78GB free disk) proved sufficient for
-this small pilot (pre-built images, no from-scratch builds, one worker
-at a time), but official SWE-bench guidance is ~16GB RAM/8 cores/120GB+
-free disk for a real sample size. Before running anything past a
-handful of instances, ai-stack needs a resize — same class of decision
-as the AgentBench RAM bump earlier in this project, which the operator
-handled directly via Proxmox rather than delegating it. Not yet decided
-who performs this one.
+**Phase B — ai-stack resized 2026-08-16, ready for a real sample.**
+ai-stack's original specs (4GB RAM/2 cores/78GB free disk) proved
+sufficient for this small pilot (pre-built images, no from-scratch
+builds, one worker at a time), but official SWE-bench guidance is
+~16GB RAM/8 cores/120GB+ free disk for a real sample size. Resized via
+the pve API (CT 116, `pct set`/`pct resize`, operator-approved
+production mutation): **4GB→16GB RAM, 2→8 cores, 100GB→250GB disk**,
+confirmed live with no restart needed. Real pre-resize capacity check
+(host `free -h`/`pct list`/per-container `status/current`, not just
+configured allocations) confirmed the host had genuine headroom — most
+running containers use a small fraction of their configured ceiling,
+several of the largest ceilings belonged to stopped containers
+contributing zero real load. Not yet run: the actual ~20-50 instance
+sample this resize was for.
 
 **To resume:** `~/eval-harnesses/swe-rebench/` on ai-stack has both
 repos + working config. Pattern for a new batch:
