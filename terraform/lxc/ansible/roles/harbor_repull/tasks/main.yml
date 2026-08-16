@@ -163,6 +163,84 @@
         - not (harbor_repull_admin_reachable.failed | default(true))
       no_log: true
 
+    # ---------------------------------------------------------------
+    # Retention policy for the mirror project (2026-08-16 addition)
+    # ---------------------------------------------------------------
+    #
+    # harbor_repull re-pushes the same manifest entries every night, and
+    # a mutable tag (e.g. pentagi-fixed:latest, rebuilt on every
+    # deploy-pentagi-stack.yml run) leaves its previous digest behind as
+    # an orphaned, untagged artifact each time -- confirmed live: 8
+    # separate untagged copies of pentagi-fixed accumulated with no
+    # cleanup. The mirror project is push-only (nothing ever pulls from
+    # it directly), so the usual nDaysSinceLastPull retention template
+    # doesn't apply -- everything in it would look "unused" and get
+    # pruned regardless of currency. latestPushedK (keep the most
+    # recently pushed artifact per repo) is the correct rule for a
+    # push-only project. Runs unconditionally (not gated on the
+    # credential-file-exists check above) since it's a cheap, idempotent
+    # GET-then-maybe-POST every run, not a one-time bootstrap step.
+    - name: Check if the local Harbor admin API is reachable for retention setup
+      ansible.builtin.wait_for:
+        host: "{{ harbor_repull_admin_host }}"
+        port: "{{ harbor_repull_admin_port }}"
+        timeout: 5
+      register: harbor_repull_retention_admin_reachable
+      ignore_errors: true
+
+    - name: Ensure mirror project has a retention policy
+      when: not (harbor_repull_retention_admin_reachable.failed | default(true))
+      block:
+        - name: Fetch mirror project metadata
+          ansible.builtin.uri:
+            url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/projects/{{ harbor_repull_mirror_project }}"
+            method: GET
+            url_username: "{{ harbor_repull_admin_user }}"
+            url_password: "{{ harbor_repull_admin_password }}"
+            force_basic_auth: true
+            status_code: [200, 404]
+          register: harbor_repull_mirror_project_get
+          delegate_to: localhost
+          failed_when: false
+
+        - name: Create latestPushedK retention policy for the mirror project
+          ansible.builtin.uri:
+            url: "http://{{ harbor_repull_admin_host }}:{{ harbor_repull_admin_port }}/api/v2.0/retentions"
+            method: POST
+            url_username: "{{ harbor_repull_admin_user }}"
+            url_password: "{{ harbor_repull_admin_password }}"
+            force_basic_auth: true
+            body_format: json
+            body:
+              algorithm: "or"
+              rules:
+                - action: "retain"
+                  template: "latestPushedK"
+                  params:
+                    latestPushedK: 1
+                  priority: 1
+                  scope_selectors:
+                    repository:
+                      - decoration: "repoMatches"
+                        kind: "doublestar"
+                        pattern: "**"
+                  tag_selectors:
+                    - decoration: "matches"
+                      kind: "doublestar"
+                      pattern: "**"
+              scope:
+                level: "project"
+                ref: "{{ harbor_repull_mirror_project_get.json.project_id }}"
+              trigger:
+                kind: "Schedule"
+                settings:
+                  cron: "0 30 0 * * *"
+            status_code: 201
+          delegate_to: localhost
+          when:
+            - harbor_repull_mirror_project_get.status == 200
+            - harbor_repull_mirror_project_get.json.metadata.retention_id is not defined
+
     - name: Write harbor-repull systemd service
       ansible.builtin.template:
         src: harbor-repull.service.j2
