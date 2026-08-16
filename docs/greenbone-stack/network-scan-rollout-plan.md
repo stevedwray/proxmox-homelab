@@ -364,6 +364,13 @@ Phase 2's GVM Targets/Tasks are per-gvmd-instance and need the same
    scoped), but this is the tracked, idempotent, reviewable path instead
    of the ad hoc `scp`+manual-`docker-compose` approach used to validate
    on `pve-test-vm`.
+
+   **This tagged path itself (not just the underlying script) is now
+   validated on `pve-test-vm`**: `ANSIBLE_TAGS=scan-program ./with-secrets
+   scripts/provision.sh --stack greenbone-stack` → `ok=3, changed=0` —
+   confirms the real Ansible/`provision.sh` invocation correctly touches
+   only the two tagged tasks and correctly detects the 28 objects already
+   present as a no-op. Ready to run against production as-is.
 3. Start Phase 3 (deferred by decision) / Phase 4 (scheduling) / Phase 5
    (results pipeline) — none started yet.
 
