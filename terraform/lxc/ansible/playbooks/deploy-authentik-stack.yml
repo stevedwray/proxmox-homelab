@@ -546,26 +546,35 @@
           ansible.builtin.command:
             cmd: "docker tag ghcr.io/goauthentik/ldap:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
 
-    - name: Check if Authentik LDAP image is available locally
+    # Previously this checked "is the Harbor-prefixed tag already present
+    # locally" and only pulled-from-upstream-then-locally-tagged when it
+    # wasn't. That check passes trivially once the first-ever deploy has
+    # run, so every later version bump skipped a real Harbor-routed pull
+    # entirely -- confirmed live via Harbor's own nginx access logs (only
+    # HEAD manifest checks, zero GET blob requests) for both this repo
+    # and portainer-ce (see deploy-portainer-stack.yml's equivalent fix).
+    # Harbor's proxy-cache only registers an artifact when it actually
+    # relays a real fetch, so its own vulnerability scan data was
+    # silently stuck on the old version indefinitely. Always attempt the
+    # real Harbor-routed pull first now; only fall back to
+    # pull-from-upstream-then-locally-tag if that specific pull fails
+    # (Harbor genuinely unreachable, or this exact tag isn't proxied yet).
+    - name: Pull Authentik server image via Harbor
       ansible.builtin.command:
-        cmd: "docker image inspect {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
-      register: authentik_ldap_image_check
+        cmd: "docker pull {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
+      register: authentik_server_harbor_pull
       failed_when: false
-      changed_when: false
-      when: not ansible_check_mode
-
-    - name: Check if Authentik server image is available locally
-      ansible.builtin.command:
-        cmd: "docker image inspect {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
-      register: authentik_server_image_check
-      failed_when: false
-      changed_when: false
-      when: not ansible_check_mode
-
-    - name: Pull and tag Authentik server image when not locally cached
+      changed_when: authentik_server_harbor_pull.rc == 0
       when:
         - not ansible_check_mode
-        - authentik_server_image_check.rc != 0
+        - authentik_harbor_reachable.rc is defined
+        - authentik_harbor_reachable.rc == 0
+        - not (authentik_docker_login is defined and authentik_docker_login.failed)
+
+    - name: Pull and tag Authentik server image directly from upstream (Harbor unreachable or its pull failed)
+      when:
+        - not ansible_check_mode
+        - authentik_server_harbor_pull.rc is not defined or authentik_server_harbor_pull.rc != 0
       block:
         - name: Pull goauthentik server image from ghcr.io
           ansible.builtin.command:
@@ -575,10 +584,22 @@
           ansible.builtin.command:
             cmd: "docker tag ghcr.io/goauthentik/server:{{ authentik_image_version }} {{ authentik_registry_host }}/ghcr/goauthentik/server:{{ authentik_image_version }}"
 
-    - name: Pull and tag Authentik LDAP outpost image when not locally cached
+    - name: Pull Authentik LDAP outpost image via Harbor
+      ansible.builtin.command:
+        cmd: "docker pull {{ authentik_registry_host }}/ghcr/goauthentik/ldap:{{ authentik_image_version }}"
+      register: authentik_ldap_harbor_pull
+      failed_when: false
+      changed_when: authentik_ldap_harbor_pull.rc == 0
       when:
         - not ansible_check_mode
-        - authentik_ldap_image_check.rc != 0
+        - authentik_harbor_reachable.rc is defined
+        - authentik_harbor_reachable.rc == 0
+        - not (authentik_docker_login is defined and authentik_docker_login.failed)
+
+    - name: Pull and tag Authentik LDAP outpost image directly from upstream (Harbor unreachable or its pull failed)
+      when:
+        - not ansible_check_mode
+        - authentik_ldap_harbor_pull.rc is not defined or authentik_ldap_harbor_pull.rc != 0
       block:
         - name: Pull Authentik LDAP outpost image from ghcr.io
           ansible.builtin.command:
