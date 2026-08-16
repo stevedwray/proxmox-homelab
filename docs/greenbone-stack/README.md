@@ -234,11 +234,13 @@ issue. A simple retry is the expected fix, matching what resolved it here.
    (done) → apply + first boot → feed sync validation → Traefik + Authentik
    exposure → an authorized test scan → future PentAGI integration (scoped,
    see below).
-2. [pentagi-integration.md](./pentagi-integration.md) — scoping for the
-   PentAGI↔GVM integration: the real technical gap (GVM's GMP API is
-   Unix-socket-only today, not network-reachable from another LXC), and
-   the decided architecture (a `gvm-bridge` service mirroring the
-   `cve-mcp-server` integration) — not yet implemented.
+2. [pentagi-integration.md](./pentagi-integration.md) — PentAGI↔GVM
+   on-demand integration: `gvm-bridge`, built, deployed, and validated
+   end-to-end (2026-08-03).
+3. [network-scan-rollout-plan.md](./network-scan-rollout-plan.md) — scoped,
+   not started: turning GVM into a standing, scheduled discovery +
+   vulnerability scanning program across the whole LAN and every Proxmox
+   SDN zone, not just the one-off/agent-triggered targets above.
 
 ## Key facts up front
 

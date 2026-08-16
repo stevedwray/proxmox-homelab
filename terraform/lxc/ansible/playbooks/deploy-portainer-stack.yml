@@ -129,15 +129,28 @@
                 - /etc/machine-id:/etc/machine-id:ro
       register: portainer_compose_write
 
-    - name: Pull Portainer image
-      community.docker.docker_image:
-        name: "portainer/portainer-ce:{{ portainer_version }}"
-        source: pull
-
+    # No separate pre-pull task here on purpose. A prior "Pull Portainer
+    # image" task pulled the bare portainer/portainer-ce:{{ portainer_version }}
+    # name directly from Docker Hub -- an image reference the compose file
+    # above never actually uses (it only ever references the Harbor-
+    # prefixed name). That pre-pull pre-seeded Docker's local
+    # content-addressed blob store with the same digests, so the compose
+    # task's own pull of the Harbor-prefixed reference below was silently
+    # satisfied entirely from local cache (confirmed live via Harbor's own
+    # nginx access logs: only HEAD manifest checks, zero GET blob
+    # requests) -- Harbor's proxy-cache never saw a real fetch, so it
+    # never registered the artifact, leaving Harbor's own vulnerability
+    # scan data permanently stale for this image. Let the compose task
+    # below do the only pull, so it actually goes through Harbor.
     - name: Start Portainer via compose
       community.docker.docker_compose_v2:
         project_src: "{{ portainer_compose_dir }}"
         state: present
+        # Explicit, not relying on the module's 'policy' default resolving
+        # to the compose spec's own 'missing' -- makes the intent (pull
+        # only when the Harbor-prefixed reference isn't already present)
+        # unambiguous now that nothing else pre-seeds the local cache.
+        pull: missing
         recreate: >-
           {{
             'always'

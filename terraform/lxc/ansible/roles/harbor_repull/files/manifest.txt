@@ -12,20 +12,27 @@
 # in code during this same pass but not re-verified against their exact
 # live tags in this session — add them here once similarly confirmed,
 # rather than transcribing from source and risking a stale/wrong tag.
+#
+# Refreshed 2026-08-16 for the Harbor vulnerability remediation pass
+# (traefik/victoria-metrics/grafana-oss/cadvisor/portainer-ce/authentik
+# version bumps) — every tag below re-verified against each deploy
+# playbook's current vars, not transcribed from the prior stale copy.
+# cadvisor's canonical registry also moved gcr.io -> ghcr.io this same
+# pass (gcr.io/cadvisor/cadvisor tops out at v0.55.1, unmaintained).
 
 # portainer-stack
-dockerhub/portainer/portainer-ce:2.27.3
+dockerhub/portainer/portainer-ce:2.39.5
 
-# proxy-stack / monitoring-stack / netbox-stack / authentik-stack cadvisor
-# sidecar (same image, shared across every stack that runs one)
-gcr/cadvisor/cadvisor:v0.49.1
+# proxy-stack / monitoring-stack / netbox-stack / authentik-stack / harbor-stack
+# cadvisor sidecar (same image, shared across every stack that runs one)
+ghcr/google/cadvisor:v0.60.5
 
 # proxy-stack
-dockerhub/library/traefik:v3.1.6
+dockerhub/library/traefik:v3.7.10
 
 # monitoring-stack
-dockerhub/victoriametrics/victoria-metrics:v1.102.1
-dockerhub/grafana/grafana-oss:11.6.0
+dockerhub/victoriametrics/victoria-metrics:v1.148.0
+dockerhub/grafana/grafana-oss:13.0.2
 dockerhub/library/python:3.12-alpine
 
 # technitium-stack
@@ -35,8 +42,8 @@ dockerhub/technitium/dns-server:15.2.0
 dockerhub/tecnativa/docker-socket-proxy:latest
 
 # authentik-stack
-ghcr/goauthentik/server:2026.2.4
-ghcr/goauthentik/ldap:2026.2.4
+ghcr/goauthentik/server:2026.5.6
+ghcr/goauthentik/ldap:2026.5.6
 dockerhub/library/nginx:1.27-alpine
 dockerhub/library/postgres:16-alpine
 dockerhub/library/redis:alpine

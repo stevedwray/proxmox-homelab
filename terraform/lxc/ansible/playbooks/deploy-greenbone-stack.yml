@@ -738,3 +738,76 @@
           - gvm_bridge_health.status is defined
           - gvm_bridge_health.status == 200
         fail_msg: "gvm-bridge did not respond healthy on :8010/health after retries (last status: {{ gvm_bridge_health.status | default('unknown') }})"
+
+    # Phase 2 of docs/greenbone-stack/network-scan-rollout-plan.md: the
+    # standing LAN/VLAN discovery+vulnerability scan program's GVM Targets
+    # and Tasks (14 total -- one Discovery + one Full-and-fast pair per
+    # zone/LAN). Separate from gvm-bridge's own on-demand, agent-triggered
+    # scans above -- this creates static, reusable objects instead. Uses
+    # the admin account (not the scoped pentagi-integration user, which is
+    # PentAGI's own concern) since these are platform-owned routine-scan
+    # objects, not something an autonomous agent creates itself.
+    - name: Write scan-program setup script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_scan_program.py"
+        dest: "{{ greenbone_compose_dir }}/setup_scan_program.py"
+        # 0644, same reasoning as modify_auth.xml above -- gvm-tools' throwaway
+        # container runs as a different unprivileged uid needing read access
+        # via the bind mount, and this file has no secret content (the
+        # credential is passed as an env var, not embedded in the script).
+        mode: "0644"
+      tags: [scan-program]
+
+    # --no-deps added 2026-08-16 after a live incident on pve-test-vm:
+    # `docker compose run` for this one service, without --no-deps, was
+    # able to trigger a full recreate cascade of unrelated dependencies
+    # (gvmd/ospd-openvas ended up stuck in Created state) when run
+    # concurrently with another in-flight docker compose operation on the
+    # same host. --no-deps makes this task touch only gvm-tools itself,
+    # never gvmd or anything else, regardless of what else is running.
+    # Run this task alone via `ANSIBLE_TAGS=scan-program` (provision.sh
+    # already passes this through to `ansible-playbook --tags`) rather
+    # than the whole playbook, so a routine scan-program update never
+    # re-triggers the earlier `--pull always` compose-up task above.
+    - name: Create/verify the LAN/VLAN scan program's Targets and Tasks (idempotent)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_scan_program.py:/tmp/setup_scan_program.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          gvm-tools python3 /tmp/setup_scan_program.py
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: "'created target' in greenbone_scan_program_setup.stdout or 'created task' in greenbone_scan_program_setup.stdout"
+      no_log: true
+      register: greenbone_scan_program_setup
+      tags: [scan-program]
+
+    # Phase 4 (partial) -- operator instruction 2026-08-16: schedule only
+    # the vulnerability ("full-vuln") Tasks, staggered an hour apart, LAN
+    # segment last, first run 22:00 local time, recurring weekly. Separate
+    # tag from scan-program so a schedule-only change (e.g. re-timing)
+    # never re-runs (or is blocked behind) the Targets/Tasks setup above.
+    - name: Write schedule setup script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_schedules.py"
+        dest: "{{ greenbone_compose_dir }}/setup_schedules.py"
+        mode: "0644"
+      tags: [schedule-program]
+
+    # --no-deps for the same reason as the scan-program task above -- see
+    # that task's comment for the live incident this avoids repeating.
+    # Run alone via `ANSIBLE_TAGS=schedule-program`.
+    - name: Create/verify the weekly full-vuln scan Schedules and attach to Tasks (idempotent)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_schedules.py:/tmp/setup_schedules.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          gvm-tools python3 /tmp/setup_schedules.py
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: "'created schedule' in greenbone_schedule_setup.stdout"
+      no_log: true
+      register: greenbone_schedule_setup
+      tags: [schedule-program]

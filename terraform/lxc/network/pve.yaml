@@ -440,6 +440,24 @@ policies:
       physical router/VLAN as pve-test-vm.yaml's identical rule, so no
       separate MikroTik change was needed when greenbone-stack was
       deployed to pve 2026-08-01.
+  - from: "${lab_ip_greenbone}"
+    to: [build_seg, mgmt_seg, edge_seg, infra_seg, ai_seg, game_seg, "192.168.1.0/24"]
+    protocol: all
+    ports: []
+    description: >-
+      Live — applied 2026-08-16 via the router's own Safe Mode console
+      (rules *6D-*73), independently reverified after the fact. See
+      docs/greenbone-stack/network-scan-rollout-plan.md Phase 1. Broadens
+      only greenbone-stack's own IP (not blanket pentest_seg — pentagi-stack's
+      containment is unchanged), one rule per destination, for the routine
+      LAN/VLAN discovery+vulnerability scanning program. Deliberately scoped
+      by destination CIDR rather than port list, same reasoning as the
+      Metasploitable2 rule above (open-ended port enumeration is the whole
+      point). Anchor is *3B (`pentest_seg default-deny to LAN/other zones`,
+      matched on `in-interface=vlan70-pentest`, not src-address — confirmed
+      live, corrected from this rule's original draft assumption). Ansible
+      equivalent for any future re-application:
+      ansible/00-initial-setup/mikrotik-firewall-greenbone-lan-scan-reach.yml.
   - from: pentest_seg
     to: default
     protocol: all
