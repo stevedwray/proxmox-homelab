@@ -40,13 +40,27 @@ DISCOVERY_CONFIG_NAME = "Discovery"
 FULL_CONFIG_NAME = "Full and fast"
 SCANNER_NAME = "OpenVAS Default"
 
+# GVM's own standard pairing for "Full and fast" -- confirmed live
+# 2026-08-16: create_target has no implicit port default (GmvResponseError
+# 400 "One of PORT_LIST and PORT_RANGE are required" if omitted, contrary
+# to this file's original draft assumption). Resolved by name, same
+# convention as the scan config/scanner, not hardcoded.
+PORT_LIST_NAME = "All TCP and Nmap top 100 UDP"
+
 # GVM's standard combined default -- deliberately NOT gvm-bridge's
 # hardcoded "Consider Alive" (that was justified specifically for
 # pentest_seg's own deliberately ICMP-firewalled lab targets; every host
 # here is normal LAN/VLAN infrastructure that should respond to ICMP/ARP
 # like anything else). Revisit per-zone only if a specific zone is
 # observed to have real false-negative host-alive results.
-ALIVE_TESTS = "ICMP, TCP-ACK Service Ping, ARP Ping"
+#
+# Exact string confirmed live 2026-08-16 against python-gvm's AliveTest
+# enum (gvm.protocols.gmp.requests.v224._targets.AliveTest) -- the
+# original draft guessed "ICMP, TCP-ACK Service Ping, ARP Ping" and it
+# does not match any enum value (raises InvalidArgument). The real
+# combined-default member is "ICMP, TCP-ACK Service & ARP Ping" (comma +
+# ampersand, "Service" not "Service Ping" in the middle clause).
+ALIVE_TESTS = "ICMP, TCP-ACK Service & ARP Ping"
 
 # Tier A hosts (docs/greenbone-stack/network-scan-rollout-plan.md Phase 2)
 # are excluded from the Full-and-fast target only -- still covered by
@@ -95,7 +109,13 @@ def find_by_name(gmp, getter, tag, name):
     return el.get("id") if el is not None else None
 
 
-def ensure_target(gmp, name, cidr, exclude_hosts):
+def ensure_target(gmp, name, cidr, exclude_hosts, port_list_id):
+    """exclude_hosts is a list[str] of individual addresses, per
+    python-gvm's Targets.create_target signature -- a pre-joined comma
+    string here fails live with GvmResponseError 400 "Error in host
+    specification" (confirmed 2026-08-16), the same "hosts wants a list,
+    not a string" shape as the hosts=[cidr] argument below.
+    """
     existing = find_by_name(gmp, gmp.get_targets, "target", name)
     if existing:
         print(f"target {name!r} already exists ({existing}), skipping")
@@ -105,6 +125,7 @@ def ensure_target(gmp, name, cidr, exclude_hosts):
         name=name,
         hosts=[cidr],
         alive_test=ALIVE_TESTS,
+        port_list_id=port_list_id,
         **kwargs,
     )
     target_id = response.get("id")
@@ -131,20 +152,23 @@ def main():
         discovery_config_id = resolve_id(gmp, gmp.get_scan_configs, DISCOVERY_CONFIG_NAME, "config")
         full_config_id = resolve_id(gmp, gmp.get_scan_configs, FULL_CONFIG_NAME, "config")
         scanner_id = resolve_id(gmp, gmp.get_scanners, SCANNER_NAME, "scanner")
+        port_list_id = resolve_id(gmp, gmp.get_port_lists, PORT_LIST_NAME, "port_list")
 
         for zone in ZONES:
             key, cidr, tier_a_exclude = zone["key"], zone["cidr"], zone["tier_a_exclude"]
 
             discovery_exclude = list(REDTEAM_EXCLUDE) if key == "lan" else []
             discovery_target_id = ensure_target(
-                gmp, f"LAN scan: {key} discovery", cidr, ",".join(discovery_exclude)
+                gmp, f"LAN scan: {key} discovery", cidr, discovery_exclude, port_list_id
             )
             ensure_task(gmp, f"LAN scan: {key} discovery", discovery_config_id, discovery_target_id, scanner_id)
 
             full_exclude = list(tier_a_exclude)
             if key == "lan":
                 full_exclude += REDTEAM_EXCLUDE
-            full_target_id = ensure_target(gmp, f"LAN scan: {key} full-vuln", cidr, ",".join(full_exclude))
+            full_target_id = ensure_target(
+                gmp, f"LAN scan: {key} full-vuln", cidr, full_exclude, port_list_id
+            )
             ensure_task(gmp, f"LAN scan: {key} full-vuln", full_config_id, full_target_id, scanner_id)
 
     print("done")

@@ -146,19 +146,55 @@ ask, per CLAUDE.md and [[feedback_avoid_full_teardown_scale]].
 
 ## Phase 2 — Target inventory & scan-config tiers
 
-**Status: code written, syntax-checked, not yet run.**
+**Status: DONE, validated live on `pve-test-vm`, 2026-08-16.**
 `terraform/lxc/ansible/files/greenbone-scan-setup/setup_scan_program.py`
 creates all 14 Targets/Tasks (one Discovery + one Full-and-fast pair per
 zone/LAN) idempotently via python-gvm, mirroring `gvm-bridge/app.py`'s
-already-live-proven call shapes (`create_target`/`create_task`,
-`alive_test` as a plain string, scan config/scanner resolved by name
-filter rather than a hardcoded UUID). Wired into
-`deploy-greenbone-stack.yml` as new tasks at the end of the existing play
-(copies the script in, runs it once via the same throwaway `gvm-tools`
-container pattern already used for `modify_auth.xml`). `--syntax-check`
-passes. **Simplification found while implementing**: GVM ships a built-in
-`Discovery` scan config (host-alive + port sweep, no vulnerability NVTs) —
-used that directly rather than authoring a new custom config from scratch.
+already-live-proven call shapes. Wired into `deploy-greenbone-stack.yml`
+as new tasks at the end of the existing play (copies the script in, runs
+it once via the same throwaway `gvm-tools` container pattern already used
+for `modify_auth.xml`). **Simplification found**: GVM ships a built-in
+`Discovery` scan config — used that directly rather than authoring a new
+custom config from scratch.
+
+**Validated by running the script directly against the running `gvmd`**
+on `pve-test-vm` (not via a full `provision.sh` re-deploy — that re-pulls
+every image and touches unrelated config; only the one new script needed
+exercising). All 14 Targets + 14 Tasks confirmed created, then a second
+clean run confirmed full idempotency (all 28 objects "already exists,
+skipping", zero duplicates).
+
+**Three real bugs found and fixed getting there, none guessable from
+`gvm-bridge`'s precedent alone**:
+1. `alive_test`'s draft string ("ICMP, TCP-ACK Service Ping, ARP Ping")
+   doesn't match any `AliveTest` enum value — python-gvm raises
+   `InvalidArgument`. The real combined-default string, confirmed by
+   enumerating the live enum, is `"ICMP, TCP-ACK Service & ARP Ping"`
+   (comma + ampersand, "Service" not "Service Ping" mid-clause).
+2. `create_target` has **no implicit port default** — omitting both
+   `port_list_id` and `port_range` fails with `GvmResponseError 400: One
+   of PORT_LIST and PORT_RANGE are required`. Fixed by resolving GVM's
+   built-in `"All TCP and Nmap top 100 UDP"` port list by name (the same
+   one `Full and fast` pairs with by default) and passing its ID to every
+   Target.
+3. `exclude_hosts` wants a `list[str]`, not a pre-joined comma string —
+   passing a joined string produced `GvmResponseError 400: Error in host
+   specification`. Matches the same shape as `hosts=[cidr]`, just missed
+   on the first pass.
+
+**Real infra incident hit during validation, unrelated to any of the
+above, worth its own note**: manually running `docker compose run` for
+one service against this stack while an earlier, interrupted
+`provision.sh` invocation's `docker compose up --pull always` was *still
+running in the background on the remote host* caused a genuine
+container-recreate race (`gvmd`/`ospd-openvas` got stuck in `Created`,
+one container hit a hash-prefixed rename conflict). Recovered cleanly by
+killing both stale processes and running one clean `docker compose up
+-d` to settle the stack — no data loss, but a real lesson: **always
+check `ps aux | grep docker.compose` on the target host for a still-running
+process before starting another one**, especially after a locally
+interrupted/cancelled command — the remote side doesn't necessarily stop
+just because the local tool call was cancelled.
 
 - **Two GVM Scan Configs**, not one:
   - `Discovery` — GVM's own built-in config; host-alive + port sweep, no
@@ -301,17 +337,22 @@ actually running:
 
 ## What's next (2026-08-16 checkpoint)
 
-`task/gvm-lan-scan-rollout` has Phase 1 **done and live** — see above.
-Remaining before Phase 1 is fully closed out, then moving on:
+`task/gvm-lan-scan-rollout` has Phase 1 and Phase 2 **done and validated
+on `pve-test-vm`** — see above. Not yet applied to production `pve`'s
+`greenbone-stack` (VMID `70011`, `192.168.70.11`) — Phase 1's firewall
+change is `pve`-wide already (the MikroTik is physically shared), but
+Phase 2's GVM Targets/Tasks are per-gvmd-instance and need the same
+`setup_scan_program.py` run against production's own `gvmd` separately.
 
 1. Optional but recommended: an actual reachability spot-check
    (`nc -zv`/`ping`) from inside `greenbone-stack` into 2–3 destination
    zones, to confirm real traffic, not just rule presence. Not done yet.
-2. Start Phase 2 — scan configs (`Discovery Only` vs `Full and fast`),
-   Tier A/B target classification, per-zone GVM Targets. Not started.
-   Everything in Phase 2 onward is local to `greenbone-stack` itself (GMP
-   calls against its own GVM instance), not a shared-infrastructure change
-   like Phase 1 was — lower-stakes to iterate on.
+2. Run Phase 2's `setup_scan_program.py` against production `pve`'s
+   `greenbone-stack` — needs the standard `TASK_APPROVAL` flow per
+   CLAUDE.md since it's a production mutation, even though it's low-blast-
+   radius (creates GVM objects only, no image pulls/config changes).
+3. Start Phase 3 (deferred by decision) / Phase 4 (scheduling) / Phase 5
+   (results pipeline) — none started yet.
 
 ## Related documentation
 
