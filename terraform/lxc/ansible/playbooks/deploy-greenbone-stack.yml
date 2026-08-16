@@ -756,11 +756,23 @@
         # via the bind mount, and this file has no secret content (the
         # credential is passed as an env var, not embedded in the script).
         mode: "0644"
+      tags: [scan-program]
 
+    # --no-deps added 2026-08-16 after a live incident on pve-test-vm:
+    # `docker compose run` for this one service, without --no-deps, was
+    # able to trigger a full recreate cascade of unrelated dependencies
+    # (gvmd/ospd-openvas ended up stuck in Created state) when run
+    # concurrently with another in-flight docker compose operation on the
+    # same host. --no-deps makes this task touch only gvm-tools itself,
+    # never gvmd or anything else, regardless of what else is running.
+    # Run this task alone via `ANSIBLE_TAGS=scan-program` (provision.sh
+    # already passes this through to `ansible-playbook --tags`) rather
+    # than the whole playbook, so a routine scan-program update never
+    # re-triggers the earlier `--pull always` compose-up task above.
     - name: Create/verify the LAN/VLAN scan program's Targets and Tasks (idempotent)
       ansible.builtin.command:
         cmd: >-
-          docker compose run --rm
+          docker compose run --rm --no-deps
           -v {{ greenbone_compose_dir }}/setup_scan_program.py:/tmp/setup_scan_program.py:ro
           -e GVM_USERNAME=admin
           -e GVM_PASSWORD={{ greenbone_admin_password }}
@@ -769,3 +781,4 @@
       changed_when: "'created target' in greenbone_scan_program_setup.stdout or 'created task' in greenbone_scan_program_setup.stdout"
       no_log: true
       register: greenbone_scan_program_setup
+      tags: [scan-program]

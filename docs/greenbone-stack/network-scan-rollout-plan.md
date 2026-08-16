@@ -348,9 +348,22 @@ Phase 2's GVM Targets/Tasks are per-gvmd-instance and need the same
    (`nc -zv`/`ping`) from inside `greenbone-stack` into 2–3 destination
    zones, to confirm real traffic, not just rule presence. Not done yet.
 2. Run Phase 2's `setup_scan_program.py` against production `pve`'s
-   `greenbone-stack` — needs the standard `TASK_APPROVAL` flow per
-   CLAUDE.md since it's a production mutation, even though it's low-blast-
-   radius (creates GVM objects only, no image pulls/config changes).
+   `greenbone-stack` — via the tracked IaC path, not manual `scp`/`ssh`:
+   both Phase 2 tasks in `deploy-greenbone-stack.yml` are tagged
+   `scan-program`, and `provision.sh` already passes `ANSIBLE_TAGS`
+   through to `ansible-playbook --tags`. Confirmed locally
+   (`--list-tasks --tags scan-program`) that this selects exactly the two
+   Phase 2 tasks and nothing else — no image pulls, no LDAP/admin-password
+   tasks, no re-run of the `--pull always` compose-up step. The actual
+   command:
+   ```
+   ANSIBLE_TAGS=scan-program TASK_APPROVAL=<name> ./with-secrets-prod scripts/provision.sh --stack greenbone-stack
+   ```
+   Still gated on `TASK_APPROVAL` per CLAUDE.md (Ansible's SSH transport
+   makes it a production mutation regardless of how narrowly it's
+   scoped), but this is the tracked, idempotent, reviewable path instead
+   of the ad hoc `scp`+manual-`docker-compose` approach used to validate
+   on `pve-test-vm`.
 3. Start Phase 3 (deferred by decision) / Phase 4 (scheduling) / Phase 5
    (results pipeline) — none started yet.
 
