@@ -281,20 +281,65 @@ add-on to this plan.
 
 ## Phase 4 — Scheduling
 
-GMP's native `Schedule` objects (icalendar-based), attached directly to
-Tasks — **not routed through `gvm-bridge` or PentAGI**; that integration
-exists for agent-triggered on-demand scans and is a different mission from
-standing recurring scans. Create via the same `gvm-cli` file-bind-mount
-pattern the deploy playbook already uses for GMP calls (see README.md's
-"LDAP login" section, gotcha #1) or directly in GSA once, then confirm it
-persists.
+**Weekly full-vuln scheduling: DONE, LIVE on both `pve-test-vm` (validated,
+then detached) and production `pve` as of 2026-08-16.** Daily discovery
+scheduling is NOT done — separate, not yet requested.
 
-- **Daily**: `Discovery Only` config, all in-scope zones + LAN.
-- **Weekly**: `Full and fast` config, Tier B hosts immediately, Tier A hosts
-  once individually promoted.
-- Respect Greenbone's own documented warning that feed sync is slow and
-  asynchronous — a scheduled scan against a mid-sync feed gives "incomplete
-  and erroneous results" per their own docs, already noted in README.md.
+GMP's native `Schedule` objects (icalendar-based), attached directly to
+Tasks via `modify_task(schedule_id=...)` — **not routed through
+`gvm-bridge` or PentAGI**; that integration exists for agent-triggered
+on-demand scans and is a different mission from standing recurring scans.
+Created via a real python-gvm script
+(`terraform/lxc/ansible/files/greenbone-scan-setup/setup_schedules.py`),
+tagged `schedule-program` in `deploy-greenbone-stack.yml` (separate tag
+from Phase 2's `scan-program`), same idempotent create-by-name pattern.
+
+**What's live**: the 7 `full-vuln` Tasks (one per zone + LAN) each got
+their own weekly Schedule, operator-specified 2026-08-16 — staggered an
+hour apart, LAN deliberately last, first run 2026-08-16 22:00
+Pacific/Auckland, recurring weekly indefinitely:
+
+| Time (Pacific/Auckland) | Zone |
+|---|---|
+| 22:00 | build_seg |
+| 23:00 | mgmt_seg |
+| 00:00 (+1d) | edge_seg |
+| 01:00 | infra_seg |
+| 02:00 | ai_seg |
+| 03:00 | game_seg |
+| 04:00 | lan |
+
+**Design decisions made building this**:
+- `DURATION` deliberately omitted from every VEVENT. gvmd defaults it to
+  `PT0S` when absent (confirmed live) and, per its own scheduler source
+  (`scheduled_task_handle_start_success` in `gvmd`'s `src/manage.c`), only
+  treats a 0-duration schedule as "once-off, auto-detach" when
+  `task_schedule_next_time` is *also* 0 — an ongoing `RRULE:FREQ=WEEKLY`
+  keeps `next_time` non-zero, so this path never trips. No risk of gvmd
+  aborting an in-progress scan just because it runs past the 1-hour
+  stagger interval (full-vuln scans routinely do).
+- `schedule_periods` left at its default (0) — confirmed via the same
+  gvmd source to mean unlimited scheduled runs, not zero runs.
+- DTSTART is a naive local time; the separate `timezone="Pacific/Auckland"`
+  argument to `create_schedule` is what gvmd applies to it. gvmd
+  auto-generates a full DST-aware `VTIMEZONE` block for Pacific/Auckland
+  on creation (confirmed live) — the 22:00 local-time trigger stays
+  correct across DST transitions without any manual adjustment.
+- Schedules **actually trigger runs**, unlike Phase 2's inert
+  Targets/Tasks — so after validating on `pve-test-vm`
+  (`ANSIBLE_TAGS=schedule-program`), the test-env schedules were detached
+  (`modify_task(schedule_id="0")`) and deleted
+  (`delete_schedule(ultimate=True)`) before applying to production, to
+  avoid a second host duplicating tonight's scan load against the same
+  live network. The validated script itself stays tracked; only the live
+  attachment was removed from the test env.
+
+Still to do for Phase 4 in full: **Daily** `Discovery Only` scheduling,
+all zones + LAN — not requested yet, no schedule exists for the Discovery
+tasks. Also still applies: respect Greenbone's own documented warning
+that feed sync is slow and asynchronous — a scheduled scan against a
+mid-sync feed gives "incomplete and erroneous results" per their own
+docs, already noted in README.md.
 
 ## Phase 5 — Results pipeline (the GSA reports page is broken — plan around it, don't rediscover it)
 
