@@ -782,3 +782,32 @@
       no_log: true
       register: greenbone_scan_program_setup
       tags: [scan-program]
+
+    # Phase 4 (partial) -- operator instruction 2026-08-16: schedule only
+    # the vulnerability ("full-vuln") Tasks, staggered an hour apart, LAN
+    # segment last, first run 22:00 local time, recurring weekly. Separate
+    # tag from scan-program so a schedule-only change (e.g. re-timing)
+    # never re-runs (or is blocked behind) the Targets/Tasks setup above.
+    - name: Write schedule setup script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/greenbone-scan-setup/setup_schedules.py"
+        dest: "{{ greenbone_compose_dir }}/setup_schedules.py"
+        mode: "0644"
+      tags: [schedule-program]
+
+    # --no-deps for the same reason as the scan-program task above -- see
+    # that task's comment for the live incident this avoids repeating.
+    # Run alone via `ANSIBLE_TAGS=schedule-program`.
+    - name: Create/verify the weekly full-vuln scan Schedules and attach to Tasks (idempotent)
+      ansible.builtin.command:
+        cmd: >-
+          docker compose run --rm --no-deps
+          -v {{ greenbone_compose_dir }}/setup_schedules.py:/tmp/setup_schedules.py:ro
+          -e GVM_USERNAME=admin
+          -e GVM_PASSWORD={{ greenbone_admin_password }}
+          gvm-tools python3 /tmp/setup_schedules.py
+        chdir: "{{ greenbone_compose_dir }}"
+      changed_when: "'created schedule' in greenbone_schedule_setup.stdout"
+      no_log: true
+      register: greenbone_schedule_setup
+      tags: [schedule-program]
