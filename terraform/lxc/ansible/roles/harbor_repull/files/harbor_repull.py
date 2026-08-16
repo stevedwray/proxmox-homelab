@@ -145,6 +145,35 @@ def mirror_one(registry_host: str, mirror_project: str, entry: str, *, dry_run: 
     return False, elapsed, f"FAILED mirroring {dest}: {last_line}"
 
 
+def cleanup_one(registry_host: str, mirror_project: str, entry: str, *, mirrored: bool, dry_run: bool) -> None:
+    """Remove the local image reference(s) for `entry` after processing.
+
+    ci-runner-01's docker storage is a small, fixed-size volume, not a
+    cache Harbor or anything else depends on -- harbor_repull's job is
+    to relay content through Harbor (and, for the mirror push, prove a
+    real pull happened), not to accumulate a permanent local copy of
+    every image in the manifest. Confirmed live 2026-08-16: with no
+    cleanup, this filled ci-runner-01's 10GB docker volume to 86% (98%
+    of it reclaimable) and caused a real mid-run failure ("disk quota
+    exceeded") partway through a run, unrelated to any actual network
+    issue. Best-effort and silent on failure -- never affects the run's
+    overall exit code, worst case is one image's disk space stays
+    unreclaimed until the next run's own cleanup attempt.
+    """
+    if dry_run:
+        return
+    refs = [f"{registry_host}/{entry}"]
+    if mirrored:
+        refs.append(f"{registry_host}/{mirror_project}/{entry}")
+    subprocess.run(  # nosec B603 B607 — fixed argv, no shell, image comes from a repo-tracked manifest file
+        ["docker", "rmi", *refs],
+        capture_output=True,
+        text=True,
+        timeout=60,
+        check=False,
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
@@ -215,6 +244,7 @@ def main() -> int:
 
         project = entry.split("/", 1)[0]
         if not mirror_enabled or project in skip_projects:
+            cleanup_one(args.registry_host, args.mirror_project, entry, mirrored=False, dry_run=args.dry_run)
             continue
 
         mirror_attempts += 1
@@ -227,6 +257,7 @@ def main() -> int:
             mirrored += 1
         else:
             mirror_failures += 1
+        cleanup_one(args.registry_host, args.mirror_project, entry, mirrored=mirror_ok, dry_run=args.dry_run)
 
     total = len(manifest)
     print(f"harbor-repull: {total - pull_failures}/{total} images pulled successfully")
