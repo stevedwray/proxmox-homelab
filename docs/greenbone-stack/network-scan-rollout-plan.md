@@ -232,13 +232,41 @@ just because the local tool call was cancelled.
   Target for that same zone uses GMP's `exclude_hosts` to carve out its
   Tier A members. Revisit target grain if a zone's scan time or noise
   level argues for splitting further.
-- **Real open capacity question, not yet answered**: `greenbone-stack` is
-  sized at Greenbone's stated *minimum* (2 cores / 4096 MB), justified
-  originally for one-off authorized-target scans. Daily discovery sweeps
-  across 8 network segments plus a weekly full-vuln pass is a materially
-  different, heavier standing load. Watch scan duration and container
-  resource usage after the first week; revisit sizing if scans are still
-  running when the next one is due to start.
+- **Capacity question, partially answered 2026-08-16**: operator manually
+  triggered `lan discovery` alone, then all 6 zone discovery scans
+  concurrently, on production `pve`, to observe real behavior (not yet
+  the daily-schedule automation, Phase 4 — a manual one-off exercise of
+  the same Tasks). Findings:
+  - **CPU is the real constraint, not memory.** With all 6 zone scans
+    running concurrently, host CPU stayed pinned at 95-100% for the
+    entire run (`ospd-openvas` alone measured up to 187% via `docker
+    stats` — already over the 2-core ceiling on its own). Memory never
+    exceeded ~56% (2.3GB/4GB) and dropped to ~27% by the end — comfortable
+    throughout. **2 cores is the binding limit for this stack, not the
+    4096MB memory allocation** — revisit *cores* first if scan duration
+    becomes a problem, not memory.
+  - **Long flat-progress plateaus are normal, not a hang.** Both the
+    single `lan discovery` run and the 6 concurrent zone runs each showed
+    multi-minute (up to ~9 min) periods where the GMP `progress` field
+    didn't move at all. Confirmed via `docker stats` during one such
+    plateau: `ospd-openvas` was at ~187% CPU, genuinely still computing
+    (`gvmd`/`ospd-openvas` container logs are near-silent during this
+    phase, which looks alarming but isn't). Don't treat a stalled
+    percentage alone as a failure signal when scheduling/alerting logic
+    is built in Phase 4/5 — check actual host resource usage or wait
+    longer before concluding a scan is stuck.
+  - **All 7 discovery scans (6 zones + `lan`) completed and produced real,
+    distinct, non-empty results** — nothing came back silently empty (the
+    exact failure mode the `alive_tests` gotcha exists to prevent).
+    Result/host counts: `lan` 511 results/23 hosts, `mgmt_seg` 478/14,
+    `infra_seg` 176/7, `edge_seg` 109/3, `ai_seg` 63/4, `build_seg` 41/3,
+    `game_seg` 39/2.
+  - **Still open**: this was one manual concurrent batch, not the actual
+    daily-schedule automation (Phase 4) or a full-vuln run (heavier
+    per-host than discovery). Whether the current 2-core sizing holds up
+    under the real Phase 4 cadence (daily discovery + weekly full-vuln,
+    potentially overlapping) is still unconfirmed — revisit if scheduled
+    scans are still running when the next one is due to start.
 
 ## Phase 3 — Credentialed scanning (decided 2026-08-16: deferred)
 
@@ -352,13 +380,22 @@ these objects yet, unlike `pve-test-vm`). Immediate second run:
 as it did on test. All 14 Targets + 14 Tasks are now live on production
 `greenbone-stack`.
 
+**Manual reachability validation done, same day**: operator triggered
+`lan discovery` and then all 6 zone discovery scans concurrently on
+production `pve` (via GSA, not Phase 4 automation), confirming real
+traffic end-to-end — see the capacity findings above for the full
+results/performance data. This also stands in for the "optional
+reachability spot-check" item that was on this list — real production
+scan traffic into every zone, not just a `ping`, is stronger evidence
+than the originally-planned narrower check.
+
 Remaining:
 
-1. Optional: an actual reachability spot-check (`nc -zv`/`ping`) from
-   inside `greenbone-stack` into 2–3 destination zones, to confirm real
-   traffic, not just rule presence. Not done yet, on either environment.
-2. Start Phase 3 (deferred by decision) / Phase 4 (scheduling) / Phase 5
+1. Start Phase 3 (deferred by decision) / Phase 4 (scheduling) / Phase 5
    (results pipeline) — none started yet.
+2. Decide whether the current 2-core sizing needs revisiting before
+   Phase 4 turns this into a recurring daily/weekly load — see the
+   capacity findings above.
 
 ## Related documentation
 
