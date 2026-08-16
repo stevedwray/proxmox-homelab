@@ -1,0 +1,16 @@
+---
+# Docker's daemon caches the system TLS trust pool at process start and
+# does not pick up a newly-installed/rotated CA cert on a live daemon --
+# confirmed live 2026-08-16: ci-runner-01's homelab root CA was refreshed
+# by a redeploy (update-ca-certificates ran, the new cert was genuinely
+# on disk) but every `docker pull` against Harbor's HTTPS endpoint kept
+# failing with "x509: certificate signed by unknown authority" until
+# dockerd itself was restarted. lxc_base runs on hosts that don't have
+# Docker at all (dns-stack/CoreDNS, apt-cacher-stack, step-ca-stack), so
+# this must degrade quietly rather than fail the play when there's no
+# docker.service unit to restart.
+- name: Restart Docker to pick up refreshed CA trust
+  ansible.builtin.systemd:
+    name: docker
+    state: restarted
+  failed_when: false

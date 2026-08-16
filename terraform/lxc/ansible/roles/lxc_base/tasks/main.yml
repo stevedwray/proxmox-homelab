@@ -90,6 +90,7 @@
   when:
     - lxc_base_root_ca_exists | bool
     - lxc_base_homelab_root_ca_copy.changed
+  notify: Restart Docker to pick up refreshed CA trust
 
 - name: Ensure machine-id exists for host and cAdvisor identity
   ansible.builtin.command:
