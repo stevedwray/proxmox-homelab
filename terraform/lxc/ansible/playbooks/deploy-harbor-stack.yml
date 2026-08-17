@@ -261,3 +261,19 @@
             if (harbor_daemon_config.changed or harbor_cadvisor_compose_definition.changed)
             else 'auto'
           }}
+
+- name: Deploy findings ingestion (Harbor -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new dedicated Harbor robot +
+  # OpenSearch user -- does not touch harbor_installer, harbor_postconfigure,
+  # cAdvisor, or any credential/state either of those manage. Fully
+  # independent of harbor_repull too (that role runs on ci-runner-01, a
+  # different host entirely -- see terraform/lxc/ansible/playbooks/deploy-ci-runner.yml).
+  # Gated the same way docker_socket_proxy/harbor_repull are: explicit opt-in
+  # via a stack.yaml flag, off by default.
+  roles:
+    - role: es_findings_ingest
+      when: es_findings_ingest_enabled | default(false) | bool

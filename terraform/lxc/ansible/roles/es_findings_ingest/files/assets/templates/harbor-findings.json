@@ -1,0 +1,45 @@
+{
+  "index_patterns": ["harbor-findings*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.default_pipeline": "harbor-findings-normalize"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "source": { "type": "keyword" },
+        "finding_id": { "type": "keyword" },
+        "severity_raw": { "type": "keyword" },
+        "severity_assessed": { "type": "keyword" },
+        "assessed_reason": { "type": "text" },
+        "assessed_by": { "type": "keyword" },
+        "assessed_at": { "type": "date" },
+        "package": { "type": "keyword" },
+        "package_version": { "type": "keyword" },
+        "fixed_version": { "type": "keyword" },
+        "description": { "type": "text" },
+        "artifact": {
+          "properties": {
+            "project": { "type": "keyword" },
+            "repository": { "type": "keyword" },
+            "tag": { "type": "keyword" },
+            "digest": { "type": "keyword" },
+            "in_production": { "type": "boolean" },
+            "stack": { "type": "keyword" }
+          }
+        },
+        "scan_time": { "type": "date" },
+        "first_seen": { "type": "date" },
+        "last_seen": { "type": "date" },
+        "ingested_at": { "type": "date" }
+      }
+    }
+  },
+  "priority": 200,
+  "_meta": {
+    "description": "Harbor/Trivy vulnerability findings — one document per finding-per-artifact-per-scan, upserted on a deterministic _id so reruns update first_seen/last_seen rather than duplicating. See docs/elasticsearch-stack/README.md section 1 (Data model).",
+    "managed_by": "es_findings_ingest role, es_setup_assets.py"
+  }
+}
