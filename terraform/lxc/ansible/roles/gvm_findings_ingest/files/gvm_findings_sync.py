@@ -162,13 +162,23 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
             json.dumps(
                 {
                     "script": {
+                        # putAll refreshes every current-scan-observed field
+                        # (threat_raw, severity_raw, cve, qod, last_seen,
+                        # scan_time -- doc already carries the latter two)
+                        # on already-indexed documents, not just timestamps.
+                        # Same latent bug found and fixed in
+                        # harbor_findings_sync.py 2026-08-18: the previous
+                        # version only ever touched last_seen/scan_time/
+                        # first_seen, so any future field addition would
+                        # silently never backfill onto already-indexed
+                        # documents via a rerun. first_seen stays
+                        # deliberately sticky (only set if still null).
                         "source": (
-                            "ctx._source.last_seen = params.now; "
-                            "ctx._source.scan_time = params.scan_time; "
+                            "ctx._source.putAll(params.doc); "
                             "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
                         ),
                         "lang": "painless",
-                        "params": {"now": now, "scan_time": doc.get("scan_time")},
+                        "params": {"now": now, "doc": doc},
                     },
                     "upsert": upsert_doc,
                 }

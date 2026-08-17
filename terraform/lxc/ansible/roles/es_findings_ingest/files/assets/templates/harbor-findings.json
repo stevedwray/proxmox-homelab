@@ -12,6 +12,7 @@
         "source": { "type": "keyword" },
         "finding_id": { "type": "keyword" },
         "severity_raw": { "type": "keyword" },
+        "cvss_score": { "type": "float" },
         "severity_assessed": { "type": "keyword" },
         "assessed_reason": { "type": "text" },
         "assessed_by": { "type": "keyword" },

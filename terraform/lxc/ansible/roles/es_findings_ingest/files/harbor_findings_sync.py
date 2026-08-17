@@ -191,6 +191,22 @@ def scan_overview_completed(artifact: dict) -> bool:
     return False
 
 
+def _extract_cvss_score(vuln: dict) -> float | None:
+    # Confirmed live 2026-08-18 against a real Harbor vulnerability record
+    # (greenbone/community/gvmd): Harbor's additions/vulnerabilities
+    # response carries a top-level "preferred_cvss" object
+    # ({"score_v3": ..., "score_v2": ..., ...}) that harbor_findings_sync.py
+    # had never captured until now -- same real, unresolved CVSS
+    # v2-vs-v3/cross-source-severity caveat gvm-findings.json's own _meta
+    # description already flags for GVM. Prefer v3 (more precise, more
+    # commonly populated); fall back to v2 only when v3 is null/absent.
+    preferred = vuln.get("preferred_cvss") or {}
+    score = preferred.get("score_v3")
+    if score is None:
+        score = preferred.get("score_v2")
+    return score
+
+
 def build_documents(project_name: str, repo_short_name: str, artifact: dict, vulnerabilities: list[dict], *, scan_time: str) -> list[dict]:
     digest = artifact.get("digest", "")
     tags = [t.get("name") for t in (artifact.get("tags") or []) if t.get("name")]
@@ -205,6 +221,7 @@ def build_documents(project_name: str, repo_short_name: str, artifact: dict, vul
                 "source": "harbor",
                 "finding_id": finding_id,
                 "severity_raw": vuln.get("severity"),
+                "cvss_score": _extract_cvss_score(vuln),
                 "package": vuln.get("package"),
                 "package_version": vuln.get("version"),
                 "fixed_version": vuln.get("fix_version") or None,
@@ -248,13 +265,26 @@ def bulk_upsert(base_url: str, index: str, docs: list[dict], *, auth_header: str
             json.dumps(
                 {
                     "script": {
+                        # putAll refreshes every current-scan-observed field
+                        # (severity_raw, cvss_score, package_version,
+                        # fixed_version, description, last_seen, scan_time --
+                        # doc already carries the latter two) on already-
+                        # indexed documents, not just timestamps. Fixed
+                        # 2026-08-18: the previous version only ever touched
+                        # last_seen/scan_time/first_seen, so a newly-added
+                        # field like cvss_score silently never backfilled
+                        # onto the ~16k documents indexed before it existed
+                        # -- confirmed live (0 docs had cvss_score after a
+                        # full rerun, until this fix). first_seen stays
+                        # deliberately sticky (only set if still null) since
+                        # it's meant to record original discovery date, not
+                        # get overwritten by putAll.
                         "source": (
-                            "ctx._source.last_seen = params.now; "
-                            "ctx._source.scan_time = params.scan_time; "
+                            "ctx._source.putAll(params.doc); "
                             "if (ctx._source.first_seen == null) { ctx._source.first_seen = params.now }"
                         ),
                         "lang": "painless",
-                        "params": {"now": now, "scan_time": doc.get("scan_time")},
+                        "params": {"now": now, "doc": doc},
                     },
                     "upsert": upsert_doc,
                 }
