@@ -352,6 +352,22 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://kibana.lab.gibbsgreatly.xyz/
 # same forwardAuth signature every other stack's route produces
 ```
 
+**Important architectural note found live 2026-08-17**: `forwardAuth` is
+a perimeter gate only — it does not give Kibana the caller's identity.
+Once through Authentik (or silently passed through on an already-valid
+session cookie for the shared outpost, which covers the whole
+`lab.gibbsgreatly.xyz` domain), the request still hits **Kibana's own
+native login screen** (Elasticsearch's native user realm — the `elastic`
+superuser, `ELASTIC_PASSWORD` in SOPS). True SSO (Kibana trusting
+Authentik's identity directly via a SAML/OIDC realm in Elasticsearch)
+requires Elastic's **Gold+ subscription** — not available on the free
+Basic license this stack runs. So the real model is two layers:
+Authentik gates *who can reach* Kibana at all, native `elastic`/future
+per-user accounts gate *what they can do inside* it. Not a bug — just
+wasn't spelled out when Stage 4 was planned. Follow-up, not urgent:
+create a dedicated native-realm user (non-superuser role) for interactive
+login instead of sharing the `elastic` account long-term.
+
 ## Stage 5 — Cross-zone SDN rules on the MikroTik — **DONE, live 2026-08-17**
 
 **Correction from the original plan**: not a manual Safe Mode CLI
