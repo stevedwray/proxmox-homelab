@@ -1,0 +1,47 @@
+{
+  "index_patterns": ["gvm-findings*"],
+  "template": {
+    "settings": {
+      "number_of_shards": 1,
+      "number_of_replicas": 0,
+      "index.default_pipeline": "gvm-findings-normalize"
+    },
+    "mappings": {
+      "dynamic": false,
+      "properties": {
+        "source": { "type": "keyword" },
+        "finding_id": { "type": "keyword" },
+        "cve": { "type": "keyword" },
+        "name": { "type": "text" },
+        "severity_raw": { "type": "float" },
+        "threat_raw": { "type": "keyword" },
+        "qod": { "type": "integer" },
+        "severity_assessed": { "type": "keyword" },
+        "assessed_reason": { "type": "text" },
+        "assessed_by": { "type": "keyword" },
+        "assessed_at": { "type": "date" },
+        "target": {
+          "properties": {
+            "host": { "type": "ip" },
+            "hostname": { "type": "keyword" },
+            "port": { "type": "keyword" },
+            "zone": { "type": "keyword" },
+            "stack": { "type": "keyword" },
+            "in_production": { "type": "boolean" },
+            "pentest_target": { "type": "boolean" }
+          }
+        },
+        "scan_task": { "type": "keyword" },
+        "scan_time": { "type": "date" },
+        "first_seen": { "type": "date" },
+        "last_seen": { "type": "date" },
+        "ingested_at": { "type": "date" }
+      }
+    }
+  },
+  "priority": 200,
+  "_meta": {
+    "description": "Greenbone/GVM vulnerability findings -- one document per finding-per-host-per-port, upserted on a deterministic _id so reruns update first_seen/last_seen rather than duplicating. finding_id is the NVT OID (not always a CVE -- a real finding can have zero associated CVEs). Deliberately does NOT carry threat=Log rows -- those are filtered out in gvm_findings_sync.py before documents are ever built, not at ingest time, since real production data showed Log makes up ~90-95% of raw results (see docs/elasticsearch-stack/README.md section 3). See that doc for the full data model and the real, unresolved CVSS v2-vs-v3/threat-bucket cross-source severity caveat.",
+    "managed_by": "gvm_findings_ingest role, es_setup_assets.py"
+  }
+}

@@ -355,6 +355,10 @@ ES_FINDINGS_INGEST_KEYS = (
     "es_findings_ingest_enabled",
 )
 
+GVM_FINDINGS_INGEST_KEYS = (
+    "gvm_findings_ingest_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -418,6 +422,10 @@ for key in HARBOR_REPULL_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in ES_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in GVM_FINDINGS_INGEST_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 

@@ -651,6 +651,15 @@
       changed_when: true
       no_log: true
       register: greenbone_ldap_enable
+      # Same gvmd-socket-not-ready race the "Set gvmd admin password" task
+      # above already guards against -- confirmed live 2026-08-17 (a full
+      # pull+build run left gvmd slower to bind /run/gvmd/gvmd.sock than
+      # usual): "ERROR:gvmtools.cli:Could not connect to socket
+      # /run/gvmd/gvmd.sock. Error was [Errno 111] Connection refused".
+      # This task never had the retry guard its sibling does; added here.
+      retries: 10
+      delay: 10
+      until: greenbone_ldap_enable is succeeded
 
     # gvmd requires a local user record to exist even for LDAP-authenticated
     # logins -- LDAP only supplies the password check, not the account
@@ -811,3 +820,18 @@
       no_log: true
       register: greenbone_schedule_setup
       tags: [schedule-program]
+
+- name: Deploy findings ingestion (GVM -> opensearch-stack)
+  hosts: all
+  become: true
+  gather_facts: false
+  # Purely additive to this playbook: a new role, new files under its own
+  # directory, a new systemd timer, and a new scoped OpenSearch user --
+  # does not touch gvmd, ospd-openvas, gvm-bridge's own compose service,
+  # or any credential/state those manage (gvm-bridge's own
+  # /findings/all endpoint is new code within its existing container,
+  # not a new service). Gated the same way es_findings_ingest is:
+  # explicit opt-in via a stack.yaml flag, off by default.
+  roles:
+    - role: gvm_findings_ingest
+      when: gvm_findings_ingest_enabled | default(false) | bool

@@ -1,0 +1,10 @@
+[Unit]
+Description=Schedule for gvm-findings-ingest.service
+
+[Timer]
+OnCalendar={{ gvm_findings_ingest_on_calendar }}
+Persistent=true
+RandomizedDelaySec=300
+
+[Install]
+WantedBy=timers.target

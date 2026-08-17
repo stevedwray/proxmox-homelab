@@ -176,5 +176,49 @@ def scan_results(task_id):
     return jsonify({"results": results})
 
 
+@app.get("/findings/all")
+def findings_all():
+    # Same get_results/never-get_reports, rows=-1 reasoning as
+    # /scan/results/<task_id> above -- but with NO task_id filter term at
+    # all, which is what actually returns results across every task
+    # (confirmed live 2026-08-17: task_id is only ever a note/override
+    # scoping kwarg, not a results filter, so omitting it entirely -- not
+    # passing an empty value -- is what makes this a real sweep). Used by
+    # gvm_findings_ingest's scheduled sync, not by PentAGI's on-demand
+    # single-task flow above; richer field extraction than scan_results()
+    # to match the OpenSearch document shape in
+    # docs/elasticsearch-stack/README.md section 3 -- confirmed live
+    # against a real result element (not guessed) which fields actually
+    # exist and at what path.
+    with _open_gmp() as gmp:
+        gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
+        response = gmp.get_results(filter_string="rows=-1", details=True)
+
+    results = []
+    for r in response.findall("result"):
+        nvt = r.find("nvt")
+        cve_refs = nvt.findall('refs/ref[@type="cve"]') if nvt is not None else []
+        hostname_el = r.find("host/hostname")
+        task_el = r.find("task")
+        qod_el = r.find("qod/value")
+        results.append(
+            {
+                "finding_id": nvt.get("oid") if nvt is not None else None,
+                "name": r.findtext("name"),
+                "cve": [ref.get("id") for ref in cve_refs],
+                "severity": r.findtext("severity"),
+                "threat": r.findtext("threat"),
+                "qod": qod_el.text if qod_el is not None else None,
+                "host": r.findtext("host"),
+                "hostname": hostname_el.text if hostname_el is not None else None,
+                "port": r.findtext("port"),
+                "task_name": task_el.findtext("name") if task_el is not None else None,
+                "creation_time": r.findtext("creation_time"),
+            }
+        )
+
+    return jsonify({"results": results})
+
+
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", "8010")))

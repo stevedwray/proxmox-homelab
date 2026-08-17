@@ -1,0 +1,261 @@
+---
+- name: Remove scheduled GVM findings ingest when not explicitly enabled
+  when: not (gvm_findings_ingest_enabled | bool)
+  block:
+    - name: Stop and disable gvm-findings-ingest timer
+      ansible.builtin.systemd:
+        name: gvm-findings-ingest.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop gvm-findings-ingest service if present
+      ansible.builtin.systemd:
+        name: gvm-findings-ingest.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove gvm-findings-ingest units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/gvm-findings-ingest.timer
+        - /etc/systemd/system/gvm-findings-ingest.service
+        - "{{ gvm_findings_ingest_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale gvm-findings-ingest service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed gvm-findings-ingest.service gvm-findings-ingest.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled GVM findings ingest when explicitly enabled
+  when: gvm_findings_ingest_enabled | bool
+  block:
+    - name: Create gvm-findings-ingest directory
+      ansible.builtin.file:
+        path: "{{ gvm_findings_ingest_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Create gvm-findings-ingest assets directory
+      ansible.builtin.file:
+        path: "{{ gvm_findings_ingest_dir }}/assets/{{ item }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+      loop:
+        - templates
+        - ingest_pipelines
+
+    - name: Copy es_setup_assets.py
+      ansible.builtin.copy:
+        src: es_setup_assets.py
+        dest: "{{ gvm_findings_ingest_dir }}/es_setup_assets.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy gvm_findings_sync.py
+      ansible.builtin.copy:
+        src: gvm_findings_sync.py
+        dest: "{{ gvm_findings_ingest_dir }}/gvm_findings_sync.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy index template assets
+      ansible.builtin.copy:
+        src: "assets/templates/{{ item }}"
+        dest: "{{ gvm_findings_ingest_dir }}/assets/templates/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - gvm-findings.json
+        - es-findings-sync-state.json
+
+    - name: Copy ingest pipeline assets
+      ansible.builtin.copy:
+        src: "assets/ingest_pipelines/{{ item }}"
+        dest: "{{ gvm_findings_ingest_dir }}/assets/ingest_pipelines/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - gvm-findings-normalize.json
+
+    # ---------------------------------------------------------------
+    # Scoped OpenSearch internal user -- reuses es_findings_ingest's own
+    # es_findings_writer role (already scoped to harbor-findings*/
+    # gvm-findings*/es-findings-sync-state) rather than defining a second,
+    # identically-scoped role. Only a new USER identity is created here,
+    # so this role's credential stays independently rotatable from
+    # es_findings_ingest's. If harbor-stack's role has never run,
+    # es_findings_writer won't exist yet -- create-role-if-missing here
+    # too so this role doesn't implicitly depend on deploy ordering.
+    # ---------------------------------------------------------------
+
+    - name: Check for existing OpenSearch findings-writer credential
+      ansible.builtin.stat:
+        path: "{{ gvm_findings_ingest_dir }}/es-user.env"
+      register: gvm_findings_ingest_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning its scoped user
+      ansible.builtin.wait_for:
+        host: "{{ gvm_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: gvm_findings_ingest_es_reachable
+      ignore_errors: true
+      when: not gvm_findings_ingest_es_credential_stat.stat.exists
+
+    - name: Warn and skip OpenSearch user provisioning when it is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ gvm_findings_ingest_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping gvm-findings-ingest user creation --
+          re-run provision once opensearch-stack is reachable.
+      when:
+        - not gvm_findings_ingest_es_credential_stat.stat.exists
+        - gvm_findings_ingest_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the scoped OpenSearch user
+      ansible.builtin.set_fact:
+        gvm_findings_ingest_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not gvm_findings_ingest_es_credential_stat.stat.exists
+        - not (gvm_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure es_findings_writer role exists in OpenSearch
+      ansible.builtin.uri:
+        url: "{{ gvm_findings_ingest_elasticsearch_url }}/_plugins/_security/api/roles/{{ gvm_findings_ingest_es_role_name }}"
+        method: PUT
+        url_username: "{{ gvm_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ gvm_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not gvm_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            - index_patterns:
+                - "harbor-findings*"
+                - "gvm-findings*"
+                - "es-findings-sync-state"
+              allowed_actions:
+                - "create_index"
+                - "write"
+                - "read"
+        status_code: [200, 201]
+      when:
+        - not gvm_findings_ingest_es_credential_stat.stat.exists
+        - not (gvm_findings_ingest_es_reachable.failed | default(true))
+      delegate_to: localhost
+
+    - name: Ensure scoped OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ gvm_findings_ingest_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ gvm_findings_ingest_es_user_name }}"
+        method: PUT
+        url_username: "{{ gvm_findings_ingest_elastic_admin_user }}"
+        url_password: "{{ gvm_findings_ingest_elastic_admin_password }}"
+        validate_certs: "{{ not gvm_findings_ingest_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ gvm_findings_ingest_es_password }}"
+          opendistro_security_roles:
+            - "{{ gvm_findings_ingest_es_role_name }}"
+          description: "gvm_findings_ingest service account (greenbone-stack) -- never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not gvm_findings_ingest_es_credential_stat.stat.exists
+        - not (gvm_findings_ingest_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch findings-writer credential file
+      ansible.builtin.copy:
+        dest: "{{ gvm_findings_ingest_dir }}/es-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # gvm-findings-ingest OpenSearch user credential - managed by Ansible, do not edit by hand
+          ES_FINDINGS_USER={{ gvm_findings_ingest_es_user_name }}
+          ES_FINDINGS_PASSWORD={{ gvm_findings_ingest_es_password }}
+      when:
+        - not gvm_findings_ingest_es_credential_stat.stat.exists
+        - not (gvm_findings_ingest_es_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Idempotent index template / ingest pipeline apply -- cheap
+    # GET-compare-PUT, safe (and expected) to run every deploy, same
+    # style as es_findings_ingest's own asset-setup task.
+    # ---------------------------------------------------------------
+
+    - name: Check if OpenSearch is reachable for asset setup
+      ansible.builtin.wait_for:
+        host: "{{ gvm_findings_ingest_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: gvm_findings_ingest_es_reachable_for_assets
+      ignore_errors: true
+
+    - name: Apply OpenSearch index templates and ingest pipelines
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/python3 {{ gvm_findings_ingest_dir }}/es_setup_assets.py
+          --elasticsearch-url {{ gvm_findings_ingest_elasticsearch_url }}
+          --user {{ gvm_findings_ingest_elastic_admin_user }}
+          --password {{ gvm_findings_ingest_elastic_admin_password | quote }}
+          {{ '--no-verify-tls' if gvm_findings_ingest_es_no_verify_tls else '' }}
+          --apply
+      register: gvm_findings_ingest_setup_assets_result
+      changed_when: >-
+        'created' in gvm_findings_ingest_setup_assets_result.stdout
+        or 'updated' in gvm_findings_ingest_setup_assets_result.stdout
+      when: not (gvm_findings_ingest_es_reachable_for_assets.failed | default(true))
+      no_log: true
+
+    - name: Report asset setup skipped
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ gvm_findings_ingest_elasticsearch_host }}:9200 is not reachable --
+          skipped index template / ingest pipeline setup this run.
+      when: gvm_findings_ingest_es_reachable_for_assets.failed | default(true)
+
+    - name: Write gvm-findings-ingest systemd service
+      ansible.builtin.template:
+        src: gvm-findings-ingest.service.j2
+        dest: /etc/systemd/system/gvm-findings-ingest.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write gvm-findings-ingest systemd timer
+      ansible.builtin.template:
+        src: gvm-findings-ingest.timer.j2
+        dest: /etc/systemd/system/gvm-findings-ingest.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start gvm-findings-ingest timer
+      ansible.builtin.systemd:
+        name: gvm-findings-ingest.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

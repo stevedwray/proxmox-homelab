@@ -1,0 +1,53 @@
+---
+# Defaults for gvm_findings_ingest role — see docs/elasticsearch-stack/README.md
+# section 3 (GVM data model) and plan.md's "Ingestion pattern". Explicit
+# opt-in, matching es_findings_ingest_enabled/harbor_repull_enabled's
+# pattern — only ever included on greenbone-stack, gated by a flag so it
+# never silently attaches to any other host that happens to reuse this
+# role file.
+gvm_findings_ingest_enabled: false
+
+gvm_findings_ingest_dir: /opt/gvm-findings-ingest
+gvm_findings_ingest_log_path: /var/log/gvm-findings-ingest.log
+
+# systemd OnCalendar expression. Estimate, not confirmed against the
+# actual weekly full-vuln schedule's real finish time -- the design doc
+# (docs/elasticsearch-stack/README.md section 3) says the lan zone
+# (last in the stagger) finishes ~05:00-06:00 Pacific/Auckland, which is
+# ~17:00-18:00 UTC the previous day. 19:00 UTC gives a safety margin past
+# that; revisit once a real scheduled run's actual finish time is
+# confirmed live, same as harbor_findings_sync's own 05:30 UTC pick was
+# reasoned from Harbor's specific timing.
+gvm_findings_ingest_on_calendar: "*-*-* 19:00:00"
+
+# --- gvm-bridge connection -------------------------------------------
+# Same host this script runs on (greenbone-stack itself) -- gvm-bridge
+# already holds the real GMP credential and does the get_results/never-
+# get_reports, rows=-1 dance; this role's sync script is a plain HTTP
+# client on top of it via localhost, not a second direct GMP/socket
+# connection. See gvm_findings_sync.py's own docstring.
+gvm_findings_ingest_bridge_url: "http://127.0.0.1:8010"
+
+# --- OpenSearch connection -----------------------------------------------
+# Same opensearch-stack target and HTTPS/self-signed-cert reasoning as
+# es_findings_ingest's defaults -- see that role's defaults/main.yml.
+gvm_findings_ingest_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+gvm_findings_ingest_elasticsearch_url: "https://{{ gvm_findings_ingest_elasticsearch_host }}:9200"
+gvm_findings_ingest_es_no_verify_tls: true
+
+# OpenSearch admin superuser -- needed only to bootstrap this role's own
+# scoped OpenSearch user and to idempotently apply index templates/
+# ingest pipelines (es_setup_assets.py, shared with es_findings_ingest).
+# Never used at runtime by gvm_findings_sync.py.
+gvm_findings_ingest_elastic_admin_user: admin
+gvm_findings_ingest_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Reuses es_findings_ingest's own es_findings_writer OpenSearch role
+# (already scoped to harbor-findings*/gvm-findings*/es-findings-sync-state
+# -- see that role's tasks/main.yml) rather than defining a second,
+# identically-scoped role. A distinct internal-user identity per writer
+# (this one, separate from es_findings_ingest's own) keeps credentials
+# independently rotatable/revocable even though the permissions granted
+# are the same.
+gvm_findings_ingest_es_role_name: es_findings_writer
+gvm_findings_ingest_es_user_name: gvm_findings_ingest
