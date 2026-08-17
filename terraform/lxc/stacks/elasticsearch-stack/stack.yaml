@@ -1,0 +1,78 @@
+# Elasticsearch + Kibana — dedicated findings store (Harbor + GVM to start).
+# Not the legacy `elastic-stack` (vmid 112, drifted, native-installed, out of
+# scope) — see docs/elasticsearch-stack/plan.md's "Corrected facts" section.
+# Memory: started conservative at 3072MB (-> 1GB ES heap), observed real
+# usage live 2026-08-17 -- genuinely too tight: ES+Kibana+Docker daemon+
+# docker-socket-proxy+portainer-agent left the LXC at 24Mi free / OOM,
+# Kibana stuck unable to reach a healthy state. Bumped to 6144MB, matching
+# deploy-graylog-stack.yml's own proven tier for a comparable JVM-backed
+# service (same heap formula -> 3GB ES heap, ~3GB left for everything else).
+hostname: elasticsearch-stack
+ip_address: "192.168.40.13/24"
+gateway: "192.168.40.1"
+dns_server: "192.168.40.1"
+network:
+  zone: infra_seg
+vmid: 40013
+cores: 2
+memory: 6144
+swap: 1024
+rootfs_size: 16
+storage_profile: platform-zfs
+docker_storage_size: "20G"
+docker_mount:
+  logical_name: docker-data
+  path: /var/lib/docker
+  size: "20G"
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+template_name: "debian-13.1-2-docker-template.tar.gz"
+tags:
+  - elasticsearch
+  - kibana
+  - security
+  - findings
+  - docker
+depends_on:
+  - harbor-stack
+  - apt-cacher-stack
+provides:
+  - service: elasticsearch-http
+    port: 9200
+    protocol: tcp
+  - service: kibana-http
+    port: 5601
+    protocol: tcp
+
+# Dedicated data volume for Elasticsearch indices — separate from the LXC's
+# own rootfs/docker-storage, on the durable-zfs profile (the `storage` ZFS
+# pool, 1.62TB free as of 2026-08-17 — see plan.md's storage call). Started
+# at 150G; grow-only, not expected to need it soon at Harbor+GVM scale.
+extra_mount_path: "/var/lib/elasticsearch-data"
+extra_mount_size: "150G"
+extra_mount_profile: durable-zfs
+extra_mount:
+  logical_name: es-data
+  path: /var/lib/elasticsearch-data
+  size: "150G"
+  profile: durable-zfs
+  backup_policy: include
+  resize_control_plane: operational
+  mutation_policy: grow-only
+
+# Environment-selected service IPs (sourced from TF_VAR_lab_ip_* env vars)
+registry_host: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}"
+apt_cacher_host: "${lab_ip_apt_cacher}"
+
+# Docker socket proxy — read-only Docker API endpoint, consistent with
+# harbor-stack/netbox-stack (NetBox discovery, cross-stack visibility)
+enable_docker_socket_proxy: true
+docker_socket_proxy_bind_addr: "192.168.40.13"
+docker_socket_proxy_listen_port: 2375
+docker_socket_proxy_targets:
+  - "192.168.40.13"
+
+ansible_playbook: "deploy-elasticsearch-stack"
+deployment_tier: platform
+portainer_agent: false

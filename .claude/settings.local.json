@@ -1,6 +1,7 @@
 {
   "permissions": {
     "allow": [
+      "Bash(ssh root@192.168.10.63:*)",
       "Bash(./with-secrets-prod ansible-playbook -i terraform/lxc/environments/pve/monitoring-stack/inventory.yml terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml *)",
       "Bash(git add:*)",
       "Bash(git commit:*)",
@@ -144,7 +145,11 @@
       "Bash(python3 /tmp/claude-1000/-home-steve-git-proxmox-homelab/a753eb54-308c-4911-95bb-5f83bb035a32/scratchpad/fix_ip_scheme.py)",
       "Bash(ping -c1 -W2 192.168.1.1)",
       "Bash(ssh framework.gibbsgreatly.xyz ' *)",
-      "Bash(ssh framework.gibbsgreatly.xyz \"systemctl is-active docker.service docker.socket containerd.service 2>&1; echo '---'; sudo lsof +D /storage 2>&1; echo '---'; pgrep -fa 'llmster|llama-server' 2>&1 || echo 'none found'\")"
+      "Bash(ssh framework.gibbsgreatly.xyz \"systemctl is-active docker.service docker.socket containerd.service 2>&1; echo '---'; sudo lsof +D /storage 2>&1; echo '---'; pgrep -fa 'llmster|llama-server' 2>&1 || echo 'none found'\")",
+      "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/elasticsearch-stack apply*)",
+      "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/elasticsearch-stack plan*)",
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack elasticsearch-stack*)",
+      "Bash(./with-secrets-prod scripts/provision.sh --stack elasticsearch-stack*)"
     ],
     "deny": [
       "Read(./secrets/**)",

@@ -2,10 +2,19 @@
 
 ## Status
 
-**Ideation only. Nothing has been built.** This document exists to seed a
-future session. See `docs/workflow/documentation-workspaces.md` for how
-this workspace should evolve (durable conclusions here, scratch material
-in `artifacts/`).
+**Decisions made — see `plan.md`. Step-by-step execution — see
+`runbook.md`.** This document is now the ideation/data-model source
+(finding shapes, GVM ingestion gotchas below); `plan.md` has the concrete
+placement, sizing, deployment mechanics, and phasing, including a
+correction to this doc's "legacy container is empty" claim (it isn't —
+see `plan.md`'s "Corrected facts about the legacy container");
+`runbook.md` turns `plan.md`'s Phases 1–6 into exact commands with
+testing at each stage, developed directly against `pve` (not
+`pve-test-vm`) and landing on `stable` (not `main`) — see `plan.md`'s
+"Development environment" section for why. Nothing has been built yet.
+See `docs/workflow/documentation-workspaces.md`
+for how this workspace should evolve (durable conclusions here and in
+`plan.md`, scratch material in `artifacts/`).
 
 ## Goal
 
@@ -22,25 +31,26 @@ with Graylog/Grafana/Kibana as possible surfaces on top.
 ## Relevant existing state
 
 - **There is a legacy Elasticsearch container already in the infra,
-  unmaintained.** Confirmed by the operator 2026-08-17; not otherwise
-  identified (host/IP unknown to this doc). **Explicitly out of scope —
-  leave it alone.** Not being migrated from, not being decommissioned as
-  part of this work, just noted for awareness so it isn't mistaken for
-  live/current if stumbled across.
-- **The new container's target host is undecided — deferred to whatever
-  session actually does this work.** Confirmed explicitly: this is *not*
-  the `elastic-stack` LXC shell described below (checked live,
-  2026-08-17: nothing listening on 9200 or 5601 there, matching its empty
-  Terraform state) — the operator wants a genuinely different/new
-  LXC/host, not a reuse of that reserved slot. Don't assume placement;
-  that's a decision for the implementing session.
-- **`elastic-stack` exists as an empty LXC shell** —
-  `terraform/lxc/stacks/elastic-stack/` (vmid 112, `192.168.1.24`, on
-  production `pve`). Currently just registers a Portainer agent; no
-  compose stack, no playbook, and confirmed not the legacy container
-  either (nothing running there at all). **Not the target for this
-  work** per the operator — mentioned here only so it isn't confused
-  with either the legacy container or the new one.
+  unmaintained.** Confirmed by the operator 2026-08-17. **CORRECTED in
+  `plan.md`**: it *is* identified now — it's `elastic-stack`, vmid 112,
+  `192.168.1.24` (see next bullet), not a separate unknown host. It's
+  genuinely live (ES 9.2.1 + Kibana + Elastic Agent Fleet, natively
+  installed, not Docker), not empty as this doc originally claimed.
+  **Still explicitly out of scope for the new build** — not being
+  migrated from, decommission is a separate later phase per `plan.md`.
+- **The new container's target host is decided in `plan.md`** —
+  `infra_seg` (VLAN 40), a fresh Terraform-managed LXC, not a reuse of
+  `elastic-stack`'s reserved slot.
+- **`elastic-stack` is NOT an empty LXC shell — this doc's original
+  claim here was wrong.** `terraform/lxc/stacks/elastic-stack/`
+  (vmid 112, `192.168.1.24`, on production `pve`) declares itself as
+  Portainer-agent-only in Terraform, but the live container has drifted:
+  it's actually running Elasticsearch, Kibana, and Elastic Agent Fleet
+  natively (systemd, not Docker), consuming 177G of its 200G volume
+  (93% full). This *is* the legacy container from the first bullet —
+  confirmed via live SSH inspection 2026-08-17, see `plan.md` for the
+  full finding. **Still not the target for the new work** — if anything
+  this reinforces building fresh rather than adopting this one in place.
 - **`security-stack`** (vmid 109, `192.168.1.11`) and **`analysis-stack`**
   (vmid 110, `192.168.1.16`) are the same kind of empty reserved shell,
   also on production `pve`. Unrelated unless a future session decides
@@ -58,16 +68,15 @@ with Graylog/Grafana/Kibana as possible surfaces on top.
   lifecycles and complicates future Graylog upgrades. But it's cheap
   infra-wise to at least test against Graylog's OpenSearch first before
   committing to a second JVM-heavy service.
-- **Network placement:** `192.168.1.x` is the general/unsegmented LAN,
-  not one of the VLAN-segmented zones Harbor/apt-cacher/NetBox use
-  (`infra_seg`, confirmed for pve-test-vm's `10.57.x.x` scheme; production
-  uses a `192.168.X0.x` per-service pattern instead — e.g. Harbor
-  `192.168.40.10`, Portainer `192.168.20.120`). Note: the SDN VLAN design
-  memory this references is 125+ days old and pve-test-vm-specific —
-  re-verify production's actual zone layout before relying on it. Worth
-  deciding whether a store holding vulnerability data should sit in a
-  more controlled zone rather than the general LAN block the shell
-  currently occupies.
+- **Network placement: decided in `plan.md`.** Production zone layout
+  re-verified live 2026-08-17 (via `setup_scan_program.py`'s `ZONES`
+  table and live stack manifests): `mgmt_seg` 192.168.20.0/24 (Authentik,
+  step-ca, Graylog, Grafana), `edge_seg` 192.168.30.0/24 (Traefik),
+  `infra_seg` 192.168.40.0/24 (Harbor `.10`, apt-cacher `.11`, NetBox
+  `.12`), `pentest_seg` 192.168.70.0/24 (Greenbone, PentAGI). `192.168.1.x`
+  (general/unsegmented LAN) is where the legacy container and
+  `management-stack` sit — pre-SDN legacy, not where the new stack goes.
+  `plan.md` places the new stack in `infra_seg`.
 - **Greenbone/GVM is also live in production** with its own, separately-
   queried findings model (`get_results` — see
   `reference_gvm_scan_gotchas` in memory). Its scan results are not
@@ -339,32 +348,15 @@ maintain, and the operator already lives in Grafana for the metrics side.
   `reference_claude_code_automode_classifier` in memory; get a
   `.claude/settings.local.json` rule added up front.
 
-## Open questions for the next session
+## Open questions — resolved in `plan.md`
 
-- **Target host/IP/zone for the new container — genuinely undecided,**
-  confirmed explicitly by the operator 2026-08-17. Not the `elastic-stack`
-  shell, not the legacy container. Pick placement (including which
-  network zone — see the stale SDN note above, re-verify production's
-  real zone layout) as part of that session's own work, not assumed here.
-- Dedicated Elasticsearch vs. reuse Graylog's OpenSearch — leaning
-  dedicated (see above), but not decided.
-- Ingestion approach: start with scheduled-pull (A) as recommended above?
-  Applies to both Harbor and GVM now — same recommendation both places.
-- **Scope: Harbor only to start, or Harbor + Greenbone from day one?**
-  Still genuinely open — the GVM ingestion section above means the
-  Greenbone half is now a concrete, de-risked plan (real document shape,
-  known gotchas, known noise profile) rather than a vague "second source"
-  note, so adding it isn't extra research work if the operator wants it
-  from day one. But it's still more scope than Harbor alone, and the
-  cross-source severity-scale mapping (CVSS v2 vs v3, GVM `threat` vs
-  Harbor's qualitative bucket) is a real design decision neither source
-  needs on its own — worth deciding deliberately, not defaulting to
-  "both" just because both plans now exist.
-- Visualization: Grafana datasource vs. Kibana?
-- Retention: how long to keep historical findings — this is exactly the
-  trend data Harbor's dashboard can't provide, so probably longer than
-  Harbor's own 7-day artifact retention, but not decided.
-- Anything worth checking on the legacy container before it's fully
-  ignored (e.g. does it hold historical data anyone might want later)?
-  Out of scope for now per the operator, but flagging in case that
-  changes.
+Everything that was open here now has a concrete answer in `plan.md`:
+target zone/placement (`infra_seg`), dedicated ES vs. reusing Graylog's
+OpenSearch (dedicated), ingestion approach (scheduled-pull, Harbor first
+then GVM), visualization (Grafana datasource primary, Kibana as a
+secondary dev-tools console), and the legacy container question (it's
+identified and live, not empty — decommission is a separate later phase).
+
+Still genuinely open, per `plan.md`'s own "Open decisions" section:
+exact vmid/IP, final stack directory name, retention policy for
+findings, and timing for the legacy decommission phase.
