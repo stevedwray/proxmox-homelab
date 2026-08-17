@@ -310,26 +310,46 @@ The 2 "changed" are expected baseline churn (image pre-pull and
 drift — matches `validation.md`'s "Accepted Non-Idempotent Baseline
 Behavior"). **Stage 3 is fully closed.**
 
-## Stage 4 — Edge exposure: Kibana behind Traefik + Authentik — **PRODUCTION MUTATION**
+## Stage 4 — Edge exposure: Kibana behind Traefik + Authentik — **DONE, live 2026-08-17**
 
 Same mechanism `greenbone-stack`'s Traefik+Authentik phase used
 (`docs/greenbone-stack/plan.md` §3):
 
 ```bash
 export TASK_APPROVAL="elasticsearch-stack-edge"
-# dry-run first, scoped to just this one manifest
-./with-secrets-prod python3 terraform/lxc/reconcile-edge.py --dry-run terraform/lxc/stacks/elasticsearch-stack/edge.yaml
-# confirm only elasticsearch-stack's own Authentik application/provider would be touched, then:
+# dry-run first, scoped to just this one manifest — NOTE: reconcile-edge.py has no
+# --dry-run flag; dry-run is the default behavior, --apply is what opts into mutation
+# (corrected 2026-08-17, this runbook originally documented a --dry-run flag that
+# doesn't exist in the script's argparse definition)
 ./with-secrets-prod python3 terraform/lxc/reconcile-edge.py terraform/lxc/stacks/elasticsearch-stack/edge.yaml
+# confirm only elasticsearch-stack's own Authentik application/provider would be touched, then:
+./with-secrets-prod python3 terraform/lxc/reconcile-edge.py --apply terraform/lxc/stacks/elasticsearch-stack/edge.yaml
 ./with-secrets-prod ./scripts/provision.sh --stack proxy-stack        # push rendered Traefik config
 ./with-secrets-prod ./scripts/provision.sh --stack technitium-stack   # publish the kibana DNS record
 ```
 
-Verify:
+**Real results**: dry-run confirmed scope first (2 creates —
+`edge-elasticsearch-stack-kibana-app` + `-provider` — 1 noop for the
+already-linked shared forwardAuth outpost, none of the other 21 existing
+Authentik objects touched). Apply passed (`writes=3`). `proxy-stack`
+re-run: only `elasticsearch-stack.yml` changed among 15 rendered route
+files, smoke test passed. `technitium-stack` re-run: DNS record
+published, smoke test passed (parity check green across all zones).
+
+**Gotcha found**: the actual published host is
+`kibana.lab.gibbsgreatly.xyz`, not `kibana.gibbsgreatly.xyz` as
+originally drafted here — `LAB_DOMAIN` resolves to `lab.gibbsgreatly.xyz`
+(matches every other stack's route, e.g. `harbor.lab.gibbsgreatly.xyz`).
+Verify commands below corrected to match.
+
+Verify (**confirmed end-to-end, live**):
 
 ```bash
-dig kibana.gibbsgreatly.xyz          # expect Traefik's IP (edge_seg)
-curl -sk -o /dev/null -w '%{http_code}\n' https://kibana.gibbsgreatly.xyz/   # expect 302 to Authentik's authorize endpoint
+dig +short kibana.lab.gibbsgreatly.xyz
+# -> 192.168.30.10 (Traefik)
+curl -sk -o /dev/null -w '%{http_code}\n' https://kibana.lab.gibbsgreatly.xyz/
+# -> 302, Location: https://authentik.lab.gibbsgreatly.xyz/application/o/authorize/...
+# same forwardAuth signature every other stack's route produces
 ```
 
 ## Stage 5 — Cross-zone SDN rules on the MikroTik — **PRODUCTION MUTATION**

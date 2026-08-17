@@ -149,7 +149,12 @@
       "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/elasticsearch-stack apply*)",
       "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/elasticsearch-stack plan*)",
       "Bash(./with-secrets-prod ./scripts/provision.sh --stack elasticsearch-stack*)",
-      "Bash(./with-secrets-prod scripts/provision.sh --stack elasticsearch-stack*)"
+      "Bash(./with-secrets-prod scripts/provision.sh --stack elasticsearch-stack*)",
+      "Bash(./with-secrets-prod python3 terraform/lxc/reconcile-edge.py*)",
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack proxy-stack*)",
+      "Bash(./with-secrets-prod scripts/provision.sh --stack proxy-stack*)",
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack technitium-stack*)",
+      "Bash(./with-secrets-prod scripts/provision.sh --stack technitium-stack*)"
     ],
     "deny": [
       "Read(./secrets/**)",
