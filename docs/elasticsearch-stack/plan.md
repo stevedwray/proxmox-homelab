@@ -1,5 +1,11 @@
 # Elasticsearch Stack — Deployment Plan
 
+> **SUPERSEDED 2026-08-17 — elasticsearch-stack decommissioned.** See
+> `README.md`'s banner for why (Elastic SAML/OIDC needs a paid Platinum+
+> subscription; OpenSearch's is free) and **`docs/opensearch-stack/README.md`**
+> for the current stack. Kept as historical reference for its deployment
+> mechanics and phasing, not as a live plan.
+
 ## Status
 
 **Planning complete, nothing built yet.** This supersedes the open questions

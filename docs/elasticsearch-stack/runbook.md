@@ -1,5 +1,11 @@
 # Elasticsearch Stack — Development & Deployment Runbook
 
+> **SUPERSEDED 2026-08-17 — elasticsearch-stack decommissioned.** See
+> `README.md`'s banner for why and **`docs/opensearch-stack/README.md`**
+> for the current stack. These commands ran successfully against the now-
+> destroyed `elasticsearch-stack` LXC (vmid 40013) and are kept as
+> historical reference for their validation shape, not as live instructions.
+
 Turns `plan.md`'s Phases 1–6 (the MVP: LXC → ingest → visualize) into
 concrete, ordered, testable steps. Phases 7–9 (correlation transform,
 `findings-mcp`, PentAGI handoff — the TVM-automation layer) get a lighter

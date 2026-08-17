@@ -1,5 +1,17 @@
 # Elasticsearch Stack — Ideas
 
+> **SUPERSEDED 2026-08-17 — elasticsearch-stack decommissioned.** The
+> operator migrated off Elasticsearch to **OpenSearch** because real
+> Authentik SSO into Kibana requires a paid Elastic Platinum+ subscription;
+> OpenSearch's security plugin bundles SAML/OIDC free. `elasticsearch-stack`
+> (vmid 40013) was built, ran in production, and has now been fully torn
+> down (LXC destroyed, Authentik app/provider deleted, DNS/firewall/Traefik
+> wiring removed). See **`docs/opensearch-stack/README.md`** for the current
+> stack. This document and `plan.md`/`runbook.md` are kept as historical
+> reference — the finding-shape data model, ingest gotchas, heap-sizing
+> formula, and other lessons below are still accurate and were carried
+> forward, not the "Elasticsearch" storage choice itself.
+
 ## Status
 
 **Decisions made — see `plan.md`. Step-by-step execution — see
