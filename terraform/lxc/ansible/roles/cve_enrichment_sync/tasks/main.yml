@@ -1,0 +1,258 @@
+---
+- name: Remove scheduled CVE enrichment sync when not explicitly enabled
+  when: not (cve_enrichment_sync_enabled | bool)
+  block:
+    - name: Stop and disable cve-enrichment-sync timer
+      ansible.builtin.systemd:
+        name: cve-enrichment-sync.timer
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Stop cve-enrichment-sync service if present
+      ansible.builtin.systemd:
+        name: cve-enrichment-sync.service
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Remove cve-enrichment-sync units and files
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /etc/systemd/system/cve-enrichment-sync.timer
+        - /etc/systemd/system/cve-enrichment-sync.service
+        - "{{ cve_enrichment_sync_dir }}"
+      notify: Reload systemd
+
+    - name: Clear stale cve-enrichment-sync service failure state
+      ansible.builtin.command:
+        cmd: systemctl reset-failed cve-enrichment-sync.service cve-enrichment-sync.timer
+      failed_when: false
+      changed_when: false
+
+- name: Install scheduled CVE enrichment sync when explicitly enabled
+  when: cve_enrichment_sync_enabled | bool
+  block:
+    - name: Create cve-enrichment-sync directory
+      ansible.builtin.file:
+        path: "{{ cve_enrichment_sync_dir }}"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Create cve-enrichment-sync assets directory
+      ansible.builtin.file:
+        path: "{{ cve_enrichment_sync_dir }}/assets/templates"
+        state: directory
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy es_setup_assets.py
+      ansible.builtin.copy:
+        src: es_setup_assets.py
+        dest: "{{ cve_enrichment_sync_dir }}/es_setup_assets.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy cve_enrichment_sync.py
+      ansible.builtin.copy:
+        src: cve_enrichment_sync.py
+        dest: "{{ cve_enrichment_sync_dir }}/cve_enrichment_sync.py"
+        owner: root
+        group: root
+        mode: "0750"
+
+    - name: Copy index template assets
+      ansible.builtin.copy:
+        src: "assets/templates/{{ item }}"
+        dest: "{{ cve_enrichment_sync_dir }}/assets/templates/{{ item }}"
+        owner: root
+        group: root
+        mode: "0640"
+      loop:
+        - unified-cve-exposure.json
+
+    - name: Write LLM provider credential file
+      ansible.builtin.copy:
+        dest: "{{ cve_enrichment_sync_dir }}/llm-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # cve-enrichment-sync LLM provider credential - managed by Ansible, do not edit by hand
+          ANTHROPIC_API_KEY={{ cve_enrichment_sync_anthropic_api_key }}
+          OPENAI_API_KEY={{ cve_enrichment_sync_openai_api_key }}
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Scoped OpenSearch internal user -- reuses es_findings_ingest's own
+    # es_findings_writer role, extending its index_patterns to also
+    # cover unified-cve-exposure* (idempotent PUT -- safe to reapply even
+    # if es_findings_ingest/gvm_findings_ingest already created this role
+    # with a narrower pattern list; this is the union, not a replacement).
+    # Only a new USER identity is created here, so this role's credential
+    # stays independently rotatable. Create-role-if-missing here too so
+    # this role doesn't implicitly depend on harbor-stack/greenbone-stack
+    # having deployed first.
+    # ---------------------------------------------------------------
+
+    - name: Check for existing OpenSearch findings-writer credential
+      ansible.builtin.stat:
+        path: "{{ cve_enrichment_sync_dir }}/es-user.env"
+      register: cve_enrichment_sync_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning its scoped user
+      ansible.builtin.wait_for:
+        host: "{{ cve_enrichment_sync_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: cve_enrichment_sync_es_reachable
+      ignore_errors: true
+      when: not cve_enrichment_sync_es_credential_stat.stat.exists
+
+    - name: Warn and skip OpenSearch user provisioning when it is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ cve_enrichment_sync_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping cve-enrichment-sync user creation --
+          re-run provision once opensearch-stack is reachable.
+      when:
+        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - cve_enrichment_sync_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the scoped OpenSearch user
+      ansible.builtin.set_fact:
+        cve_enrichment_sync_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - not (cve_enrichment_sync_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure es_findings_writer role exists in OpenSearch (extended to unified-cve-exposure*)
+      ansible.builtin.uri:
+        url: "{{ cve_enrichment_sync_elasticsearch_url }}/_plugins/_security/api/roles/{{ cve_enrichment_sync_es_role_name }}"
+        method: PUT
+        url_username: "{{ cve_enrichment_sync_elastic_admin_user }}"
+        url_password: "{{ cve_enrichment_sync_elastic_admin_password }}"
+        validate_certs: "{{ not cve_enrichment_sync_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            - index_patterns:
+                - "harbor-findings*"
+                - "gvm-findings*"
+                - "es-findings-sync-state"
+                - "unified-cve-exposure*"
+              allowed_actions:
+                - "create_index"
+                - "write"
+                - "read"
+        status_code: [200, 201]
+      delegate_to: localhost
+
+    - name: Ensure scoped OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ cve_enrichment_sync_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ cve_enrichment_sync_es_user_name }}"
+        method: PUT
+        url_username: "{{ cve_enrichment_sync_elastic_admin_user }}"
+        url_password: "{{ cve_enrichment_sync_elastic_admin_password }}"
+        validate_certs: "{{ not cve_enrichment_sync_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ cve_enrichment_sync_es_password }}"
+          opendistro_security_roles:
+            - "{{ cve_enrichment_sync_es_role_name }}"
+          description: "cve_enrichment_sync service account (secpipe-stack) -- never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - not (cve_enrichment_sync_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch findings-writer credential file
+      ansible.builtin.copy:
+        dest: "{{ cve_enrichment_sync_dir }}/es-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # cve-enrichment-sync OpenSearch user credential - managed by Ansible, do not edit by hand
+          ES_FINDINGS_USER={{ cve_enrichment_sync_es_user_name }}
+          ES_FINDINGS_PASSWORD={{ cve_enrichment_sync_es_password }}
+      when:
+        - not cve_enrichment_sync_es_credential_stat.stat.exists
+        - not (cve_enrichment_sync_es_reachable.failed | default(true))
+      no_log: true
+
+    # ---------------------------------------------------------------
+    # Idempotent index template apply -- cheap GET-compare-PUT, safe (and
+    # expected) to run every deploy, same style as es_findings_ingest/
+    # gvm_findings_ingest's own asset-setup task.
+    # ---------------------------------------------------------------
+
+    - name: Check if OpenSearch is reachable for asset setup
+      ansible.builtin.wait_for:
+        host: "{{ cve_enrichment_sync_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: cve_enrichment_sync_es_reachable_for_assets
+      ignore_errors: true
+
+    - name: Apply OpenSearch index templates
+      ansible.builtin.command:
+        cmd: >-
+          /usr/bin/python3 {{ cve_enrichment_sync_dir }}/es_setup_assets.py
+          --elasticsearch-url {{ cve_enrichment_sync_elasticsearch_url }}
+          --user {{ cve_enrichment_sync_elastic_admin_user }}
+          --password {{ cve_enrichment_sync_elastic_admin_password | quote }}
+          {{ '--no-verify-tls' if cve_enrichment_sync_es_no_verify_tls else '' }}
+          --apply
+      register: cve_enrichment_sync_setup_assets_result
+      changed_when: >-
+        'created' in cve_enrichment_sync_setup_assets_result.stdout
+        or 'updated' in cve_enrichment_sync_setup_assets_result.stdout
+      when: not (cve_enrichment_sync_es_reachable_for_assets.failed | default(true))
+      no_log: true
+
+    - name: Report asset setup skipped
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ cve_enrichment_sync_elasticsearch_host }}:9200 is not reachable --
+          skipped index template setup this run.
+      when: cve_enrichment_sync_es_reachable_for_assets.failed | default(true)
+
+    - name: Write cve-enrichment-sync systemd service
+      ansible.builtin.template:
+        src: cve-enrichment-sync.service.j2
+        dest: /etc/systemd/system/cve-enrichment-sync.service
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Write cve-enrichment-sync systemd timer
+      ansible.builtin.template:
+        src: cve-enrichment-sync.timer.j2
+        dest: /etc/systemd/system/cve-enrichment-sync.timer
+        owner: root
+        group: root
+        mode: "0644"  # nosonar: ansible:S2612 - standard systemd unit file permissions
+      notify: Reload systemd
+
+    - name: Flush handlers before enabling timer
+      ansible.builtin.meta: flush_handlers
+
+    - name: Enable and start cve-enrichment-sync timer
+      ansible.builtin.systemd:
+        name: cve-enrichment-sync.timer
+        enabled: true
+        state: started
+      when: not ansible_check_mode

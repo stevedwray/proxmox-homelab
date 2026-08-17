@@ -1,0 +1,63 @@
+---
+# Defaults for cve_enrichment_sync role -- see docs/threat-vuln-platform/
+# plan.md. Explicit opt-in, matching es_findings_ingest_enabled/
+# gvm_findings_ingest_enabled's pattern -- only ever included on
+# secpipe-stack, gated by a flag so it never silently attaches to any
+# other host that happens to reuse this role file.
+cve_enrichment_sync_enabled: false
+
+cve_enrichment_sync_dir: /opt/cve-enrichment-sync
+cve_enrichment_sync_log_path: /var/log/cve-enrichment-sync.log
+
+# Daily, after both Harbor's repull/scan cycle (finishes ~04:20-04:35 UTC,
+# see project_harbor_alerting_automation_plan memory) and GVM's own
+# findings-ingest timer (19:00 UTC) -- gives a comfortable margin so
+# both source indices are fresh before this runs.
+cve_enrichment_sync_on_calendar: "*-*-* 21:00:00"
+
+# --- cve-mcp-server connection -------------------------------------------
+# mcp-utility-stack lives in the same ai_seg zone as this stack -- no
+# cross-zone firewall rule needed for this hop. Confirmed live during
+# planning: a real MCP tools/list call against this exact URL succeeded.
+cve_enrichment_sync_mcp_host: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandatory('LAB_IP_MCP_UTILITY env var is required') }}"
+cve_enrichment_sync_mcp_url: "http://{{ cve_enrichment_sync_mcp_host }}:8000/mcp"
+cve_enrichment_sync_triage_depth: standard
+
+# --- LLM provider (temporary -- see cve_enrichment_sync.py's module
+# docstring and plan.md's "LLM narrative step" section) ------------------
+# The local Ollama runtime is occupied with benchmarking work as of
+# 2026-08-18 -- using Anthropic/OpenAI for now, operator instruction.
+# Swap back to a local-LLM provider later by changing this default, not
+# the script.
+cve_enrichment_sync_llm_provider: anthropic
+cve_enrichment_sync_anthropic_api_key: "{{ lookup('env', 'ANTHROPIC_API_KEY') | default('', true) }}"
+cve_enrichment_sync_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('', true) }}"
+
+# --- OpenSearch connection -----------------------------------------------
+# Same opensearch-stack target and HTTPS/self-signed-cert reasoning as
+# es_findings_ingest/gvm_findings_ingest's own defaults.
+cve_enrichment_sync_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+cve_enrichment_sync_elasticsearch_url: "https://{{ cve_enrichment_sync_elasticsearch_host }}:9200"
+cve_enrichment_sync_es_no_verify_tls: true
+
+# OpenSearch admin superuser -- needed only to bootstrap this role's own
+# scoped OpenSearch user and to idempotently apply index templates
+# (es_setup_assets.py, shared with es_findings_ingest/gvm_findings_ingest).
+# Never used at runtime by cve_enrichment_sync.py.
+cve_enrichment_sync_elastic_admin_user: admin
+cve_enrichment_sync_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Reuses es_findings_ingest's own es_findings_writer OpenSearch role
+# (this role's own tasks/main.yml extends its index_patterns to include
+# unified-cve-exposure*) rather than defining a second role. A distinct
+# internal-user identity keeps this role's credential independently
+# rotatable/revocable from es_findings_ingest's and gvm_findings_ingest's.
+# This role also needs read access to harbor-findings/gvm-findings (for
+# the CVE aggregation) and update access (for the severity_assessed
+# write-back) -- OpenSearch's "write" action group is documented to
+# include indices:data/write/update/byquery, so the existing "write"+
+# "read" grant should already cover both without a broader role change.
+# Verify this live on first real deploy rather than trusting the docs
+# alone -- update this comment once confirmed.
+cve_enrichment_sync_es_role_name: es_findings_writer
+cve_enrichment_sync_es_user_name: cve_enrichment_sync

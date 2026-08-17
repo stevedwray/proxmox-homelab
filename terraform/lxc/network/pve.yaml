@@ -246,6 +246,7 @@ zones:
     containers:
       - "mcp-utility-stack (VMID 50011) — ${lab_ip_mcp_utility} — live, promoted to pve 2026-08-01 (fast-tracked directly from feat/mcp-utility-stack, not through the usual stable promotion step)"
       - "ai-services-stack (VMID 50013) — ${lab_ip_ai_services} — OpenWebUI+SearXNG, planned by docs/ai-services-migration/plan.md, not yet deployed"
+      - "secpipe-stack (VMID 50012) — ${lab_ip_secpipe} — CVE correlation/enrichment (cve_enrichment_sync), see docs/threat-vuln-platform/plan.md"
 
 policies:
   - from: edge_seg

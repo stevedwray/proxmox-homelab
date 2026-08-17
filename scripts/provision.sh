@@ -359,6 +359,10 @@ GVM_FINDINGS_INGEST_KEYS = (
     "gvm_findings_ingest_enabled",
 )
 
+CVE_ENRICHMENT_SYNC_KEYS = (
+    "cve_enrichment_sync_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -426,6 +430,10 @@ for key in ES_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in GVM_FINDINGS_INGEST_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in CVE_ENRICHMENT_SYNC_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
