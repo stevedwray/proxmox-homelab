@@ -83,8 +83,32 @@ model-paired batches, both now fully done):**
   already seen on RepoBench, now confirmed in a real agentic context).
 - **Qwen3.8-27B** (new Alibaba release, ~2026-08-13/14, Apache 2.0) —
   pulled and tagged `eval-qwen3.8-27b:q4_k_m-ctx32k`, real specs
-  confirmed directly (27.3B dense, Q4_K_M, 262144 native ctx). BFCL/
-  GPQA/IFEval queued to run next.
+  confirmed directly from the GGUF's own embedded metadata: dense
+  27.3B params (`Qwen/Qwen3.8-27B`, quantized by Unsloth), 262144
+  native ctx, Apache 2.0. **BFCL/GPQA/IFEval all done:**
+  - BFCL: 91.25% — 6th of 8 models tested, solid but not a leader.
+  - GPQA (flexible-extract): **43.43%** — tied ~2nd with Gemma4-26B
+    (43.94%), well behind Qwen3.6-35B's leading 57.07%. Took **~27
+    hours** to run (vs a few hours for every other model) — by far the
+    slowest in this project, driven by long CoT that frequently maxed
+    the 8192-token generation budget (many responses landed at exactly
+    `8192 tokens / ~12 tok/s ≈ 11m22s`, a real signal some answers may
+    have been truncated mid-reasoning rather than reaching a natural
+    stop — not yet re-tested with a larger budget to check).
+  - IFEval (prompt-strict/loose): **89.46% / 91.31%** — 4th of 6,
+    just behind Gemma4-26B-A4B-QAT (89.83%) and Qwen3.6-35B (90.39%).
+  - **Consistent story across all three axes: solid-but-unremarkable,
+    and unusually slow** (~46h combined for GPQA+IFEval). Nothing here
+    displaces Qwen3.6-35B (reasoning) or Gemma4-26B (instruction-
+    following/agentic) as the stronger picks. Real architectural note:
+    despite the higher version number, Qwen3.8-27B is **dense**
+    (27.3B always-active) while Qwen3.6-35B is **MoE** (34.7B total,
+    only 8-of-256 experts / far fewer active params per token) — the
+    smaller-active-compute MoE model still won on GPQA, a reminder that
+    a later point-release in the same model family doesn't imply
+    monotonic capability improvement, especially across an architecture
+    change. Sampling params are identical between the two (temp=1,
+    top_k=20, top_p=0.95), ruled out as a confound via direct check.
 
 **Still pending (not started):**
 - Real DeepResearch Bench rerun at full-batch scale, to validate the
@@ -135,6 +159,7 @@ truncation) and needs a redo, — = out of scope for this model):
 | Laguna S2.1 (base) | ✅ | ✅ | ✅ 24.24% | ✅ 75.42%/80.59% | ✅ 0% refusal | ⬜ |
 | Qwen3-Coder-Next | ✅ | ✅ | — dropped | — dropped (swapped for Qwen3-Coder-30B redo) | ⬜ | ✅ |
 | Laguna-Heretic | ✅ | ✅ | — dropped | — cancelled | ⬜ | ✅ |
+| Qwen3.8-27B (new, dense) | ✅ 91.25% | ⬜ | ✅ 43.43% (~27h run, possible token-budget truncation, see note above) | ✅ 89.46%/91.31% | ⬜ | ⬜ |
 
 **Tier A — fill first** (the 3 models whose battery was mid-flight when
 the project pivoted; harness and methodology already proven, this is
