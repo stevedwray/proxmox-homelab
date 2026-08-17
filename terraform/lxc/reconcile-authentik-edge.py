@@ -469,7 +469,7 @@ def _oidc_provider_payload(
     signing_key_pk: str,
     property_mapping_ids: list[str],
 ) -> dict[str, Any]:
-    return {
+    payload: dict[str, Any] = {
         "name": intent.provider_name,
         "client_type": "confidential",
         "client_id": _DISCOVER._oidc_client_id(intent),
@@ -486,6 +486,23 @@ def _oidc_provider_payload(
         "signing_key": signing_key_pk,
         "property_mappings": property_mapping_ids,
     }
+    # grant_types was never set here historically -- every pre-existing
+    # provider this script only ever PATCHed (not created) already had a
+    # non-empty grant_types from its original manual creation in the
+    # Authentik UI, so the gap was silent. opensearch-stack/dashboards was
+    # the first provider actually created via this script's own
+    # create_provider() call, which surfaced it: Authentik's API defaults
+    # an omitted grant_types to [] on create, which makes
+    # /application/o/authorize/ reject every request as malformed. Only
+    # set it for routes with an explicit entry below -- leaving it out of
+    # the payload for every other route preserves current behavior exactly
+    # (this script never patches an existing provider's grant_types), so a
+    # future reconcile run against Harbor/Grafana/Portainer/Technitium/
+    # OpenWebUI cannot narrow their existing (larger) grant_types sets.
+    grant_types = _DISCOVER._oidc_grant_types(intent)
+    if grant_types:
+        payload["grant_types"] = list(grant_types)
+    return payload
 
 
 def _resolve_oidc_signing_key_id(

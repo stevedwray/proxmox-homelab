@@ -1,6 +1,8 @@
 {
   "permissions": {
     "allow": [
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack proxy-stack*)",
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack technitium-stack*)",
       "Bash(ssh root@192.168.10.63:*)",
       "Bash(./with-secrets-prod ansible-playbook -i terraform/lxc/environments/pve/monitoring-stack/inventory.yml terraform/lxc/ansible/playbooks/deploy-monitoring-stack.yml *)",
       "Bash(git add:*)",
@@ -154,7 +156,11 @@
       "Bash(./with-secrets-prod ./scripts/provision.sh --stack proxy-stack*)",
       "Bash(./with-secrets-prod scripts/provision.sh --stack proxy-stack*)",
       "Bash(./with-secrets-prod ./scripts/provision.sh --stack technitium-stack*)",
-      "Bash(./with-secrets-prod scripts/provision.sh --stack technitium-stack*)"
+      "Bash(./with-secrets-prod scripts/provision.sh --stack technitium-stack*)",
+      "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/opensearch-stack apply*)",
+      "Bash(./with-secrets-prod terragrunt --working-dir terraform/lxc/environments/pve/opensearch-stack plan*)",
+      "Bash(./with-secrets-prod ./scripts/provision.sh --stack opensearch-stack*)",
+      "Bash(./with-secrets-prod scripts/provision.sh --stack opensearch-stack*)"
     ],
     "deny": [
       "Read(./secrets/**)",
