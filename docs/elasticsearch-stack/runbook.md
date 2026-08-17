@@ -352,37 +352,53 @@ curl -sk -o /dev/null -w '%{http_code}\n' https://kibana.lab.gibbsgreatly.xyz/
 # same forwardAuth signature every other stack's route produces
 ```
 
-## Stage 5 — Cross-zone SDN rules on the MikroTik — **PRODUCTION MUTATION**
+## Stage 5 — Cross-zone SDN rules on the MikroTik — **DONE, live 2026-08-17**
 
-**Not a Terraform-managed step** — confirmed via `graylog-stack`/
-`greenbone-stack` precedent that cross-zone allow rules are applied
-directly against the MikroTik's REST API in a Safe Mode session, placed
-immediately before the target zone's default-deny rule
-(`docs/greenbone-stack/README.md`'s own precedent for
-`pentest_seg → mgmt_seg`). Two rules needed for this MVP pass (the third,
-`ai_seg → infra_seg:9200` for `findings-mcp`, is Stage 10/Phase 8 —
-don't add it yet, least-privilege: no rule before something needs it):
+**Correction from the original plan**: not a manual Safe Mode CLI
+session — the actual established pattern already used repo-wide
+(`mikrotik-firewall-pentagi-to-ai-services-searxng.yml`,
+`mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml`,
+`mikrotik-firewall-greenbone-lan-scan-reach.yml`) is a small idempotent
+Ansible playbook per rule: authenticated REST POST to
+`/ip/firewall/filter/add`, matched by full criteria (not comment alone),
+inserted via `place-before` ahead of the first `forward`
+`drop`/`reject` rule, then re-read + `assert`ed. No interactive Safe
+Mode terminal session involved. Followed that pattern exactly — two new
+playbooks, one rule each (least-privilege, not a combined playbook):
 
-1. `mgmt_seg → infra_seg:9200` (tcp) — Grafana's ES datasource.
-2. `pentest_seg → infra_seg:9200` (tcp) — the GVM sync job (Stage 8).
+1. `ansible/00-initial-setup/mikrotik-firewall-monitoring-to-elasticsearch-stack.yml`
+   — `mgmt_seg → elasticsearch-stack:9200` (tcp) — Grafana's ES datasource (Stage 7).
+2. `ansible/00-initial-setup/mikrotik-firewall-greenbone-to-elasticsearch-stack.yml`
+   — `pentest_seg → elasticsearch-stack:9200` (tcp) — the GVM sync job (Stage 8).
+
+The third planned consumer, `ai_seg → infra_seg:9200` for `findings-mcp`,
+is Stage 10/Phase 8 and deliberately not added yet — no rule before
+something needs it.
 
 ```bash
 export TASK_APPROVAL="elasticsearch-stack-sdn-rules"
-# apply via MikroTik REST API in a Safe Mode session (see reference_routeros_safe_mode
-# in memory: changes revert if the session exits uncleanly — close it cleanly, then
-# re-verify from OUTSIDE that session, don't trust an in-session check alone)
+ansible-playbook --syntax-check ansible/00-initial-setup/mikrotik-firewall-monitoring-to-elasticsearch-stack.yml
+ansible-playbook --syntax-check ansible/00-initial-setup/mikrotik-firewall-greenbone-to-elasticsearch-stack.yml
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-monitoring-to-elasticsearch-stack.yml
+./with-secrets-prod ansible-playbook ansible/00-initial-setup/mikrotik-firewall-greenbone-to-elasticsearch-stack.yml
 ```
 
-Verify live, don't trust the rule's intent comment alone (the exact
-lesson `pentagi-integration.md` already paid for):
+Both applied clean (`failed=0`), each playbook's own re-read+assert
+step confirmed the rule present with exact match criteria.
+
+**Verified live, not just trusting the rule's intent comment** (the
+exact lesson `pentagi-integration.md` already paid for) — real `nc`
+checks from inside each consumer container, run twice ~20s apart to
+rule out a Safe-Mode-style revert:
 
 ```bash
-timeout 5 nc -zv 192.168.40.13 9200   # run from a container inside mgmt_seg (e.g. monitoring-stack)
-timeout 5 nc -zv 192.168.40.13 9200   # run from a container inside pentest_seg (e.g. greenbone-stack)
+./with-secrets-prod ssh root@pve "pct exec <monitoring-stack-vmid> -- timeout 5 nc -zv 192.168.40.13 9200"
+./with-secrets-prod ssh root@pve "pct exec <greenbone-stack-vmid> -- timeout 5 nc -zv 192.168.40.13 9200"
 ```
 
-Expected: both succeed post-change; re-verify again a few minutes later
-to confirm the Safe Mode session actually committed rather than reverting.
+**Result**: both succeeded (`9200 open`) on the first check and again
+~20s later — confirmed genuinely committed, not a transient/reverting
+state. **Stage 5 is fully closed.**
 
 ## Stage 6 — Harbor findings: assets + ingestion — **PRODUCTION MUTATION (on `harbor-stack`)**
 

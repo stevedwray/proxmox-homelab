@@ -1,0 +1,181 @@
+---
+# The planned GVM findings sync job (docs/elasticsearch-stack/plan.md
+# Stage 8) needs greenbone-stack (pentest_seg, VLAN 70) to reach
+# elasticsearch-stack's HTTP API (infra_seg, VLAN 40) on port 9200. No
+# existing route exists between these zones for this port. This playbook
+# adds the one rule needed, following the same idempotent pattern as
+# mikrotik-firewall-pentagi-to-ai-services-searxng.yml /
+# mikrotik-firewall-pentagi-to-mcp-utility-cve-mcp.yml (match by full
+# criteria, not comment alone; insert before the first forward
+# drop/reject; re-read and assert).
+#
+# Scoped to the whole pentest_seg subnet as source (matching those
+# rules' own reasoning -- PentAGI's ephemeral worker containers and
+# greenbone-stack both live in this zone), destination narrowly scoped
+# to elasticsearch-stack's specific IP and Elasticsearch's specific
+# port -- not a broad grant. The mirror rule for mgmt_seg ->
+# elasticsearch-stack (Grafana, Stage 7) is a separate playbook,
+# mikrotik-firewall-monitoring-to-elasticsearch-stack.yml -- least
+# privilege, one rule per real consumer. The third planned consumer,
+# ai_seg -> infra_seg:9200 for findings-mcp, is Stage 10/Phase 8 and
+# deliberately not added here -- no rule before something needs it.
+
+- name: Ensure pentest_seg -> elasticsearch-stack Elasticsearch firewall rule exists
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    mikrotik_host: "{{ lookup('env', 'MIKROTIK_HOST') | mandatory('MIKROTIK_HOST env var is required') }}"
+    mikrotik_rest_base_url: "https://{{ mikrotik_host }}/rest"
+    mikrotik_user: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN')
+        | default(lookup('env', 'MIKROTIK_USER'), true)
+        | default('api-user', true)
+      }}
+    mikrotik_password: >-
+      {{
+        lookup('env', 'MIKROTIK_ADMIN_PASSWORD')
+        | default(lookup('env', 'MIKROTIK_PASSWORD'), true)
+      }}
+
+    lab_subnet_pentest_cidr: "{{ lookup('env', 'LAB_SUBNET_PENTEST_CIDR') | mandatory('LAB_SUBNET_PENTEST_CIDR env var is required') }}"
+    lab_ip_elasticsearch: "{{ lookup('env', 'LAB_IP_ELASTICSEARCH') | mandatory('LAB_IP_ELASTICSEARCH env var is required') }}"
+
+    greenbone_elasticsearch_firewall_rule:
+      comment: "greenbone-stack: pentest_seg to elasticsearch-stack elasticsearch 9200"
+      chain: "forward"
+      action: "accept"
+      protocol: "tcp"
+      src-address: "{{ lab_subnet_pentest_cidr }}"
+      dst-address: "{{ lab_ip_elasticsearch }}"
+      dst-port: "9200"
+
+  pre_tasks:
+    - name: Assert MikroTik password is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_password | length > 0
+        fail_msg: >-
+          No MikroTik password is available. Set MIKROTIK_ADMIN_PASSWORD or MIKROTIK_PASSWORD
+          before running this playbook.
+
+    - name: Assert MikroTik user is set
+      ansible.builtin.assert:
+        that:
+          - mikrotik_user | length > 0
+        fail_msg: >-
+          No MikroTik user is available. Set MIKROTIK_ADMIN or MIKROTIK_USER
+          before running this playbook.
+
+  tasks:
+    - name: Read MikroTik firewall filter rules
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters
+      no_log: true
+
+    - name: Find first forward drop/reject rule for ordered insertion
+      ansible.builtin.set_fact:
+        forward_drop_anchor: >-
+          {{
+            (firewall_filters.json
+              | selectattr('chain', 'defined')
+              | selectattr('chain', 'equalto', 'forward')
+              | selectattr('action', 'defined')
+              | selectattr('action', 'in', ['drop', 'reject'])
+              | list)
+            | first | default({})
+          }}
+
+    - name: Add the rule before the first forward drop/reject, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ greenbone_elasticsearch_firewall_rule | combine({'place-before': forward_drop_anchor['.id']}) }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor != {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', greenbone_elasticsearch_firewall_rule.comment)
+            | selectattr('chain', 'equalto', greenbone_elasticsearch_firewall_rule.chain)
+            | selectattr('action', 'equalto', greenbone_elasticsearch_firewall_rule.action)
+            | selectattr('protocol', 'equalto', greenbone_elasticsearch_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', greenbone_elasticsearch_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', greenbone_elasticsearch_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', greenbone_elasticsearch_firewall_rule['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Add the rule when no forward drop/reject anchor exists, if missing
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter/add"
+        method: POST
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        body_format: json
+        body: "{{ greenbone_elasticsearch_firewall_rule }}"
+        status_code: [200, 201]
+      when:
+        - forward_drop_anchor == {}
+        - >-
+          (firewall_filters.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', greenbone_elasticsearch_firewall_rule.comment)
+            | selectattr('chain', 'equalto', greenbone_elasticsearch_firewall_rule.chain)
+            | selectattr('action', 'equalto', greenbone_elasticsearch_firewall_rule.action)
+            | selectattr('protocol', 'equalto', greenbone_elasticsearch_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', greenbone_elasticsearch_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', greenbone_elasticsearch_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', greenbone_elasticsearch_firewall_rule['dst-port'])
+            | list) | length == 0
+      no_log: true
+
+    - name: Re-read MikroTik firewall filter rules after apply
+      ansible.builtin.uri:
+        url: "{{ mikrotik_rest_base_url }}/ip/firewall/filter"
+        method: GET
+        user: "{{ mikrotik_user }}"
+        password: "{{ mikrotik_password }}"
+        force_basic_auth: true
+        validate_certs: false  # nosonar: ansible:S4830 — MikroTik self-signed cert; HTTPS traffic still encrypted; private SDN
+        return_content: true
+        status_code: 200
+      register: firewall_filters_final
+      no_log: true
+
+    - name: Assert the rule exists with expected match criteria
+      ansible.builtin.assert:
+        that:
+          - >-
+            firewall_filters_final.json
+            | selectattr('comment', 'defined')
+            | selectattr('comment', 'equalto', greenbone_elasticsearch_firewall_rule.comment)
+            | selectattr('chain', 'equalto', greenbone_elasticsearch_firewall_rule.chain)
+            | selectattr('action', 'equalto', greenbone_elasticsearch_firewall_rule.action)
+            | selectattr('protocol', 'equalto', greenbone_elasticsearch_firewall_rule.protocol)
+            | selectattr('src-address', 'equalto', greenbone_elasticsearch_firewall_rule['src-address'])
+            | selectattr('dst-address', 'equalto', greenbone_elasticsearch_firewall_rule['dst-address'])
+            | selectattr('dst-port', 'equalto', greenbone_elasticsearch_firewall_rule['dst-port'])
+            | list | length > 0
+        fail_msg: "Expected MikroTik forward allow rule '{{ greenbone_elasticsearch_firewall_rule.comment }}' was not found after apply."
+
+    - name: Report the firewall rule is present
+      ansible.builtin.debug:
+        msg: "pentest_seg -> elasticsearch-stack Elasticsearch MikroTik firewall rule confirmed present."
