@@ -439,6 +439,9 @@
             top_p: 0.8
             n: 1
             max_tokens: 1500
+            extra_body:
+              chat_template_kwargs:
+                enable_thinking: false
 
           searcher:
             model: "{{ pentagi_llamacpp_primary_model }}"

@@ -512,3 +512,29 @@ in the web UI. Not yet checked in the UI (deliberately deferred).
 Follow-up: find the actual settings screen/mutation and test a custom
 `generator`/`refiner` override requesting one subtask per distinct
 service/vulnerability.
+
+### Stage 0 harness baseline: reflector no-thinking isolates completion formatting
+
+On 2026-08-18, the controlled Stage 0 harness flow (`56`) selected the
+pinned Kali worker and ran exactly one scoped command against
+`192.168.70.12`: `nmap -p 8080,6379`. It observed both ports as open and
+the subtask completed with evidence. The parent task/flow did not
+self-finish inside the ten-minute stage limit, so it was finalized through
+PentAGI's supported `finishFlow` operation and remains a baseline timeout,
+not a passing run.
+
+The preceding flow showed that Qwen3.6's reflector could return prose in
+place of the required completion tool call. A direct llama.cpp test proved
+that the native OpenAI request field
+`chat_template_kwargs.enable_thinking=false` produces a clean tool call.
+Applying that setting to every role made planning unsafe (it chose the
+default Debian image and inserted an out-of-criterion ping precheck).
+The retained production configuration applies it **only to `reflector`**;
+in flow 56 the reflector completed in 35 output tokens and the scoped
+subtask closed correctly. Keep normal reasoning enabled for planning,
+image selection, and pentester execution.
+
+This isolates the remaining reliability issue to parent task/flow closure
+after a completed subtask. Do not begin a Qwen3-Coder A/B comparison until
+two Qwen3.6 Stage 0 baselines self-finish inside the timeout. No
+`gpt-oss-120b` model was used in these runs.
