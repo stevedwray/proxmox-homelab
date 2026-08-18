@@ -173,12 +173,15 @@ plus 15 local commits (`fe772720678f06f48e03f9311a1810fcfa499b52`). Those
 commits contain the eight validation-derived fixes plus the CVE-MCP and
 GVM-bridge tools. An upstream rebase is therefore not part of this update.
 
-The deployed Harbor image remains `pentagi-fixed:latest`, so its *running*
-digest must be captured from the lab `pentagi-stack` and then pinned before a
-new deployment. No digest has been invented or treated as verified. Obtain
-the container image ID and the registry digest from the lab instance, record
-both here, rebuild from `fe77272`, and use the resulting immutable digest in
-the playbook.
+The lab deployment currently runs
+`harbor.lab.gibbsgreatly.xyz/pentagi/pentagi-fixed:latest` with Docker image
+ID `sha256:deb4365c1ab62bc001b0f25bbe4b3f39378ea383bc2132a1c379b03afefe06f8`
+(captured from VMID 70010 on 2026-08-18). This is the local Docker
+image/config ID, **not** a registry manifest digest and cannot safely be used
+as an `image@sha256:…` pin. Capture the corresponding `RepoDigests` entry
+from the lab instance, then use that registry manifest digest in the playbook
+before a new deployment. Do not invent or substitute a digest. Rebuild from
+`fe77272` only if the captured image cannot be traced to that source commit.
 
 ## Key facts up front
 
