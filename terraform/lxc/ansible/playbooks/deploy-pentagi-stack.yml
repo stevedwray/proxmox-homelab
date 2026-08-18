@@ -110,6 +110,11 @@
     pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
     pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
     pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
+    # Rebuilding and pushing the Kali worker changes a separate mutable
+    # Harbor artifact. Keep it out of ordinary PentAGI configuration/image
+    # rollouts; set PENTAGI_REBUILD_KALI_IMAGE=true only for an explicitly
+    # approved worker-image change.
+    pentagi_rebuild_kali_image: "{{ lookup('env', 'PENTAGI_REBUILD_KALI_IMAGE') | default('false', true) | bool }}"
 
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.
@@ -190,6 +195,7 @@
         status_code: 200
       register: pentagi_harbor_projects
       delegate_to: localhost
+      when: pentagi_rebuild_kali_image
 
     - name: Create 'pentagi' Harbor project (custom images, not a proxy-cache)
       ansible.builtin.uri:
@@ -203,7 +209,10 @@
           project_name: "{{ pentagi_kali_project_name }}"
           public: false
         status_code: 201
-      when: pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
+        - pentagi_harbor_projects.json | selectattr('name', 'equalto', pentagi_kali_project_name) | list | length == 0
       delegate_to: localhost
 
     - name: Write Dockerfile for bootsnap-safe Kali worker image
@@ -211,6 +220,7 @@
         path: "{{ pentagi_compose_dir }}/kali-fixed"
         state: directory
         mode: "0750"
+      when: pentagi_rebuild_kali_image
 
     - name: Write bootsnap-safe Kali worker Dockerfile
       ansible.builtin.copy:
@@ -219,6 +229,7 @@
         content: |
           FROM {{ pentagi_registry_host }}/dockerhub/vxcontrol/kali-linux:latest
           RUN rm -f /usr/lib/llvm-18/build/Release /usr/lib/llvm-18/build/Debug+Asserts
+      when: pentagi_rebuild_kali_image
 
     # Dedicated, narrowly-scoped robot for this one push -- deliberately NOT
     # the shared 'robot$ci-runner' system-level robot that signature-gate.yml
@@ -263,6 +274,9 @@
       register: pentagi_kali_robot_create
       delegate_to: localhost
       no_log: true
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Display new pentagi push robot credentials -- store in SOPS for future runs
       ansible.builtin.debug:
@@ -272,7 +286,10 @@
           - "  PENTAGI_HARBOR_ROBOT_PASSWORD = {{ pentagi_kali_robot_create.json.secret }}"
           - "(username is deterministic: robot${{ pentagi_kali_project_name }}+kali-push)"
           - "This run uses the freshly-created secret directly; it will not be shown again."
-      when: pentagi_kali_robot_create.status == 201
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
+        - pentagi_kali_robot_create.status == 201
       delegate_to: localhost
 
     - name: Set effective pentagi push robot credentials
@@ -284,6 +301,9 @@
              else lookup('env', 'PENTAGI_HARBOR_ROBOT_PASSWORD') }}
       no_log: true
       delegate_to: localhost
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Log in to Harbor to push the custom Kali worker image
       community.docker.docker_login:
@@ -291,6 +311,9 @@
         username: "{{ pentagi_kali_robot_user }}"
         password: "{{ pentagi_kali_robot_password }}"
       no_log: true
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Build bootsnap-safe Kali worker image
       community.docker.docker_image_build:
@@ -298,10 +321,16 @@
         path: "{{ pentagi_compose_dir }}/kali-fixed"
         pull: true
         rebuild: always
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Push bootsnap-safe Kali worker image
       community.docker.docker_image_push:
         name: "{{ pentagi_kali_fixed_image }}"
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Verify the bootsnap symlink trap is actually gone
       ansible.builtin.command:
@@ -310,6 +339,9 @@
           "test ! -e /usr/lib/llvm-18/build/Release && test ! -e /usr/lib/llvm-18/build/Debug+Asserts && msfconsole --version"
       register: pentagi_kali_fixed_verify
       changed_when: false
+      when:
+        - pentagi_rebuild_kali_image
+        - not ansible_check_mode
 
     - name: Placeholder custom provider config (unused -- bind-mount target must be a file, not auto-created dir)
       ansible.builtin.copy:
