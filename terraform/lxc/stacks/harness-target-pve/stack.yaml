@@ -6,7 +6,9 @@ gateway: "${lab_gw_pentest}"
 dns_server: "${lab_gw_pentest}"
 network:
   zone: pentest_seg
-vmid: 50010
+# 70010/70011 are PentAGI/Greenbone; keep this target in their dedicated
+# PentAGI workload range rather than the AI-service 500xx range.
+vmid: 70012
 cores: 2
 memory: 2048
 swap: 512
