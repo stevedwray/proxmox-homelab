@@ -162,7 +162,23 @@ checks passed:
 2. [lessons-learned.md](./lessons-learned.md) — checkpoint from the
    validation-testing phase that followed deployment: eight fixes to a
    private PentAGI fork, infrastructure changes, what broke and why, and
-   the current plan to move the adviser model onto llama.cpp.
+   the llama.cpp migration findings. The active deployment uses Qwen3.6 for
+   every role, including `adviser`; it does not use `gpt-oss-120b`.
+
+## Upgrade baseline (2026-08-18)
+
+The private fork at `/home/steve/git/pentagi`, branch
+`fix/lab-lessons-learned`, is already based on upstream PentAGI `v2.1.0`
+plus 15 local commits (`fe772720678f06f48e03f9311a1810fcfa499b52`). Those
+commits contain the eight validation-derived fixes plus the CVE-MCP and
+GVM-bridge tools. An upstream rebase is therefore not part of this update.
+
+The deployed Harbor image remains `pentagi-fixed:latest`, so its *running*
+digest must be captured from the lab `pentagi-stack` and then pinned before a
+new deployment. No digest has been invented or treated as verified. Obtain
+the container image ID and the registry digest from the lab instance, record
+both here, rebuild from `fe77272`, and use the resulting immutable digest in
+the playbook.
 
 ## Key facts up front
 

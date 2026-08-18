@@ -102,18 +102,14 @@
     pentagi_primary_model: "{{ lookup('env', 'PENTAGI_PRIMARY_MODEL') | default('qwen3.6-35b-a3b-ud:q4_k_m', true) }}"
     pentagi_embedding_model: "{{ lookup('env', 'PENTAGI_EMBEDDING_MODEL') | default('nomic-embed-text', true) }}"
 
-    # llama.cpp's own native multi-model router (llamacpp-router on
-    # framework.gibbsgreatly.xyz, port 8080) -- lets qwen3.6 (fast base
-    # agents) and gpt-oss-120b (stronger adviser model, per PentAGI's own
-    # recommended architecture) stay loaded concurrently as independent
-    # processes, unlike Ollama's OLLAMA_MAX_LOADED_MODELS which is only a
-    # soft ceiling: confirmed live 2026-07-28 that Ollama's own scheduler
-    # still evicted a model rather than risk a 3-model fit, even with the
-    # limit raised and keep-alive disabled. Model IDs are llama.cpp's own
-    # filename-derived names, not Ollama's tag format.
+    # llama.cpp's OpenAI-compatible router (llamacpp-router on
+    # framework.gibbsgreatly.xyz, port 8080). The active deployment uses
+    # Qwen3.6 for every role, including adviser; do not introduce a second
+    # adviser model merely because the router can serve one. Model IDs are
+    # llama.cpp's filename-derived names, not Ollama tag formats.
     pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
     pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
-    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('gpt-oss-120b', true) }}"
+    pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
 
     # Secrets -- terraform/secrets.common.enc.yaml (SOPS). Not yet added as
     # of stack scaffolding; must exist before this playbook can actually run.
@@ -336,13 +332,10 @@
     # that was crowding out actual tool calls. generator/pentester/coder
     # keep more room and higher temperature since they need to plan and
     # construct non-trivial commands/exploits.
-    # Switched from Ollama to llama.cpp's native multi-model router
-    # (custom/OpenAI-compatible provider) 2026-07-28 -- see the
-    # pentagi_llamacpp_url comment above for why. The adviser role alone
-    # gets the stronger gpt-oss-120b model; every other role stays on the
-    # fast qwen3.6 base model, both loaded concurrently as independent
-    # llama.cpp processes with no shared-scheduler eviction risk between
-    # them.
+    # Switched from Ollama to llama.cpp's OpenAI-compatible provider on
+    # 2026-07-28. All roles use Qwen3.6 in the active deployment; the
+    # explicit adviser variable remains only to make any future, separately
+    # approved role experiment deliberate and visible in configuration.
     #
     # IMPORTANT: this file is only read at all if LLM_SERVER_CONFIG_PATH
     # is set to its in-container mount path -- confirmed live 2026-07-28
