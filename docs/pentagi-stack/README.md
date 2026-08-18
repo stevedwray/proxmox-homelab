@@ -164,6 +164,9 @@ checks passed:
    private PentAGI fork, infrastructure changes, what broke and why, and
    the llama.cpp migration findings. The active deployment uses Qwen3.6 for
    every role, including `adviser`; it does not use `gpt-oss-120b`.
+3. [model-ab-test-plan.md](./model-ab-test-plan.md) — staged, controlled
+   model-comparison plan using the PVE `pentest_seg` harness. It begins with
+   minimal tool calls before any vulnerability validation.
 
 ## Upgrade baseline (2026-08-18)
 
