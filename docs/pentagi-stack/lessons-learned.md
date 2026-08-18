@@ -555,3 +555,17 @@ no target connection and no target state change, but this is still a hard
 scope-compliance failure. It also never reached the `coder` role, so it is not
 evidence for or against Qwen3-Coder's in-flow behaviour. Revert the override
 immediately after such a run; PVE returned to all-Qwen3.6.
+
+### Stage 0 terminal-only retry: idle flow cleanup
+
+The Stage 0 prompt now explicitly permits only the terminal tool and forbids
+browser, search, documentation, and URLs. This turns the prior public-manual
+fetch into an unambiguous scope violation rather than relying on an implicit
+reading of "use only".
+
+The first retry (flow 58) never progressed beyond an empty flow record: it
+created zero tasks and zero tool calls. `finishFlow` and `stopFlow` could not
+reconcile that controller-less state; the supported `deleteFlow` mutation
+soft-deleted it, leaving status `finished`. Treat this as an orchestration
+queue failure, not a baseline or model result. Do not launch another model
+comparison until flow creation reliably transitions into a task.
