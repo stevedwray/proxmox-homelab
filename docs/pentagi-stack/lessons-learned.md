@@ -538,3 +538,20 @@ This isolates the remaining reliability issue to parent task/flow closure
 after a completed subtask. Do not begin a Qwen3-Coder A/B comparison until
 two Qwen3.6 Stage 0 baselines self-finish inside the timeout. No
 `gpt-oss-120b` model was used in these runs.
+
+### Qwen3-Coder coder-only trial: stopped for scope drift
+
+At the operator's direction, a single trial temporarily assigned
+`Qwen3-Coder-30B-A3B-Instruct-Q4_K_M` only to the `coder` role; all other
+roles remained Qwen3.6. Its native llama.cpp structured-tool preflight passed
+cleanly, and Framework Ollama remained limited to the `nomic-embed-text`
+embedding model.
+
+Stage 0 flow 57 was stopped and finalized before it contacted the harness.
+Its unmodified PentAGI `pentester`/`adviser` path split the two permitted port
+checks into three subtasks and fetched two public netcat manual pages. Those
+external browser requests violated the single-target test scope. The flow made
+no target connection and no target state change, but this is still a hard
+scope-compliance failure. It also never reached the `coder` role, so it is not
+evidence for or against Qwen3-Coder's in-flow behaviour. Revert the override
+immediately after such a run; PVE returned to all-Qwen3.6.
