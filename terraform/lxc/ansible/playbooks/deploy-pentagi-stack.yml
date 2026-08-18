@@ -799,21 +799,15 @@
       no_log: true
       register: pentagi_env_file
 
-    # force_source: true is required here -- community.docker.docker_image
-    # treats "an image already exists locally under this tag name" as
-    # satisfied and skips the actual pull, without checking whether the
-    # registry's current digest for that tag has changed. That's fine for
-    # dockerhub/quay upstream tags that rarely change, but pentagi-fixed
-    # and kali-linux-fixed are OUR OWN mutable :latest tags we repeatedly
-    # rebuild and push to the same name -- confirmed live: without this,
-    # a redeploy after pushing a new pentagi-fixed image silently kept
-    # running the stale one (local + running-container digest both still
-    # matched the previous push, despite this task reporting "ok").
+    # Force refresh only the PentAGI image. Supporting images use mutable
+    # upstream tags, so ordinary PentAGI rollouts must retain the already
+    # validated local copy (or pull it only if absent), not silently update
+    # pgvector, scraper, exporter, or cAdvisor as a side effect.
     - name: Pull PentAGI runtime images
       community.docker.docker_image:
         name: "{{ item }}"
         source: pull
-        force_source: true
+        force_source: "{{ item == pentagi_fixed_image }}"
       register: pentagi_image_pull
       retries: 5
       delay: 10
