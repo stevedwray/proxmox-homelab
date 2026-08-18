@@ -3,6 +3,12 @@
 Status: ready to run in small, operator-reviewed batches. The target is
 `harness-target-pve` (VMID `70012`, `192.168.70.12`) in `pentest_seg`.
 
+The separate [upstream control](./upstream-control.md) is available for a
+patched-versus-upstream comparison. When it is used, repeat each stage with
+the same prompt and Qwen3.6/Ollama selection; do not treat this as a model-only
+A/B result, because PentAGI implementation/configuration is the changed
+variable.
+
 The comparison begins by validating PentAGI's tooling, not vulnerability
 reasoning. A model is eligible for an A/B run only after the preceding stage
 passes with the unchanged Qwen3.6 baseline. This prevents a broken provider,

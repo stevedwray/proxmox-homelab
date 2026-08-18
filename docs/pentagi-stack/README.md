@@ -167,6 +167,9 @@ checks passed:
 3. [model-ab-test-plan.md](./model-ab-test-plan.md) — staged, controlled
    model-comparison plan using the PVE `pentest_seg` harness. It begins with
    minimal tool calls before any vulnerability validation.
+4. [upstream-control.md](./upstream-control.md) — the isolated, true-upstream
+   PentAGI control on PVE used to distinguish upstream behaviour from the
+   private patched deployment.
 
 ## Upgrade baseline (2026-08-18)
 
