@@ -110,6 +110,10 @@
     pentagi_llamacpp_url: "http://{{ pentagi_framework_host }}:8080/v1"
     pentagi_llamacpp_primary_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_PRIMARY_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
     pentagi_llamacpp_adviser_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_ADVISER_MODEL') | default('Qwen3.6-35B-A3B-UD-Q4_K_M', true) }}"
+    # The coding specialist can be evaluated independently.  Keep the
+    # default tied to the primary model so normal deployments remain a single
+    # model configuration; set this only for a controlled coder-role A/B run.
+    pentagi_llamacpp_coder_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_CODER_MODEL') | default(pentagi_llamacpp_primary_model, true) }}"
     # Rebuilding and pushing the Kali worker changes a separate mutable
     # Harbor artifact. Keep it out of ordinary PentAGI configuration/image
     # rollouts; set PENTAGI_REBUILD_KALI_IMAGE=true only for an explicitly
@@ -458,7 +462,7 @@
             max_tokens: 8000
 
           coder:
-            model: "{{ pentagi_llamacpp_primary_model }}"
+            model: "{{ pentagi_llamacpp_coder_model }}"
             temperature: 0.1
             top_p: 0.8
             n: 1
