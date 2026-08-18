@@ -163,6 +163,12 @@ checks passed:
    validation-testing phase that followed deployment: eight fixes to a
    private PentAGI fork, infrastructure changes, what broke and why, and
    the current plan to move the adviser model onto llama.cpp.
+3. [model-recommendations.md](./model-recommendations.md) — role-by-role
+   model recommendations from the separate eval-battery project's full
+   BFCL/GPQA/IFEval/CyberSecEval/RepoBench/SWE-rebench results, including
+   a real open question this doc's own "adviser" evidence never
+   settled: whether `gpt-oss-120b` actually earns its cost over
+   Qwen3.6-35B alone.
 
 ## Key facts up front
 
@@ -204,6 +210,12 @@ checks passed:
   12's tool-calling evidence is from VSCode/Copilot/Continue, though, not
   PentAGI's own provider calibration — Phase 2's tool-call preflight is
   still the first direct confirmation either way, not a formality.
+  **Superseded, same day** — see "Model correction, 2026-07-26" above:
+  `llama-3.3-70b-instruct` failed PentAGI's real Test 1 three times and
+  was replaced with `qwen3.6-35b-a3b-ud:q4_k_m`, which is what's actually
+  live now. See [model-recommendations.md](./model-recommendations.md)
+  for the independent eval-battery evidence backing that choice, plus
+  recommendations for the other roles (`adviser`, `coder`).
 - **Lab-target network scoping is by destination IP, not by port.** A real
   pentest needs open-ended port enumeration against an authorized target,
   so `pentest_seg`'s cross-zone policy for `LAB_TARGET` allows the full
