@@ -181,7 +181,13 @@
           opensearch.password: kibanaserver
           opensearch.requestHeadersWhitelist: [authorization, securitytenant]
           opensearch_security.multitenancy.enabled: true
-          opensearch_security.multitenancy.tenants.preferred: [Private, Global]
+          # Global first: every dashboard/visualization this platform builds
+          # is deliberately transplanted into the Global tenant (see
+          # "Dashboards multitenancy trap" in docs/opensearch-stack/README.md),
+          # so a fresh login with no cached tenant choice should land there
+          # by default instead of an empty Private tenant. Private stays
+          # available via the tenant switcher for anyone who wants it.
+          opensearch_security.multitenancy.tenants.preferred: [Global, Private]
           opensearch_security.readonly_mode.roles: [kibana_read_only]
           opensearch_security.cookie.secure: false
           opensearch_security.auth.type: "openid"
