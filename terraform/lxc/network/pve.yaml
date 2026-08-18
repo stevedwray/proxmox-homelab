@@ -240,6 +240,7 @@ zones:
     containers:
       - "pentagi-stack — ${lab_ip_pentagi}"
       - "greenbone-stack — ${lab_ip_greenbone} — live, deployed 2026-08-01, see docs/greenbone-stack/plan.md §6"
+      - "pentagi-upstream-control (VMID 70013) — 192.168.70.13 — isolated upstream control for PentAGI model A/B testing"
   ai_seg:
     description: AI/LLM application services + external-utility MCP adapters — reactivated 2026-08-01
     attachment: ai_seg

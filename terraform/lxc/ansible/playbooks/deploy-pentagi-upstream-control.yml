@@ -1,0 +1,126 @@
+---
+# This is intentionally a control, not another customised PentAGI deploy.
+# The Compose content is read verbatim from the checked-out upstream remote
+# reference.  Only .env selects the requested native Ollama backend.
+- name: Deploy upstream PentAGI control
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    upstream_compose_dir: /opt/pentagi-upstream-control
+    # Ansible's pipe lookup removes the final newline even with rstrip=False;
+    # restore it so this file is byte-for-byte the upstream tracked object.
+    upstream_compose_content: "{{ lookup('pipe', 'git -C /home/steve/git/pentagi show upstream/main:docker-compose.yml') + '\n' }}"
+    upstream_compose_sha256: >-
+      {{ lookup('pipe', "git -C /home/steve/git/pentagi show upstream/main:docker-compose.yml | sha256sum | cut -d ' ' -f1") }}
+    upstream_framework_host: framework.gibbsgreatly.xyz
+    upstream_ollama_model: qwen3.6-35b-a3b-ud:q4_k_m
+    upstream_embedding_model: nomic-embed-text
+    upstream_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
+    upstream_cached_images:
+      - source: "{{ upstream_registry_host }}/dockerhub/vxcontrol/pentagi:latest"
+        target: vxcontrol/pentagi:latest
+      - source: "{{ upstream_registry_host }}/dockerhub/vxcontrol/pgvector:latest"
+        target: vxcontrol/pgvector:latest
+      - source: "{{ upstream_registry_host }}/dockerhub/vxcontrol/scraper:latest"
+        target: vxcontrol/scraper:latest
+      - source: "{{ upstream_registry_host }}/quay/prometheuscommunity/postgres-exporter:v0.16.0"
+        target: quay.io/prometheuscommunity/postgres-exporter:v0.16.0
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Trust Harbor proxy cache in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ upstream_registry_host }}"],
+            "log-driver": "json-file",
+            "log-opts": {"max-size": "50m", "max-file": "7"}
+          }
+      notify: Restart Docker
+
+    - name: Flush Docker daemon configuration
+      ansible.builtin.meta: flush_handlers
+
+    - name: Create upstream control compose directory
+      ansible.builtin.file:
+        path: "{{ upstream_compose_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Write verbatim upstream Docker Compose file
+      ansible.builtin.copy:
+        content: "{{ upstream_compose_content }}"
+        dest: "{{ upstream_compose_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write native Ollama-only control configuration
+      ansible.builtin.copy:
+        dest: "{{ upstream_compose_dir }}/.env"
+        mode: "0600"
+        content: |
+          OLLAMA_SERVER_URL=http://{{ upstream_framework_host }}:11434
+          OLLAMA_SERVER_MODEL={{ upstream_ollama_model }}
+          EMBEDDING_URL=http://{{ upstream_framework_host }}:11434
+          EMBEDDING_MODEL={{ upstream_embedding_model }}
+          EMBEDDING_PROVIDER=ollama
+
+    - name: Pull upstream images through the Harbor proxy cache
+      ansible.builtin.command:
+        cmd: "docker pull {{ item.source }}"
+      register: upstream_image_pull
+      changed_when: "'Downloaded newer image' in upstream_image_pull.stdout or 'Pull complete' in upstream_image_pull.stdout"
+      loop: "{{ upstream_cached_images }}"
+
+    - name: Tag cached images with their upstream Compose names
+      ansible.builtin.command:
+        cmd: "docker tag {{ item.source }} {{ item.target }}"
+      changed_when: false
+      loop: "{{ upstream_cached_images }}"
+
+    - name: Validate verbatim upstream Docker Compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ upstream_compose_dir }}"
+      changed_when: false
+
+    - name: Start upstream PentAGI control services
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ upstream_compose_dir }}"
+      register: upstream_compose_up
+      changed_when: "'Started' in upstream_compose_up.stdout or 'Created' in upstream_compose_up.stdout"
+
+    - name: Wait for upstream PentAGI control HTTP listener
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 8443
+        timeout: 180
+
+    - name: Verify deployed Compose matches upstream reference
+      ansible.builtin.command:
+        cmd: sha256sum docker-compose.yml
+        chdir: "{{ upstream_compose_dir }}"
+      register: deployed_compose_sha256
+      changed_when: false
+      failed_when: "deployed_compose_sha256.stdout.split()[0] != upstream_compose_sha256"
+
+    - name: Verify requested Ollama model is visible from the control LXC
+      ansible.builtin.uri:
+        url: "http://{{ upstream_framework_host }}:11434/api/tags"
+        return_content: true
+      register: upstream_ollama_tags
+      changed_when: false
+      failed_when: "upstream_ollama_model not in upstream_ollama_tags.content"
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
