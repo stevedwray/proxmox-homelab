@@ -189,6 +189,52 @@ the deployment playbook pins that exact artifact. Rebuild from `fe77272` only
 when an image change is required, then capture and promote its new manifest
 digest explicitly.
 
+## Vanilla-upstream companion on the same LXC (2026-08-19)
+
+For quick "browse and click through the real vanilla upstream UI" testing —
+lighter weight than the isolated [upstream control](./upstream-control.md),
+which deliberately has no Traefik route by design — `pentagi-stack`'s own
+LXC (`192.168.70.10`) now also carries a second, separate compose project at
+`/opt/pentagi-upstream-vanilla`, laid down by
+`deploy-pentagi-upstream-vanilla-companion.yml`. It's the same byte-for-byte
+upstream Compose file as the isolated control, its own `.env`/data volume so
+neither install's state touches the other, and `PENTAGI_LISTEN_IP`/
+`PENTAGI_LISTEN_PORT`/`SERVER_USE_SSL=false` set to the exact same
+`192.168.70.10:8443` the real lab route already targets — so switching to it
+needs **zero** Traefik/DNS/Authentik changes; the existing
+`pentagi.lab.gibbsgreatly.xyz` route and its Authentik forward-auth gate
+just keep working, unchanged, no matter which install answers behind it.
+
+**Only one can run at a time** — upstream's own Compose file hardcodes fixed
+container names (`pentagi`, `pgvector`, `scraper`, `pgexporter`), so both
+projects can't hold them simultaneously. Switching is a manual
+`docker compose down` (on whichever is active, to free the names — data
+volumes are untouched) followed by `docker compose up -d` (on the other):
+
+```bash
+# Switch lab -> vanilla upstream
+ssh root@192.168.70.10 'cd /opt/pentagi-stack && docker compose down'
+ssh root@192.168.70.10 'cd /opt/pentagi-upstream-vanilla && docker compose up -d'
+
+# Switch back, vanilla -> lab
+ssh root@192.168.70.10 'cd /opt/pentagi-upstream-vanilla && docker compose down'
+ssh root@192.168.70.10 'cd /opt/pentagi-stack && docker compose up -d'
+```
+
+Login is identical to the real lab instance from the browser's point of
+view — same URL, same Authentik SSO gate. Behind that gate, PentAGI's own
+login is whichever install is currently up: the lab one uses its
+already-changed password, the vanilla one is untouched
+(`admin@pentagi.com`/`admin`).
+
+An earlier attempt in this session gave the vanilla control its own
+permanent Traefik/DNS/Authentik route (a separate hostname pointing at
+`pentagi-upstream-control`'s own LXC) — fully reverted, unused. Kept the
+isolated control exactly as originally designed (loopback-only, no edge
+route) for the A/B test harness in
+[model-ab-test-plan.md](./model-ab-test-plan.md); this same-LXC companion is
+purely for quick manual browsing.
+
 ## Key facts up front
 
 - **Target host: `pve-test-vm`**, not `pve` — not a production node, so no

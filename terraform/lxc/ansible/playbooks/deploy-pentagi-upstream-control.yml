@@ -95,7 +95,9 @@
         cmd: docker compose up -d
         chdir: "{{ upstream_compose_dir }}"
       register: upstream_compose_up
-      changed_when: "'Started' in upstream_compose_up.stdout or 'Created' in upstream_compose_up.stdout"
+      changed_when: >-
+        'Started' in upstream_compose_up.stdout or 'Created' in upstream_compose_up.stdout
+        or 'Recreated' in upstream_compose_up.stdout
 
     - name: Wait for upstream PentAGI control HTTP listener
       ansible.builtin.wait_for:
