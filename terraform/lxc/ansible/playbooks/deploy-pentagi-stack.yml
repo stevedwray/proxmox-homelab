@@ -130,10 +130,12 @@
     # artifacts (e.g. "<parameter=cwd>") before they reach `sh -c`, since
     # upstream silently executes them as a shell command that then fails
     # with a syntax error invisible to the tool-call-fixer retry path.
-    # Built and pushed manually for now (docker build/push from the fork
-    # checkout, not yet wired into this playbook) -- same Harbor project
-    # as the bootsnap-safe Kali image below.
-    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed:latest"
+    # Immutable Harbor manifest captured from the live lab deployment on
+    # 2026-08-18. Do not change this to :latest: a new image must be
+    # validated, its registry manifest digest recorded, and then promoted
+    # here explicitly. It shares the Harbor project with the bootsnap-safe
+    # Kali image below.
+    pentagi_fixed_image: "{{ pentagi_registry_host }}/{{ pentagi_kali_project_name }}/pentagi-fixed@sha256:685f638482fa43139a08f46396e863cc3ebc585486f9184fc747d9292102c914"
 
     pentagi_runtime_images:
       - "{{ pentagi_fixed_image }}"

@@ -176,12 +176,12 @@ GVM-bridge tools. An upstream rebase is therefore not part of this update.
 The lab deployment currently runs
 `harbor.lab.gibbsgreatly.xyz/pentagi/pentagi-fixed:latest` with Docker image
 ID `sha256:deb4365c1ab62bc001b0f25bbe4b3f39378ea383bc2132a1c379b03afefe06f8`
-(captured from VMID 70010 on 2026-08-18). This is the local Docker
-image/config ID, **not** a registry manifest digest and cannot safely be used
-as an `image@sha256:…` pin. Capture the corresponding `RepoDigests` entry
-from the lab instance, then use that registry manifest digest in the playbook
-before a new deployment. Do not invent or substitute a digest. Rebuild from
-`fe77272` only if the captured image cannot be traced to that source commit.
+(captured from VMID 70010 on 2026-08-18). This local Docker image/config ID
+is **not** the pin. Its verified registry manifest digest is
+`harbor.lab.gibbsgreatly.xyz/pentagi/pentagi-fixed@sha256:685f638482fa43139a08f46396e863cc3ebc585486f9184fc747d9292102c914`;
+the deployment playbook pins that exact artifact. Rebuild from `fe77272` only
+when an image change is required, then capture and promote its new manifest
+digest explicitly.
 
 ## Key facts up front
 
