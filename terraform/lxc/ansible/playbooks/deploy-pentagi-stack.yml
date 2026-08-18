@@ -118,6 +118,10 @@
     # is intentionally opt-in: ordinary PentAGI operation retains scraper
     # access, while a bounded terminal-only test cannot drift to public URLs.
     pentagi_disable_browser: "{{ lookup('env', 'PENTAGI_DISABLE_BROWSER') | default('false', true) | bool }}"
+    # Normal flows preserve an explicit approval pause. Controlled harness
+    # flows can opt in to unattended execution after their tool surface and
+    # target have already been constrained by this deployment.
+    pentagi_ask_user: "{{ lookup('env', 'PENTAGI_ASK_USER') | default('true', true) | bool }}"
     # Rebuilding and pushing the Kali worker changes a separate mutable
     # Harbor artifact. Keep it out of ordinary PentAGI configuration/image
     # rollouts; set PENTAGI_REBUILD_KALI_IMAGE=true only for an explicitly
@@ -740,7 +744,7 @@
           GVM_BRIDGE_URL=http://{{ pentagi_gvm_bridge_host }}:8010
 
           # Agent execution settings
-          ASK_USER=true
+          ASK_USER={{ pentagi_ask_user | lower }}
           ASSISTANT_USE_AGENTS=false
           EXECUTION_MONITOR_ENABLED=true
           EXECUTION_MONITOR_SAME_TOOL_LIMIT=5
