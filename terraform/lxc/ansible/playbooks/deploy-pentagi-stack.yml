@@ -114,6 +114,10 @@
     # default tied to the primary model so normal deployments remain a single
     # model configuration; set this only for a controlled coder-role A/B run.
     pentagi_llamacpp_coder_model: "{{ lookup('env', 'PENTAGI_LLAMACPP_CODER_MODEL') | default(pentagi_llamacpp_primary_model, true) }}"
+    # Harness runs can remove the browser tool from every agent schema. This
+    # is intentionally opt-in: ordinary PentAGI operation retains scraper
+    # access, while a bounded terminal-only test cannot drift to public URLs.
+    pentagi_disable_browser: "{{ lookup('env', 'PENTAGI_DISABLE_BROWSER') | default('false', true) | bool }}"
     # Rebuilding and pushing the Kali worker changes a separate mutable
     # Harbor artifact. Keep it out of ordinary PentAGI configuration/image
     # rollouts; set PENTAGI_REBUILD_KALI_IMAGE=true only for an explicitly
@@ -553,7 +557,7 @@
                 - HTTP_CLIENT_TIMEOUT=${HTTP_CLIENT_TIMEOUT:-}
                 - TERMINAL_TOOL_TIMEOUT=${TERMINAL_TOOL_TIMEOUT:-}
                 - SCRAPER_PUBLIC_URL=${SCRAPER_PUBLIC_URL:-}
-                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL:-https://someuser:somepass@scraper/}
+                - SCRAPER_PRIVATE_URL=${SCRAPER_PRIVATE_URL-https://someuser:somepass@scraper/}
                 - PUBLIC_URL=${PUBLIC_URL:-}
                 - SERVER_PORT=8443
                 - SERVER_HOST=0.0.0.0
@@ -745,6 +749,9 @@
           MAX_GENERAL_AGENT_TOOL_CALLS=100
           MAX_LIMITED_AGENT_TOOL_CALLS=20
           AGENT_PLANNING_STEP_ENABLED=true
+          # Empty is meaningful here: docker-compose's ${VAR-default} form
+          # preserves it and PentAGI then omits the browser tool entirely.
+          SCRAPER_PRIVATE_URL={{ '' if pentagi_disable_browser else 'https://someuser:somepass@scraper/' }}
 
           # Server -- Traefik terminates TLS externally (edge.yaml), so
           # PentAGI serves plain HTTP internally, matching every other web
