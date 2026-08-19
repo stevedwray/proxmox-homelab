@@ -177,3 +177,13 @@ for workers belonging to flow states that cannot be restored after a restart.
 CT 70010 was restored to its unchanged upstream model configuration; it has
 no `pentagi-terminal-*` container, temporary provider config, test session,
 or locally stored API token.
+
+## Exact-upstream fix validation (2026-08-19)
+
+The two minimal fixes were reapplied to the exact deployed upstream source
+revision `879e87c`: scope the flow-controller mutex to map access, and invoke
+`DockerClient.Cleanup()` during startup before `LoadFlows()`. Focused Go tests
+passed. A matching full image was deployed temporarily to CT 70010; during a
+stalled `createAssistant` request, `deleteFlow` returned `success` in under one
+second. The LXC was immediately restored to the pinned unmodified upstream
+image. The submission branch is `fix/upstream-flow-cleanup`, commit `946c0b0`.
