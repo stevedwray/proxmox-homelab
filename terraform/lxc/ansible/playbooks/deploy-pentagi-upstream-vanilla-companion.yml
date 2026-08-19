@@ -27,6 +27,9 @@
     vanilla_framework_host: framework.gibbsgreatly.xyz
     vanilla_ollama_model: qwen3.6-35b-a3b-ud:q4_k_m
     vanilla_embedding_model: nomic-embed-text
+    # Shared SOPS-backed secret. Upstream disables API-token creation when
+    # this is omitted and it falls back to the insecure literal "salt".
+    vanilla_cookie_salt: "{{ lookup('env', 'PENTAGI_COOKIE_SALT') | mandatory('PENTAGI_COOKIE_SALT env var is required') }}"
     vanilla_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.lab.gibbsgreatly.xyz', true) }}"
     docker_registry_host: "{{ vanilla_registry_host }}"
     vanilla_cached_images:
@@ -87,6 +90,7 @@
           PENTAGI_LISTEN_IP={{ ansible_host }}
           PENTAGI_LISTEN_PORT=8443
           SERVER_USE_SSL=false
+          COOKIE_SIGNING_SALT={{ vanilla_cookie_salt }}
 
     - name: Pull upstream images through the Harbor proxy cache
       ansible.builtin.command:
