@@ -135,3 +135,34 @@ The outstanding investigation is therefore the distinct reported issue:
 exercise a flow that successfully reaches worker creation, then verify that
 all worker containers are removed after finish, delete, timeout, and request
 cancellation.
+
+## Worker lifecycle and restart recovery finding (2026-08-19)
+
+A constrained terminal-only flow on the unmodified upstream control created
+`pentagi-terminal-3` and a corresponding `primary` container row. Deleting
+that flow removed the Docker container and marked its row `deleted`; the
+approximately ten-second deletion time was Docker's normal stop grace period.
+Thus the ordinary in-process `deleteFlow` path does not leak a primary worker.
+
+Source inspection then identified the restart-recovery gap. Upstream already
+has `DockerClient.Cleanup()`, which marks abandoned `created` flows failed and
+removes their running or starting worker containers. However,
+`cmd/pentagi/main.go` created the Docker client and immediately restored active
+flows with `LoadFlows()` without ever calling `Cleanup()`. A restart can
+therefore leave workers associated with flows that cannot be restored in the
+in-memory controller.
+
+The local fork now calls `client.Cleanup(ctx)` before provider and flow
+initialization (commit `e38eb90`, following the earlier lock/failed-init fix
+`32bd304`). Focused tests passed:
+
+```text
+go test ./cmd/pentagi ./pkg/docker ./pkg/controller ./pkg/graph
+```
+
+The live restart/delete reproduction could not be completed without the
+operator's changed PentAGI administrator password. The bootstrap password in
+SOPS correctly returned HTTP 403, and no credential reset was attempted.
+CT 70010 was restored to its unchanged upstream configuration; it has no
+`pentagi-terminal-*` container and no temporary provider config or test
+session files.
