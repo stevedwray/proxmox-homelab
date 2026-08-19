@@ -106,3 +106,32 @@ TASK_APPROVAL=pentagi-v210-upgrade \
 Treat the control as disposable experimental state. Do not point it at targets
 outside the explicit scope in the A/B plan, and do not use it to bypass the
 patched stack's safety controls in an otherwise uncontrolled run.
+
+## Flow-initialization cleanup finding (2026-08-19)
+
+The clean upstream deployment was reproduced on CT 70010 with the native
+Ollama configuration above. A `createAssistant(flowId: 0, ...)` request
+created a flow row, then stalled during the synchronous provider metadata
+calls that happen before `executor.Prepare()` creates a primary terminal.
+Consequently, this reproduction created **no** `pentagi-terminal-*` container;
+it is not evidence of a post-worker container leak.
+
+Upstream held `flowController.mx` for the whole creation path. Since
+`deleteFlow` calls `GetFlow`, a pending provider call prevented deletion of
+the newly created flow until the application was restarted. The configured
+HTTP-client timeout is 600 seconds, so this can present as a long-running
+cleanup failure.
+
+The local fork fix `32bd304` narrows the controller mutex to map access and
+cleans up a failed initialization's prepared resources and database record.
+Its focused Go tests passed. A temporary image built from that commit was
+used only to test the stalled-flow path: deleting the pending flow returned
+`success` in 58 ms while the original create request remained blocked. No
+terminal container existed before or after that deletion. CT 70010 was then
+restored to the pinned upstream image, and the temporary registry login and
+test session files were removed.
+
+The outstanding investigation is therefore the distinct reported issue:
+exercise a flow that successfully reaches worker creation, then verify that
+all worker containers are removed after finish, delete, timeout, and request
+cancellation.
