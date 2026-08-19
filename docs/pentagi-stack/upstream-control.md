@@ -160,9 +160,20 @@ initialization (commit `e38eb90`, following the earlier lock/failed-init fix
 go test ./cmd/pentagi ./pkg/docker ./pkg/controller ./pkg/graph
 ```
 
-The live restart/delete reproduction could not be completed without the
-operator's changed PentAGI administrator password. The bootstrap password in
-SOPS correctly returned HTTP 403, and no credential reset was attempted.
-CT 70010 was restored to its unchanged upstream configuration; it has no
-`pentagi-terminal-*` container and no temporary provider config or test
-session files.
+The restart/delete reproduction was subsequently completed with a short-lived
+operator-created API token (not retained). A terminal-only flow created the
+real `pentagi-terminal-5` worker. After a PentAGI-only restart, `deleteFlow`
+returned `success`, removed the Docker container, and left its database row as
+`primary | deleted`. Thus a `waiting` flow restored by `LoadFlows()` cleans up
+correctly on explicit deletion.
+
+The same run reconfirmed the distinct stalled-creation failure: a flow was
+persisted in `created` state while the upstream controller held its global
+mutex during provider setup; `deleteFlow` timed out until PentAGI was
+restarted. The local fork fix `32bd304` addresses that lock and failed-init
+cleanup path. The startup-recovery patch `e38eb90` remains the defensive fix
+for workers belonging to flow states that cannot be restored after a restart.
+
+CT 70010 was restored to its unchanged upstream model configuration; it has
+no `pentagi-terminal-*` container, temporary provider config, test session,
+or locally stored API token.
