@@ -187,3 +187,23 @@ passed. A matching full image was deployed temporarily to CT 70010; during a
 stalled `createAssistant` request, `deleteFlow` returned `success` in under one
 second. The LXC was immediately restored to the pinned unmodified upstream
 image. The submission branch is `fix/upstream-flow-cleanup`, commit `946c0b0`.
+
+## Live-test blocker: PentAGI provider calls report a false missing Ollama model (2026-08-20)
+
+The intended restart-recovery test needs a real `pentagi-terminal-*` worker.
+That worker could not be created on the exact-upstream cleanup image because
+PentAGI's provider initialization persisted a `created` flow and then failed
+its second setup call (`failed to get language`) with `404 Not Found: model
+'qwen3.6-35b-a3b-ud:q4_k_m' not found`. Retries could instead remain blocked
+before worker preparation. Each test flow was deleted immediately; no worker
+or active flow remains.
+
+This is not a missing model or basic connectivity fault. Framework Ollama
+listed and had loaded the model, and direct `/api/show`, `/api/generate`,
+`/api/chat`, and OpenAI-compatible `/v1/models` calls from CT 70010 succeeded.
+Neither a temporary 128-token per-role Ollama profile nor routing PentAGI's
+`custom` provider through Ollama's `/v1` endpoint resolved the error. The
+issue must be reproduced with PentAGI's pinned client to compare its exact
+successive request payloads with the successful direct calls. See
+[problem-statement.md](problem-statement.md) for the full evidence, attempted
+workarounds, and next steps.
