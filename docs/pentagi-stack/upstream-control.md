@@ -2,7 +2,10 @@
 
 Status (2026-08-21): the vanilla-upstream project is the **active** project.
 The patched `pentagi-stack` project is **not currently deployed** — see
-[Current live state](#current-live-state) below.
+[Current live state](#current-live-state) below. The worker-leak
+investigation itself is **closed** — both real leak paths found here are
+fixed and live-validated; see
+[problem-statement.md](problem-statement.md#restart-cleanup-test--complete-2026-08-21).
 
 ## Deployment model
 

@@ -1,5 +1,9 @@
 # PentAGI upstream lifecycle and Ollama compatibility problem statement
 
+Status (2026-08-21): **objective closed.** Both real worker-leak paths found
+during this investigation are fixed and live-validated — see "Restart-cleanup
+test — complete" below.
+
 ## Objective
 
 Establish whether unmodified upstream PentAGI leaks its per-flow Docker worker
@@ -143,11 +147,42 @@ window between the flow's own long-lived context being created and
 `initialized = true` inside `NewFlowWorker`, since `executor.Prepare()`
 there runs on a separate context — not Ollama-bound, so far lower risk.
 
-Next:
+## Restart-cleanup test — complete (2026-08-21)
+
+The original objective's last open item: does a real worker survive a
+PentAGI restart cleanly, without leaking? Ran on the consolidated
+fix image (both fixes above).
+
+Deliberately raced a restart against a flow's own worker creation:
+triggered `createAssistant`, polled `docker ps` for `pentagi-terminal-*`
+to appear, restarted `pentagi` the instant it did. The race landed even
+tighter than planned — flow 17 had just reached `waiting` and its
+container (`pentagi-terminal-17`) was about a second old, not yet settled,
+when the restart hit.
+
+Result: PentAGI caught `SIGTERM` gracefully; on the new process's startup,
+`DockerClient.Cleanup()` found the container, removed it
+(`"removing container and associated resources"` → `"container removed"`),
+and marked the flow `failed`. Final state: **zero** `pentagi-terminal-*`
+containers, container row `deleted`. No manual intervention needed.
+
+This confirms the `e38eb90` startup-`Cleanup()` fix handles a real worker
+container across a restart with no leak, even in a tighter race than the
+original test plan called for.
+
+**Original objective status: closed.** Unmodified upstream leaks a worker
+under two conditions, both now fixed and live-validated: (1) a
+`deleteFlow` racing an in-flight `createAssistant` init (`8322b44`), and
+(2) a restart landing before `Cleanup()` ran at startup — upstream already
+had `Cleanup()`, it just was never called (`e38eb90`, now confirmed live).
+
+Remaining, smaller items — none blocking:
 
 1. Tighten the title-generator role's `num_predict`/stop condition — 5,365
    tokens for a ≤20-character title is what created the timing window the
-   Ollama race needs. Smaller, separate fix.
+   Ollama race needs.
 2. Consider reporting the underlying Ollama scheduler race upstream.
-3. Run the restart-cleanup test that's been blocked on the Ollama issue —
-   now unblocked, and now running on top of both fixes.
+3. Housekeeping: several stale `created`-status flow rows (ids 1, 2, 4, 6,
+   7, 8, 9, 10, 11, 15, 16) and one stale `waiting`-status row (id 12) from
+   earlier in this investigation have no attached containers (confirmed) but
+   were never soft-deleted — cosmetic DB cleanup, not a resource leak.
