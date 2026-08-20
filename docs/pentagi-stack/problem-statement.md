@@ -113,28 +113,41 @@ The flow completed end-to-end with **no error surfaced to the client** in
 either run. Full detail:
 [upstream-control.md](upstream-control.md#4-false-missing-model-from-ollama--root-cause-found-2026-08-2021).
 
-**Separate finding from the same validation run:** a soft-`deleteFlow` call
-against a flow whose `createAssistant` init goroutine was still in flight
-(flow 12, pre-dating this fix) left a real orphaned `pentagi-terminal-12`
-worker running — the goroutine wasn't cancelled by the delete, so it
-completed independently and created a primary worker *after* the flow was
-already marked deleted. This is a second, distinct interaction gap between
-the `32bd304` mutex-narrowing fix and cleanup: narrowing the mutex made
-`deleteFlow` return fast, but it doesn't cancel the in-flight init. Manually
-cleaned up (`docker stop`/`rm`); worth its own fix (cancel the flow's
-context on delete) before calling the original worker-leak objective fully
-closed. Flows 13/14 (the fix-validation runs) deleted cleanly with no
-leftover containers — this only reproduces when delete races an in-flight
-init specifically, which the earlier finding #1 tests didn't cover.
+**Second finding, fixed and live-validated the same day:** a soft-`deleteFlow`
+call against a flow whose `createAssistant` init goroutine was still in
+flight (flow 12, pre-dating this fix) left a real orphaned
+`pentagi-terminal-12` worker running — the goroutine wasn't cancelled by the
+delete, so it completed independently and created a primary worker *after*
+the flow was already marked deleted. Root cause: a flow only gets added to
+the controller's live map once its (potentially multi-minute) provider setup
+already succeeded, so `deleteFlow`'s `GetFlow` lookup can't see it while
+setup is still running — the existing `32bd304` mutex fix made `deleteFlow`
+return fast, but never cancelled the in-flight init.
+
+**Fix:** `backend/pkg/controller/{flow,flows}.go` +
+`pkg/graph/schema.resolvers.go`, branch
+`fix/delete-flow-in-flight-init-race`, commit `8322b44`, on top of the
+Ollama retry fix. Adds a `pending` registry (flowID → cancel func) populated
+as soon as the flow's DB row/ID exists but before the slow setup runs;
+`deleteFlow` now cancels it when `GetFlow` reports not-found. Focused tests
+added; full suite passes.
+
+Live-validated by deliberately racing it: triggered `createAssistant`, grabbed
+the new flow's ID within ~1s, called `deleteFlow` while it was still
+`status: created`. Result: the setup call failed with `context canceled`,
+the client got a clean GraphQL error instead of a hang, **zero**
+`pentagi-terminal-*` containers were created, and the flow's `containers`
+row count was 0. Confirmed this exact scenario (flow 12) is no longer
+reproducible. Known remaining edge case: doesn't close the much smaller
+window between the flow's own long-lived context being created and
+`initialized = true` inside `NewFlowWorker`, since `executor.Prepare()`
+there runs on a separate context — not Ollama-bound, so far lower risk.
 
 Next:
 
-1. Fix the delete/in-flight-goroutine race found above — cancel the flow's
-   context on `deleteFlow` so a real worker can't be created after the flow
-   is marked deleted.
-2. Tighten the title-generator role's `num_predict`/stop condition — 5,365
+1. Tighten the title-generator role's `num_predict`/stop condition — 5,365
    tokens for a ≤20-character title is what created the timing window the
-   race needs. Smaller, separate fix.
-3. Consider reporting the underlying scheduler race to Ollama upstream.
-4. Run the restart-cleanup test that's been blocked on the Ollama issue —
-   now unblocked.
+   Ollama race needs. Smaller, separate fix.
+2. Consider reporting the underlying Ollama scheduler race upstream.
+3. Run the restart-cleanup test that's been blocked on the Ollama issue —
+   now unblocked, and now running on top of both fixes.
