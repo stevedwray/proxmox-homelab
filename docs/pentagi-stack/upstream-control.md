@@ -1,53 +1,73 @@
-# Upstream PentAGI control environment
+# Vanilla-upstream PentAGI companion (on `pentagi-stack`'s LXC)
 
-Status: deployed and healthy on `pve` as of 2026-08-19. This is the control
-plane for comparing the locally patched PentAGI deployment with an unmodified
-upstream deployment. It is an experimental environment, not a user-facing
-service and not a replacement for `pentagi-stack`.
+Status (2026-08-21): the vanilla-upstream project is the **active** project.
+The patched `pentagi-stack` project is **not currently deployed** — see
+[Current live state](#current-live-state) below.
 
-## Purpose and comparison boundary
+## Deployment model
 
-`pentagi-upstream-control` establishes the upstream baseline for the controlled
-model and behaviour tests in [model-ab-test-plan.md](./model-ab-test-plan.md).
-It must be compared with the patched stack using the same fixed prompt, target,
-model endpoint, and test stage. A result is not attributable to the PentAGI
-code/configuration if any of those other variables differ.
+There is one LXC: `pentagi-stack` (VMID `70010`, `192.168.70.10`,
+`pentest_seg`). It can hold two Docker Compose projects on disk:
 
-The control intentionally has none of the patched stack's additions:
+| Project | Path | What it is |
+| --- | --- | --- |
+| `pentagi-stack` | `/opt/pentagi-stack` | The patched, harness-integrated deployment (custom `pentagi-fixed` image, role/provider config, CVE-MCP, GVM bridge, shared Docker network). |
+| vanilla-upstream companion | `/opt/pentagi-upstream-vanilla` | Byte-for-byte unmodified upstream. No patches, no harness integration. |
 
-- no private `pentagi-fixed` image;
-- no custom role or provider YAML;
-- no harness-specific browser/tool guardrails;
-- no execution-monitor tuning, search integration, CVE-MCP, GVM bridge, or
-  shared Docker network;
-- no shared database, named volume, or Docker daemon.
+**Only one runs at a time.** Upstream's Compose file hardcodes container
+names (`pentagi`, `pgvector`, `scraper`, `pgexporter`), so both projects
+can't hold them simultaneously. Whichever is up answers the existing
+`pentagi.lab.gibbsgreatly.xyz` Traefik route and Authentik gate — switching
+projects needs no edge/DNS change.
 
-It does use the lab's normal base-LXC operations roles (metrics, logging, CA
-trust, Docker) and Harbor proxy cache. Those are host-operating requirements,
-not PentAGI application customisation.
+Switch manually:
 
-## Deployed topology
+```bash
+# lab (patched) -> vanilla upstream
+ssh root@192.168.70.10 'cd /opt/pentagi-stack && docker compose down'
+ssh root@192.168.70.10 'cd /opt/pentagi-upstream-vanilla && docker compose up -d'
 
-| Item | Value |
-| --- | --- |
-| Proxmox node | `pve` |
-| LXC | `70013` (`pentagi-upstream-control`) |
-| Address / zone | `192.168.70.13/24`, `pentest_seg` (VLAN 70) |
-| Resources | 2 vCPU, 8 GiB RAM, 2 GiB swap, 30 GiB rootfs, dedicated 50 GiB `/var/lib/docker` mount |
-| Compose directory | `/opt/pentagi-upstream-control` |
-| Listener | `https://127.0.0.1:8443` inside the LXC only; no Traefik route or public DNS record |
-| Supporting services | upstream `pgvector`, `scraper`, and `pgexporter` services |
+# vanilla upstream -> lab (patched)
+ssh root@192.168.70.10 'cd /opt/pentagi-upstream-vanilla && docker compose down'
+ssh root@192.168.70.10 'cd /opt/pentagi-stack && docker compose up -d'
+```
 
-The upstream Compose names (`pentagi`, `pgvector`, `scraper`, and
-`pgexporter`) are safe because this is a separate LXC. Do not co-locate this
-Compose project with `pentagi-stack`: its fixed container and network names
-would collide.
+Deploying via automation: `pentagi-stack`'s `stack.yaml` has one
+`ansible_playbook` pointer, so it selects one project per run of
+`provision.sh --stack pentagi-stack`:
+
+- `deploy-pentagi-stack` → patched project
+- `deploy-pentagi-upstream-vanilla-companion` → vanilla-upstream companion
+
+## Current live state
+
+The pointer is currently set to `deploy-pentagi-upstream-vanilla-companion`
+(commit `cdc878b0`, 2026-08-19, "deploy pinned upstream PentAGI for cleanup
+investigation"). It was meant to be reverted once the worker-lifecycle
+investigation finished; it hasn't been yet.
+
+Confirmed live on 70010 (2026-08-21):
+
+- `/opt/pentagi-upstream-vanilla` exists and is the running project.
+- `/opt/pentagi-stack` does not exist. No `pentagi-stack_*` Docker volumes
+  exist either.
+- No backup exists for VMID 70010 (checked PBS, `storage-backup`,
+  `gazaar-backup`, `nas-backup`) and no ZFS snapshots exist for its rootfs
+  or `/var/lib/docker` datasets.
+
+**Consequence:** the patched project's prior runtime state (flow/task
+history, DB rows) is gone, not just hidden. Redeploying `deploy-pentagi-stack`
+restores the code/config cleanly but starts with empty application state.
+
+Restoring the patched project is deliberately **on hold** — the operator
+wants the Ollama investigation below to continue on the current vanilla
+deployment first.
 
 ## Upstream provenance and image handling
 
-The deployed `docker-compose.yml` is byte-for-byte the file at upstream
-PentAGI revision `879e87c2c2688c4a95eac9c1aaf3cd6f6123ebe3`.
-Its verified SHA-256 is:
+The vanilla project's `docker-compose.yml` is byte-for-byte the file at
+upstream PentAGI revision `879e87c2c2688c4a95eac9c1aaf3cd6f6123ebe3`.
+Verified SHA-256:
 
 ```
 8dd61ae1a92096bea2477426043751f19471c844a5ed1094d957549056039063
@@ -56,8 +76,8 @@ Its verified SHA-256 is:
 All images are pulled through Harbor, never directly from a public registry.
 The deployment pulls the Docker Hub/Quay proxy-cache references below, then
 tags those exact local images with the names the unmodified upstream Compose
-expects. This retains an unmodified Compose file while complying with the
-lab's registry-routing policy.
+expects — unmodified Compose file, still compliant with registry-routing
+policy.
 
 | Upstream Compose image | Verified Harbor manifest digest |
 | --- | --- |
@@ -66,13 +86,13 @@ lab's registry-routing policy.
 | `vxcontrol/scraper:latest` | `harbor.lab.gibbsgreatly.xyz/dockerhub/vxcontrol/scraper@sha256:4a3b0f179ab29003313167877ee2f6ab74c89f3fcb1ce108e648ca1ffadc51b7` |
 | `quay.io/prometheuscommunity/postgres-exporter:v0.16.0` | `harbor.lab.gibbsgreatly.xyz/quay/prometheuscommunity/postgres-exporter@sha256:6999a7657e2f2fb0ca6ebf417213eebf6dc7d21b30708c622f6fcb11183a2bb0` |
 
-`latest` remains an upstream default, so record fresh Harbor manifest digests
-before treating a later redeploy as comparable with the initial control run.
+`latest` remains an upstream default — record fresh Harbor manifest digests
+before treating a later redeploy as comparable with the initial run.
 
 ## Native Ollama configuration
 
-The control's `.env` contains only the native Ollama provider selections
-needed for this experiment:
+The vanilla project's `.env` contains only the native Ollama provider
+selections needed for this investigation:
 
 ```dotenv
 OLLAMA_SERVER_URL=http://framework.gibbsgreatly.xyz:11434
@@ -83,127 +103,99 @@ EMBEDDING_PROVIDER=ollama
 ```
 
 No `LLM_SERVER_*`, custom provider file, role mapping, or other application
-configuration is set. `gpt-oss-120b` is out of scope for this environment.
+configuration is set. `gpt-oss-120b` is out of scope.
 
-## Verification and operations
+## Findings so far
 
-Initial deployment validation on 2026-08-19 confirmed:
+### 1. Flow-initialization cleanup (2026-08-19)
 
-- `pentagi`, `scraper`, and `pgexporter` were running; `pgvector` was healthy;
-- `https://127.0.0.1:8443/` returned HTTP `200` from inside the LXC;
-- the deployed Compose SHA-256 matched the upstream object above exactly;
-- the control LXC could see both `qwen3.6-35b-a3b-ud:q4_k_m` and
-  `nomic-embed-text` from Framework Ollama's `/api/tags` endpoint.
+A `createAssistant(flowId: 0, ...)` request created a flow row, then stalled
+during synchronous provider metadata calls that happen before
+`executor.Prepare()` creates a primary terminal. No `pentagi-terminal-*`
+container was created — not a post-worker leak.
 
-For an approved production reconciliation, use the normal PVE wrapper:
+- Upstream held `flowController.mx` for the whole creation path.
+- `deleteFlow` calls `GetFlow`, so a pending provider call blocked deletion
+  until the app was restarted (HTTP-client timeout: 600s).
+- Fix (`32bd304`): narrow the mutex to map access; clean up a failed init's
+  prepared resources and DB record.
+- Validated: a stalled flow deleted in 58ms while the original create stayed
+  blocked. No terminal container before or after.
 
-```bash
-TASK_APPROVAL=pentagi-v210-upgrade \
-  ./with-secrets-prod scripts/provision.sh \
-  --target-env pve --stack pentagi-upstream-control
-```
+Outstanding: exercise a flow that *does* reach worker creation, then verify
+all worker containers are removed after finish/delete/timeout/cancellation.
 
-Treat the control as disposable experimental state. Do not point it at targets
-outside the explicit scope in the A/B plan, and do not use it to bypass the
-patched stack's safety controls in an otherwise uncontrolled run.
+### 2. Worker lifecycle and restart recovery (2026-08-19)
 
-## Flow-initialization cleanup finding (2026-08-19)
+A constrained terminal-only flow created `pentagi-terminal-3` and a `primary`
+container row. Deleting that flow removed the container and marked the row
+`deleted` (~10s = Docker's normal stop grace period). Ordinary `deleteFlow`
+does not leak a primary worker.
 
-The clean upstream deployment was reproduced on CT 70010 with the native
-Ollama configuration above. A `createAssistant(flowId: 0, ...)` request
-created a flow row, then stalled during the synchronous provider metadata
-calls that happen before `executor.Prepare()` creates a primary terminal.
-Consequently, this reproduction created **no** `pentagi-terminal-*` container;
-it is not evidence of a post-worker container leak.
+Restart-recovery gap: upstream's `DockerClient.Cleanup()` marks abandoned
+`created` flows failed and removes their running/starting workers — but
+`cmd/pentagi/main.go` never called it before `LoadFlows()`. A restart can
+leave workers tied to flows the in-memory controller can't restore.
 
-Upstream held `flowController.mx` for the whole creation path. Since
-`deleteFlow` calls `GetFlow`, a pending provider call prevented deletion of
-the newly created flow until the application was restarted. The configured
-HTTP-client timeout is 600 seconds, so this can present as a long-running
-cleanup failure.
+- Fix (`e38eb90`, after `32bd304`): call `client.Cleanup(ctx)` before
+  provider/flow init. Tests passed: `go test ./cmd/pentagi ./pkg/docker
+  ./pkg/controller ./pkg/graph`
+- Validated: a real `pentagi-terminal-5` worker, PentAGI-only restart,
+  `deleteFlow` → `success`, container removed, row `primary | deleted`.
+- Reconfirmed finding #1 in the same run: a `created`-state flow still
+  blocked `deleteFlow` until restart.
 
-The local fork fix `32bd304` narrows the controller mutex to map access and
-cleans up a failed initialization's prepared resources and database record.
-Its focused Go tests passed. A temporary image built from that commit was
-used only to test the stalled-flow path: deleting the pending flow returned
-`success` in 58 ms while the original create request remained blocked. No
-terminal container existed before or after that deletion. CT 70010 was then
-restored to the pinned upstream image, and the temporary registry login and
-test session files were removed.
+### 3. Exact-upstream fix validation (2026-08-19)
 
-The outstanding investigation is therefore the distinct reported issue:
-exercise a flow that successfully reaches worker creation, then verify that
-all worker containers are removed after finish, delete, timeout, and request
-cancellation.
+Both fixes reapplied to the exact deployed upstream revision `879e87c`.
+Tests passed. A matching image deployed temporarily: stalled
+`createAssistant`, `deleteFlow` → `success` in <1s. Submission branch:
+`fix/upstream-flow-cleanup`, commit `946c0b0`.
 
-## Worker lifecycle and restart recovery finding (2026-08-19)
+### 4. False "missing model" from Ollama — root cause found (2026-08-20/21)
 
-A constrained terminal-only flow on the unmodified upstream control created
-`pentagi-terminal-3` and a corresponding `primary` container row. Deleting
-that flow removed the Docker container and marked its row `deleted`; the
-approximately ten-second deletion time was Docker's normal stop grace period.
-Thus the ordinary in-process `deleteFlow` path does not leak a primary worker.
+Earlier belief (2026-08-20): PentAGI's second setup LLM call fails with `404
+Not Found: model 'qwen3.6-35b-a3b-ud:q4_k_m' not found`, while direct
+`/api/show`/`/api/generate`/`/api/chat`/`/v1/models` calls all succeed.
+Several workarounds (matching client fields, a 128-token profile, routing
+through `/v1`) did not fix it.
 
-Source inspection then identified the restart-recovery gap. Upstream already
-has `DockerClient.Cleanup()`, which marks abandoned `created` flows failed and
-removes their running or starting worker containers. However,
-`cmd/pentagi/main.go` created the Docker client and immediately restored active
-flows with `LoadFlows()` without ever calling `Cleanup()`. A restart can
-therefore leave workers associated with flows that cannot be restored in the
-in-memory controller.
+**Actual root cause (2026-08-21), confirmed by packet capture:** not a
+PentAGI request-formatting bug. A real `createAssistant` call makes **7**
+sequential `/api/chat` calls on one keep-alive connection (image select,
+language detect, title, 2× function-call capability probe, 2× tool-call-ID
+pattern probe), not just 2. All 7 requests are byte-identical in shape —
+same host, same model name, same body structure.
 
-The local fork now calls `client.Cleanup(ctx)` before provider and flow
-initialization (commit `e38eb90`, following the earlier lock/failed-init fix
-`32bd304`). Focused tests passed:
+The 404 hit exactly once: on the request sent immediately after a prior
+request that took **114 seconds** to generate (the title-generator role
+rambled for 5,365 tokens instead of producing a short title). Ollama
+returned `404 model not found` for that one request, near-instantly. The
+very next request — identical in every field — succeeded normally. This is
+consistent with a race in Ollama's model-registry/scheduler state right as
+a long-running generation on that model finishes and a new request for the
+same model arrives, not a client bug.
 
-```text
-go test ./cmd/pentagi ./pkg/docker ./pkg/controller ./pkg/graph
-```
+Direct manual tests never reproduced it because they were isolated single
+calls — never seven calls back-to-back, and never immediately following a
+100+ second generation.
 
-The restart/delete reproduction was subsequently completed with a short-lived
-operator-created API token (not retained). A terminal-only flow created the
-real `pentagi-terminal-5` worker. After a PentAGI-only restart, `deleteFlow`
-returned `success`, removed the Docker container, and left its database row as
-`primary | deleted`. Thus a `waiting` flow restored by `LoadFlows()` cleans up
-correctly on explicit deletion.
+**Fix implemented and live-validated (2026-08-21):** retry the Ollama 404
+instead of failing the flow. `backend/pkg/providers/provider/wrapper.go`,
+branch `fix/ollama-transient-model-not-found-retry`, commit `60fdbff`.
+Unit-tested. Built into a test image, temporarily swapped into this
+deployment, and confirmed live: a real 404 recurred and the retry recovered
+it 7s later (same connection, identical follow-up request, 200 OK) —
+`createAssistant` completed successfully with nothing surfaced to the
+client. Original pinned image restored afterward. See
+[problem-statement.md](problem-statement.md#current-state-and-next-engineering-work)
+for the next-step list, including a second, distinct finding from this same
+validation run (a delete/in-flight-goroutine race that left an orphaned
+worker).
 
-The same run reconfirmed the distinct stalled-creation failure: a flow was
-persisted in `created` state while the upstream controller held its global
-mutex during provider setup; `deleteFlow` timed out until PentAGI was
-restarted. The local fork fix `32bd304` addresses that lock and failed-init
-cleanup path. The startup-recovery patch `e38eb90` remains the defensive fix
-for workers belonging to flow states that cannot be restored after a restart.
+Still open, unrelated to the fix above:
 
-CT 70010 was restored to its unchanged upstream model configuration; it has
-no `pentagi-terminal-*` container, temporary provider config, test session,
-or locally stored API token.
-
-## Exact-upstream fix validation (2026-08-19)
-
-The two minimal fixes were reapplied to the exact deployed upstream source
-revision `879e87c`: scope the flow-controller mutex to map access, and invoke
-`DockerClient.Cleanup()` during startup before `LoadFlows()`. Focused Go tests
-passed. A matching full image was deployed temporarily to CT 70010; during a
-stalled `createAssistant` request, `deleteFlow` returned `success` in under one
-second. The LXC was immediately restored to the pinned unmodified upstream
-image. The submission branch is `fix/upstream-flow-cleanup`, commit `946c0b0`.
-
-## Live-test blocker: PentAGI provider calls report a false missing Ollama model (2026-08-20)
-
-The intended restart-recovery test needs a real `pentagi-terminal-*` worker.
-That worker could not be created on the exact-upstream cleanup image because
-PentAGI's provider initialization persisted a `created` flow and then failed
-its second setup call (`failed to get language`) with `404 Not Found: model
-'qwen3.6-35b-a3b-ud:q4_k_m' not found`. Retries could instead remain blocked
-before worker preparation. Each test flow was deleted immediately; no worker
-or active flow remains.
-
-This is not a missing model or basic connectivity fault. Framework Ollama
-listed and had loaded the model, and direct `/api/show`, `/api/generate`,
-`/api/chat`, and OpenAI-compatible `/v1/models` calls from CT 70010 succeeded.
-Neither a temporary 128-token per-role Ollama profile nor routing PentAGI's
-`custom` provider through Ollama's `/v1` endpoint resolved the error. The
-issue must be reproduced with PentAGI's pinned client to compare its exact
-successive request payloads with the successful direct calls. See
-[problem-statement.md](problem-statement.md) for the full evidence, attempted
-workarounds, and next steps.
+- The oversized title-generator response (5,365 tokens for a ≤20-character
+  title) is its own smaller finding — worth a tighter `num_predict` or
+  stricter stop condition on that role.
+- Consider reporting the underlying scheduler race to Ollama upstream.
