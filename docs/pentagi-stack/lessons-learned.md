@@ -569,3 +569,140 @@ reconcile that controller-less state; the supported `deleteFlow` mutation
 soft-deleted it, leaving status `finished`. Treat this as an orchestration
 queue failure, not a baseline or model result. Do not launch another model
 comparison until flow creation reliably transitions into a task.
+
+## Worker-leak investigation & Ollama false-404 diagnosis (2026-08-19 to 2026-08-21)
+
+Full narrative and evidence lives in [problem-statement.md](problem-statement.md)
+and [upstream-control.md](upstream-control.md); this is the checkpoint.
+
+### What this investigation achieved
+
+**Found and fixed a real deployment mixup, still open.** Commit `cdc878b0`
+(2026-08-19) repointed `pentagi-stack`'s own manifest
+(`terraform/lxc/stacks/pentagi-stack/stack.yaml`) from
+`ansible_playbook: deploy-pentagi-stack` to
+`deploy-pentagi-upstream-vanilla-companion`, intended as temporary ("restore
+`deploy-pentagi-stack` only after the upstream worker-container lifecycle
+result has been captured") but never reverted. Every subsequent
+`provision.sh --stack pentagi-stack` run since then deployed the unmodified
+upstream investigation project onto 70010 — the LXC that's supposed to hold
+the patched, harness-integrated PentAGI — under the same production
+Traefik route. Confirmed via live Proxmox/Docker inspection: `/opt/pentagi-stack`
+doesn't exist on the host at all, only `/opt/pentagi-upstream-vanilla`.
+Checked recoverability: **zero backups** across PBS, `storage-backup`,
+`gazaar-backup`, `nas-backup`, and **zero ZFS snapshots** for either of
+70010's datasets — the patched deployment's prior runtime state (flow
+history, DB rows) is genuinely gone, though the code/config is fully
+recoverable from git. Not yet restored — the operator chose to continue the
+Ollama investigation on the existing vanilla deployment first.
+
+**Root-caused the Ollama "false 404" that had blocked live worker testing.**
+Not a request-formatting bug: packet capture (on-host `tcpdump`, reassembled
+with a hand-written pure-stdlib pcap parser since neither `tshark` nor
+`scapy` were available) showed a real `createAssistant` call makes **6-7**
+sequential `/api/chat` calls per flow on one keep-alive connection (image
+select, language, title, ×2 function-call capability probes, ×2
+tool-call-ID pattern probes), not the 1-2 originally assumed. The 404 landed
+exactly once, on the request sent immediately after a prior request that
+took 114-450+ seconds to generate (the title-generator role rambled 5,365
+tokens for a task specced "≤20 characters"). The next, identical request
+succeeded seconds later. Matches a transient race in Ollama's own model
+scheduler around a long generation finishing, not a client defect — which is
+why every earlier workaround attempt (matching client fields, a 128-token
+profile, routing through `/v1`) failed: they all targeted the wrong theory.
+
+**Fixed and live-validated three real bugs**, each built into a real Docker
+image, deployed to the vanilla project on 70010, exercised against real
+Ollama traffic, then reverted — never left running:
+
+1. **Ollama transient-404 retry** (`backend/pkg/providers/provider/wrapper.go`,
+   commit `60fdbff`) — retries a 404 "model not found" from the Ollama
+   provider specifically (scoped by `ProviderType`), 2s delay, reusing the
+   existing 429-retry loop's attempt cap. Live-validated: a real 404 recurred
+   during testing, the retry recovered it 7s later, nothing surfaced to the
+   client.
+2. **Delete/in-flight-init race** (`pkg/controller/{flow,flows}.go`,
+   `pkg/graph/schema.resolvers.go`, commit `8322b44`) — found *during*
+   validating fix 1: a flow only gets added to the controller's live map
+   once its (potentially multi-minute) provider setup already succeeds, so
+   `deleteFlow`'s `GetFlow` lookup can't see it while setup is still
+   running. The `32bd304` mutex-narrowing fix made `deleteFlow` return fast
+   but never actually cancelled the in-flight goroutine — it kept running
+   independently and created a real orphaned worker (`pentagi-terminal-12`)
+   *after* the flow was already marked deleted. Fixed with a second,
+   separate `pending` registry (flowID → cancel func) populated as soon as
+   the flow's DB row exists but before the slow setup runs; `deleteFlow`
+   now cancels it when `GetFlow` reports not-found. Live-validated by
+   deliberately racing a delete against a fresh flow's setup: `context
+   canceled`, clean client-facing GraphQL error, zero worker containers,
+   zero container rows.
+3. **Restart-cleanup, confirmed already correct** — the original
+   investigation objective. Deliberately raced a `docker restart pentagi`
+   against a real worker's own creation; the container was barely a second
+   old, flow status already `waiting`, when the restart hit. `Cleanup()`
+   (the pre-existing `e38eb90` fix) found and removed the container on the
+   new process's startup, marked the flow `failed`. Zero leaked containers.
+
+### What this investigation taught us
+
+- **A "temporary" manifest repoint needs an expiry mechanism or a loud
+  marker, not just a code comment.** `cdc878b0`'s comment said exactly what
+  to do and when, and it still sat unreverted on a production LXC for two
+  days before being noticed — by accident, while investigating something
+  else entirely.
+- **Check backup coverage before experimenting on a host, not after
+  something's already gone.** The recoverability question only got asked
+  once data was already confirmed missing; asking it first would have
+  changed how cautiously the vanilla-companion swap got treated.
+- **Packet capture beats theory-matching when workarounds keep failing.**
+  Several rounds of plausible-sounding fixes (field-matching, token limits,
+  `/v1` routing) all missed because they assumed the wrong shape of bug
+  entirely. Capturing and diffing actual wire traffic found the real cause
+  in one pass.
+- **Narrowing a mutex to unblock one operation can silently leave a whole
+  code path unreachable to the thing that was supposed to reach it.** The
+  `32bd304` fix correctly made `deleteFlow` non-blocking, but "non-blocking"
+  and "actually stops the thing" are different guarantees — the in-flight
+  goroutine it was supposed to interrupt was never wired to observe the
+  delete at all until the follow-up fix added a real cancellation path.
+- **`deleteFlow` only ever sets `deleted_at`; it never rewrites `status`.**
+  A soft-deleted row's `status` column is a frozen snapshot of whatever it
+  was at deletion time, not a live indicator — don't infer "still active"
+  from `status` alone without also checking `deleted_at`.
+- **`Cleanup()`'s worker-removal check is not strictly gated on flow
+  `status = created`.** It correctly removed a container that was under a
+  second old, with the flow already at `status: waiting` — more
+  conservative/safe than the investigation initially assumed.
+- **Tight, on-host polling beats workstation-side round-trips for
+  sub-second races.** Detecting a container's creation and restarting the
+  service in reaction only worked reliably as a single persistent SSH
+  session running a local bash loop on the LXC itself — per-iteration SSH
+  round-trips from the workstation were too slow to land inside the actual
+  race window.
+- **The permission classifier gates individual actions, not whole
+  approved tasks.** Reading a `.env` with secrets, a direct DB `UPDATE`, and
+  a `docker compose` container recreate each needed their own explicit
+  go-ahead even within one already-approved investigation.
+
+### Current status (2026-08-21)
+
+- **Investigation objective: closed.** Both real worker-leak paths (delete
+  racing in-flight init; restart landing before `Cleanup()` ran) are found,
+  fixed, and live-validated.
+- **`pentagi` fork**: 4 commits deep on branch
+  `fix/delete-flow-in-flight-init-race`
+  (`32bd304` → `e38eb90` → `60fdbff` → `8322b44`), all source-tested and
+  live-validated. Not merged or PR'd anywhere yet.
+- **70010 (`pentagi-stack`'s own LXC)**: still running the unmodified
+  `vxcontrol/pentagi:latest` vanilla-upstream companion — none of the four
+  fixes above are in the currently-deployed container; they exist only in
+  the fork's git history (the test images that carried them were built,
+  validated, and deleted each time, by design).
+- **The patched `pentagi-stack` project is still not deployed.**
+  `stack.yaml`'s `ansible_playbook` pointer still targets
+  `deploy-pentagi-upstream-vanilla-companion`; restoring
+  `deploy-pentagi-stack` and redeploying is unstarted, separate work.
+- **Still open, none blocking**: the title-generator role's runaway token
+  count (5,365 tokens for a ≤20-character title, the timing root cause of
+  the Ollama race); optionally reporting the underlying scheduler race to
+  Ollama upstream.

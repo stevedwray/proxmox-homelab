@@ -182,7 +182,14 @@ Remaining, smaller items — none blocking:
    tokens for a ≤20-character title is what created the timing window the
    Ollama race needs.
 2. Consider reporting the underlying Ollama scheduler race upstream.
-3. Housekeeping: several stale `created`-status flow rows (ids 1, 2, 4, 6,
-   7, 8, 9, 10, 11, 15, 16) and one stale `waiting`-status row (id 12) from
-   earlier in this investigation have no attached containers (confirmed) but
-   were never soft-deleted — cosmetic DB cleanup, not a resource leak.
+
+No DB cleanup is actually needed: every investigation-era flow row except
+`17` already has `deleted_at` set (`deleteFlow` was called on each). Their
+`status` column just still shows whatever it was at the moment of deletion
+(`created`/`waiting`) — `deleteFlow` only ever sets `deleted_at`, it never
+rewrites `status`, so that field is a frozen snapshot, not a live indicator.
+Flow `17` (from the restart-cleanup test) has no `deleted_at` because it was
+never user-deleted — `Cleanup()` marked it `failed` instead, its correct,
+documented behavior for a flow that can't be resumed after a restart. Any
+flow-list query filtering on `deleted_at IS NULL` (the normal soft-delete
+pattern) already treats all of this correctly with zero code changes needed.
