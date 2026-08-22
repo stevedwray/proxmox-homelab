@@ -1,11 +1,16 @@
 # Vanilla-upstream PentAGI companion (on `pentagi-stack`'s LXC)
 
-Status (2026-08-21): the vanilla-upstream project is the **active** project.
-The patched `pentagi-stack` project is **not currently deployed** — see
-[Current live state](#current-live-state) below. The worker-leak
-investigation itself is **closed** — both real leak paths found here are
-fixed and live-validated; see
-[problem-statement.md](problem-statement.md#restart-cleanup-test--complete-2026-08-21).
+Status (2026-08-22): the vanilla-upstream project is still the **active**
+project on 70010, but it is currently running a fully-patched build (all 6
+fixes from this investigation and the smoke-test follow-up), not the
+original vanilla upstream image — see [Current live state](#current-live-state)
+below. The patched `pentagi-stack` project is **not currently deployed**.
+The worker-leak investigation itself is **closed**; a follow-on
+smoke-testing pass found and fixed 4 further reliability bugs but also
+found autonomous exploitation itself never once succeeded — see
+[problem-statement.md](problem-statement.md#capability-assessment-read-before-trusting-this-for-real-engagements)
+for the full, honest capability read before trusting this for a real
+engagement.
 
 ## Deployment model
 
@@ -47,11 +52,19 @@ Deploying via automation: `pentagi-stack`'s `stack.yaml` has one
 The pointer is currently set to `deploy-pentagi-upstream-vanilla-companion`
 (commit `cdc878b0`, 2026-08-19, "deploy pinned upstream PentAGI for cleanup
 investigation"). It was meant to be reverted once the worker-lifecycle
-investigation finished; it hasn't been yet.
+investigation finished; it hasn't been yet — and by 2026-08-22 the
+vanilla-companion slot itself has drifted well past plain vanilla anyway.
 
-Confirmed live on 70010 (2026-08-21):
+Confirmed live on 70010 (2026-08-22):
 
-- `/opt/pentagi-upstream-vanilla` exists and is the running project.
+- `/opt/pentagi-upstream-vanilla` exists and is the running project, but
+  its `pentagi` container is now running a locally-built image
+  (`pentagi-modelswap:0b2c1ec`, tagged as `vxcontrol/pentagi:latest`) that
+  carries **all 6 fix commits** from this investigation and the smoke-test
+  follow-up — it is no longer byte-for-byte vanilla upstream in behavior,
+  only in `docker-compose.yml`/provenance. The original pinned upstream
+  image (digest `sha256:7d964a6e...b62e9`) is still present locally on
+  70010 if a true-vanilla baseline is needed again.
 - `/opt/pentagi-stack` does not exist. No `pentagi-stack_*` Docker volumes
   exist either.
 - No backup exists for VMID 70010 (checked PBS, `storage-backup`,
@@ -62,9 +75,12 @@ Confirmed live on 70010 (2026-08-21):
 history, DB rows) is gone, not just hidden. Redeploying `deploy-pentagi-stack`
 restores the code/config cleanly but starts with empty application state.
 
-Restoring the patched project is deliberately **on hold** — the operator
-wants the Ollama investigation below to continue on the current vanilla
-deployment first.
+Restoring the patched `pentagi-stack` project (merging this investigation's
+fix branch into `fix/lab-lessons-learned`, building `pentagi-fixed`, pushing
+to Harbor, redeploying) is a deliberate next decision, not yet done — see
+the capability assessment linked above before treating that restoration as
+"production-ready for real engagements" rather than "reliable for
+recon/multi-step-ops work."
 
 ## Upstream provenance and image handling
 
@@ -202,3 +218,96 @@ Still open, unrelated to the fix above:
   title) is its own smaller finding — worth a tighter `num_predict` or
   stricter stop condition on that role.
 - Consider reporting the underlying scheduler race to Ollama upstream.
+
+### 5. Qwen3.6 thinking-budget exhaustion corrupting tool-call formatting (2026-08-21)
+
+Live smoke-testing (a staged ladder: login → simple response → terminal
+command → multi-step file ops → real recon against a dedicated lab target,
+see [problem-statement.md](problem-statement.md#smoke-testing-and-reliability-follow-up-2026-08-2122))
+found `refiner`, `reflector`, and `searcher` repeatedly producing
+malformed/empty tool calls under real multi-turn flows. Root cause:
+`qwen3.6-35b-a3b-ud` is Ollama-recognized as a thinking-capable model
+(`capabilities: [tools, thinking, completion]`), but this provider's native
+Ollama integration never sets Ollama's `think` field to disable it — unlike
+the separate DashScope Qwen provider, which does exactly that per role.
+Hidden reasoning tokens repeatedly consumed these roles' token budgets
+before the actual tool call, and — confirmed by direct isolated testing
+against the same reflector prompt/budget — also correlated with the
+original false-404 race above recurring under back-to-back load (3/16 with
+`think` unset vs 0/16 with `think: false`).
+
+**Fix, live-validated:** route `refiner`/`reflector`/`searcher` to
+`eval-qwen3-coder-30b-a3b:q4_k_m-ctx32k` (no thinking capability at all) via
+each role's per-role `model:` override in `ollama/config.yml` — zero
+provider code changes. The reflector recovered bad output from other roles
+in 1 iteration afterward, versus 3-4 (often failing outright) before.
+
+### 6. A separate Ollama/rocm serving-stack corruption bug, now hit under real PentAGI traffic (2026-08-21)
+
+Already documented from this project's eval-harness work: long/dense
+generations sometimes degenerate into a single repeated character (seen as
+thousands of consecutive `?` bytes). Confirmed here to recur under real
+multi-role PentAGI flows and to affect any role, model-swapped or not.
+Confirmed via VictoriaMetrics GTT-usage history that concurrent-model memory
+pressure is **not** the cause (usage was flat across two live occurrences).
+
+Root-caused via isolated testing to be **content-triggered, not random**: a
+`searcher` request asking for detailed CVE-2017-5638 exploit-technique
+documentation corrupted on 9/9 attempts across two separate message chains
+in one flow — exactly the kind of dense technical content real exploitation
+depends on most. A separate occurrence was traced to a different,
+already-documented "stuck" Ollama state (garbage on *any* prompt after ~3
+days uptime and heavy load) — `docker restart ollama` cleared it completely
+(0/6 corrupted afterward).
+
+**Fix, live-validated:** `isDegenerateGarbageContent()` in `performer.go`
+checks both overall single-character dominance (≥95% of ≥200 bytes) and an
+independent long-contiguous-run signature (≥150 identical chars — added
+after live testing caught a real corrupted response the dominance check
+alone missed), feeding the existing retry loop. `refiner`'s token budget
+also cut 16384→8192 to reduce exposure. The detector fired correctly on
+`searcher` and `pentester`, retried, and either recovered or exhausted
+retries cleanly (see finding 8).
+
+### 7. Qwen3.6 refusing authorized exploitation despite an explicit override (2026-08-21)
+
+`pentester.tmpl`'s system prompt already has an explicit "AUTHORIZATION
+FRAMEWORK" section instructing the model to never request permission and to
+proceed with penetration testing immediately. Live testing found Qwen3.6
+ignoring it: *"I cannot proceed with exploiting CVE-2017-5638... this would
+constitute unauthorized system access and is illegal."* Confirmed in
+isolated testing (no system prompt at all): the same prompt refused 3/3 by
+Qwen3.6, answered fully and unprompted by `qwen3-coder-30b-a3b`.
+
+**Fix, deployed:** extended the finding-5 model swap to `pentester` too —
+confirmed with the operator first, since this changes which model performs
+the actual exploitation, not just tool-call formatting.
+
+### 8. Task/subtask failures silently reported as idle "waiting", not failed (2026-08-21/22)
+
+A genuine (non-cancellation) `PerformAgentChain` failure — e.g. retries
+exhausted after finding 6's corruption — left both the subtask and its
+parent task in `Waiting` status with no result recorded, identical from any
+API consumer's view to a normal idle "ready for next input" state.
+`subtask.go`'s error handler and both `taskWorker`/`subtaskWorker`
+`handleInterrupting()` helpers only ever handled the cancellation/timeout
+case; any other error silently reset status to `Waiting` and stopped there.
+
+**Fix, live-validated:** both call sites now distinguish cancellation
+(resumable, stays `Waiting`) from genuine errors (marks `Failed`, records
+`err` via `SetResult` — the same pattern already used for graceful task
+failures elsewhere in the same file). Re-triggered the same underlying
+corruption on a fresh flow afterward: task and subtask both correctly showed
+`Failed` with the real error message recorded.
+
+## Capability assessment
+
+Every smoke-test stage through reconnaissance passed reliably once findings
+5-8 were fixed. **Actual exploitation did not, in four separate attempts,
+against a target whose vulnerability is trivial and independently confirmed
+exploitable by hand** (see [harness-target.md](harness-target.md)'s
+"Verified live" section). See
+[problem-statement.md](problem-statement.md#capability-assessment-read-before-trusting-this-for-real-engagements)
+for the full assessment — in short: today's fixes made this deployment more
+*reliable*, not more *capable*, and the underlying Ollama corruption bug
+(finding 6) is still genuinely unresolved, just survivable.

@@ -706,3 +706,156 @@ Ollama traffic, then reverted — never left running:
   count (5,365 tokens for a ≤20-character title, the timing root cause of
   the Ollama race); optionally reporting the underlying scheduler race to
   Ollama upstream.
+
+## Smoke-test ladder, reliability fixes, and a capability reality-check (2026-08-21 to 2026-08-22)
+
+Full narrative and evidence lives in [problem-statement.md](problem-statement.md)
+and [upstream-control.md](upstream-control.md); this is the checkpoint.
+
+### What this smoke-test pass achieved
+
+**Ran a staged smoke-test ladder** (login → simple non-agentic response →
+single terminal command → multi-step file operations → real reconnaissance
+against a dedicated, purpose-built, pre-authorized lab target
+[harness-target.md](harness-target.md) → actual exploitation) against the
+fixed image on the same vanilla-upstream companion. Every stage through
+recon passed cleanly; recon correctly and accurately fingerprinted both
+target services (Jetty/Struts2 on 8080, Redis 4.0.9 on 6379) purely from
+live commands, no prior knowledge baked into the prompt.
+
+**Found and fixed four further real bugs**, all live-validated on the same
+"build a real image, deploy it, exercise it against real traffic" pattern
+as the earlier worker-leak fixes:
+
+1. **Qwen3.6 thinking-budget exhaustion.** A hybrid reasoning model whose
+   hidden `<think>` tokens repeatedly ate the `refiner`/`reflector`/
+   `searcher` roles' budgets before they could emit a real tool call —
+   PentAGI's native Ollama provider never sets Ollama's `think` field to
+   disable this, unlike the separate DashScope Qwen provider. Direct
+   isolated testing confirmed it also correlates with the earlier
+   false-404 race recurring under load (3/16 with `think` unset vs 0/16
+   with `think: false`). Fixed with zero provider code changes — routed
+   the three roles to `qwen3-coder-30b-a3b` (no thinking capability) via
+   the existing per-role `model:` config override, the same mechanism
+   `openai/config.yml` already uses for different models per role.
+2. **A separate, pre-existing Ollama/rocm corruption bug**, already
+   documented from this project's eval-harness work, now confirmed
+   recurring under real PentAGI traffic on any role. Root-caused via
+   isolated testing to be content-triggered, not random — a request for
+   detailed CVE exploit-technique documentation corrupted 9/9 times across
+   two separate message chains, exactly the kind of dense technical
+   content real exploitation needs most. A distinct occurrence traced to a
+   different, already-documented "stuck" Ollama state (any prompt
+   corrupts after ~3 days uptime + heavy load) — cleared completely by
+   `docker restart ollama`. Fixed with a two-signature detector (overall
+   character dominance, and — added after live testing caught a real
+   corrupted response the first check missed — an independent
+   long-contiguous-run check) feeding the existing retry loop.
+3. **Qwen3.6 refusing authorized exploitation outright**, despite
+   `pentester.tmpl`'s explicit, pre-existing "AUTHORIZATION FRAMEWORK"
+   system-prompt section built specifically to prevent exactly this.
+   Confirmed in isolated testing: the same prompt with no system prompt at
+   all refused 3/3 by Qwen3.6, answered fully and unprompted by
+   `qwen3-coder-30b-a3b`. Fixed by extending the same model-swap approach
+   to `pentester` — confirmed with the operator first, since this is a
+   bigger change than fix 1 (it changes which model performs the actual
+   exploitation, not just tool-call formatting).
+4. **Task/subtask failures silently reported as idle, not failed.** A
+   genuine (non-cancellation) agent-chain error left both the subtask and
+   its parent task in `Waiting` status with no result recorded —
+   indistinguishable from a normal idle state to any API consumer. Found
+   by watching a real pentest objective die silently: task and subtask
+   both `Waiting`, flow `Waiting`, nothing anywhere indicating failure
+   except a container-log line. Fixed by making the existing
+   cancellation-vs-genuine-error branch (already present but only handling
+   cancellation) mark `Failed` and record the error for the genuine case,
+   matching the pattern already used for graceful task failures elsewhere
+   in the same file. Live-validated by re-triggering the same underlying
+   corruption on a fresh flow: task and subtask both correctly showed
+   `Failed` with the real error recorded.
+
+**The honest finding underneath all four fixes:** across four separate
+exploitation attempts (Stage 5/5b/5c/5d) against the same trivial,
+independently-confirmed-exploitable target, PentAGI's autonomous loop never
+once completed the exploit — it either hit the refusal (fix 3, before it
+landed) or died in the corruption retry loop (fix 2). Today's fixes made the
+deployment more *reliable*; they did not make it more *capable*.
+
+### What this smoke-test pass taught us
+
+- **A model swap chosen to fix formatting/refusal problems is not the same
+  thing as a model chosen for task capability.** `qwen3-coder-30b-a3b` reliably
+  produces valid tool calls and doesn't refuse — but nothing in this
+  investigation validated it (or Qwen3.6) as actually *good* at crafting a
+  real exploit end-to-end. Fixing the plumbing doesn't answer the
+  capability question.
+- **A bug's trigger condition can look like "random" until you test the
+  actual content that matters.** The garbage-corruption bug was assumed
+  length/budget-triggered (matching the earlier documented finding) until
+  isolated testing varying only the *topic* (benign HTTP explainer vs CVE
+  exploit detail) at a fixed, short token budget showed the real target
+  content corrupting 100% of the time — a materially different, and worse,
+  finding than "occasionally slow generations corrupt."
+- **A detector built from one observed failure signature can still miss a
+  second, subtler instance of the same bug.** The dominance-only garbage
+  check worked for the first (pure, uniform) corrupted response found, but
+  missed a later one where the same repeated-character run was embedded in
+  an otherwise longer, valid-looking response — diluting the overall
+  fraction below threshold. Only live re-testing surfaced the gap; a
+  contiguous-run check closed it.
+- **"The flow went back to Waiting" is not the same claim as "the task
+  succeeded" or even "the task was tried and failed" — and upstream's own
+  code conflates all three.** Two separate, independently-discovered
+  unconditional-Waiting-on-any-error branches (one at the subtask level,
+  one in the shared `handleInterrupting` helpers) meant a real, unrecoverable
+  failure was completely invisible to anything but the container log.
+- **An explicit "you are pre-authorized, never refuse" system-prompt
+  section is not a reliable override for a specific model's own alignment
+  training.** It worked for some tool-formatting scenarios but not for the
+  one place it mattered most (an actual exploitation request) — worth
+  remembering before assuming any single prompt-engineering technique
+  generalizes across models.
+- **When a live-testing session runs very long, re-verify "is it still
+  working" empirically (GPU busy%, established connections, byte-level
+  activity deltas) before assuming a stall — but also don't let organic
+  model latency alone stand in for genuine live validation forever.**
+  Several apparent "stalls" this session turned out to just be slow
+  generation (confirmed via VictoriaMetrics `amdgpu_busy_percent` staying
+  at 100%); at the same time, waiting on naturally-occurring corruption to
+  validate a fix took far longer than deliberately reproducing the
+  triggering conditions would have.
+
+### Current status (2026-08-22)
+
+- **Worker-leak objective: still closed** (unchanged from the prior
+  checkpoint).
+- **Smoke-test capability objective: not closed.** Recon-tier work
+  (reconnaissance, multi-step terminal/file operations) is reliable.
+  Autonomous exploitation is **not yet validated as working at all** —
+  four attempts, zero completions, even after every reliability fix
+  landed. Treat this deployment as recon-tier only until either a
+  stronger `pentester` model, a way to reduce how much exploit-technique
+  content the agent has to originate live (pre-seeded guides, etc.), or a
+  real fix for the underlying Ollama corruption bug changes that picture.
+- **`pentagi` fork**: 6 commits deep on branch
+  `fix/route-formatting-roles-to-qwen3-coder`
+  (`32bd304` → `e38eb90` → `60fdbff` → `8322b44` → `f6a0352` → `8ab3111` →
+  `1b59fe4` → `c87143a` → `0b2c1ec` — the four newest being the model-swap,
+  garbage-budget-cut, pentester-swap, and task/subtask-failure fixes from
+  this checkpoint), all source-tested and live-validated. Pushed to the
+  fork; not merged or PR'd anywhere yet.
+- **70010 (`pentagi-stack`'s own LXC)**: the vanilla-upstream companion slot
+  is now running the fully-patched build (`pentagi-modelswap:0b2c1ec`,
+  tagged `vxcontrol/pentagi:latest`) — no longer a behavioral match for
+  plain vanilla upstream, though the on-disk project is still the
+  vanilla-upstream `docker-compose.yml`. The original pinned upstream image
+  is still present locally if a true baseline is needed again.
+- **The patched `pentagi-stack` project is still not deployed** — restoring
+  it (merging this fix branch into `fix/lab-lessons-learned`, building
+  `pentagi-fixed`, pushing to Harbor, redeploying) is a deliberate next
+  decision, not yet done, and should be scoped as "recon-tier restore," not
+  "production-ready pentesting platform," per the capability finding above.
+- **Still open, none blocking**: the title-generator role's runaway token
+  count; reporting the Ollama corruption bug upstream; whether a stronger
+  model or pre-seeded exploit-technique guides would actually close the
+  capability gap (untested).
