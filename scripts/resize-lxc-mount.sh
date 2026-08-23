@@ -5,6 +5,13 @@ REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STACKS_DIR="${REPO_ROOT}/terraform/lxc/stacks"
 ANSIBLE_DIR="${REPO_ROOT}/terraform/lxc/ansible"
 PLAYBOOK_FILE="${ANSIBLE_DIR}/playbooks/resize-lxc-mount.yml"
+# Per-environment runtime root -- same pattern as scripts/provision.sh's
+# ENV_ROOT. This script predates the per-environment Terragrunt layout and
+# still hardcoded the legacy STACKS_DIR/<stack>/inventory.yml path until
+# 2026-08-24 -- found live when mcp-utility-stack (already migrated) failed
+# with "inventory file not found" even though its real, current inventory
+# was sitting at ENV_ROOT/<stack>/inventory.yml the whole time.
+ENV_ROOT="${REPO_ROOT}/terraform/lxc/environments/${PVE_ENV:-}"
 
 usage() {
   cat <<'EOF'
@@ -71,7 +78,14 @@ done
 
 stack_dir="${STACKS_DIR}/${stack_name}"
 stack_yaml="${stack_dir}/stack.yaml"
-inventory_file="${stack_dir}/inventory.yml"
+
+# Per-environment layout first (matches provision.sh), legacy flat layout
+# as fallback for stacks not yet migrated.
+if [[ -f "${ENV_ROOT}/${stack_name}/inventory.yml" ]]; then
+  inventory_file="${ENV_ROOT}/${stack_name}/inventory.yml"
+else
+  inventory_file="${stack_dir}/inventory.yml"
+fi
 
 [[ -f "$PLAYBOOK_FILE" ]] || fail "playbook not found: ${PLAYBOOK_FILE}"
 [[ -f "$stack_yaml" ]] || fail "stack.yaml not found: ${stack_yaml}"
