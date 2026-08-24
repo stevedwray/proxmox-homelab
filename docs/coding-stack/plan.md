@@ -939,6 +939,38 @@ designed. Deployed the same way as every other `docs-rag-mcp` change
 this doc covers — `provision.sh --stack mcp-utility-stack` against
 production, `build: always` rebuilding the image from the new source.
 
+### Phase 8 — Dedicated Copilot agent mode
+
+**Built (2026-08-25), not yet confirmed working — this one needs the
+operator to actually select it in VS Code, since driving the Chat view's
+mode picker isn't something achievable from here.** Motivation:
+Phase 4/5 found Laguna's tool-selection unreliable with all ~104 tools
+enabled at once (didn't reach for `search_docs` unprompted, kept
+re-verifying via native search even after a good MCP result) — plausibly
+also a contributor to the Phase 4 prompt-tsx crash. A scoped agent mode
+narrows the tool surface for repo-specific work.
+
+`.github/agents/repo-tools.agent.md` — note the current format is
+`.agent.md`, not the older `.chatmode.md` (deprecated, still read but
+should be migrated per current VS Code docs). This repo already has a
+`.github/agents/` directory, but its three existing files
+(`architect`/`planner`/`executor`) are a completely different, unrelated
+mechanism (no YAML frontmatter, a home-grown planning workflow) — added
+this as a new, distinctly-named file rather than touching those.
+
+Scopes tools to `edit`/`read`/`search`/`execute` plus `docs-rag/*` and
+`cve-mcp/*` (both registered MCP servers), explicitly excluding `browser`/
+`vscode`/`web`/`agent` and the unrelated MCP servers visible in the tools
+picker (Pylance, Snyk, Container Tools, etc.) that add tool-schema bulk
+with no relevance to this repo's own work. Pins the model to Laguna S 2.1
+via the reliability proxy by exact display name.
+
+**Genuinely unverified**: the `tools:` frontmatter syntax is built from
+the current official VS Code docs, not confirmed against this specific
+build's actual tool-name schema (unlike `.vscode/mcp.json`, which worked
+first try). If selecting "Repo Tools" mode doesn't show the intended
+tool set, that's the thing to check first.
+
 ## Open questions
 
 - ~~Stack name~~ — **resolved, then corrected, in Phase 2**: not a new
