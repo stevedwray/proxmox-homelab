@@ -28,7 +28,7 @@ from mcp.server.mcpserver import Context, MCPServer
 
 from . import db
 from .embeddings import embed
-from .reindex import reindex_all
+from .reindex import CORPUS_DIR, reindex_all
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("docs_rag_mcp.server")
@@ -105,3 +105,35 @@ async def list_stacks(ctx: Context) -> list[str]:
     for search_docs's `stack` filter rather than guessing spellings."""
     app = ctx.request_context.lifespan_context
     return await db.list_stacks(app.pool)
+
+
+@mcp.tool()
+async def get_document(ctx: Context, file_path: str) -> str:
+    """Fetch the full, exact raw content of one file in this repo's
+    indexed corpus, by its exact relative path -- e.g. the `file_path`
+    field from a previous search_docs result, such as
+    "terraform/lxc/stacks/mcp-utility-stack/STACK_CONTRACT.md" or
+    "docs/coding-stack/plan.md".
+
+    Use this once you already know the exact file you want, instead of
+    search_docs -- it returns the literal file content, not a ranked/
+    reassembled excerpt, so it can't miss content that fell on the wrong
+    side of a chunk boundary or rank a wrong section above the right one.
+    search_docs is still the right tool when you don't already know which
+    file has the answer.
+
+    Args:
+        file_path: exact relative path within the corpus, no leading
+            slash, no "../" traversal.
+
+    Returns the raw file text, or a short "ERROR: ..." string if the
+    path doesn't exist or escapes the corpus root.
+    """
+    try:
+        resolved = (CORPUS_DIR / file_path).resolve()
+        resolved.relative_to(CORPUS_DIR.resolve())
+    except ValueError:
+        return f"ERROR: path escapes the corpus root: {file_path!r}"
+    if not resolved.is_file():
+        return f"ERROR: no such file in the corpus: {file_path!r}"
+    return resolved.read_text(encoding="utf-8", errors="replace")

@@ -243,7 +243,7 @@ Two MCP servers are registered in `.vscode/mcp.json`, both on `mcp-utility-stack
 (`ai_seg`, `192.168.50.10`) — see its `STACK_CONTRACT.md` and
 `docs/coding-stack/plan.md` for the full design/history of `docs-rag-mcp`.
 
-- **`docs-rag` (`search_docs`, `list_stacks`)** — semantic search over this
+- **`docs-rag` (`search_docs`, `list_stacks`, `get_document`)** — semantic search over this
   repo's own documentation (`docs/**/*.md`, every `STACK_CONTRACT.md`,
   `CLAUDE.md`). **Prefer this over grepping the workspace for
   repo-specific facts** — stack conventions, network topology, per-stack

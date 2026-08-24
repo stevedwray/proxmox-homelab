@@ -14,7 +14,7 @@ egress to public CVE/advisory APIs — the opposite trust posture from
 
 Also runs `docs-rag-mcp` + `pgvector` (added 2026-08-23): a second,
 purpose-built MCP server giving agents semantic search
-(`search_docs`/`list_stacks`) over this repo's own documentation, backed
+(`search_docs`/`list_stacks`/`get_document`) over this repo's own documentation, backed
 by `nomic-embed-text` embeddings (via the existing Ollama endpoint on
 `framework.gibbsgreatly.xyz`) stored in `pgvector`. Folded into this same
 LXC rather than a new stack — same trust class as `cve-mcp-server` (no
@@ -56,7 +56,7 @@ allowlist).
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `cve-mcp-http` | `8000` | `tcp` | MCP Streamable HTTP endpoint at `/api/mcp`. No built-in authentication — access control is network-level only (MikroTik inbound rule), see Security notes below. |
-| `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
+| `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`, `get_document`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
 
 ## Dependencies
 

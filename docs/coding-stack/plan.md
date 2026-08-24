@@ -919,6 +919,26 @@ rather than trivially passing.
 `systemd --user` variant was stopped and its unit file removed (fully
 superseded, not left as a confusing second path).
 
+### Phase 7 — `get_document` exact-fetch tool
+
+**Done (2026-08-25).** `search_docs` is ranked/chunked retrieval — good
+when the caller doesn't already know which file has the answer, weaker
+once it does (chunk-boundary risk, ranking can bury the right section).
+Added `get_document(file_path) -> str` to `docs-rag-mcp`: reads the exact
+file straight off the corpus bind mount (not reassembled from indexed
+chunks), byte-for-byte, given the same `file_path` a `search_docs` result
+already returns. Deliberately simple — no DB involved at all, just a
+path-safety check (`Path.relative_to` against the corpus root, blocking
+`../` traversal and absolute-path substitution) then a direct read.
+
+Verified live via a real MCP client against `pve` production: a normal
+fetch (`CLAUDE.md`, 15,889 bytes, correct content), a missing file
+(clean `"ERROR: no such file..."`, no crash), and a path-traversal
+attempt (`../../etc/passwd`, correctly blocked) all behaved exactly as
+designed. Deployed the same way as every other `docs-rag-mcp` change
+this doc covers — `provision.sh --stack mcp-utility-stack` against
+production, `build: always` rebuilding the image from the new source.
+
 ## Open questions
 
 - ~~Stack name~~ — **resolved, then corrected, in Phase 2**: not a new
