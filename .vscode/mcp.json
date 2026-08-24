@@ -3,6 +3,10 @@
     "docs-rag": {
       "type": "http",
       "url": "http://192.168.50.10:8001/mcp"
+    },
+    "cve-mcp": {
+      "type": "http",
+      "url": "http://192.168.50.10:8000/mcp"
     }
   }
 }
