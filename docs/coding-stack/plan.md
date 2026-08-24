@@ -847,23 +847,58 @@ classes head-on rather than building more speculative surface:
    drifting have all independently broken parts of this chain before,
    silently, until someone hit it in a real session.
 
-**`scripts/ollama-reliability-proxy/`** — a small stdlib-only local proxy
-(`127.0.0.1:11435`) between Copilot and `framework:11434`. Forces the
+**`scripts/ollama-reliability-proxy/`** — a small stdlib-only Python
+proxy between any Ollama consumer and `framework:11434`. Forces the
 upstream call non-streaming so the full response can be validated before
-Copilot ever sees it; on a detected degenerate response (empty content,
-or >50% `?`-character content — real patterns from this project's own
-history, not hypothetical), unloads the model (`keep_alive: 0`) and
-retries once before ever handing anything back. Verified live: normal
-passthrough works, the streaming-response SSE-wrapping works, the
-detection function correctly classifies real bug patterns without
-false-positiving on legitimate content (including genuine question
-marks), the unload call succeeds against real Ollama, and a full
-unload→reload→correct-answer cycle actually completes (~23s, matching
-the previously-documented reload cost). One real, deliberate tradeoff:
-streaming responses arrive as a single chunk, not token-by-token — traded
-for being able to validate before ever showing the user anything. Ships
-as a `systemd --user` service for durability (survives logout/reboot);
-see its `README.md`.
+the caller ever sees it; on a detected degenerate response (empty
+content, or >50% `?`-character content — real patterns from this
+project's own history, not hypothetical), unloads the model
+(`keep_alive: 0`) and retries once before ever handing anything back.
+Verified live standalone first: normal passthrough, streaming-response
+SSE-wrapping, the detection function correctly classifying real bug
+patterns without false-positiving on legitimate content (including
+genuine question marks), the unload call succeeding against real Ollama,
+and a full unload→reload→correct-answer cycle actually completing
+(~23s, matching the previously-documented reload cost). One real,
+deliberate tradeoff: streaming responses arrive as a single chunk, not
+token-by-token — traded for being able to validate before ever showing
+the user anything.
+
+**Centralized on `ai-services-stack`, not left as a per-workstation
+process (2026-08-25, operator's explicit call).** First built and tested
+as a workstation-local `systemd --user` service, purely for VS Code
+Copilot's benefit. The operator correctly pushed back: Ollama's
+corruption bugs affect every consumer, not just Copilot, and
+`ai-services-stack`'s own `OpenWebUI` is itself a direct Ollama consumer
+that would otherwise get none of this protection. Moved into
+`deploy-ai-services-stack.yml` as a real Docker Compose service
+(`ollama-reliability-proxy`, built from the same `proxy.py`, no build
+step — bind-mounted into a plain `python:3.12-slim` image), with
+`OpenWebUI`'s own `OLLAMA_BASE_URL` repointed through it internally.
+Published on the LXC host (`192.168.50.11:11435`) for external
+reachability too (VS Code Copilot from the workstation), gated by a new
+host-scoped MikroTik rule (`lan → 192.168.50.11:11435`), same pattern as
+`docs-rag-mcp`'s `:8001` rule.
+
+**A real, unrelated bug found and fixed along the way, not glossed
+over**: deploying this re-exercised `ai-services-stack`'s existing
+"verify all managed LLM routes" task, which had a stale hard/soft
+requirement split — `llamacpp` was originally (2026-08-02) the one hard
+requirement, back when it was the actively-used backend. It failed the
+whole deploy when `llamacpp-router` turned out to be genuinely down on
+`framework` (confirmed directly, not assumed — a real
+`ConnectionRefusedError`, same fact Phase 1 of this doc already
+established). **Not a regression from this work** — a pre-existing,
+already-stale assumption this deploy just happened to be the first to
+re-trigger. Fixed by reversing which routes are hard vs. soft: Ollama
+(the actively-used backend today) is now the hard requirement,
+`llamacpp`/LM Studio are soft/warning-only — kept fully configured and
+documented, not removed, since the operator wants to be able to come back
+to them later. Re-ran clean afterward (`failed=0`), and confirmed
+directly inside the `openwebui` container that both soft routes warn
+correctly (`llamacpp`: connection refused; LM Studio: `502`, a separate
+pre-existing known issue) while Ollama, via the new proxy, correctly
+returns its full real model list (19 models).
 
 **`scripts/local-ai-canary/`** — a small regression check (not a full
 eval battery) against four facts this pipeline should always be able to
@@ -872,19 +907,17 @@ correctly surfaces two specific known facts (the `127.0.0.1:8001`
 allowed-hosts requirement and the `*78`/`*79` MikroTik rule IDs — both
 things this exact conversation already proved were retrievable), and the
 model answers a deterministic arithmetic prompt correctly through the
-reliability proxy. **Verified both directions, not just the happy path**:
-all four pass against the live pipeline, and killing the reliability
-proxy correctly produces one clear `[FAIL]` (connection refused) while
-the three independent MCP checks still correctly pass — proving the
-canary actually discriminates rather than trivially passing. Ships as a
-`systemd --user` timer (every 6 hours); see its `README.md`.
+reliability proxy (now pointed at the centralized address). **Verified
+both directions, not just the happy path**: all four pass against the
+live pipeline, and killing the reliability proxy correctly produces one
+clear `[FAIL]` (connection refused) while the three independent MCP
+checks still correctly pass — proving the canary actually discriminates
+rather than trivially passing.
 
-**Not yet done**: switching `chatLanguageModels.json`'s `url` to route
-through the proxy (`127.0.0.1:11435` instead of `framework:11434`
-directly) — that's the step that actually puts the proxy in Copilot's
-real path, versus just having it built and tested standalone. Left as an
-explicit operator decision given the streaming-UX tradeoff above, not
-applied unprompted.
+**Final state**: `chatLanguageModels.json` points at
+`http://192.168.50.11:11435/v1/chat/completions`; the workstation-local
+`systemd --user` variant was stopped and its unit file removed (fully
+superseded, not left as a confusing second path).
 
 ## Open questions
 

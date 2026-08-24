@@ -35,7 +35,9 @@ from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
 DOCS_RAG_URL = "http://192.168.50.10:8001/mcp"
-PROXY_URL = "http://127.0.0.1:11435/v1/chat/completions"
+# Centralized on ai-services-stack since 2026-08-25 (docs/coding-stack/plan.md
+# Phase 6) -- was a workstation-local process, now shared with OpenWebUI.
+PROXY_URL = "http://192.168.50.11:11435/v1/chat/completions"
 MODEL = "laguna-s-2.1:q4_k_m-ctx131k"
 
 # Known-true, stable facts this pipeline should always be able to

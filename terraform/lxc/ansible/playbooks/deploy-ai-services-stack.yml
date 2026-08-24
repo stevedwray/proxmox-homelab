@@ -52,6 +52,26 @@
   vars:
     ai_services_compose_dir: /opt/ai-services-stack
     ai_services_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | mandatory('LAB_DOMAIN env var is required') }}"
+    # ollama-reliability-proxy: centralized here (not per-workstation) so
+    # every consumer of Ollama on this LXC -- OpenWebUI included, not just
+    # an external client like VS Code Copilot -- gets protection against
+    # this project's own documented, repeated Ollama corruption bugs
+    # (degenerate empty responses, dense content degenerating into "?"
+    # garbage). See docs/coding-stack/plan.md Phase 6 for the proxy's
+    # design/validation and why this stack (not mcp-utility-stack) is
+    # where it landed -- OpenWebUI is itself a direct Ollama consumer that
+    # benefits from being routed through it, unlike mcp-utility-stack's
+    # own services. Source lives at scripts/ollama-reliability-proxy/ in
+    # this repo (stdlib-only Python, no build step needed).
+    repo_root: "{{ (playbook_dir + '/../../../..') | realpath }}"
+    ai_services_reliability_proxy_source_dir: "{{ repo_root }}/scripts/ollama-reliability-proxy"
+    ai_services_reliability_proxy_build_dir: "{{ ai_services_compose_dir }}/ollama-reliability-proxy"
+    # Published on the LXC host (not just the internal compose network) so
+    # an external client like VS Code Copilot on the operator's workstation
+    # can reach it too -- needs its own MikroTik lan -> ai_seg:<port> rule,
+    # same host-scoped pattern as mcp-utility-stack's docs-rag-mcp :8001
+    # rule (see terraform/lxc/stacks/ai-services-stack/STACK_CONTRACT.md).
+    ai_services_reliability_proxy_port: "{{ lookup('env', 'AI_SERVICES_RELIABILITY_PROXY_PORT') | default('11435', true) }}"
     # ai_seg is a deliberately contained zone (same class as pentest_seg)
     # with no direct route to Harbor's infra_seg IP -- confirmed live
     # 2026-08-02 when a raw LAB_IP_HARBOR pull timed out
@@ -118,7 +138,11 @@
     # Ollama's :11434. Revisit if the operator decides to add real auth to
     # the router (open question in plan.md).
     ai_services_openwebui_llamacpp_api_base: "http://{{ ai_services_framework_host }}:8080/v1"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
-    ai_services_openwebui_ollama_api_base: "http://{{ ai_services_framework_host }}:11434"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
+    # Routed through ollama-reliability-proxy (internal compose network,
+    # not framework directly) since 2026-08-25 -- see docs/coding-stack/plan.md
+    # Phase 6. The proxy's own OLLAMA_UPSTREAM env var below is what
+    # actually makes the framework:11434 plaintext cross-subnet hop now.
+    ai_services_openwebui_ollama_api_base: "http://ollama-reliability-proxy:{{ ai_services_reliability_proxy_port }}"  # NOSONAR: internal-only Docker network
     ai_services_openwebui_llm_api_key: "{{ lookup('env', 'LLM_GPU_STACK_API_KEY') | mandatory('LLM_GPU_STACK_API_KEY env var is required') }}"
     # Reused as-is from the framework deployment -- signs sessions/JWTs, so
     # a fresh data dir on this new LXC must not mint a new one and silently
@@ -156,6 +180,18 @@
       ansible.builtin.copy:
         src: "../../stacks/ai-services-stack/searxng-engines/"
         dest: "{{ ai_services_compose_dir }}/searxng-engines/"
+        mode: "0640"
+
+    - name: Create ollama-reliability-proxy build directory
+      ansible.builtin.file:
+        path: "{{ ai_services_reliability_proxy_build_dir }}"
+        state: directory
+        mode: "0750"
+
+    - name: Copy ollama-reliability-proxy source
+      ansible.builtin.copy:
+        src: "{{ ai_services_reliability_proxy_source_dir }}/proxy.py"
+        dest: "{{ ai_services_reliability_proxy_build_dir }}/proxy.py"
         mode: "0640"
 
     - name: Seed SearXNG settings with JSON output enabled
@@ -386,6 +422,40 @@
               depends_on:
                 searxng:
                   condition: service_healthy
+                ollama-reliability-proxy:
+                  condition: service_healthy
+
+            # Centralized here so every Ollama consumer on this LXC --
+            # OpenWebUI included -- gets protection from this project's
+            # own documented Ollama corruption bugs, not just an external
+            # client like VS Code Copilot. See
+            # docs/coding-stack/plan.md Phase 6 and
+            # scripts/ollama-reliability-proxy/proxy.py's own module
+            # docstring for the full design. Stdlib-only Python, no build
+            # step -- bind-mounted straight into a plain python image.
+            ollama-reliability-proxy:
+              image: "{{ ai_services_registry_host }}/dockerhub/library/python:3.12-slim"
+              container_name: ollama-reliability-proxy
+              restart: unless-stopped
+              command: ["python3", "/proxy.py"]
+              ports:
+                - "{{ ai_services_reliability_proxy_port }}:{{ ai_services_reliability_proxy_port }}"
+              environment:
+                PROXY_HOST: "0.0.0.0"
+                PROXY_PORT: "{{ ai_services_reliability_proxy_port }}"
+                # The one real plaintext cross-subnet hop this stack makes
+                # to framework -- same accepted-risk posture as the
+                # llamacpp/Ollama routes above (llamacpp-router/Ollama
+                # enforce no auth on this network either way).
+                OLLAMA_UPSTREAM: "http://{{ ai_services_framework_host }}:11434"  # NOSONAR: ansible:S5332 - accepted risk, see plan.md Step 3
+              volumes:
+                - "{{ ai_services_reliability_proxy_build_dir }}/proxy.py:/proxy.py:ro"
+              healthcheck:
+                test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:{{ ai_services_reliability_proxy_port }}/v1/models', timeout=10)"]
+                interval: 10s
+                timeout: 15s
+                retries: 6
+                start_period: 10s
 
             searxng:
               image: {{ ai_services_searxng_image }}
@@ -539,20 +609,22 @@
             import urllib.error
             import urllib.request
 
-            # Only llamacpp is a hard requirement for this migration --
-            # operator confirmed 2026-08-02 that Ollama and LM Studio
-            # aren't in active operational use right now, so failures on
-            # either are reported as warnings, not fatal. This isn't
-            # theoretical: LM Studio's route returned untrusted LE staging
-            # certs on pve-test-vm and a clean HTTP 502 on `pve` itself
-            # (its own backend/Traefik route state, unrelated to anything
-            # this migration touches) -- both would have failed the whole
-            # deploy under the old all-or-nothing check.
+            # Reversed 2026-08-25 (docs/coding-stack/plan.md Phase 6):
+            # originally (2026-08-02) llamacpp was the hard requirement
+            # and Ollama/LM Studio were soft, reflecting which backend was
+            # actually in active use at the time. That's flipped since --
+            # Ollama (Laguna) is the actively-used backend today, llamacpp
+            # isn't running on framework at all right now. Keeping
+            # llamacpp/LM Studio fully configured and documented (not
+            # removed -- may come back into use later), just no longer
+            # treated as hard requirements. Confirmed live 2026-08-25: this
+            # exact check hadn't been re-exercised since llamacpp-router
+            # went down, so it silently failed every deploy of this stack
+            # on an unrelated, non-fatal condition until this fix.
             discovered = {}
             warnings = []
             openai_base_urls = os.environ["OPENAI_API_BASE_URLS"].split(";")
             openai_api_keys = os.environ["OPENAI_API_KEYS"].split(";")
-            lmstudio_base_url = os.environ["LMSTUDIO_API_BASE"]
             for base_url, api_key in zip(openai_base_urls, openai_api_keys):
                 request = urllib.request.Request(
                     f"{base_url}/models",
@@ -560,16 +632,17 @@
                 )
                 try:
                     with urllib.request.urlopen(request, timeout=15) as response:
-                        discovered[base_url] = [
+                        models = [
                             model.get("id")
                             for model in json.load(response).get("data", [])
                             if model.get("id")
                         ]
+                        if models:
+                            discovered[base_url] = models
+                        else:
+                            warnings.append(f"{base_url}: reachable but returned no models (llamacpp/LM Studio not in active use, not fatal)")
                 except urllib.error.URLError as error:
-                    if base_url == lmstudio_base_url:
-                        warnings.append(f"{base_url}: {error} (LM Studio not in active use, not fatal)")
-                        continue
-                    raise
+                    warnings.append(f"{base_url}: {error} (llamacpp/LM Studio not in active use, not fatal)")
 
             ollama_base_url = os.environ["OLLAMA_BASE_URL"]
             try:
@@ -582,7 +655,7 @@
                         if model.get("name")
                     ]
             except urllib.error.URLError as error:
-                warnings.append(f"{ollama_base_url}: {error} (Ollama not in active use, not fatal)")
+                raise SystemExit(f"Ollama route ({ollama_base_url}) is not reachable -- this is the actively-used backend, not optional: {error}")
 
             empty_routes = [
                 base_url for base_url, models in discovered.items() if not models
