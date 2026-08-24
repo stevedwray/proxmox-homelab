@@ -16,6 +16,14 @@
 # Runs in the background so `git commit` returns immediately. Installed via
 # scripts/install-git-hooks.sh (not tracked directly under .git/hooks/, so
 # it survives review/re-install).
+#
+# Uses with-secrets-prod (not with-secrets): docs-rag-mcp is deployed on
+# production `pve`, not pve-test-vm. with-secrets defaults to pve-test-vm
+# and would silently try to reindex a host that doesn't run this stack.
+# TASK_APPROVAL is set to a fixed value here deliberately -- the operator
+# already decided (docs/coding-stack/plan.md Phase 5) that this specific,
+# narrow, idempotent action doesn't need a fresh per-run chat approval the
+# way a real infra mutation would.
 
 set -euo pipefail
 
@@ -28,7 +36,10 @@ if echo "$CHANGED" | grep -qE '^(docs/.*\.md$|.*STACK_CONTRACT\.md$|CLAUDE\.md$)
   LOG="/tmp/docs-rag-reindex-$(date +%Y%m%d-%H%M%S).log"
   echo "[post-commit] docs changed -- refreshing docs-rag-mcp corpus in the background"
   echo "[post-commit] log: $LOG"
-  nohup ./with-secrets scripts/provision.sh --stack mcp-utility-stack \
-    > "$LOG" 2>&1 &
-  disown
+  (
+    export TASK_APPROVAL="docs-rag-mcp-housekeeping-reindex"
+    nohup ./with-secrets-prod scripts/provision.sh --stack mcp-utility-stack \
+      > "$LOG" 2>&1 &
+    disown
+  )
 fi

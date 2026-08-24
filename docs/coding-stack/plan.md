@@ -765,6 +765,51 @@ live and working. Whether Copilot's own tool-selection reaches for it
 
 ### Phase 5 — Iterate
 
+**Auto-reindex on doc commits — done (2026-08-25).** The manual-refresh
+model (Phase 2/3: reindex only via an explicit `provision.sh` re-run) was
+a deliberate design choice at the time, but it also meant staleness was
+easy to hit by accident — exactly what happened testing Phase 4. The
+operator's call: refreshing `docs-rag-mcp`'s corpus/index is a *data*
+housekeeping action, not an infra mutation, so it doesn't need CLAUDE.md's
+per-task production-mutation approval the way a real infra change would
+(same reasoning already applied elsewhere to e.g. Harbor's scheduled
+repull).
+
+- `scripts/git-hooks/post-commit-docs-reindex.sh` + `scripts/
+  install-git-hooks.sh` (tracked, symlinked into `.git/hooks/post-commit`
+  by the installer since `.git/hooks/` itself isn't version-controlled).
+  On any commit touching `docs/**/*.md`, a `STACK_CONTRACT.md`, or
+  `CLAUDE.md`, it backgrounds a `provision.sh --stack mcp-utility-stack`
+  run and logs to `/tmp/docs-rag-reindex-<timestamp>.log`.
+- **Two real bugs found getting this working, not just theoretical
+  risk:**
+  1. First version used `./with-secrets` (this repo's default
+     *development* wrapper, targets `pve-test-vm`) instead of
+     `./with-secrets-prod` (targets the real `pve` where `docs-rag-mcp`
+     actually runs) — every run failed with `No route to host` against
+     `pve-test-vm`'s address. Fixed; `TASK_APPROVAL` is set to a fixed
+     value inside the hook itself, matching the operator's explicit
+     housekeeping-not-infra call above.
+  2. Deeper bug, in the underlying playbook, not the hook: `docker
+     compose` never restarts a container over a bind-mount *content*
+     change alone (no config diff to detect) — so `provision.sh` could
+     report full success while the corpus file changed on disk and the
+     running container's `pgvector` index stayed stale, silently, same
+     failure shape as a Phase 3 bug recurring for a new reason. Fixed in
+     `deploy-mcp-utility-stack.yml`: the corpus-copy task now registers
+     its result, and an explicit `docker_container` restart (plus a
+     post-restart health re-check) fires only when at least one file
+     actually changed.
+- **Verified live, three layers deep, not just "the ansible run
+  succeeded":** hook fired (log created) → `provision.sh` completed
+  against real `pve` (`failed=0`) → a direct `psql` query against
+  `docs-rag-pgvector` returned the actual just-committed
+  `STACK_CONTRACT.md` text (the `:8001` MikroTik-rule wording from
+  earlier in this same phase) as an embedded, retrievable chunk. Confirms
+  the whole chain — commit → hook → `provision.sh` → corpus copy →
+  restart → reindex → `pgvector` → `search_docs` — actually works, not
+  just that each individual step looked fine in isolation.
+
 - Whether Copilot's/the model's own tool-selection reaches for
   `search_docs` unprompted, or only when explicitly `#`-referenced, is
   still open — Phase 4 only forced one confirmed real call via explicit

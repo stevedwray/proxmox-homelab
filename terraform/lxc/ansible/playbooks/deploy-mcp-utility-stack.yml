@@ -320,6 +320,7 @@
       loop: "{{ corpus_files }}"
       loop_control:
         label: "{{ item | replace(repo_root + '/', '') }}"
+      register: corpus_copy_result
 
     - name: Write mcp-utility-stack docker-compose.yml
       ansible.builtin.copy:
@@ -465,3 +466,47 @@
           - docs_rag_health.status is defined
           - docs_rag_health.status in [200, 401, 405, 406]
         fail_msg: "docs-rag-mcp did not respond on :8001/mcp after retries (last status: {{ docs_rag_health.status | default('unknown') }})"
+
+    # Real bug found 2026-08-25: docs-rag-mcp only reindexes in its own
+    # startup lifespan (see docs/coding-stack/plan.md Phase 2). The corpus
+    # bind mount means a plain content-only change (no Dockerfile/compose
+    # diff) lands on disk immediately, but `docker compose` sees no config
+    # diff and never restarts the container -- so the "Deploy ... via
+    # docker compose" task above reports `ok`, health checks still pass
+    # against the *already-running* container, and the whole play goes
+    # green while the pgvector index silently stays stale. Confirmed live:
+    # a corpus file changed on disk while the container's own uptime
+    # showed it hadn't restarted in over a day. Restarting explicitly here,
+    # only when the corpus copy loop actually changed something, is what
+    # closes that gap -- this is what makes the post-commit docs-reindex
+    # git hook (scripts/git-hooks/post-commit-docs-reindex.sh) actually
+    # work end-to-end, not just report success.
+    - name: Determine whether the corpus actually changed this run
+      ansible.builtin.set_fact:
+        corpus_changed: "{{ corpus_copy_result.results | selectattr('changed') | list | length > 0 }}"
+
+    - name: Restart docs-rag-mcp to pick up corpus changes (bind-mount content diffs don't trigger a compose restart)
+      community.docker.docker_container:
+        name: docs-rag-mcp
+        state: started
+        restart: true
+      when: corpus_changed
+
+    - name: Wait for docs-rag-mcp to come back up after a corpus-change restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:8001/mcp"
+        status_code: [200, 401, 405, 406]
+      register: docs_rag_health_after_restart
+      retries: 60
+      delay: 10
+      until: docs_rag_health_after_restart.status is defined and docs_rag_health_after_restart.status in [200, 401, 405, 406]
+      failed_when: false
+      when: corpus_changed
+
+    - name: Fail if docs-rag-mcp never came back up after restart
+      ansible.builtin.assert:
+        that:
+          - docs_rag_health_after_restart.status is defined
+          - docs_rag_health_after_restart.status in [200, 401, 405, 406]
+        fail_msg: "docs-rag-mcp did not respond on :8001/mcp after the corpus-change restart (last status: {{ docs_rag_health_after_restart.status | default('unknown') }})"
+      when: corpus_changed

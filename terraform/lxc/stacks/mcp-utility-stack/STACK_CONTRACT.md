@@ -118,13 +118,29 @@ session (Laguna S 2.1 via Ollama) via `.vscode/mcp.json` — see
   them in without revisiting the egress allowlist and the scope decision
   that excluded them.
 - **`docs-rag-mcp`'s corpus is a point-in-time copy, not a live view of
-  this repo.** It's refreshed only by re-running
+  this repo.** It's refreshed by re-running
   `provision.sh --stack mcp-utility-stack`, which re-copies
   `docs/**/*.md`/`STACK_CONTRACT.md`/`CLAUDE.md` from the Ansible
-  controller's own checkout and reindexes whatever changed. A very recent
-  edit that hasn't been (re)provisioned yet will not show up in
-  `search_docs` results — `indexed_at` in each result is how a caller can
-  tell.
+  controller's own checkout and reindexes whatever changed. Since
+  2026-08-25 this also happens automatically: a `post-commit` git hook
+  (`scripts/git-hooks/post-commit-docs-reindex.sh`, installed via
+  `scripts/install-git-hooks.sh`) backgrounds this same command whenever
+  a commit touches `docs/**/*.md`, a `STACK_CONTRACT.md`, or `CLAUDE.md`
+  — see `docs/coding-stack/plan.md` Phase 5. It's still not instantaneous
+  (a real ansible run against `pve`, backgrounded but not free), so a
+  same-second edit-then-query can still predate it — `indexed_at` in each
+  `search_docs` result is how a caller can tell.
+- **The corpus copy landing on disk does not by itself guarantee a
+  reindex happened.** The corpus is a bind mount, so plain file-content
+  changes don't produce a `docker compose` config diff, and Compose
+  won't restart an already-running container just because a bind-mounted
+  file changed underneath it. `deploy-mcp-utility-stack.yml` now
+  explicitly restarts `docs-rag-mcp` (with a post-restart health
+  re-check) whenever the corpus-copy task actually changed something —
+  don't remove that restart task thinking it's redundant with the
+  `docker compose` deploy step above it; it isn't, and removing it
+  silently reintroduces stale-index bugs that look like success in the
+  playbook output.
 - **Port `:8001` (`docs-rag-mcp`) has a MikroTik inbound rule since
   2026-08-24 but still no Traefik hostname route.** The rules (`*78`
   `lan`, `*79` `pentest_seg`) are deliberately host-scoped to
