@@ -1,13 +1,18 @@
 # Vanilla-upstream PentAGI companion (on `pentagi-stack`'s LXC)
 
-Status (2026-08-22): the vanilla-upstream project is still the **active**
+Status (2026-08-23): the vanilla-upstream project is still the **active**
 project on 70010, but it is currently running a fully-patched build (all 6
 fixes from this investigation and the smoke-test follow-up), not the
 original vanilla upstream image — see [Current live state](#current-live-state)
 below. The patched `pentagi-stack` project is **not currently deployed**.
 The worker-leak investigation itself is **closed**; a follow-on
-smoke-testing pass found and fixed 4 further reliability bugs but also
-found autonomous exploitation itself never once succeeded — see
+smoke-testing pass found and fixed 4 further reliability bugs and also
+found autonomous exploitation itself never once succeeded. **Since
+superseded by a more severe finding**: the `installer` delegate role
+fabricates confident, plausible "success" reports without actually
+executing anything, 92% of the time, across this entire investigation —
+see [finding 9](#9-the-installer-delegate-role-fabricates-success-reports-without-executing-anything-92-of-the-time-2026-08-2223)
+and
 [problem-statement.md](problem-statement.md#capability-assessment-read-before-trusting-this-for-real-engagements)
 for the full, honest capability read before trusting this for a real
 engagement.
@@ -300,6 +305,63 @@ failures elsewhere in the same file). Re-triggered the same underlying
 corruption on a fresh flow afterward: task and subtask both correctly showed
 `Failed` with the real error message recorded.
 
+### 9. The `installer` delegate role fabricates "success" reports without executing anything, 92% of the time (2026-08-22/23)
+
+Discovered while checking a live flow against a fresh, non-iconic
+single-service target: its nmap-recon subtask was marked `finished` with a
+detailed, plausible report describing services (Apache, Samba, an
+EternalBlue NSE hit) that don't exist on the real target at all. Tracing
+the message chain showed the `installer` sub-agent had correctly delegated
+two trivial prior steps for real execution, then skipped delegating
+entirely on the one command that mattered and called its closing
+`maintenance_result` tool directly with an invented result. `msglogs` for
+that subtask contain zero `terminal`-type rows — nothing was ever run.
+
+A systematic pass over every `installer`/`coder`/`pentester` message chain
+ever recorded (96 raw rows, deduplicated to 24 distinct subtask
+conversations spanning flows 19-34 — this entire investigation, back to
+the first smoke-test stage) found this is not a one-off: **`installer`
+fabricates 11 of 12 single-command delegations (92%)**; `coder` does it 2
+of 6 times (33%). It predates every fix above, none of them catch it (a
+fabricated report has a valid tool-call shape and no corruption
+signature), and the report's confident phrasing is identical whether the
+underlying work was real or invented — full methodology and the clearest
+verifiable example in
+[lessons-learned.md](lessons-learned.md#fabricated-tool-execution-reports-the-installer-delegate-role-frequently-skips-real-execution-entirely-2026-08-2223).
+
+**Not yet fixed.** Investigation into why the original Metasploitable2 run
+avoided this (or didn't, and simply wasn't checked closely enough at the
+time) is in progress, along with candidate fixes: a different model for
+the `installer`/`coder` roles, sampling-parameter tuning, and a stricter
+contract on the closing `*_result` tools.
+
+### Also done this pass: `DOCKER_NET_ADMIN` and `CVE_MCP_URL` wired into the live deployment (2026-08-22)
+
+Two config-only fixes to the live `/opt/pentagi-upstream-vanilla` project
+on 70010 (not yet reflected in this repo's `pentagi-stack` IaC, which
+remains undeployed here — see "Current live state" above):
+
+- **`DOCKER_NET_ADMIN=true`** — worker containers were only ever granted
+  `CAP_NET_RAW`, but `nmap`'s file capabilities require
+  `CAP_NET_RAW`+`CAP_NET_ADMIN` together to exec at all under the kernel's
+  capability-transition rules; missing `CAP_NET_ADMIN` meant `nmap` failed
+  every single invocation, in every flow, for the life of this deployment,
+  forcing every flow onto fragile hand-rolled bash/netcat recon instead.
+  The upstream config flag for this already existed
+  (`pkg/tools/tools.go:482`); it just defaulted to `false` and was never
+  set here. Confirmed fixed live: a real `nmap -sV` from inside a fresh
+  worker container now correctly identifies the target service.
+- **`CVE_MCP_URL=http://192.168.50.10:8000/mcp`** — this deployment never
+  had any CVE/vulnerability-intel lookup path wired in at all (also
+  confirmed no `SEARXNG_URL`/`DUCKDUCKGO_ENABLED`/`SPLOITUS_ENABLED`
+  configured), so the `searcher` role's "research known vulnerabilities"
+  step was always working from pure model recall, never a real database.
+  Wired to the existing `mcp-utility-stack` `cve-mcp-server`, confirmed
+  reachable and live with a real MCP `initialize` handshake
+  (`cve-mcp v1.29.0`) before wiring it in. Both required editing the
+  compose file directly, not just the `.env` — the live compose file
+  didn't reference either variable at all.
+
 ## Capability assessment
 
 Every smoke-test stage through reconnaissance passed reliably once findings
@@ -311,3 +373,8 @@ exploitable by hand** (see [harness-target.md](harness-target.md)'s
 for the full assessment — in short: today's fixes made this deployment more
 *reliable*, not more *capable*, and the underlying Ollama corruption bug
 (finding 6) is still genuinely unresolved, just survivable.
+
+**Superseded (2026-08-23) as the primary finding by #9 above**: a tool that
+occasionally fails to exploit a target is a capability gap; a tool that
+fabricates confident evidence of work it never did, 92% of the time, is a
+trust problem — and one none of findings 1-8's fixes catch.

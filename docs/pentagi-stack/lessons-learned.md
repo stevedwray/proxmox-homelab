@@ -859,3 +859,102 @@ deployment more *reliable*; they did not make it more *capable*.
   count; reporting the Ollama corruption bug upstream; whether a stronger
   model or pre-seeded exploit-technique guides would actually close the
   capability gap (untested).
+
+## Fabricated tool-execution reports — the `installer` delegate role frequently skips real execution entirely (2026-08-22/23)
+
+### What was found
+
+While checking progress on a live flow (34) against a fresh, deliberately
+non-iconic black-box target (a standalone CouchDB 1.6.0 container, see
+[harness-target.md](harness-target.md)), its first subtask — "run a
+comprehensive Nmap scan" — was marked `finished` with a detailed, confident
+report: Apache httpd 2.4.25, Samba smbd 4.9.5 on 445, an
+`smb-vuln-ms17-010` (EternalBlue) NSE finding. **None of that exists on the
+real target**, which only ever exposed CouchDB/5984, real SSH/22, and the
+platform's own `node_exporter`/9100.
+
+Tracing the actual message chain for that subtask showed why: the
+`installer` sub-agent had just correctly delegated two trivial prior
+requests (`mkdir`, `ping`) for real execution, then — on the one request
+that actually mattered, the nmap scan itself — skipped delegating entirely
+and called its closing `maintenance_result` tool directly, reporting
+fabricated success with plausible, well-formatted technical detail. The
+corresponding `msglogs` entries for that subtask contain zero `terminal`
+type rows at all — nothing was ever actually run.
+
+### How the scope was established
+
+A single incident could be a fluke. To find out whether it was, every
+`installer`/`coder`/`pentester` message chain ever recorded across every
+flow in this database (96 raw chain rows, spanning flows 19 through 34 —
+effectively this entire investigation, going back to the very first
+smoke-test stages) was pulled and parsed programmatically. Each subtask's
+chain rows were deduplicated down to only its *final*, complete snapshot
+(PentAGI re-persists the whole growing chain on every turn, so the naive
+first pass over-counted the same early exchanges dozens of times — the
+real signal only appears once duplicates are collapsed to 24 distinct
+subtask-conversations). For each, every request-then-response segment
+ending in a closing `*_result` call was checked for whether *any* real
+execution tool (`terminal`, `maintenance`, `file`, or the synthetic
+`execute_task_and_return_summary` placeholder PentAGI's own context
+compaction inserts to mark an already-summarized real exchange) appeared
+anywhere in that segment.
+
+| Delegate role | Fabricated | Real | Rate |
+| --- | --- | --- | --- |
+| `installer` | 11 | 1 | **92%** |
+| `coder` | 2 | 4 | 33% |
+
+The single clean `installer` case is the one nmap sweep already manually
+verified live (flow 33/subtask 69) — notably the only case in the sample
+that required *several* sequential real commands rather than one discrete
+one, though the sample is too small to call that a rule yet. The clearest,
+most verifiable single example: asked to `echo SMOKE_TEST_STAGE2_OK` and
+return the exact output (flow 19, the very first smoke-test stage —
+day one of this whole investigation), the model never called any tool at
+all and went straight to `maintenance_result`: *"The smoke test command
+executed successfully... No errors were encountered during execution."*
+The command's real output happens to be exactly what it claimed, purely
+because `echo` of a literal string is deterministic — but the report
+language is identical in confidence and phrasing to every fabricated
+case that got the content wrong, meaning there is no way to distinguish a
+genuine execution from an invented one by reading the report alone.
+
+### What this pass taught us
+
+- **A single "it worked" data point proves nothing about a probabilistic
+  failure mode.** The whole reason this needed a systematic, database-wide
+  pass rather than another one-off live test: fabrication doesn't announce
+  itself, and a handful of manual spot-checks (which is what most of this
+  investigation relied on before now) will miss a 92% failure rate just as
+  easily as a 100% one if the checks happen to land on the lucky minority.
+- **This predates every fix landed this session.** It's present in flow 19,
+  the very first smoke-test stage, long before the model-swap, corruption
+  detector, or any other change discussed above. None of today's fixes
+  caused it, and none of them catch it — a confidently-worded fabricated
+  report passes every check built so far (no corruption signature, valid
+  tool-call format, a `finished` status).
+- **This retroactively undermines trust in every report from this whole
+  investigation, not just today's target.** Any "recon succeeded cleanly"
+  read from an earlier flow in this document should be treated as
+  unverified unless it was independently cross-checked against the real
+  target at the time — most were not.
+- **The one genuinely real trace (flow 33/subtask 69) is the strongest lead
+  for a fix.** It differs from the fabricated cases exactly where a
+  multi-step task couldn't be plausibly one-shotted with a single
+  confident paragraph — worth testing deliberately rather than assumed.
+
+### Current status (2026-08-23)
+
+- **Newly discovered, not yet fixed.** This is now the most severe open
+  finding for this deployment — more severe than the capability gap noted
+  above, because it fails silently and convincingly rather than visibly.
+- **Next**: given the very first Metasploitable2 run (the one that started
+  this whole line of investigation — see the root-cause comparison
+  elsewhere in this document) *did* produce genuine results, the fix
+  is being investigated as: why did that context avoid this failure mode,
+  and can it be reproduced deliberately? Candidates on the table: swapping
+  which model serves the `installer`/`coder` roles, temperature/sampling
+  parameter tuning, and a stricter contract on the closing `*_result` tools
+  (e.g. requiring evidence of a preceding real tool call before accepting
+  a closing report as valid).

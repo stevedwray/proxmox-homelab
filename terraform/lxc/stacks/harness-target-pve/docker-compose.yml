@@ -1,6 +1,10 @@
 version: '3.8'
 
 services:
+  # Struts2 and redis are kept defined (not removed) from the earlier
+  # multi-service comparison run, but stopped by hand after deploy so only
+  # couchdb is live for the single-service black-box reasoning test. See
+  # docs/pentagi-stack/harness-target.md.
   struts2:
     image: harbor.lab.gibbsgreatly.xyz/dockerhub/vulhub/struts2:2.3.30
     container_name: harness-target-pve-struts2
@@ -14,4 +18,16 @@ services:
     command: ["redis-server", "--protected-mode", "no", "--save", "", "--appendonly", "no"]
     ports:
       - "6379:6379/tcp"
+    restart: unless-stopped
+
+  # Single-service black-box reasoning target: CouchDB 1.6.0, unauthenticated
+  # end-to-end via chained CVE-2017-12635 (admin-bypass, type confusion in
+  # user-doc validation) + CVE-2017-12636 (RCE via query_servers config).
+  # Deliberately not vsftpd/Struts2-tier iconic — requires a real sequential
+  # multi-request chain, not a single memorized payload.
+  couchdb:
+    image: harbor.lab.gibbsgreatly.xyz/dockerhub/vulhub/couchdb:1.6.0
+    container_name: harness-target-pve-couchdb
+    ports:
+      - "5984:5984/tcp"
     restart: unless-stopped

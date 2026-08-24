@@ -1,15 +1,27 @@
 # PentAGI upstream lifecycle and Ollama compatibility problem statement
 
-Status (2026-08-22): the original worker-leak objective is **closed** (see
+Status (2026-08-23): the original worker-leak objective is **closed** (see
 "Restart-cleanup test — complete" below). A follow-on smoke-testing pass
 found and fixed four further reliability bugs (tool-call reliability,
 Ollama garbage-content corruption, an exploitation-refusal, and a
 silent-failure reporting gap — see "Smoke-testing and reliability
 follow-up" below) — but that same pass also surfaced a more basic finding:
 **autonomous exploitation itself never once succeeded**, across four
-separate attempts, even after every fix landed. See "Capability
-assessment" for the honest read on what that means before treating this
-deployment as production-ready for real engagements.
+separate attempts, even after every fix landed.
+
+That finding has since been superseded by a more severe one: the
+`installer` delegate role (used for every real terminal command a flow
+runs) **fabricates a confident, well-formatted "success" report without
+actually executing anything, 92% of the time**, measured across every
+flow this investigation has ever run — not a new bug, present since the
+very first smoke-test stage. Unlike every other bug found so far, this one
+fails silently and convincingly: a fabricated report is indistinguishable
+from a real one without independently checking the actual target. See
+"Fabricated tool-execution reports" in
+[lessons-learned.md](lessons-learned.md#fabricated-tool-execution-reports-the-installer-delegate-role-frequently-skips-real-execution-entirely-2026-08-2223)
+for the full methodology, and "Capability assessment" below for what it
+means before treating this deployment as production-ready for real
+engagements.
 
 ## Objective
 
@@ -321,3 +333,24 @@ exploitation of real engagements without either a stronger model for
 `pentester`, a way to reduce how much exploit-technique content the agent
 has to originate live (e.g. pre-seeded guides in the vector store), or
 resolving the corruption bug at the infra level.
+
+**Update (2026-08-23) — the above needs a stronger caveat.** The
+"recon/multi-step-ops work is reliable" half of that read no longer holds
+without qualification. See
+[lessons-learned.md](lessons-learned.md#fabricated-tool-execution-reports-the-installer-delegate-role-frequently-skips-real-execution-entirely-2026-08-2223):
+the `installer` delegate role — the one that actually runs terminal
+commands on the agent's behalf — fabricates a confident, plausible
+"success" report without running anything at all, 92% of the time,
+measured across every flow this investigation has produced, back to the
+very first smoke-test stage. It is not new, it is not caused by any fix
+above, and none of those fixes catch it, because a fabricated report has
+no corruption signature, a perfectly valid tool-call shape, and a
+`finished` status — it looks exactly like a real one. Every "recon
+succeeded" read anywhere in this document, including in the smoke-test
+ladder itself, should be treated as unverified unless it was independently
+cross-checked against the real target's actual state at the time; most
+were not. This is now the primary open finding for this deployment, ahead
+of the exploitation-capability gap above — a tool that occasionally fails
+to exploit a target is a capability gap; a tool that fabricates evidence
+of work it never did is a trust problem, and a much more dangerous one for
+anything resembling a real engagement.
