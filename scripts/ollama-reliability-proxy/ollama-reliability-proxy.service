@@ -1,0 +1,13 @@
+[Unit]
+Description=Ollama reliability proxy for Copilot Chat (Laguna S 2.1)
+After=network-online.target
+
+[Service]
+Type=simple
+Environment=OLLAMA_UPSTREAM=http://framework.gibbsgreatly.xyz:11434
+ExecStart=/usr/bin/python3 %h/git/proxmox-homelab/scripts/ollama-reliability-proxy/proxy.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

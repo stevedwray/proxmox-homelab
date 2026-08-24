@@ -1,7 +1,13 @@
 # coding-stack — Plan
 
-Status: **planning only.** Nothing in this doc is built yet. See
-`README.md` for the one-paragraph purpose/scope.
+Status: **live and validated through Phase 6.** `docs-rag-mcp` + `pgvector`
+are deployed on `pve` and confirmed working end-to-end from a real VS Code
+Copilot Chat Agent-mode session; a `post-commit` git hook keeps the corpus
+current; and a reliability proxy + regression canary now protect the
+Laguna S 2.1 + Copilot + MCP pipeline itself. See `README.md` for the
+one-paragraph purpose/scope, and each Phase section below for what
+actually happened at each step (including every bug found along the way —
+this doc is a history, not just a plan).
 
 ## Background
 
@@ -822,6 +828,63 @@ repull).
   recurs even with the larger `maxInputTokens`, that's an upstream
   extension bug (see Phase 4's tracked-issue list) — not something to
   chase further in this project.
+
+### Phase 6 — Reliability proxy + regression canary
+
+**Done (2026-08-25), both built and verified live, not just designed.**
+Prompted by "is there anything else we can set up to empower local models
+to work well with this project" — the answer that mattered wasn't more
+housekeeping, it was addressing two *documented, repeated* real failure
+classes head-on rather than building more speculative surface:
+
+1. **This project's own history shows real, recurring Ollama corruption**
+   (degenerate empty responses, dense content degenerating into `?`
+   garbage, mitigated only by reloading the model) — and Copilot talks to
+   Ollama's OpenAI-compat endpoint directly, with zero protection against
+   any of it.
+2. **Everything validated in this doc is a snapshot.** Ollama updates,
+   GGUF re-imports, VS Code Copilot updates, and this repo's own docs
+   drifting have all independently broken parts of this chain before,
+   silently, until someone hit it in a real session.
+
+**`scripts/ollama-reliability-proxy/`** — a small stdlib-only local proxy
+(`127.0.0.1:11435`) between Copilot and `framework:11434`. Forces the
+upstream call non-streaming so the full response can be validated before
+Copilot ever sees it; on a detected degenerate response (empty content,
+or >50% `?`-character content — real patterns from this project's own
+history, not hypothetical), unloads the model (`keep_alive: 0`) and
+retries once before ever handing anything back. Verified live: normal
+passthrough works, the streaming-response SSE-wrapping works, the
+detection function correctly classifies real bug patterns without
+false-positiving on legitimate content (including genuine question
+marks), the unload call succeeds against real Ollama, and a full
+unload→reload→correct-answer cycle actually completes (~23s, matching
+the previously-documented reload cost). One real, deliberate tradeoff:
+streaming responses arrive as a single chunk, not token-by-token — traded
+for being able to validate before ever showing the user anything. Ships
+as a `systemd --user` service for durability (survives logout/reboot);
+see its `README.md`.
+
+**`scripts/local-ai-canary/`** — a small regression check (not a full
+eval battery) against four facts this pipeline should always be able to
+reproduce: `list_stacks` includes a known stack subset, `search_docs`
+correctly surfaces two specific known facts (the `127.0.0.1:8001`
+allowed-hosts requirement and the `*78`/`*79` MikroTik rule IDs — both
+things this exact conversation already proved were retrievable), and the
+model answers a deterministic arithmetic prompt correctly through the
+reliability proxy. **Verified both directions, not just the happy path**:
+all four pass against the live pipeline, and killing the reliability
+proxy correctly produces one clear `[FAIL]` (connection refused) while
+the three independent MCP checks still correctly pass — proving the
+canary actually discriminates rather than trivially passing. Ships as a
+`systemd --user` timer (every 6 hours); see its `README.md`.
+
+**Not yet done**: switching `chatLanguageModels.json`'s `url` to route
+through the proxy (`127.0.0.1:11435` instead of `framework:11434`
+directly) — that's the step that actually puts the proxy in Copilot's
+real path, versus just having it built and tested standalone. Left as an
+explicit operator decision given the streaming-UX tradeoff above, not
+applied unprompted.
 
 ## Open questions
 
