@@ -677,17 +677,106 @@ serving real semantic search over this repo's documentation.
 
 ### Phase 4 — Index and wire up
 
-- Initial full index of the 378-file corpus.
-- Point whichever agent harness drives Laguna (Cline/OpenCode/Aider — see
-  `docs/framework-ubuntu/local-ai-development.md`'s bake-off) at the new
-  MCP tool.
-- Confirm end-to-end: a real coding task that needs a specific
-  `STACK_CONTRACT.md` fact retrieves it correctly and the agent uses it.
+**Done (2026-08-24) — confirmed working end-to-end from a real VS Code
+Copilot Chat Agent-mode session, not just direct MCP client tests.**
+
+**Firewall**: `:8001` had no MikroTik inbound rule (Phase 3 deliberately
+left this out of scope). Read the live rule set first rather than guess —
+found the existing `:8000` precedent (`*50`/`*51`, `lan`/`pentest_seg` →
+the *whole* `ai_seg` subnet, not host-scoped — a documented imprecision
+per `pve-test-vm.yaml`'s own comments) plus a correctly host-scoped
+precedent (`*5D`, PentAGI's dedicated `cve-mcp-server` rule). Added two
+new rules mirroring the *correct* (host-scoped) pattern, `place-before`
+the zone's own `*53` ("ai_seg explicit deny — everything else") anchor,
+resolved dynamically via `[find comment="..."]` rather than a fragile
+numeric position:
+
+```text
+lan -> mcp-utility-stack docs-rag-mcp 8001         192.168.1.0/24  -> 192.168.50.10:8001
+pentest_seg -> mcp-utility-stack docs-rag-mcp 8001 192.168.70.0/24 -> 192.168.50.10:8001
+```
+
+Operator applied both via the RouterOS CLI (outward-facing production
+mutation, handed the exact commands rather than run directly — same
+harness-classifier reasoning as Phase 3). Verified live afterward, twice:
+read-only re-query of the MikroTik REST API showed both rules present and
+correctly ordered before `*53`; a direct `curl` from the workstation to
+`http://192.168.50.10:8001/mcp` returned the MCP server's own JSON-RPC
+`"Missing session ID"` error (not a timeout, not a 421) — proof the
+packet reaches the app, not just the network layer.
+
+**VS Code wiring — two real config bugs found and fixed, unrelated to
+`docs-rag-mcp` itself:**
+
+1. `~/.config/Code/User/chatLanguageModels.json` (Copilot's custom-model/
+   BYOK config) still pointed at `framework:8080` (llama.cpp — not
+   currently functional, per Phase 1) and at
+   `Laguna-S-2.1-UD-Q4_K_M-00001-of-00003`, the exact locally-imported
+   third-party GGUF that Phase 1 proved was the corruption root cause.
+   Also declared `maxInputTokens: 180000` — never tested at any size
+   near that. Corrected to Ollama's real endpoint (`:11434`), the
+   official rebuilt `laguna-s-2.1:q4_k_m-ctx131k` tag, and
+   `maxInputTokens` reset to 24000 (matching what Phase 1 actually
+   validated), `maxOutputTokens` to 8000.
+2. `.vscode/mcp.json` didn't exist yet — created it, registering
+   `docs-rag` as an `http` server at `docs-rag-mcp`'s real address.
+
+**A third bug, in VS Code's Copilot Chat extension itself, not this
+project's config**: the first live Agent-mode message crashed with
+`"No lowest priority node found (path: Gte)"` — a known, long-running bug
+class in the extension's prompt-tsx renderer/token-budget pruner (10+
+tracked issues on `microsoft/vscode-copilot-release` going back to
+`#5903`, not specific to `docs-rag-mcp` or even to custom/BYOK models —
+one report ties a recurrence to Claude models plus history
+summarization). Registering `docs-rag-mcp`'s tool schemas into that same
+prompt tree, against the tight `maxInputTokens: 24000` budget, is a
+plausible trigger. Mitigated by raising `maxInputTokens` to 110000 (still
+well inside the `-ctx131k` tag's real 131,072-token window, leaving
+~13K headroom) — explicitly **not** a claim that output is
+validated-accurate at that input size, only that it removes a plausible
+crash trigger for Copilot's own renderer.
+
+**Confirmed actually working, twice, with different outcomes worth
+recording honestly:**
+
+- First real attempt (after the crash fix): the model answered correctly
+  but via VS Code's *built-in* `search`/`read` tools, not `docs-rag-mcp`
+  — a legitimate outcome (matches this project's own stated reasoning for
+  *not* building this for Claude Code/Codex — native tools already
+  suffice at this corpus size for a capable-enough agent loop), but not a
+  test of what we built.
+- Disabling the built-in `search`/`read` tool categories didn't force the
+  issue either — the model fell back to shell `find`/`grep` via the
+  `execute` tool category instead.
+- Explicit `#search_docs` tool-reference syntax did force it: trace shows
+  `Ran search_docs — docs-rag (MCP Server)` with a real query and `k=15`,
+  alongside (not instead of) several native search/read calls — the model
+  doesn't yet treat the MCP tool as primary, just as one option it will
+  use when directed. The resulting answer was substantively correct and
+  well-grounded in the real retrieved content, with one small invented
+  detail (a wrong example LAN IP, `192.168.50.11` vs. the real
+  `192.168.50.10`) — a reminder that grounded retrieval reduces but
+  doesn't eliminate small confabulations.
+
+**Net result**: the full chain — VS Code Agent mode → Laguna S 2.1 via
+Ollama → `docs-rag-mcp` → `pgvector` → grounded answer — is confirmed
+live and working. Whether Copilot's own tool-selection reaches for it
+*without* being told to is a separate, still-open question — see Phase 5.
 
 ### Phase 5 — Iterate
 
-Revisit chunk size / retrieval count against Phase 1's measured reliable-
-context number if either the model or the Ollama build changes.
+- Whether Copilot's/the model's own tool-selection reaches for
+  `search_docs` unprompted, or only when explicitly `#`-referenced, is
+  still open — Phase 4 only forced one confirmed real call via explicit
+  reference. Worth watching across real coding sessions rather than
+  engineering further right now.
+- Revisit chunk size / retrieval count against Phase 1's measured
+  reliable-context number if either the model or the Ollama build
+  changes.
+- If the Copilot Chat "No lowest priority node found" crash (Phase 4)
+  recurs even with the larger `maxInputTokens`, that's an upstream
+  extension bug (see Phase 4's tracked-issue list) — not something to
+  chase further in this project.
 
 ## Open questions
 

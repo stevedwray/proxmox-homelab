@@ -56,7 +56,7 @@ allowlist).
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `cve-mcp-http` | `8000` | `tcp` | MCP Streamable HTTP endpoint at `/api/mcp`. No built-in authentication — access control is network-level only (MikroTik inbound rule), see Security notes below. |
-| `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`). No built-in authentication, same posture as `cve-mcp-http`. **No MikroTik inbound rule exists for this port yet** — unlike `:8000`, it is not currently reachable from `lan`/`pentest_seg`; see "What Must Not Be Edited Casually" below. |
+| `docs-rag-mcp-http` | `8001` | `tcp` | MCP Streamable HTTP endpoint at `/mcp` (`search_docs`, `list_stacks`). No built-in authentication, same posture as `cve-mcp-http`. Reachable from `lan`/`pentest_seg` since 2026-08-24 (MikroTik rules `*78`/`*79`, host-scoped to `192.168.50.10:8001`, deliberately tighter than `:8000`'s subnet-wide `*50`/`*51` — see "What Must Not Be Edited Casually" below). No Traefik hostname route. |
 
 ## Dependencies
 
@@ -95,10 +95,11 @@ starting with an interactive Claude Code session on the workstation, and
 `pentagi-stack`/`greenbone-stack` findings review. No stack currently
 depends on it in an automated way.
 
-`docs-rag-mcp` is intended for the same kind of client (an agentic coding
-session, particularly one driving a local model per
-`docs/coding-stack/plan.md`) but has no firewall rule granting that
-reachability yet — see below.
+`docs-rag-mcp` is for the same kind of client (an agentic coding session,
+particularly one driving a local model per `docs/coding-stack/plan.md`).
+Confirmed live 2026-08-24 from a real VS Code Copilot Chat Agent-mode
+session (Laguna S 2.1 via Ollama) via `.vscode/mcp.json` — see
+`docs/coding-stack/plan.md` Phase 4.
 
 ## What Must Not Be Edited Casually
 
@@ -124,11 +125,14 @@ reachability yet — see below.
   edit that hasn't been (re)provisioned yet will not show up in
   `search_docs` results — `indexed_at` in each result is how a caller can
   tell.
-- **Port `:8001` (`docs-rag-mcp`) has no MikroTik inbound rule and no
-  Traefik hostname route as of 2026-08-24** — deliberately out of scope
-  for this build (see `docs/coding-stack/plan.md`). Do not assume
-  `lan`/`pentest_seg → ai_seg:8001` reachability exists just because
-  `:8000` has it; adding it is a separate, explicit firewall change.
+- **Port `:8001` (`docs-rag-mcp`) has a MikroTik inbound rule since
+  2026-08-24 but still no Traefik hostname route.** The rules (`*78`
+  `lan`, `*79` `pentest_seg`) are deliberately host-scoped to
+  `192.168.50.10:8001` — narrower than `:8000`'s `*50`/`*51`, which
+  accept for the whole `ai_seg` subnet (a documented pre-existing
+  imprecision, not a pattern to copy). If a second `ai_seg` host ever
+  needs `docs-rag-mcp` reachability, that's a new rule, not a reason to
+  widen these two.
 - **`pgvector`'s data is intentionally not backed up separately** — it's
   fully re-derivable by reindexing. Don't add it to a backup policy
   expecting point-in-time recovery value beyond "save re-embedding time."

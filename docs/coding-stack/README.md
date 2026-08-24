@@ -1,8 +1,15 @@
 # coding-stack (planning workspace name — not a new stack)
 
-Status: **live in production.** `docs-rag-mcp` + `pgvector` are deployed
-and working on `pve`, folded into the existing `mcp-utility-stack` LXC
+Status: **live in production, confirmed working end-to-end from a real
+VS Code Copilot Chat Agent-mode session.** `docs-rag-mcp` + `pgvector`
+are deployed on `pve`, folded into the existing `mcp-utility-stack` LXC
 (no new Terraform stack was created — see Phase 2's correction below).
+Phase 4 (2026-08-24) opened the `:8001` firewall rule, wired up VS
+Code's `.vscode/mcp.json` and fixed two stale/wrong Copilot custom-model
+config bugs, worked around a VS Code Copilot Chat extension crash bug,
+and got a real `search_docs` call confirmed via `Ran search_docs — docs-
+rag (MCP Server)` in an actual Agent-mode trace, with a correct, well-
+grounded answer. See `plan.md`'s Phase 4 section for the full account.
 The `docs/coding-stack/` name is just this planning workspace's name (this
 repo's `docs/mcp-stack/` workspace similarly covers two differently-named
 stacks already, so a workspace name not matching a stack 1:1 is an
