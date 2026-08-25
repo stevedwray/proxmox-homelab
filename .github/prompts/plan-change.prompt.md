@@ -49,12 +49,34 @@ so later execution doesn't have to repeat it.
      `stack-request.yaml` (applying the literal-vs-constrained rule per
      field) and one `local` step that runs
      `terraform/lxc/scaffold-stack.sh <stack-name>`.
-   - Set `model_hint: local` if the step is genuinely bounded enough for
-     Laguna (or another small local model) to execute unsupervised --
-     single-file-or-few-file, mechanical, no open design judgment left to
-     make. Set `model_hint: frontier` if the step still requires cross-file
-     reasoning, an architectural call, or anything this plan doc can't
-     fully pin down.
+   - **`frontier` is a todo, not a destination.** If a step still requires
+     judgment, don't just tag it `frontier` and move on -- do that
+     judgment now, yourself, and write the literal result into `change`.
+     A step only stays genuinely `frontier`/manual if, after you've tried
+     to resolve it: (a) it needs a value only knowable at execution time
+     (and even then, prefer "run this exact command to fetch it, then
+     substitute" over leaving the whole step open), (b) you've confirmed
+     -- by checking, not assuming -- there's no scriptable/config-file
+     path at all (a UI-only plugin, say), or (c) it's a first mutation of
+     shared/production infrastructure where a human's own judgment in
+     the moment matters more than a pre-written spec. Everything else
+     graduates to `model_hint: local` once you've done the work of
+     writing the literal content. A finished plan with most steps still
+     `frontier` usually means the planning wasn't finished, not that the
+     work was inherently unbounded.
+   - **Verify a mechanism's real behavior by reading its actual
+     implementation before calling it generic or reusable in a plan** --
+     not by pattern-matching one similar-looking example. A shared
+     script that looks config-driven from one example file can turn out
+     to be a hardcoded per-case lookup underneath; only reading the code
+     itself catches that. Getting this wrong sends a plan (and whoever
+     executes it) down a path that looks fine and does nothing.
+   - **Test any gate command you're not certain of**, don't just judge it
+     plausible -- run it against a real matching and non-matching example
+     before leaving it in the plan. A gate that looks reasonable but
+     silently errors (a regex feature the local grep doesn't support, for
+     instance) is worse than no gate at all, because it looks like
+     coverage that isn't there.
    - Every step needs at least one `critical: true` gate that is a literal,
      runnable command with an expected result -- never "looks right."
    - Set `depends_on` honestly; don't let steps silently assume an earlier
