@@ -85,6 +85,21 @@ Batch related changes during development and run the appropriate tier. As the pl
 - Clean up stale `artifacts/` contents as the plan progresses and at closeout.
 - See `docs/workflow/documentation-workspaces.md` for the canonical rule.
 
+## Planning Big Infrastructure Work For Local-Model Execution
+
+When asked a big, open-ended infrastructure question — "what would it
+take to add X", a new stack, a cross-cutting change — and the goal is
+work a local model (Laguna) can safely execute afterward, follow the
+process in `docs/agent-design/README.md`: `/plan-change` (a
+frontier/strong model only — not Laguna) researches this repo's real
+conventions, surfaces genuine judgment calls to the operator rather than
+defaulting them silently, then writes `docs/<workspace>/plan.md` as
+bounded steps per `docs/agent-design/step-packet-schema.md` — converting
+every step's judgment into literal file content or exact commands
+before calling it done. Laguna then runs `/implement-step` against one
+named step at a time. See `docs/media-stack-v2/` for a real worked
+example.
+
 ## Production Credential Controls
 
 Production access is strictly controlled and defaults to read-only. There
