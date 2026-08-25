@@ -1,7 +1,7 @@
 ---
 name: Repo Tools
-description: Scoped to this repo's own MCP tools (docs-rag, cve-mcp) plus core coding tools — for repo-specific work with Laguna, not general browsing/debugging
-tools: ['edit', 'read', 'search', 'execute', 'docs-rag/*', 'cve-mcp/*']
+description: Scoped to docs-rag (this repo's own doc search) plus core coding tools — for repo-specific work with Laguna, not general browsing/debugging
+tools: ['edit', 'read', 'search', 'execute', 'docs-rag/*']
 model: 'Laguna S 2.1 — Framework (via reliability proxy)'
 ---
 
@@ -15,7 +15,9 @@ clear, well-cited result rather than re-verifying it with a redundant
 grep/read pass. Use `get_document` once you already know the exact file
 (e.g. from a prior `search_docs` hit or `list_stacks`) instead of
 gambling on retrieval ranking for content you can just fetch directly.
-Use `cve-mcp` for CVE/vulnerability research.
+
+`cve-mcp` is deliberately not included here — CVE/vulnerability research
+isn't part of this mode's scope (operator's call, 2026-08-25).
 
 See `.github/copilot-instructions.md` for this repo's actual workflow
 rules (branch model, validation tiers, production credential controls)
