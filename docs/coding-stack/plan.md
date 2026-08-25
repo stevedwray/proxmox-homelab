@@ -1,11 +1,14 @@
 # coding-stack — Plan
 
-Status: **live and validated through Phase 6.** `docs-rag-mcp` + `pgvector`
-are deployed on `pve` and confirmed working end-to-end from a real VS Code
-Copilot Chat Agent-mode session; a `post-commit` git hook keeps the corpus
-current; and a reliability proxy + regression canary now protect the
-Laguna S 2.1 + Copilot + MCP pipeline itself. See `README.md` for the
-one-paragraph purpose/scope, and each Phase section below for what
+Status: **live and validated through Phase 8; Phase 9 scoped but paused,
+not built.** `docs-rag-mcp` + `pgvector` are deployed on `pve` and
+confirmed working end-to-end from a real VS Code Copilot Chat Agent-mode
+session; a `post-commit` git hook keeps the corpus current; a
+reliability proxy + regression canary protect the Laguna S 2.1 + Copilot
++ MCP pipeline itself; `get_document` gives exact-fetch alongside
+`search_docs`; and a scoped `repo-tools` Copilot agent mode is confirmed
+working. See `README.md` for the one-paragraph purpose/scope, and each
+Phase section below for what
 actually happened at each step (including every bug found along the way —
 this doc is a history, not just a plan).
 
@@ -958,21 +961,113 @@ should be migrated per current VS Code docs). This repo already has a
 mechanism (no YAML frontmatter, a home-grown planning workflow) — added
 this as a new, distinctly-named file rather than touching those.
 
-Scopes tools to `edit`/`read`/`search`/`execute` plus `docs-rag/*` and
-`cve-mcp/*` (both registered MCP servers), explicitly excluding `browser`/
-`vscode`/`web`/`agent` and the unrelated MCP servers visible in the tools
-picker (Pylance, Snyk, Container Tools, etc.) that add tool-schema bulk
-with no relevance to this repo's own work. Pins the model to Laguna S 2.1
-via the reliability proxy by exact display name.
+Scopes tools to `edit`/`read`/`search`/`execute` plus `docs-rag/*`,
+explicitly excluding `browser`/`vscode`/`web`/`agent` and the unrelated
+MCP servers visible in the tools picker (Pylance, Snyk, Container Tools,
+Debugger for Java, Python, SonarQube) that add tool-schema bulk with no
+relevance to this repo's own work. Pins the model to Laguna S 2.1 via
+the reliability proxy by exact display name. `cve-mcp/*` was in the
+first draft but removed — the operator confirmed CVE/vulnerability
+research isn't in scope for this mode.
 
-**Genuinely unverified**: the `tools:` frontmatter syntax is built from
-the current official VS Code docs, not confirmed against this specific
-build's actual tool-name schema (unlike `.vscode/mcp.json`, which worked
-first try). If selecting "Repo Tools" mode doesn't show the intended
-tool set, that's the thing to check first.
+**Confirmed working live, with two real findings, not the "genuinely
+unverified" state this was first written in:**
+
+1. **Correction to an assumption made while diagnosing this**: the three
+   pre-existing `.github/agents/` files (`architect`/`planner`/`executor`)
+   were assumed to be an unrelated mechanism, since they lack frontmatter.
+   Wrong — they show up in Copilot's own custom-agent picker right
+   alongside `repo-tools`. VS Code's discovery is more lenient than
+   assumed (any `.agent.md` file in that directory, frontmatter or not),
+   not a separate system.
+2. Live in the tools picker: `docs-rag-mcp`'s tools show correctly scoped
+   and enabled, and every unrelated extension-contributed MCP server
+   (Pylance, Snyk, Container Tools, Debugger for Java, Python, SonarQube)
+   correctly stays excluded by default — the actual goal of this mode,
+   confirmed achieved.
+3. One loose end, not ours to fix: the tools picker showed only
+   `list_stacks`/`search_docs` under `docs-rag-mcp`, not `get_document`
+   (added in Phase 7, confirmed working server-side). A full VS Code
+   restart (not just Reload Window) didn't clear it either. This matches
+   known, actively-tracked upstream VS Code bugs about MCP tool-list
+   caching (`microsoft/vscode#256421`, `#246033`, `#245921`) — not a
+   config problem here, a client-side cache issue to just be aware of.
+
+### Phase 9 — NetBox live-data MCP tool (scoped, paused before building)
+
+**Paused here deliberately (2026-08-25) — real scoping/schema research
+done, nothing built yet.** This is the last item from the original "what
+else can we set up" menu, and turned out to be comparably sized to the
+reliability-proxy work once actually scoped, not a quick addition — worth
+a session of its own rather than folding into an already-long one.
+
+**Motivation**: `docs-rag-mcp` is only ever as fresh as its last commit
+(and reindex). NetBox already holds structured IPAM/DCIM data that's
+*fresher*, if not perfectly real-time — worth exposing as a live-data
+complement, not a replacement.
+
+**Placement — decided**: fold into `netbox-stack` itself, not a new
+dedicated stack. Reasoning: a NetBox-reading MCP tool needs NetBox's own
+`NETBOX_API_TOKEN` (a real internal infrastructure credential) — a
+different trust class from `docs-rag-mcp`/`cve-mcp-server`, which
+deliberately hold none. Per this repo's own bundle-by-trust-level
+convention (see Phase 2's "Stack identity" correction), that means it
+doesn't belong folded into `mcp-utility-stack`. `netbox-stack` itself
+already holds exactly this trust class (NetBox token, read-only Proxmox
+token, read-only MikroTik creds for its own discovery/population jobs),
+so it's the natural fit — talks to NetBox over `localhost`/compose-
+internal networking, no new cross-zone egress rule needed at all.
+Confirmed live: no `ai_seg → NetBox` egress rule exists today (only
+`apt-cacher` `:3142` and one `opensearch`-specific rule from
+`secpipe-stack`) — a new dedicated stack elsewhere would have needed a
+new egress rule; folding into `netbox-stack` only needs one new *inbound*
+rule (`lan → infra_seg:<port>`, same host-scoped pattern as
+`docs-rag-mcp`'s `:8001`).
+
+**Real schema, checked live against the actual NetBox API, not
+assumed:**
+
+- VM names are `<stack-name>@<node>` (e.g. `ai-services-stack@pve`,
+  `torrent-stack@pve`).
+- **VMID is not a clean field** — it's embedded in free text on the VM's
+  `description` (e.g. `"Proxmox LXC VMID 101 [Status: running] [Source
+  name: management-stack]"`). Extracting it needs a regex, not a direct
+  field read. `custom_fields` is empty on every object checked — VMID
+  isn't tracked there.
+- **IPs live on a separate `/api/ipam/ip-addresses/` endpoint**, linked
+  via `assigned_object` to either `virtualization.vminterface` (LXC/VMs)
+  or `dcim.interface` (physical devices — the MikroTik router, the `pve`
+  host itself) — not a simple field on the VM object (`primary_ip4` was
+  `null` on every VM checked).
+- **NetBox's own data isn't real-time either** — populated by a scheduled
+  job (`.github/workflows/netbox-populate.yml`), not live-synced.
+  Concretely confirmed, not assumed: searching for `ai-services-stack`'s
+  real, live IP (`192.168.50.11`, confirmed working earlier this session)
+  found **no matching IP record in NetBox at all** — its last population
+  run hasn't caught up. This tool would give *NetBox's* view of infra
+  state, fresher than static docs but still not instantaneous ground
+  truth — worth being honest about that ceiling up front rather than
+  overselling "live" data.
+
+**Proposed tool surface (designed, not built)**: one flexible
+`search_infra(query) -> list[{name, vmid, ip, node, status}]`, searching
+both VM names and IP-address descriptions, parsing VMID out of the
+description text server-side — matches `docs-rag-mcp`'s "one tool, not
+one-per-use-case" philosophy rather than several narrow lookups.
+
+**Remaining work for whoever picks this up next**: write the Python MCP
+service (same shape as `docs-rag-mcp`), add it to
+`deploy-netbox-stack.yml`'s compose file, add the new inbound firewall
+rule, register it in `.vscode/mcp.json`, deploy to `pve` production and
+verify live (real query, not just a healthcheck) — comparable scope to
+the reliability-proxy work in Phase 6.
 
 ## Open questions
 
+- **Phase 9 (NetBox live-data MCP tool) is scoped and paused, not
+  built** — see its section above for the full design, real schema
+  findings, and exactly what's left to do. This is the natural next
+  session for this doc.
 - ~~Stack name~~ — **resolved, then corrected, in Phase 2**: not a new
   stack at all — docs-rag folds into the existing `mcp-utility-stack` LXC
   (VMID `50011`) as two more Compose services. See Phase 2's "Stack
