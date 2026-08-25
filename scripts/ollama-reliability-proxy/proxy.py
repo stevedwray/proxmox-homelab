@@ -163,6 +163,34 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):  # route BaseHTTPRequestHandler's own logging through ours
         log.info("%s - %s", self.address_string(), fmt % args)
 
+    def _call_upstream_safe(self, path: str, body: dict) -> tuple[int, dict] | None:
+        """call_upstream(), but on a network-level failure (timeout,
+        connection refused, malformed upstream body) send a clean 504 to
+        the client and return None instead of letting the exception
+        propagate. An uncaught exception here is exactly what caused the
+        real bug this guards against: Python's own http.server catches an
+        uncaught TimeoutError from inside do_POST and just closes the
+        connection with zero bytes written -- no error, no signal at all.
+        That is indistinguishable from a crash on the client side, and
+        showed up in practice as VS Code Copilot Chat's
+        net::ERR_EMPTY_RESPONSE with no indication why. The whole point of
+        this proxy is to turn silent failures into visible ones; this path
+        was still failing invisibly."""
+        try:
+            return call_upstream(path, body)
+        except (OSError, json.JSONDecodeError) as e:
+            log.exception("upstream call to %s failed", path)
+            self._send_json(
+                504,
+                {
+                    "error": {
+                        "message": f"ollama-reliability-proxy: upstream call to Ollama failed or timed out ({e}). Not dropping the connection silently.",
+                        "type": "proxy_upstream_error",
+                    }
+                },
+            )
+            return None
+
     def do_POST(self):
         if self.path != "/v1/chat/completions":
             self._proxy_passthrough()
@@ -181,7 +209,10 @@ class Handler(BaseHTTPRequestHandler):
         upstream_body["stream"] = False
         model = upstream_body.get("model", "")
 
-        status, completion = call_upstream("/v1/chat/completions", upstream_body)
+        result = self._call_upstream_safe("/v1/chat/completions", upstream_body)
+        if result is None:
+            return
+        status, completion = result
         if status >= 400:
             self._send_json(status, completion)
             return
@@ -191,7 +222,10 @@ class Handler(BaseHTTPRequestHandler):
         if reason:
             log.warning("degenerate response detected (%s) -- retrying once after unload", reason)
             unload_model(model)
-            status, completion = call_upstream("/v1/chat/completions", upstream_body)
+            result = self._call_upstream_safe("/v1/chat/completions", upstream_body)
+            if result is None:
+                return
+            status, completion = result
             choice = (completion.get("choices") or [{}])[0]
             reason2 = is_degenerate(choice.get("message", {}), choice.get("finish_reason"))
             if reason2:
