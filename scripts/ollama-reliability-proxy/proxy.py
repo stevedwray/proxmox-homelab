@@ -26,23 +26,38 @@ Deliberately stdlib-only (http.server + urllib) -- this runs as a small
 background process on the operator's own workstation, not inside this
 repo's infra, so it shouldn't need a venv/pip install to get started.
 
-2026-08-25 fix: sse_wrap() used to only forward message content in the
+2026-08-25 fix #1: sse_wrap() used to only forward message content in the
 streamed delta, silently dropping tool_calls. Every real VS Code Copilot
 Chat request streams, so an agentic turn that wanted a tool call would
 get the model's preamble text and then just stop -- no error, no visible
 sign anything was wrong, until traced back to this proxy. Fixed by
 carrying tool_calls through into the delta chunk too.
 
+2026-08-25 fix #2: a real, working-but-slow generation (a large question
+against a large repo context, on this hardware) could take longer than
+the old 180s PROXY_TIMEOUT_S default. call_upstream() had no handling
+for that beyond letting the exception propagate -- caught by Python's
+own http.server, which just closes the connection with zero bytes
+written. Copilot saw that as net::ERR_EMPTY_RESPONSE with no indication
+why, indistinguishable from a crash. _call_upstream_safe() now turns
+that into a real 504 -- but the actual fix for "a slow answer that was
+genuinely still working" is raising the ceiling itself (900s default),
+not just failing more visibly at the same one. See known limitation
+below: because the client never sees a token until the whole thing
+finishes, a slow-but-working answer and a genuinely hung one look
+identical from Copilot's side either way.
+
 Known limitation (v1): the upstream call to Ollama is always non-
 streaming (forced `stream: false`) so the full response can be validated
 before it's returned. If the client asked for a streaming response, it
 gets the complete answer back as a single SSE chunk rather than true
 token-by-token streaming. That's a real UX tradeoff (the reply appears
-all at once instead of incrementally) traded for the ability to catch a
-bad response before the user ever sees it. Upgrading to real streaming
-with post-hoc validation (buffer the stream, only replay it if it
-validates, otherwise discard and retry) is possible later if the
-incremental UX turns out to matter more than it seems right now.
+all at once instead of incrementally, so a long wait gives no sign of
+progress) traded for the ability to catch a bad response before the
+user ever sees it. Upgrading to real streaming with post-hoc validation
+(buffer the stream, only replay it if it validates, otherwise discard
+and retry) is possible later if the incremental UX turns out to matter
+more than it seems right now.
 
 Usage:
     OLLAMA_UPSTREAM=http://framework.gibbsgreatly.xyz:11434 \
@@ -67,7 +82,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 LISTEN_HOST = os.environ.get("PROXY_HOST", "127.0.0.1")
 LISTEN_PORT = int(os.environ.get("PROXY_PORT", "11435"))
 UPSTREAM = os.environ.get("OLLAMA_UPSTREAM", "http://framework.gibbsgreatly.xyz:11434")
-REQUEST_TIMEOUT_S = float(os.environ.get("PROXY_TIMEOUT_S", "180"))
+REQUEST_TIMEOUT_S = float(os.environ.get("PROXY_TIMEOUT_S", "900"))
 UNLOAD_SETTLE_S = float(os.environ.get("PROXY_UNLOAD_SETTLE_S", "1.0"))
 
 logging.basicConfig(

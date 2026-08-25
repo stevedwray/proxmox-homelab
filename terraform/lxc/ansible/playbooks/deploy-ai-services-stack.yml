@@ -444,6 +444,14 @@
               environment:
                 PROXY_HOST: "0.0.0.0"
                 PROXY_PORT: "{{ ai_services_reliability_proxy_port }}"
+                # 900s (15min): a real, working-but-slow answer to a big
+                # question against a large repo context can genuinely take
+                # several minutes on this hardware. The old 180s default
+                # cut those off mid-generation with no visible error (see
+                # proxy.py's 2026-08-25 fix #2) -- this is the operator's
+                # explicit tolerance ("its reasonable for it to take
+                # ages"), not just a bigger arbitrary number.
+                PROXY_TIMEOUT_S: "900"
                 # The one real plaintext cross-subnet hop this stack makes
                 # to framework -- same accepted-risk posture as the
                 # llamacpp/Ollama routes above (llamacpp-router/Ollama
