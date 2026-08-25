@@ -23,7 +23,18 @@ so later execution doesn't have to repeat it.
    has already decided that the new work must follow. Don't invent
    conventions the repo doesn't already have.
 
-2. **Create the workspace**, following
+2. **Surface genuine judgment calls to the operator -- don't default them
+   silently.** Architecture shape (one stack or several), destructive vs.
+   additive framing, zone/naming choices, which of several real options
+   to use (a plugin, a library, a migration approach) -- these are the
+   operator's calls, not yours to assume. Ask concretely, with the real
+   tradeoffs you found in research, before finalizing the plan around a
+   guess. This is different from step 4's `<<NEEDS OPERATOR INPUT>>`
+   placeholders (a value with no safe default at all, like a storage
+   size) -- this is about not silently picking an approach when the
+   operator would reasonably want to weigh in.
+
+3. **Create the workspace**, following
    `docs/workflow/documentation-workspaces.md`:
    ```
    docs/<workspace>/
@@ -32,7 +43,7 @@ so later execution doesn't have to repeat it.
      artifacts/      # gitignored scratch -- not created unless needed
    ```
 
-3. **Write `plan.md`** as an ordered list of step blocks following
+4. **Write `plan.md`** as an ordered list of step blocks following
    `docs/agent-design/step-packet-schema.md` exactly. For each step:
    - Name exact file(s) and an exact edit in `change` -- three sentences,
      no hedging. If you can't, the step is still too big: split it.
@@ -82,11 +93,11 @@ so later execution doesn't have to repeat it.
    - Set `depends_on` honestly; don't let steps silently assume an earlier
      one landed.
 
-4. **Write `README.md`** with a short status line (what this is, whether
+5. **Write `README.md`** with a short status line (what this is, whether
    any steps are done yet) -- this is what a human or another session reads
    first, matching every other `docs/<workspace>/README.md` in this repo.
 
-5. **Commit it.** `docs/**/*.md` changes trigger this repo's post-commit
+6. **Commit it.** `docs/**/*.md` changes trigger this repo's post-commit
    auto-reindex hook, so once committed, docs-rag-mcp picks it up and any
    agent with that MCP tool (including Laguna in Repo Tools mode) can
    `search_docs`/`get_document` it directly -- no pasting content into
