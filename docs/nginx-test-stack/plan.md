@@ -12,25 +12,9 @@ against a freshly-recreated container, per the operator's own framing of
 this exercise. Do not add integration steps to this file; write a new
 `docs/<workspace>/plan.md` for that pass instead.
 
-**Revision 2026-08-26: dropped `scaffold-stack.sh`/OpenCode from this
-plan.** The first version of this plan reused
-`terraform/lxc/scaffold-stack.sh`, this repo's standard tool for
-authoring a new stack's five files, per `step-packet-schema.md`'s
-"Reuse scaffold-stack.sh for new stacks specifically" section. That tool
-shells out to OpenCode (a second local-agent runtime, separate from
-Laguna/Copilot) to get per-agent tool-permission denial, because a
-single general-purpose agent asked to author all five files in one
-open-ended task was previously found to invent things. The operator does
-not want a second agent runtime introduced for this exercise, and step
-`nginx-test-stack-01` already demonstrated Laguna can transcribe literal
-content into a new file with zero drift when given an unambiguous,
-narrowly-scoped instruction -- the same technique the five OpenCode
-sub-agents use internally, just executed directly by Laguna instead.
-Steps `02`-`06` below replace the single `scaffold-stack.sh` step with
-five such literal-content steps; no OpenCode or `scaffold-stack.sh`
-involvement remains anywhere in this plan. This is a scope decision for
-*this* exercise, not a change to the repo's general recommendation to
-reuse `scaffold-stack.sh` for other new stacks.
+Each of the five stack files is authored directly from literal content
+in its own step below (steps `02`-`06`), gated by the same standalone
+validators this repo already uses for that purpose elsewhere.
 
 ## Research this plan is based on
 
@@ -75,8 +59,8 @@ reuse `scaffold-stack.sh` for other new stacks.
   confirmed to pass (`docker compose config` initially warned about an
   obsolete top-level `version:` key -- removed from the literal content
   below, after which the warning was gone and the gate stayed a clean
-  exit 0), then the files were deleted again so Laguna performs the
-  actual authoring per the plan.
+  exit 0), then the files were deleted again so the local model
+  performs the actual authoring per the plan.
 - `terraform/lxc/terragrunt.hcl` (root) stores each stack's Terraform
   state locally inside that stack's own directory
   (`${get_original_terragrunt_dir()}/terraform.tfstate`) -- so running
@@ -101,21 +85,17 @@ reuse `scaffold-stack.sh` for other new stacks.
   pre-commit a zone now.
 - No persistent state, no Portainer fleet membership (`portainer_agent:
   false`) -- consistent with this being the simplest possible first pass.
-- No OpenCode/`scaffold-stack.sh` in this plan (see revision note above)
-  -- Laguna authors all five stack files directly from literal content.
+- Each of the five stack files is authored directly from literal
+  content in its own step, not via a single scaffolding tool.
 
 ---
 
 ## Step: nginx-test-stack-01-stack-request
 
-**Status: done (2026-08-26).** Kept as-is; its output,
-`terraform/lxc/stacks/nginx-test-stack/stack-request.yaml`, is no longer
-consumed by anything now that `scaffold-stack.sh` is out of this plan --
-it stays only as a historical record of original intent, exactly as
-`stack-request.example.yaml`'s own comment allows ("delete or keep as a
-record of intent -- either is fine"). Steps `02`-`06` below re-derive the
-same facts directly into the real files, so nothing needs to be re-run
-because of the revision.
+**Status: done.** Its output,
+`terraform/lxc/stacks/nginx-test-stack/stack-request.yaml`, stays only as
+a historical record of original intent -- steps `02`-`06` below re-derive
+the same facts directly into the real files.
 
 ```yaml
 id: nginx-test-stack-01-stack-request

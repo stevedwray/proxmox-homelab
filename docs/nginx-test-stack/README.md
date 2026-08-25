@@ -15,27 +15,12 @@ step-by-step plan.
 1. **This pass (current plan.md):** deploy + provision only. A single
    `nginx-test-stack` LXC, plain LAN bridge, stock `nginx` image, no
    integration with anything else. All 8 steps carry literal content or
-   exact commands -- none are `frontier`, and **none involve OpenCode**
-   (see below).
+   exact commands to run.
 2. **A second pass, later, in a fresh plan-change run:** once pass 1 is
    validated, the operator destroys this container and a new plan adds
    Traefik, technitium DNS (test zone), and monitoring integration on a
    rebuilt `nginx-test-stack`. That plan does not exist yet -- do not
    assume any of its shape from this README.
-
-**No OpenCode in this plan.** The first version of this plan reused
-`terraform/lxc/scaffold-stack.sh`, which shells out to OpenCode (a
-second local-agent runtime, separate from Laguna/Copilot) for its
-five-narrow-agent file-authoring trick. The operator asked to drop that
-dependency for this exercise, since Laguna had already proven (step
-`01`) it can transcribe literal content into a file with zero drift when
-given an unambiguous instruction -- the same underlying technique,
-without a second tool. `plan.md` now has Laguna author all five stack
-files directly (steps `02`-`06`), each gated by the same standalone
-validator scripts `scaffold-stack.py` itself uses
-(`validate-compose.sh`, `ansible-playbook --syntax-check`, etc.) -- no
-OpenCode process is ever invoked. See `plan.md`'s revision note for the
-full reasoning.
 
 ## Quick facts (pass 1 only)
 
@@ -54,10 +39,8 @@ full reasoning.
 
 nginx was chosen only because it is a minimal, well-known image with an
 obvious pass/fail check (its default welcome page) -- there is nothing
-nginx-specific about validating the plan-change pipeline. The scaffolding
-approach (one step authoring `stack-request.yaml`, one step running
-`terraform/lxc/scaffold-stack.sh`) follows
-`step-packet-schema.md`'s "Reuse scaffold-stack.sh for new stacks
-specifically" section, the same pattern already proven end-to-end by the
-`minecraft-stack` exemplar in
-`docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md`.
+nginx-specific about validating the `plan-change`/`implement-step`
+pipeline. Each of the five stack files is authored directly from literal
+content in its own step, gated by the same standalone validator scripts
+this repo already uses for that purpose elsewhere
+(`validate-compose.sh`, `ansible-playbook --syntax-check`, etc.).
