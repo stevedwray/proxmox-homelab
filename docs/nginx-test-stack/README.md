@@ -14,13 +14,28 @@ step-by-step plan.
 
 1. **This pass (current plan.md):** deploy + provision only. A single
    `nginx-test-stack` LXC, plain LAN bridge, stock `nginx` image, no
-   integration with anything else. All 4 steps carry literal content or
-   exact commands -- none are `frontier`.
+   integration with anything else. All 8 steps carry literal content or
+   exact commands -- none are `frontier`, and **none involve OpenCode**
+   (see below).
 2. **A second pass, later, in a fresh plan-change run:** once pass 1 is
    validated, the operator destroys this container and a new plan adds
    Traefik, technitium DNS (test zone), and monitoring integration on a
    rebuilt `nginx-test-stack`. That plan does not exist yet -- do not
    assume any of its shape from this README.
+
+**No OpenCode in this plan.** The first version of this plan reused
+`terraform/lxc/scaffold-stack.sh`, which shells out to OpenCode (a
+second local-agent runtime, separate from Laguna/Copilot) for its
+five-narrow-agent file-authoring trick. The operator asked to drop that
+dependency for this exercise, since Laguna had already proven (step
+`01`) it can transcribe literal content into a file with zero drift when
+given an unambiguous instruction -- the same underlying technique,
+without a second tool. `plan.md` now has Laguna author all five stack
+files directly (steps `02`-`06`), each gated by the same standalone
+validator scripts `scaffold-stack.py` itself uses
+(`validate-compose.sh`, `ansible-playbook --syntax-check`, etc.) -- no
+OpenCode process is ever invoked. See `plan.md`'s revision note for the
+full reasoning.
 
 ## Quick facts (pass 1 only)
 
