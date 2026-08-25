@@ -1,11 +1,12 @@
 # media-stack-v2 (planning workspace)
 
-Status: **plan written, not yet built.** Replacement for legacy
-`media-stack` (VMID 102, plain LAN, Jellyfin only via Portainer). New
-architecture: two separate contract-driven stacks (`jellyfin-stack`,
-`immich-stack`) in a new `media_seg` zone (VLAN 80), both behind Authentik
-SSO, existing Jellyfin users/watch-history migrated across, legacy
-`media-stack` decommissioned only after the new one is verified.
+Status: **plan written, not yet built.** One combined stack -- Jellyfin +
+Immich together in a single new LXC -- standing up **alongside** legacy
+`media-stack`, not replacing it destructively. Existing Jellyfin
+users/watch-history get brought across so the new stack is a real
+alternative, but legacy stays running; retiring it is a separate,
+future, operator-initiated decision this plan does not assume or
+schedule.
 
 Supersedes `docs/immich-stack/` -- see that workspace's README for why.
 
@@ -18,10 +19,10 @@ step-by-step plan, research, and decisions.
 | | |
 |---|---|
 | Zone | `media_seg`, VLAN 80, `192.168.80.0/24`, gateway `192.168.80.1` (new) |
-| `immich-stack` | candidate `192.168.80.10`, VMID `80010` |
-| `jellyfin-stack` | candidate `192.168.80.11`, VMID `80011` |
+| Stack | one combined `media-stack-v2` (Jellyfin + Immich, one LXC) -- candidate `192.168.80.10`, VMID `80010` |
 | Storage | NFS, matching legacy media-stack's existing `/nas-media/` pattern -- not local `docker_storage_size` |
 | Dedup | none needed -- Immich's built-in Duplicates Utility |
 | Immich SSO | native OAuth (no plugin) |
 | Jellyfin SSO | `jellyfin-plugin-authentik` (scottfridwin) |
-| Auth wiring | reuses this repo's existing `edge.yaml` + `reconcile-authentik-edge.py` pattern (already live for monitoring-stack/Grafana) -- not a manual click-through in the Authentik UI |
+| Auth wiring | **not** a drop-in -- `discover-authentik-edge.py` has a hardcoded per-`(stack, route)` whitelist (6 existing entries: Harbor/Grafana/Portainer/Technitium/OpenWebUI/OpenSearch), each with its own redirect-URI branch. Adding Jellyfin+Immich means editing that shared script carefully, not just writing an `edge.yaml`. |
+| Legacy media-stack | stays running, untouched. Not destroyed, not scheduled for retirement by this plan. |

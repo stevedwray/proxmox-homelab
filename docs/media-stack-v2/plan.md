@@ -6,6 +6,12 @@ Written with `.github/prompts/plan-change.prompt.md`, following
 `model_hint: frontier` steps need a strong model and, where noted, direct
 operator supervision.
 
+**Not a replacement plan.** Legacy `media-stack` (VMID 102) keeps running,
+untouched, for as long as the operator wants. This plan only stands up a
+new, additive `media-stack-v2` and brings existing Jellyfin users/watch
+history across so it's a real alternative to switch to whenever ready --
+it does not schedule or assume retiring the old one.
+
 ## Research this plan is based on
 
 - **Legacy state**: `terraform/lxc/stacks/media-stack/` -- VMID 102, plain
@@ -16,6 +22,10 @@ operator supervision.
   straight into the container -- confirmed by reading the actual compose
   file, not assumed. That NFS mount is **not** Terraform/Ansible-managed
   anywhere in this repo (confirmed by search) -- manual host-level setup.
+- **One combined stack, not two** -- operator's explicit preference over
+  this repo's usual one-LXC-per-service convention. Jellyfin and both
+  Immich services and its two supporting containers (5 services total)
+  all live in one compose file, one LXC, one `stack.yaml`.
 - **Immich upstream facts** (fetched live from
   `github.com/immich-app/immich/main/docker/docker-compose.yml`): four
   services -- `immich-server` (port 2283, depends on redis+database),
@@ -26,9 +36,8 @@ operator supervision.
   not vanilla postgres/pgvector).
 - **Immich OAuth**: native, first-party, no plugin. Enable in
   Administration > Settings > OAuth Authentication, `issuer_url` pointing
-  at Authentik's OIDC provider. Authentik publishes an official
-  integration guide (`integrations.goauthentik.io/media/immich/`).
-  Redirect URIs: `app.immich:///oauth-callback` (mobile),
+  at Authentik's OIDC provider. Redirect URIs:
+  `app.immich:///oauth-callback` (mobile),
   `http://DOMAIN:PORT/auth/login` (web). Source:
   `docs.immich.app/administration/oauth/`.
 - **Jellyfin has no first-party OIDC.** Chosen plugin:
@@ -36,9 +45,8 @@ operator supervision.
   auto-provisioning, group-based permissions, admin permission sync,
   profile-picture sync. Repository URL to add in Jellyfin:
   `https://scottfridwin.github.io/jellyfin-plugin-authentik/manifest.json`.
-  Needs: Authentik base URL, client ID, client secret. Authentik-side:
-  redirect URI `https://<jellyfin-fqdn>/authentik/callback`, scopes
-  `openid`, `profile`, `email` (groups included by default), OAuth2
+  Redirect URI `https://<jellyfin-fqdn>/authentik/callback`, scopes
+  `openid`/`profile`/`email` (groups included by default), OAuth2
   provider client type Confidential.
 - **Dedup**: none needed. Immich ships an official, ML-based Duplicates
   Utility enabled by default (`docs.immich.app/features/
@@ -50,19 +58,26 @@ operator supervision.
   `jellyfin.db`, users + watch-history) onto the new container, **only
   if both run the same Jellyfin version** -- cross-version copying needs
   surgical SQL-table copying instead, which this plan avoids by pinning
-  the new stack's image tag to match legacy's current version first.
-- **Authentik wiring reuses an existing, live mechanism** -- not a manual
-  click-through. `terraform/lxc/reconcile-authentik-edge.py`, driven by
-  each stack's own `edge.yaml` (`apiVersion: homelab.gibbsgreatly.xyz/
-  v1alpha1`, `kind: EdgeManifest`), already creates/updates an Authentik
-  OAuth2/OIDC provider+application and writes the resulting client
-  id/secret into env vars named by the manifest's own annotations. This
-  is exactly what `monitoring-stack`/Grafana already does in production
-  (`terraform/lxc/stacks/monitoring-stack/edge.yaml`) -- both new stacks
-  here follow that literal shape, not a new integration approach.
-- **Architecture**: two separate contract-driven stacks
-  (`jellyfin-stack`, `immich-stack`), not one merged container --
-  matches this repo's established one-LXC-per-service convention.
+  the new stack's Jellyfin image tag to match legacy's current version
+  first. **Legacy's own /config is read-only for this whole plan** --
+  copy from it, never modify it, so it keeps working exactly as-is for
+  as long as anyone's still using it.
+- **Authentik wiring is not a generic drop-in -- corrected finding.**
+  `terraform/lxc/reconcile-authentik-edge.py` and
+  `terraform/lxc/discover-authentik-edge.py` do real, reusable OIDC
+  provider/application reconciliation from `edge.yaml`, but which
+  `(stack, route)` pairs actually get a client is a **hardcoded
+  whitelist** (`OIDC_ROUTE_CLIENT_IDS`/`OIDC_ROUTE_CLIENT_SECRETS` in
+  `discover-authentik-edge.py`, 6 existing entries: harbor-stack/harbor,
+  monitoring-stack/grafana, portainer-stack/portainer,
+  technitium-stack/technitium, ai-services-stack/openwebui,
+  opensearch-stack/dashboards), each paired with its own hardcoded
+  redirect-URI branch in `_oidc_redirect_uris`. Writing an `edge.yaml`
+  alone does nothing for a route not in that whitelist. Adding
+  media-stack-v2's two routes means editing this shared script directly
+  -- real code work touching something 6 live production integrations
+  already depend on, done additively (new entries only, never touching
+  the existing 6).
 - **Zone precedent**: `docs/stack-lifecycle-refactor/
   stage-10-minecraft-exemplar.md` for the "author a stack-request.yaml,
   then run `scaffold-stack.sh`" split; `network/pve.yaml`'s existing
@@ -73,9 +88,15 @@ operator supervision.
 
 - Zone: new `media_seg`, VLAN 80, `192.168.80.0/24`, gateway `192.168.80.1`.
 - Storage: NFS, reusing legacy's existing `/nas-media/` exports.
-- Two separate stacks, not one.
+- **One combined stack** (`media-stack-v2`), not split into two -- needs
+  its own directory name distinct from legacy's still-live
+  `terraform/lxc/stacks/media-stack/` to avoid a Terraform-state
+  collision, but is one LXC hosting both apps.
 - Dedup: none -- Immich's built-in Duplicates Utility.
 - Jellyfin SSO plugin: `jellyfin-plugin-authentik` (scottfridwin).
+- **Additive, not destructive**: legacy `media-stack` is never modified
+  or destroyed by this plan. No step here schedules or assumes its
+  retirement.
 
 ---
 
@@ -95,7 +116,7 @@ change: >
   existing zone blocks' exact shape (see infra_seg/ai_seg/game_seg for
   the pattern). VLAN 80, subnet 192.168.80.0/24, gateway 192.168.80.1.
   Add the matching MikroTik trunk/VLAN interface and cross-zone firewall
-  rules both new stacks need (at minimum: LAN -> media_seg reachability
+  rules the new stack needs (at minimum: LAN -> media_seg reachability
   for the workstation; media_seg -> Authentik for OIDC; media_seg ->
   NAS for NFS). Additive-only (new zone, no changes to existing zones) --
   CLAUDE.md's tier for that is apply + scripts/provision.sh --stack
@@ -116,148 +137,232 @@ gates:
     critical: true
 ```
 
-## Step: media-v2-01-immich-stack-request
+## Step: media-v2-01-stack-request
 
 ```yaml
-id: media-v2-01-immich-stack-request
-title: Author stack-request.yaml for immich-stack
+id: media-v2-01-stack-request
+title: Author stack-request.yaml for the combined media-stack-v2
 model_hint: frontier
 depends_on: [media-v2-00-create-media-seg-zone]
 
 change: >
-  Create terraform/lxc/stacks/immich-stack/stack-request.yaml (copy
+  Create terraform/lxc/stacks/media-stack-v2/stack-request.yaml (copy
   terraform/lxc/stacks/stack-request.example.yaml as the starting shape).
-  stack_yaml: hostname immich-stack, ip_address "192.168.80.10/24"
+  stack_yaml: hostname media-stack-v2, ip_address "192.168.80.10/24"
   (confirm free), gateway/dns_server "192.168.80.1", vmid 80010 (confirm
-  free), cores 4, memory 4096, docker_storage_size "20G" (base OS +
-  images + Postgres/model-cache only -- the photo library is NFS),
-  deployment_tier apps, ansible_playbook deploy-immich-stack,
-  portainer_agent false, provides: [{service: immich, port: 2283,
-  protocol: tcp}].
-  compose_requirements: the literal four-service compose from the
-  research section above, adapted: container_name prefixed
-  immich-stack-<service>, restart unless-stopped, model-cache as a named
-  Docker volume, UPLOAD_LOCATION bind-mounted from an NFS-backed host
-  path (e.g. /nas-media/immich-photos) -- NOT a Docker volume, NOT a size
-  on docker_storage_size.
+  free), cores 6, memory 6144 (Jellyfin transcoding + Immich ML
+  inference + Postgres combined in one LXC -- an estimate, not verified
+  under real load; monitor and adjust after deploy), docker_storage_size
+  "30G" (base OS + images + Postgres + model-cache + Jellyfin config
+  only -- all media libraries stay NFS, not local storage),
+  deployment_tier apps, ansible_playbook deploy-media-stack-v2,
+  portainer_agent false, provides: [{service: jellyfin, port: 8096,
+  protocol: tcp}, {service: immich, port: 2283, protocol: tcp}].
+  compose_requirements: five services in one compose file --
+  (1) jellyfin: image lscr.io/linuxserver/jellyfin pinned to its current
+  stable release tag (check the actual current tag at authoring time,
+  do NOT carry over legacy's unpinned :latest), container_name
+  media-stack-v2-jellyfin, env PUID=1000/PGID=1000/TZ=Pacific/Auckland/
+  JELLYFIN_PublishedServerUrl matching jellyfin.${LAB_DOMAIN}, a named
+  Docker volume for /config (not legacy's raw host bind path -- this
+  repo's convention is named volumes), the same three NFS bind mounts
+  legacy already uses unchanged (/nas-media/video/movies:/movies,
+  /nas-media/video/tv:/tv, /nas-media/music:/music), ports 8096/8920/
+  7359 udp/1900 udp, group_add ["44","104"], security_opt
+  seccomp:unconfined -- all matching legacy's existing working config.
+  (2) immich-server: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release},
+  container_name media-stack-v2-immich-server, port 2283, depends_on
+  redis+database, UPLOAD_LOCATION bind-mounted from an NFS-backed host
+  path (e.g. /nas-media/immich-photos) -- NOT a Docker volume.
+  (3) immich-machine-learning:
+  ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release},
+  container_name media-stack-v2-immich-ml, model-cache as a named Docker
+  volume. (4) redis (actually valkey/valkey:9, digest-pinned per
+  upstream), container_name media-stack-v2-redis. (5) database
+  (ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0,
+  digest-pinned per upstream -- not a plain postgres/pgvector image),
+  container_name media-stack-v2-database. All restart: unless-stopped
+  (repo convention, not upstream's bare `always`).
   compose_forbidden: a custom top-level networks: block, exposing
   database/redis ports externally, a plain postgres/pgvector image
   instead of the pinned vectorchord fork, UPLOAD_LOCATION as a named
-  volume instead of the NFS bind mount.
-  contract_facts: zone is media_seg (VLAN 80); prerequisite that
+  volume instead of the NFS bind mount, changing the three Jellyfin NFS
+  mount paths from what legacy already uses, an unpinned Jellyfin image
+  tag.
+  contract_facts: zone media_seg (VLAN 80); nothing depends on this
+  stack; legacy media-stack (VMID 102) keeps running unaffected --
+  this is additive, not a migration-then-destroy; prerequisite that
   /nas-media/immich-photos is already NFS-mounted on the LXC before
-  first compose up (manual, not IaC-managed); OAuth is configured in a
-  later step (media-v2-04), not at first boot; Implementation files
-  section listing the five new paths under
-  terraform/lxc/stacks/immich-stack/ and
-  terraform/lxc/ansible/playbooks/deploy-immich-stack.yml as not
+  first compose up (manual, not IaC-managed); OAuth/SSO configured in
+  later steps, not at first boot; watch-history brought across in
+  media-v2-06, also not at first boot; Implementation files section
+  listing the five new paths under terraform/lxc/stacks/media-stack-v2/
+  and terraform/lxc/ansible/playbooks/deploy-media-stack-v2.yml as not
   existing yet.
 
 scope:
   allowed_paths:
-    - terraform/lxc/stacks/immich-stack/stack-request.yaml
+    - terraform/lxc/stacks/media-stack-v2/stack-request.yaml
   forbidden_actions:
     - "Running scaffold-stack.sh -- that's media-v2-02"
     - "Any terragrunt or provision.sh command"
     - "Mounting or modifying the NFS export itself"
+    - "Touching legacy media-stack (VMID 102) in any way"
 
 gates:
   - id: stack-request-exists
-    cmd: "test -f terraform/lxc/stacks/immich-stack/stack-request.yaml"
+    cmd: "test -f terraform/lxc/stacks/media-stack-v2/stack-request.yaml"
     expect: "exit 0"
     critical: true
   - id: stack-request-parses
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/immich-stack/stack-request.yaml'))\""
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/media-stack-v2/stack-request.yaml'))\""
+    expect: "exit 0"
+    critical: true
+  - id: nfs-paths-match-legacy
+    cmd: "grep -q '/nas-media/video/movies' terraform/lxc/stacks/media-stack-v2/stack-request.yaml && grep -q '/nas-media/video/tv' terraform/lxc/stacks/media-stack-v2/stack-request.yaml && grep -q '/nas-media/music' terraform/lxc/stacks/media-stack-v2/stack-request.yaml"
     expect: "exit 0"
     critical: true
 ```
 
-## Step: media-v2-02-immich-scaffold
+## Step: media-v2-02-scaffold
 
 ```yaml
-id: media-v2-02-immich-scaffold
-title: Run the stack scaffolder against immich-stack's stack-request.yaml
+id: media-v2-02-scaffold
+title: Run the stack scaffolder against media-stack-v2's stack-request.yaml
 model_hint: local
-depends_on: [media-v2-01-immich-stack-request]
+depends_on: [media-v2-01-stack-request]
 
 change: >
-  Run terraform/lxc/scaffold-stack.sh immich-stack. Do not author any of
-  the five files by hand -- the scaffolder's own sub-agents do that,
+  Run terraform/lxc/scaffold-stack.sh media-stack-v2. Do not author any
+  of the five files by hand -- the scaffolder's own sub-agents do that,
   gated by its own validators. Your job is only to run it and report the
   outcome.
 
 scope:
   allowed_paths:
-    - terraform/lxc/stacks/immich-stack/
+    - terraform/lxc/stacks/media-stack-v2/
   forbidden_actions:
     - "Hand-editing any of the five generated files if the scaffolder fails partway -- report which validator failed instead"
     - "Any terragrunt or provision.sh command"
 
 gates:
   - id: scaffold-exits-clean
-    cmd: "terraform/lxc/scaffold-stack.sh immich-stack"
+    cmd: "terraform/lxc/scaffold-stack.sh media-stack-v2"
     expect: "exit 0"
     critical: true
 ```
 
-## Step: media-v2-03-immich-edge-yaml
+## Step: media-v2-03-edge-yaml
 
 ```yaml
-id: media-v2-03-immich-edge-yaml
-title: Author edge.yaml for immich-stack's Authentik OIDC client
+id: media-v2-03-edge-yaml
+title: Author edge.yaml with both routes (jellyfin, immich)
 model_hint: frontier
-depends_on: [media-v2-02-immich-scaffold]
+depends_on: [media-v2-02-scaffold]
 
 change: >
-  Create terraform/lxc/stacks/immich-stack/edge.yaml, copying
+  Create terraform/lxc/stacks/media-stack-v2/edge.yaml, copying
   monitoring-stack/edge.yaml's exact shape (apiVersion
-  homelab.gibbsgreatly.xyz/v1alpha1, kind EdgeManifest). metadata.name
-  immich-edge, metadata.stack immich-stack, annotations
-  repo.auth.oidc.client_id_env IMMICH_OAUTH_CLIENT_ID,
-  repo.auth.oidc.client_secret_env IMMICH_OAUTH_CLIENT_SECRET.
-  spec.routes: one route named immich, host immich.${LAB_DOMAIN},
-  backend url http://192.168.80.10:2283, dns enabled target
-  ${LAB_IP_PROXY}, tls resolver letsencrypt, auth.mode oidc -- literal
-  copy of the shape, only the names/host/backend differ.
+  homelab.gibbsgreatly.xyz/v1alpha1, kind EdgeManifest).
+  metadata.name media-stack-v2-edge, metadata.stack media-stack-v2.
+  spec.routes: two entries -- {name: jellyfin, host:
+  jellyfin.${LAB_DOMAIN}, backend: {type: url, url:
+  http://192.168.80.10:8096}, dns: {enabled: true, target:
+  ${LAB_IP_PROXY}, ttl: 5m}, tls: {resolver: letsencrypt}, auth: {mode:
+  oidc}} and {name: immich, host: immich.${LAB_DOMAIN}, backend: {type:
+  url, url: http://192.168.80.10:2283}, dns/tls same shape, auth: {mode:
+  oidc}}. discover-authentik-edge.py's _build_route_intents derives one
+  Authentik app+provider per route (keyed by stack+route name), so this
+  one manifest correctly produces two independent OIDC clients --
+  confirmed by reading that function, not assumed.
 
 scope:
   allowed_paths:
-    - terraform/lxc/stacks/immich-stack/edge.yaml
+    - terraform/lxc/stacks/media-stack-v2/edge.yaml
   forbidden_actions:
     - "Modifying any other stack's edge.yaml"
-    - "Running reconcile-authentik-edge.py directly -- that happens via the deploy playbook's pre_task, added in this same step's playbook work, not run ad hoc here"
+    - "Editing discover-authentik-edge.py or reconcile-authentik-edge.py -- that's media-v2-04, kept separate since it touches shared code"
 
 gates:
   - id: edge-yaml-parses
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/immich-stack/edge.yaml'))\""
+    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/media-stack-v2/edge.yaml'))\""
     expect: "exit 0"
     critical: true
-  - id: playbook-has-reconcile-pretask
-    cmd: "grep -q 'reconcile-authentik-edge.py' terraform/lxc/ansible/playbooks/deploy-immich-stack.yml"
+  - id: has-both-routes
+    cmd: "python3 -c \"import yaml; d=yaml.safe_load(open('terraform/lxc/stacks/media-stack-v2/edge.yaml')); names={r['name'] for r in d['spec']['routes']}; exit(0 if names=={'jellyfin','immich'} else 1)\""
     expect: "exit 0"
     critical: true
 ```
 
-## Step: media-v2-04-immich-configure-oauth
+## Step: media-v2-04-extend-oidc-whitelist
 
-Real, delicate integration wiring done after both Immich and its
-Authentik client exist -- supervise this one directly rather than
-trusting a local model's report alone.
+**Not a step for a local model.** This edits a shared script 6 live
+production integrations (Harbor, Grafana, Portainer, Technitium,
+OpenWebUI, OpenSearch) already depend on. The gate below is what makes
+this safe to attempt at all -- if it doesn't pass clean, stop and don't
+apply.
 
 ```yaml
-id: media-v2-04-immich-configure-oauth
-title: Enable OAuth in Immich pointing at the reconciled Authentik client
+id: media-v2-04-extend-oidc-whitelist
+title: Add jellyfin/immich routes to discover-authentik-edge.py's whitelist
 model_hint: frontier
-depends_on: [media-v2-03-immich-edge-yaml]
+depends_on: [media-v2-03-edge-yaml]
 
 change: >
-  After immich-stack is deployed and media-v2-03's edge.yaml has been
-  reconciled (IMMICH_OAUTH_CLIENT_ID/SECRET populated), enable OAuth via
-  Immich's Administration > Settings > OAuth Authentication: issuer_url
-  https://<authentik-fqdn>/application/o/immich/ (slug matches
-  metadata.name from edge.yaml, confirm the actual slug Authentik
-  assigned), client ID/secret from the reconciled env vars, redirect
-  URIs app.immich:///oauth-callback (mobile) and
+  In terraform/lxc/discover-authentik-edge.py, add two entries to
+  OIDC_ROUTE_CLIENT_IDS: ("media-stack-v2", "jellyfin"):
+  ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"), ("media-stack-v2", "immich"):
+  ("IMMICH_OAUTH_CLIENT_ID", "immich"). Add matching entries to
+  OIDC_ROUTE_CLIENT_SECRETS: ("media-stack-v2", "jellyfin"):
+  "JELLYFIN_OAUTH_CLIENT_SECRET", ("media-stack-v2", "immich"):
+  "IMMICH_OAUTH_CLIENT_SECRET". Add two branches to _oidc_redirect_uris:
+  for ("media-stack-v2", "jellyfin") return
+  (f"{base_url}/authentik/callback",); for ("media-stack-v2", "immich")
+  return (f"{base_url}/auth/login",) -- Immich's mobile deep-link
+  redirect (app.immich:///oauth-callback) is configured directly in
+  Immich's own OAuth settings in media-v2-05, not through this script.
+  Do not reorder, rename, or otherwise touch any of the existing 6
+  entries or branches.
+
+scope:
+  allowed_paths:
+    - terraform/lxc/discover-authentik-edge.py
+  forbidden_actions:
+    - "Any change to the existing 6 (stack, route) entries or their redirect-URI branches"
+    - "Editing reconcile-authentik-edge.py in this step"
+    - "Running reconcile-authentik-edge.py against real Authentik in this step -- that's a separate, supervised action after this diff is reviewed"
+
+gates:
+  - id: existing-six-entries-untouched
+    cmd: "git diff terraform/lxc/discover-authentik-edge.py | grep -E '^-' | grep -E 'harbor-stack|monitoring-stack|portainer-stack|technitium-stack|ai-services-stack|opensearch-stack'"
+    expect: "no output -- any match here means an existing entry was touched, which must not happen"
+    critical: true
+  - id: file-still-imports-cleanly
+    cmd: "python3 -c \"import ast; ast.parse(open('terraform/lxc/discover-authentik-edge.py').read())\""
+    expect: "exit 0"
+    critical: true
+  - id: new-entries-present
+    cmd: "grep -q 'media-stack-v2.*jellyfin' terraform/lxc/discover-authentik-edge.py && grep -q 'media-stack-v2.*immich' terraform/lxc/discover-authentik-edge.py"
+    expect: "exit 0"
+    critical: true
+```
+
+## Step: media-v2-05-configure-immich-oauth
+
+```yaml
+id: media-v2-05-configure-immich-oauth
+title: Enable OAuth in Immich pointing at the reconciled Authentik client
+model_hint: frontier
+depends_on: [media-v2-04-extend-oidc-whitelist]
+
+change: >
+  After media-stack-v2 is deployed and reconcile-authentik-edge.py has
+  been run against the updated edge.yaml (IMMICH_OAUTH_CLIENT_ID/SECRET
+  populated), enable OAuth via Immich's Administration > Settings >
+  OAuth Authentication: issuer_url https://<authentik-fqdn>/application/o/<slug>/
+  (confirm the actual slug Authentik assigned for the immich route),
+  client ID/secret from the reconciled env vars, redirect URIs
+  app.immich:///oauth-callback (mobile) and
   https://immich.${LAB_DOMAIN}/auth/login (web).
 
 scope:
@@ -272,147 +377,23 @@ gates:
     critical: true
 ```
 
-## Step: media-v2-05-jellyfin-stack-request
+## Step: media-v2-06-configure-jellyfin-sso-plugin
 
 ```yaml
-id: media-v2-05-jellyfin-stack-request
-title: Author stack-request.yaml for jellyfin-stack
-model_hint: frontier
-depends_on: [media-v2-00-create-media-seg-zone]
-
-change: >
-  Create terraform/lxc/stacks/jellyfin-stack/stack-request.yaml.
-  stack_yaml: hostname jellyfin-stack, ip_address "192.168.80.11/24"
-  (confirm free), gateway/dns_server "192.168.80.1", vmid 80011 (confirm
-  free), cores 2, memory 2048, docker_storage_size "10G" (config only --
-  media library is NFS), deployment_tier apps, ansible_playbook
-  deploy-jellyfin-stack, portainer_agent false, provides: [{service:
-  jellyfin, port: 8096, protocol: tcp}].
-  compose_requirements: single service jellyfin, image
-  lscr.io/linuxserver/jellyfin pinned to its current stable release tag
-  -- check the actual current tag at authoring time, do NOT carry over
-  legacy media-stack's unpinned :latest. container_name
-  jellyfin-stack-jellyfin. Environment: PUID=1000, PGID=1000,
-  TZ=Pacific/Auckland, JELLYFIN_PublishedServerUrl matching the new
-  jellyfin.${LAB_DOMAIN} route (not the legacy gibbsgreatly.xyz bare
-  host). Volumes: a named Docker volume for /config (NOT a raw host bind
-  path like legacy's /config/jellyfin -- this repo's convention is named
-  volumes), plus the same three NFS bind mounts legacy already uses
-  unchanged: /nas-media/video/movies:/movies,
-  /nas-media/video/tv:/tv, /nas-media/music:/music. Ports 8096, 8920,
-  7359/udp, 1900/udp -- same as legacy. group_add ["44","104"],
-  security_opt seccomp:unconfined -- same as legacy (hardware
-  transcoding group IDs).
-  compose_forbidden: a custom top-level networks: block, changing the
-  three NFS mount paths (must match legacy exactly so the same NAS
-  library is visible), an unpinned image tag.
-  contract_facts: zone media_seg (VLAN 80); nothing depends on this
-  stack; watch-history migration happens in media-v2-09, not at first
-  boot; Implementation files listing the five new paths as not existing
-  yet.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/stacks/jellyfin-stack/stack-request.yaml
-  forbidden_actions:
-    - "Running scaffold-stack.sh -- that's media-v2-06"
-    - "Any terragrunt or provision.sh command"
-    - "Changing the /nas-media/ mount paths from what legacy already uses"
-
-gates:
-  - id: stack-request-exists
-    cmd: "test -f terraform/lxc/stacks/jellyfin-stack/stack-request.yaml"
-    expect: "exit 0"
-    critical: true
-  - id: stack-request-parses
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/jellyfin-stack/stack-request.yaml'))\""
-    expect: "exit 0"
-    critical: true
-  - id: nfs-paths-match-legacy
-    cmd: "grep -q '/nas-media/video/movies' terraform/lxc/stacks/jellyfin-stack/stack-request.yaml && grep -q '/nas-media/video/tv' terraform/lxc/stacks/jellyfin-stack/stack-request.yaml && grep -q '/nas-media/music' terraform/lxc/stacks/jellyfin-stack/stack-request.yaml"
-    expect: "exit 0"
-    critical: true
-```
-
-## Step: media-v2-06-jellyfin-scaffold
-
-```yaml
-id: media-v2-06-jellyfin-scaffold
-title: Run the stack scaffolder against jellyfin-stack's stack-request.yaml
-model_hint: local
-depends_on: [media-v2-05-jellyfin-stack-request]
-
-change: >
-  Run terraform/lxc/scaffold-stack.sh jellyfin-stack. Do not author any
-  of the five files by hand. Your job is only to run it and report the
-  outcome.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/stacks/jellyfin-stack/
-  forbidden_actions:
-    - "Hand-editing any of the five generated files if the scaffolder fails partway -- report which validator failed instead"
-    - "Any terragrunt or provision.sh command"
-
-gates:
-  - id: scaffold-exits-clean
-    cmd: "terraform/lxc/scaffold-stack.sh jellyfin-stack"
-    expect: "exit 0"
-    critical: true
-```
-
-## Step: media-v2-07-jellyfin-edge-yaml
-
-```yaml
-id: media-v2-07-jellyfin-edge-yaml
-title: Author edge.yaml for jellyfin-stack's Authentik OIDC client
-model_hint: frontier
-depends_on: [media-v2-06-jellyfin-scaffold]
-
-change: >
-  Create terraform/lxc/stacks/jellyfin-stack/edge.yaml, same shape as
-  immich-stack's (media-v2-03). metadata.name jellyfin-edge,
-  metadata.stack jellyfin-stack, annotations
-  repo.auth.oidc.client_id_env JELLYFIN_OAUTH_CLIENT_ID,
-  repo.auth.oidc.client_secret_env JELLYFIN_OAUTH_CLIENT_SECRET.
-  spec.routes: one route named jellyfin, host jellyfin.${LAB_DOMAIN},
-  backend url http://192.168.80.11:8096, dns enabled target
-  ${LAB_IP_PROXY}, tls resolver letsencrypt, auth.mode oidc.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/stacks/jellyfin-stack/edge.yaml
-  forbidden_actions:
-    - "Modifying any other stack's edge.yaml"
-
-gates:
-  - id: edge-yaml-parses
-    cmd: "python3 -c \"import yaml; yaml.safe_load(open('terraform/lxc/stacks/jellyfin-stack/edge.yaml'))\""
-    expect: "exit 0"
-    critical: true
-  - id: playbook-has-reconcile-pretask
-    cmd: "grep -q 'reconcile-authentik-edge.py' terraform/lxc/ansible/playbooks/deploy-jellyfin-stack.yml"
-    expect: "exit 0"
-    critical: true
-```
-
-## Step: media-v2-08-jellyfin-configure-sso-plugin
-
-```yaml
-id: media-v2-08-jellyfin-configure-sso-plugin
+id: media-v2-06-configure-jellyfin-sso-plugin
 title: Install and configure jellyfin-plugin-authentik
 model_hint: frontier
-depends_on: [media-v2-07-jellyfin-edge-yaml]
+depends_on: [media-v2-04-extend-oidc-whitelist]
 
 change: >
-  After jellyfin-stack is deployed and media-v2-07's edge.yaml has been
-  reconciled: in Authentik, set the OAuth2 provider's redirect URI to
-  https://jellyfin.${LAB_DOMAIN}/authentik/callback and confirm scopes
-  openid/profile/email (groups included by default), client type
-  Confidential. In Jellyfin: add plugin repository
+  After media-stack-v2 is deployed and reconcile-authentik-edge.py has
+  been run: in Authentik, confirm the jellyfin route's OAuth2 provider
+  redirect URI is https://jellyfin.${LAB_DOMAIN}/authentik/callback,
+  scopes openid/profile/email, client type Confidential. In Jellyfin:
+  add plugin repository
   https://scottfridwin.github.io/jellyfin-plugin-authentik/manifest.json,
   install "Authentik SSO" from the Catalog, configure it with Authentik
-  base URL, client ID, client secret from the reconciled
+  base URL, client ID/secret from the reconciled
   JELLYFIN_OAUTH_CLIENT_ID/SECRET env vars.
 
 scope:
@@ -422,86 +403,59 @@ scope:
 
 gates:
   - id: plugin-installed
-    cmd: "curl -s http://192.168.80.11:8096/Plugins | python3 -c \"import json,sys; d=json.load(sys.stdin); exit(0 if any('Authentik' in p.get('Name','') for p in d) else 1)\""
+    cmd: "curl -s http://192.168.80.10:8096/Plugins | python3 -c \"import json,sys; d=json.load(sys.stdin); exit(0 if any('Authentik' in p.get('Name','') for p in d) else 1)\""
     expect: "exit 0"
     critical: true
 ```
 
-## Step: media-v2-09-migrate-watch-history
+## Step: media-v2-07-bring-across-existing-users
 
-Real user data, not a mechanical step. Read before overwriting; verify
-the copy against the source before treating it as done.
+Real user data, additive only. Legacy stays running and unmodified
+throughout -- this step only ever reads from it.
 
 ```yaml
-id: media-v2-09-migrate-watch-history
-title: Migrate users and watch history from legacy media-stack's Jellyfin
+id: media-v2-07-bring-across-existing-users
+title: Bring existing Jellyfin users and watch history into media-stack-v2
 model_hint: frontier
-depends_on: [media-v2-06-jellyfin-scaffold]
+depends_on: [media-v2-02-scaffold]
 
 change: >
   Confirm legacy media-stack's Jellyfin image version (docker inspect
-  the running jellyfin container on media-stack, VMID 102). Pin
-  jellyfin-stack's compose to that exact same tag before first boot --
-  do not let it start on a different version first, or the config
-  migration needs surgical SQL-table copying instead of a plain copy.
-  Stop the new jellyfin-stack container (not legacy -- legacy stays live
-  until this is verified). Copy legacy's entire /config directory (the
-  named volume or bind path backing it, containing jellyfin.db and
+  the running jellyfin container on media-stack, VMID 102, read-only).
+  Pin media-stack-v2's Jellyfin service to that exact same tag before
+  first boot -- do not let it start on a different version first, or
+  this needs surgical SQL-table copying instead of a plain copy. Stop
+  media-stack-v2's jellyfin service only (never touch legacy). Copy
+  legacy's entire /config directory (containing jellyfin.db and
   library.db -- users, watch history, library config) onto
-  jellyfin-stack's config volume, preserving ownership. Start
-  jellyfin-stack, verify existing users can log in with their existing
-  local passwords and see correct watch history before considering this
-  done. Only after that verification should the SSO plugin
-  (media-v2-08) or an image-version upgrade be layered on.
+  media-stack-v2's jellyfin config volume, preserving ownership -- this
+  is a copy, not a move; legacy's own /config is never modified. Start
+  media-stack-v2's jellyfin service, verify existing users can log in
+  with their existing local passwords and see correct watch history.
+  Only after that verification should the SSO plugin (media-v2-06) or a
+  Jellyfin image-version upgrade be layered on. Legacy media-stack
+  keeps running throughout and after -- this step does not end with
+  turning anything off.
 
 scope:
   allowed_paths: []
   forbidden_actions:
-    - "Modifying or deleting anything in legacy media-stack's /config -- read/copy only, this must stay a working fallback until decommissioning is explicitly approved"
-    - "Upgrading jellyfin-stack's image tag before the config copy is verified"
+    - "Any write to legacy media-stack's /config -- read/copy only, forever, not just until this step is done"
+    - "Stopping, restarting, or otherwise touching legacy's jellyfin container"
+    - "Upgrading media-stack-v2's Jellyfin image tag before the config copy is verified"
 
 gates:
   - id: image-versions-matched-before-copy
-    cmd: "docker inspect --format '{{.Config.Image}}' jellyfin (on media-stack) vs jellyfin-stack-jellyfin (on jellyfin-stack) -- confirm identical tag"
+    cmd: "docker inspect --format '{{.Config.Image}}' jellyfin (on media-stack) vs media-stack-v2-jellyfin (on media-stack-v2) -- confirm identical tag"
     expect: "identical"
     critical: true
   - id: existing-user-can-login-with-history-intact
-    cmd: "manual verification: log in as an existing user, confirm watch history/continue-watching matches legacy"
+    cmd: "manual verification: log in as an existing user on media-stack-v2, confirm watch history/continue-watching matches legacy"
     expect: "matches"
     critical: true
-```
-
-## Step: media-v2-10-decommission-legacy-media-stack
-
-**Not authorized by this plan.** This is the one genuinely destructive
-step here -- destroying the legacy container -- and per CLAUDE.md needs
-its own fresh operator approval when the time actually comes, not a
-green light inherited from planning this far ahead. Included only so the
-plan is complete and the dependency is explicit.
-
-```yaml
-id: media-v2-10-decommission-legacy-media-stack
-title: Destroy legacy media-stack (VMID 102) after verification
-model_hint: frontier
-depends_on: [media-v2-04-immich-configure-oauth, media-v2-08-jellyfin-configure-sso-plugin, media-v2-09-migrate-watch-history]
-
-change: >
-  Only after jellyfin-stack and immich-stack are both live, SSO-verified,
-  and watch history is confirmed correct for a real sample of users over
-  a real period of use (not just immediately after migration): destroy
-  legacy media-stack (VMID 102) via the normal terragrunt destroy path.
-  Requires a fresh, explicit operator "proceed" at the time -- this plan
-  does not pre-approve it.
-
-scope:
-  allowed_paths: []
-  forbidden_actions:
-    - "Running this step without a fresh, explicit operator approval given at the time, regardless of how long ago this plan was written"
-
-gates:
-  - id: operator-approval-given-today
-    cmd: "n/a -- this is a human approval gate, not a runnable check"
-    expect: "explicit operator sign-off in chat, dated at time of execution"
+  - id: legacy-still-running-unmodified
+    cmd: "docker inspect --format '{{.State.Status}}' jellyfin (on media-stack) -- confirm still running"
+    expect: "running"
     critical: true
 ```
 
@@ -509,15 +463,18 @@ gates:
 
 ## Not covered by this plan
 
-- Confirming candidate IPs/VMIDs are actually free (read-only check,
+- Confirming the candidate IP/VMID are actually free (read-only check,
   before `terragrunt apply`).
-- `terragrunt plan`/`apply` for the zone and both stacks,
-  `provision.sh --stack <name>`, and health-check validation -- real
-  infrastructure steps, stay manual/operator-run.
-- Hardware transcoding passthrough for the new jellyfin-stack (legacy's
-  `group_add`/`security_opt` are carried over as a starting point, but
-  GPU device passthrough itself isn't addressed here).
+- `terragrunt plan`/`apply` for the zone and the stack,
+  `provision.sh --stack media-stack-v2`, and health-check validation --
+  real infrastructure steps, stay manual/operator-run.
+- Hardware transcoding passthrough for media-stack-v2's Jellyfin
+  (legacy's `group_add`/`security_opt` are carried over as a starting
+  point, but GPU device passthrough itself isn't addressed here).
 - Backup strategy for the photo library, Postgres data, and Jellyfin
   config -- a real gap for anything holding irreplaceable personal data.
-- A rollback plan if SSO integration breaks login for either app after
-  legacy is decommissioned.
+- **Retiring legacy `media-stack`.** Deliberately not in this plan at
+  all, not even as a deferred step -- that's the operator's own future
+  call, made whenever (if ever) it's wanted, with its own fresh approval
+  at that time. This plan's job ends at "media-stack-v2 works as a real
+  alternative," not "legacy is gone."
