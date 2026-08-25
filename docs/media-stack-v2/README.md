@@ -14,6 +14,13 @@ Written with `.github/prompts/plan-change.prompt.md` per
 `docs/agent-design/step-packet-schema.md`. See `plan.md` for the full
 step-by-step plan, research, and decisions.
 
+**All 8 steps carry literal content or exact command sequences, not
+just decisions to make** -- rewritten 2026-08-25 so the plan is actually
+usable by a local model via `implement-step`, not just by a frontier
+one. Only `media-v2-06` (Jellyfin's SSO plugin) stays a manual
+procedure, because that plugin is genuinely UI-only with no config-file
+or API path.
+
 ## Quick facts
 
 | | |
