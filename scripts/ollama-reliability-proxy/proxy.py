@@ -26,6 +26,13 @@ Deliberately stdlib-only (http.server + urllib) -- this runs as a small
 background process on the operator's own workstation, not inside this
 repo's infra, so it shouldn't need a venv/pip install to get started.
 
+2026-08-25 fix: sse_wrap() used to only forward message content in the
+streamed delta, silently dropping tool_calls. Every real VS Code Copilot
+Chat request streams, so an agentic turn that wanted a tool call would
+get the model's preamble text and then just stop -- no error, no visible
+sign anything was wrong, until traced back to this proxy. Fixed by
+carrying tool_calls through into the delta chunk too.
+
 Known limitation (v1): the upstream call to Ollama is always non-
 streaming (forced `stream: false`) so the full response can be validated
 before it's returned. If the client asked for a streaming response, it
@@ -114,10 +121,19 @@ def unload_model(model: str) -> None:
 
 def sse_wrap(completion: dict) -> bytes:
     """Turn one complete OpenAI-style chat completion into a minimal but
-    valid SSE stream: one delta chunk carrying the full content, then
+    valid SSE stream: one delta chunk carrying the full content (and any
+    tool_calls -- dropping these silently ends an agent turn with no
+    visible error, which is exactly what happened in practice), then
     [DONE]. See module docstring's "Known limitation" note."""
     choice = completion.get("choices", [{}])[0]
     message = choice.get("message", {})
+    delta = {"role": "assistant"}
+    content = message.get("content")
+    if content:
+        delta["content"] = content
+    tool_calls = message.get("tool_calls")
+    if tool_calls:
+        delta["tool_calls"] = tool_calls
     chunk = {
         "id": completion.get("id", "proxy-chunk"),
         "object": "chat.completion.chunk",
@@ -126,7 +142,7 @@ def sse_wrap(completion: dict) -> bytes:
         "choices": [
             {
                 "index": 0,
-                "delta": {"role": "assistant", "content": message.get("content", "")},
+                "delta": delta,
                 "finish_reason": None,
             }
         ],

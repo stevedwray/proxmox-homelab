@@ -193,6 +193,7 @@
         src: "{{ ai_services_reliability_proxy_source_dir }}/proxy.py"
         dest: "{{ ai_services_reliability_proxy_build_dir }}/proxy.py"
         mode: "0640"
+      register: ai_services_reliability_proxy_copy_result
 
     - name: Seed SearXNG settings with JSON output enabled
       community.docker.docker_container:
@@ -501,6 +502,43 @@
         # elsewhere this session). Force recreation whenever the compose
         # file's own content changed.
         recreate: "{{ 'always' if ai_services_compose_definition.changed else 'auto' }}"
+
+    - name: Determine whether ollama-reliability-proxy's source actually changed this run
+      ansible.builtin.set_fact:
+        ai_services_reliability_proxy_changed: "{{ ai_services_reliability_proxy_copy_result.changed and not ai_services_compose_definition.changed }}"
+        # A compose-file change already forced 'recreate: always' above, which
+        # picks up the new bind-mounted proxy.py for free. This only needs to
+        # fire for the source-only-changed case, which 'auto' silently misses
+        # (bind-mount content diffs don't trigger a compose recreate -- same
+        # bug class as docs-rag-mcp's corpus, found live 2026-08-25 when a
+        # real Copilot session kept dropping tool calls after a proxy.py fix
+        # that had been "deployed" but never actually loaded).
+
+    - name: Restart ollama-reliability-proxy to pick up a source-only change
+      community.docker.docker_container:
+        name: ollama-reliability-proxy
+        state: started
+        restart: true
+      when: ai_services_reliability_proxy_changed | bool
+
+    - name: Wait for ollama-reliability-proxy to come back up after a source-change restart
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:{{ ai_services_reliability_proxy_port }}/v1/models"
+        status_code: [200, 404]
+      register: ai_services_reliability_proxy_health_after_restart
+      retries: 30
+      delay: 5
+      until: ai_services_reliability_proxy_health_after_restart.status is defined
+      failed_when: false
+      when: ai_services_reliability_proxy_changed | bool
+
+    - name: Fail if ollama-reliability-proxy never came back up after restart
+      ansible.builtin.assert:
+        that:
+          - ai_services_reliability_proxy_health_after_restart.status is defined
+          - ai_services_reliability_proxy_health_after_restart.status in [200, 404]
+        fail_msg: "ollama-reliability-proxy did not come back up after a source-change restart"
+      when: ai_services_reliability_proxy_changed | bool
 
     - name: Reconcile infrastructure-managed OpenWebUI connection settings
       ansible.builtin.command:
