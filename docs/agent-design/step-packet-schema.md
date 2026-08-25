@@ -31,10 +31,13 @@ required, unlike the `.git/ai` machinery.
 ```yaml
 id: immich-01-compose-service          # <workspace>-NN-slug, stable once written
 title: Add Immich compose service definition
-model_hint: local                      # local = safe to hand to Laguna as-is
+model_hint: local                      # local = safe to hand to the local model as-is
                                         # frontier = needs a strong model (open
                                         # design judgment, cross-file reasoning,
                                         # or a call this doc can't fully specify)
+                                        # manual = operator runs this directly --
+                                        # not a judgment call, just not appropriate
+                                        # for whichever loop is executing local steps
 depends_on: []                         # ids of steps that must land first
 
 change: >
@@ -63,8 +66,8 @@ Field notes:
 - **`id`** — prefix with the workspace name so ids stay globally unique
   across plans (`immich-01-...`, not `01-...`).
 - **`model_hint`** — the one field that makes this schema useful for the
-  Laguna question specifically. A plan author (the frontier model writing
-  the plan) marks each step `local` or `frontier` at write time, so an
+  local-model question specifically. A plan author (the frontier model writing
+  the plan) marks each step `local`, `frontier`, or `manual` at write time, so an
   executor picking a step doesn't have to guess whether it's actually
   bounded enough to attempt.
 - **`change`** — must name exact files and an exact edit. If you can't
@@ -87,9 +90,10 @@ Field notes:
 ## Two content strategies for `change` -- a real, already-validated lesson
 
 `docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md` ran this
-exact pattern for real (OpenCode/Ollama, not Copilot/Laguna, but the same
-"bounded local execution of a frontier-authored spec" idea) and found a
-specific, repeatable failure mode worth designing around directly:
+exact pattern for real with a different local-model tool-loop, but the
+same "bounded local execution of a frontier-authored spec" idea, and
+found a specific, repeatable failure mode worth designing around
+directly:
 
 - For content whose **schema is entirely repo-specific** (`stack.yaml`,
   `STACK_CONTRACT.md` facts, an Ansible playbook's task structure), a local
@@ -112,7 +116,7 @@ specific, repeatable failure mode worth designing around directly:
 When writing a step's `change`, decide which of these two it is and write
 accordingly -- don't default to prose instructions and hope.
 
-## Reuse `scaffold-stack.sh` for new stacks specifically
+## Reuse `scaffold-stack.sh` for new stacks specifically -- but not as a local-model step
 
 Adding a brand new stack is common enough that it already has a dedicated,
 validated tool: `terraform/lxc/scaffold-stack.sh <stack-name>`, driven by a
@@ -126,10 +130,19 @@ hand-written file-edit steps:
   resources, what the compose file actually needs) and author
   `stack-request.yaml`, applying the literal-vs-constrained distinction
   above field by field.
-- **One `model_hint: local` step**: run `scaffold-stack.sh <stack-name>`.
-  Its own internal validators are the gates -- a local executor's job is
-  just to run it and report whether it exited clean or which validator
-  stopped it, not to author the five files itself.
+- **Running `scaffold-stack.sh <stack-name>` itself is manual
+  (`model_hint: manual`), not something to hand to whichever local model
+  is executing this plan's other steps.** Found for real, not
+  theoretically: it internally depends on a separate tool the executing
+  loop doesn't have -- handing it over sent that loop looking for
+  something outside its own environment. Before recommending *any*
+  existing script as a step for the local model, check what it actually
+  invokes underneath; don't assume a script is plain, self-contained
+  shell work just because it looks like one from its name. And when a
+  step turns out not to be for the local model, just mark it
+  `model_hint: manual` and give it the plain instruction -- don't
+  explain what it was almost handed instead. That explanation is the
+  thing you're trying to keep out of its context in the first place.
 
 ## When to escalate to `.git/ai` instead
 
@@ -143,7 +156,7 @@ files is not that — use plan.md steps.
 
 - A frontier model (Claude Code, or a strong Copilot model) writes the plan
   using `.github/prompts/plan-change.prompt.md`.
-- Laguna (or any executor) runs one step at a time using
+- The local model (or any executor) runs one step at a time using
   `.github/prompts/implement-step.prompt.md`, which enforces: do only the
   named step, touch only `scope.allowed_paths`, run every gate, report
   pass/fail, stop -- never chain into the next step on its own.

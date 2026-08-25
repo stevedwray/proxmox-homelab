@@ -10,9 +10,10 @@ tools: ['edit', 'read', 'search', 'execute']
 Use this for a big, open-ended question -- "what would be involved in adding
 X", a new stack, a cross-cutting refactor -- where answering well requires
 reasoning across multiple stacks, conventions, and docs. This prompt is for a
-strong/frontier model. Don't run this from Laguna or another small local
-model: the whole point is that the open-ended reasoning happens once, here,
-so later execution doesn't have to repeat it.
+strong/frontier model. Don't run this from the local model this plan is meant
+for (whichever one -- there is no assumption it's any specific named model):
+the whole point is that the open-ended reasoning happens once, here, so later
+execution doesn't have to repeat it.
 
 ## What to do
 
@@ -54,12 +55,18 @@ so later execution doesn't have to repeat it.
      For content with a strong public-training-data shape (a Compose file
      for a well-known image), write explicit positive **and** negative
      constraints instead of literal content or bare instructions.
-   - If the task is **adding a new stack**, don't hand-write file-edit
-     steps for the five boilerplate files at all -- there's already a
-     validated tool for that. Write one `frontier` step that authors
-     `stack-request.yaml` (applying the literal-vs-constrained rule per
-     field) and one `local` step that runs
-     `terraform/lxc/scaffold-stack.sh <stack-name>`.
+   - If the task is **adding a new stack**, `terraform/lxc/scaffold-stack.sh`
+     is a validated tool for the five boilerplate files -- but check what
+     it actually invokes underneath before writing a step around it (this
+     one turned out to depend on something the local-model loop doesn't
+     have, found for real, not theoretically). Write the `frontier` step
+     that authors `stack-request.yaml` (applying the literal-vs-constrained
+     rule per field) as usual, but give running `scaffold-stack.sh` itself
+     `model_hint: manual` with a plain instruction -- same weight class as
+     `terragrunt apply`/`provision.sh`. Don't explain in the step why it's
+     manual; that explanation is exactly the kind of thing to keep out of
+     the local model's context, not put in the one document it fetches to
+     execute every other step in the plan.
    - **`frontier` is a todo, not a destination.** If a step still requires
      judgment, don't just tag it `frontier` and move on -- do that
      judgment now, yourself, and write the literal result into `change`.
@@ -99,9 +106,9 @@ so later execution doesn't have to repeat it.
 
 6. **Commit it.** `docs/**/*.md` changes trigger this repo's post-commit
    auto-reindex hook, so once committed, docs-rag-mcp picks it up and any
-   agent with that MCP tool (including Laguna in Repo Tools mode) can
-   `search_docs`/`get_document` it directly -- no pasting content into
-   chat required.
+   agent with that MCP tool (including the local model in Repo Tools
+   mode) can `search_docs`/`get_document` it directly -- no pasting
+   content into chat required.
 
 ## What not to do
 
@@ -112,3 +119,12 @@ so later execution doesn't have to repeat it.
   for large staged infra programs, not this.
 - Don't mark a step `model_hint: local` just to make the plan look more
   automatable. Be honest about which steps still need real judgment.
+- Don't hand the local model a step whose underlying script invokes a
+  different agent tool as a subprocess -- found for real, not
+  theoretically. Before recommending any existing script as a "local"
+  step, check what it actually shells out to; if it depends on
+  something outside the executing loop's own environment, mark that
+  step `model_hint: manual` with a plain instruction instead. Don't name
+  or explain the other tool in the step itself -- that's exactly the
+  kind of detail that sends a model looking for it, and the step content
+  is the one thing the local model actually reads.

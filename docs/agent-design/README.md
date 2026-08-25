@@ -1,7 +1,7 @@
 # agent-design (planning workspace)
 
 Status: **live, working methodology.** Answers "how do I turn a big,
-open-ended question into work a local model (Laguna) can actually
+open-ended question into work a local model can actually
 execute" -- validated end-to-end on a real task, not just designed. See
 `docs/media-stack-v2/` for the worked example: 8 real steps, 7 of them
 literal enough to hand to a local model unsupervised.
@@ -23,7 +23,7 @@ stack, a cross-cutting change.
    commands before calling it done -- not leaving it as "figure this out
    at execution time."
 
-2. **Once the plan is committed**, switch to Laguna (VS Code Copilot,
+2. **Once the plan is committed**, switch to your local model (VS Code Copilot,
    `Repo Tools` agent mode) and run `/implement-step`, naming the plan
    and the step id (e.g. "run implement-step against
    docs/media-stack-v2/plan.md, step media-v2-02-scaffold"). It fetches
@@ -56,7 +56,7 @@ judgment (frontier, done once) from execution (local, done repeatedly,
 safely, because the judgment is already resolved into literal content).
 See `implementation-plan.md`'s Phase 2 for how this fits the wider plan,
 and `docs/coding-stack/` for the original problem this was built to
-solve -- getting a local model (Laguna, via VS Code Copilot) to be
+solve -- getting a local model (via VS Code Copilot) to be
 genuinely useful against this repo, not just technically wired up.
 
 ## Worked example

@@ -80,7 +80,7 @@ Batch related changes during development and run the appropriate tier. As the pl
 
 When asked a big, open-ended infrastructure question — "what would it
 take to add X", a new stack, a cross-cutting change — and the goal is
-work a local model (Laguna, via VS Code Copilot) can safely execute
+work a local model (via VS Code Copilot) can safely execute
 afterward, follow the process in `docs/agent-design/README.md`, not an
 ad hoc plan. In short: research this repo's real conventions, surface
 genuine judgment calls to the operator rather than default them

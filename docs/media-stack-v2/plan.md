@@ -295,14 +295,12 @@ gates:
 
 ```yaml
 id: media-v2-02-scaffold
-title: Run the stack scaffolder against media-stack-v2's stack-request.yaml
-model_hint: local
+title: Run the stack scaffolder (operator step)
+model_hint: manual
 depends_on: [media-v2-01-stack-request]
 
 change: >
-  Run terraform/lxc/scaffold-stack.sh media-stack-v2. Do not author any
-  of the five files by hand. Your job is only to run it and report the
-  outcome.
+  Operator runs terraform/lxc/scaffold-stack.sh media-stack-v2 directly.
 
 scope:
   allowed_paths:
