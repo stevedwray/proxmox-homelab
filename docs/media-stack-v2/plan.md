@@ -93,7 +93,15 @@ it does not schedule or assume retiring the old one.
   `terraform/lxc/stacks/media-stack/` to avoid a Terraform-state
   collision, but is one LXC hosting both apps.
 - Dedup: none -- Immich's built-in Duplicates Utility.
-- Jellyfin SSO plugin: `jellyfin-plugin-authentik` (scottfridwin).
+- Jellyfin SSO plugin: `jellyfin-plugin-authentik` (scottfridwin) --
+  native OIDC-in-app, confirmed over the alternative of `auth.mode:
+  forwardAuth` (Authentik gating Traefik via the existing shared
+  forward-auth outpost, no whitelist edit needed). forwardAuth is
+  simpler to wire up but is just an access gate in front of Jellyfin's
+  own separate login, not real per-user identity integration (no
+  auto-provisioning, group-based permissions, or profile-picture sync) --
+  rejected for that reason, keeping media-v2-04's whitelist edit in the
+  plan.
 - **Additive, not destructive**: legacy `media-stack` is never modified
   or destroyed by this plan. No step here schedules or assumes its
   retirement.
