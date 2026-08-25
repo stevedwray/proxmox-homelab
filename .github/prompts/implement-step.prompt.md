@@ -8,13 +8,14 @@ tools: ['edit', 'read', 'search', 'execute', 'docs-rag/*']
 # implement-step
 
 Use this to execute **one named step** from a plan doc already written by
-`plan-change` (see `docs/agent-design/step-packet-schema.md` for the step
-shape). This is the prompt meant for the local model, working in
+`plan-change`. This is the prompt meant for the local model, working in
 Repo Tools mode. It deliberately does not do any open-ended reasoning --
-that already happened when the plan was written.
+that already happened when the plan was written. Everything you need
+is in the step block itself (`change`, `scope`, `gates`) -- you don't
+need to read anything else to understand what those mean.
 
 You will be told which plan and which step id to run, e.g.:
-"Run implement-step against docs/immich-stack/plan.md, step immich-01-compose-service."
+"Run implement-step against docs/<workspace>/plan.md, step <workspace>-01-<slug>."
 
 ## What to do, in order
 

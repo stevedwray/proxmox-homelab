@@ -87,18 +87,20 @@ Batch related changes during development and run the appropriate tier. As the pl
 
 ## Planning Big Infrastructure Work For Local-Model Execution
 
+This section is for a strong/frontier model doing planning work via
+`/plan-change` -- it does not apply to a local model's own task
+execution. If you are the local model and were asked to run
+`/implement-step`, that prompt's own instructions are complete on their
+own; nothing here changes what to do.
+
 When asked a big, open-ended infrastructure question — "what would it
 take to add X", a new stack, a cross-cutting change — and the goal is
-work a local model can safely execute afterward, follow the
-process in `docs/agent-design/README.md`: `/plan-change` (a
-frontier/strong model only — not the local model) researches this repo's real
-conventions, surfaces genuine judgment calls to the operator rather than
-defaulting them silently, then writes `docs/<workspace>/plan.md` as
-bounded steps per `docs/agent-design/step-packet-schema.md` — converting
-every step's judgment into literal file content or exact commands
-before calling it done. The local model then runs `/implement-step` against one
-named step at a time. See `docs/media-stack-v2/` for a real worked
-example.
+work a local model can safely execute afterward, follow the process in
+`docs/agent-design/README.md`: research this repo's real conventions,
+surface genuine judgment calls to the operator rather than defaulting
+them silently, then write a bounded, gated plan doc, converting every
+step's judgment into literal file content or exact commands before
+calling it done.
 
 ## Production Credential Controls
 
