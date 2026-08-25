@@ -110,6 +110,37 @@ def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
     return None
 
 
+def _truncate(text: str, limit: int = 200) -> str:
+    text = text or ""
+    return text if len(text) <= limit else text[:limit] + "...(truncated)"
+
+
+def log_exchange(body: dict, message: dict) -> None:
+    """Log a real summary of what was asked and what came back. The
+    default http.server access-log line (just a status code) gives no
+    way to tell what the model actually did -- this is what makes it
+    possible to see, from this proxy's own logs, whether a request asked
+    a tool to be called, what tool (if any) the model actually chose,
+    and what it said, without dumping full (potentially large) payloads."""
+    messages = body.get("messages") or []
+    last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
+    user_summary = _truncate(str((last_user or {}).get("content", "")))
+    tool_names = [t.get("function", {}).get("name") for t in (body.get("tools") or [])]
+    content_summary = _truncate(message.get("content") or "")
+    tool_calls = message.get("tool_calls") or []
+    if tool_calls:
+        calls_summary = "; ".join(
+            f"{tc.get('function', {}).get('name')}({_truncate(tc.get('function', {}).get('arguments', ''), 100)})"
+            for tc in tool_calls
+        )
+    else:
+        calls_summary = "none"
+    log.info(
+        "exchange model=%s user=%r tools_offered=%s -- content=%r tool_calls=%s",
+        body.get("model", ""), user_summary, tool_names, content_summary, calls_summary,
+    )
+
+
 def call_upstream(path: str, body: dict, timeout: float = REQUEST_TIMEOUT_S) -> tuple[int, dict]:
     data = json.dumps(body).encode("utf-8")
     req = urllib.request.Request(
@@ -256,6 +287,8 @@ class Handler(BaseHTTPRequestHandler):
                 )
                 return
             log.info("retry succeeded after unload")
+
+        log_exchange(upstream_body, choice.get("message", {}))
 
         if client_wanted_stream:
             self._send_sse(sse_wrap(completion))
