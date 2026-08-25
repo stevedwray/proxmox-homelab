@@ -1,16 +1,9 @@
-# immich-stack (planning workspace)
+# immich-stack (superseded)
 
-Status: **plan written, not yet built.** This is the live first test of the
-`plan-change`/`implement-step` methodology (see
-`docs/agent-design/step-packet-schema.md`), not a committed decision to
-deploy Immich yet. Zone (new `media_seg`, VLAN 80) and storage (NFS,
-matching media-stack's existing `/nas-media/` pattern) are decided --
-`plan.md` now has three real steps (`immich-00` create the zone,
-`immich-01` author `stack-request.yaml`, `immich-02` run
-`scaffold-stack.sh`). None have been executed yet.
-
-See `plan.md` for the steps. See
-`docs/stack-lifecycle-refactor/stage-10-minecraft-exemplar.md` for the
-precedent this follows (same "author a stack-request.yaml, then run
-`scaffold-stack.sh`" split, there proven with OpenCode/Ollama on
-minecraft-stack).
+**Superseded 2026-08-25 by [docs/media-stack-v2/](../media-stack-v2/README.md).**
+The operator's actual goal turned out to be broader than "add Immich" --
+a full replacement for legacy `media-stack`, with Jellyfin, watch-history
+migration, and Authentik SSO for both apps. The zone (`media_seg`, VLAN 80)
+and storage (NFS) decisions made here carried forward unchanged; everything
+else is rewritten there. Kept as history, not a live plan -- don't build
+from this file.
