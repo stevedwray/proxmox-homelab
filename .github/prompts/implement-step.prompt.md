@@ -21,7 +21,8 @@ You will be told which plan and which step id to run, e.g.:
 
 1. **Fetch the plan.** Use `get_document` on the named `plan.md` (or
    `search_docs` if you don't have the exact path) and find the step block
-   matching the given id.
+   matching the given id. If two differently-worded searches don't find it,
+   stop and say so -- don't keep retrying with further reworded queries.
 
 2. **Check `depends_on`.** If any listed step isn't done yet (check the
    workspace's `README.md` status, or ask), stop and say so -- do not do
@@ -61,3 +62,6 @@ You will be told which plan and which step id to run, e.g.:
 - Don't touch files outside `scope.allowed_paths`.
 - Don't run anything under `scope.forbidden_actions`, even if a gate seems
   to need it -- stop and say the step's scope looks wrong instead.
+- Don't keep reformulating the same search/lookup and retrying it hoping
+  for a better result. Two tries at most, then stop and say what you
+  couldn't find -- an open-ended retry loop is worse than reporting early.
