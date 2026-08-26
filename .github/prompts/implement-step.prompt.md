@@ -33,14 +33,23 @@ You will be told which plan and which step id to run, e.g.:
    workspace's `README.md` status, or ask), stop and say so -- do not do
    the dependency yourself and do not skip ahead.
 
-3. **Do exactly the `change` described** -- nothing broader. Touch only
+3. **If you believe this exact step already ran** (including in an
+   earlier turn of this same conversation), don't act on that memory --
+   verify it for real, right now, with an actual tool call (read the
+   file, run the gate) before saying anything about current state.
+   Memory of a previous turn is not a substitute for checking; the repo
+   can change between turns for reasons you don't know about. If your
+   fresh check confirms it's already done, say that -- but only after
+   actually checking this turn, never before.
+
+4. **Do exactly the `change` described** -- nothing broader. Touch only
    paths under `scope.allowed_paths`. Do not do anything listed under
    `scope.forbidden_actions`.
 
-4. **Run every gate** listed for the step, in order, exactly as written.
+5. **Run every gate** listed for the step, in order, exactly as written.
    Record the actual output, not a paraphrase.
 
-5. **Make an actual edit to the workspace's `README.md` now** (same
+6. **Make an actual edit to the workspace's `README.md` now** (same
    directory as the plan.md) -- use your file-edit tool on it, the same
    way you just edited files for the step itself. This is a real file
    change, not something to only describe in your chat reply. Under
@@ -57,7 +66,7 @@ You will be told which plan and which step id to run, e.g.:
    step -- it has to survive after this chat session ends, so writing
    it only in your chat reply does not count as having done this.
 
-6. **Then report the same thing in chat, and stop.** One invocation of
+7. **Then report the same thing in chat, and stop.** One invocation of
    this prompt is one step. If you finish and there's an obvious next
    step, name it and wait -- don't chain into it.
 
@@ -75,3 +84,6 @@ You will be told which plan and which step id to run, e.g.:
 - Don't consider the hand-back done because you described it in your
   chat reply. It requires an actual edit to the workspace's `README.md`
   -- the same kind of tool call you used for the step's own `change`.
+- Don't state a file's contents, a gate's result, or anything else about
+  current repo state based on memory of an earlier turn, even in this
+  same conversation, without a fresh tool call this turn to back it up.
