@@ -62,7 +62,14 @@ not.
    exact path(s) `change` names, character for character -- don't
    substitute a different path even if it seems like a reasonable place
    for this kind of file. Touch only paths under `scope.allowed_paths`.
-   Do not do anything listed under `scope.forbidden_actions`.
+   Do not do anything listed under `scope.forbidden_actions`. If
+   `change` gives you an exact command to run, run it -- don't read the
+   source of that command's script first to understand how it works,
+   and don't go looking at how some other, unrelated existing stack did
+   something similar as a reference before running it. The command
+   already is the whole task; reading its implementation or browsing
+   other examples first is exactly the open-ended reasoning this prompt
+   says already happened when the plan was written.
 
 5. **Run every gate's `cmd` string exactly as written, byte for byte** --
    never adjust it to point at wherever you actually put something.
@@ -121,3 +128,6 @@ not.
 - Don't state a file's contents, a gate's result, or anything else about
   current repo state based on memory of an earlier turn, even in this
   same conversation, without a fresh tool call this turn to back it up.
+- Don't read a referenced script's source, or another stack's files, to
+  understand a command before running it. If `change` gives you the
+  exact command, that's everything you need -- just run it.
