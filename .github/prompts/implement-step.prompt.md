@@ -22,6 +22,19 @@ those mean.
 You will be told which plan and which step id to run, e.g.:
 "Run implement-step against docs/<workspace>/plan.md, step <workspace>-01-<slug>."
 
+## Hard rule: never repeat a tool call
+
+**Never call the same tool with the same (or near-identical) arguments
+more than once during this step -- for any reason, at any point.** If
+you already read a file, fetched a document, ran a command, or checked
+something once, you have your answer; reading it again will not produce
+a different one. This applies everywhere below, not just where a
+specific rule calls it out: fetching the plan, verifying current state,
+running a gate, or anything else. If you notice you're about to repeat
+a call you already made, stop instead and report plainly that you're
+stuck and why -- a stall you report is recoverable; a silent loop is
+not.
+
 ## What to do, in order
 
 1. **Fetch the plan.** Use `get_document` on the named `plan.md` (or
@@ -95,13 +108,13 @@ You will be told which plan and which step id to run, e.g.:
 - Don't run anything under `scope.forbidden_actions`, even if a gate seems
   to need it -- stop and say the step's scope looks wrong instead.
 - Don't keep reformulating the same search/lookup and retrying it hoping
-  for a better result. Two tries at most, then stop and say what you
-  couldn't find -- an open-ended retry loop is worse than reporting early.
-- Don't re-fetch or re-read something you already fetched or read this
-  turn, hoping a repeat will tell you something new. It won't -- the
-  content is the content. This applies to verifying current state
-  (rule 3) just as much as to searching (above): one look is enough,
-  then act on what you found.
+  for a better result -- see the hard rule above. Two tries at most on a
+  search specifically, then stop and say what you couldn't find.
+- Don't re-fetch, re-read, or re-run anything you already did this turn
+  (file reads, gate commands, anything), hoping a repeat will tell you
+  something new. It won't -- the content is the content. This is the
+  same hard rule, applied to verifying current state (rule 3) as much as
+  to searching or anything else.
 - Don't consider the hand-back done because you described it in your
   chat reply. It requires an actual edit to the workspace's `README.md`
   -- the same kind of tool call you used for the step's own `change`.
