@@ -35,6 +35,7 @@ def _load_module(name: str, path: Path) -> Any:
 
 
 RENDER_TRAEFIK = _load_module("render_edge_traefik", SCRIPT_DIR / "render-edge-traefik.py")
+RENDER_TECHNITIUM = _load_module("render_edge_technitium", SCRIPT_DIR / "render-edge-technitium.py")
 RENDER_COREDNS = _load_module("render_edge_coredns", SCRIPT_DIR / "render-edge-coredns.py")
 DISCOVER_AUTHENTIK = _load_module("discover_authentik_edge", SCRIPT_DIR / "discover-authentik-edge.py")
 RECONCILE_AUTHENTIK = _load_module("reconcile_authentik_edge", SCRIPT_DIR / "reconcile-authentik-edge.py")
@@ -52,9 +53,17 @@ _generated_base = (
 DEFAULT_TARGET_PREFLIGHT_EXPECTED = os.environ.get("EDGE_TARGET_PREFLIGHT_EXPECTED") or os.environ.get("PVE_ENV", "pve-test")
 DEFAULT_TRAEFIK_PROBE_HOST = os.environ["LAB_IP_PROXY"]
 DEFAULT_TRAEFIK_PROBE_PORT = 443
+DEFAULT_DNS_PROBE_NAME = os.environ.get("LAB_FQDN_TRAEFIK") or f"traefik.{os.environ.get('LAB_DOMAIN', 'lab.gibbsgreatly.xyz')}"
+DEFAULT_DNS_PROBE_EXPECTED = os.environ["LAB_IP_PROXY"]
+# Technitium is the live DNS authority post-cutover (docs/dns-refactor/README.md) and is
+# probed/rendered by default. CoreDNS (dns-stack) is frozen/rollback-only per
+# docs/dns-refactor/plan.md Phase 6a -- its render/probe path is opt-in only (--coredns).
+DEFAULT_TECHNITIUM_PROBE_SERVER = os.environ.get("LAB_IP_TECHNITIUM", "")
+DEFAULT_TECHNITIUM_PROBE_NAME = DEFAULT_DNS_PROBE_NAME
+DEFAULT_TECHNITIUM_PROBE_EXPECTED = DEFAULT_DNS_PROBE_EXPECTED
 DEFAULT_COREDNS_PROBE_SERVER = os.environ.get("LAB_IP_DNS", "")
-DEFAULT_COREDNS_PROBE_NAME = os.environ.get("LAB_FQDN_TRAEFIK") or f"traefik.{os.environ.get('LAB_DOMAIN', 'lab.gibbsgreatly.xyz')}"
-DEFAULT_COREDNS_PROBE_EXPECTED = os.environ["LAB_IP_PROXY"]
+DEFAULT_COREDNS_PROBE_NAME = DEFAULT_DNS_PROBE_NAME
+DEFAULT_COREDNS_PROBE_EXPECTED = DEFAULT_DNS_PROBE_EXPECTED
 NOT_RUN_DRY_RUN = "not run (dry-run mode)"
 
 
@@ -65,6 +74,29 @@ class EdgeIssue:
 
     def to_dict(self) -> dict[str, str]:
         return {"code": self.code, "message": self.message}
+
+
+@dataclass(frozen=True)
+class RenderPhaseResult:
+    """Bundled render outputs -- keeps _build_passed_payload's parameter count sane."""
+
+    traefik_result: Any
+    technitium_result: Any
+    coredns_result: Any | None
+    traefik_output_dir: Path
+    rendered_files: list[str]
+    rendered_records: str
+    rendered_zone: str | None
+
+
+@dataclass(frozen=True)
+class AuthentikPhaseResult:
+    """Bundled Authentik discovery/reconcile outputs."""
+
+    needs_authentik: bool
+    discovery: dict[str, object] | None
+    post_apply_discovery: dict[str, object] | None
+    reconcile: dict[str, object] | None
 
 
 @dataclass(frozen=True)
@@ -85,6 +117,16 @@ class HealthCheckResult:
         if self.status_code is not None:
             payload["status_code"] = self.status_code
         return payload
+
+
+@dataclass(frozen=True)
+class HealthPhaseResult:
+    """Bundled apply-mode (or dry-run stub) health-check outputs."""
+
+    target_detail: str
+    traefik: HealthCheckResult
+    technitium: HealthCheckResult
+    coredns: HealthCheckResult | None
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -125,13 +167,28 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         "--seed-zone",
         type=Path,
         default=SCRIPT_DIR / "ansible" / "files" / "coredns-lab.zone",
-        help="Path to the seed CoreDNS zone file.",
+        help="Path to the seed zone file shared by the Technitium and (opt-in) CoreDNS renderers.",
+    )
+    parser.add_argument(
+        "--technitium-output-records",
+        type=Path,
+        default=_generated_base / "technitium" / "zone-records.json",
+        help="Output file for rendered Technitium parity-zone records.",
+    )
+    parser.add_argument(
+        "--coredns",
+        action="store_true",
+        help=(
+            "Opt in to the legacy CoreDNS (dns-stack) render and health-check path. "
+            "Off by default post-cutover (docs/dns-refactor/plan.md Phase 6a) -- dns-stack "
+            "is frozen/rollback-only and no longer part of the routine reconciliation path."
+        ),
     )
     parser.add_argument(
         "--coredns-output-zone",
         type=Path,
         default=_generated_base / "coredns" / "coredns-lab.zone",
-        help="Output file for rendered CoreDNS zone.",
+        help="Output file for rendered CoreDNS zone. Only used with --coredns.",
     )
     parser.add_argument(
         "--intended-replacement-host",
@@ -167,14 +224,29 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         help="Traefik TCP port required to be reachable in apply mode.",
     )
     parser.add_argument(
+        "--technitium-probe-server",
+        default=DEFAULT_TECHNITIUM_PROBE_SERVER,
+        help="Authoritative Technitium server IP for apply-mode dig validation.",
+    )
+    parser.add_argument(
+        "--technitium-probe-name",
+        default=DEFAULT_TECHNITIUM_PROBE_NAME,
+        help="DNS name queried during apply-mode authoritative Technitium probe.",
+    )
+    parser.add_argument(
+        "--technitium-probe-expected",
+        default=DEFAULT_TECHNITIUM_PROBE_EXPECTED,
+        help="Expected IPv4 answer in apply-mode authoritative Technitium probe.",
+    )
+    parser.add_argument(
         "--coredns-probe-server",
         default=DEFAULT_COREDNS_PROBE_SERVER,
-        help="Authoritative CoreDNS server IP for apply-mode dig validation.",
+        help="Authoritative CoreDNS server IP for apply-mode dig validation. Only used with --coredns.",
     )
     parser.add_argument(
         "--coredns-probe-name",
         default=DEFAULT_COREDNS_PROBE_NAME,
-        help="DNS name queried during apply-mode authoritative CoreDNS probe.",
+        help="DNS name queried during apply-mode authoritative CoreDNS probe. Only used with --coredns.",
     )
     parser.add_argument(
         "--target-preflight-expected",
@@ -184,7 +256,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--coredns-probe-expected",
         default=DEFAULT_COREDNS_PROBE_EXPECTED,
-        help="Expected IPv4 answer in apply-mode authoritative CoreDNS probe.",
+        help="Expected IPv4 answer in apply-mode authoritative CoreDNS probe. Only used with --coredns.",
     )
     parser.add_argument(
         "--apply",
@@ -327,24 +399,34 @@ def _resolve_selected_manifests(
 def _render_outputs(
     args: argparse.Namespace,
     manifest_paths: list[Path],
-) -> tuple[Any, Any, list[EdgeIssue]]:
+) -> tuple[Any, Any, Any | None, list[EdgeIssue]]:
     issues: list[EdgeIssue] = []
     traefik_result = RENDER_TRAEFIK.render_traefik_dry_run(
         manifest_paths,
         args.legacy_playbook.resolve(),
     )
-    coredns_result = RENDER_COREDNS.render_coredns_dry_run(
+    technitium_result = RENDER_TECHNITIUM.render_technitium_dry_run(
         manifest_paths=manifest_paths,
         seed_zone_path=args.seed_zone.resolve(),
-        output_zone_path=args.coredns_output_zone.resolve(),
-        validate_live_forwarding=False,
+        output_records_path=args.technitium_output_records.resolve(),
     )
+
+    coredns_result = None
+    if args.coredns:
+        coredns_result = RENDER_COREDNS.render_coredns_dry_run(
+            manifest_paths=manifest_paths,
+            seed_zone_path=args.seed_zone.resolve(),
+            output_zone_path=args.coredns_output_zone.resolve(),
+            validate_live_forwarding=False,
+        )
 
     if not traefik_result.ok:
         issues.append(EdgeIssue(code="EGR130", message="Traefik render failed"))
-    if not coredns_result.ok:
+    if not technitium_result.ok:
+        issues.append(EdgeIssue(code="EGR132", message="Technitium render failed"))
+    if coredns_result is not None and not coredns_result.ok:
         issues.append(EdgeIssue(code="EGR131", message="CoreDNS render failed"))
-    return traefik_result, coredns_result, issues
+    return traefik_result, technitium_result, coredns_result, issues
 
 
 def _run_pve_target_preflight(expected_target: str) -> tuple[bool, str]:
@@ -445,6 +527,7 @@ def _build_failed_result(
     manifest_paths: list[Path] | None = None,
     validation: dict[str, object] | None = None,
     traefik: dict[str, object] | None = None,
+    technitium: dict[str, object] | None = None,
     coredns: dict[str, object] | None = None,
     issues: list[EdgeIssue],
 ) -> dict[str, object]:
@@ -460,12 +543,16 @@ def _build_failed_result(
         payload["validation"] = validation
     if traefik is not None:
         payload["traefik"] = traefik
+    if technitium is not None:
+        payload["technitium"] = technitium
     if coredns is not None:
         payload["coredns"] = coredns
     return payload
 
 
-def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckResult, HealthCheckResult, list[EdgeIssue]]:
+def _run_apply_preflights(
+    args: argparse.Namespace,
+) -> tuple[HealthPhaseResult, list[EdgeIssue]]:
     issues: list[EdgeIssue] = []
     target_ok, target_detail = _run_pve_target_preflight(args.target_preflight_expected)
     if not target_ok:
@@ -482,22 +569,45 @@ def _run_apply_preflights(args: argparse.Namespace) -> tuple[str, HealthCheckRes
     if not traefik_health.ok:
         issues.append(EdgeIssue(code="EGR201", message=f"Traefik health check failed: {traefik_health.detail}"))
 
-    coredns_probe = _dns_authority_health_check(
-        args.coredns_probe_server,
-        args.coredns_probe_name,
-        args.coredns_probe_expected,
+    technitium_probe = _dns_authority_health_check(
+        args.technitium_probe_server,
+        args.technitium_probe_name,
+        args.technitium_probe_expected,
     )
-    coredns_health = HealthCheckResult(
-        name="coredns",
-        url=coredns_probe.url,
-        ok=coredns_probe.ok,
-        status_code=coredns_probe.status_code,
-        detail=coredns_probe.detail,
+    technitium_health = HealthCheckResult(
+        name="technitium",
+        url=technitium_probe.url,
+        ok=technitium_probe.ok,
+        status_code=technitium_probe.status_code,
+        detail=technitium_probe.detail,
     )
-    if not coredns_health.ok:
-        issues.append(EdgeIssue(code="EGR202", message=f"CoreDNS health check failed: {coredns_health.detail}"))
+    if not technitium_health.ok:
+        issues.append(EdgeIssue(code="EGR203", message=f"Technitium health check failed: {technitium_health.detail}"))
 
-    return target_detail, traefik_health, coredns_health, issues
+    coredns_health: HealthCheckResult | None = None
+    if args.coredns:
+        coredns_probe = _dns_authority_health_check(
+            args.coredns_probe_server,
+            args.coredns_probe_name,
+            args.coredns_probe_expected,
+        )
+        coredns_health = HealthCheckResult(
+            name="coredns",
+            url=coredns_probe.url,
+            ok=coredns_probe.ok,
+            status_code=coredns_probe.status_code,
+            detail=coredns_probe.detail,
+        )
+        if not coredns_health.ok:
+            issues.append(EdgeIssue(code="EGR202", message=f"CoreDNS health check failed: {coredns_health.detail}"))
+
+    health = HealthPhaseResult(
+        target_detail=target_detail,
+        traefik=traefik_health,
+        technitium=technitium_health,
+        coredns=coredns_health,
+    )
+    return health, issues
 
 
 def _discovery_has_route_drift(discovery: dict[str, object] | None) -> bool:
@@ -632,7 +742,127 @@ def _run_authentik_phase(
     return discovery_dict, post_apply_discovery_dict, reconcile_dict, issues
 
 
-def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
+def _dry_run_health_stubs(args: argparse.Namespace) -> HealthPhaseResult:
+    traefik_health = HealthCheckResult(
+        name="traefik",
+        url=f"tcp://{args.traefik_probe_host}:{args.traefik_probe_port}",
+        ok=True,
+        status_code=None,
+        detail=NOT_RUN_DRY_RUN,
+    )
+    technitium_health = HealthCheckResult(
+        name="technitium",
+        url=f"dig @{args.technitium_probe_server} +short {args.technitium_probe_name}",
+        ok=True,
+        status_code=None,
+        detail=NOT_RUN_DRY_RUN,
+    )
+    coredns_health: HealthCheckResult | None = None
+    if args.coredns:
+        coredns_health = HealthCheckResult(
+            name="coredns",
+            url=f"dig @{args.coredns_probe_server} +short {args.coredns_probe_name}",
+            ok=True,
+            status_code=None,
+            detail=NOT_RUN_DRY_RUN,
+        )
+    return HealthPhaseResult(
+        target_detail=NOT_RUN_DRY_RUN,
+        traefik=traefik_health,
+        technitium=technitium_health,
+        coredns=coredns_health,
+    )
+
+
+def _write_render_outputs(
+    args: argparse.Namespace,
+    traefik_result: Any,
+    technitium_result: Any,
+    coredns_result: Any | None,
+) -> RenderPhaseResult:
+    traefik_output_dir = args.traefik_output_dir.resolve()
+    rendered_files = [
+        str(path) for path in RENDER_TRAEFIK.write_rendered_files(traefik_result.rendered, traefik_output_dir)
+    ]
+    rendered_records = str(
+        RENDER_TECHNITIUM.write_rendered_records(
+            technitium_result.zone, technitium_result.records, args.technitium_output_records.resolve()
+        )
+    )
+    rendered_zone: str | None = None
+    if coredns_result is not None:
+        rendered_zone = str(
+            RENDER_COREDNS.write_rendered_zone(coredns_result.rendered_zone, args.coredns_output_zone.resolve())
+        )
+    return RenderPhaseResult(
+        traefik_result=traefik_result,
+        technitium_result=technitium_result,
+        coredns_result=coredns_result,
+        traefik_output_dir=traefik_output_dir,
+        rendered_files=rendered_files,
+        rendered_records=rendered_records,
+        rendered_zone=rendered_zone,
+    )
+
+
+def _build_passed_payload(
+    *,
+    applied: bool,
+    repo_root: Path,
+    args: argparse.Namespace,
+    manifest_paths: list[Path],
+    validation: Any,
+    render: RenderPhaseResult,
+    health: HealthPhaseResult,
+    auth: AuthentikPhaseResult,
+    issues: list[EdgeIssue],
+) -> dict[str, object]:
+    coredns_payload = (
+        {**render.coredns_result.to_dict(), "output_zone": render.rendered_zone}
+        if render.coredns_result is not None
+        else None
+    )
+    coredns_health_payload = health.coredns.to_dict() if health.coredns is not None else None
+
+    return {
+        "status": "passed" if not issues else "failed",
+        "mode": "apply" if applied else "dry-run",
+        "terraform_state_mutation": False,
+        "manifests": [str(path) for path in manifest_paths],
+        "validation": validation.to_dict(),
+        "preflight": {
+            "targeting": {
+                "command": " ".join(_resolve_target_preflight_command(repo_root, args.target_preflight_expected)),
+                "detail": health.target_detail,
+                "ok": not applied or not any(issue.code == "EGR200" for issue in issues),
+            },
+            "health": {
+                "traefik": health.traefik.to_dict(),
+                "technitium": health.technitium.to_dict(),
+                "coredns": coredns_health_payload,
+            },
+        },
+        "traefik": {
+            **render.traefik_result.to_dict(),
+            "output_dir": str(render.traefik_output_dir),
+            "files": render.rendered_files,
+        },
+        "technitium": {
+            **render.technitium_result.to_dict(),
+            "output_records": render.rendered_records,
+        },
+        "coredns": coredns_payload,
+        "authentik": {
+            "required": auth.needs_authentik,
+            "discovery": auth.discovery,
+            "post_apply_discovery": auth.post_apply_discovery,
+            "reconcile": auth.reconcile,
+        },
+        "issues": [issue.to_dict() for issue in issues],
+    }
+
+
+def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:  # nosonar: python:S3776 -- sequential fail-fast pipeline (manifest resolution -> validation -> render -> preflight -> Authentik), each stage already extracted to its own helper; further splitting the gating/cleanup itself would fragment one linear flow across more functions without making it clearer
     issues: list[EdgeIssue] = []
     applied = bool(args.apply)
     repo_root = SCRIPT_DIR.parents[1]
@@ -653,7 +883,7 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
             temp_dir.cleanup()
         return result
 
-    traefik_result, coredns_result, render_issues = _render_outputs(args, manifest_paths)
+    traefik_result, technitium_result, coredns_result, render_issues = _render_outputs(args, manifest_paths)
     issues.extend(render_issues)
 
     if issues:
@@ -662,17 +892,15 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
             manifest_paths=manifest_paths,
             validation=validation.to_dict(),
             traefik=traefik_result.to_dict(),
-            coredns=coredns_result.to_dict(),
+            technitium=technitium_result.to_dict(),
+            coredns=coredns_result.to_dict() if coredns_result is not None else None,
             issues=issues,
         )
         if temp_dir is not None:
             temp_dir.cleanup()
         return result
 
-    traefik_output_dir = args.traefik_output_dir.resolve()
-    coredns_output_zone = args.coredns_output_zone.resolve()
-    rendered_files = [str(path) for path in RENDER_TRAEFIK.write_rendered_files(traefik_result.rendered, traefik_output_dir)]
-    rendered_zone = str(RENDER_COREDNS.write_rendered_zone(coredns_result.rendered_zone, coredns_output_zone))
+    render = _write_render_outputs(args, traefik_result, technitium_result, coredns_result)
 
     needs_authentik = _selected_manifests_require_authentik(manifest_paths)
     discovery_dict: dict[str, object] | None = None
@@ -680,24 +908,10 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
     reconcile_dict: dict[str, object] | None = None
 
     if applied:
-        target_detail, traefik_health, coredns_health, preflight_issues = _run_apply_preflights(args)
+        health, preflight_issues = _run_apply_preflights(args)
         issues.extend(preflight_issues)
     else:
-        target_detail = NOT_RUN_DRY_RUN
-        traefik_health = HealthCheckResult(
-            name="traefik",
-            url=f"tcp://{args.traefik_probe_host}:{args.traefik_probe_port}",
-            ok=True,
-            status_code=None,
-            detail=NOT_RUN_DRY_RUN,
-        )
-        coredns_health = HealthCheckResult(
-            name="coredns",
-            url=f"dig @{args.coredns_probe_server} +short {args.coredns_probe_name}",
-            ok=True,
-            status_code=None,
-            detail=NOT_RUN_DRY_RUN,
-        )
+        health = _dry_run_health_stubs(args)
 
     if needs_authentik:
         discovery_dict, post_apply_discovery_dict, reconcile_dict, auth_issues = _run_authentik_phase(
@@ -708,40 +922,24 @@ def reconcile_edge(args: argparse.Namespace) -> dict[str, object]:
         )
         issues.extend(auth_issues)
 
-    payload: dict[str, object] = {
-        "status": "passed" if not issues else "failed",
-        "mode": "apply" if applied else "dry-run",
-        "terraform_state_mutation": False,
-        "manifests": [str(path) for path in manifest_paths],
-        "validation": validation.to_dict(),
-        "preflight": {
-            "targeting": {
-                "command": " ".join(_resolve_target_preflight_command(repo_root, args.target_preflight_expected)),
-                "detail": target_detail,
-                "ok": not applied or not any(issue.code == "EGR200" for issue in issues),
-            },
-            "health": {
-                "traefik": traefik_health.to_dict(),
-                "coredns": coredns_health.to_dict(),
-            },
-        },
-        "traefik": {
-            **traefik_result.to_dict(),
-            "output_dir": str(traefik_output_dir),
-            "files": rendered_files,
-        },
-        "coredns": {
-            **coredns_result.to_dict(),
-            "output_zone": rendered_zone,
-        },
-        "authentik": {
-            "required": needs_authentik,
-            "discovery": discovery_dict,
-            "post_apply_discovery": post_apply_discovery_dict,
-            "reconcile": reconcile_dict,
-        },
-        "issues": [issue.to_dict() for issue in issues],
-    }
+    auth = AuthentikPhaseResult(
+        needs_authentik=needs_authentik,
+        discovery=discovery_dict,
+        post_apply_discovery=post_apply_discovery_dict,
+        reconcile=reconcile_dict,
+    )
+
+    payload = _build_passed_payload(
+        applied=applied,
+        repo_root=repo_root,
+        args=args,
+        manifest_paths=manifest_paths,
+        validation=validation,
+        render=render,
+        health=health,
+        auth=auth,
+        issues=issues,
+    )
 
     if temp_dir is not None:
         temp_dir.cleanup()

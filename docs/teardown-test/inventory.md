@@ -47,13 +47,13 @@ This is a planning artifact only. It does not approve destructive execution.
 |---|---|---:|---|---|---|---|
 | `portainer-stack` | Stage 3b platform | 20020 | `192.168.20.20/24` | `mgmt_seg` | `[]` | `deploy-portainer-stack` |
 | `apt-cacher-stack` | Stage 1/2 foundation | 40011 | `192.168.40.11/24` | `infra_seg` | `[]` | `deploy-apt-cacher-stack` |
-| `harbor-stack` | Stage 3b platform | 40010 | `192.168.40.10/24` | `infra_seg` | `dns-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
+| `harbor-stack` | Stage 3b platform | 40010 | `192.168.40.10/24` | `infra_seg` | `technitium-stack`, `step-ca-stack`, `proxy-stack`, `authentik-stack` | `deploy-harbor-stack` |
 | `ci-runner-01` | Stage 1/2 foundation | 10063 | `192.168.10.63/24` | `build_seg` | `apt-cacher-stack` | `deploy-ci-runner` |
 | `dns-stack` | Stage 3a edge foundation | 20013 | `192.168.20.13/24` | `mgmt_seg` | none declared | `deploy-coredns` |
 | `technitium-stack` | Stage 3a edge foundation | 20015 | `192.168.20.15/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-technitium-stack` |
 | `proxy-stack` | Stage 3a edge foundation | 30010 | `192.168.30.10/24` | `edge_seg` | `step-ca-stack`, `apt-cacher-stack` | `deploy-proxy-stack` |
 | `step-ca-stack` | Stage 3a edge foundation | 20011 | `192.168.20.11/24` | `mgmt_seg` | `apt-cacher-stack` | `deploy-step-ca` |
-| `authentik-stack` | Stage 3a edge foundation | 20010 | `192.168.20.10/24` | `mgmt_seg` | `dns-stack` | `deploy-authentik-stack` |
+| `authentik-stack` | Stage 3a edge foundation | 20010 | `192.168.20.10/24` | `mgmt_seg` | `technitium-stack` | `deploy-authentik-stack` |
 | `monitoring-stack` | Stage 3b platform | 20012 | `192.168.20.12/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-monitoring-stack` |
 | `graylog-stack` | Stage 3b platform | 20014 | `192.168.20.14/24` | `mgmt_seg` | `harbor-stack`, `apt-cacher-stack`, `authentik-stack`, `proxy-stack`, `step-ca-stack` | `deploy-graylog-stack` |
 | `netbox-stack` | Stage 3b platform | 40012 | `192.168.40.12/24` | `infra_seg` | `harbor-stack` | `deploy-netbox-stack` |
@@ -91,19 +91,23 @@ corrected in Stage 3a: `step-ca` must precede `proxy-stack`.
 
 ## Approved Deploy Order
 
+`dns-stack` is frozen/rollback-only post-Technitium-cutover
+(`docs/dns-refactor/plan.md` Phase 6a) and is no longer part of the routine
+deploy order below -- it stays deployed on `pve-test-vm` as a manual
+rollback target only.
+
 1. `apt-cacher-stack`
 2. `ci-runner-01`
-3. `dns-stack`
-4. `technitium-stack`
-5. `step-ca-stack`
-6. `proxy-stack`
-7. `authentik-stack`
-8. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
-9. `harbor-stack`
-10. `monitoring-stack`
-11. `graylog-stack`
-12. `netbox-stack`
-13. `portainer-stack`
+3. `technitium-stack`
+4. `step-ca-stack`
+5. `proxy-stack`
+6. `authentik-stack`
+7. edge reconciliation activation  <!-- not in backticks: excluded from inventory parser; handled by activate-edge phase -->
+8. `harbor-stack`
+9. `monitoring-stack`
+10. `graylog-stack`
+11. `netbox-stack`
+12. `portainer-stack`
 
 ## Approved Destroy Order
 
@@ -116,6 +120,5 @@ corrected in Stage 3a: `step-ca` must precede `proxy-stack`.
 7. `step-ca-stack`
 8. `proxy-stack`
 9. `technitium-stack`
-10. `dns-stack`
-11. `ci-runner-01`
-12. `apt-cacher-stack`
+10. `ci-runner-01`
+11. `apt-cacher-stack`
