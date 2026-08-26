@@ -41,7 +41,17 @@ the test gets.
   - Gate `stack-request-exists`: ✅ Pass (exit code 0 — file exists)
   - Gate `stack-request-parses`: ✅ Pass (exit code 0 — valid YAML)
 - `lxcprov-02-scaffold` (operator step, not run via `implement-step`): **done, authored directly by the frontier model, no OpenCode used** (2026-08-26) — created all 5 files (`stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`, `terraform/lxc/ansible/playbooks/deploy-smoketest-stack.yml`) from the literal values in `stack-request.yaml`, matching `terraform/lxc/stacks/harness-target/`'s real formats. Real validators both passed: `validate-compose.sh` and `ansible-playbook --syntax-check`.
-- `lxcprov-03-verify-generated-files`: not started
+- `lxcprov-03-verify-generated-files`: **done** (2026-08-26)
+  - Compared all five scaffolded files against stack-request.yaml literal requirements:
+    - `docker-compose.yml`: image nginx:1.27-alpine ✅, port 80:80/tcp only ✅, no volumes ✅, container_name smoketest-stack-web ✅, restart unless-stopped ✅, single service ✅, no env vars ✅
+    - `stack.yaml`: vmid 99010 ✅, ip 192.168.1.99/24 ✅, all fields match stack-request.yaml ✅
+    - `STACK_CONTRACT.md`: matches contract_facts (vmbr0 zone, IP/gateway/VMID correct) ✅
+    - `terragrunt.hcl`: present and valid ✅
+    - `deploy-smoketest-stack.yml`: playbook content matches plan exactly ✅
+  - Gate `compose-parses`: ✅ Pass (exit code 0 — docker compose config succeeds; only a warning about obsolete version attribute, which is non-fatal)
+  - Gate `correct-image-pinned`: ✅ Pass (exit code 0 — nginx:1.27-alpine found)
+  - Gate `no-latest-tag`: ✅ Pass (exit code 0 — no latest tag found)
+  - Gate `no-volumes`: ✅ Pass (exit code 0 — no volumes block present)
 - `lxcprov-04-create-environment-config`: not started
 - `lxcprov-05-terragrunt-apply`: not started -- **do not run without explicit operator go-ahead**
 - `lxcprov-06-provision`: not started
