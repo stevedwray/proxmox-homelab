@@ -65,6 +65,12 @@ the test gets.
   - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
   - Gate `apply-exits-clean`: ✅ Pass (exit code 0 — Apply complete! Resources: 3 added)
   - Gate `inventory-generated`: ✅ Pass (exit code 0 — inventory.yml exists)
-- `lxcprov-06-provision`: not started
+- `lxcprov-06-provision`: **done** (2026-08-26)
+  - Confirmed target node: `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` → pve-test-vm ✅
+  - Ran `./with-secrets scripts/provision.sh --stack smoketest-stack` — Ansible playbook executed successfully against the LXC container
+  - Playbook ran all roles (lxc_base, docker_base) and tasks: created stack dir, wrote docker-compose.yml, validated compose config, started nginx via `docker compose up -d`, waited for TCP port 80
+  - PLAY RECAP: ok=61 changed=32 unreachable=0 failed=0 skipped=8 — no failures ✅
+  - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
+  - Gate `provision-actually-ran-not-skipped`: ✅ Pass (exit code 0 — no "SKIP smoketest-stack:" found in output, provision actually ran)
 - `lxcprov-07-verify-service`: not started
 - `lxcprov-08-teardown` (operator step, not run via `implement-step`): not started
