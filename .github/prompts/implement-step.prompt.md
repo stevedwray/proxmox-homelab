@@ -83,9 +83,14 @@ not.
 6. **Make an actual edit to the workspace's `README.md` now** (same
    directory as the plan.md) -- use your file-edit tool on it, the same
    way you just edited files for the step itself. This is a real file
-   change, not something to only describe in your chat reply. Under
-   that file's `## Step status` (or similar) section, replace this
-   step's line with a short, durable record of what happened:
+   change, not something to only describe in your chat reply. Do this
+   regardless of how many tool calls the step above took, or how many
+   times you had to correct something -- a step that needed several
+   corrections needs the hand-back at least as much as a simple one did,
+   not less; don't let it get crowded out because you already feel like
+   you've done a lot of work on this step. Under that file's
+   `## Step status` (or similar) section, replace this step's line with
+   a short, durable record of what happened:
    - which step you ran
    - the exact edit you made (file + diff summary)
    - each gate's command and its actual result (pass/fail)
