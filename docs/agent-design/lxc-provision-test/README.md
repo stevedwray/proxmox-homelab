@@ -52,7 +52,11 @@ the test gets.
   - Gate `correct-image-pinned`: ✅ Pass (exit code 0 — nginx:1.27-alpine found)
   - Gate `no-latest-tag`: ✅ Pass (exit code 0 — no latest tag found)
   - Gate `no-volumes`: ✅ Pass (exit code 0 — no volumes block present)
-- `lxcprov-04-create-environment-config`: not started
+- `lxcprov-04-create-environment-config`: **done** (2026-08-26)
+  - Created `terraform/lxc/environments/pve-test-vm/smoketest-stack/terragrunt.hcl` with exact content copied verbatim from `harness-target/terragrunt.hcl` — fixed boilerplate: include "root", terraform source, inputs block (stack_name, stack_yaml_path, generated_dir)
+  - Fixed a missing trailing newline to make the file byte-identical to harness-target's version
+  - Gate `env-terragrunt-exists`: ✅ Pass (exit code 0 — file exists)
+  - Gate `matches-existing-pattern`: ✅ Pass (exit code 0 — diff shows identical content)
 - `lxcprov-05-terragrunt-apply`: not started -- **do not run without explicit operator go-ahead**
 - `lxcprov-06-provision`: not started
 - `lxcprov-07-verify-service`: not started
