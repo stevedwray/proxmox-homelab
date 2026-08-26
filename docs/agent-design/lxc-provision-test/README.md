@@ -57,7 +57,14 @@ the test gets.
   - Fixed a missing trailing newline to make the file byte-identical to harness-target's version
   - Gate `env-terragrunt-exists`: ✅ Pass (exit code 0 — file exists)
   - Gate `matches-existing-pattern`: ✅ Pass (exit code 0 — diff shows identical content)
-- `lxcprov-05-terragrunt-apply`: not started -- **do not run without explicit operator go-ahead**
+- `lxcprov-05-terragrunt-apply`: **done** (2026-08-26)
+  - Confirmed target node: `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` → pve-test-vm ✅
+  - Ran `./with-secrets terragrunt --working-dir terraform/lxc/environments/pve-test-vm/smoketest-stack apply -auto-approve` — created real LXC container (VMID 99010, IP 192.168.1.99/24) on pve-test-vm
+  - Apply succeeded: 3 resources added (proxmox_virtual_environment_container.docker_host, terraform_data.container_epoch, local_file.ansible_inventory), exit code 0
+  - Container created in 54s with correct config: vmbr0 bridge, debian-13.1 template, 512MB RAM/256 swap, docker storage 2G
+  - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
+  - Gate `apply-exits-clean`: ✅ Pass (exit code 0 — Apply complete! Resources: 3 added)
+  - Gate `inventory-generated`: ✅ Pass (exit code 0 — inventory.yml exists)
 - `lxcprov-06-provision`: not started
 - `lxcprov-07-verify-service`: not started
 - `lxcprov-08-teardown` (operator step, not run via `implement-step`): not started
