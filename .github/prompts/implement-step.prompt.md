@@ -35,12 +35,15 @@ You will be told which plan and which step id to run, e.g.:
 
 3. **If you believe this exact step already ran** (including in an
    earlier turn of this same conversation), don't act on that memory --
-   verify it for real, right now, with an actual tool call (read the
-   file, run the gate) before saying anything about current state.
-   Memory of a previous turn is not a substitute for checking; the repo
-   can change between turns for reasons you don't know about. If your
-   fresh check confirms it's already done, say that -- but only after
-   actually checking this turn, never before.
+   verify it for real, right now, with **one** tool call (read the file
+   the step's `change` names, or run its gate) before saying anything
+   about current state. Memory of a previous turn is not a substitute
+   for checking; the repo can change between turns for reasons you
+   don't know about. One fetch is enough to know current state -- if
+   you already read something this turn, that's your answer, don't read
+   it again hoping for a different result. If your one fresh check
+   confirms it's already done, say that and stop there; if it doesn't,
+   proceed to the step normally.
 
 4. **Do exactly the `change` described** -- nothing broader. Use the
    exact path(s) `change` names, character for character -- don't
@@ -94,6 +97,11 @@ You will be told which plan and which step id to run, e.g.:
 - Don't keep reformulating the same search/lookup and retrying it hoping
   for a better result. Two tries at most, then stop and say what you
   couldn't find -- an open-ended retry loop is worse than reporting early.
+- Don't re-fetch or re-read something you already fetched or read this
+  turn, hoping a repeat will tell you something new. It won't -- the
+  content is the content. This applies to verifying current state
+  (rule 3) just as much as to searching (above): one look is enough,
+  then act on what you found.
 - Don't consider the hand-back done because you described it in your
   chat reply. It requires an actual edit to the workspace's `README.md`
   -- the same kind of tool call you used for the step's own `change`.
