@@ -7,12 +7,15 @@ Written with `.github/prompts/plan-change.prompt.md`, following
 **Rewritten 2026-08-25 to actually serve the goal: make this doable by a
 local model.** The first version described *what* each step should
 decide; that's still frontier work, just done here in advance instead of
-left for whoever executes the step. Every step below now carries the
-real, literal content or exact command sequence to apply -- the residual
-work is transcription and running specified checks, not judgment. Only
-one step (`media-v2-06`, Jellyfin's SSO plugin) stays a manual procedure,
-and only because that plugin is genuinely UI-only with no config-file or
-API path -- confirmed by checking its own docs, not assumed.
+left for whoever executes the step. Every step block below now carries
+the real, literal content or exact command sequence to apply -- the
+residual work is transcription and running specified checks, not
+judgment. Two things in this plan are genuinely not step blocks at all,
+and are written as plain operator instructions instead:
+`media-v2-02-scaffold` (running `scaffold-stack.sh` directly) and
+`media-v2-06-jellyfin-sso-plugin` (a UI-only procedure, confirmed by
+checking the plugin's own docs, not assumed). Everything else is a real
+step block, meant to be run through `implement-step` as-is.
 
 **Not a replacement plan.** Legacy `media-stack` (VMID 102) keeps running,
 untouched, for as long as the operator wants.
@@ -61,7 +64,6 @@ Administration > Settings in the browser."
 ```yaml
 id: media-v2-00-create-media-seg-zone
 title: Create media_seg SDN zone (VLAN 80, 192.168.80.0/24)
-model_hint: local
 depends_on: []
 
 change: >
@@ -140,7 +142,6 @@ gates:
 ```yaml
 id: media-v2-01-stack-request
 title: Author stack-request.yaml for the combined media-stack-v2
-model_hint: local
 depends_on: [media-v2-00-create-media-seg-zone]
 
 change: >
@@ -291,37 +292,22 @@ gates:
     critical: true
 ```
 
-## Step: media-v2-02-scaffold
+## Operator step: media-v2-02-scaffold
 
-```yaml
-id: media-v2-02-scaffold
-title: Run the stack scaffolder (operator step)
-model_hint: manual
-depends_on: [media-v2-01-stack-request]
+Not a step block -- this is the operator running a command directly, not
+something to hand to `implement-step`. Depends on `media-v2-01-stack-request`
+(the `stack-request.yaml` it needs as input). Steps after this one
+(`media-v2-03` onward) depend on it having landed.
 
-change: >
-  Operator runs terraform/lxc/scaffold-stack.sh media-stack-v2 directly.
-
-scope:
-  allowed_paths:
-    - terraform/lxc/stacks/media-stack-v2/
-  forbidden_actions:
-    - "Hand-editing any of the five generated files if the scaffolder fails partway -- report which validator failed instead"
-    - "Any terragrunt or provision.sh command"
-
-gates:
-  - id: scaffold-exits-clean
-    cmd: "terraform/lxc/scaffold-stack.sh media-stack-v2"
-    expect: "exit 0"
-    critical: true
-```
+Run `terraform/lxc/scaffold-stack.sh media-stack-v2` directly. If it fails
+partway, don't hand-edit any of the five generated files -- check which
+validator failed and re-run instead.
 
 ## Step: media-v2-03-edge-yaml
 
 ```yaml
 id: media-v2-03-edge-yaml
 title: Author edge.yaml with both routes (jellyfin, immich)
-model_hint: local
 depends_on: [media-v2-02-scaffold]
 
 change: >
@@ -401,7 +387,6 @@ do not apply.
 ```yaml
 id: media-v2-04-extend-oidc-whitelist
 title: Add jellyfin/immich routes to discover-authentik-edge.py's whitelist
-model_hint: local
 depends_on: [media-v2-03-edge-yaml]
 
 change: >
@@ -468,7 +453,6 @@ gates:
 ```yaml
 id: media-v2-05-immich-oauth-config
 title: Add Immich's OAuth config file, templated from the reconciled Authentik client
-model_hint: local
 depends_on: [media-v2-04-extend-oidc-whitelist]
 
 change: >
@@ -518,47 +502,32 @@ gates:
     critical: true
 ```
 
-## Step: media-v2-06-jellyfin-sso-plugin
+## Operator step: media-v2-06-jellyfin-sso-plugin
 
-Genuinely UI-only, not a file to write -- confirmed by checking the
-plugin's own docs, which describe no config-file or API path. Every
-value needed is already known; this step is a literal procedure, just
-not a shell command.
+Not a step block -- genuinely UI-only, confirmed by checking the plugin's
+own docs, which describe no config-file or API path. Depends on
+`media-v2-04-extend-oidc-whitelist` having landed (its output values are
+what get typed in below).
 
-```yaml
-id: media-v2-06-jellyfin-sso-plugin
-title: Install and configure jellyfin-plugin-authentik (UI procedure)
-model_hint: local
-depends_on: [media-v2-04-extend-oidc-whitelist]
+In Jellyfin's admin dashboard (Dashboard > Plugins > Repositories), add
+repository URL exactly:
+<https://scottfridwin.github.io/jellyfin-plugin-authentik/manifest.json>
+Then Dashboard > Plugins > Catalog, install "Authentik SSO", restart
+Jellyfin when prompted. Then Dashboard > Plugins > Authentik SSO, fill in
+exactly these three fields (values are the reconciled output from
+media-v2-04's Authentik client, already known at this point -- no
+guessing): Authentik URL = https://{{ lab_fqdn_authentik }}, Client ID =
+value of JELLYFIN_OAUTH_CLIENT_ID, Client Secret = value of
+JELLYFIN_OAUTH_CLIENT_SECRET. Save. In Authentik itself, confirm the
+jellyfin route's OAuth2 provider has redirect URI
+`https://jellyfin.${LAB_DOMAIN}/authentik/callback` and scopes
+openid/profile/email (already set correctly by media-v2-04's redirect-URI
+branch and reconcile-authentik-edge.py's default scope list -- this is a
+confirmation, not a new decision). Keep Jellyfin's existing
+local-password login enabled until SSO login is verified working.
 
-change: >
-  In Jellyfin's admin dashboard (Dashboard > Plugins > Repositories),
-  add repository URL exactly:
-  https://scottfridwin.github.io/jellyfin-plugin-authentik/manifest.json
-  Then Dashboard > Plugins > Catalog, install "Authentik SSO", restart
-  Jellyfin when prompted. Then Dashboard > Plugins > Authentik SSO,
-  fill in exactly these three fields (values are the reconciled output
-  from media-v2-04's Authentik client, already known at this point --
-  no guessing): Authentik URL = https://{{ lab_fqdn_authentik }},
-  Client ID = value of JELLYFIN_OAUTH_CLIENT_ID, Client Secret = value
-  of JELLYFIN_OAUTH_CLIENT_SECRET. Save. In Authentik itself, confirm
-  the jellyfin route's OAuth2 provider has redirect URI
-  https://jellyfin.${LAB_DOMAIN}/authentik/callback and scopes
-  openid/profile/email (already set correctly by media-v2-04's redirect-
-  URI branch and reconcile-authentik-edge.py's default scope list --
-  this is a confirmation, not a new decision).
-
-scope:
-  allowed_paths: []
-  forbidden_actions:
-    - "Disabling Jellyfin's existing local-password login while testing -- keep it available until SSO login is verified working"
-
-gates:
-  - id: plugin-installed
-    cmd: "curl -s http://192.168.80.10:8096/Plugins | python3 -c \"import json,sys; d=json.load(sys.stdin); exit(0 if any('Authentik' in p.get('Name','') for p in d) else 1)\""
-    expect: "exit 0"
-    critical: true
-```
+Confirm with: `curl -s http://192.168.80.10:8096/Plugins` should list a
+plugin with "Authentik" in its name.
 
 ## Step: media-v2-07-bring-across-existing-users
 
@@ -569,7 +538,6 @@ mechanical.
 ```yaml
 id: media-v2-07-bring-across-existing-users
 title: Bring existing Jellyfin users and watch history into media-stack-v2
-model_hint: local
 depends_on: [media-v2-02-scaffold]
 
 change: >

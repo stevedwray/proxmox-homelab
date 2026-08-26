@@ -14,12 +14,16 @@ Written with `.github/prompts/plan-change.prompt.md` per
 `docs/agent-design/step-packet-schema.md`. See `plan.md` for the full
 step-by-step plan, research, and decisions.
 
-**All 8 steps carry literal content or exact command sequences, not
-just decisions to make** -- rewritten 2026-08-25 so the plan is actually
-usable by a local model via `implement-step`, not just by a frontier
-one. Only `media-v2-06` (Jellyfin's SSO plugin) stays a manual
-procedure, because that plugin is genuinely UI-only with no config-file
-or API path.
+**Every step block carries literal content or exact command sequences,
+not just decisions to make** -- rewritten 2026-08-25 so the plan is
+actually usable by a local model via `implement-step`, not just by a
+frontier one. Two things in the plan are genuinely not step blocks at
+all -- plain operator instructions instead: `media-v2-02-scaffold`
+(running `scaffold-stack.sh` directly) and
+`media-v2-06-jellyfin-sso-plugin` (a UI-only procedure, no config-file
+or API path). Every real step block is unconditionally meant for the
+local model to run via `implement-step`, which writes its hand-back
+into this file -- see the Status section below.
 
 ## Quick facts
 
@@ -33,3 +37,19 @@ or API path.
 | Jellyfin SSO | `jellyfin-plugin-authentik` (scottfridwin) |
 | Auth wiring | **not** a drop-in -- `discover-authentik-edge.py` has a hardcoded per-`(stack, route)` whitelist (6 existing entries: Harbor/Grafana/Portainer/Technitium/OpenWebUI/OpenSearch), each with its own redirect-URI branch. Adding Jellyfin+Immich means editing that shared script carefully, not just writing an `edge.yaml`. |
 | Legacy media-stack | stays running, untouched. Not destroyed, not scheduled for retirement by this plan. |
+
+## Step status
+
+Updated by the local model's hand-back after each `implement-step` run
+(see `.github/prompts/implement-step.prompt.md`) -- the actual edit made
+and the actual gate results, not a summary from chat. Read this before
+authoring or approving the next step.
+
+- `media-v2-00-create-media-seg-zone`: not started
+- `media-v2-01-stack-request`: not started
+- `media-v2-02-scaffold` (operator step, not run via `implement-step`): not started
+- `media-v2-03-edge-yaml`: not started
+- `media-v2-04-extend-oidc-whitelist`: not started
+- `media-v2-05-immich-oauth-config`: not started
+- `media-v2-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started
+- `media-v2-07-bring-across-existing-users`: not started

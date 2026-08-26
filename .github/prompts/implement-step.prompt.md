@@ -10,9 +10,14 @@ tools: ['edit', 'read', 'search', 'execute', 'docs-rag/*']
 Use this to execute **one named step** from a plan doc already written by
 `plan-change`. This is the prompt meant for the local model, working in
 Repo Tools mode. It deliberately does not do any open-ended reasoning --
-that already happened when the plan was written. Everything you need
-is in the step block itself (`change`, `scope`, `gates`) -- you don't
-need to read anything else to understand what those mean.
+that already happened when the plan was written. Every step block you
+are given is, by construction, meant for you to execute as-is -- the
+frontier model that wrote the plan already resolved anything that
+needed judgment or a human/operator action into either literal content
+in `change`, or plain prose in the plan doc outside any step block.
+Everything you need is in the step block itself (`change`, `scope`,
+`gates`) -- you don't need to read anything else to understand what
+those mean.
 
 You will be told which plan and which step id to run, e.g.:
 "Run implement-step against docs/<workspace>/plan.md, step <workspace>-01-<slug>."
@@ -28,29 +33,28 @@ You will be told which plan and which step id to run, e.g.:
    workspace's `README.md` status, or ask), stop and say so -- do not do
    the dependency yourself and do not skip ahead.
 
-3. **Check `model_hint`.** If it's `manual`, stop immediately and say
-   this step is for the operator to run themselves -- do not attempt the
-   `change` at all, even if it looks simple. If it's `frontier`, stop
-   and say this step needs a stronger model than you -- don't attempt it
-   either.
-
-4. **Do exactly the `change` described** -- nothing broader. Touch only
+3. **Do exactly the `change` described** -- nothing broader. Touch only
    paths under `scope.allowed_paths`. Do not do anything listed under
    `scope.forbidden_actions`.
 
-5. **Run every gate** listed for the step, in order, exactly as written.
+4. **Run every gate** listed for the step, in order, exactly as written.
    Record the actual output, not a paraphrase.
 
-6. **Report, then stop:**
+5. **Write a hand-back, then stop.** Update the workspace's `README.md`
+   (same directory as the plan.md) with a short, durable record of what
+   happened -- this is what the frontier model reads later to review the
+   step, so it needs to survive after this chat session ends:
    - which step you ran
    - the exact edit you made (file + diff summary)
    - each gate's command and its actual result (pass/fail)
-   - if every `critical: true` gate passed: say the step is done
-   - if any `critical: true` gate failed: say so plainly, leave the change
-     in place for a human to look at, and do not retry with a different
-     approach on your own
+   - if every `critical: true` gate passed: mark the step done
+   - if any `critical: true` gate failed: say so plainly, leave the
+     change in place, and do not retry with a different approach on
+     your own
+   Report the same thing in chat too, but the README update is the part
+   that persists.
 
-7. **Do not continue to the next step.** One invocation of this prompt is
+6. **Do not continue to the next step.** One invocation of this prompt is
    one step. If you finish and there's an obvious next step, name it and
    wait -- don't chain into it.
 

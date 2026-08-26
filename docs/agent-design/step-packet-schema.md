@@ -31,13 +31,6 @@ required, unlike the `.git/ai` machinery.
 ```yaml
 id: immich-01-compose-service          # <workspace>-NN-slug, stable once written
 title: Add Immich compose service definition
-model_hint: local                      # local = safe to hand to the local model as-is
-                                        # frontier = needs a strong model (open
-                                        # design judgment, cross-file reasoning,
-                                        # or a call this doc can't fully specify)
-                                        # manual = operator runs this directly --
-                                        # not a judgment call, just not appropriate
-                                        # for whichever loop is executing local steps
 depends_on: []                         # ids of steps that must land first
 
 change: >
@@ -65,11 +58,16 @@ Field notes:
 
 - **`id`** — prefix with the workspace name so ids stay globally unique
   across plans (`immich-01-...`, not `01-...`).
-- **`model_hint`** — the one field that makes this schema useful for the
-  local-model question specifically. A plan author (the frontier model writing
-  the plan) marks each step `local`, `frontier`, or `manual` at write time, so an
-  executor picking a step doesn't have to guess whether it's actually
-  bounded enough to attempt.
+- **There is no `model_hint` field.** This is a one-model process: the
+  frontier model plans, the local model executes, full stop. Every step
+  block in a plan.md is unconditionally local-model work by construction
+  -- the frontier model resolves all judgment before writing the step,
+  never after. Anything that isn't actually executable by the local
+  model (an operator running a command directly, a browser-only UI
+  procedure, a human verification a script can't perform) is never
+  written as a step block at all -- it's plain prose in the plan doc
+  instead, outside the fenced YAML, so there's nothing for the local
+  model to misinterpret as something to attempt.
 - **`change`** — must name exact files and an exact edit. If you can't
   write this in three sentences without hedging, the step is still too big
   — split it.
@@ -116,7 +114,7 @@ directly:
 When writing a step's `change`, decide which of these two it is and write
 accordingly -- don't default to prose instructions and hope.
 
-## Reuse `scaffold-stack.sh` for new stacks specifically -- but not as a local-model step
+## Reuse `scaffold-stack.sh` for new stacks specifically -- but not as a step block
 
 Adding a brand new stack is common enough that it already has a dedicated,
 validated tool: `terraform/lxc/scaffold-stack.sh <stack-name>`, driven by a
@@ -126,23 +124,22 @@ sub-agent steps (`terraform/lxc/README.md`'s "Scaffolding a new stack with a
 local coding agent" section). For a new-stack plan, prefer this over
 hand-written file-edit steps:
 
-- **One `model_hint: frontier` step**: research the real facts (zone/IP,
-  resources, what the compose file actually needs) and author
-  `stack-request.yaml`, applying the literal-vs-constrained distinction
-  above field by field.
-- **Running `scaffold-stack.sh <stack-name>` itself is manual
-  (`model_hint: manual`), not something to hand to whichever local model
-  is executing this plan's other steps.** Found for real, not
-  theoretically: it internally depends on a separate tool the executing
-  loop doesn't have -- handing it over sent that loop looking for
-  something outside its own environment. Before recommending *any*
-  existing script as a step for the local model, check what it actually
-  invokes underneath; don't assume a script is plain, self-contained
-  shell work just because it looks like one from its name. And when a
-  step turns out not to be for the local model, just mark it
-  `model_hint: manual` and give it the plain instruction -- don't
-  explain what it was almost handed instead. That explanation is the
-  thing you're trying to keep out of its context in the first place.
+- **One real step block**: research the real facts (zone/IP, resources,
+  what the compose file actually needs) and author `stack-request.yaml`,
+  applying the literal-vs-constrained distinction above field by field.
+- **Running `scaffold-stack.sh <stack-name>` itself is not a step block at
+  all -- it's plain prose, an operator instruction sitting outside the
+  fenced YAML.** Found for real, not theoretically: it internally depends
+  on a separate tool the local model's execution loop doesn't have --
+  writing it as a step the local model could pick up sent that loop
+  looking for something outside its own environment. Before recommending
+  *any* existing script as a step, check what it actually invokes
+  underneath; don't assume a script is plain, self-contained shell work
+  just because it looks like one from its name. And when something turns
+  out not to be local-model work, just write the plain instruction as
+  prose -- don't explain what it was almost written as a step instead.
+  That explanation is the thing you're trying to keep out of the local
+  model's context in the first place.
 
 ## When to escalate to `.git/ai` instead
 
@@ -154,14 +151,24 @@ files is not that — use plan.md steps.
 
 ## How this is consumed
 
-- A frontier model (Claude Code, or a strong Copilot model) writes the plan
-  using `.github/prompts/plan-change.prompt.md`.
-- The local model (or any executor) runs one step at a time using
+This is a one-model-plans, one-model-executes loop, not a mixed-tier
+system:
+
+- The frontier model writes the plan using
+  `.github/prompts/plan-change.prompt.md` -- every step block it writes is
+  already, unconditionally, local-model work.
+- The local model runs one step at a time using
   `.github/prompts/implement-step.prompt.md`, which enforces: do only the
-  named step, touch only `scope.allowed_paths`, run every gate, report
-  pass/fail, stop -- never chain into the next step on its own.
-- A human (or a reviewer pass) reads the diff and the gate output before the
-  next step starts.
+  named step, touch only `scope.allowed_paths`, run every gate, then
+  write a **hand-back** -- a real, durable record of what happened (the
+  edit made, each gate's actual result) into the workspace's `README.md`,
+  not just a chat reply that disappears with the session -- and stop.
+  Never chain into the next step on its own.
+- The frontier model reads that hand-back before authoring or approving
+  the next step -- especially anything touching real user data or
+  shared/production config, no matter how mechanical the step looked on
+  paper. The hand-back is what makes that review possible without
+  re-deriving what happened from scratch.
 
 See `docs/agent-design/implementation-plan.md` for how this fits the wider
 agent architecture, and `docs/workflow/documentation-workspaces.md` for the

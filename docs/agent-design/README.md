@@ -2,9 +2,13 @@
 
 Status: **live, working methodology.** Answers "how do I turn a big,
 open-ended question into work a local model can actually
-execute" -- validated end-to-end on a real task, not just designed. See
-`docs/media-stack-v2/` for the worked example: 8 real steps, 7 of them
-literal enough to hand to a local model unsupervised.
+execute" -- validated end-to-end on a real task, not just designed, and
+separately validated against a battery of small, contained,
+proxy-observed tests exercising the real failure modes (retry loops,
+gate failures, dependency gating, no-chaining). One model plans
+(frontier), one model executes (local) -- there is no third tier and no
+per-step judgment call for the executor to make. See
+`docs/media-stack-v2/` for the worked example.
 
 ## How to use this, starting from nothing
 
@@ -26,14 +30,18 @@ stack, a cross-cutting change.
 2. **Once the plan is committed**, switch to your local model (VS Code Copilot,
    `Repo Tools` agent mode) and run `/implement-step`, naming the plan
    and the step id (e.g. "run implement-step against
-   docs/media-stack-v2/plan.md, step media-v2-02-scaffold"). It fetches
-   the plan itself via `get_document` -- committing to `docs/` triggers
-   this repo's auto-reindex hook, so there's no copy-pasting content
-   into chat. `.github/prompts/implement-step.prompt.md` is what governs
-   its behavior: do exactly the named step, run its gates, report, stop.
-   One invocation, one step -- it does not chain into the next one.
+   docs/media-stack-v2/plan.md, step media-v2-01-stack-request"). It
+   fetches the plan itself via `get_document` -- committing to `docs/`
+   triggers this repo's auto-reindex hook, so there's no copy-pasting
+   content into chat. `.github/prompts/implement-step.prompt.md` is what
+   governs its behavior: do exactly the named step, run its gates, write
+   a hand-back into the workspace's `README.md`, stop. One invocation,
+   one step -- it does not chain into the next one.
 
-3. **Review each step's result before the next one runs.** Especially
+3. **Read the hand-back before the next step runs.** The local model's
+   `README.md` update is a real, durable record of what happened -- the
+   actual edit, the actual gate results -- not just a chat reply that
+   disappears with the session. Review it especially closely for
    anything touching real user data or shared/production config, no
    matter how mechanical the step looked on paper.
 
@@ -41,9 +49,9 @@ stack, a cross-cutting change.
 
 | File | Role |
 |---|---|
-| [step-packet-schema.md](step-packet-schema.md) | The step shape itself (`id`/`model_hint`/`change`/`scope`/`gates`), why it's a lighter weight class than `.git/ai`'s YAML state machine, and the literal-vs-constrained content lesson from the Minecraft exemplar |
-| [`.github/prompts/plan-change.prompt.md`](../../.github/prompts/plan-change.prompt.md) | The frontier-model side: research → ask the operator about genuine judgment calls → write bounded, gated steps → commit |
-| [`.github/prompts/implement-step.prompt.md`](../../.github/prompts/implement-step.prompt.md) | The local-model side: fetch one step, execute exactly what's written, run gates, report, stop |
+| [step-packet-schema.md](step-packet-schema.md) | The step shape itself (`id`/`change`/`scope`/`gates` -- no tiering field, every step block is unconditionally local-model work), why it's a lighter weight class than `.git/ai`'s YAML state machine, and the literal-vs-constrained content lesson from the Minecraft exemplar |
+| [`.github/prompts/plan-change.prompt.md`](../../.github/prompts/plan-change.prompt.md) | The frontier-model side: research → ask the operator about genuine judgment calls → write bounded, gated steps (anything needing a human becomes plain prose, not a step block) → commit → read each hand-back before advancing |
+| [`.github/prompts/implement-step.prompt.md`](../../.github/prompts/implement-step.prompt.md) | The local-model side: fetch one step, execute exactly what's written, run gates, write a hand-back into the workspace's `README.md`, stop |
 
 ## Why this exists
 
@@ -63,9 +71,9 @@ genuinely useful against this repo, not just technically wired up.
 
 `docs/media-stack-v2/` -- a real plan (replace legacy `media-stack` with
 Jellyfin+Immich, Authentik SSO, watch-history migration) taken through
-two full passes: the first had 7 of 8 steps still requiring a frontier
-model because it described decisions rather than resolving them; the
-second rewrote every step with literal content, dropping that to 1 of 8
-(and that one only because the mechanism it depends on -- a Jellyfin
-plugin -- is genuinely UI-only, confirmed by checking, not assumed).
-Read both the plan and its git history for the concrete before/after.
+two full passes: the first described decisions rather than resolving
+them, leaving most steps unbounded; the second rewrote every step with
+literal content, leaving only two genuinely operator-only actions
+(running `scaffold-stack.sh`, a UI-only Jellyfin plugin install) as
+plain prose rather than step blocks. Read both the plan and its git
+history for the concrete before/after.
