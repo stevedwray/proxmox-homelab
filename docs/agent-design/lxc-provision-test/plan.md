@@ -364,9 +364,9 @@ gates:
     cmd: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
     expect: "pve-test-vm"
     critical: true
-  - id: provision-exits-clean
-    cmd: "./with-secrets scripts/provision.sh --stack smoketest-stack"
-    expect: "exit 0"
+  - id: provision-actually-ran-not-skipped
+    cmd: "./with-secrets scripts/provision.sh --stack smoketest-stack 2>&1 | tee /tmp/lxcprov-provision-out.log; ! grep -qE 'SKIP smoketest-stack:' /tmp/lxcprov-provision-out.log"
+    expect: "exit 0 (provision.sh exits 0 even when it silently skips a stack -- e.g. because inventory.yml doesn't exist yet -- so checking bare exit code alone is not enough; this gate fails explicitly if the output shows the stack was skipped rather than actually run)"
     critical: true
 ```
 
