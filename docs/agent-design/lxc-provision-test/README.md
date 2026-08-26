@@ -36,7 +36,10 @@ the test gets.
   - Ran `grep -rl "vmid: 99010" terraform/lxc/stacks/*/stack.yaml` → exit code 1 (no matches, VMID free) ✅
   - Ran `ping -c 2 -W 1 192.168.1.99` → 100% packet loss, exit code 1 (IP appears free) ✅
   - No file changes made — this step only checks current state
-- `lxcprov-01-stack-request`: not started
+- `lxcprov-01-stack-request`: **done** (2026-08-26)
+  - Created `terraform/lxc/stacks/smoketest-stack/stack-request.yaml` with exact content from the plan: stack_yaml, compose_requirements, compose_forbidden, contract_facts, and playbook_content sections
+  - Gate `stack-request-exists`: ✅ Pass (exit code 0 — file exists)
+  - Gate `stack-request-parses`: ✅ Pass (exit code 0 — valid YAML)
 - `lxcprov-02-scaffold` (operator step, not run via `implement-step`): not started
 - `lxcprov-03-verify-generated-files`: not started
 - `lxcprov-04-create-environment-config`: not started
