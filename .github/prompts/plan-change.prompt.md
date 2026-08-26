@@ -130,6 +130,14 @@ execution doesn't have to repeat it.
    don't author or approve the next step until that's resolved. If the
    hand-back looks wrong or incomplete for what the step asked for, say
    so rather than assuming the local model's own report was accurate.
+   **A hand-back that's simply missing -- the README still says "not
+   started" even though the chat reply claimed success -- is at least as
+   important to catch as a wrong one.** This happens in practice,
+   especially on longer or more eventful steps. When it does: verify
+   the step's actual real-world result yourself (read the file, check
+   the gate command's output, whatever's appropriate), then write the
+   accurate hand-back into the README yourself rather than proceeding
+   on the strength of an unrecorded chat claim.
 
 ## What not to do
 

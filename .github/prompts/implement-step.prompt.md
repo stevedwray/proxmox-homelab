@@ -104,7 +104,12 @@ not.
 
 7. **Then report the same thing in chat, and stop.** One invocation of
    this prompt is one step. If you finish and there's an obvious next
-   step, name it and wait -- don't chain into it.
+   step, name it and wait -- don't chain into it. **Before you write
+   this chat reply, check: does the `README.md` edit from step 6 already
+   exist?** If you're about to summarize what happened without having
+   actually made that edit yet, stop and make it now, first -- a chat
+   reply is not a valid substitute for it, no matter how complete the
+   reply sounds.
 
 ## What not to do
 
