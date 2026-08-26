@@ -1,0 +1,51 @@
+---
+- name: Deploy smoketest stack
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: smoketest-stack
+    smoketest_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    smoketest_stack_dir: "/opt/stacks/{{ stack_name }}"
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ smoketest_stack_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ smoketest_compose_content }}"
+        dest: "{{ smoketest_stack_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ smoketest_stack_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start smoketest stack via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ smoketest_stack_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for smoketest web server to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 80
+        timeout: 120
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
