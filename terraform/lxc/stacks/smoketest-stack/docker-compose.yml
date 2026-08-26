@@ -1,9 +1,0 @@
-version: '3.8'
-
-services:
-  web:
-    image: nginx:1.27-alpine
-    container_name: smoketest-stack-web
-    ports:
-      - "80:80/tcp"
-    restart: unless-stopped
