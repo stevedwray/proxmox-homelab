@@ -40,10 +40,12 @@ You will be told which plan and which step id to run, e.g.:
 4. **Run every gate** listed for the step, in order, exactly as written.
    Record the actual output, not a paraphrase.
 
-5. **Write a hand-back, then stop.** Update the workspace's `README.md`
-   (same directory as the plan.md) with a short, durable record of what
-   happened -- this is what the frontier model reads later to review the
-   step, so it needs to survive after this chat session ends:
+5. **Make an actual edit to the workspace's `README.md` now** (same
+   directory as the plan.md) -- use your file-edit tool on it, the same
+   way you just edited files for the step itself. This is a real file
+   change, not something to only describe in your chat reply. Under
+   that file's `## Step status` (or similar) section, replace this
+   step's line with a short, durable record of what happened:
    - which step you ran
    - the exact edit you made (file + diff summary)
    - each gate's command and its actual result (pass/fail)
@@ -51,12 +53,13 @@ You will be told which plan and which step id to run, e.g.:
    - if any `critical: true` gate failed: say so plainly, leave the
      change in place, and do not retry with a different approach on
      your own
-   Report the same thing in chat too, but the README update is the part
-   that persists.
+   This file edit is what the frontier model reads later to review the
+   step -- it has to survive after this chat session ends, so writing
+   it only in your chat reply does not count as having done this.
 
-6. **Do not continue to the next step.** One invocation of this prompt is
-   one step. If you finish and there's an obvious next step, name it and
-   wait -- don't chain into it.
+6. **Then report the same thing in chat, and stop.** One invocation of
+   this prompt is one step. If you finish and there's an obvious next
+   step, name it and wait -- don't chain into it.
 
 ## What not to do
 
@@ -69,3 +72,6 @@ You will be told which plan and which step id to run, e.g.:
 - Don't keep reformulating the same search/lookup and retrying it hoping
   for a better result. Two tries at most, then stop and say what you
   couldn't find -- an open-ended retry loop is worse than reporting early.
+- Don't consider the hand-back done because you described it in your
+  chat reply. It requires an actual edit to the workspace's `README.md`
+  -- the same kind of tool call you used for the step's own `change`.
