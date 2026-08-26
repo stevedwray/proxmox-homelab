@@ -15,6 +15,10 @@ while production clients now resolve through the Technitium-backed MikroTik
 path after the production delegate repoint on 2026-07-04. CoreDNS remains
 deployed only as the old authority/rollback target.
 
+**Phase 6a complete (2026-08-27):** `dns-stack` is now frozen -- nothing in
+the routine provisioning/reconciliation path writes to it anymore. See
+Phase 6 below for what changed and how it was validated.
+
 Tasks 1, 3, 4 below are decided — see [decisions.md](./decisions.md). Task 2
 (requirements enumeration) and task 5 (cutover procedure) are captured
 below.
@@ -496,6 +500,35 @@ lowest-risk step (stop CoreDNS from looking/being live) happens first,
 and the actual resource deletion happens last, after a soak period.
 
 ### Phase 6a — Freeze: stop active reconciliation, keep the container inert
+
+**Status: complete (2026-08-27).** All four items below done and validated
+on `pve-test-vm`. Notes on how validation actually ran, since it deviated
+from item 4's literal wording:
+
+- Items 1-3 done exactly as scoped: `provision.sh --stack dns-stack` now
+  no-ops with a clear message (dead CoreDNS-regen block removed, not the
+  `--stack` target itself); `reconcile-edge.py` renders/probes Technitium
+  by default (new `EGR132`/`EGR203` codes) with CoreDNS opt-in via
+  `--coredns` and no longer blocking by default; `docs/teardown-test/inventory.md`
+  updated (`depends_on` changed, `dns-stack` dropped from deploy/destroy
+  order, still listed as in-scope inventory).
+- Item 4 ran narrower than `--tier platform`: this change touches only
+  `reconcile-edge.py` (a standalone tool, not any stack's Ansible) and the
+  `dns-stack` skip path in `provision.sh` -- no other stack's deploy
+  behavior changed, so a full platform-tier redeploy was disproportionate
+  blast radius for what actually changed. Instead: (a) dry-run parity --
+  real `pve-test-vm` manifests render identically through the new default
+  path as the old one, 15 generated records either way; (b)
+  `provision.sh --stack dns-stack` confirmed as a true no-op, zero network
+  contact; (c) a live `provision.sh --stack technitium-stack` redeploy
+  (the actual "small real-consumer sample," since Technitium is the stack
+  whose default path changed) completed clean (`ok=87 changed=2 failed=0`)
+  with its smoke test confirming real parity-zone DNS resolution across
+  every routed stack.
+- Found and left alone as pre-existing, unrelated to this change: `terraform/lxc`'s
+  test suite has significant fixture/validator drift (`EMV002`, 44
+  failures + 24 errors of 78 tests repo-wide) predating this change,
+  confirmed identical before/after against the unmodified baseline.
 
 Goal: nothing writes to CoreDNS anymore, so it stops being a place a future
 session could plausibly land a change. The container stays deployed and
