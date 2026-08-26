@@ -40,7 +40,7 @@ the test gets.
   - Created `terraform/lxc/stacks/smoketest-stack/stack-request.yaml` with exact content from the plan: stack_yaml, compose_requirements, compose_forbidden, contract_facts, and playbook_content sections
   - Gate `stack-request-exists`: ✅ Pass (exit code 0 — file exists)
   - Gate `stack-request-parses`: ✅ Pass (exit code 0 — valid YAML)
-- `lxcprov-02-scaffold` (operator step, not run via `implement-step`): not started
+- `lxcprov-02-scaffold` (operator step, not run via `implement-step`): **done, authored directly by the frontier model, no OpenCode used** (2026-08-26) — created all 5 files (`stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`, `terragrunt.hcl`, `terraform/lxc/ansible/playbooks/deploy-smoketest-stack.yml`) from the literal values in `stack-request.yaml`, matching `terraform/lxc/stacks/harness-target/`'s real formats. Real validators both passed: `validate-compose.sh` and `ansible-playbook --syntax-check`.
 - `lxcprov-03-verify-generated-files`: not started
 - `lxcprov-04-create-environment-config`: not started
 - `lxcprov-05-terragrunt-apply`: not started -- **do not run without explicit operator go-ahead**
