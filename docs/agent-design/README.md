@@ -38,12 +38,19 @@ stack, a cross-cutting change.
    a hand-back into the workspace's `README.md`, stop. One invocation,
    one step -- it does not chain into the next one.
 
-3. **Read the hand-back before the next step runs.** The local model's
-   `README.md` update is a real, durable record of what happened -- the
-   actual edit, the actual gate results -- not just a chat reply that
-   disappears with the session. Review it especially closely for
-   anything touching real user data or shared/production config, no
-   matter how mechanical the step looked on paper.
+3. **Read the hand-back before the next step runs -- and be ready to
+   write it yourself if it's missing.** The local model's `README.md`
+   update is meant to be a real, durable record of what happened, but in
+   practice it's unreliable on longer or more eventful steps (several
+   tool calls, a self-correction along the way): the step itself lands
+   correctly, gates genuinely pass, the chat reply describes it all
+   accurately -- and the README simply never gets edited. Three
+   different prompt-wording fixes for this were tried and each still
+   missed it at least once. Don't treat a missing hand-back as blocking
+   -- verify the step's actual real-world result yourself (read the
+   file, re-run the gate, whatever's appropriate) and write the record
+   in. This is now the expected way the loop actually runs, not a rare
+   exception to watch for.
 
 ## The three files that make this work
 
