@@ -59,6 +59,24 @@ user ever sees it. Upgrading to real streaming with post-hoc validation
 and retry) is possible later if the incremental UX turns out to matter
 more than it seems right now.
 
+Token-usage stats (2026-08-27): every real call to Ollama returns a real
+usage block (prompt_tokens/completion_tokens/total_tokens -- confirmed
+live against this deployment's own Ollama, not assumed from generic
+OpenAI-API docs). This proxy now tracks cumulative totals across every
+upstream call it makes, including a discarded degenerate response and its
+retry (both really did consume compute):
+
+    GET  /proxy/stats        -- current cumulative totals as JSON
+    POST /proxy/stats/reset  -- zero the counters, returns the zeroed
+                                 snapshot (call this before a measured
+                                 span of work, e.g. one implement-step
+                                 invocation, then GET /proxy/stats after
+                                 it finishes to see just that span's cost)
+
+Every exchange's own usage is also in this proxy's regular log line
+(log_exchange()), so per-call cost is visible in real time without
+polling the stats endpoint.
+
 Usage:
     OLLAMA_UPSTREAM=http://framework.gibbsgreatly.xyz:11434 \
         python3 scripts/ollama-reliability-proxy/proxy.py
@@ -74,6 +92,7 @@ import json
 import logging
 import os
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -91,6 +110,69 @@ logging.basicConfig(
     stream=sys.stderr,
 )
 log = logging.getLogger("ollama-reliability-proxy")
+
+# Cumulative token-usage/request stats, exposed via GET /proxy/stats and
+# resettable via POST /proxy/stats/reset (see module docstring "Token-usage
+# stats" section below). ThreadingHTTPServer handles each request on its own
+# thread, so this is guarded by a lock rather than assumed single-threaded.
+_stats_lock = threading.Lock()
+_stats = {
+    "request_count": 0,
+    "retry_count": 0,
+    "prompt_tokens": 0,
+    "completion_tokens": 0,
+    "total_tokens": 0,
+    "since": time.time(),
+}
+
+
+def record_usage(usage: dict | None) -> None:
+    """Add one upstream call's token usage to the running totals. Called for
+    every real call to Ollama, including a discarded degenerate response and
+    its retry -- both actually consumed real compute, so both actually
+    count. usage may be missing or empty (e.g. an error response never
+    reached a real completion) -- that's a no-op, not an error."""
+    if not usage:
+        return
+    with _stats_lock:
+        _stats["prompt_tokens"] += int(usage.get("prompt_tokens") or 0)
+        _stats["completion_tokens"] += int(usage.get("completion_tokens") or 0)
+        _stats["total_tokens"] += int(usage.get("total_tokens") or 0)
+
+
+def record_retry() -> None:
+    with _stats_lock:
+        _stats["retry_count"] += 1
+
+
+def record_request() -> None:
+    """Once per client-facing request that got a real answer back (success
+    or a surfaced error) -- regardless of whether it took one upstream call
+    or two (an initial call plus a degenerate-triggered retry)."""
+    with _stats_lock:
+        _stats["request_count"] += 1
+
+
+def get_stats_snapshot() -> dict:
+    with _stats_lock:
+        snapshot = dict(_stats)
+    snapshot["elapsed_seconds"] = round(time.time() - snapshot["since"], 1)
+    return snapshot
+
+
+def reset_stats() -> dict:
+    with _stats_lock:
+        _stats.update(
+            request_count=0,
+            retry_count=0,
+            prompt_tokens=0,
+            completion_tokens=0,
+            total_tokens=0,
+            since=time.time(),
+        )
+        snapshot = dict(_stats)
+    snapshot["elapsed_seconds"] = 0.0
+    return snapshot
 
 
 def is_degenerate(message: dict, finish_reason: str | None) -> str | None:
@@ -115,13 +197,16 @@ def _truncate(text: str, limit: int = 200) -> str:
     return text if len(text) <= limit else text[:limit] + "...(truncated)"
 
 
-def log_exchange(body: dict, message: dict) -> None:
+def log_exchange(body: dict, message: dict, usage: dict | None = None) -> None:
     """Log a real summary of what was asked and what came back. The
     default http.server access-log line (just a status code) gives no
     way to tell what the model actually did -- this is what makes it
     possible to see, from this proxy's own logs, whether a request asked
     a tool to be called, what tool (if any) the model actually chose,
-    and what it said, without dumping full (potentially large) payloads."""
+    and what it said, without dumping full (potentially large) payloads.
+    Also logs this exchange's real token usage (Ollama's OpenAI-compatible
+    endpoint returns a real usage block -- confirmed live, not assumed) so
+    per-call cost is visible without querying /proxy/stats."""
     messages = body.get("messages") or []
     last_user = next((m for m in reversed(messages) if m.get("role") == "user"), None)
     user_summary = _truncate(str((last_user or {}).get("content", "")))
@@ -135,9 +220,12 @@ def log_exchange(body: dict, message: dict) -> None:
         )
     else:
         calls_summary = "none"
+    usage = usage or {}
     log.info(
-        "exchange model=%s user=%r tools_offered=%s -- content=%r tool_calls=%s",
+        "exchange model=%s user=%r tools_offered=%s -- content=%r tool_calls=%s "
+        "usage=(prompt=%s completion=%s total=%s)",
         body.get("model", ""), user_summary, tool_names, content_summary, calls_summary,
+        usage.get("prompt_tokens", "?"), usage.get("completion_tokens", "?"), usage.get("total_tokens", "?"),
     )
 
 
@@ -238,6 +326,9 @@ class Handler(BaseHTTPRequestHandler):
             return None
 
     def do_POST(self):
+        if self.path == "/proxy/stats/reset":
+            self._send_json(200, reset_stats())
+            return
         if self.path != "/v1/chat/completions":
             self._proxy_passthrough()
             return
@@ -259,7 +350,9 @@ class Handler(BaseHTTPRequestHandler):
         if result is None:
             return
         status, completion = result
+        record_usage(completion.get("usage"))
         if status >= 400:
+            record_request()
             self._send_json(status, completion)
             return
 
@@ -267,15 +360,18 @@ class Handler(BaseHTTPRequestHandler):
         reason = is_degenerate(choice.get("message", {}), choice.get("finish_reason"))
         if reason:
             log.warning("degenerate response detected (%s) -- retrying once after unload", reason)
+            record_retry()
             unload_model(model)
             result = self._call_upstream_safe("/v1/chat/completions", upstream_body)
             if result is None:
                 return
             status, completion = result
+            record_usage(completion.get("usage"))
             choice = (completion.get("choices") or [{}])[0]
             reason2 = is_degenerate(choice.get("message", {}), choice.get("finish_reason"))
             if reason2:
                 log.error("still degenerate after retry (%s) -- surfacing as an error, not passing it through", reason2)
+                record_request()
                 self._send_json(
                     502,
                     {
@@ -288,7 +384,8 @@ class Handler(BaseHTTPRequestHandler):
                 return
             log.info("retry succeeded after unload")
 
-        log_exchange(upstream_body, choice.get("message", {}))
+        record_request()
+        log_exchange(upstream_body, choice.get("message", {}), completion.get("usage"))
 
         if client_wanted_stream:
             self._send_sse(sse_wrap(completion))
@@ -296,6 +393,9 @@ class Handler(BaseHTTPRequestHandler):
             self._send_json(status, completion)
 
     def do_GET(self):
+        if self.path == "/proxy/stats":
+            self._send_json(200, get_stats_snapshot())
+            return
         self._proxy_passthrough()
 
     def _proxy_passthrough(self):

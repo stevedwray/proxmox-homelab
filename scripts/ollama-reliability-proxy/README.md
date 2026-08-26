@@ -35,6 +35,26 @@ see `CLAUDE.md`).
 `~/.config/Code/User/chatLanguageModels.json`'s model `url` should be
 `http://192.168.50.11:11435/v1/chat/completions`.
 
+## Token-usage stats (2026-08-27)
+
+The proxy tracks cumulative token usage across every real call it makes
+to Ollama, including a discarded degenerate response and its retry (both
+really consumed compute). Useful for measuring how much a local model
+actually costs to work through a bounded task (e.g. one
+`implement-step` invocation against an `agent-design` plan):
+
+```bash
+curl -s -X POST http://192.168.50.11:11435/proxy/stats/reset   # zero the counters right before
+# ... let the local model run its step ...
+curl -s http://192.168.50.11:11435/proxy/stats                 # read the totals for just that span
+```
+
+Returns `request_count`, `retry_count`, `prompt_tokens`,
+`completion_tokens`, `total_tokens`, `since` (reset timestamp), and
+`elapsed_seconds`. Per-exchange usage is also in the proxy's own log
+line (`docker logs ollama-reliability-proxy`) in real time, without
+polling the stats endpoint.
+
 ## Running it standalone (e.g. for local testing without touching prod)
 
 ```bash
