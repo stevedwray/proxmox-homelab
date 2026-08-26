@@ -42,11 +42,19 @@ You will be told which plan and which step id to run, e.g.:
    fresh check confirms it's already done, say that -- but only after
    actually checking this turn, never before.
 
-4. **Do exactly the `change` described** -- nothing broader. Touch only
-   paths under `scope.allowed_paths`. Do not do anything listed under
-   `scope.forbidden_actions`.
+4. **Do exactly the `change` described** -- nothing broader. Use the
+   exact path(s) `change` names, character for character -- don't
+   substitute a different path even if it seems like a reasonable place
+   for this kind of file. Touch only paths under `scope.allowed_paths`.
+   Do not do anything listed under `scope.forbidden_actions`.
 
-5. **Run every gate** listed for the step, in order, exactly as written.
+5. **Run every gate's `cmd` string exactly as written, byte for byte** --
+   never adjust it to point at wherever you actually put something.
+   The gate's job is to catch a mismatch between what `change` asked for
+   and what you actually did; adapting the gate to fit your own result
+   defeats that -- it turns a real deviation into a fake pass. If the
+   literal gate command fails, that's real information: it means what
+   you did doesn't match `change`, not that the gate needs fixing.
    Record the actual output, not a paraphrase.
 
 6. **Make an actual edit to the workspace's `README.md` now** (same
@@ -74,7 +82,12 @@ You will be told which plan and which step id to run, e.g.:
 
 - Don't improvise beyond what `change` says, even if you can see a
   "better" way -- that judgment call belongs in `plan-change`, not here.
+  This includes file paths: use the exact one named, not a nearby one
+  that seems reasonable.
 - Don't skip a failing gate and report success anyway.
+- Don't edit a gate's `cmd` to match wherever you actually put
+  something. Run the literal string from the plan; if it fails, that
+  failure is the signal that something drifted from `change`.
 - Don't touch files outside `scope.allowed_paths`.
 - Don't run anything under `scope.forbidden_actions`, even if a gate seems
   to need it -- stop and say the step's scope looks wrong instead.
