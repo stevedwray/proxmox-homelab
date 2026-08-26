@@ -72,5 +72,8 @@ the test gets.
   - PLAY RECAP: ok=61 changed=32 unreachable=0 failed=0 skipped=8 — no failures ✅
   - Gate `target-node-is-test-vm`: ✅ Pass (pve-test-vm)
   - Gate `provision-actually-ran-not-skipped`: ✅ Pass (exit code 0 — no "SKIP smoketest-stack:" found in output, provision actually ran)
-- `lxcprov-07-verify-service`: not started
+- `lxcprov-07-verify-service`: **done** (2026-08-26)
+  - Ran `curl -s http://192.168.1.99/` — nginx responded with full default welcome page HTML ✅
+  - Output confirmed: `<title>Welcome to nginx!</title>` and `<h1>Welcome to nginx!</h1>` present in response body
+  - Gate `nginx-responds`: ✅ Pass (exit code 0 — grep found 'Welcome to nginx' in curl output)
 - `lxcprov-08-teardown` (operator step, not run via `implement-step`): not started
