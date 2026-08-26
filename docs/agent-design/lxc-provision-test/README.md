@@ -32,7 +32,10 @@ the test gets.
 
 ## Step status
 
-- `lxcprov-00-preflight-check`: not started
+- `lxcprov-00-preflight-check`: **done** (2026-08-26)
+  - Ran `grep -rl "vmid: 99010" terraform/lxc/stacks/*/stack.yaml` → exit code 1 (no matches, VMID free) ✅
+  - Ran `ping -c 2 -W 1 192.168.1.99` → 100% packet loss, exit code 1 (IP appears free) ✅
+  - No file changes made — this step only checks current state
 - `lxcprov-01-stack-request`: not started
 - `lxcprov-02-scaffold` (operator step, not run via `implement-step`): not started
 - `lxcprov-03-verify-generated-files`: not started
