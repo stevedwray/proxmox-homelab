@@ -1,22 +1,33 @@
-# LXC Provision Test Workspace (throwaway)
+# LXC Provision Test Workspace
+
+Status: **kept as a durable worked example**, alongside `docs/media-stack-v2/`
+-- the second pass ran clean end to end and both real infrastructure
+mutations (`lxcprov-05-terragrunt-apply`, `lxcprov-06-provision`) were
+torn down afterward (`terragrunt destroy`, confirmed via `pct list` --
+VMID 99010 no longer exists on pve-test-vm). Nothing real is running;
+this workspace is kept for its plan shape and git history, not as a
+live stack.
 
 Tests the real target task class for this methodology: deploying a new
 LXC container and configuring a service on it via Ansible, end to end,
-one small step at a time.
+one small step at a time. See
+`docs/agent-design/validation-methodology.md` for the general process
+this exercise established, and this workspace's own git history for
+the concrete blow-by-blow (a first pass that found two real gaps, a
+second pass that ran clean).
 
-**Second pass, 2026-08-26.** The first pass found and fixed two real
-gaps: a missing pair of steps (`lxcprov-04-create-environment-config`,
-`lxcprov-05-terragrunt-apply` -- `provision.sh` alone was never
-sufficient, it only runs the Ansible phase and needs `inventory.yml`
-from a real `terragrunt apply` first), and an imprecise gate on
-`lxcprov-06-provision` (`provision.sh` exits 0 even when it silently
-skips a stack, so a bare exit-code gate couldn't catch that). Both are
-fixed in `plan.md` now. Full teardown of the first pass's real
-infrastructure is complete (`terragrunt destroy`, confirmed via `pct
-list` -- VMID 99010 no longer exists) and all generated files removed.
-This pass starts genuinely from scratch, testing whether the corrected
-plan now lets `implement-step` get all the way to a running service
-without needing frontier intervention along the way.
+**First pass found and fixed two real gaps**: a missing pair of steps
+(`lxcprov-04-create-environment-config`, `lxcprov-05-terragrunt-apply`
+-- `provision.sh` alone was never sufficient, it only runs the Ansible
+phase and needs `inventory.yml` from a real `terragrunt apply` first),
+and an imprecise gate on `lxcprov-06-provision` (`provision.sh` exits 0
+even when it silently skips a stack, so a bare exit-code gate couldn't
+catch that). Both are fixed in `plan.md`.
+
+**Second pass, run fresh from a clean slate after full teardown**, ran
+clean end to end -- every step's hand-back landed correctly on its own,
+no frontier intervention needed anywhere in execution. That's the real
+confirmation the fixes were sufficient.
 
 Everything through `lxcprov-04` is pure text authoring with zero
 infrastructure risk. `lxcprov-05-terragrunt-apply` is the first step
@@ -24,11 +35,9 @@ that actually creates real infrastructure (a new LXC on pve-test-vm) --
 it waits for an explicit go-ahead beyond the normal hand-back flow, not
 just "the previous step's gate passed."
 
-The stack itself, `smoketest-stack`, is a single disposable nginx
-container -- no persistent data, nothing depends on it, safe to destroy
-at any point. Delete this whole workspace once the test is done, and
-tear down the real stack per `lxcprov-08-teardown` regardless of how far
-the test gets.
+The stack itself, `smoketest-stack`, was a single disposable nginx
+container -- no persistent data, nothing depended on it, safe to
+destroy at any point (and now fully torn down).
 
 ## Step status
 
@@ -76,4 +85,4 @@ the test gets.
   - Ran `curl -s http://192.168.1.99/` — nginx responded with full default welcome page HTML ✅
   - Output confirmed: `<title>Welcome to nginx!</title>` and `<h1>Welcome to nginx!</h1>` present in response body
   - Gate `nginx-responds`: ✅ Pass (exit code 0 — grep found 'Welcome to nginx' in curl output)
-- `lxcprov-08-teardown` (operator step, not run via `implement-step`): not started
+- `lxcprov-08-teardown` (operator step, not run via `implement-step`): **done** (2026-08-26) — ran `terragrunt destroy` against `terraform/lxc/environments/pve-test-vm/smoketest-stack` (3 resources destroyed), confirmed via `pct list` that VMID 99010 no longer exists on pve-test-vm, then removed all tracked generated files (`terraform/lxc/stacks/smoketest-stack/`, `terraform/lxc/environments/pve-test-vm/smoketest-stack/`, `terraform/lxc/ansible/playbooks/deploy-smoketest-stack.yml`). `stack-request.yaml` and `docs/agent-design/lxc-provision-test/` themselves are kept, per operator's choice, as a durable worked example.

@@ -74,13 +74,20 @@ and `docs/coding-stack/` for the original problem this was built to
 solve -- getting a local model (via VS Code Copilot) to be
 genuinely useful against this repo, not just technically wired up.
 
-## Worked example
+## Worked examples
 
-`docs/media-stack-v2/` -- a real plan (replace legacy `media-stack` with
-Jellyfin+Immich, Authentik SSO, watch-history migration) taken through
-two full passes: the first described decisions rather than resolving
-them, leaving most steps unbounded; the second rewrote every step with
-literal content, leaving only two genuinely operator-only actions
-(running `scaffold-stack.sh`, a UI-only Jellyfin plugin install) as
-plain prose rather than step blocks. Read both the plan and its git
-history for the concrete before/after.
+- `docs/media-stack-v2/` -- a real plan (replace legacy `media-stack`
+  with Jellyfin+Immich, Authentik SSO, watch-history migration) taken
+  through two full passes: the first described decisions rather than
+  resolving them, leaving most steps unbounded; the second rewrote
+  every step with literal content, leaving only two genuinely
+  operator-only actions (running `scaffold-stack.sh`, a UI-only
+  Jellyfin plugin install) as plain prose rather than step blocks. Read
+  both the plan and its git history for the concrete before/after.
+- `docs/agent-design/lxc-provision-test/` -- deploying a real LXC and
+  configuring a service on it via Ansible, end to end. First pass found
+  two real gaps (a missing pair of steps, an imprecise gate); a full
+  teardown and fresh second pass then ran clean start to finish, no
+  frontier intervention needed anywhere in execution. See
+  `validation-methodology.md` for the general process this established
+  for proving out a new capability class.
