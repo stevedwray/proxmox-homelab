@@ -58,6 +58,17 @@ Field notes:
 
 - **`id`** — prefix with the workspace name so ids stay globally unique
   across plans (`immich-01-...`, not `01-...`).
+- **Give every step its own markdown heading directly above its fenced
+  YAML block** (e.g. `### immich-01-compose-service`) -- not only the
+  ones needing an operator go-ahead. `docs-rag-mcp` chunks a plan.md by
+  heading, and `implement-step` fetches one step via `search_docs`
+  (returning just that step's chunk) rather than the whole document.
+  Steps left without their own heading get lumped into one oversized
+  chunk with their un-headed neighbors, which `implement-step` then has
+  to page through by hand -- found for real, not theoretically: exactly
+  this sent the local model into a genuine 3.8M-token stall trying to
+  locate one step inside a whole fetched plan.md
+  (2026-08-27, `docs/agent-design/graylog-integration-test/`).
 - **There is no `model_hint` field.** This is a one-model process: the
   frontier model plans, the local model executes, full stop. Every step
   block in a plan.md is unconditionally local-model work by construction

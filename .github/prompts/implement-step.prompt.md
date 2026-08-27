@@ -37,10 +37,22 @@ not.
 
 ## What to do, in order
 
-1. **Fetch the plan.** Use `get_document` on the named `plan.md` (or
-   `search_docs` if you don't have the exact path) and find the step block
-   matching the given id. If two differently-worded searches don't find it,
-   stop and say so -- don't keep retrying with further reworded queries.
+1. **Fetch the step.** Use `search_docs` with the exact step id as the
+   query (e.g. `query: "gli-08-add-rsyslog-forward-role"`) -- a plan.md
+   is chunked one step per heading, so this returns just that one step's
+   content, not the whole file. Use `get_document` on the named
+   `plan.md` only as a fallback if `search_docs` doesn't find a clean
+   match (e.g. an older plan without one heading per step). A large
+   plan.md's full content, fetched via `get_document`, is too big to
+   read comfortably in one pass -- don't try to page through a large
+   fetched document's content piece by piece looking for your step;
+   that already produced a real, very expensive stall (tracked down
+   2026-08-27: over 100 near-identical lookups against the same cached
+   content, 3.8M+ tokens, before being caught and cancelled). If two
+   differently-worded searches don't find it, stop and say so -- don't
+   keep retrying with further reworded queries, and don't fall back to
+   inspecting your own chat session's cached files or storage to find
+   it -- that isn't this repo's content at all.
 
 2. **Check `depends_on`.** If any listed step isn't done yet (check the
    workspace's `README.md` status, or ask), stop and say so -- do not do

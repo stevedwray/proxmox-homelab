@@ -53,6 +53,16 @@ execution doesn't have to repeat it.
    handed off:
    - Name exact file(s) and an exact edit in `change` -- three sentences,
      no hedging. If you can't, the step is still too big: split it.
+   - **Give every step its own markdown heading directly above its fenced
+     YAML block** (e.g. `### immich-01-compose-service`), not just the
+     ones needing an operator go-ahead. `docs-rag-mcp` chunks a document
+     by heading, and `implement-step` fetches one step via `search_docs`
+     rather than pulling the whole plan -- steps left un-headed get
+     lumped into one oversized chunk alongside their neighbors. Found for
+     real, not theoretically: a plan without per-step headings sent the
+     local model into a genuine 3.8M-token stall trying to page through
+     the whole fetched document looking for one step (2026-08-27,
+     `docs/agent-design/graylog-integration-test/`).
    - For repo-schema-specific content (a `stack.yaml`, a `STACK_CONTRACT.md`,
      an Ansible playbook's structure), write the **literal exact content**
      into `change`, not "model this on file X" -- see the schema doc's

@@ -43,6 +43,8 @@ no persistent data, nothing depends on it.
   gap to fix then, the same way `lxc-provision-test` found and fixed its
   own two real gaps mid-run.
 
+### gli-00-preflight-check
+
 ```yaml
 id: gli-00-preflight-check
 title: Confirm VMID 99010 and IP 192.168.1.99 are not already in use
@@ -72,6 +74,8 @@ gates:
     expect: "exit 0 (no reply -- address appears free)"
     critical: true
 ```
+
+### gli-01-stack-files
 
 ```yaml
 id: gli-01-stack-files
@@ -228,6 +232,8 @@ gates:
     critical: true
 ```
 
+### gli-02-playbook
+
 ```yaml
 id: gli-02-playbook
 title: Author the deploy-smoketest-stack Ansible playbook
@@ -314,6 +320,8 @@ gates:
     critical: true
 ```
 
+### gli-03-verify-generated-files
+
 ```yaml
 id: gli-03-verify-generated-files
 title: Verify the four stack files and the playbook match spec exactly
@@ -346,6 +354,8 @@ gates:
     expect: "exit 0"
     critical: true
 ```
+
+### gli-04-create-environment-config
 
 ```yaml
 id: gli-04-create-environment-config
@@ -432,6 +442,8 @@ gates:
     critical: true
 ```
 
+### gli-06-provision
+
 ```yaml
 id: gli-06-provision
 title: Provision smoketest-stack (deploys the nginx service via Ansible)
@@ -465,6 +477,8 @@ gates:
     critical: true
 ```
 
+### gli-07-verify-service
+
 ```yaml
 id: gli-07-verify-service
 title: Confirm the deployed nginx container actually responds
@@ -494,6 +508,8 @@ Everything above this point is the already-proven deploy/provision
 pipeline from `lxc-provision-test`, reused here only to get a live
 target to attach the new integration to. The steps below are the actual
 subject of this test.
+
+### gli-08-add-rsyslog-forward-role
 
 ```yaml
 id: gli-08-add-rsyslog-forward-role
@@ -596,6 +612,8 @@ gates:
     critical: true
 ```
 
+### gli-10-emit-verification-log
+
 ```yaml
 id: gli-10-emit-verification-log
 title: Emit a uniquely identifiable log line from the smoketest-stack container
@@ -626,6 +644,8 @@ gates:
     expect: "exit 0"
     critical: true
 ```
+
+### gli-11-verify-in-graylog
 
 ```yaml
 id: gli-11-verify-in-graylog
