@@ -311,7 +311,7 @@ gates:
     expect: "exit 0"
     critical: true
   - id: playbook-syntax-check
-    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml"
+    cmd: "(cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml)"
     expect: "exit 0"
     critical: true
   - id: only-two-roles
@@ -350,7 +350,7 @@ gates:
     expect: "exit 0"
     critical: true
   - id: playbook-syntax-check
-    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml"
+    cmd: "(cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml)"
     expect: "exit 0"
     critical: true
 ```
@@ -559,7 +559,7 @@ gates:
     expect: "exit 0 (no vars override present -- defaults are used)"
     critical: true
   - id: playbook-syntax-check
-    cmd: "cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml"
+    cmd: "(cd terraform/lxc/ansible && ansible-playbook --syntax-check playbooks/deploy-smoketest-stack.yml)"
     expect: "exit 0"
     critical: true
   - id: contract-documents-graylog-dependency
