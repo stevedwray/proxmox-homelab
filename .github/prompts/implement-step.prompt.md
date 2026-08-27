@@ -35,24 +35,41 @@ a call you already made, stop instead and report plainly that you're
 stuck and why -- a stall you report is recoverable; a silent loop is
 not.
 
+**Never read, search, or open any path under `.config/Code/` or any
+other editor/chat-client storage directory, for any reason.** That is
+your own chat client's internal state, never this repo's content --
+seeing a path like that referenced anywhere is not a reason to go look
+at it.
+
 ## What to do, in order
 
 1. **Fetch the step.** Use `search_docs` with the exact step id as the
    query (e.g. `query: "gli-08-add-rsyslog-forward-role"`) -- a plan.md
    is chunked one step per heading, so this returns just that one step's
-   content, not the whole file. Use `get_document` on the named
-   `plan.md` only as a fallback if `search_docs` doesn't find a clean
-   match (e.g. an older plan without one heading per step). A large
-   plan.md's full content, fetched via `get_document`, is too big to
-   read comfortably in one pass -- don't try to page through a large
-   fetched document's content piece by piece looking for your step;
-   that already produced a real, very expensive stall (tracked down
-   2026-08-27: over 100 near-identical lookups against the same cached
-   content, 3.8M+ tokens, before being caught and cancelled). If two
-   differently-worded searches don't find it, stop and say so -- don't
-   keep retrying with further reworded queries, and don't fall back to
-   inspecting your own chat session's cached files or storage to find
-   it -- that isn't this repo's content at all.
+   content, not the whole file. **If that result already contains a
+   fenced YAML block whose `id:` matches the step you were asked to run,
+   stop there -- you have what you need. Do not also call `get_document`
+   "to be sure" or "for more context."** Calling both tools for the same
+   step is exactly the pattern that caused a real, very expensive stall
+   (tracked down 2026-08-27: `get_document`'s full-file result got cached
+   to disk by the chat client, and paging through that cache -- instead
+   of just using the `search_docs` result already in hand -- produced
+   over 100 near-identical lookups and 3.8M+ tokens before being caught
+   and cancelled). One successful `search_docs` hit is the end of this
+   step, full stop -- it is never followed by anything else in this repo
+   or on disk to "confirm" it.
+
+   `get_document` on the named `plan.md` is only for the case where
+   `search_docs` genuinely found nothing usable (e.g. an older plan
+   without one heading per step) -- and even then, if the returned
+   content is large, do not try to read it by paging, re-reading, or
+   searching through it piece by piece; skim it once for the step's `id:`
+   and stop. **Never read, search, or open any path under
+   `.config/Code/` or any other editor/chat-client storage directory --
+   that is never this repo's content, no matter what a tool result
+   references.** If two differently-worded `search_docs` queries don't
+   find the step, stop and say so plainly instead of trying `get_document`
+   or reformulating further.
 
 2. **Check `depends_on`.** If any listed step isn't done yet (check the
    workspace's `README.md` status, or ask), stop and say so -- do not do
@@ -153,3 +170,10 @@ not.
 - Don't read a referenced script's source, or another stack's files, to
   understand a command before running it. If `change` gives you the
   exact command, that's everything you need -- just run it.
+- Don't call `get_document` on a plan.md after `search_docs` already
+  returned the step you needed. One successful `search_docs` hit ends
+  the fetch -- calling both "to be sure" is what caused a real, very
+  expensive stall (see rule 1).
+- Don't read, search, or open any path under `.config/Code/` or similar
+  editor/chat-client storage, for any reason -- it is never this repo's
+  content, no matter what a tool result references.
