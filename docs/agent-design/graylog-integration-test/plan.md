@@ -402,45 +402,48 @@ gates:
     critical: true
 ```
 
-## `gli-05-terragrunt-apply` -- STOP: requires explicit operator go-ahead
+## `gli-05-terragrunt-apply` -- OPERATOR ACTION, not an `implement-step` invocation
 
 This is the step that actually creates real infrastructure -- a new LXC
-on pve-test-vm. Do not send this step to `implement-step` just because
-`gli-04`'s gates passed. Wait for the operator to say specifically to
-proceed with this one.
+on pve-test-vm. **This is deliberately not a fenced YAML step block --
+there is nothing here for `implement-step` to fetch or execute.** Found
+for real, not theoretically (2026-08-27): writing this as a normal step
+block, even directly beneath prominent "STOP, wait for the operator"
+prose, was not enough -- across two separate from-scratch runs, the
+local model chained straight from `gli-04`'s hand-back into fetching
+and running this step's `change` in the same turn, and its own
+"gate" (`apply-exits-clean`) re-ran the identical `apply` command as
+if it were a side-effect-free check. A second, stronger prompt rule
+(explicitly forbidding exactly this) still didn't stop the second
+recurrence. The fix isn't better wording -- it's removing the runnable
+command from anything `search_docs`/`get_document` can surface as "the
+next step to execute."
 
-```yaml
-id: gli-05-terragrunt-apply
-title: Apply Terraform for smoketest-stack (creates the real LXC container)
-depends_on: [gli-04-create-environment-config]
+Run this yourself, directly, when you're ready. First confirm targeting:
 
-change: >
-  First confirm `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'`
-  prints `pve-test-vm` -- if it prints anything else, stop and report
-  that instead of continuing. Then run exactly this command:
-
-    ./with-secrets terragrunt --working-dir terraform/lxc/environments/pve-test-vm/smoketest-stack apply -auto-approve
-
-scope:
-  allowed_paths: []
-  forbidden_actions:
-    - "Running this against any node other than pve-test-vm"
-    - "Any --working-dir other than terraform/lxc/environments/pve-test-vm/smoketest-stack"
-
-gates:
-  - id: target-node-is-test-vm
-    cmd: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
-    expect: "pve-test-vm"
-    critical: true
-  - id: apply-exits-clean
-    cmd: "./with-secrets terragrunt --working-dir terraform/lxc/environments/pve-test-vm/smoketest-stack apply -auto-approve"
-    expect: "exit 0"
-    critical: true
-  - id: inventory-generated
-    cmd: "test -f terraform/lxc/environments/pve-test-vm/smoketest-stack/inventory.yml"
-    expect: "exit 0"
-    critical: true
+```bash
+cd /home/steve/git/proxmox-homelab
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 ```
+
+That must print `pve-test-vm` -- if it prints anything else, stop and
+investigate before continuing. Then apply:
+
+```bash
+./with-secrets terragrunt --working-dir terraform/lxc/environments/pve-test-vm/smoketest-stack apply -auto-approve
+```
+
+Confirm it exited 0 and generated the inventory:
+
+```bash
+test -f terraform/lxc/environments/pve-test-vm/smoketest-stack/inventory.yml && echo "OK"
+```
+
+Then edit `docs/agent-design/graylog-integration-test/README.md` yourself
+and replace the `gli-05-terragrunt-apply` line under `## Step status`
+with a short record (apply exit code, inventory.yml confirmed) --
+`implement-step` will never write this step's hand-back, since there's
+no step block here for it to have run.
 
 ### gli-06-provision
 
@@ -568,49 +571,41 @@ gates:
     critical: true
 ```
 
-## `gli-09-reprovision` -- STOP: requires explicit operator go-ahead
+## `gli-09-reprovision` -- OPERATOR ACTION, not an `implement-step` invocation
 
 This step reconfigures the already-running container (installs
-`rsyslog`, rewrites its syslog config, restarts the service). Do not
-send this step to `implement-step` just because `gli-08`'s gates
-passed. Wait for the operator to say specifically to proceed with this
-one.
+`rsyslog`, rewrites its syslog config, restarts the service).
+**Deliberately not a fenced YAML step block, for the same reason as
+`gli-05` above** -- a runnable step block here proved unsafe in
+practice even with explicit "wait for the operator" prose right above
+it (see `gli-05`'s note for the two real recurrences this is based on).
 
-```yaml
-id: gli-09-reprovision
-title: Reprovision smoketest-stack to apply the new rsyslog_forward role
-depends_on: [gli-08-add-rsyslog-forward-role]
+Run this yourself, directly, when you're ready. First confirm targeting:
 
-change: >
-  Run exactly this command:
-
-    ./with-secrets scripts/provision.sh --stack smoketest-stack
-
-  Before running it, confirm
-  `./with-secrets bash -c 'echo $TF_VAR_proxmox_node'` prints
-  `pve-test-vm` -- if it prints anything else, stop and report that
-  instead of running provision.sh.
-
-scope:
-  allowed_paths: []
-  forbidden_actions:
-    - "Running this against any node other than pve-test-vm"
-    - "Any --stack value other than smoketest-stack"
-
-gates:
-  - id: target-node-is-test-vm
-    cmd: "./with-secrets bash -c 'echo $TF_VAR_proxmox_node'"
-    expect: "pve-test-vm"
-    critical: true
-  - id: reprovision-exits-clean-not-skipped
-    cmd: "./with-secrets scripts/provision.sh --stack smoketest-stack 2>&1 | tee /tmp/gli-reprovision-out.log; ! grep -qE 'SKIP smoketest-stack:' /tmp/gli-reprovision-out.log"
-    expect: "exit 0 (same skip-detection gate as gli-06 -- provision.sh exits 0 even on a silent skip)"
-    critical: true
-  - id: no-failed-tasks
-    cmd: "! grep -qE 'failed=[1-9]' /tmp/gli-reprovision-out.log"
-    expect: "exit 0 (PLAY RECAP shows failed=0)"
-    critical: true
+```bash
+cd /home/steve/git/proxmox-homelab
+./with-secrets bash -c 'echo $TF_VAR_proxmox_node'
 ```
+
+That must print `pve-test-vm` -- if it prints anything else, stop and
+investigate before continuing. Then reprovision:
+
+```bash
+./with-secrets scripts/provision.sh --stack smoketest-stack 2>&1 | tee /tmp/gli-reprovision-out.log
+```
+
+Confirm it didn't silently skip and had no failed tasks:
+
+```bash
+grep -qE 'SKIP smoketest-stack:' /tmp/gli-reprovision-out.log && echo "SKIPPED (bad)" || echo "not skipped (good)"
+grep -qE 'failed=[1-9]' /tmp/gli-reprovision-out.log && echo "FAILURES FOUND (bad)" || echo "no failures (good)"
+```
+
+Then edit `docs/agent-design/graylog-integration-test/README.md` yourself
+and replace the `gli-09-reprovision` line under `## Step status` with a
+short record (not skipped, no failed tasks) -- `implement-step` will
+never write this step's hand-back, since there's no step block here for
+it to have run.
 
 ### gli-10-emit-verification-log
 
