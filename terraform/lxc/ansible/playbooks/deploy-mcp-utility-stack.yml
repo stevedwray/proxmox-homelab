@@ -312,6 +312,16 @@
       loop_control:
         label: "{{ item }}"
 
+    # ignore_errors here, not a hard failure: this reindex runs as a
+    # background job (post-commit hook) while the working tree keeps
+    # changing underneath it -- found live 2026-08-27 during the
+    # graylog-integration-test exercise, whose disposable smoketest-stack
+    # files get created and rm -rf'd repeatedly. The earlier "Discover
+    # every STACK_CONTRACT.md" find task can list a file that's gone by
+    # the time this copy runs moments later, aborting the whole play and
+    # leaving the corpus stale/partial for that cycle. A single vanished
+    # source file is not worth failing the entire reindex over -- skip it
+    # and pick it up cleanly on the next commit's reindex instead.
     - name: Copy corpus files into the LXC, preserving repo-relative paths
       ansible.builtin.copy:
         src: "{{ item }}"
@@ -321,6 +331,17 @@
       loop_control:
         label: "{{ item | replace(repo_root + '/', '') }}"
       register: corpus_copy_result
+      ignore_errors: true
+
+    - name: Warn about any corpus source files that vanished mid-reindex
+      ansible.builtin.debug:
+        msg: >-
+          Corpus file vanished between discovery and copy (skipped, not
+          fatal): {{ item.item | replace(repo_root + '/', '') }}
+      loop: "{{ corpus_copy_result.results | selectattr('failed', 'defined') | selectattr('failed') | list }}"
+      loop_control:
+        label: "{{ item.item | replace(repo_root + '/', '') }}"
+      when: corpus_copy_result.results is defined
 
     - name: Write mcp-utility-stack docker-compose.yml
       ansible.builtin.copy:
