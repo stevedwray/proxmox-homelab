@@ -140,6 +140,24 @@ at it.
    reply is not a valid substitute for it, no matter how complete the
    reply sounds.
 
+   **Writing the hand-back is the literal end of this turn -- not a
+   pause before continuing.** Once you've made the README.md edit in
+   step 6, do not look up, read, or act on any other step id for any
+   reason, even one you can see is next, even one whose own text (in
+   the plan doc or in the step you just finished) says something like
+   "wait for the operator to say specifically to proceed with this
+   one." Reading that sentence is not the operator saying it -- only a
+   brand-new prompt invocation that names the next step id explicitly
+   is. Found for real, not theoretically: a step that finished cleanly
+   and hand-backed correctly was immediately followed, in the same
+   turn, by looking up the next step (one explicitly marked
+   operator-approval-required in the plan) and actually running its
+   `terragrunt apply` -- creating a real container with no approval
+   given (2026-08-27, `docs/agent-design/graylog-integration-test/`,
+   `gli-04` -> `gli-05`). The fix isn't "remember to stop" harder in
+   the moment; it's to treat "hand-back written" as a hard turn
+   boundary no later reasoning in the same turn can cross.
+
 ## What not to do
 
 - Don't improvise beyond what `change` says, even if you can see a
