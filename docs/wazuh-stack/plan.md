@@ -471,29 +471,46 @@ written and committed:
    plain HTTP on 5601, matching `opensearch-stack`'s dashboard and this
    plan's `edge.yaml`.
 
+## Deploy target: `pve` directly (operator decision, 2026-08-29)
+
+Overrides the standard validation tier (Ansible role changes normally
+validate on `pve-test-vm` first) — operator instruction, not a silent
+retarget. `terraform/lxc/environments/pve/wazuh-stack/terragrunt.hcl`
+added alongside the `pve-test-vm` one (kept, unused for now). `pve` is a
+listed production node (`terraform/PRODUCTION_NODES`), so the actual
+`terragrunt apply`/`provision.sh` run goes through this repo's
+Production Credential Controls: preflight summary, explicit operator
+"Proceed", then `TASK_APPROVAL` + `with-secrets-prod`.
+
+## MikroTik firewall — resolved, live-verified 2026-08-29
+
+**No new rule is needed.** Read the router's actual live ruleset (73
+forward-chain rules, via the read-only REST API credential) rather than
+guessing: `infra_seg` (VLAN 40) and `edge_seg` (VLAN 30) both have **no
+default-deny rule** in the forward chain — unlike `game_seg`, `ai_seg`,
+`pentest_seg`, and `research_seg`, each of which has its own explicit
+"default-deny to LAN/other zones" catch-all. Traffic between zones with
+no default-deny falls through to RouterOS's implicit accept. This is
+exactly why `opensearch-stack`'s own dashboard route
+(`192.168.40.14:5601`) has never needed an explicit
+`edge_seg → infra_seg` rule either — confirmed no such rule exists for
+it in the live ruleset. The same applies to `wazuh-stack`'s
+`192.168.40.15:5601` unchanged.
+
+An optional, non-required hygiene rule (matching the explicit-allow-as-
+documentation pattern already used for other infra_seg-bound traffic,
+e.g. "pentest_seg to infra_seg (Harbor/apt-cacher)") was offered to the
+operator separately in chat, not applied by default.
+
 ## Not yet resolved
 
-1. **The MikroTik `edge_seg → infra_seg tcp/5601` rule** — confirm
-   whether the existing rule that lets Traefik reach `opensearch-stack`'s
-   dashboard is zone-wide or scoped to `192.168.40.14`, before deciding
-   whether a new entry is needed for `192.168.40.15`. This is a real
-   network mutation (Validation Tiers: additive-only tier) — not a step
-   packet regardless, per this repo's Production Credential Controls and
-   the general rule that ambiguous/mutating network changes are operator
-   work, not local-model work.
-2. **Promotion path** — `scaffold-stack.sh` was not actually used for
-   this stack (see below); `provision.sh --stack wazuh-stack` against
-   `pve-test-vm`, verifying the dashboard's OIDC login end to end, and
-   the eventual `pve` promotion remain, and are plain operator-run
-   infrastructure steps, not step packets.
-3. **Untested end-to-end** — every fact above is verified against
+1. **Untested end-to-end** — every fact in this plan is verified against
    Wazuh's own published sources, but this playbook has not yet been
    run against a real host. The usual class of first-run surprises
    (cert-generator image availability through Harbor's `dockerhub`
    proxy-cache, `securityadmin.sh`'s exact exit behavior on this image,
    whether `hash.sh`'s output format matches what was seen in third-party
-   write-ups) should be expected and are why `pve-test-vm` validation
-   comes before any `stable`/`pve` promotion.
+   write-ups) should be expected.
 
 **Note on `scaffold-stack.sh`**: this stack's five files ended up
 hand-authored directly rather than through the scaffolder, matching the
