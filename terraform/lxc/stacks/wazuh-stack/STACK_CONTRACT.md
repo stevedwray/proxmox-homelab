@@ -90,4 +90,5 @@ project, `memlock` ulimits stripped) rather than a dedicated role.
 | `terraform/lxc/stacks/wazuh-stack/edge.yaml` | Traefik/Authentik OIDC route for the dashboard | new |
 | `terraform/lxc/stacks/wazuh-stack/terragrunt.hcl` | Terragrunt entrypoint (boilerplate) | new |
 | `terraform/lxc/environments/pve-test-vm/wazuh-stack/` | Terragrunt entrypoint (validation) | new |
-| `terraform/lxc/ansible/playbooks/deploy-wazuh-stack.yml` | Stack playbook | not yet written — see `docs/wazuh-stack/plan.md` "Not yet resolved" |
+| `terraform/lxc/ansible/playbooks/deploy-wazuh-stack.yml` | Stack playbook | new |
+| `terraform/lxc/ansible/files/wazuh-stack/add_openid_auth_domain.py` | Helper: adds the `openid_auth_domain` block to the indexer's live security config.yml (no vendored source exists for that file) | new |

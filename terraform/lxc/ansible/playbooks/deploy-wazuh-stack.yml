@@ -1,0 +1,1019 @@
+---
+# wazuh-stack — Wazuh (SIEM/host IDS) single-node manager + indexer +
+# dashboard, Wazuh's official Docker deployment (v4.14.7 — the current
+# stable release; 5.0 is beta as of 2026-08, not used here). See
+# terraform/lxc/stacks/wazuh-stack/STACK_CONTRACT.md and
+# docs/wazuh-stack/plan.md for the full design.
+#
+# Server-only in this pass: no agents enrolled, no telemetry, no
+# ingestion into opensearch-stack. Real Authentik OIDC on the dashboard
+# IS in scope this pass (operator decision, 2026-08-29 — unlike
+# opensearch-stack/greenbone-stack, which each deferred SSO to a later
+# stage).
+#
+# Play 1: Docker base configuration (matches deploy-opensearch-stack.yml).
+# Play 2: Generate the indexer's node/admin TLS certs (Wazuh's own
+#         wazuh-certs-generator tool) — one-time, skipped if already done.
+# Play 3: Deploy manager + indexer + dashboard, rotate the admin/wazuh-wui
+#         demo passwords, verify all three healthy.
+# Play 4: Wire real Authentik OIDC onto the dashboard (both the
+#         dashboard's own OAuth2 client config AND the indexer-side
+#         security-plugin token-validation config, applied via
+#         securityadmin.sh — same two-sided mechanism opensearch-stack
+#         already solved for its own OIDC stage).
+#
+# Vendor file provenance: every config file this playbook writes
+# (docker-compose.yml, certs.yml, internal_users.yml, wazuh.yml,
+# wazuh.indexer.yml, wazuh_manager.conf) is a literal transcription of
+# wazuh/wazuh-docker's v4.14.7 single-node deployment, fetched and
+# verified 2026-08-29 — not invented from a generic "what a Wazuh
+# compose looks like" pattern. Deviations from upstream are called out
+# explicitly at the point they're made.
+
+- name: Configure Docker base
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    wazuh_lab_ip_dns: >-
+      {{
+        lookup('env', 'LAB_IP_DNS')
+        | default(dns_server, true)
+        | mandatory('LAB_IP_DNS env var or dns_server inventory var is required')
+      }}
+    wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+  roles:
+    - lxc_base
+    - docker_base
+    - role: docker_socket_proxy
+      when: enable_docker_socket_proxy | default(false) | bool
+  tasks:
+    - name: Trust Harbor HTTP registry in Docker daemon
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ wazuh_registry_host }}"],
+            "dns": ["{{ wazuh_lab_ip_dns }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+
+    - name: Flush handlers to apply Docker daemon config before compose up
+      ansible.builtin.meta: flush_handlers
+
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
+- name: Generate Wazuh indexer TLS certificates
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_compose_dir: /opt/wazuh-stack
+    wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    wazuh_certs_generator_image: "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-certs-generator:0.0.4"
+  tasks:
+    - name: Create Wazuh compose and config directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0750"
+      loop:
+        - "{{ wazuh_compose_dir }}"
+        - "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs"
+        - "{{ wazuh_compose_dir }}/config/wazuh_indexer"
+        - "{{ wazuh_compose_dir }}/config/wazuh_dashboard"
+        - "{{ wazuh_compose_dir }}/config/wazuh_cluster"
+
+    # Literal transcription of wazuh-docker v4.14.7's config/certs.yml —
+    # node names here must match the hostnames used in docker-compose.yml
+    # below, since the generator bakes them into each cert's CN/SAN.
+    - name: Write certs.yml (cert-generator node manifest)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/certs.yml"
+        mode: "0640"
+        content: |
+          nodes:
+            # Wazuh indexer server nodes
+            indexer:
+              - name: wazuh.indexer
+                ip: wazuh.indexer
+
+            # Wazuh server nodes
+            # Use node_type only with more than one Wazuh manager
+            server:
+              - name: wazuh.manager
+                ip: wazuh.manager
+
+            # Wazuh dashboard node
+            dashboard:
+              - name: wazuh.dashboard
+                ip: wazuh.dashboard
+
+    - name: Check whether indexer certs already exist
+      ansible.builtin.stat:
+        path: "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs/admin.pem"
+      register: wazuh_certs_stat
+
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ wazuh_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+      when: not wazuh_certs_stat.stat.exists
+
+    - name: Pull cert-generator image
+      ansible.builtin.command:
+        argv: [docker, pull, "{{ wazuh_certs_generator_image }}"]
+      register: wazuh_certs_generator_pull
+      retries: 5
+      delay: 10
+      until: wazuh_certs_generator_pull.rc == 0
+      when: not wazuh_certs_stat.stat.exists
+
+    - name: Run wazuh-certs-generator (one-time)
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - -v
+          - "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs/:/certificates/"
+          - -v
+          - "{{ wazuh_compose_dir }}/config/certs.yml:/config/certs.yml"
+          - "{{ wazuh_certs_generator_image }}"
+      when: not wazuh_certs_stat.stat.exists
+
+- name: Deploy Wazuh manager + indexer + dashboard
+  hosts: all
+  become: true
+  gather_facts: true
+  vars:
+    wazuh_compose_dir: /opt/wazuh-stack
+    wazuh_indexer_data_dir: /var/lib/wazuh-indexer-data   # extra_mount path from stack.yaml
+    wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
+    wazuh_image_tag: "4.14.7"   # current stable as of 2026-08-29 -- keep in sync, do not use the 5.0 beta line
+    wazuh_indexer_admin_password: >-
+      {{
+        lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD')
+        | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+      }}
+    wazuh_api_password: >-
+      {{
+        lookup('env', 'WAZUH_API_PASSWORD')
+        | mandatory('WAZUH_API_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+      }}
+    wazuh_runtime_images:
+      - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-manager:{{ wazuh_image_tag }}"
+      - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-indexer:{{ wazuh_image_tag }}"
+      - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-dashboard:{{ wazuh_image_tag }}"
+
+  tasks:
+    - name: Ensure Wazuh indexer data directory ownership matches the container's non-root user
+      ansible.builtin.file:
+        path: "{{ wazuh_indexer_data_dir }}"
+        state: directory
+        owner: "1000"   # wazuh-indexer image's non-root "wazuh-indexer" user
+        group: "1000"
+        mode: "0750"
+
+    # Literal transcription of wazuh-docker v4.14.7's
+    # config/wazuh_indexer/wazuh.indexer.yml -- unmodified.
+    - name: Write Wazuh indexer opensearch.yml
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_indexer/wazuh.indexer.yml"
+        mode: "0640"
+        content: |
+          network.host: "0.0.0.0"
+          node.name: "wazuh.indexer"
+          cluster.name: "wazuh-cluster"
+          path.data: /var/lib/wazuh-indexer
+          path.logs: /var/log/wazuh-indexer
+          discovery.type: single-node
+          compatibility.override_main_response_version: true
+          plugins.security.ssl.http.pemcert_filepath: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+          plugins.security.ssl.http.pemkey_filepath: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+          plugins.security.ssl.http.pemtrustedcas_filepath: /usr/share/wazuh-indexer/config/certs/root-ca.pem
+          plugins.security.ssl.transport.pemcert_filepath: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+          plugins.security.ssl.transport.pemkey_filepath: /usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+          plugins.security.ssl.transport.pemtrustedcas_filepath: /usr/share/wazuh-indexer/config/certs/root-ca.pem
+          plugins.security.ssl.http.enabled: true
+          plugins.security.ssl.transport.enforce_hostname_verification: false
+          plugins.security.ssl.transport.resolve_hostname: false
+          plugins.security.ssl.http.enabled_ciphers:
+            - "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+            - "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+            - "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+            - "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+          plugins.security.ssl.http.enabled_protocols:
+            - "TLSv1.2"
+          plugins.security.authcz.admin_dn:
+          - "CN=admin,OU=Wazuh,O=Wazuh,L=California,C=US"
+          plugins.security.check_snapshot_restore_write_privileges: true
+          plugins.security.enable_snapshot_restore_privilege: true
+          plugins.security.nodes_dn:
+          - "CN=wazuh.indexer,OU=Wazuh,O=Wazuh,L=California,C=US"
+          plugins.security.restapi.roles_enabled:
+          - "all_access"
+          - "security_rest_api_access"
+          plugins.security.system_indices.enabled: true
+          plugins.security.system_indices.indices: [".opendistro-alerting-config", ".opendistro-alerting-alert*", ".opendistro-anomaly-results*", ".opendistro-anomaly-detector*", ".opendistro-anomaly-checkpoints", ".opendistro-anomaly-detection-state", ".opendistro-reports-*", ".opendistro-notifications-*", ".opendistro-notebooks", ".opensearch-observability", ".opendistro-asynchronous-search-response*", ".replication-metadata-store"]
+          plugins.security.allow_default_init_securityindex: true
+          cluster.routing.allocation.disk.threshold_enabled: false
+
+    # Literal transcription of wazuh-docker v4.14.7's
+    # config/wazuh_cluster/wazuh_manager.conf -- unmodified. (ossec.conf)
+    - name: Write Wazuh manager ossec.conf
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/wazuh_manager.conf"
+        mode: "0640"
+        content: |
+          <ossec_config>
+            <global>
+              <jsonout_output>yes</jsonout_output>
+              <alerts_log>yes</alerts_log>
+              <logall>no</logall>
+              <logall_json>no</logall_json>
+              <email_notification>no</email_notification>
+              <smtp_server>smtp.example.wazuh.com</smtp_server>
+              <email_from>wazuh@example.wazuh.com</email_from>
+              <email_to>recipient@example.wazuh.com</email_to>
+              <email_maxperhour>12</email_maxperhour>
+              <email_log_source>alerts.log</email_log_source>
+              <agents_disconnection_time>10m</agents_disconnection_time>
+              <agents_disconnection_alert_time>0</agents_disconnection_alert_time>
+            </global>
+
+            <alerts>
+              <log_alert_level>3</log_alert_level>
+              <email_alert_level>12</email_alert_level>
+            </alerts>
+
+            <logging>
+              <log_format>plain</log_format>
+            </logging>
+
+            <remote>
+              <connection>secure</connection>
+              <port>1514</port>
+              <protocol>tcp</protocol>
+              <queue_size>131072</queue_size>
+            </remote>
+
+            <rootcheck>
+              <disabled>no</disabled>
+              <check_files>yes</check_files>
+              <check_trojans>yes</check_trojans>
+              <check_dev>yes</check_dev>
+              <check_sys>yes</check_sys>
+              <check_pids>yes</check_pids>
+              <check_ports>yes</check_ports>
+              <check_if>yes</check_if>
+              <frequency>43200</frequency>
+              <rootkit_files>etc/rootcheck/rootkit_files.txt</rootkit_files>
+              <rootkit_trojans>etc/rootcheck/rootkit_trojans.txt</rootkit_trojans>
+              <skip_nfs>yes</skip_nfs>
+            </rootcheck>
+
+            <wodle name="cis-cat">
+              <disabled>yes</disabled>
+              <timeout>1800</timeout>
+              <interval>1d</interval>
+              <scan-on-start>yes</scan-on-start>
+              <java_path>wodles/java</java_path>
+              <ciscat_path>wodles/ciscat</ciscat_path>
+            </wodle>
+
+            <wodle name="osquery">
+              <disabled>yes</disabled>
+              <run_daemon>yes</run_daemon>
+              <log_path>/var/log/osquery/osqueryd.results.log</log_path>
+              <config_path>/etc/osquery/osquery.conf</config_path>
+              <add_labels>yes</add_labels>
+            </wodle>
+
+            <wodle name="syscollector">
+              <disabled>no</disabled>
+              <interval>1h</interval>
+              <scan_on_start>yes</scan_on_start>
+              <hardware>yes</hardware>
+              <os>yes</os>
+              <network>yes</network>
+              <packages>yes</packages>
+              <ports all="yes">yes</ports>
+              <processes>yes</processes>
+              <synchronization>
+                <max_eps>10</max_eps>
+              </synchronization>
+            </wodle>
+
+            <sca>
+              <enabled>yes</enabled>
+              <scan_on_start>yes</scan_on_start>
+              <interval>12h</interval>
+              <skip_nfs>yes</skip_nfs>
+            </sca>
+
+            <vulnerability-detection>
+              <enabled>yes</enabled>
+              <index-status>yes</index-status>
+              <feed-update-interval>60m</feed-update-interval>
+            </vulnerability-detection>
+
+            <indexer>
+              <enabled>yes</enabled>
+              <hosts>
+                <host>https://wazuh.indexer:9200</host>
+              </hosts>
+              <ssl>
+                <certificate_authorities>
+                  <ca>/etc/ssl/root-ca.pem</ca>
+                </certificate_authorities>
+                <certificate>/etc/ssl/filebeat.pem</certificate>
+                <key>/etc/ssl/filebeat.key</key>
+              </ssl>
+            </indexer>
+
+            <syscheck>
+              <disabled>no</disabled>
+              <frequency>43200</frequency>
+              <scan_on_start>yes</scan_on_start>
+              <alert_new_files>yes</alert_new_files>
+              <auto_ignore frequency="10" timeframe="3600">no</auto_ignore>
+              <directories>/etc,/usr/bin,/usr/sbin</directories>
+              <directories>/bin,/sbin,/boot</directories>
+              <ignore>/etc/mtab</ignore>
+              <ignore>/etc/hosts.deny</ignore>
+              <ignore>/etc/mail/statistics</ignore>
+              <ignore>/etc/random-seed</ignore>
+              <ignore>/etc/random.seed</ignore>
+              <ignore>/etc/adjtime</ignore>
+              <ignore>/etc/httpd/logs</ignore>
+              <ignore>/etc/utmpx</ignore>
+              <ignore>/etc/wtmpx</ignore>
+              <ignore>/etc/cups/certs</ignore>
+              <ignore>/etc/dumpdates</ignore>
+              <ignore>/etc/svc/volatile</ignore>
+              <ignore type="sregex">.log$|.swp$</ignore>
+              <nodiff>/etc/ssl/private.key</nodiff>
+              <skip_nfs>yes</skip_nfs>
+              <skip_dev>yes</skip_dev>
+              <skip_proc>yes</skip_proc>
+              <skip_sys>yes</skip_sys>
+              <process_priority>10</process_priority>
+              <max_eps>100</max_eps>
+              <synchronization>
+                <enabled>yes</enabled>
+                <interval>5m</interval>
+                <max_interval>1h</max_interval>
+                <max_eps>10</max_eps>
+              </synchronization>
+            </syscheck>
+
+            <global>
+              <white_list>127.0.0.1</white_list>
+              <white_list>^localhost.localdomain$</white_list>
+            </global>
+
+            <command>
+              <name>disable-account</name>
+              <executable>disable-account</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <command>
+              <name>restart-wazuh</name>
+              <executable>restart-wazuh</executable>
+            </command>
+
+            <command>
+              <name>firewall-drop</name>
+              <executable>firewall-drop</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <command>
+              <name>host-deny</name>
+              <executable>host-deny</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <command>
+              <name>route-null</name>
+              <executable>route-null</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <command>
+              <name>win_route-null</name>
+              <executable>route-null.exe</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <command>
+              <name>netsh</name>
+              <executable>netsh.exe</executable>
+              <timeout_allowed>yes</timeout_allowed>
+            </command>
+
+            <localfile>
+              <log_format>command</log_format>
+              <command>df -P</command>
+              <frequency>360</frequency>
+            </localfile>
+
+            <localfile>
+              <log_format>full_command</log_format>
+              <command>netstat -tulpn | sed 's/\([[:alnum:]]\+\)\ \+[[:digit:]]\+\ \+[[:digit:]]\+\ \+\(.*\):\([[:digit:]]*\)\ \+\([0-9\.\:\*]\+\).\+\ \([[:digit:]]*\/[[:alnum:]\-]*\).*/\1 \2 == \3 == \4 \5/' | sort -k 4 -g | sed 's/ == \(.*\) ==/:\1/' | sed 1,2d</command>
+              <alias>netstat listening ports</alias>
+              <frequency>360</frequency>
+            </localfile>
+
+            <localfile>
+              <log_format>full_command</log_format>
+              <command>last -n 20</command>
+              <frequency>360</frequency>
+            </localfile>
+
+            <ruleset>
+              <decoder_dir>ruleset/decoders</decoder_dir>
+              <rule_dir>ruleset/rules</rule_dir>
+              <rule_exclude>0215-policy_rules.xml</rule_exclude>
+              <list>etc/lists/audit-keys</list>
+              <list>etc/lists/amazon/aws-eventnames</list>
+              <list>etc/lists/security-eventchannel</list>
+              <list>etc/lists/malicious-ioc/malicious-ip</list>
+              <list>etc/lists/malicious-ioc/malicious-domains</list>
+              <list>etc/lists/malicious-ioc/malware-hashes</list>
+              <decoder_dir>etc/decoders</decoder_dir>
+              <rule_dir>etc/rules</rule_dir>
+            </ruleset>
+
+            <rule_test>
+              <enabled>yes</enabled>
+              <threads>1</threads>
+              <max_sessions>64</max_sessions>
+              <session_timeout>15m</session_timeout>
+            </rule_test>
+
+            <auth>
+              <disabled>no</disabled>
+              <port>1515</port>
+              <use_source_ip>no</use_source_ip>
+              <purge>yes</purge>
+              <use_password>no</use_password>
+              <ciphers>HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH</ciphers>
+              <ssl_verify_host>no</ssl_verify_host>
+              <ssl_manager_cert>etc/sslmanager.cert</ssl_manager_cert>
+              <ssl_manager_key>etc/sslmanager.key</ssl_manager_key>
+              <ssl_auto_negotiate>no</ssl_auto_negotiate>
+            </auth>
+
+            <cluster>
+              <name>wazuh</name>
+              <node_name>node01</node_name>
+              <node_type>master</node_type>
+              <key>aa093264ef885029653eea20dfcf51ae</key>
+              <port>1516</port>
+              <bind_addr>0.0.0.0</bind_addr>
+              <nodes>
+                  <node>wazuh.manager</node>
+              </nodes>
+              <hidden>no</hidden>
+              <disabled>yes</disabled>
+            </cluster>
+
+          </ossec_config>
+
+          <ossec_config>
+            <localfile>
+              <log_format>syslog</log_format>
+              <location>/var/ossec/logs/active-responses.log</location>
+            </localfile>
+
+          </ossec_config>
+
+    - name: Authenticate Docker to Harbor registry
+      ansible.builtin.shell:
+        cmd: >-
+          printf '%s' "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') }}" |
+          docker login "{{ wazuh_registry_host }}"
+          -u "{{ lookup('env', 'HARBOR_ADMIN') | default('admin') }}"
+          --password-stdin
+      no_log: true
+      changed_when: false
+
+    - name: Pre-pull Wazuh runtime images from Harbor sequentially
+      ansible.builtin.command:
+        argv: [docker, pull, "{{ item }}"]
+      register: wazuh_image_pull
+      retries: 5
+      delay: 10
+      until: wazuh_image_pull.rc == 0
+      loop: "{{ wazuh_runtime_images }}"
+
+    # hash.sh is Wazuh/OpenSearch security's own bcrypt tool -- used
+    # instead of Ansible's password_hash filter so the hash format is
+    # guaranteed compatible with the security plugin's verifier (same
+    # tool the official docs use: "Changing the default password of
+    # Wazuh users", documentation.wazuh.com). Output includes banner/
+    # deprecation-warning noise on some builds (wazuh/wazuh-docker#2485,
+    # opensearch-project/security#2485) -- filter for the bcrypt-shaped
+    # line rather than assuming it's the last line of output.
+    - name: Generate bcrypt hash for the indexer admin password
+      ansible.builtin.command:
+        argv:
+          - docker
+          - run
+          - --rm
+          - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-indexer:{{ wazuh_image_tag }}"
+          - bash
+          - /usr/share/wazuh-indexer/plugins/opensearch-security/tools/hash.sh
+          - -p
+          - "{{ wazuh_indexer_admin_password }}"
+      register: wazuh_admin_hash_raw
+      changed_when: false
+      no_log: true
+
+    - name: Extract the bcrypt hash from hash.sh output
+      ansible.builtin.set_fact:
+        wazuh_indexer_admin_hash: "{{ wazuh_admin_hash_raw.stdout_lines | select('match', '^\\$2[aby]\\$') | list | last }}"
+      no_log: true
+
+    # Literal transcription of wazuh-docker v4.14.7's
+    # config/wazuh_indexer/internal_users.yml, with only the admin
+    # user's hash replaced (our rotated password). kibanaserver is
+    # deliberately LEFT at its vendor demo hash -- same reasoning
+    # opensearch-stack already established: it's an internal-only
+    # service credential the dashboard uses to talk to the indexer,
+    # never exposed externally, so rotating it buys nothing and this
+    # matches the one precedent already set in this repo (see
+    # deploy-opensearch-stack.yml's "kibanaserver/kibanaserver...
+    # reused rather than provisioning a new dedicated one" comment).
+    - name: Write Wazuh indexer internal_users.yml
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_indexer/internal_users.yml"
+        mode: "0640"
+        content: |
+          _meta:
+            type: "internalusers"
+            config_version: 2
+
+          # Define your internal users here
+
+          ## Demo users
+
+          admin:
+            hash: "{{ wazuh_indexer_admin_hash }}"
+            reserved: true
+            backend_roles:
+            - "admin"
+            description: "Demo admin user"
+
+          kibanaserver:
+            hash: "$2a$12$4AcgAt3xwOWadA5s5blL6ev39OXDNhmOesEoo33eZtrq2N0YrU3H."
+            reserved: true
+            description: "Demo kibanaserver user"
+
+          kibanaro:
+            hash: "$2a$12$JJSXNfTowz7Uu5ttXfeYpeYE0arACvcwlPBStB1F.MI7f0U9Z4DGC"
+            reserved: false
+            backend_roles:
+            - "kibanauser"
+            - "readall"
+            attributes:
+              attribute1: "value1"
+              attribute2: "value2"
+              attribute3: "value3"
+            description: "Demo kibanaro user"
+
+          logstash:
+            hash: "$2a$12$u1ShR4l4uBS3Uv59Pa2y5.1uQuZBrZtmNfqB3iM/.jL0XoV9sghS2"
+            reserved: false
+            backend_roles:
+            - "logstash"
+            description: "Demo logstash user"
+
+          readall:
+            hash: "$2a$12$ae4ycwzwvLtZxwZ82RmiEunBbIPiAmGZduBAjKN0TXdwQFtCwARz2"
+            reserved: false
+            backend_roles:
+            - "readall"
+            description: "Demo readall user"
+
+          snapshotrestore:
+            hash: "$2y$12$DpwmetHKwgYnorbgdvORCenv4NAK8cPUg8AI6pxLCuWf/ALc0.v7W"
+            reserved: false
+            backend_roles:
+            - "snapshotrestore"
+            description: "Demo snapshotrestore user"
+      no_log: true
+      register: wazuh_internal_users_file
+      notify: Recreate Wazuh stack
+
+    # Baseline dashboard config (no OIDC yet -- Play 4 rewrites this file
+    # again once the stack is healthy). Deviates from upstream in one
+    # deliberate way: server.ssl.enabled is set to false and the
+    # cert/key lines dropped, so the dashboard serves plain HTTP on
+    # 5601. Upstream defaults to server.ssl.enabled: true (dashboard
+    # terminates its own TLS with a self-signed cert) -- but this
+    # repo's EdgeManifest/Traefik routing has no support for a
+    # self-signed HTTPS backend (see reference_traefik_no_insecure_
+    # backend_tls in memory; confirmed the same constraint opensearch-
+    # stack's own dashboard already works around by staying plain HTTP).
+    # wazuh-stack's edge.yaml routes to plain http://, matching this.
+    - name: Write Wazuh dashboard opensearch_dashboards.yml (baseline, pre-OIDC)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/opensearch_dashboards.yml"
+        mode: "0640"
+        content: |
+          server.host: 0.0.0.0
+          server.port: 5601
+          opensearch.hosts: https://wazuh.indexer:9200
+          opensearch.ssl.verificationMode: certificate
+          opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
+          opensearch_security.multitenancy.enabled: false
+          opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+          uiSettings.overrides.defaultRoute: /app/wz-home
+          opensearch_security.cookie.ttl: 900000
+          opensearch_security.session.ttl: 900000
+          opensearch_security.session.keepalive: true
+      register: wazuh_dashboard_config
+      notify: Recreate Wazuh stack
+
+    # Literal transcription of wazuh-docker v4.14.7's
+    # config/wazuh_dashboard/wazuh.yml, with the numeric app-config id
+    # (1513629884013, a fixed constant used by every Wazuh dashboard
+    # install, not stack-specific) and password field templated.
+    - name: Write Wazuh dashboard app config (wazuh.yml)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/wazuh.yml"
+        mode: "0640"
+        content: |
+          hosts:
+            - 1513629884013:
+                url: "https://wazuh.manager"
+                port: 55000
+                username: wazuh-wui
+                password: "{{ wazuh_api_password }}"
+                run_as: true
+      no_log: true
+      register: wazuh_dashboard_app_config
+      notify: Recreate Wazuh stack
+
+    # Full transcription of wazuh-docker v4.14.7's docker-compose.yml,
+    # with three deliberate changes from upstream:
+    #   1. Images rewritten through Harbor's dockerhub proxy-cache project.
+    #   2. `memlock: -1:-1` (unlimited) ulimits stripped from both
+    #      wazuh.manager and wazuh.indexer -- nested LXC rejects an
+    #      unlimited memlock ulimit, the exact failure mode already
+    #      fixed for elasticsearch-stack/opensearch-stack. `nofile` kept.
+    #   3. INDEXER_PASSWORD/API_PASSWORD templated to the real rotated
+    #      secrets instead of upstream's placeholder demo values.
+    - name: Write Wazuh docker-compose.yml
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/docker-compose.yml"
+        mode: "0640"
+        content: |
+          services:
+            wazuh.manager:
+              image: {{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-manager:{{ wazuh_image_tag }}
+              container_name: wazuh-stack-manager
+              hostname: wazuh.manager
+              restart: unless-stopped
+              ulimits:
+                nofile:
+                  soft: 655360
+                  hard: 655360
+              ports:
+                - "1514:1514"
+                - "1515:1515"
+                - "514:514/udp"
+                - "55000:55000"
+              environment:
+                - INDEXER_URL="https://wazuh.indexer:9200"
+                - INDEXER_USERNAME=admin
+                - INDEXER_PASSWORD={{ wazuh_indexer_admin_password }}
+                - FILEBEAT_SSL_VERIFICATION_MODE=full
+                - SSL_CERTIFICATE_AUTHORITIES=/etc/ssl/root-ca.pem
+                - SSL_CERTIFICATE=/etc/ssl/filebeat.pem
+                - SSL_KEY=/etc/ssl/filebeat.key
+                - API_USERNAME=wazuh-wui
+                - API_PASSWORD={{ wazuh_api_password }}
+              volumes:
+                - wazuh_api_configuration:/var/ossec/api/configuration
+                - wazuh_etc:/var/ossec/etc
+                - wazuh_logs:/var/ossec/logs
+                - wazuh_queue:/var/ossec/queue
+                - wazuh_var_multigroups:/var/ossec/var/multigroups
+                - wazuh_integrations:/var/ossec/integrations
+                - wazuh_active_response:/var/ossec/active-response/bin
+                - wazuh_agentless:/var/ossec/agentless
+                - wazuh_wodles:/var/ossec/wodles
+                - filebeat_etc:/etc/filebeat
+                - filebeat_var:/var/lib/filebeat
+                - ./config/wazuh_indexer_ssl_certs/root-ca-manager.pem:/etc/ssl/root-ca.pem
+                - ./config/wazuh_indexer_ssl_certs/wazuh.manager.pem:/etc/ssl/filebeat.pem
+                - ./config/wazuh_indexer_ssl_certs/wazuh.manager-key.pem:/etc/ssl/filebeat.key
+                - ./config/wazuh_cluster/wazuh_manager.conf:/wazuh-config-mount/etc/ossec.conf
+
+            wazuh.indexer:
+              image: {{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-indexer:{{ wazuh_image_tag }}
+              container_name: wazuh-stack-indexer
+              hostname: wazuh.indexer
+              restart: unless-stopped
+              ports:
+                - "9200:9200"
+              environment:
+                - "OPENSEARCH_JAVA_OPTS=-Xms{{ wazuh_indexer_heap_gb }}g -Xmx{{ wazuh_indexer_heap_gb }}g"
+              ulimits:
+                nofile:
+                  soft: 65536
+                  hard: 65536
+              volumes:
+                - {{ wazuh_indexer_data_dir }}:/var/lib/wazuh-indexer
+                - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
+                - ./config/wazuh_indexer_ssl_certs/wazuh.indexer-key.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.key
+                - ./config/wazuh_indexer_ssl_certs/wazuh.indexer.pem:/usr/share/wazuh-indexer/config/certs/wazuh.indexer.pem
+                - ./config/wazuh_indexer_ssl_certs/admin.pem:/usr/share/wazuh-indexer/config/certs/admin.pem
+                - ./config/wazuh_indexer_ssl_certs/admin-key.pem:/usr/share/wazuh-indexer/config/certs/admin-key.pem
+                - ./config/wazuh_indexer/wazuh.indexer.yml:/usr/share/wazuh-indexer/config/opensearch.yml
+                - ./config/wazuh_indexer/internal_users.yml:/usr/share/wazuh-indexer/config/opensearch-security/internal_users.yml
+              healthcheck:
+                test: ["CMD-SHELL", "curl -sk https://localhost:9200 | grep -q 'Unauthorized'"]
+                interval: 10s
+                timeout: 10s
+                retries: 60
+                start_period: 60s
+
+            wazuh.dashboard:
+              image: {{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-dashboard:{{ wazuh_image_tag }}
+              container_name: wazuh-stack-dashboard
+              hostname: wazuh.dashboard
+              restart: unless-stopped
+              ports:
+                - "5601:5601"
+              environment:
+                - INDEXER_USERNAME=admin
+                - INDEXER_PASSWORD={{ wazuh_indexer_admin_password }}
+                - WAZUH_API_URL=https://wazuh.manager
+                - DASHBOARD_USERNAME=kibanaserver
+                - DASHBOARD_PASSWORD=kibanaserver
+                - API_USERNAME=wazuh-wui
+                - API_PASSWORD={{ wazuh_api_password }}
+              volumes:
+                - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-dashboard/certs/root-ca.pem
+                - ./config/wazuh_dashboard/opensearch_dashboards.yml:/usr/share/wazuh-dashboard/config/opensearch_dashboards.yml
+                - ./config/wazuh_dashboard/wazuh.yml:/usr/share/wazuh-dashboard/data/wazuh/config/wazuh.yml
+                - wazuh-dashboard-config:/usr/share/wazuh-dashboard/data/wazuh/config
+                - wazuh-dashboard-custom:/usr/share/wazuh-dashboard/plugins/wazuh/public/assets/custom
+              depends_on:
+                wazuh.indexer:
+                  condition: service_healthy
+              healthcheck:
+                test: ["CMD-SHELL", "curl -s -o /dev/null -w '%{http_code}' http://localhost:5601/api/status | grep -qE '200|302'"]
+                interval: 10s
+                timeout: 10s
+                retries: 60
+                start_period: 60s
+
+          volumes:
+            wazuh_api_configuration:
+            wazuh_etc:
+            wazuh_logs:
+            wazuh_queue:
+            wazuh_var_multigroups:
+            wazuh_integrations:
+            wazuh_active_response:
+            wazuh_agentless:
+            wazuh_wodles:
+            filebeat_etc:
+            filebeat_var:
+            wazuh-dashboard-config:
+            wazuh-dashboard-custom:
+      vars:
+        # Half of the container's real memory, floor, minimum 1GB --
+        # same formula opensearch-stack/elasticsearch-stack/Graylog's
+        # Data Node all use.
+        wazuh_indexer_heap_gb: >-
+          {{
+            [
+              1,
+              (
+                (
+                  hostvars[inventory_hostname].ansible_memtotal_mb
+                  | default(hostvars[inventory_hostname].ansible_memory_mb.real.total)
+                  | int
+                ) / 1024 / 2
+              ) | round(0, 'floor') | int
+            ] | max
+          }}
+      register: wazuh_compose_file
+      notify: Recreate Wazuh stack
+
+    - name: Bring up Wazuh stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_compose_dir }}"
+        state: present
+        pull: never
+        remove_orphans: true
+        recreate: >-
+          {{
+            'always'
+            if (wazuh_internal_users_file.changed or wazuh_dashboard_config.changed
+                or wazuh_dashboard_app_config.changed or wazuh_compose_file.changed)
+            else 'auto'
+          }}
+
+    - name: Wait for indexer HTTPS port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 9200
+        timeout: 300
+
+    - name: Confirm indexer cluster health with rotated admin credential
+      ansible.builtin.uri:
+        url: "https://127.0.0.1:9200/_cluster/health"
+        method: GET
+        validate_certs: false  # nosonar: ansible:S4830 — Wazuh's own self-signed demo cert, internal SDN only
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+      register: wazuh_cluster_health
+      until: wazuh_cluster_health.json.status is defined and wazuh_cluster_health.json.status in ['green', 'yellow']
+      retries: 30
+      delay: 10
+
+    - name: Wait for manager API port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 55000
+        timeout: 300
+
+    - name: Wait for dashboard HTTP port to accept connections
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 5601
+        timeout: 300
+
+    - name: Confirm dashboard reports available
+      ansible.builtin.uri:
+        url: "http://127.0.0.1:5601/api/status"
+        method: GET
+        url_username: admin
+        url_password: "{{ wazuh_indexer_admin_password }}"
+        force_basic_auth: true
+        return_content: true
+        status_code: [200]
+      register: wazuh_dashboard_status
+      until: >-
+        wazuh_dashboard_status.status == 200 and
+        (wazuh_dashboard_status.json.status.overall.state | default('')) in ['green', 'yellow']
+      retries: 30
+      delay: 10
+
+  handlers:
+    - name: Recreate Wazuh stack
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_compose_dir }}"
+        state: present
+        recreate: always
+
+- name: Wire real Authentik OIDC onto the Wazuh dashboard
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_compose_dir: /opt/wazuh-stack
+    wazuh_lab_domain: "{{ lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true) }}"
+    wazuh_authentik_fqdn: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ wazuh_lab_domain, true) }}"
+    wazuh_oidc_client_id: "{{ lookup('env', 'WAZUH_OIDC_CLIENT_ID') | default('wazuh-dashboard', true) }}"
+    wazuh_oidc_client_secret: >-
+      {{
+        lookup('env', 'WAZUH_OIDC_CLIENT_SECRET')
+        | mandatory('WAZUH_OIDC_CLIENT_SECRET env var is required -- new SOPS secret')
+      }}
+    wazuh_dashboard_public_url: "https://wazuh.{{ wazuh_lab_domain }}"
+    wazuh_indexer_admin_password: >-
+      {{
+        lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD')
+        | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required')
+      }}
+  tasks:
+    # Dashboard-side OAuth2 client config -- same block opensearch-stack
+    # already proved works for this exact plugin (Wazuh's dashboard
+    # forks OpenSearch Dashboards and its security plugin unchanged).
+    # Full-file replacement (not a fragment) so every baseline key from
+    # the prior task is still carried forward.
+    - name: Write Wazuh dashboard opensearch_dashboards.yml (with OIDC)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/opensearch_dashboards.yml"
+        mode: "0640"
+        content: |
+          server.host: 0.0.0.0
+          server.port: 5601
+          opensearch.hosts: https://wazuh.indexer:9200
+          opensearch.ssl.verificationMode: certificate
+          opensearch.requestHeadersWhitelist: ["securitytenant","Authorization"]
+          opensearch_security.multitenancy.enabled: false
+          opensearch_security.readonly_mode.roles: ["kibana_read_only"]
+          uiSettings.overrides.defaultRoute: /app/wz-home
+          opensearch_security.cookie.ttl: 900000
+          opensearch_security.session.ttl: 900000
+          opensearch_security.session.keepalive: true
+          opensearch_security.auth.type: "openid"
+          opensearch_security.openid.connect_url: "https://{{ wazuh_authentik_fqdn }}/application/o/edge-wazuh-stack-dashboard/.well-known/openid-configuration"
+          opensearch_security.openid.client_id: "{{ wazuh_oidc_client_id }}"
+          opensearch_security.openid.client_secret: "{{ wazuh_oidc_client_secret }}"
+          opensearch_security.openid.scope: "openid profile email"
+          opensearch_security.openid.base_redirect_url: "{{ wazuh_dashboard_public_url }}"
+      no_log: true
+      register: wazuh_dashboard_oidc_config
+
+    - name: Recreate the dashboard container to pick up the new config
+      community.docker.docker_compose_v2:
+        project_src: "{{ wazuh_compose_dir }}"
+        services: [wazuh.dashboard]
+        state: present
+        recreate: always
+      when: wazuh_dashboard_oidc_config.changed
+
+    # Indexer-side token-validation config (openid_auth_domain) has no
+    # vendored source in wazuh-docker -- it's baked into the image, not
+    # shipped as an editable file the repo carries. Rather than guess
+    # its baseline shape, extract the LIVE default from the running
+    # container, add the OIDC domain to it programmatically, and push
+    # the result via securityadmin.sh -- the only supported way to
+    # apply security-plugin config changes after first bootstrap
+    # (config.yml sits behind the securityconfig REST endpoint, which
+    # is disabled by default; see project_opensearch_migration_status
+    # memory / es_findings_ingest role's own comment on this exact
+    # distinction). Idempotent: skipped once the domain is already present.
+    - name: Check whether indexer security config already has the OIDC domain
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-indexer, grep, -q, openid_auth_domain,
+               /usr/share/wazuh-indexer/opensearch-security/config.yml]
+      register: wazuh_oidc_domain_present
+      changed_when: false
+      failed_when: false
+
+    - name: Copy live security config.yml out of the indexer container
+      ansible.builtin.command:
+        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml",
+               "{{ wazuh_compose_dir }}/config.yml.orig"]
+      when: wazuh_oidc_domain_present.rc != 0
+
+    - name: Copy the openid_auth_domain helper script to the host
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/wazuh-stack/add_openid_auth_domain.py"
+        dest: "{{ wazuh_compose_dir }}/add_openid_auth_domain.py"
+        mode: "0750"
+      when: wazuh_oidc_domain_present.rc != 0
+
+    - name: Add the openid_auth_domain block to security config.yml
+      ansible.builtin.command:
+        argv:
+          - python3
+          - "{{ wazuh_compose_dir }}/add_openid_auth_domain.py"
+          - "{{ wazuh_compose_dir }}/config.yml.orig"
+          - "{{ wazuh_compose_dir }}/config.yml.new"
+          - "https://{{ wazuh_authentik_fqdn }}/application/o/edge-wazuh-stack-dashboard/.well-known/openid-configuration"
+      when: wazuh_oidc_domain_present.rc != 0
+
+    - name: Copy the updated security config.yml back into the indexer container
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config.yml.new",
+               "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml"]
+      when: wazuh_oidc_domain_present.rc != 0
+
+    - name: Push the updated security config via securityadmin.sh
+      ansible.builtin.command:
+        argv:
+          - docker
+          - exec
+          - wazuh-stack-indexer
+          - bash
+          - -c
+          - >-
+            CONFIG_DIR=/usr/share/wazuh-indexer/opensearch-security &&
+            bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
+            -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../config/certs/admin-key.pem
+            -cert $CONFIG_DIR/../config/certs/admin.pem
+            -cacert $CONFIG_DIR/../config/certs/root-ca.pem -nhnv -p 9200 -h localhost
+      when: wazuh_oidc_domain_present.rc != 0

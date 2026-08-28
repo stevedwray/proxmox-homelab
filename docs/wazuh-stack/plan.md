@@ -33,14 +33,21 @@ first." This plan is that setup work, for Wazuh only.
 
 ## Verified upstream facts (researched 2026-08-29, not assumed)
 
+**Correction from the first pass of this plan**: an earlier fetch
+against the `wazuh-docker` GitHub repo's `6.0.0` ref returned content
+that turned out to be wrong — there is no `6.0.0` tag in that repo at
+all (checked via the GitHub tags API). The real current stable release
+as of 2026-08-29 is **`4.14.7`** (`5.0.0` is beta, not used here). All
+facts below are re-verified against the actual `v4.14.7` tag.
+
 Wazuh's official `wazuh-docker` single-node deployment, current stable
-tag `6.0.0`:
+tag `v4.14.7`:
 
 | Component | Image | Ports | Ulimits |
 |---|---|---|---|
-| `wazuh.manager` | `wazuh/wazuh-manager:6.0.0` | 1514/tcp (agent events), 1515/tcp (agent enrollment), 514/udp (syslog), 55000/tcp (Wazuh API) | `memlock: -1:-1` (unlimited), `nofile: 655360` |
-| `wazuh.indexer` | `wazuh/wazuh-indexer:6.0.0` | 9200/tcp | `memlock: -1:-1` (unlimited), `nofile: 65536` |
-| `wazuh.dashboard` | `wazuh/wazuh-dashboard:6.0.0` | container listens on 5601, upstream compose publishes it as host `443` | — |
+| `wazuh.manager` | `wazuh/wazuh-manager:4.14.7` | 1514/tcp (agent events), 1515/tcp (agent enrollment), 514/udp (syslog), 55000/tcp (Wazuh API) | `memlock: -1:-1` (unlimited), `nofile: 655360` |
+| `wazuh.indexer` | `wazuh/wazuh-indexer:4.14.7` | 9200/tcp | `memlock: -1:-1` (unlimited), `nofile: 65536` |
+| `wazuh.dashboard` | `wazuh/wazuh-dashboard:4.14.7` | container listens on 5601, upstream compose publishes it as host `443` | — |
 
 **Real gotcha, high-confidence carry-over**: upstream's compose sets
 `memlock: -1:-1` on both `wazuh.manager` and `wazuh.indexer`. This repo
@@ -423,38 +430,50 @@ spec:
         mode: oidc
 ```
 
-## Not yet resolved (deliberately not written as step packets)
+## Resolved in a second pass (2026-08-29)
 
-Following `step-packet-schema.md`'s rule — "if you can't write this in
-three sentences without hedging, the step is still too big, split it" —
-the following need their own research pass before they can become
-literal step content. Writing them now would mean guessing at exact
-config keys/task ordering this plan hasn't actually verified against a
-running container, the same mistake the schema doc's "two content
-strategies" section warns against.
+The four items below were flagged in this plan's first pass as needing
+live-container verification before becoming literal content. All four
+are now resolved — `deploy-wazuh-stack.yml` and its helper script are
+written and committed:
 
-1. **`deploy-wazuh-stack` playbook itself** — the cert-generation
-   pre-step, the compose file with `memlock` stripped and heap sizing
-   computed from real container memory (same formula Graylog/OpenSearch
-   already use), and the password-rotation task. `opensearch-stack` and
-   `greenbone-stack` are the right precedents to follow (`lxc_base` +
-   `docker_base` + direct tasks templating compose inline, no dedicated
-   role) but neither's playbook is simple enough to hand a local model
-   without first confirming the exact `6.0.0` image's cert-tool and
-   password-tool invocation live.
-2. **Default-password rotation mechanism** — confirm Wazuh 6.0.0's
-   actual tool/procedure for replacing the indexer's `internal_users.yml`
-   demo hash and the manager/dashboard's shared API password before
-   writing this as a task. Do not guess a bcrypt hash by hand.
-3. **OIDC config key verification** — the block sketched above under
-   "Verified upstream facts" is the right starting hypothesis (direct
-   transcription of `opensearch-stack`'s already-solved config, since
-   Wazuh's dashboard forks the same codebase), but must be checked
-   against the live `wazuh/wazuh-dashboard:6.0.0` container's actual
-   config file name and plugin key names before being templated for
-   real — Wazuh's own release notes don't guarantee 1:1 parity with
-   upstream OpenSearch Dashboards on every version.
-4. **The MikroTik `edge_seg → infra_seg tcp/5601` rule** — confirm
+1. **The playbook itself** — written, following `opensearch-stack`'s
+   shape (`lxc_base` + `docker_base` + direct tasks templating compose
+   inline). Every vendored config file (`docker-compose.yml`,
+   `certs.yml`, `internal_users.yml`, `wazuh.yml`, `wazuh.indexer.yml`,
+   `wazuh_manager.conf`) is a literal transcription of the real
+   `wazuh-docker` `v4.14.7` tag's own files, fetched and verified during
+   this pass — not invented from a generic pattern.
+2. **Default-password rotation** — resolved via Wazuh's own documented
+   procedure (`documentation.wazuh.com`'s "Changing the default
+   password of Wazuh users"): `hash.sh -p <password>` generates a
+   plugin-compatible bcrypt hash non-interactively, written into
+   `internal_users.yml`'s `admin` entry. `kibanaserver` is deliberately
+   left at its vendor demo hash, matching the precedent
+   `opensearch-stack` already set for exactly this internal-only
+   service credential.
+3. **OIDC config** — the dashboard-side hypothesis (direct transcription
+   of `opensearch-stack`'s already-solved `opensearch_security.auth.type:
+   "openid"` block) is now confirmed correct: Wazuh's own community docs
+   put this in the same `opensearch_dashboards.yml` file at the same
+   config keys. The indexer-side token-validation half
+   (`openid_auth_domain` in the security plugin's `config.yml`) has no
+   vendored source to transcribe — the playbook extracts it live from
+   the running container instead of guessing its baseline shape, adds
+   the domain via `add_openid_auth_domain.py`, and pushes it with
+   `securityadmin.sh` (real, documented invocation, not guessed).
+4. **A real gotcha found along the way, not previously known**: Wazuh's
+   dashboard defaults to `server.ssl.enabled: true` (terminates its own
+   TLS with a self-signed cert) — the same
+   `reference_traefik_no_insecure_backend_tls` constraint already hit
+   elsewhere in this repo (Traefik can't route to a self-signed HTTPS
+   backend). Fixed by disabling the dashboard's own TLS so it serves
+   plain HTTP on 5601, matching `opensearch-stack`'s dashboard and this
+   plan's `edge.yaml`.
+
+## Not yet resolved
+
+1. **The MikroTik `edge_seg → infra_seg tcp/5601` rule** — confirm
    whether the existing rule that lets Traefik reach `opensearch-stack`'s
    dashboard is zone-wide or scoped to `192.168.40.14`, before deciding
    whether a new entry is needed for `192.168.40.15`. This is a real
@@ -462,8 +481,22 @@ strategies" section warns against.
    packet regardless, per this repo's Production Credential Controls and
    the general rule that ambiguous/mutating network changes are operator
    work, not local-model work.
-5. **Promotion path** — `scaffold-stack.sh`, `provision.sh --stack
-   wazuh-stack` against `pve-test-vm`, and the eventual `pve` promotion
-   are all plain operator instructions once the above is resolved, not
-   step packets — same reasoning `step-packet-schema.md` gives for why
-   `scaffold-stack.sh` itself is never written as a step block.
+2. **Promotion path** — `scaffold-stack.sh` was not actually used for
+   this stack (see below); `provision.sh --stack wazuh-stack` against
+   `pve-test-vm`, verifying the dashboard's OIDC login end to end, and
+   the eventual `pve` promotion remain, and are plain operator-run
+   infrastructure steps, not step packets.
+3. **Untested end-to-end** — every fact above is verified against
+   Wazuh's own published sources, but this playbook has not yet been
+   run against a real host. The usual class of first-run surprises
+   (cert-generator image availability through Harbor's `dockerhub`
+   proxy-cache, `securityadmin.sh`'s exact exit behavior on this image,
+   whether `hash.sh`'s output format matches what was seen in third-party
+   write-ups) should be expected and are why `pve-test-vm` validation
+   comes before any `stable`/`pve` promotion.
+
+**Note on `scaffold-stack.sh`**: this stack's five files ended up
+hand-authored directly rather than through the scaffolder, matching the
+precedent `opensearch-stack`/`greenbone-stack` already set — real
+complexity (cert generation, password rotation, two-sided OIDC wiring)
+exceeded what the generic five-agent scaffolder path is meant for.
