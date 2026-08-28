@@ -46,6 +46,7 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("technitium-stack", "technitium"): ("TECHNITIUM_OIDC_CLIENT_ID", "technitium"),
     ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
     ("opensearch-stack", "dashboards"): ("OPENSEARCH_OIDC_CLIENT_ID", "opensearch-dashboards"),
+    ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -54,6 +55,7 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("technitium-stack", "technitium"): "TECHNITIUM_OIDC_CLIENT_SECRET",
     ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
     ("opensearch-stack", "dashboards"): "OPENSEARCH_OIDC_CLIENT_SECRET",
+    ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
 }
 
 
