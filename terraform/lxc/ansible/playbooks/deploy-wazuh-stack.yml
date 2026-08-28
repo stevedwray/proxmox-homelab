@@ -83,6 +83,14 @@
     wazuh_compose_dir: /opt/wazuh-stack
     wazuh_registry_host: "{{ lookup('env', 'LAB_FQDN_HARBOR') | default('harbor.' ~ lookup('env', 'LAB_DOMAIN'), true) }}"
     wazuh_certs_generator_image: "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-certs-generator:0.0.4"
+    # Must match the major.minor of wazuh_image_tag (4.14.7) in the later
+    # play -- the generator downloads a matching wazuh-certs-tool.sh from
+    # packages.wazuh.com/packages-dev.wazuh.com keyed on this version and
+    # fails outright ("tool does not exist in any bucket") without it.
+    # Real bug, found live on pve 2026-08-29: this env var was missing
+    # from the docker run invocation entirely (upstream's own
+    # generate-indexer-certs.yml sets it), not just wrong.
+    wazuh_cert_tool_version: "4.14"
   tasks:
     - name: Create Wazuh compose and config directories
       ansible.builtin.file:
@@ -152,6 +160,8 @@
           - docker
           - run
           - --rm
+          - -e
+          - "CERT_TOOL_VERSION={{ wazuh_cert_tool_version }}"
           - -v
           - "{{ wazuh_compose_dir }}/config/wazuh_indexer_ssl_certs/:/certificates/"
           - -v
