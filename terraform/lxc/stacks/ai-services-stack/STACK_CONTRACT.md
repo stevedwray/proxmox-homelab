@@ -167,24 +167,11 @@ Traefik/Authentik OIDC. No other stack depends on it programmatically.
   `settings.yml` — this survives a settings file migrated in from
   `framework` (which has the same underlying default-engine problem, just
   never surfaced because nobody stress-tested web search there).
-- **Google general web search is not viable** — new Programmable Search
-  Engines can't enable "search the entire web" anymore, and SearXNG's
-  built-in `google_cse` engine is hardcoded to a shared third-party token
-  that ignores any credentials you configure (confirmed against both this
-  image and upstream SearXNG's current master). A curated-site Google
-  search *is* wired up via a custom engine module
-  (`searxng-engines/google_customsearch.py`, bind-mounted into the
-  container — do not mount the whole directory over
-  `/usr/local/searxng/searx/engines/`, that masks every built-in engine
-  including bing/braveapi/mwmbl) if both `GOOGLE_CSE_ID` and
-  `GOOGLE_CSE_API_KEY` are set, but it only searches whatever site list
-  the CSE was configured with, not the general web. As of 2026-08-02 this
-  is live in code but disabled on `pve-test-vm` pending the operator
-  resolving a Google Cloud "project doesn't have access to Custom Search
-  JSON API" error (API key and enabled-API project mismatch) — re-running
-  `provision.sh --stack ai-services-stack` will re-enable it automatically
-  once that's fixed, no playbook change needed. See
-  `docs/design/lessons-learned.md`'s SearXNG section.
+- **Google Custom Search is deliberately not deployed** — Google no longer
+  permits new Programmable Search Engines to search the general web, so its
+  curated-site results do not meet this stack's general-search requirement.
+  Removing the custom engine also prevents failed requests from placing its
+  API key in SearXNG's request-error logs.
 
 ## Playbook
 
