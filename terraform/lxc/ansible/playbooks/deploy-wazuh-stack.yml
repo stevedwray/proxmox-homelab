@@ -1079,6 +1079,12 @@
     # the certs dir is a sibling of opensearch-security under config/, i.e.
     # $CONFIG_DIR/../certs (not $CONFIG_DIR/../config/certs, which would
     # have doubled the config/ segment).
+    # Real bug found live on pve, seventh deploy attempt: securityadmin.sh
+    # shells out to `which` internally to locate java when JAVA_HOME isn't
+    # set, and this image has no `which` binary at all ("command not
+    # found", confirmed via the actual stderr, not guessed). Setting
+    # JAVA_HOME explicitly (the exact path Wazuh's own docs use for this
+    # image) avoids that code path entirely.
     - name: Push the updated security config via securityadmin.sh
       ansible.builtin.command:
         argv:
@@ -1088,6 +1094,7 @@
           - bash
           - -c
           - >-
+            export JAVA_HOME=/usr/share/wazuh-indexer/jdk &&
             CONFIG_DIR=/usr/share/wazuh-indexer/config/opensearch-security &&
             bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
             -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../certs/admin-key.pem
