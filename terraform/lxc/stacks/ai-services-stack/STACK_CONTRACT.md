@@ -60,7 +60,7 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave_llm_context` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. |
+| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. The current key returns HTTP 400 from Brave LLM Context, so `brave_llm_context` must not be selected unless its plan is changed. |
 
 ## Provides
 
