@@ -995,18 +995,38 @@
       no_log: true
       register: wazuh_authd_pass_staged
 
+    # Real bug found live, 2026-08-29: gating the copy/chown/restart below
+    # on wazuh_authd_pass_staged.changed alone breaks whenever the
+    # MANAGER CONTAINER gets rebuilt independently of this host-side
+    # staging file (e.g. `docker compose down -v` to rule out corrupted
+    # state, then a redeploy) -- the staging file's content is unchanged
+    # (same SOPS secret), so .changed is False, so every step here got
+    # skipped even though the fresh container had no authd.pass at all.
+    # Every one of the 5 pilot agents then failed enrollment with
+    # "Invalid password" (authd validating against a nonexistent file
+    # rejects everything) until this was caught and fixed. Checking
+    # whether the file actually exists INSIDE the container -- not just
+    # whether the host staging copy changed -- makes this self-healing
+    # across a container rebuild, not just a config edit.
+    - name: Check whether authd.pass already exists inside the manager container
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, test, -s, /var/ossec/etc/authd.pass]
+      register: wazuh_authd_pass_in_container
+      changed_when: false
+      failed_when: false
+
     - name: Copy authd.pass into the running manager container
       ansible.builtin.command:
         argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/authd.pass",
                "wazuh-stack-manager:/var/ossec/etc/authd.pass"]
-      when: wazuh_authd_pass_staged.changed
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
       changed_when: true
 
     - name: Set ownership/permissions on the in-container authd.pass
       ansible.builtin.command:
         argv: [docker, exec, wazuh-stack-manager, sh, -c,
                "chown 999:999 /var/ossec/etc/authd.pass && chmod 640 /var/ossec/etc/authd.pass"]
-      when: wazuh_authd_pass_staged.changed
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
       changed_when: true
 
     # ossec.conf's own use_password: yes change (above) already forces a
@@ -1020,7 +1040,7 @@
     - name: Restart the manager container to pick up authd.pass
       ansible.builtin.command:
         argv: [docker, restart, wazuh-stack-manager]
-      when: wazuh_authd_pass_staged.changed
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
       changed_when: true
 
     - name: Wait for manager API port to accept connections again after authd restart
@@ -1028,7 +1048,7 @@
         host: 127.0.0.1
         port: 55000
         timeout: 300
-      when: wazuh_authd_pass_staged.changed
+      when: wazuh_authd_pass_staged.changed or wazuh_authd_pass_in_container.rc != 0
 
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
