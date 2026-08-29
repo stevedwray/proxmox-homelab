@@ -437,6 +437,14 @@ policies:
       The zone's existing edge_seg -> ai_seg:[80,443] entry in pve.yaml is
       not enough on its own, same reasoning as mcp-utility-stack's
       dedicated :8000 rule above.
+  - from: edge_seg
+    to: ai_seg
+    protocol: tcp
+    ports: [8082]
+    description: >-
+      Traefik to ai-services-stack (searxng.$${LAB_DOMAIN}, HTTPS at the
+      edge, plain HTTP to the backend). SearXNG is an intentionally
+      unauthenticated network service; Traefik supplies HTTPS and routing.
   - from: pentest_seg
     to: infra_seg
     protocol: tcp

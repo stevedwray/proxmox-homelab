@@ -40,9 +40,10 @@ hosts — not sufficient here):
 
 - Egress: `ai_seg → framework:8080,11434` (`192.168.50.0/24 →
   192.168.1.8`) so OpenWebUI can reach llamacpp-router/Ollama.
-- Ingress: `edge_seg → ai_seg:8081` so Traefik can reach OpenWebUI — the
-  zone's generic `edge_seg → ai_seg:[80,443]` entry is not enough on its
-  own, same pattern `mcp-utility-stack` needed for its own `:8000`.
+- Ingress: `edge_seg → ai_seg:8081,8082` so Traefik can reach OpenWebUI and
+  the SearXNG browser UI — the zone's generic `edge_seg →
+  ai_seg:[80,443]` entry is not enough on its own, same pattern
+  `mcp-utility-stack` needed for its own `:8000`.
 - Egress: SearXNG needs broad outbound reach to arbitrary search engines,
   fundamentally incompatible with the CVE-server-era named-FQDN allowlist
   — see plan.md Step 4 for the explicit broad-vs-narrow policy decision.
@@ -66,12 +67,14 @@ hosts — not sufficient here):
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
+| `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. OpenWebUI continues to query the service directly over the internal Docker network. |
 | `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
 
-SearXNG itself is intentionally unrouted — no public Traefik entry, LAN
-(in-LXC compose network) reachable only, no auth, matching the LM
-Studio/llama.cpp/Ollama endpoints' posture and today's framework
-deployment.
+SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
+raw `:8082` service remains available for existing machine-to-machine
+consumers such as PentAGI. SearXNG has no user authentication or RBAC;
+browser settings are per-browser cookies, while server policy remains in
+the infrastructure-managed `settings.yml`.
 
 ## Dependencies
 

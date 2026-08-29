@@ -150,9 +150,13 @@
     ai_services_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
     ai_services_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
     # OpenWebUI's own RAG web-search talks to SearXNG over the internal
-    # Docker network -- unrelated to the LAN-facing port below.
+    # Docker network. Do not replace this with the public route below: this
+    # is the stable service-to-service path regardless of browser settings.
     ai_services_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
-    ai_services_searxng_base_url: "http://searxng:8080/"  # NOSONAR: ansible:S5332 - internal-only Docker network; SearXNG has no published host port
+    # SearXNG uses its base URL to generate redirects (including after saving
+    # preferences). `searxng:8080` only resolves inside Docker, so it cannot
+    # be used here now that the service has a user-facing HTTPS route.
+    ai_services_searxng_base_url: "https://searxng.{{ ai_services_lab_domain }}/"
     # Optional, unlike the mandatory secrets above -- web search works
     # without either, just with fewer/lower-quality engines. See
     # docs/design/lessons-learned.md's SearXNG entry for why the default

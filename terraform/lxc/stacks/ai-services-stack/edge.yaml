@@ -26,3 +26,22 @@ spec:
         resolver: letsencrypt
       auth:
         mode: oidc
+    - name: searxng
+      host: searxng.${LAB_DOMAIN}
+      backend:
+        type: url
+        # SearXNG's internal container port is published on the LXC at 8082.
+        # This route is intentionally separate from OpenWebUI's Docker-only
+        # `http://searxng:8080` query path.
+        url: http://${LAB_IP_AI_SERVICES}:8082
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        # SearXNG has no accounts or RBAC. It is deliberately an
+        # unauthenticated network service; individual browser preferences
+        # are stored in the user's cookie, not in an Authentik identity.
+        mode: none
