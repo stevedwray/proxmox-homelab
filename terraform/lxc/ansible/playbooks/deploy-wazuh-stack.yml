@@ -1027,14 +1027,14 @@
     - name: Check whether indexer security config already has the OIDC domain
       ansible.builtin.command:
         argv: [docker, exec, wazuh-stack-indexer, grep, -q, openid_auth_domain,
-               /usr/share/wazuh-indexer/opensearch-security/config.yml]
+               /usr/share/wazuh-indexer/config/opensearch-security/config.yml]
       register: wazuh_oidc_domain_present
       changed_when: false
       failed_when: false
 
     - name: Copy live security config.yml out of the indexer container
       ansible.builtin.command:
-        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml",
+        argv: [docker, cp, "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/config.yml",
                "{{ wazuh_compose_dir }}/config.yml.orig"]
       when: wazuh_oidc_domain_present.rc != 0
 
@@ -1058,9 +1058,16 @@
     - name: Copy the updated security config.yml back into the indexer container
       ansible.builtin.command:
         argv: [docker, cp, "{{ wazuh_compose_dir }}/config.yml.new",
-               "wazuh-stack-indexer:/usr/share/wazuh-indexer/opensearch-security/config.yml"]
+               "wazuh-stack-indexer:/usr/share/wazuh-indexer/config/opensearch-security/config.yml"]
       when: wazuh_oidc_domain_present.rc != 0
 
+    # Real bug found live on pve, fifth deploy attempt: config.yml actually
+    # lives at .../config/opensearch-security/config.yml, not
+    # .../opensearch-security/config.yml -- confirmed by `find` inside the
+    # running container rather than guessed. CONFIG_DIR corrected to match;
+    # the certs dir is a sibling of opensearch-security under config/, i.e.
+    # $CONFIG_DIR/../certs (not $CONFIG_DIR/../config/certs, which would
+    # have doubled the config/ segment).
     - name: Push the updated security config via securityadmin.sh
       ansible.builtin.command:
         argv:
@@ -1070,9 +1077,9 @@
           - bash
           - -c
           - >-
-            CONFIG_DIR=/usr/share/wazuh-indexer/opensearch-security &&
+            CONFIG_DIR=/usr/share/wazuh-indexer/config/opensearch-security &&
             bash /usr/share/wazuh-indexer/plugins/opensearch-security/tools/securityadmin.sh
-            -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../config/certs/admin-key.pem
-            -cert $CONFIG_DIR/../config/certs/admin.pem
-            -cacert $CONFIG_DIR/../config/certs/root-ca.pem -nhnv -p 9200 -h localhost
+            -cd $CONFIG_DIR -icl -key $CONFIG_DIR/../certs/admin-key.pem
+            -cert $CONFIG_DIR/../certs/admin.pem
+            -cacert $CONFIG_DIR/../certs/root-ca.pem -nhnv -p 9200 -h localhost
       when: wazuh_oidc_domain_present.rc != 0
