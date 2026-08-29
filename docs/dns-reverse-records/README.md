@@ -1,9 +1,13 @@
 # dns-reverse-records
 
-Status: **planned, not started.** `plan.md` is a fully researched, fully
+Status: **all 8 code/doc steps landed on `work/dns-reverse-records-plan`,
+awaiting `pve` deployment approval.** `plan.md` is a fully researched, fully
 validated step-by-step plan (per `docs/agent-design/`) for giving every
 statically-published Technitium A record a matching reverse (PTR) record,
-where one can meaningfully exist. No step has been executed yet.
+where one can meaningfully exist. Every step's gate passed on the real repo
+files (not just the pre-commit scratch validation). Deploying to `pve` is a
+production mutation and requires the operator's explicit "Proceed" per
+CLAUDE.md's Production Credential Controls -- see "Step status" below.
 
 ## What this is
 
@@ -72,19 +76,57 @@ validation. `plan.md`'s step content is what actually lands.
 
 | Step | Status |
 |---|---|
-| dns-reverse-01-shared-role | not started |
-| dns-reverse-02-render-edge-ptr-logic | not started |
-| dns-reverse-03-render-edge-ptr-test | not started |
-| dns-reverse-04-bootstrap-zone-wiring | not started |
-| dns-reverse-05-parity-zone-wiring | not started |
-| dns-reverse-06-ai-stack-playbook | not started |
-| dns-reverse-07-gaming-stack-playbook | not started |
-| dns-reverse-08-stack-contract-doc | not started |
+| dns-reverse-01-shared-role | done |
+| dns-reverse-02-render-edge-ptr-logic | done |
+| dns-reverse-03-render-edge-ptr-test | done |
+| dns-reverse-04-bootstrap-zone-wiring | done |
+| dns-reverse-05-parity-zone-wiring | done |
+| dns-reverse-06-ai-stack-playbook | done |
+| dns-reverse-07-gaming-stack-playbook | done |
+| dns-reverse-08-stack-contract-doc | done |
 
-(`implement-step` writes each step's hand-back here as it runs -- the actual
-edit made and the actual gate results. If a hand-back is missing after a
-step supposedly ran, verify it directly rather than trusting a chat reply;
-see `docs/agent-design/README.md`.)
+All 8 steps executed 2026-08-30 on branch `work/dns-reverse-records-plan`,
+literal content transcribed as-written from `plan.md` (no deviation). Every
+step's own gate command was re-run against the real repo files after
+editing and passed:
+
+- **01**: role created; `python3 -c "import yaml; ..."` and `ansible-lint
+  terraform/lxc/ansible/roles/technitium_dns_record` both exit 0 (0
+  failures, 3 pre-warn-listed line-length warnings).
+- **02**: `render-edge-technitium.py` edited; the 4 pre-existing tests in
+  `test_render_edge_technitium.py` still pass; `ruff check` clean.
+- **03**: new test `test_ptr_owner_is_proxy_stack_for_shared_browser_ip`
+  added; full suite now 5/5 passing; `ruff check` clean.
+- **04**: `technitium_seed_records` gained `zone`/`ptr` fields (all
+  `ptr: false`, per the plan's bootstrap-vs-parity PTR-collision finding);
+  the query+publish task pair replaced with one `include_role` call;
+  `--syntax-check` exit 0.
+- **05**: parity-zone assert extended to require `ptr` on every generated
+  record; query+publish task pair replaced with a `set_fact` (injects
+  `zone`) plus `include_role`; added the two new PTR-verification tasks
+  (`dig -x` plus assert) after the existing authority assert;
+  `--syntax-check` exit 0.
+- **06**: `configure-ai-stack-dns-records.yml` rewritten onto
+  `technitium_dns_record` (drops the old GET+`overwrite=true` pattern);
+  `--syntax-check` exit 0.
+- **07**: `configure-gaming-stack-dns-records.yml` rewritten the same way;
+  `--syntax-check` exit 0.
+- **08**: `STACK_CONTRACT.md` bullet added documenting the `ptr` field and
+  reverse-zone auto-creation; `grep` gate exit 0.
+
+A final full sweep after all 8 steps (unittest, ruff, `--syntax-check` on
+all 3 touched playbooks, `ansible-lint` on the role) and a live dry-run of
+`render-edge-technitium.py` against the real 16-stack `edge.yaml` set
+(`LAB_DOMAIN=lab.gibbsgreatly.xyz LAB_IP_PROXY=192.168.30.10
+LAB_IP_TECHNITIUM=192.168.20.15`) all still passed, confirming the same 8
+PTR owners found during planning: `authentik-bg`, `dns`, `harbor-bg`,
+`monitoring`, `netbox-bg`, `portainer-bg`, `step-ca`, `traefik`.
+
+Nothing has been committed to `stable`/`main`, and no `provision.sh` or
+`ansible-playbook` run has touched any real host (`pve-test-vm` or `pve`)
+yet -- only local syntax/lint/unit gates. Deploying to `pve` needs the
+operator's explicit "Proceed" per CLAUDE.md's Production Credential
+Controls before any mutating command runs.
 
 ## After all steps land
 

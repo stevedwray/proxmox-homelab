@@ -1,0 +1,126 @@
+---
+# technitium_dns_record: idempotently publish one or more Technitium A
+# records, and (where the record's own IP is uniquely owned by it) a
+# matching PTR record in the appropriate /24 reverse zone.
+#
+# Callers must already be logged in to the Technitium API and provide
+# technitium_api_base / technitium_token (this role never logs in itself,
+# matching every existing call site's own login task).
+#
+# Required var: technitium_dns_record_records -- list of:
+#   - name: <label, e.g. "dns">
+#     zone: <forward zone this record is published in, e.g. "tech.lab.gibbsgreatly.xyz">
+#     ip: <IPv4 address, e.g. "192.168.20.15">
+#     ptr: <bool -- true only for the ONE record that should own the
+#           reverse (PTR) entry for this IP. When two or more records
+#           share the same IP (e.g. every browser-routed hostname behind
+#           Traefik), exactly one of them must set ptr: true and the
+#           rest must set ptr: false -- PTR is one name per IP, it
+#           cannot represent every A record pointing at that IP.>
+#
+# Assumes every record's IP falls in a /24 subnet (true for every SDN VLAN
+# segment this repo defines -- see docs/design/network.md); the reverse
+# zone is derived from the IP's first three octets.
+
+- name: Determine distinct /24 reverse zones needed for this record set
+  ansible.builtin.set_fact:
+    technitium_dns_record_reverse_zones_needed: >-
+      {{
+        technitium_dns_record_records
+        | selectattr('ptr', 'equalto', true)
+        | map(attribute='ip')
+        | map('regex_replace', '^(\d+\.\d+\.\d+)\.\d+$', '\1.0/24')
+        | unique
+        | list
+      }}
+
+- name: List existing Technitium zones before reverse-zone reconciliation
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/list?token={{ technitium_token }}"
+    method: GET
+    return_content: true
+  register: technitium_dns_record_zone_list
+  no_log: true
+
+- name: Create missing reverse zones for this record set
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/create?zone={{ item | urlencode }}&type=Primary&token={{ technitium_token }}"
+    method: POST
+    status_code: [200]
+  loop: "{{ technitium_dns_record_reverse_zones_needed }}"
+  loop_control:
+    label: "{{ item }}"
+  when: >-
+    (item | regex_replace('^(\d+)\.(\d+)\.(\d+)\.0/24$', '\3.\2.\1.in-addr.arpa'))
+    not in ((technitium_dns_record_zone_list.content | from_json).response.zones | map(attribute='name') | list)
+  no_log: true
+
+- name: Query current A records before publishing
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/records/get?zone={{ item.zone }}&domain={{ item.name }}.{{ item.zone }}&listZone=false&token={{ technitium_token }}"
+    method: GET
+    return_content: true
+  loop: "{{ technitium_dns_record_records }}"
+  loop_control:
+    label: "{{ item.name }}.{{ item.zone }}"
+  register: technitium_dns_record_existing_a
+  retries: 10
+  delay: 2
+  until: technitium_dns_record_existing_a is not failed
+  no_log: true
+
+- name: Publish A records
+  ansible.builtin.uri:
+    url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.item.name }}.{{ item.item.zone }}&zone={{ item.item.zone }}&type=A&ipAddress={{ item.item.ip }}&token={{ technitium_token }}"
+    method: POST
+    status_code: [200]
+    return_content: true
+  loop: "{{ technitium_dns_record_existing_a.results }}"
+  loop_control:
+    label: "{{ item.item.name }}.{{ item.item.zone }} -> {{ item.item.ip }}"
+  when: >-
+    (item.content | from_json).response.records
+    | selectattr('type', 'equalto', 'A')
+    | selectattr('rData.ipAddress', 'equalto', item.item.ip)
+    | list
+    | length == 0
+  failed_when: >-
+    (technitium_dns_record_publish_a.content | from_json).status != 'ok'
+  register: technitium_dns_record_publish_a
+  no_log: true
+
+- name: Query current PTR records before publishing
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_api_base }}/zones/records/get?zone={{ item.ip | regex_replace('^(\d+)\.(\d+)\.(\d+)\.\d+$', '\3.\2.\1.in-addr.arpa') }}&domain={{ item.ip | regex_replace('^(\d+)\.(\d+)\.(\d+)\.(\d+)$', '\4.\3.\2.\1.in-addr.arpa') }}&listZone=false&token={{ technitium_token }}
+    method: GET
+    return_content: true
+  loop: "{{ technitium_dns_record_records | selectattr('ptr', 'equalto', true) | list }}"
+  loop_control:
+    label: "{{ item.ip }} -> {{ item.name }}.{{ item.zone }}"
+  register: technitium_dns_record_existing_ptr
+  retries: 10
+  delay: 2
+  until: technitium_dns_record_existing_ptr is not failed
+  no_log: true
+
+- name: Publish PTR records
+  ansible.builtin.uri:
+    url: >-
+      {{ technitium_api_base }}/zones/records/add?domain={{ item.item.ip | regex_replace('^(\d+)\.(\d+)\.(\d+)\.(\d+)$', '\4.\3.\2.\1.in-addr.arpa') }}&zone={{ item.item.ip | regex_replace('^(\d+)\.(\d+)\.(\d+)\.\d+$', '\3.\2.\1.in-addr.arpa') }}&type=PTR&ptrName={{ item.item.name }}.{{ item.item.zone }}&token={{ technitium_token }}
+    method: POST
+    status_code: [200]
+    return_content: true
+  loop: "{{ technitium_dns_record_existing_ptr.results }}"
+  loop_control:
+    label: "{{ item.item.ip }} -> {{ item.item.name }}.{{ item.item.zone }}"
+  when: >-
+    (item.content | from_json).response.records
+    | selectattr('type', 'equalto', 'PTR')
+    | selectattr('rData.ptrName', 'equalto', item.item.name ~ '.' ~ item.item.zone)
+    | list
+    | length == 0
+  failed_when: >-
+    (technitium_dns_record_publish_ptr.content | from_json).status != 'ok'
+  register: technitium_dns_record_publish_ptr
+  no_log: true

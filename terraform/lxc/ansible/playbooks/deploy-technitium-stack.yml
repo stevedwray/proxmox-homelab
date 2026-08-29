@@ -215,24 +215,31 @@
     # intentionally mirrors CoreDNS's current browser-routed vs breakglass
     # split so we can validate Technitium independently before it owns the
     # live LAB_DOMAIN zone.
+    #
+    # ptr is always false here: this zone shares physical IPs with the real
+    # parity zone below (same LAB_IP_* addresses under a different, non-
+    # authoritative tech.<domain> name), and a PTR record can only point at
+    # one name per IP. The parity zone -- the real production namespace --
+    # is what owns reverse DNS for these addresses; see technitium_dns_record
+    # role docs for why.
     technitium_seed_records:
-      - { name: "dns", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}" }
-      - { name: "ns1", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}" }
-      - { name: "traefik", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "authentik", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "step-ca", ip: "{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}" }
-      - { name: "monitoring", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}" }
-      - { name: "grafana", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "portainer", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "harbor", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "netbox", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
-      - { name: "authentik-int", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}" }
-      - { name: "authentik-bg", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}" }
-      - { name: "harbor-bg", ip: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}" }
-      - { name: "monitoring-bg", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}" }
-      - { name: "netbox-bg", ip: "{{ lookup('env', 'LAB_IP_NETBOX') | mandatory('LAB_IP_NETBOX env var is required') }}" }
-      - { name: "portainer-bg", ip: "{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var is required') }}" }
-      - { name: "proxy-bg", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}" }
+      - { name: "dns", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}", ptr: false }
+      - { name: "ns1", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_TECHNITIUM') }}", ptr: false }
+      - { name: "traefik", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "authentik", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "step-ca", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_STEP_CA') | mandatory('LAB_IP_STEP_CA env var is required') }}", ptr: false }
+      - { name: "monitoring", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}", ptr: false }
+      - { name: "grafana", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "portainer", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "harbor", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "netbox", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
+      - { name: "authentik-int", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}", ptr: false }
+      - { name: "authentik-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_AUTHENTIK') | mandatory('LAB_IP_AUTHENTIK env var is required') }}", ptr: false }
+      - { name: "harbor-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_HARBOR') | mandatory('LAB_IP_HARBOR env var is required') }}", ptr: false }
+      - { name: "monitoring-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_MONITORING') | mandatory('LAB_IP_MONITORING env var is required') }}", ptr: false }
+      - { name: "netbox-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_NETBOX') | mandatory('LAB_IP_NETBOX env var is required') }}", ptr: false }
+      - { name: "portainer-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PORTAINER') | mandatory('LAB_IP_PORTAINER env var is required') }}", ptr: false }
+      - { name: "proxy-bg", zone: "{{ technitium_bootstrap_zone }}", ip: "{{ lookup('env', 'LAB_IP_PROXY') | mandatory('LAB_IP_PROXY env var is required') }}", ptr: false }
 
   tasks:
     # NOTE: request/response shapes below are a first-draft mapping of
@@ -304,9 +311,15 @@
           - technitium_generated_zone_payload is not string
           - technitium_generated_zone_records is sequence
           - technitium_generated_zone_records is not string
+          - >-
+            technitium_generated_zone_records
+            | selectattr('ptr', 'defined')
+            | list | length == technitium_generated_zone_records | length
         fail_msg: >-
           technitium_generated_zone_src must contain either a JSON array of
-          `{name, ip}` records or an object with `zone` and `records`.
+          `{name, ip, ptr}` records or an object with `zone` and `records`.
+          Every record needs a `ptr` field -- regenerate it with the current
+          render-edge-technitium.py, which always includes one.
       when: technitium_generated_zone_enabled | bool
 
     - name: Check whether the lab zone already exists
@@ -415,43 +428,11 @@
           required for the short-lived Technitium authority zone (`dns`
           and `ns1`). Refusing to publish.
 
-    - name: Query current A records in the bootstrap zone
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_bootstrap_zone }}&domain={{ item.name }}.{{ technitium_bootstrap_zone }}&listZone=false&token={{ technitium_token }}"
-        method: GET
-        return_content: true
-      loop: "{{ technitium_records }}"
-      loop_control:
-        label: "{{ item.name }}.{{ technitium_bootstrap_zone }}"
-      register: technitium_existing_record_queries
-      retries: 10
-      delay: 2
-      until: technitium_existing_record_queries is not failed
-      no_log: true
-
-    - name: Publish A records to the bootstrap zone
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.item.name }}.{{ technitium_bootstrap_zone }}&zone={{ technitium_bootstrap_zone }}&type=A&ipAddress={{ item.item.ip }}&token={{ technitium_token }}"
-        method: POST
-        status_code: [200]
-        return_content: true
-      loop: "{{ technitium_existing_record_queries.results }}"
-      loop_control:
-        label: "{{ item.item.name }}.{{ technitium_bootstrap_zone }} -> {{ item.item.ip }}"
-      when: >-
-        (
-          item.content | from_json
-        ).response.records
-        | selectattr('type', 'equalto', 'A')
-        | selectattr('rData.ipAddress', 'equalto', item.item.ip)
-        | list
-        | length == 0
-      failed_when: >-
-        (
-          publish_record_response.content | from_json
-        ).status != 'ok'
-      register: publish_record_response
-      no_log: true
+    - name: Publish bootstrap-zone A records via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ technitium_records }}"
 
     - name: Verify authority query returns expected address in bootstrap zone
       ansible.builtin.shell: >
@@ -660,45 +641,22 @@
           bootstrap A records (`dns` and `ns1`). Refusing to publish.
       when: technitium_parity_zone_enabled | bool
 
-    - name: Query current A records in the parity zone
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/records/get?zone={{ technitium_generated_zone_name }}&domain={{ item.name }}.{{ technitium_generated_zone_name }}&listZone=false&token={{ technitium_token }}"
-        method: GET
-        return_content: true
-      loop: "{{ technitium_generated_zone_records }}"
-      loop_control:
-        label: "{{ item.name }}.{{ technitium_generated_zone_name }}"
-      register: technitium_existing_parity_record_queries
-      retries: 10
-      delay: 2
-      until: technitium_existing_parity_record_queries is not failed
+    - name: Build parity-zone record set for technitium_dns_record
+      ansible.builtin.set_fact:
+        technitium_generated_zone_records_with_zone: >-
+          {{
+            technitium_generated_zone_records
+            | map('combine', {'zone': technitium_generated_zone_name})
+            | list
+          }}
       when: technitium_parity_zone_enabled | bool
-      no_log: true
 
-    - name: Publish A records to the parity zone
-      ansible.builtin.uri:
-        url: "{{ technitium_api_base }}/zones/records/add?domain={{ item.item.name }}.{{ technitium_generated_zone_name }}&zone={{ technitium_generated_zone_name }}&type=A&ipAddress={{ item.item.ip }}&token={{ technitium_token }}"
-        method: POST
-        status_code: [200]
-        return_content: true
-      loop: "{{ technitium_existing_parity_record_queries.results | default([]) }}"
-      loop_control:
-        label: "{{ item.item.name }}.{{ technitium_generated_zone_name }} -> {{ item.item.ip }}"
-      when: >-
-        technitium_parity_zone_enabled | bool and
-        (
-          (item.content | from_json).response.records
-          | selectattr('type', 'equalto', 'A')
-          | selectattr('rData.ipAddress', 'equalto', item.item.ip)
-          | list
-          | length == 0
-        )
-      failed_when: >-
-        (
-          publish_parity_record_response.content | from_json
-        ).status != 'ok'
-      register: publish_parity_record_response
-      no_log: true
+    - name: Publish parity-zone A and PTR records via technitium_dns_record
+      ansible.builtin.include_role:
+        name: technitium_dns_record
+      vars:
+        technitium_dns_record_records: "{{ technitium_generated_zone_records_with_zone }}"
+      when: technitium_parity_zone_enabled | bool
 
     - name: Verify authority query returns expected address in parity zone
       ansible.builtin.shell: >
@@ -718,6 +676,31 @@
         that:
           - (technitium_parity_authority_test.stdout | trim) == (lookup('env', 'LAB_IP_PROXY'))
         fail_msg: "Parity-zone authority query did not return expected IP {{ lookup('env', 'LAB_IP_PROXY') }}"
+      when:
+        - technitium_parity_zone_enabled | bool
+        - not ansible_check_mode
+
+    - name: Verify reverse lookup for the proxy IP resolves to its PTR owner
+      ansible.builtin.shell: >
+        dig @{{ technitium_ip }} +short -x {{ lookup('env', 'LAB_IP_PROXY') }}
+      register: technitium_parity_ptr_test
+      args:
+        executable: /bin/bash
+      check_mode: false
+      changed_when: false
+      retries: 10
+      delay: 2
+      until: (technitium_parity_ptr_test.stdout | default('')) | length > 0
+      when: technitium_parity_zone_enabled | bool
+
+    - name: Assert reverse lookup for the proxy IP names the expected PTR owner
+      ansible.builtin.assert:
+        that:
+          - (technitium_parity_ptr_test.stdout | trim) == ('traefik.' ~ technitium_generated_zone_name ~ '.')
+        fail_msg: >-
+          Reverse lookup for {{ lookup('env', 'LAB_IP_PROXY') }} did not
+          return traefik.{{ technitium_generated_zone_name }} -- check which
+          record technitium_dns_record_records marked ptr: true for this IP.
       when:
         - technitium_parity_zone_enabled | bool
         - not ansible_check_mode
