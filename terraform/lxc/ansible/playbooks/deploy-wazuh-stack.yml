@@ -712,17 +712,30 @@
 
     # Literal transcription of wazuh-docker v4.14.7's
     # config/wazuh_dashboard/wazuh.yml, with the password field templated
-    # -- plus two deliberate changes from upstream:
-    #   1. The `hosts` map's key renamed from upstream's default numeric
-    #      constant (1513629884013 -- an arbitrary, freely-renamable
-    #      label, not a meaningful id; confirmed via Wazuh's own docs
-    #      that this is just the map key used to look up the entry, with
-    #      no significance beyond that) to "wazuh-stack", matching this
-    #      stack's own name. Real cosmetic bug reported live via actual
-    #      browser use, 2026-08-29: the dashboard's API selector dropdown
-    #      shows this key verbatim, so the raw constant appeared as an
-    #      unexplained number in the UI instead of a readable label.
-    #   2. run_as: true (upstream's own default) changed to false:
+    # -- plus one deliberate change from upstream:
+    #
+    # NOTE on the `hosts` map's key (upstream default: the numeric
+    # constant 1513629884013, which shows up verbatim and unexplained in
+    # the dashboard's API selector dropdown): a same-day attempt to
+    # rename this to a readable label ("wazuh-stack") was tried and
+    # REVERTED after live verification found it triggers a real
+    # functional regression, not just a cosmetic rename. On container
+    # recreate with a non-numeric key, the dashboard app appended a
+    # SECOND stale `hosts` entry back into this same file, keyed on the
+    # original numeric constant and carrying upstream's own run_as: true
+    # default -- i.e. exactly the config that caused the "You have no
+    # permissions" bug this file's run_as: false fix (below) exists to
+    # solve. Confirmed via `wc -l` on the actual host-side file (14
+    # lines, two `hosts:` blocks) both before and independent of the
+    # container's bind-mounted view, ruling out a mount-layering
+    # artifact -- something in the dashboard app's own config
+    # validation/migration logic doesn't tolerate a non-numeric key and
+    # falls back to re-adding its default. Left as upstream's numeric
+    # key pending a real investigation of that app-side behavior; do not
+    # re-attempt the label rename without first re-verifying no
+    # duplicate entry reappears.
+    #
+    # run_as: true (upstream's own default) changed to false:
     # real bug found live via an actual browser login, 2026-08-29 --
     # "You have no permissions" for agent:read/sca:read even after the
     # OpenSearch-level all_access fix. Wazuh's own RBAC (server-side,
@@ -744,7 +757,7 @@
         mode: "0640"
         content: |
           hosts:
-            - wazuh-stack:
+            - 1513629884013:
                 url: "https://wazuh.manager"
                 port: 55000
                 username: wazuh-wui
