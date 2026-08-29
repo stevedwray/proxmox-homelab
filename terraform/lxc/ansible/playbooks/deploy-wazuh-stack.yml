@@ -713,7 +713,21 @@
     # Literal transcription of wazuh-docker v4.14.7's
     # config/wazuh_dashboard/wazuh.yml, with the numeric app-config id
     # (1513629884013, a fixed constant used by every Wazuh dashboard
-    # install, not stack-specific) and password field templated.
+    # install, not stack-specific) and password field templated -- with
+    # one deliberate change from upstream's own default (run_as: true):
+    # real bug found live via an actual browser login, 2026-08-29 --
+    # "You have no permissions" for agent:read/sca:read even after the
+    # OpenSearch-level all_access fix. Wazuh's own RBAC (server-side,
+    # entirely separate from OpenSearch's roles_mapping.yml) is what
+    # gates these -- confirmed via Wazuh's own official docs: with
+    # run_as: true the dashboard tries to impersonate the logged-in
+    # dashboard user against the Wazuh API, but an OIDC-authenticated
+    # user has no corresponding Wazuh RBAC identity at all. Wazuh's own
+    # SSO guidance is explicit that run_as must be false for SSO
+    # deployments -- every API call then uses the fixed wazuh-wui
+    # service credential (already an implicit administrator) regardless
+    # of who's logged into the dashboard UI, appropriate for a
+    # single-operator lab already gated by Authentik SSO.
     - name: Write Wazuh dashboard app config (wazuh.yml)
       ansible.builtin.copy:
         dest: "{{ wazuh_compose_dir }}/config/wazuh_dashboard/wazuh.yml"
@@ -727,7 +741,7 @@
                 port: 55000
                 username: wazuh-wui
                 password: "{{ wazuh_api_password }}"
-                run_as: true
+                run_as: false
       no_log: true
       register: wazuh_dashboard_app_config
       notify: Recreate Wazuh stack
