@@ -1045,6 +1045,17 @@
         mode: "0750"
       when: wazuh_oidc_domain_present.rc != 0
 
+    # Real bug found live on pve, sixth deploy attempt: the LXC's own
+    # system python3 has no PyYAML installed by default (Ansible's own
+    # module execution doesn't need it on the host side), so the helper
+    # script's `import yaml` failed outright. Install it explicitly
+    # rather than assume it's already present.
+    - name: Ensure PyYAML is installed for the openid_auth_domain helper script
+      ansible.builtin.apt:
+        name: python3-yaml
+        state: present
+      when: wazuh_oidc_domain_present.rc != 0
+
     - name: Add the openid_auth_domain block to security config.yml
       ansible.builtin.command:
         argv:
