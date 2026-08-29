@@ -504,13 +504,21 @@ operator separately in chat, not applied by default.
 
 ## Not yet resolved
 
-1. **Untested end-to-end** — every fact in this plan is verified against
+1. ~~**Untested end-to-end**~~ — **Resolved**, see below. Originally: every fact in this plan was verified against
    Wazuh's own published sources, but this playbook has not yet been
    run against a real host. The usual class of first-run surprises
    (cert-generator image availability through Harbor's `dockerhub`
    proxy-cache, `securityadmin.sh`'s exact exit behavior on this image,
    whether `hash.sh`'s output format matches what was seen in third-party
    write-ups) should be expected.
+
+   **Resolved, 2026-08-29**: deployed live to `pve`; agent pilot rollout
+   (5 stacks + `pve` itself) complete, with FIM/SCA/vulnerability-
+   detection/Docker-monitoring all confirmed genuinely working
+   per-agent. See `README.md`'s Status section for current state and
+   the real bugs found/fixed along the way (this plan document is kept
+   as the original design record, not continuously updated with
+   ongoing status).
 
 **Note on `scaffold-stack.sh`**: this stack's five files ended up
 hand-authored directly rather than through the scaffolder, matching the
