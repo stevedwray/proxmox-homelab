@@ -18,12 +18,12 @@ live, but is separate, not-yet-started work.
 Deployed directly to `pve` (operator decision, skipping the normal
 `pve-test-vm`-first validation tier) — took 7 real playbook-fixing
 iterations to get right, each found live against production, not
-guessed in advance. See plan.md's "Resolved in a second pass" and the
-git history on `feat/wazuh-stack` for the full list of bugs found and
-fixed (cert-tool version env var, memlock *and* nofile ulimits, config
-file ownership matching each container's real uid, a dropped CA-trust
-line, the indexer's real config.yml path, a missing PyYAML dependency,
-and JAVA_HOME for `securityadmin.sh`). No agents enrolled yet — scope
+guessed in advance, plus 3 more found via actual browser login testing
+after the initial "done": a missing Authentik `redirect_uris`/
+`grant_types` registration, and a platform-wide Traefik ACME reliability
+bug (DNS-01 propagation checks against public recursive resolvers
+instead of the zone's own authoritative NS — see git history on
+`feat/wazuh-stack` for the full list). No agents enrolled yet — scope
 for this pass was server-only, per the operator's own decision.
 
 ## What this is
