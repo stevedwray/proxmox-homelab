@@ -711,10 +711,18 @@
       notify: Recreate Wazuh stack
 
     # Literal transcription of wazuh-docker v4.14.7's
-    # config/wazuh_dashboard/wazuh.yml, with the numeric app-config id
-    # (1513629884013, a fixed constant used by every Wazuh dashboard
-    # install, not stack-specific) and password field templated -- with
-    # one deliberate change from upstream's own default (run_as: true):
+    # config/wazuh_dashboard/wazuh.yml, with the password field templated
+    # -- plus two deliberate changes from upstream:
+    #   1. The `hosts` map's key renamed from upstream's default numeric
+    #      constant (1513629884013 -- an arbitrary, freely-renamable
+    #      label, not a meaningful id; confirmed via Wazuh's own docs
+    #      that this is just the map key used to look up the entry, with
+    #      no significance beyond that) to "wazuh-stack", matching this
+    #      stack's own name. Real cosmetic bug reported live via actual
+    #      browser use, 2026-08-29: the dashboard's API selector dropdown
+    #      shows this key verbatim, so the raw constant appeared as an
+    #      unexplained number in the UI instead of a readable label.
+    #   2. run_as: true (upstream's own default) changed to false:
     # real bug found live via an actual browser login, 2026-08-29 --
     # "You have no permissions" for agent:read/sca:read even after the
     # OpenSearch-level all_access fix. Wazuh's own RBAC (server-side,
@@ -736,7 +744,7 @@
         mode: "0640"
         content: |
           hosts:
-            - 1513629884013:
+            - wazuh-stack:
                 url: "https://wazuh.manager"
                 port: 55000
                 username: wazuh-wui
@@ -1037,10 +1045,23 @@
     # (config.yml sits behind the securityconfig REST endpoint, which
     # is disabled by default; see project_opensearch_migration_status
     # memory / es_findings_ingest role's own comment on this exact
-    # distinction). Idempotent: skipped once the domain is already present.
+    # distinction). Idempotent: skipped once the domain is already
+    # present in its current desired shape.
+    #
+    # Checks specifically for "subject_key: preferred_username" rather
+    # than just the presence of openid_auth_domain -- real bug found
+    # live via actual browser login, 2026-08-29: the first version of
+    # this helper wrote subject_key: sub, which OpenSearch surfaces as
+    # the raw hashed OIDC subject claim as the displayed username
+    # instead of "steve". A grep for openid_auth_domain alone would have
+    # matched the stale block and skipped re-applying the fix on a
+    # re-run, since the domain itself already existed. PyYAML's
+    # safe_dump renders this as an unquoted plain scalar (confirmed:
+    # `subject_key: preferred_username`, no quoting), so a plain
+    # substring grep is reliable here.
     - name: Check whether indexer security config already has the OIDC domain
       ansible.builtin.command:
-        argv: [docker, exec, wazuh-stack-indexer, grep, -q, openid_auth_domain,
+        argv: [docker, exec, wazuh-stack-indexer, grep, -q, "subject_key: preferred_username",
                /usr/share/wazuh-indexer/config/opensearch-security/config.yml]
       register: wazuh_oidc_domain_present
       changed_when: false
