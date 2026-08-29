@@ -172,3 +172,38 @@ promotion was also not done -- this deployed straight from
 validation tier and branch-promotion path, per the operator's explicit
 choice to target `pve` directly rather than the plan's own default
 (`pve-test-vm` first).
+
+## MikroTik reverse-zone delegation (follow-up, same day)
+
+`dig -x <ip>` from a real workstation still returned nothing after the `pve`
+deploy above -- the PTR records were correct on Technitium but unreachable
+via the LAN's default resolver, because MikroTik only delegated the
+*forward* zone (`lab.gibbsgreatly.xyz`) to Technitium, never the *reverse*
+zones. New `ansible/00-initial-setup/mikrotik-dns-reverse-zone-delegate.yml`
+(mirrors `mikrotik-dns-lab-zone-delegate.yml`'s FWD pattern) adds 3
+narrowly-scoped, additive FWD entries: `20.168.192.in-addr.arpa`,
+`30.168.192.in-addr.arpa`, `40.168.192.in-addr.arpa` -> `192.168.20.15`.
+
+**A real execution mistake, caught and corrected in the same session**: the
+first run used `./with-secrets` bare, which defaults `PVE_ENV=pve-test-vm`
+-- so the 3 entries were created pointing at `192.168.20.115`
+(pve-test-vm's Technitium) instead of `192.168.20.15` (production's). Caught
+immediately by querying MikroTik's own `/ip/dns/static` directly (not by
+trusting Ansible's `changed`/`ok` status, which was uninformative here).
+Fixed by re-running the same playbook with `ALLOW_PVE=true PVE_ENV=pve` --
+the playbook's own idempotent "update stale forward-to" task detected and
+corrected all 3 entries. Independently re-verified via `dig @192.168.1.1 -x
+...` afterward: `NOERROR`, correct name, for all 3.
+
+**Remaining gap -- confirmed out of scope, not fixed**: the workstation that
+reported the original issue doesn't actually use MikroTik as its default
+resolver. Its `/etc/resolv.conf` points at `192.168.1.23`
+(`argon-02`, a Pi-hole secondary -- see `docs/dhcp-refactor/current-state.md`).
+Pi-hole refuses to forward *any* private-range (RFC1918) reverse lookup
+upstream by default (confirmed with a control query against
+`192.168.20.1`, MikroTik's own gateway IP, unrelated to this project entirely
+-- same authoritative NXDOMAIN). This is a pre-existing Pi-hole setting on a
+separate device this repo has no access pattern to, not something this
+project's scope or approval covers. MikroTik itself is fully correct and
+verified; Technitium itself is fully correct and verified. Fixing Pi-hole is
+the operator's own follow-up if wanted.
