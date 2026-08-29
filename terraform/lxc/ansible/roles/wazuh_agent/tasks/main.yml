@@ -155,15 +155,30 @@
   register: wazuh_agent_ossec_conf
 
 # agent-auth talks to wazuh-authd on the manager's :1515 using the
-# shared enrollment password and writes /var/ossec/etc/client.keys --
-# idempotent by construction: only run it when that file doesn't
-# already hold a key, so a re-run of this role never re-enrolls (which
-# would generate a NEW random agent id/key and orphan the old one in
-# the manager's agent list).
-- name: Check whether this agent already has an enrollment key
+# shared enrollment password and writes /var/ossec/etc/client.keys.
+#
+# Idempotency is keyed on whether the agent is ACTUALLY connected to
+# THIS manager right now (/var/ossec/var/run/wazuh-agentd.state,
+# status='connected' -- the same state file the agent itself maintains
+# and updates within 10s of a real handshake), not merely on whether
+# client.keys is non-empty. Real bug found live on pve, 2026-08-29:
+# pve had a leftover client.keys from a completely unrelated, long-dead
+# wazuh install from February 2026 (a different, now-offline manager at
+# 192.168.1.14 -- see docs/elasticsearch-stack/plan.md). A mere-existence
+# check saw that ancient file, assumed "already enrolled", and skipped
+# re-enrollment -- so the agent kept authenticating with a key the
+# CURRENT manager had never issued, and the connection silently cycled
+# (open, rejected, retry every ~10s) forever with no obvious error on
+# either side. Checking real connection status instead makes this
+# self-healing: any agent that isn't actually talking to the manager
+# -- never enrolled, stale/foreign key, or any other failure -- gets
+# re-enrolled automatically, while a genuinely-already-connected agent
+# is left alone (avoiding the orphaned-duplicate-agent-id churn a
+# blind re-enroll-every-run approach would cause).
+- name: Check whether this agent is actually connected to the manager
   ansible.builtin.command:
-    argv: [test, -s, /var/ossec/etc/client.keys]
-  register: wazuh_agent_client_keys_present
+    argv: [grep, -q, "status='connected'", /var/ossec/var/run/wazuh-agentd.state]
+  register: wazuh_agent_already_connected
   changed_when: false
   failed_when: false
 
@@ -177,7 +192,7 @@
       - "{{ inventory_hostname }}"
       - -P
       - "{{ wazuh_agent_authd_password_resolved }}"
-  when: wazuh_agent_client_keys_present.rc != 0
+  when: wazuh_agent_already_connected.rc != 0
   no_log: true
   changed_when: true
 
@@ -185,4 +200,4 @@
   ansible.builtin.systemd:
     name: wazuh-agent
     enabled: true
-    state: "{{ 'restarted' if (wazuh_agent_ossec_conf.changed or wazuh_agent_client_keys_present.rc != 0) else 'started' }}"
+    state: "{{ 'restarted' if (wazuh_agent_ossec_conf.changed or wazuh_agent_already_connected.rc != 0) else 'started' }}"
