@@ -1,14 +1,17 @@
 # dns-reverse-records
 
-Status: **LIVE IN PRODUCTION on `pve`, deployed 2026-08-30.** All 8 code/doc
-steps landed and `scripts/provision.sh --stack technitium-stack` was run
-against `pve` (operator-approved, `TASK_APPROVAL=dns-reverse-records-pve-deploy`)
-via `./with-secrets-prod`. Deploy succeeded (`failed=0 unreachable=0`, smoke
-test passed) and all 8 predicted PTR owners were independently confirmed
-live with real `dig -x` queries against the production Technitium instance
--- see "pve deployment (after-action)" below. This bypassed the normal
-`pve-test-vm` validation tier and `stable` promotion step, per the
-operator's explicit choice to deploy to `pve` directly.
+Status: **LIVE IN PRODUCTION end-to-end, closed out 2026-08-30.** All 8
+code/doc steps landed, `scripts/provision.sh --stack technitium-stack` ran
+against `pve` (operator-approved), MikroTik's reverse-zone delegation was
+added and verified, and the Pi-hole (`argon-02`) private-range reverse-lookup
+block -- the one remaining hop between a real client and the new PTR
+records -- was identified, diagnosed as out of this repo's scope, and
+changed by the operator directly. Plain `dig -x` from a real workstation
+(no `@server` needed) now correctly resolves all 8 PTR owners, confirmed
+live. See "pve deployment (after-action)" and "MikroTik reverse-zone
+delegation" below for the full chain. `pve-test-vm` validation and
+`stable`/`main` promotion were bypassed, per the operator's explicit choice
+to deploy to `pve` directly.
 
 ## What this is
 
@@ -195,15 +198,25 @@ the playbook's own idempotent "update stale forward-to" task detected and
 corrected all 3 entries. Independently re-verified via `dig @192.168.1.1 -x
 ...` afterward: `NOERROR`, correct name, for all 3.
 
-**Remaining gap -- confirmed out of scope, not fixed**: the workstation that
-reported the original issue doesn't actually use MikroTik as its default
-resolver. Its `/etc/resolv.conf` points at `192.168.1.23`
-(`argon-02`, a Pi-hole secondary -- see `docs/dhcp-refactor/current-state.md`).
-Pi-hole refuses to forward *any* private-range (RFC1918) reverse lookup
-upstream by default (confirmed with a control query against
-`192.168.20.1`, MikroTik's own gateway IP, unrelated to this project entirely
--- same authoritative NXDOMAIN). This is a pre-existing Pi-hole setting on a
-separate device this repo has no access pattern to, not something this
-project's scope or approval covers. MikroTik itself is fully correct and
-verified; Technitium itself is fully correct and verified. Fixing Pi-hole is
-the operator's own follow-up if wanted.
+**Pi-hole gap -- diagnosed, then closed by the operator directly (same day).**
+The workstation that reported the original issue doesn't use MikroTik as its
+default resolver -- its `/etc/resolv.conf` points at `192.168.1.23`
+(`argon-02`, a Pi-hole secondary -- see `docs/dhcp-refactor/current-state.md`,
+and Decision 3 in `docs/dhcp-refactor/decisions.md`: DHCP-assigned DNS is
+deliberately kept on the Pi-holes, not MikroTik, so this is expected
+topology). Pi-hole refused *any* private-range (RFC1918) reverse lookup by
+its "never forward reverse lookups for private IP ranges" default, confirmed
+with control queries: an arbitrary unmanaged private IP got the identical
+instant authoritative NXDOMAIN as the lab addresses, while a public IP
+(`8.8.8.8` -> `dns.google.`) genuinely forwarded -- proving Pi-hole's
+upstream chain to MikroTik/Technitium was already correct and only the
+private-range reverse-lookup block was in the way, not a chain problem.
+This confirmed the setting was on Pi-hole itself, outside this repo's
+access, and the operator changed it directly in Pi-hole's own admin UI.
+
+**Re-verified after the operator's change**: plain `dig -x` (no `@server`,
+this workstation's real default resolver path) now returns the correct
+name for all 8 PTR owners, and public reverse lookup (`8.8.8.8`) still
+works too -- confirms Pi-hole is genuinely forwarding now, not wide open.
+Full chain verified end-to-end: Technitium (authority) -> MikroTik
+(delegation) -> Pi-hole (default resolver) -> client.
