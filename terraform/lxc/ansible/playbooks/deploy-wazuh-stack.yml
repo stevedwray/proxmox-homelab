@@ -689,10 +689,18 @@
     # Full transcription of wazuh-docker v4.14.7's docker-compose.yml,
     # with three deliberate changes from upstream:
     #   1. Images rewritten through Harbor's dockerhub proxy-cache project.
-    #   2. `memlock: -1:-1` (unlimited) ulimits stripped from both
-    #      wazuh.manager and wazuh.indexer -- nested LXC rejects an
-    #      unlimited memlock ulimit, the exact failure mode already
-    #      fixed for elasticsearch-stack/opensearch-stack. `nofile` kept.
+    #   2. ALL ulimits stripped from both wazuh.manager and wazuh.indexer
+    #      -- not just memlock. Real failure found live on pve 2026-08-29:
+    #      keeping upstream's explicit `nofile: 655360/65536` (believing
+    #      only the `memlock: -1:-1` rlimit was nested-LXC-hostile, per
+    #      the elasticsearch-stack/opensearch-stack precedent) still
+    #      failed the same way -- "error setting rlimit type 7 [[RLIMIT_
+    #      NOFILE]]: operation not permitted" -- because this LXC's own
+    #      nofile hard limit is below what upstream requests, and nested
+    #      LXC can't raise a ulimit past the host's own ceiling any more
+    #      than it can make memlock unlimited. opensearch-stack's own
+    #      compose omits ulimits entirely for exactly this reason (see
+    #      its own comment); matching that fully now instead of partially.
     #   3. INDEXER_PASSWORD/API_PASSWORD templated to the real rotated
     #      secrets instead of upstream's placeholder demo values.
     - name: Write Wazuh docker-compose.yml
@@ -706,10 +714,6 @@
               container_name: wazuh-stack-manager
               hostname: wazuh.manager
               restart: unless-stopped
-              ulimits:
-                nofile:
-                  soft: 655360
-                  hard: 655360
               ports:
                 - "1514:1514"
                 - "1515:1515"
@@ -751,10 +755,6 @@
                 - "9200:9200"
               environment:
                 - "OPENSEARCH_JAVA_OPTS=-Xms{{ wazuh_indexer_heap_gb }}g -Xmx{{ wazuh_indexer_heap_gb }}g"
-              ulimits:
-                nofile:
-                  soft: 65536
-                  hard: 65536
               volumes:
                 - {{ wazuh_indexer_data_dir }}:/var/lib/wazuh-indexer
                 - ./config/wazuh_indexer_ssl_certs/root-ca.pem:/usr/share/wazuh-indexer/config/certs/root-ca.pem
