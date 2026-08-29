@@ -291,6 +291,15 @@ def sse_wrap(completion: dict) -> bytes:
     return out.encode("utf-8")
 
 
+def ndjson_wrap(completion: dict) -> bytes:
+    """Return a completed native Ollama response as its one valid NDJSON
+    record.  Ollama's /api/chat streaming protocol is newline-delimited JSON,
+    not SSE.  A single completed record retains the proxy's validate/retry
+    guarantee while satisfying clients such as OpenWebUI that requested a
+    stream."""
+    return (json.dumps(completion) + "\n").encode("utf-8")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "OllamaReliabilityProxy/1.0"
 
@@ -329,7 +338,7 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/proxy/stats/reset":
             self._send_json(200, reset_stats())
             return
-        if self.path != "/v1/chat/completions":
+        if self.path not in ("/v1/chat/completions", "/api/chat"):
             self._proxy_passthrough()
             return
 
@@ -345,8 +354,9 @@ class Handler(BaseHTTPRequestHandler):
         upstream_body = dict(body)
         upstream_body["stream"] = False
         model = upstream_body.get("model", "")
+        is_native_ollama_chat = self.path == "/api/chat"
 
-        result = self._call_upstream_safe("/v1/chat/completions", upstream_body)
+        result = self._call_upstream_safe(self.path, upstream_body)
         if result is None:
             return
         status, completion = result
@@ -357,18 +367,22 @@ class Handler(BaseHTTPRequestHandler):
             return
 
         choice = (completion.get("choices") or [{}])[0]
-        reason = is_degenerate(choice.get("message", {}), choice.get("finish_reason"))
+        message = completion.get("message", {}) if is_native_ollama_chat else choice.get("message", {})
+        finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
+        reason = is_degenerate(message, finish_reason)
         if reason:
             log.warning("degenerate response detected (%s) -- retrying once after unload", reason)
             record_retry()
             unload_model(model)
-            result = self._call_upstream_safe("/v1/chat/completions", upstream_body)
+            result = self._call_upstream_safe(self.path, upstream_body)
             if result is None:
                 return
             status, completion = result
             record_usage(completion.get("usage"))
             choice = (completion.get("choices") or [{}])[0]
-            reason2 = is_degenerate(choice.get("message", {}), choice.get("finish_reason"))
+            message = completion.get("message", {}) if is_native_ollama_chat else choice.get("message", {})
+            finish_reason = completion.get("done_reason") if is_native_ollama_chat else choice.get("finish_reason")
+            reason2 = is_degenerate(message, finish_reason)
             if reason2:
                 log.error("still degenerate after retry (%s) -- surfacing as an error, not passing it through", reason2)
                 record_request()
@@ -385,10 +399,13 @@ class Handler(BaseHTTPRequestHandler):
             log.info("retry succeeded after unload")
 
         record_request()
-        log_exchange(upstream_body, choice.get("message", {}), completion.get("usage"))
+        log_exchange(upstream_body, message, completion.get("usage"))
 
         if client_wanted_stream:
-            self._send_sse(sse_wrap(completion))
+            if is_native_ollama_chat:
+                self._send_ndjson(status, ndjson_wrap(completion))
+            else:
+                self._send_sse(sse_wrap(completion))
         else:
             self._send_json(status, completion)
 
@@ -429,6 +446,13 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream")
         self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _send_ndjson(self, status: int, data: bytes):
+        self.send_response(status)
+        self.send_header("Content-Type", "application/x-ndjson")
+        self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
 
