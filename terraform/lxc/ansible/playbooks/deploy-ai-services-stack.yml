@@ -149,9 +149,10 @@
     # invalidate the migrated OpenWebUI DB's existing sessions.
     ai_services_openwebui_webui_secret_key: "{{ lookup('env', 'OPENWEBUI_WEBUI_SECRET_KEY') | mandatory('OPENWEBUI_WEBUI_SECRET_KEY env var is required') }}"
     ai_services_searxng_secret_key: "{{ lookup('env', 'SEARXNG_SECRET_KEY') | mandatory('SEARXNG_SECRET_KEY env var is required') }}"
-    # OpenWebUI's own RAG web-search talks to SearXNG over the internal
-    # Docker network. Do not replace this with the public route below: this
-    # is the stable service-to-service path regardless of browser settings.
+    # SearXNG remains available as the browser-facing metasearch service.
+    # OpenWebUI's AI search uses Brave's LLM Context endpoint directly: it
+    # returns relevance-scored passages and avoids SearXNG's unreliable
+    # upstream-engine mix and OpenWebUI's post-search page scraping.
     ai_services_searxng_query_url: "http://searxng:8080/search?q=<query>&format=json"  # NOSONAR: internal-only Docker network
     # SearXNG uses its base URL to generate redirects (including after saving
     # preferences). `searxng:8080` only resolves inside Docker, so it cannot
@@ -373,7 +374,16 @@
                 OAUTH_PROVIDER_NAME: "Authentik"
                 OAUTH_SCOPES: "openid email profile"
                 ENABLE_WEB_SEARCH: "true"
-                WEB_SEARCH_ENGINE: "searxng"
+                WEB_SEARCH_ENGINE: "brave_llm_context"
+                BRAVE_SEARCH_API_KEY: "{{ ai_services_brave_search_api_key }}"
+                # Brave's free tier permits one request per second. Keeping
+                # this sequential avoids a multi-query model immediately
+                # exhausting that quota; OpenWebUI retries one 429 once.
+                WEB_SEARCH_CONCURRENT_REQUESTS: "1"
+                WEB_SEARCH_RESULT_COUNT: "5"
+                BRAVE_SEARCH_CONTEXT_TOKENS: "8192"
+                # Retained only for a deliberate admin switch back to
+                # SearXNG; it is not used by brave_llm_context.
                 SEARXNG_QUERY_URL: "{{ ai_services_searxng_query_url }}"
                 # Without this, OpenWebUI defaults new chats to whichever
                 # model sorts first alphabetically among everything
@@ -539,9 +549,18 @@
                     [os.environ["OLLAMA_BASE_URL"]], separators=(",", ":")
                 ),
                 "web.search.enable": json.dumps(True),
-                "web.search.engine": json.dumps("searxng"),
-                "web.search.searxng_query_url": json.dumps(
-                    os.environ["SEARXNG_QUERY_URL"]
+                "web.search.engine": json.dumps("brave_llm_context"),
+                "web.search.brave_search_api_key": json.dumps(
+                    os.environ["BRAVE_SEARCH_API_KEY"]
+                ),
+                "web.search.brave_search_context_tokens": json.dumps(
+                    int(os.environ["BRAVE_SEARCH_CONTEXT_TOKENS"])
+                ),
+                "web.search.concurrent_requests": json.dumps(
+                    int(os.environ["WEB_SEARCH_CONCURRENT_REQUESTS"])
+                ),
+                "web.search.result_count": json.dumps(
+                    int(os.environ["WEB_SEARCH_RESULT_COUNT"])
                 ),
                 "webui.url": json.dumps(os.environ["WEBUI_URL"]),
                 "ui.default_models": json.dumps(os.environ["DEFAULT_MODELS"]),

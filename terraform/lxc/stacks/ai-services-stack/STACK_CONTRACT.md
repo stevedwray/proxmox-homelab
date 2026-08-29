@@ -60,14 +60,14 @@ hosts — not sufficient here):
 | `OPENWEBUI_WEBUI_SECRET_KEY` | SOPS, mandatory | Signs OpenWebUI sessions/JWTs — reused as-is so the migrated DB's existing sessions stay valid |
 | `SEARXNG_SECRET_KEY` | SOPS, mandatory | SearXNG's own session secret |
 | `LLM_GPU_STACK_API_KEY` | SOPS, mandatory | Sent to both the LM Studio (Traefik) and llama.cpp (direct) routes — the direct route does not actually enforce it (confirmed live 2026-08-02, see plan.md Step 3) |
-| `BRAVE_SEARCH_API_KEY` | SOPS, optional | Enables SearXNG's `braveapi` engine (official API, no bot-detection issues) for OpenWebUI's RAG web search. Web search works without it, just via `bing`/`mwmbl`/`searchmysite` only — see "What Must Not Be Edited Casually" below |
+| `BRAVE_SEARCH_API_KEY` | SOPS, mandatory for OpenWebUI AI search | Used directly by OpenWebUI's `brave_llm_context` engine. SearXNG also uses it for its optional browser `braveapi` engine, so both consumers share its plan and rate limit. |
 
 ## Provides
 
 | Service | Port | Protocol | Notes |
 |---------|------|----------|-------|
 | `openwebui-http` | 8081 | tcp | Container's own :8080 published as host :8081 — :8080 stays free (no LAN-facing port collision on this LXC, unlike framework which also runs llamacpp-router on :8080 there) |
-| `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. OpenWebUI continues to query the service directly over the internal Docker network. |
+| `searxng-https` | 443 | https | `https://searxng.${LAB_DOMAIN}` via Traefik. SearXNG is an unauthenticated network service: browser preferences are cookie-based, not user accounts. It remains available for browser search; OpenWebUI's AI search calls Brave LLM Context directly. |
 | `ollama-reliability-proxy` | 11435 | tcp | Ollama OpenAI-compat passthrough with corruption detection/retry (see Purpose above). Published on the LXC host, reachable from `lan` since 2026-08-25 via a host-scoped MikroTik rule (`lan → 192.168.50.11:11435`) — not from `pentest_seg`/other zones, added only for VS Code Copilot's use, widen deliberately if another consumer needs it. No auth of its own, same posture as every other unauthenticated endpoint on this LXC. |
 
 SearXNG has an HTTPS route at `searxng.${LAB_DOMAIN}` for browser use. Its
