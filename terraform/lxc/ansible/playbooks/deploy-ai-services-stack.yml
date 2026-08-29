@@ -285,6 +285,10 @@
               engine: braveapi
               shortcut: bra
               api_key: "{{ ai_services_brave_search_api_key }}"
+              # API-key engines are inactive in SearXNG's defaults.  Setting
+              # disabled: false alone leaves the engine removed from both
+              # searches and the preferences page.
+              inactive: false
               disabled: false
               # Confirmed live 2026-08-02: scraped `bing` returns
               # completely unrelated content (NZ regional news) for
