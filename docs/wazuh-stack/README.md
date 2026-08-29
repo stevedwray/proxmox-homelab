@@ -2,13 +2,29 @@
 
 ## Status
 
-**Planning complete, 2026-08-29. Not yet scaffolded/deployed.** See
-`plan.md` for the full design. This is the "Wazuh gets its own setup
-work first" phase that `docs/threat-vuln-platform/plan.md` explicitly
-deferred on 2026-08-18 — that plan's `*-events` ingestion design (a
-later, filtered sync from Wazuh into `opensearch-stack`) still applies
-once this stack is live, but is separate, later work, not part of this
-plan.
+**LIVE in production on `pve`, 2026-08-29.** Manager + indexer +
+dashboard all up and healthy at vmid `40015` (`192.168.40.15`,
+`infra_seg`). Real Authentik OIDC login confirmed working end-to-end:
+`https://wazuh.lab.gibbsgreatly.xyz` resolves via Technitium, routes
+through Traefik, and redirects into the dashboard's own OIDC handshake
+(`/auth/openid/captureUrlFragment`) toward Authentik — the same
+signature every other OIDC-fronted stack here produces. This is the
+"Wazuh gets its own setup work first" phase that
+`docs/threat-vuln-platform/plan.md` explicitly deferred on 2026-08-18 —
+that plan's `*-events` ingestion design (a later, filtered sync from
+Wazuh into `opensearch-stack`) still applies now that this stack is
+live, but is separate, not-yet-started work.
+
+Deployed directly to `pve` (operator decision, skipping the normal
+`pve-test-vm`-first validation tier) — took 7 real playbook-fixing
+iterations to get right, each found live against production, not
+guessed in advance. See plan.md's "Resolved in a second pass" and the
+git history on `feat/wazuh-stack` for the full list of bugs found and
+fixed (cert-tool version env var, memlock *and* nofile ulimits, config
+file ownership matching each container's real uid, a dropped CA-trust
+line, the indexer's real config.yml path, a missing PyYAML dependency,
+and JAVA_HOME for `securityadmin.sh`). No agents enrolled yet — scope
+for this pass was server-only, per the operator's own decision.
 
 ## What this is
 
@@ -20,24 +36,40 @@ route. Scope for this pass is the server only: no agents enrolled yet,
 no telemetry flowing, no ingestion into `opensearch-stack`. That's
 deliberate — see plan.md's "Phase scope" for the operator decision.
 
-## What's built so far
+## What's built and live
 
-- `docs/wazuh-stack/plan.md` — the design, with real facts (zone/IP/
-  vmid, verified upstream image/port/ulimit facts, the OIDC config
-  pattern reused from `opensearch-stack`)
-- Four resolved step packets in plan.md, ready for local-model execution
-  under `docs/agent-design/step-packet-schema.md`'s process
+- `terraform/lxc/stacks/wazuh-stack/` — all 5 files (`STACK_CONTRACT.md`,
+  `stack.yaml`, `terragrunt.hcl` ×2 for both `pve` and `pve-test-vm`,
+  `edge.yaml`)
+- `terraform/lxc/ansible/playbooks/deploy-wazuh-stack.yml` +
+  `terraform/lxc/ansible/files/wazuh-stack/add_openid_auth_domain.py` —
+  the full deploy playbook, fixed forward through 7 real live bugs
+- New SOPS secrets (`WAZUH_INDEXER_ADMIN_PASSWORD`, `WAZUH_API_PASSWORD`,
+  `WAZUH_OIDC_CLIENT_SECRET`), new `.env` var (`LAB_IP_WAZUH`)
+- `discover-authentik-edge.py`'s OIDC registry — `wazuh-stack`'s
+  dashboard route registered so its Authentik application/provider
+  actually get created by the reconciler
+- The LXC itself: manager, indexer, dashboard containers all up and
+  passing health checks on `pve` (vmid `40015`)
+- Full edge activation: Authentik application/provider created,
+  Traefik route published and live, Technitium DNS record live —
+  `https://wazuh.lab.gibbsgreatly.xyz` confirmed working end-to-end
+- **No MikroTik rule was needed** — confirmed live by reading the
+  router's actual ruleset: `infra_seg`/`edge_seg` have no default-deny,
+  so this was never a real blocker (see plan.md)
 
 ## What's not built yet
 
-- `terraform/lxc/stacks/wazuh-stack/` (any files)
-- The Ansible playbook (`deploy-wazuh-stack`) — deliberately **not**
-  reduced to a step packet this pass; it needs its own research pass
-  (cert-generation task, default-password rotation, heap sizing, OIDC
-  config verification against Wazuh's actual dashboard config schema).
-  See plan.md's "Not yet resolved" section.
-- New SOPS secrets, new `.env` var, the MikroTik `edge_seg → infra_seg`
-  rule for the dashboard route
+- Any Wazuh agent enrollment — deliberately out of scope for this pass
+  (operator decision)
 - Everything from `docs/threat-vuln-platform/plan.md`'s `*-events`
   family (Wazuh → `opensearch-stack` filtered sync) — still future work,
   gated on this stack actually running with real agents first
+- Wazuh's own default `kibanaserver` password (left at its vendor demo
+  value, matching `opensearch-stack`'s precedent — internal-only
+  service credential, never exposed)
+- `monitoring-stack` scrape config doesn't include `wazuh-stack` — but
+  neither does it include `opensearch-stack`/`greenbone-stack`/
+  `secpipe-stack`/`mcp-utility-stack`; this is a standing, pre-existing
+  platform gap, not something introduced here (see chat history for the
+  full audit against Traefik/DNS/Authentik/Harbor/apt-cacher/Graylog)
