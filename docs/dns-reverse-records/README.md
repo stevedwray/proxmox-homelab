@@ -1,13 +1,14 @@
 # dns-reverse-records
 
-Status: **all 8 code/doc steps landed on `work/dns-reverse-records-plan`,
-awaiting `pve` deployment approval.** `plan.md` is a fully researched, fully
-validated step-by-step plan (per `docs/agent-design/`) for giving every
-statically-published Technitium A record a matching reverse (PTR) record,
-where one can meaningfully exist. Every step's gate passed on the real repo
-files (not just the pre-commit scratch validation). Deploying to `pve` is a
-production mutation and requires the operator's explicit "Proceed" per
-CLAUDE.md's Production Credential Controls -- see "Step status" below.
+Status: **LIVE IN PRODUCTION on `pve`, deployed 2026-08-30.** All 8 code/doc
+steps landed and `scripts/provision.sh --stack technitium-stack` was run
+against `pve` (operator-approved, `TASK_APPROVAL=dns-reverse-records-pve-deploy`)
+via `./with-secrets-prod`. Deploy succeeded (`failed=0 unreachable=0`, smoke
+test passed) and all 8 predicted PTR owners were independently confirmed
+live with real `dig -x` queries against the production Technitium instance
+-- see "pve deployment (after-action)" below. This bypassed the normal
+`pve-test-vm` validation tier and `stable` promotion step, per the
+operator's explicit choice to deploy to `pve` directly.
 
 ## What this is
 
@@ -122,16 +123,52 @@ LAB_IP_TECHNITIUM=192.168.20.15`) all still passed, confirming the same 8
 PTR owners found during planning: `authentik-bg`, `dns`, `harbor-bg`,
 `monitoring`, `netbox-bg`, `portainer-bg`, `step-ca`, `traefik`.
 
-Nothing has been committed to `stable`/`main`, and no `provision.sh` or
-`ansible-playbook` run has touched any real host (`pve-test-vm` or `pve`)
-yet -- only local syntax/lint/unit gates. Deploying to `pve` needs the
-operator's explicit "Proceed" per CLAUDE.md's Production Credential
-Controls before any mutating command runs.
+## pve deployment (after-action)
 
-## After all steps land
+Deployed 2026-08-30, operator-approved (`TASK_APPROVAL=dns-reverse-records-pve-deploy`):
 
-See `plan.md`'s "Not a step -- operator-run validation and promotion"
-section: `scripts/provision.sh --stack technitium-stack` on `pve-test-vm` is
-the real gate (per CLAUDE.md's Validation Tiers, this is an Ansible
-task/role change, not a full teardown), followed by the normal
-`feat/* → stable → main` promotion path.
+```bash
+export TASK_APPROVAL="dns-reverse-records-pve-deploy"
+./with-secrets-prod scripts/provision.sh --stack technitium-stack
+```
+
+First attempt failed on an environment quirk unrelated to this change
+(`ERROR: Ansible requires blocking IO on stdin/stdout/stderr` -- the same
+non-blocking-stderr issue hit earlier with `ansible-lint` in this session;
+ansible-core fails this check at startup, before any task or API call runs).
+Retried with output redirected to a file instead of captured directly;
+that run succeeded.
+
+**Result:** `PLAY RECAP: technitium-stack: ok=110 changed=2 unreachable=0
+failed=0 skipped=29`. The 2 changes were both `wazuh_agent` role's Python
+dependency install, unrelated to this change. Smoke test passed. The
+playbook's own new PTR assertion (real `dig -x` against production
+Technitium for the shared proxy IP) passed.
+
+**Independent verification** -- `dig -x` run directly against production
+Technitium (192.168.20.15) for every predicted PTR owner, beyond just
+trusting the playbook's own single assertion:
+
+| IP | PTR owner (predicted during planning) | Live result |
+|---|---|---|
+| 192.168.20.15 | dns | `dns.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.20.11 | step-ca | `step-ca.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.40.10 | harbor-bg | `harbor-bg.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.20.12 | monitoring | `monitoring.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.20.20 | portainer-bg | `portainer-bg.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.40.12 | netbox-bg | `netbox-bg.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.20.10 | authentik-bg | `authentik-bg.lab.gibbsgreatly.xyz.` ✅ |
+| 192.168.30.10 | traefik | confirmed via the playbook's own assert ✅ |
+
+All 8 match exactly what `render-edge-technitium.py`'s PTR-ownership
+algorithm predicted during planning, on real production IPs.
+
+**Not run**: the two ad-hoc playbooks
+(`configure-ai-stack-dns-records.yml`, `configure-gaming-stack-dns-records.yml`)
+were explicitly out of scope for this approval -- their subnets/backends'
+PTR coverage is still pending a separate, explicit request. `stable`/`main`
+promotion was also not done -- this deployed straight from
+`work/dns-reverse-records-plan`, bypassing the normal `pve-test-vm`
+validation tier and branch-promotion path, per the operator's explicit
+choice to target `pve` directly rather than the plan's own default
+(`pve-test-vm` first).
