@@ -15,3 +15,12 @@ wazuh_agent_fim_paths: []
 # pilot hosts, filtering/managing them individually by name in the
 # dashboard is enough for now; revisit grouping if/when this becomes a
 # fleet-wide rollout.
+
+# Off by default -- deliberate opt-in, not "on wherever Docker happens
+# to be present". The docker-listener wodle runs as the wazuh user and
+# needs docker.sock access, which in practice means adding wazuh to the
+# docker group -- i.e. root-equivalent host access for the agent
+# process, trading away the isolation it otherwise has as an
+# unprivileged user. Only set this true for a host where that tradeoff
+# has been deliberately accepted (see docs/wazuh-stack/).
+wazuh_agent_docker_monitoring_enabled: false

@@ -64,6 +64,33 @@
     update_cache: true
   register: wazuh_agent_installed
 
+# Docker container monitoring (docker-listener wodle) -- opt-in per host,
+# see wazuh_agent_docker_monitoring_enabled's own comment in defaults/main.yml
+# for the docker.sock privilege tradeoff this accepts. Package versions
+# pinned to Wazuh's own documented-compatible set, not "latest", since
+# the wodle talks to the Docker Engine API through this exact library.
+- name: Install Python dependencies for Docker container monitoring
+  ansible.builtin.pip:
+    name:
+      - docker==7.1.0
+      - urllib3==1.26.20
+      - requests==2.32.2
+    extra_args: --break-system-packages   # Debian 13's Python 3.13 is externally-managed (PEP 668)
+  when: wazuh_agent_docker_monitoring_enabled | bool
+
+# Grants docker.sock access to the wazuh-agent process -- root-equivalent
+# host access, by design of how this wodle works (see the tradeoff note
+# in defaults/main.yml). Group membership changes don't apply to an
+# already-running process, so this also needs to be reflected in the
+# service restart condition below.
+- name: Add the wazuh user to the docker group for docker-listener socket access
+  ansible.builtin.user:
+    name: wazuh
+    groups: docker
+    append: true
+  when: wazuh_agent_docker_monitoring_enabled | bool
+  register: wazuh_agent_docker_group
+
 - name: Write this host's ossec.conf
   ansible.builtin.copy:
     dest: /var/ossec/etc/ossec.conf
@@ -118,6 +145,15 @@
           <ports all="no">yes</ports>
           <processes>yes</processes>
         </wodle>
+        {%- if wazuh_agent_docker_monitoring_enabled | bool %}
+
+        <wodle name="docker-listener">
+          <disabled>no</disabled>
+          <interval>1m</interval>
+          <attempts>5</attempts>
+          <run_on_start>yes</run_on_start>
+        </wodle>
+        {%- endif %}
 
         <sca>
           <enabled>yes</enabled>
@@ -200,4 +236,11 @@
   ansible.builtin.systemd:
     name: wazuh-agent
     enabled: true
-    state: "{{ 'restarted' if (wazuh_agent_ossec_conf.changed or wazuh_agent_already_connected.rc != 0) else 'started' }}"
+    state: >-
+      {{
+        'restarted'
+        if (wazuh_agent_ossec_conf.changed
+            or wazuh_agent_already_connected.rc != 0
+            or wazuh_agent_docker_group.changed | default(false))
+        else 'started'
+      }}

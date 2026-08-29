@@ -285,5 +285,6 @@
   vars:
     wazuh_agent_fim_paths:
       - /opt/harbor/harbor
+    wazuh_agent_docker_monitoring_enabled: true
   roles:
     - wazuh_agent

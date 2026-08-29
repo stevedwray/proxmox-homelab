@@ -350,5 +350,6 @@
   vars:
     wazuh_agent_fim_paths:
       - /opt/proxy-stack
+    wazuh_agent_docker_monitoring_enabled: true
   roles:
     - wazuh_agent

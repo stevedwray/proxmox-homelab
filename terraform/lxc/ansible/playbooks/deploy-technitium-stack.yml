@@ -729,5 +729,6 @@
   vars:
     wazuh_agent_fim_paths:
       - /opt/technitium-stack
+    wazuh_agent_docker_monitoring_enabled: true
   roles:
     - wazuh_agent
