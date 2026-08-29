@@ -69,13 +69,24 @@
 # for the docker.sock privilege tradeoff this accepts. Package versions
 # pinned to Wazuh's own documented-compatible set, not "latest", since
 # the wodle talks to the Docker Engine API through this exact library.
+#
+# --ignore-installed alongside --break-system-packages: real failure
+# found live, 2026-08-29 -- this Debian 13 image already has urllib3
+# 2.3.0 installed via apt (a system dependency of something else), and
+# pip's default install tries to uninstall it first to satisfy the
+# older pinned version here, which fails outright ("Cannot uninstall
+# urllib3 2.3.0 ... no RECORD file was found" -- pip can't safely
+# remove a dpkg-managed package). --ignore-installed installs the
+# pinned versions into pip's own site-packages layer instead, which
+# Python's import resolution prefers over dist-packages, without
+# touching or uninstalling the apt-managed copies at all.
 - name: Install Python dependencies for Docker container monitoring
   ansible.builtin.pip:
     name:
       - docker==7.1.0
       - urllib3==1.26.20
       - requests==2.32.2
-    extra_args: --break-system-packages   # Debian 13's Python 3.13 is externally-managed (PEP 668)
+    extra_args: --break-system-packages --ignore-installed   # Debian 13's Python 3.13 is externally-managed (PEP 668)
   when: wazuh_agent_docker_monitoring_enabled | bool
 
 # Grants docker.sock access to the wazuh-agent process -- root-equivalent
