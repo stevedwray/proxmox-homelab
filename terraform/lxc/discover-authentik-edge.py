@@ -470,6 +470,14 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         # as base_redirect_url + this fixed suffix (base_redirect_url is the
         # bare public URL, same convention as every other stack here).
         return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Wazuh's dashboard forks OpenSearch Dashboards' same security
+        # plugin, so it builds its redirect_uri the same way. Real bug
+        # found live 2026-08-29: this entry was missing on first deploy --
+        # the created provider got redirect_uris: [] and Authentik's
+        # /application/o/authorize/ rejected the real login with a
+        # "Redirect URI Error", confirmed via the actual browser flow.
+        return (f"{base_url}/auth/openid/login",)
     return ()
 
 
@@ -483,6 +491,14 @@ def _oidc_grant_types(intent: RouteIntent) -> tuple[str, ...]:
         # providers in this Authentik instance. authorization_code is all
         # this route's real login flow needs; client_credentials/password
         # included only for parity with that existing baseline.
+        return ("authorization_code", "client_credentials", "password")
+    if _oidc_route_key(intent) == ("wazuh-stack", "dashboard"):
+        # Same reasoning as opensearch-stack/dashboards immediately above --
+        # same underlying plugin, same requirement. Real bug found live
+        # 2026-08-29: this entry was missing, so the created provider got
+        # Authentik's create-time default grant_types: [], which makes
+        # /application/o/authorize/ reject every request as malformed (see
+        # reconcile-authentik-edge.py's _oidc_provider_payload comment).
         return ("authorization_code", "client_credentials", "password")
     return ()
 
