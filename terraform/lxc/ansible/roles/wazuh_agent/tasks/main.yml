@@ -1,0 +1,188 @@
+---
+# Wazuh agent pilot rollout, 2026-08-29. See docs/wazuh-stack/ for the
+# decision record (5 core-infra stacks, wazuh-authd shared-password
+# auto-enrollment, narrowly-scoped cross-zone firewall rules).
+#
+# Requires: WAZUH_AGENT_AUTHD_PASSWORD (SOPS, terraform/secrets.common.enc.yaml)
+# and LAB_IP_WAZUH (.env) resolvable in the including playbook's env --
+# both are already common/shared, not wazuh-stack-specific, so every
+# stack's normal ./with-secrets / with-secrets-prod session already has
+# them.
+
+- name: Resolve required wazuh_agent inputs
+  ansible.builtin.set_fact:
+    wazuh_agent_manager_ip: "{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required for the wazuh_agent role') }}"
+    wazuh_agent_authd_password_resolved: >-
+      {{
+        lookup('env', 'WAZUH_AGENT_AUTHD_PASSWORD')
+        | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required for the wazuh_agent role -- see wazuh-stack STACK_CONTRACT.md')
+      }}
+  no_log: true
+
+- name: Install prerequisites for the Wazuh apt repo
+  ansible.builtin.apt:
+    name:
+      - gnupg
+      - apt-transport-https
+      - python3-apt   # required by the apt_repository module below
+    state: present
+
+- name: Fetch the Wazuh GPG signing key
+  ansible.builtin.get_url:
+    url: https://packages.wazuh.com/key/GPG-KEY-WAZUH
+    dest: /tmp/GPG-KEY-WAZUH
+    mode: "0644"
+
+- name: Import the Wazuh GPG key into its own keyring
+  ansible.builtin.command:
+    argv: [gpg, --no-default-keyring, --keyring, "gnupg-ring:/usr/share/keyrings/wazuh.gpg",
+           --import, /tmp/GPG-KEY-WAZUH]
+  args:
+    creates: /usr/share/keyrings/wazuh.gpg
+
+- name: Set expected permissions on the Wazuh keyring
+  ansible.builtin.file:
+    path: /usr/share/keyrings/wazuh.gpg
+    mode: "0644"
+
+- name: Add the Wazuh apt repository
+  ansible.builtin.apt_repository:
+    repo: "deb [signed-by=/usr/share/keyrings/wazuh.gpg] https://packages.wazuh.com/4.x/apt/ stable main"
+    filename: wazuh
+    state: present
+
+# Unversioned install (latest current 4.x stable), not pinned to the
+# manager's exact 4.14.7 patch -- Wazuh's own compatibility guidance is
+# matching MAJOR.MINOR across agent/manager, not exact patch; pinning a
+# specific patch here risks apt install failing outright once
+# packages.wazuh.com's "stable" component moves past it, for a
+# compatibility guarantee it isn't actually buying.
+- name: Install the wazuh-agent package
+  ansible.builtin.apt:
+    name: wazuh-agent
+    state: present
+    update_cache: true
+  register: wazuh_agent_installed
+
+- name: Write this host's ossec.conf
+  ansible.builtin.copy:
+    dest: /var/ossec/etc/ossec.conf
+    owner: root
+    group: wazuh
+    mode: "0640"
+    content: |
+      <ossec_config>
+        <client>
+          <server>
+            <address>{{ wazuh_agent_manager_ip }}</address>
+            <port>1514</port>
+            <protocol>tcp</protocol>
+          </server>
+          <config-profile>ubuntu, ubuntu24, ubuntu24.04</config-profile>
+          <notify_time>10</notify_time>
+          <time-reconnect>60</time-reconnect>
+          <auto_restart>yes</auto_restart>
+          <crypto_method>aes</crypto_method>
+          <enrollment>
+            <enabled>no</enabled>
+          </enrollment>
+        </client>
+
+        <client_buffer>
+          <disabled>no</disabled>
+          <queue_size>5000</queue_size>
+          <events_per_second>500</events_per_second>
+        </client_buffer>
+
+        <rootcheck>
+          <disabled>no</disabled>
+          <check_files>yes</check_files>
+          <check_trojans>yes</check_trojans>
+          <check_dev>yes</check_dev>
+          <check_sys>yes</check_sys>
+          <check_pids>yes</check_pids>
+          <check_ports>yes</check_ports>
+          <check_if>yes</check_if>
+          <frequency>43200</frequency>
+          <skip_nfs>yes</skip_nfs>
+        </rootcheck>
+
+        <wodle name="syscollector">
+          <disabled>no</disabled>
+          <interval>1h</interval>
+          <scan_on_start>yes</scan_on_start>
+          <hardware>yes</hardware>
+          <os>yes</os>
+          <network>yes</network>
+          <packages>yes</packages>
+          <ports all="no">yes</ports>
+          <processes>yes</processes>
+        </wodle>
+
+        <sca>
+          <enabled>yes</enabled>
+          <scan_on_start>yes</scan_on_start>
+          <interval>12h</interval>
+          <skip_nfs>yes</skip_nfs>
+        </sca>
+
+        <syscheck>
+          <disabled>no</disabled>
+          <frequency>43200</frequency>
+          <scan_on_start>yes</scan_on_start>
+          <directories check_all="yes" report_changes="yes" realtime="yes">/etc,/usr/bin,/usr/sbin,/bin,/sbin</directories>
+          {% for path in wazuh_agent_fim_paths %}
+          <directories check_all="yes" report_changes="yes" realtime="yes">{{ path }}</directories>
+          {% endfor %}
+          <ignore>/etc/mtab</ignore>
+          <ignore>/etc/hosts.deny</ignore>
+          <ignore>/etc/mail/statistics</ignore>
+          <ignore>/etc/random-seed</ignore>
+          <ignore>/etc/adjtime</ignore>
+          <ignore>/etc/httpd/logs</ignore>
+        </syscheck>
+
+        <localfile>
+          <log_format>syslog</log_format>
+          <location>/var/log/syslog</location>
+        </localfile>
+
+        <localfile>
+          <log_format>syslog</log_format>
+          <location>/var/log/auth.log</location>
+        </localfile>
+      </ossec_config>
+  register: wazuh_agent_ossec_conf
+
+# agent-auth talks to wazuh-authd on the manager's :1515 using the
+# shared enrollment password and writes /var/ossec/etc/client.keys --
+# idempotent by construction: only run it when that file doesn't
+# already hold a key, so a re-run of this role never re-enrolls (which
+# would generate a NEW random agent id/key and orphan the old one in
+# the manager's agent list).
+- name: Check whether this agent already has an enrollment key
+  ansible.builtin.command:
+    argv: [test, -s, /var/ossec/etc/client.keys]
+  register: wazuh_agent_client_keys_present
+  changed_when: false
+  failed_when: false
+
+- name: Enroll this agent with the manager via wazuh-authd
+  ansible.builtin.command:
+    argv:
+      - /var/ossec/bin/agent-auth
+      - -m
+      - "{{ wazuh_agent_manager_ip }}"
+      - -A
+      - "{{ inventory_hostname }}"
+      - -P
+      - "{{ wazuh_agent_authd_password_resolved }}"
+  when: wazuh_agent_client_keys_present.rc != 0
+  no_log: true
+  changed_when: true
+
+- name: Enable and (re)start the Wazuh agent service
+  ansible.builtin.systemd:
+    name: wazuh-agent
+    enabled: true
+    state: "{{ 'restarted' if (wazuh_agent_ossec_conf.changed or wazuh_agent_client_keys_present.rc != 0) else 'started' }}"

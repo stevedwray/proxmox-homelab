@@ -277,3 +277,13 @@
   roles:
     - role: es_findings_ingest
       when: es_findings_ingest_enabled | default(false) | bool
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/harbor/harbor
+  roles:
+    - wazuh_agent

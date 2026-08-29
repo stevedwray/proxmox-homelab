@@ -721,3 +721,13 @@
       when:
         - technitium_parity_zone_enabled | bool
         - not ansible_check_mode
+
+- name: Enroll this host as a Wazuh agent (pilot rollout, 2026-08-29)
+  hosts: all
+  become: true
+  gather_facts: false
+  vars:
+    wazuh_agent_fim_paths:
+      - /opt/technitium-stack
+  roles:
+    - wazuh_agent

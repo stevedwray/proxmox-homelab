@@ -223,6 +223,15 @@
         lookup('env', 'WAZUH_API_PASSWORD')
         | mandatory('WAZUH_API_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
       }}
+    # Shared secret for wazuh-authd auto-enrollment (agent pilot rollout,
+    # 2026-08-29): every wazuh_agent-role host registers itself against
+    # this manager's :1515 using this same password, rather than
+    # generating+distributing a static key per agent.
+    wazuh_agent_authd_password: >-
+      {{
+        lookup('env', 'WAZUH_AGENT_AUTHD_PASSWORD')
+        | mandatory('WAZUH_AGENT_AUTHD_PASSWORD env var is required -- new SOPS secret, see STACK_CONTRACT.md Inputs')
+      }}
     wazuh_runtime_images:
       - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-manager:{{ wazuh_image_tag }}"
       - "{{ wazuh_registry_host }}/dockerhub/wazuh/wazuh-indexer:{{ wazuh_image_tag }}"
@@ -521,11 +530,18 @@
             </rule_test>
 
             <auth>
-              <disabled>no</disabled>
-              <port>1515</port>
-              <use_source_ip>no</use_source_ip>
-              <purge>yes</purge>
-              <use_password>no</use_password>
+              <!-- use_password: yes (upstream default: no) -- agent pilot
+                   rollout, 2026-08-29. wazuh-authd (this block) validates
+                   new agent registrations against a shared password file
+                   at /var/ossec/etc/authd.pass, injected by a later task
+                   in this same play once the manager container is up
+                   (that file lives in the wazuh_etc *named volume*, not
+                   a bind mount -- see the task comment for why it's
+                   injected via docker cp rather than templated in
+                   directly, matching this file's own wazuh.yml lesson
+                   about mixing bind-mounted files into a directory a
+                   named volume also covers). -->
+              <use_password>yes</use_password>
               <ciphers>HIGH:!ADH:!EXP:!MD5:!RC4:!3DES:!CAMELLIA:@STRENGTH</ciphers>
               <ssl_verify_host>no</ssl_verify_host>
               <ssl_manager_cert>etc/sslmanager.cert</ssl_manager_cert>
@@ -956,6 +972,63 @@
         host: 127.0.0.1
         port: 55000
         timeout: 300
+
+    # wazuh-authd's password file lives at /var/ossec/etc/authd.pass,
+    # inside the wazuh_etc *named volume* -- not a path this playbook
+    # bind-mounts from the host (ossec.conf itself is only staged in via
+    # /wazuh-config-mount/etc/ossec.conf, which the image's own
+    # entrypoint copies into the volume; there's no equivalent staging
+    # path for authd.pass). Deliberately NOT bind-mounting a single file
+    # onto a path a named volume also covers here -- that exact pattern
+    # (this file's own wazuh.yml, on the dashboard side) was tried
+    # earlier this same day and caused the dashboard app to silently
+    # append a stale duplicate entry back into the file on every
+    # container recreate. Writing the file into the already-running
+    # container via docker cp, matching how this playbook already
+    # injects the indexer's OIDC config.yml/roles_mapping.yml changes,
+    # avoids that risk entirely.
+    - name: Write authd.pass to the host (staging file, not container-mounted)
+      ansible.builtin.copy:
+        dest: "{{ wazuh_compose_dir }}/config/wazuh_cluster/authd.pass"
+        content: "{{ wazuh_agent_authd_password }}"
+        mode: "0600"
+      no_log: true
+      register: wazuh_authd_pass_staged
+
+    - name: Copy authd.pass into the running manager container
+      ansible.builtin.command:
+        argv: [docker, cp, "{{ wazuh_compose_dir }}/config/wazuh_cluster/authd.pass",
+               "wazuh-stack-manager:/var/ossec/etc/authd.pass"]
+      when: wazuh_authd_pass_staged.changed
+      changed_when: true
+
+    - name: Set ownership/permissions on the in-container authd.pass
+      ansible.builtin.command:
+        argv: [docker, exec, wazuh-stack-manager, sh, -c,
+               "chown 999:999 /var/ossec/etc/authd.pass && chmod 640 /var/ossec/etc/authd.pass"]
+      when: wazuh_authd_pass_staged.changed
+      changed_when: true
+
+    # ossec.conf's own use_password: yes change (above) already forces a
+    # full-stack recreate via the "Recreate Wazuh stack" handler at the
+    # end of this play -- but that recreate happens BEFORE authd.pass
+    # exists in the volume (handlers run once, at end of play, and this
+    # task runs mid-play, after the manager's already up). Restart just
+    # the manager container here so wazuh-authd re-reads its config with
+    # the password file actually present, instead of waiting on a second
+    # deploy run to pick it up.
+    - name: Restart the manager container to pick up authd.pass
+      ansible.builtin.command:
+        argv: [docker, restart, wazuh-stack-manager]
+      when: wazuh_authd_pass_staged.changed
+      changed_when: true
+
+    - name: Wait for manager API port to accept connections again after authd restart
+      ansible.builtin.wait_for:
+        host: 127.0.0.1
+        port: 55000
+        timeout: 300
+      when: wazuh_authd_pass_staged.changed
 
     - name: Wait for dashboard HTTP port to accept connections
       ansible.builtin.wait_for:
