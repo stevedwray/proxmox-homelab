@@ -288,3 +288,10 @@
     wazuh_agent_docker_monitoring_enabled: true
   roles:
     - wazuh_agent
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

@@ -531,3 +531,10 @@
           - docs_rag_health_after_restart.status in [200, 401, 405, 406]
         fail_msg: "docs-rag-mcp did not respond on :8001/mcp after the corpus-change restart (last status: {{ docs_rag_health_after_restart.status | default('unknown') }})"
       when: corpus_changed
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

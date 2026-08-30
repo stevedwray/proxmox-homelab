@@ -1299,3 +1299,10 @@
             -cert $CONFIG_DIR/../certs/admin.pem
             -cacert $CONFIG_DIR/../certs/root-ca.pem -nhnv -p 9200 -h localhost
       when: wazuh_oidc_domain_present.rc != 0 or wazuh_all_access_wildcard_present.rc != 0
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades

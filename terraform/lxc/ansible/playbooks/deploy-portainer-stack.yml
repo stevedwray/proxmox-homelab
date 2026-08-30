@@ -653,3 +653,10 @@
     portainer_backup_use_nas_mount: "{{ lookup('env', 'TF_VAR_proxmox_node', default='') == 'pve' }}"
   roles:
     - portainer_backup
+
+- name: Enable unattended security updates (fleet rollout, 2026-08-30)
+  hosts: all
+  become: true
+  gather_facts: false
+  roles:
+    - unattended_upgrades
