@@ -1,0 +1,80 @@
+---
+# Both the Debian 13 template build (ansible/00-initial-setup/build-debian-13-template.yml)
+# and docker_base stop/disable/MASK apt-daily.service/timer and
+# apt-daily-upgrade.service/timer -- deliberately, to stop unattended-upgrade
+# from holding the apt/dpkg lock while Ansible provisions a container. That
+# leaves every container starting life with automatic security updates off.
+# This role turns them back on, but only once, at the end of a host's own
+# provisioning play (see the pilot playbooks that include this role last) --
+# never inside lxc_base itself, which runs first and would race the
+# stack-specific apt tasks that follow it in the same play.
+
+- name: Wait for apt/dpkg to be free before configuring unattended-upgrades
+  ansible.builtin.shell: |
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12; do
+      if ! ps -eo comm= | grep -Eq '^(apt|apt-get|dpkg|aptitude|unattended-upgrade)$'; then
+        exit 0
+      fi
+      sleep 5
+    done
+    echo "Timed out waiting for apt/dpkg lock holders to exit" >&2
+    exit 1
+  args:
+    executable: /bin/bash
+  register: unattended_upgrades_wait_apt
+  changed_when: false
+  failed_when: unattended_upgrades_wait_apt.rc != 0
+
+- name: Install unattended-upgrades
+  ansible.builtin.apt:
+    name:
+      - unattended-upgrades
+      - apt-listchanges
+    state: present
+    update_cache: true
+    lock_timeout: 300
+
+- name: Configure unattended-upgrades security-only policy
+  ansible.builtin.template:
+    src: 50unattended-upgrades.j2
+    dest: /etc/apt/apt.conf.d/50unattended-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+
+- name: Enable periodic apt update and unattended-upgrade runs
+  ansible.builtin.copy:
+    dest: /etc/apt/apt.conf.d/20auto-upgrades
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      APT::Periodic::Update-Package-Lists "1";
+      APT::Periodic::Download-Upgradeable-Packages "1";
+      APT::Periodic::AutocleanInterval "7";
+      APT::Periodic::Unattended-Upgrade "1";
+
+- name: Unmask apt-daily timers so unattended-upgrades can actually run
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    masked: false
+  loop:
+    - apt-daily.service
+    - apt-daily.timer
+    - apt-daily-upgrade.service
+    - apt-daily-upgrade.timer
+  register: unattended_upgrades_unmask
+
+- name: Reload systemd daemon after unmasking apt-daily units
+  ansible.builtin.systemd:
+    daemon_reload: true
+  when: unattended_upgrades_unmask.changed
+
+- name: Enable and start apt-daily timers
+  ansible.builtin.systemd:
+    name: "{{ item }}"
+    enabled: true
+    state: started
+  loop:
+    - apt-daily.timer
+    - apt-daily-upgrade.timer
