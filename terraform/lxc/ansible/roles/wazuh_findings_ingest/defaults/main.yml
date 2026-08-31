@@ -16,11 +16,16 @@ wazuh_findings_ingest_log_path: /var/log/wazuh-findings-ingest.log
 # rollover with no other known dependency to wait on.
 wazuh_findings_ingest_on_calendar: "*-*-* 06:00:00"
 
-# How far back to re-scan on every incremental run, to catch
-# late-arriving/reprocessed alerts -- same reasoning and same default
-# (600s) as wazuh-analysis's own SYNC_LOOKBACK_SECONDS, already validated
-# against real Wazuh alert timing behavior.
-wazuh_findings_ingest_lookback_seconds: 600
+# CORRECTION 2026-09-01, found via the first live production run: this
+# queries wazuh-states-vulnerabilities-* (Wazuh's actual current-state
+# index), a small (~2,700 doc) full snapshot, not an append-only alert
+# log -- so it's a full pull every run (same shape as
+# harbor_findings_sync.py's full Harbor-catalog walk), no incremental
+# cursor/lookback window needed. See wazuh_findings_sync.py's own module
+# docstring and docs/threat-vuln-platform/plan.md's correction note for
+# the full story (querying wazuh-alerts-* instead, as originally built,
+# silently missed 2 of 7 real agents and returned almost entirely
+# "Solved" alerts rather than current active state).
 
 # --- Wazuh Indexer connection (source) -----------------------------------
 # Colocated on the same host this role is installed on (wazuh-stack) --

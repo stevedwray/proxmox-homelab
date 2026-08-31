@@ -7,7 +7,6 @@ Wants=network-online.target
 Type=oneshot
 Environment=WAZUH_URL={{ wazuh_findings_ingest_wazuh_url }}
 Environment=WAZUH_NO_VERIFY_TLS={{ wazuh_findings_ingest_wazuh_no_verify_tls | ternary('1', '0') }}
-Environment=SYNC_LOOKBACK_SECONDS={{ wazuh_findings_ingest_lookback_seconds }}
 Environment=ELASTICSEARCH_URL={{ wazuh_findings_ingest_elasticsearch_url }}
 Environment=ES_FINDINGS_NO_VERIFY_TLS={{ wazuh_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
 EnvironmentFile=-{{ wazuh_findings_ingest_dir }}/wazuh-user.env

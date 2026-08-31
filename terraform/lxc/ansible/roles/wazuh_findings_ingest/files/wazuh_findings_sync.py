@@ -1,24 +1,48 @@
 #!/usr/bin/env python3
-"""Scheduled pull of Wazuh vulnerability-detector findings into OpenSearch.
+"""Scheduled pull of Wazuh's current vulnerability state into OpenSearch.
 
 See docs/threat-vuln-platform/plan.md's "Phase 2: Wazuh findings
-ingestion" for the design. Same overall shape as harbor_findings_sync.py
-(stdlib-only, deterministic per-document _id, scripted-upsert putAll,
-sync-state doc) but the source-side query pattern (incremental by
-@timestamp with a lookback window, search_after pagination) is carried
-over directly from wazuh-analysis's own wazuh_es_sync.py -- already
-validated against real Wazuh 4.x alert data, not reinvented here.
+ingestion" for the design, and its "CORRECTION 2026-09-01" note for why
+this queries wazuh-states-vulnerabilities-* rather than wazuh-alerts-*.
 
-Only ever queries rule.groups:vulnerability-detector -- the other four
-alert types wazuh-analysis's README documents (auth failures, file
-integrity, rootcheck, compliance/SCA) are explicitly out of scope for
-this role; that's the *-events family, a separate later phase.
+**Real finding from the first live run against production wazuh-stack**:
+querying wazuh-alerts-4.x-* for rule.groups:vulnerability-detector (the
+design wazuh-analysis's own pipeline used, and this script's first
+version copied) only captures Wazuh's alert *log* -- on this deployment
+that turned out to be almost entirely "Solved" state-transition
+notifications, not ongoing active state, and it silently missed 2 of 7
+real agents (pve and wazuh.manager itself) whose vulnerability alerts
+apparently never crossed whatever produced that specific alert stream.
+Wazuh 4.14.7 (this deployment's version) keeps the actual current
+vulnerability state -- what's *unsolved right now*, per agent -- in a
+separate, newer-schema index family: wazuh-states-vulnerabilities-*.
+Confirmed live: 2745 real documents covering all 7 real agents, using
+top-level vulnerability.id/package.name/agent.id fields (Wazuh's ECS-like
+"states" schema), not the classic dotted data.vulnerability.cve alert
+schema wazuh-analysis's design assumed.
+
+This index is a genuine current-state snapshot, not an append-only event
+log -- Wazuh's own vulnerability-detector module removes a row once the
+CVE is resolved (upgraded package, etc.), so mere presence in a full
+pull IS "still active." That's why this script does a full pull every
+run (same shape as harbor_findings_sync.py's full Harbor-catalog walk,
+gvm_findings_sync.py's full current-Results pull) rather than an
+incremental cursor -- there's no natural "last modified" field to cursor
+on, and at ~2,700 documents a full pull is cheap. This also means
+last_seen naturally advances every run a CVE is still present, and
+naturally stops advancing (going stale) once Wazuh removes it -- the
+same staleness-by-omission signal Harbor/GVM's own findings already
+carry, no separate "status" field needed (the classic alerts schema's
+Active/Solved status doesn't exist in this index at all: being present
+IS "active").
 
 Read-only against the Wazuh Indexer: only ever calls the _search API.
 Read-write against OpenSearch: bulk-upserts finding documents and
 updates one sync-state document (shared es-findings-sync-state index,
 keyed "wazuh" -- same index harbor/gvm already write their own state
-docs into).
+docs into). No cursor stored -- this is a full pull every run, not an
+incremental one; the sync-state doc here is purely informational (last
+run's timing/counts), matching harbor_findings_sync.py's own use of it.
 
 Intentionally stdlib-only, matching every other sync script in this
 repo's own reasoning (no Python venv convention on LXC hosts for jobs
@@ -31,15 +55,14 @@ import argparse
 import base64
 import json
 import os
-import re
 import ssl
 import sys
 import time
 import urllib.error
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-WAZUH_INDEX_PATTERN = "wazuh-alerts-4.x-*"
+WAZUH_INDEX_PATTERN = "wazuh-states-vulnerabilities-*"
 DEST_INDEX = "wazuh-findings"
 BATCH_SIZE = 1000
 
@@ -61,44 +84,19 @@ def _ssl_context(verify_tls: bool) -> ssl.SSLContext:
     return ctx
 
 
-def parse_es_dt(s: str) -> datetime:
-    """Parse ES/OpenSearch ISO timestamps (handles Z and long fractional
-    seconds) -- lifted directly from wazuh-analysis's wazuh_es_sync.py,
-    already proven against real Wazuh alert timestamp formats."""
-    if s.endswith("Z"):
-        s = s[:-1] + "+00:00"
-    m = re.match(r"^(.*\.\d{1,6})\d+([+-]\d{2}:\d{2})$", s)
-    if m:
-        s = m.group(1) + m.group(2)
-    return datetime.fromisoformat(s)
-
-
-def iso_minus_seconds(iso_ts: str, seconds: int) -> str:
-    return (parse_es_dt(iso_ts) - timedelta(seconds=seconds)).isoformat()
-
-
-def _wazuh_search_after(base_url, auth_header, verify_tls, start_cursor, batch_size=BATCH_SIZE):
-    """Deterministic incremental pagination using search_after, filtered
-    to vulnerability-detector alerts only, sorted by @timestamp then _doc
-    (OpenSearch-compatible tiebreaker -- not _shard_doc)."""
+def _wazuh_search_after(base_url, auth_header, verify_tls, batch_size=BATCH_SIZE):
+    """Full-index walk via search_after -- no query filter at all, this
+    index already contains only current/unsolved vulnerabilities. Sorted
+    purely on _doc (OpenSearch-compatible tiebreaker) since there's no
+    meaningful business ordering needed for a full pull."""
     search_after = None
     ctx = _ssl_context(verify_tls)
 
     while True:
         body = {
             "size": batch_size,
-            "query": {
-                "bool": {
-                    "must": [
-                        {"range": {"@timestamp": {"gte": start_cursor}}},
-                        {"term": {"rule.groups": "vulnerability-detector"}},
-                    ]
-                }
-            },
-            "sort": [
-                {"@timestamp": {"order": "asc", "missing": "_last"}},
-                "_doc",
-            ],
+            "query": {"match_all": {}},
+            "sort": ["_doc"],
         }
         if search_after:
             body["search_after"] = search_after
@@ -120,36 +118,29 @@ def _wazuh_search_after(base_url, auth_header, verify_tls, start_cursor, batch_s
             break
 
 
-def _extract_cvss_score(vuln: dict) -> float | None:
-    cvss = vuln.get("cvss") or {}
-    score = (cvss.get("cvss3") or {}).get("base_score")
-    if score is None:
-        score = (cvss.get("cvss2") or {}).get("base_score")
-    return score
-
-
 def build_document(hit: dict) -> dict | None:
     src = hit.get("_source", {})
-    vuln = (src.get("data") or {}).get("vulnerability") or {}
-    cve = vuln.get("cve")
+    vuln = src.get("vulnerability") or {}
+    cve = vuln.get("id")
     if not cve:
         return None
     agent = src.get("agent") or {}
-    package = vuln.get("package") or {}
+    package = src.get("package") or {}
+    now = _now_iso()
     return {
         "source": "wazuh",
         "finding_id": cve,
         "severity_raw": vuln.get("severity"),
-        "cvss_score": _extract_cvss_score(vuln),
+        "cvss_score": (vuln.get("score") or {}).get("base"),
         "package": package.get("name"),
         "package_version": package.get("version"),
-        "status": vuln.get("status"),
+        "description": (vuln.get("description") or "")[:2000] or None,
         "target": {
             "agent_id": agent.get("id"),
             "agent_name": agent.get("name"),
         },
-        "scan_time": src.get("@timestamp"),
-        "last_seen": _now_iso(),
+        "scan_time": vuln.get("detected_at") or now,
+        "last_seen": now,
     }
 
 
@@ -211,20 +202,7 @@ def bulk_upsert(base_url, docs, auth_header, verify_tls, dry_run) -> tuple[int, 
     return len(docs) - error_count, error_count
 
 
-def get_sync_state(base_url, auth_header, verify_tls) -> dict | None:
-    url = f"{base_url}/es-findings-sync-state/_doc/wazuh"
-    req = urllib.request.Request(url, method="GET")
-    req.add_header("Authorization", auth_header)
-    try:
-        with urllib.request.urlopen(req, context=_ssl_context(verify_tls), timeout=15) as resp:
-            return json.loads(resp.read()).get("_source")
-    except urllib.error.HTTPError as exc:
-        if exc.code == 404:
-            return None
-        raise
-
-
-def update_sync_state(base_url, auth_header, verify_tls, *, started, finished, status, docs_scanned, findings_indexed, errors, last_cursor, dry_run):
+def update_sync_state(base_url, auth_header, verify_tls, *, started, finished, status, docs_scanned, findings_indexed, errors, dry_run):
     if dry_run:
         return
     body = json.dumps(
@@ -236,7 +214,6 @@ def update_sync_state(base_url, auth_header, verify_tls, *, started, finished, s
             "artifacts_scanned": docs_scanned,
             "findings_indexed": findings_indexed,
             "errors": errors,
-            "last_cursor": last_cursor,
         }
     ).encode()
     req = urllib.request.Request(f"{base_url}/es-findings-sync-state/_doc/wazuh", data=body, method="PUT")
@@ -259,7 +236,6 @@ def main() -> int:
     parser.add_argument("--es-user", default=os.environ.get("ES_FINDINGS_USER", ""))
     parser.add_argument("--es-password", default=os.environ.get("ES_FINDINGS_PASSWORD", ""))
     parser.add_argument("--es-no-verify-tls", action="store_true", default=os.environ.get("ES_FINDINGS_NO_VERIFY_TLS") == "1")
-    parser.add_argument("--lookback-seconds", type=int, default=int(os.environ.get("SYNC_LOOKBACK_SECONDS", "600")))
     parser.add_argument("--dry-run", action="store_true", help="Query Wazuh and report counts, write nothing to OpenSearch.")
     args = parser.parse_args()
 
@@ -287,27 +263,13 @@ def main() -> int:
     started = _now_iso()
     started_monotonic = time.monotonic()
 
-    state = get_sync_state(es_base, es_auth, not args.es_no_verify_tls)
-    last_cursor = state.get("last_cursor") if state else None
-    if last_cursor:
-        start_cursor = iso_minus_seconds(last_cursor, args.lookback_seconds)
-        print(f"Incremental sync from {start_cursor} (lookback {args.lookback_seconds}s)")
-    else:
-        start_cursor = "2025-01-01T00:00:00Z"
-        print("Initial full sync (no prior sync-state doc found)")
-
     docs_scanned = 0
     findings_indexed = 0
     errors = 0
-    max_cursor_seen = last_cursor
     batch: list[dict] = []
 
-    for hit in _wazuh_search_after(wazuh_base, wazuh_auth, not args.wazuh_no_verify_tls, start_cursor):
+    for hit in _wazuh_search_after(wazuh_base, wazuh_auth, not args.wazuh_no_verify_tls):
         docs_scanned += 1
-        ts = hit.get("_source", {}).get("@timestamp")
-        if ts and (max_cursor_seen is None or parse_es_dt(ts) > parse_es_dt(max_cursor_seen)):
-            max_cursor_seen = ts
-
         doc = build_document(hit)
         if doc is None:
             continue
@@ -328,17 +290,11 @@ def main() -> int:
     elapsed = time.monotonic() - started_monotonic
     status = "success" if errors == 0 else "completed_with_errors"
 
-    # Never advance the cursor on a run that found nothing at all --
-    # same "never advance cursor on a 0-doc run" principle already
-    # validated in security-analysis's secpipe_core design (see this
-    # doc's "Prior art" section above) -- avoids silently skipping a
-    # window if Wazuh's indexer was briefly unreachable mid-query.
-    new_cursor = max_cursor_seen if docs_scanned > 0 else last_cursor
     update_sync_state(
         es_base, es_auth, not args.es_no_verify_tls,
         started=started, finished=finished, status=status,
         docs_scanned=docs_scanned, findings_indexed=findings_indexed,
-        errors=errors, last_cursor=new_cursor, dry_run=args.dry_run,
+        errors=errors, dry_run=args.dry_run,
     )
 
     print(

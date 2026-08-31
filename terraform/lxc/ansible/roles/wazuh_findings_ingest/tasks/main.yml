@@ -91,7 +91,11 @@
         - wazuh-findings-normalize.json
 
     # ---------------------------------------------------------------
-    # Scoped Wazuh Indexer internal user (read-only on wazuh-alerts-*) --
+    # Scoped Wazuh Indexer internal user (read-only on
+    # wazuh-states-vulnerabilities-*, NOT wazuh-alerts-* -- see
+    # wazuh_findings_sync.py's own module docstring and
+    # docs/threat-vuln-platform/plan.md's 2026-09-01 correction note for
+    # why) --
     # same idempotent "credential file is the only existence check" shape
     # every other role in this family uses. UNVERIFIED against Wazuh's
     # own Indexer build until this runs live -- see defaults/main.yml's
@@ -103,24 +107,21 @@
         path: "{{ wazuh_findings_ingest_dir }}/wazuh-user.env"
       register: wazuh_findings_ingest_wazuh_credential_stat
 
-    - name: Check if Wazuh Indexer is reachable before provisioning its scoped user
+    - name: Check if Wazuh Indexer is reachable
       ansible.builtin.wait_for:
         host: "{{ wazuh_findings_ingest_wazuh_host }}"
         port: 9200
         timeout: 5
       register: wazuh_findings_ingest_wazuh_reachable
       ignore_errors: true
-      when: not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
 
-    - name: Warn and skip Wazuh Indexer user provisioning when it is not yet reachable
+    - name: Warn and skip Wazuh Indexer provisioning when it is not yet reachable
       ansible.builtin.debug:
         msg: >-
           Wazuh Indexer at {{ wazuh_findings_ingest_wazuh_host }}:9200 is not
-          reachable (timeout). Skipping wazuh-findings-ingest reader creation --
+          reachable (timeout). Skipping wazuh-findings-ingest role/user setup --
           re-run provision once wazuh-stack's indexer is up.
-      when:
-        - not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
-        - wazuh_findings_ingest_wazuh_reachable.failed | default(true)
+      when: wazuh_findings_ingest_wazuh_reachable.failed | default(true)
 
     - name: Generate a random password for the scoped Wazuh Indexer user
       ansible.builtin.set_fact:
@@ -130,6 +131,14 @@
         - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
       no_log: true
 
+    # Unconditional (not gated on "credential file missing") -- unlike the
+    # user/password below, this is a plain idempotent PUT that must be
+    # able to pick up an index_permissions change on every deploy, not
+    # only the very first one. Real bug found and fixed 2026-09-01: this
+    # was originally gated the same way as the user-creation steps below,
+    # which meant a later fix to the index pattern here (wazuh-alerts-* ->
+    # wazuh-states-vulnerabilities-*) would have silently never reapplied
+    # once the credential file already existed from the first deploy.
     - name: Ensure wazuh_findings_reader role exists in Wazuh Indexer
       ansible.builtin.uri:
         url: "{{ wazuh_findings_ingest_wazuh_url }}/_plugins/_security/api/roles/{{ wazuh_findings_ingest_wazuh_role_name }}"
@@ -142,13 +151,11 @@
         body:
           index_permissions:
             - index_patterns:
-                - "wazuh-alerts-*"
+                - "wazuh-states-vulnerabilities-*"
               allowed_actions:
                 - "read"
         status_code: [200, 201]
-      when:
-        - not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
-        - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+      when: not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
       delegate_to: localhost
 
     - name: Ensure scoped Wazuh Indexer user exists

@@ -374,6 +374,105 @@ reassertion query. `wazuh-findings-01` below includes a verification gate
 for exactly this — check it before trusting `last_seen` staleness for
 any alerting built on top of this index later.
 
+---
+
+## CORRECTION 2026-09-01: wrong source index, found on the first live production run
+
+Everything above this line describes the plan as originally written and
+first deployed. Running it for real against production `wazuh-stack`
+(6 agents, real data) surfaced a genuine design bug, not a guess this
+time — worth recording in full rather than quietly rewriting history.
+
+**What happened**: the first live run of `wazuh_findings_sync.py`
+completed cleanly (`docs_scanned=1705 findings_indexed=1705 errors=0`) —
+looked like success. Checking the actual data (per this doc's own
+"Deploying and validating" step 2 — never trust a clean exit code alone)
+found two real problems:
+
+1. **All 1700 resulting documents had `status: "Solved"` — zero
+   `Active`.** Querying `wazuh-alerts-4.x-*` for
+   `rule.groups:vulnerability-detector` (the design transcribed from
+   `wazuh-analysis`'s own pipeline, and the mapping table above) only
+   captures Wazuh's alert *log* — on this deployment that turned out to
+   be almost entirely historical "Solved" state-transition
+   notifications, not an ongoing signal of current active state.
+2. **Only 5 of 7 real agents were represented.** `pve` (the single
+   highest-value host in the whole rollout — see
+   `docs/wazuh-stack/README.md`) and `wazuh.manager` itself were
+   completely absent.
+
+**Root cause**: Wazuh 4.14.7 (this deployment's real version) keeps
+current vulnerability state — what's genuinely unsolved right now, per
+agent — in a separate, newer-schema index family:
+`wazuh-states-vulnerabilities-*` (already referenced, for a different
+reason, in `reference_wazuh_states_index_per_agent_field` memory — the
+`-wazuh.manager` suffix is the writing node, not a scope filter; a
+single index holds every agent's data). Confirmed live: **2745 real
+documents covering all 7 agents**, using a different, top-level-field
+("ECS-like") schema — `vulnerability.id`, `vulnerability.severity`,
+`vulnerability.score.base` (a real number, not the string
+`data.vulnerability.cvss.cvss3.base_score` would have been), `package.name`,
+`package.version`, `agent.id`, `agent.name`, `vulnerability.detected_at` —
+not the classic dotted `data.vulnerability.*` alert schema
+`wazuh-analysis`'s pipeline (built against an older/different Wazuh
+deployment) assumed applied here too.
+
+**This also fully resolves the "open question" above, differently than
+planned**: `wazuh-states-vulnerabilities-*` is a genuine current-state
+snapshot, not an append-only log — Wazuh's own vulnerability-detector
+module removes a row once the CVE is actually resolved. That means mere
+presence in a full pull already means "still active," and `last_seen`
+naturally advances every run a CVE is still present and naturally goes
+stale once Wazuh removes it — the same staleness-by-omission signal
+Harbor's/GVM's own findings already carry. No two-day empirical check
+needed; no separate `status` field needed either (dropped from the
+mapping — being present in this index at all IS the "active" signal).
+
+**Fix, applied directly (not deferred to a follow-up plan pass)**:
+`wazuh_findings_sync.py` rewritten to do a **full pull** of
+`wazuh-states-vulnerabilities-*` every run (`match_all` + `search_after`
+pagination, no query filter, no incremental cursor/lookback window at
+all) — the same shape `harbor_findings_sync.py`'s full Harbor-catalog
+walk and `gvm_findings_sync.py`'s full current-Results pull already use.
+At ~2,700 documents this is cheap; there's no natural "last modified"
+field on this index to cursor on anyway. Updated field mapping:
+
+| `wazuh-findings` field | Real source field (`wazuh-states-vulnerabilities-*`) |
+|---|---|
+| `finding_id` | `vulnerability.id` |
+| `severity_raw` | `vulnerability.severity` |
+| `cvss_score` | `vulnerability.score.base` (already numeric) |
+| `package` | `package.name` |
+| `package_version` | `package.version` |
+| `description` | `vulnerability.description`, truncated 2000 chars (new field, matches Harbor's own truncation convention) |
+| `target.agent_id` | `agent.id` |
+| `target.agent_name` | `agent.name` |
+| `scan_time` | `vulnerability.detected_at` |
+
+Also fixed as part of the same correction: the Wazuh-Indexer-side scoped
+role's `index_permissions` (`wazuh_findings_ingest_wazuh_role_name`)
+updated from `wazuh-alerts-*` to `wazuh-states-vulnerabilities-*`, and —
+a second, independent real bug found while fixing the first — **that
+role-PUT task was incorrectly gated behind "credential file doesn't
+exist yet,"** the same idempotency mistake already documented and fixed
+once for Harbor/GVM (`es_findings_writer`'s own role-PUT is correctly
+unconditional). Left as originally written, this index-pattern fix would
+have silently never reapplied to a wazuh-stack that had already
+completed its first deploy. Fixed by splitting the reachability
+check/role-PUT (now unconditional, idempotent) from the
+password-generation/user-creation/credential-write steps (still
+correctly gated on "credential doesn't exist yet," so a rotate never
+happens by accident).
+
+`wazuh-findings-05`'s index template also updated: `status` field
+removed (no longer produced), `description` field added (`text`).
+
+**Not yet re-verified live** at the time this section was written — the
+fix needs another `provision.sh --stack wazuh-stack` run plus a manual
+`systemctl start wazuh-findings-ingest.service` to confirm real data
+now shows all 7 agents and genuinely active CVEs (Critical/High counts
+that make sense for a live fleet, not a historical "Solved" log).
+
 ### wazuh-findings-01: provision.sh key whitelist
 
 ```yaml
