@@ -2177,3 +2177,27 @@ the new agg is present in the returned `visState`.
 5. Confirm live in the Dashboards UI: open "Threat & Vulnerability
    Overview", confirm both top-CVE tables now show an "Assets Affected"
    column with real asset labels, not just counts.
+
+### CORRECTION 2026-09-01: index templates don't retroactively remap an existing index
+
+Deployed threat-vuln-04-01/02 to `secpipe-stack`, confirmed the updated
+`unified-cve-exposure.json` template registered fine
+(`GET _index_template/unified-cve-exposure` showed the new
+`assets`/`assets_truncated`/`assets_summary` properties) — but a `GET
+/unified-cve-exposure/_mapping` on the **live** index showed the old
+mapping, still `"dynamic": "false"` with no new fields. Index templates
+only apply their mapping at index-creation time; an already-existing
+index (this one's been live since Phase 1) never picks up a template
+change on its own. Combined with `dynamic: false` at the top level, any
+document write carrying `assets_summary`/`sources[].assets` would have
+had those keys silently dropped from the indexed/aggregatable view (each
+of the three `*-findings` roles' respective template files have this
+same characteristic — worth remembering before assuming a template edit
+alone is sufficient the next time one of them changes shape).
+
+Fixed with an explicit `PUT /unified-cve-exposure/_mapping` carrying the
+same `sources.assets`/`sources.assets_truncated`/`assets_summary`
+properties, applied directly to the live index (mapping *additions* are
+always backward-compatible in OpenSearch — no reindex required). Verified
+via a follow-up `GET` that all three fields are now present on the live
+index's own mapping, not just the template.
