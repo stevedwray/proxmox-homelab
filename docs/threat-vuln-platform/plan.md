@@ -529,6 +529,49 @@ future OIDC-play run.
 third `provision.sh --stack wazuh-stack` run is needed to confirm the
 user gets recreated and a manual sync succeeds end-to-end this time.
 
+## Verified live end-to-end, 2026-09-01 — Phase 2 is genuinely done
+
+Third `provision.sh --stack wazuh-stack` run: `failed=0, changed=16`.
+Confirmed live: `GET /_plugins/_security/api/internalusers/
+wazuh_findings_ingest` now returns the user, correctly bound to
+`wazuh_findings_reader`. Manual sync run:
+`docs_scanned=2745 findings_indexed=2745 errors=0` — exactly matching
+the real document count on the Wazuh Indexer, all 7 agents present
+(`apt-cacher-stack`/`authentik-stack`/`harbor-stack`/`proxy-stack`/
+`technitium-stack`/`pve.gibbsgreatly.xyz`/`wazuh.manager`), real numeric
+CVSS scores, real severity spread (Critical 99, High 1419, Medium 1687,
+Low 241).
+
+**One more real cleanup needed and done**: the index held 4440 documents
+before this, not 2745 — the two earlier wrong-source runs (querying
+`wazuh-alerts-*`) had written 1700 stale "Solved"-only documents whose
+`agent_id` values (classic alert schema's `agent.id`, e.g. `"005"`) don't
+match the states-index schema's own `agent.id` numbering (e.g. `"006"`
+for `pve`), so they never collided on `_id` and just sat there polluting
+the index. `DELETE /wazuh-findings` + one more sync run resolved this
+cleanly (documents are fully reconstructable from source, so a full
+wipe-and-resync carries no real risk here) — confirmed back down to
+exactly 2745 afterward, idempotent on a second manual run.
+
+**Also verified, the real point of this whole phase**: `secpipe-stack`
+redeployed (`provision.sh --stack secpipe-stack`, `failed=0, changed=2`)
+to pick up the 3-source `cve_enrichment_sync` extension, then a manual
+run (`--max-cves 3 --force-refresh`, kept small to bound LLM/API cost)
+confirmed it end to end: log line reads
+`Found 10070 distinct CVEs across 3 findings indices` (not 2) —
+`unified-cve-exposure` now shows real documents with
+`sources: [{"source": "harbor", "count": 71}, {"source": "wazuh", "count": 24}]`
+and a correctly summed `total_instances: 95` for genuinely overlapping
+CVEs, and the write-back half works too: the same CVE's `wazuh-findings`
+document now carries `severity_assessed`/`assessed_by: "cve_enrichment_sync"`/
+`assessed_at` populated, exactly the same write-back shape Harbor/GVM's
+own findings already had.
+
+**Phase 2 is complete and live in production, not just built.** No known
+open items remain from the original plan's "Deploying and validating"
+section. Phase 2B (general Wazuh alert stream) and Phase 3 (OpenSearch
+Transform-job rollups) remain the next, separate, not-yet-started work.
+
 ### wazuh-findings-01: provision.sh key whitelist
 
 ```yaml
