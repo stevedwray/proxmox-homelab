@@ -292,6 +292,30 @@ def writeback_findings(
     return result.get("updated", 0)
 
 
+def refresh_exposure_sources(
+    es_url: str, cve_id: str, sources_list: list[dict], total_instances: int, *, auth_header: str, verify_tls: bool, dry_run: bool
+) -> bool:
+    """Cheap update for an already-enriched CVE whose sources/counts have
+    changed (e.g. a newly-added findings source, like wazuh-findings
+    joining harbor-findings/gvm-findings on 2026-09-01) -- updates only
+    sources/total_instances via a partial _update, with NO triage_cve or
+    LLM call. This is what backfills existing enrichments onto a newly
+    added source without re-running the expensive full enrichment for
+    every already-enriched CVE. Returns True if updated."""
+    if dry_run:
+        return False
+    status, result = _es_request(
+        es_url, f"/unified-cve-exposure/_update/{urllib.parse.quote(cve_id, safe='')}",
+        method="POST",
+        body={"doc": {"sources": sources_list, "total_instances": total_instances}},
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    if status != 200:
+        print(f"WARN: source refresh failed for {cve_id} ({status}): {result}", file=sys.stderr)
+        return False
+    return True
+
+
 def upsert_exposure_doc(
     es_url: str, cve_id: str, doc: dict, *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> None:
@@ -367,6 +391,7 @@ def main() -> int:
 
     enriched = 0
     skipped_fresh = 0
+    sources_refreshed = 0
     errors = 0
     processed = 0
 
@@ -380,6 +405,39 @@ def main() -> int:
                 args.elasticsearch_url, cve_id, auth_header=auth_header, verify_tls=verify_tls
             )
             if existing is not None:
+                # Cheap backfill path, no triage_cve/LLM call: an
+                # already-enriched CVE whose real source set or instance
+                # count has drifted (the exact case a newly added
+                # findings source like wazuh-findings hits for every CVE
+                # it shares with harbor/gvm) gets its sources/
+                # total_instances refreshed directly, and the existing
+                # (not re-triaged) assessment gets written back onto
+                # whichever finding indices now carry this CVE -- so a
+                # new source doesn't have to wait for a full
+                # --force-refresh sweep to show up in the dashboard.
+                existing_source_names = {s.get("source") for s in existing.get("sources", [])}
+                new_source_names = {s["source"] for s in entry["sources"]}
+                if (
+                    new_source_names != existing_source_names
+                    or existing.get("total_instances") != entry["total_instances"]
+                ):
+                    if refresh_exposure_sources(
+                        args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
+                        auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
+                    ):
+                        sources_refreshed += 1
+                        assessment = {
+                            "severity_assessed": existing.get("risk_band"),
+                            "assessed_reason": (existing.get("llm_narrative") or existing.get("triage_raw_text") or "")[:2000],
+                            "assessed_by": "cve_enrichment_sync",
+                            "assessed_at": _now_iso(),
+                        }
+                        for src in sources:
+                            if any(s["source"] == src["source"] for s in entry["sources"]):
+                                writeback_findings(
+                                    args.elasticsearch_url, src["index"], src["field"], cve_id, assessment,
+                                    auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
+                                )
                 skipped_fresh += 1
                 continue
 
@@ -440,7 +498,7 @@ def main() -> int:
 
     print(
         f"Done — cves_seen={len(cve_map)} enriched={enriched} skipped_fresh={skipped_fresh} "
-        f"errors={errors} dry_run={args.dry_run}"
+        f"sources_refreshed={sources_refreshed} errors={errors} dry_run={args.dry_run}"
     )
     return 1 if errors > 0 else 0
 
