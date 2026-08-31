@@ -401,8 +401,8 @@ scope:
     - "Any provision.sh / terragrunt apply run -- code edit only in this step"
 
 gates:
-  - id: python-syntax
-    cmd: "python3 -m py_compile scripts/provision.sh"
+  - id: bash-syntax
+    cmd: "bash -n scripts/provision.sh"
     expect: "exit 0"
     critical: true
   - id: keys-present
@@ -410,6 +410,14 @@ gates:
     expect: "2"
     critical: true
 ```
+
+**Correction, found executing this step**: `scripts/provision.sh` is a bash
+script with an embedded Python heredoc (`python3 - ... <<'PY'`), not a
+plain Python file — a `python3 -m py_compile` gate against the whole file
+was wrong (it fails on the shell syntax around the heredoc, not on the
+edit itself). `bash -n` is the correct syntax gate for the file as a
+whole; the embedded Python block was separately confirmed to compile
+cleanly by extracting it between the heredoc markers.
 
 ### wazuh-findings-02: new role scaffold — defaults
 

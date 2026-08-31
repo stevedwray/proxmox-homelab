@@ -1,0 +1,72 @@
+---
+# Defaults for wazuh_findings_ingest role -- see docs/threat-vuln-platform/
+# plan.md "Phase 2: Wazuh findings ingestion". Explicit opt-in, matching
+# es_findings_ingest_enabled/gvm_findings_ingest_enabled's pattern -- only
+# ever included on wazuh-stack, gated by a flag so it never silently
+# attaches to any other host that happens to reuse this role file.
+wazuh_findings_ingest_enabled: false
+
+wazuh_findings_ingest_dir: /opt/wazuh-findings-ingest
+wazuh_findings_ingest_log_path: /var/log/wazuh-findings-ingest.log
+
+# Runs on wazuh-stack itself -- independent of es_findings_ingest's own
+# 05:30 UTC and gvm_findings_ingest's own schedule (different hosts, no
+# chaining dependency). Wazuh's vulnerability-detector feed updates
+# roughly daily; 06:00 UTC gives it a comfortable margin after midnight
+# rollover with no other known dependency to wait on.
+wazuh_findings_ingest_on_calendar: "*-*-* 06:00:00"
+
+# How far back to re-scan on every incremental run, to catch
+# late-arriving/reprocessed alerts -- same reasoning and same default
+# (600s) as wazuh-analysis's own SYNC_LOOKBACK_SECONDS, already validated
+# against real Wazuh alert timing behavior.
+wazuh_findings_ingest_lookback_seconds: 600
+
+# --- Wazuh Indexer connection (source) -----------------------------------
+# Colocated on the same host this role is installed on (wazuh-stack) --
+# addressed via its own routable IP, not localhost, matching
+# es_findings_ingest's own reasoning for why harbor_findings_sync.py
+# addresses Harbor via LAB_IP_HARBOR rather than 127.0.0.1 (the sync
+# script runs on the LXC host, Wazuh's indexer runs inside Docker on that
+# same host, published on the host's real IP -- addressing it the same
+# way as every other role stays consistent and avoids container-network
+# assumptions).
+wazuh_findings_ingest_wazuh_host: "{{ lookup('env', 'LAB_IP_WAZUH') | mandatory('LAB_IP_WAZUH env var is required') }}"
+wazuh_findings_ingest_wazuh_url: "https://{{ wazuh_findings_ingest_wazuh_host }}:9200"
+wazuh_findings_ingest_wazuh_no_verify_tls: true
+
+# Wazuh Indexer admin superuser -- needed only to bootstrap this role's
+# own scoped read-only Indexer user. Never used at runtime by
+# wazuh_findings_sync.py, which only ever uses the scoped credential
+# written locally to wazuh_findings_ingest_dir.
+wazuh_findings_ingest_wazuh_admin_user: admin
+wazuh_findings_ingest_wazuh_admin_password: "{{ lookup('env', 'WAZUH_INDEXER_ADMIN_PASSWORD') | mandatory('WAZUH_INDEXER_ADMIN_PASSWORD env var is required') }}"
+
+# Scoped Wazuh Indexer internal user this role provisions for itself --
+# read-only on wazuh-alerts-*, never the admin superuser. Wazuh's own
+# Indexer is a plain Wazuh-branded build of OpenSearch with the same
+# security plugin opensearch-stack uses -- the same
+# _plugins/_security/api/roles + .../internalusers REST endpoints are
+# expected to work identically post-boot, but this is UNVERIFIED against
+# this specific product's build until wazuh-findings-03 actually runs
+# live; if it doesn't, fall back to a file-based internal_users.yml entry
+# matching deploy-wazuh-stack.yml's own existing pattern instead.
+wazuh_findings_ingest_wazuh_role_name: wazuh_findings_reader
+wazuh_findings_ingest_wazuh_user_name: wazuh_findings_ingest
+
+# --- OpenSearch connection (destination) ---------------------------------
+# Identical target/reasoning to every other *_findings_ingest role.
+wazuh_findings_ingest_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+wazuh_findings_ingest_elasticsearch_url: "https://{{ wazuh_findings_ingest_elasticsearch_host }}:9200"
+wazuh_findings_ingest_es_no_verify_tls: true
+
+wazuh_findings_ingest_elastic_admin_user: admin
+wazuh_findings_ingest_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+
+# Reuses es_findings_ingest's own es_findings_writer OpenSearch role
+# (this role's own tasks/main.yml extends its index_patterns to include
+# wazuh-findings*), same technique cve_enrichment_sync already used to
+# add unified-cve-exposure* -- a distinct internal-user identity keeps
+# this role's credential independently rotatable/revocable.
+wazuh_findings_ingest_es_role_name: es_findings_writer
+wazuh_findings_ingest_es_user_name: wazuh_findings_ingest

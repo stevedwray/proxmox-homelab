@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """CVE correlation/enrichment sync — see docs/threat-vuln-platform/plan.md.
 
-Reads distinct CVE IDs (+ instance counts) from harbor-findings and
-gvm-findings, enriches each not-yet-enriched CVE via cve-mcp-server's
-triage_cve tool (CVSS/EPSS/KEV/PoC + a composite risk score), synthesizes
-a short risk narrative via an LLM, and:
+Reads distinct CVE IDs (+ instance counts) from harbor-findings,
+gvm-findings, and wazuh-findings, enriches each not-yet-enriched CVE via
+cve-mcp-server's triage_cve tool (CVSS/EPSS/KEV/PoC + a composite risk
+score), synthesizes a short risk narrative via an LLM, and:
 
   1. Upserts one document per CVE into unified-cve-exposure.
   2. Writes severity_assessed/assessed_reason/assessed_by/assessed_at
@@ -27,8 +27,10 @@ repeat unconditionally on every run. Pass --force-refresh to re-enrich
 everything (EPSS/KEV status does change over time; a real re-check
 interval policy is a documented open item in plan.md, not decided yet).
 
-Phase 1 scope (see plan.md): harbor-findings + gvm-findings only. No
-wazuh/security-onion/tpot sources yet.
+Phase 1 scope (see plan.md): harbor-findings + gvm-findings. Phase 2
+(2026-09-01) added wazuh-findings as a third source -- CVE-only
+vulnerability-detector findings, not Wazuh's general alert stream. No
+security-onion/tpot sources yet.
 """
 
 from __future__ import annotations
@@ -335,10 +337,15 @@ def main() -> int:
     auth_header = "Basic " + base64.b64encode(f"{args.es_user}:{args.es_password}".encode()).decode()
     verify_tls = not args.no_verify_tls
 
-    # Phase 1 scope (see module docstring / plan.md): these two only.
+    # Phase 1: harbor + greenbone. Phase 2 (2026-09-01) added wazuh as a
+    # third, identically-shaped source (see module docstring / plan.md) --
+    # fetch_cve_instances()/writeback_findings() are both driven off this
+    # one list, so adding wazuh-findings here is the only change needed
+    # to cover both aggregation and write-back for the new source.
     sources = [
         {"source": "harbor", "index": "harbor-findings", "field": "finding_id"},
         {"source": "greenbone", "index": "gvm-findings", "field": "cve"},
+        {"source": "wazuh", "index": "wazuh-findings", "field": "finding_id"},
     ]
 
     cve_map: dict[str, dict] = {}

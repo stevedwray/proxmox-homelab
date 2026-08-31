@@ -149,6 +149,7 @@
                 - "gvm-findings*"
                 - "es-findings-sync-state"
                 - "unified-cve-exposure*"
+                - "wazuh-findings*"
               allowed_actions:
                 - "create_index"
                 - "write"

@@ -1,0 +1,20 @@
+[Unit]
+Description=Wazuh vulnerability-detector findings sync -> OpenSearch (wazuh_findings_ingest)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+Environment=WAZUH_URL={{ wazuh_findings_ingest_wazuh_url }}
+Environment=WAZUH_NO_VERIFY_TLS={{ wazuh_findings_ingest_wazuh_no_verify_tls | ternary('1', '0') }}
+Environment=SYNC_LOOKBACK_SECONDS={{ wazuh_findings_ingest_lookback_seconds }}
+Environment=ELASTICSEARCH_URL={{ wazuh_findings_ingest_elasticsearch_url }}
+Environment=ES_FINDINGS_NO_VERIFY_TLS={{ wazuh_findings_ingest_es_no_verify_tls | ternary('1', '0') }}
+EnvironmentFile=-{{ wazuh_findings_ingest_dir }}/wazuh-user.env
+EnvironmentFile=-{{ wazuh_findings_ingest_dir }}/es-user.env
+ExecStart=/usr/bin/python3 {{ wazuh_findings_ingest_dir }}/wazuh_findings_sync.py
+StandardOutput=append:{{ wazuh_findings_ingest_log_path }}
+StandardError=append:{{ wazuh_findings_ingest_log_path }}
+
+[Install]
+WantedBy=multi-user.target
