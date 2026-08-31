@@ -85,16 +85,92 @@ def _es_request(
             return exc.code, {"error": raw.decode(errors="replace")[:500]}
 
 
+ASSET_SAMPLE_SIZE = 5
+
+
+def _get_path(d: dict, path: str):
+    """Dotted-path lookup into a nested dict, e.g. 'artifact.repository'."""
+    cur = d
+    for part in path.split("."):
+        if not isinstance(cur, dict):
+            return None
+        cur = cur.get(part)
+    return cur
+
+
+ASSET_FIELD_SPECS = {
+    "harbor": {
+        "source_fields": ["artifact.repository", "artifact.tag"],
+        "format": lambda src: (
+            f"{_get_path(src, 'artifact.repository') or '?'}:"
+            f"{_get_path(src, 'artifact.tag') or '?'}"
+        ),
+    },
+    "greenbone": {
+        "source_fields": ["target.host", "target.port", "target.zone"],
+        "format": lambda src: (
+            f"{_get_path(src, 'target.host') or '?'}:"
+            f"{_get_path(src, 'target.port') or '?'}"
+            f" ({_get_path(src, 'target.zone') or '?'})"
+        ),
+    },
+    "wazuh": {
+        "source_fields": ["target.agent_id", "target.agent_name"],
+        "format": lambda src: (
+            _get_path(src, "target.agent_name")
+            or _get_path(src, "target.agent_id")
+            or "?"
+        ),
+    },
+}
+
+
+def build_assets_summary(sources_list: list[dict]) -> str:
+    """Flatten sources[] (each already carrying an 'assets' list and
+    'assets_truncated' flag) into one human-readable text block, for
+    direct display via a top_hit/concat table column -- the same pattern
+    already proven live for risk_band/llm_narrative."""
+    lines = []
+    for s in sources_list:
+        assets = s.get("assets") or []
+        if not assets:
+            continue
+        label = f"{s['source']} ({s.get('count', len(assets))}): " + ", ".join(assets)
+        if s.get("assets_truncated"):
+            label += f" (+{s.get('count', 0) - len(assets)} more)"
+        lines.append(label)
+    return "\n".join(lines)
+
+
 def fetch_cve_instances(
-    es_url: str, index: str, cve_field: str, *, auth_header: str, verify_tls: bool
-) -> dict[str, int]:
+    es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
+    *, auth_header: str, verify_tls: bool
+) -> dict[str, dict]:
     """Terms-aggregate distinct CVE values + doc counts from one findings
-    index. Works unchanged whether the field is a single keyword
-    (harbor-findings.finding_id) or a keyword array (gvm-findings.cve) --
-    a terms agg on an array field buckets each value independently, which
-    is the correct behaviour here (a finding with 2 CVEs should count
-    toward both)."""
-    body = {"size": 0, "aggs": {"cves": {"terms": {"field": cve_field, "size": 10000}}}}
+    index, plus a top_hits sub-aggregation sampling up to
+    ASSET_SAMPLE_SIZE of the most-recently-seen documents' asset
+    identifier fields per CVE. Works unchanged whether the field is a
+    single keyword (harbor-findings.finding_id) or a keyword array
+    (gvm-findings.cve) -- a terms agg on an array field buckets each
+    value independently, which is the correct behaviour here (a finding
+    with 2 CVEs should count toward both)."""
+    body = {
+        "size": 0,
+        "aggs": {
+            "cves": {
+                "terms": {"field": cve_field, "size": 10000},
+                "aggs": {
+                    "assets": {
+                        "top_hits": {
+                            "size": ASSET_SAMPLE_SIZE,
+                            "_source": asset_source_fields,
+                            "sort": [{"last_seen": {"order": "desc"}}],
+                        }
+                    }
+                },
+            }
+        },
+    }
     status, result = _es_request(
         es_url, f"/{index}/_search", method="POST", body=body,
         auth_header=auth_header, verify_tls=verify_tls,
@@ -103,7 +179,13 @@ def fetch_cve_instances(
         print(f"WARN: failed to aggregate {index} ({status}): {result}", file=sys.stderr)
         return {}
     buckets = result.get("aggregations", {}).get("cves", {}).get("buckets", [])
-    return {b["key"]: b["doc_count"] for b in buckets if b.get("key")}
+    out: dict[str, dict] = {}
+    for b in buckets:
+        if not b.get("key"):
+            continue
+        hits = b.get("assets", {}).get("hits", {}).get("hits", [])
+        out[b["key"]] = {"count": b["doc_count"], "raw_assets": [h.get("_source", {}) for h in hits]}
+    return out
 
 
 def get_existing_enrichment(
@@ -307,7 +389,11 @@ def refresh_exposure_sources(
     status, result = _es_request(
         es_url, f"/unified-cve-exposure/_update/{urllib.parse.quote(cve_id, safe='')}",
         method="POST",
-        body={"doc": {"sources": sources_list, "total_instances": total_instances}},
+        body={"doc": {
+            "sources": sources_list,
+            "total_instances": total_instances,
+            "assets_summary": build_assets_summary(sources_list),
+        }},
         auth_header=auth_header, verify_tls=verify_tls,
     )
     if status != 200:
@@ -374,14 +460,22 @@ def main() -> int:
 
     cve_map: dict[str, dict] = {}
     for src in sources:
+        spec = ASSET_FIELD_SPECS[src["source"]]
         counts = fetch_cve_instances(
-            args.elasticsearch_url, src["index"], src["field"],
+            args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
             auth_header=auth_header, verify_tls=verify_tls,
         )
-        for cve_id, count in counts.items():
+        for cve_id, info in counts.items():
             entry = cve_map.setdefault(cve_id, {"sources": [], "total_instances": 0})
-            entry["sources"].append({"source": src["source"], "finding_id": cve_id, "count": count})
-            entry["total_instances"] += count
+            assets = [spec["format"](raw) for raw in info["raw_assets"]]
+            entry["sources"].append({
+                "source": src["source"],
+                "finding_id": cve_id,
+                "count": info["count"],
+                "assets": assets,
+                "assets_truncated": info["count"] > len(assets),
+            })
+            entry["total_instances"] += info["count"]
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
@@ -420,6 +514,7 @@ def main() -> int:
                 if (
                     new_source_names != existing_source_names
                     or existing.get("total_instances") != entry["total_instances"]
+                    or "assets_summary" not in existing
                 ):
                     if refresh_exposure_sources(
                         args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
@@ -467,6 +562,7 @@ def main() -> int:
             "cve_id": cve_id,
             "sources": entry["sources"],
             "total_instances": entry["total_instances"],
+            "assets_summary": build_assets_summary(entry["sources"]),
             **parsed,
             "triage_raw_text": triage_text,
             "llm_narrative": narrative,

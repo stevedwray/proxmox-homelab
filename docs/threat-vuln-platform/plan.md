@@ -1814,3 +1814,366 @@ rootcheck/compliance subsets need the same treatment). ILM policy for
 this index (a genuine append-only time-series, unlike `*-findings`) is
 not yet designed — needs its own judgment call on retention window before
 step-blocking.
+
+## Operator direction, 2026-09-01 — the dashboard isn't a real VM tool yet
+
+Live review of the "Threat & Vulnerability Overview" dashboard (fetched
+its actual `panelsJSON`/visualization definitions, not assumed) confirmed
+the operator's complaint directly: all four panels (`threat-kev-count`,
+`threat-top-by-risk-score`, `threat-top-by-exposure`,
+`threat-risk-narratives`) bucket only on `cve_id`, with metrics limited to
+`risk_score`/`total_instances`/`risk_band`/`kev_listed`/`llm_narrative`.
+Nothing shows which system found a CVE or which specific asset has it —
+`unified-cve-exposure.sources[]` itself only ever stored
+`{source, finding_id, count}`, never an asset identifier. Confirmed via a
+live sample doc (`CVE-2026-12087`, both harbor and wazuh sources, no
+asset info in either).
+
+Three follow-on decisions from the operator, to be built one phase at a
+time, dashboard first:
+
+1. **Phase 4 (this phase)**: full per-asset drill-down — extend
+   `unified-cve-exposure` to carry real asset identifiers per source, not
+   just a count, and surface them on the dashboard.
+2. **Phase 5** (next): a daily "CISO brief" — LLM-synthesized top-findings
+   summary. Dashboard-only for now (a new saved panel/doc), delivery
+   (email/Slack/etc.) explicitly deferred — no outbound-notification
+   capability exists anywhere in this repo yet, and building one is a
+   separate decision from the content itself.
+3. **Phase 6** (last): migrate the LLM narrative calls — both the
+   per-CVE `cve_enrichment_sync` triage narrative (currently Anthropic,
+   ~50-150 real triages/night) and the new Phase 5 daily-brief synthesis
+   — to the local Framework LLM (Ollama, `laguna-s-2.1:q4_k_m-ctx131k`,
+   confirmed live-loaded on `framework.gibbsgreatly.xyz:11434` and
+   reachable from `secpipe-stack`'s network zone as of this decision).
+   Operator confirmed the GPU has standing capacity for this now — the
+   "temporary Anthropic substitution" noted in `cve_enrichment_sync.py`'s
+   own module docstring (LLM_PROVIDER=anthropic, "the local LLM is
+   occupied with benchmarking work as of 2026-08-18") no longer applies.
+
+## Phase 4: asset-level exposure (this phase)
+
+### What each source already has, confirmed live (not guessed)
+
+Sample docs pulled directly from each `*-findings` index:
+
+| Source | Index | Asset identifier fields | Example |
+|---|---|---|---|
+| `harbor` | `harbor-findings` | `artifact.repository`, `artifact.tag` | `goauthentik/server:2026.2.4` |
+| `greenbone` | `gvm-findings` | `target.host`, `target.port`, `target.zone` | `192.168.1.113:21/tcp (lan)` |
+| `wazuh` | `wazuh-findings` | `target.agent_id`, `target.agent_name` | `web-01` |
+
+(Note: the source name is literally `"greenbone"` in both `gvm-findings`
+documents and `cve_enrichment_sync.py`'s own `sources` list — not
+`"gvm"`. Carry that through exactly; do not rename it.)
+
+Every source already has what's needed to identify the affected asset —
+the gap is entirely in `cve_enrichment_sync.py`'s aggregation step, which
+only ever ran a plain `terms` aggregation on the CVE field
+(`fetch_cve_instances()`), discarding everything about *which* documents
+made up that count.
+
+### Design
+
+- **Aggregation**: add a `top_hits` sub-aggregation nested inside the
+  existing `cves.terms` bucket, requesting only the asset identifier
+  fields (`_source` filtered), sorted by `last_seen` desc, capped at
+  `ASSET_SAMPLE_SIZE = 5` per CVE per source. One query per source still
+  (no extra round-trips) — this only changes the aggregation body of the
+  existing per-source call.
+- **Per-source formatting**: a small `ASSET_FIELD_SPECS` table (source
+  name → source fields to request + a formatter function turning one hit
+  into a short display string), so the three sources' very different
+  shapes (container image, host:port, agent name) all reduce to one
+  `list[str]` per `sources[]` entry.
+- **New fields on `unified-cve-exposure`**:
+  - `sources[].assets`: `list[str]`, the sampled/formatted asset labels
+    (capped at 5).
+  - `sources[].assets_truncated`: `bool`, true when `count > 5` (tells
+    the reader "there are more than shown").
+  - `assets_summary`: one flattened `text` field built at write time,
+    e.g. `"harbor (71): goauthentik/server:2026.2.4, ... (+66 more)\n
+    wazuh (24): web-01, app-03, ... (+22 more)"` — this is the field the
+    dashboard actually reads, using the exact same `top_hit`/`concat`
+    single-value-per-bucket pattern already proven live for `risk_band`
+    and `llm_narrative` in the existing table panels. A raw
+    `sources[].assets` array can't be flattened into one table cell by a
+    classic OpenSearch Dashboards visualization the way a scalar text
+    field can — `assets_summary` exists specifically to be that scalar.
+- **Backfill trigger**: `refresh_exposure_sources()`'s cheap
+  no-LLM-call path currently only fires when the source set or
+  `total_instances` changed. Extend its trigger condition to also fire
+  when `"assets_summary" not in existing` — this is what makes the
+  ~10,151 already-enriched CVEs pick up the new fields on the very next
+  scheduled/manual run, without a special one-off backfill script and
+  without re-spending any `triage_cve`/LLM calls (same pattern already
+  proven live for the Phase 2 wazuh-source backfill, `sources_refreshed`
+  counter and all).
+
+### Step blocks
+
+#### threat-vuln-04-01: asset-aware aggregation + new document fields
+
+**Change**: in
+`terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`:
+
+1. Add near the top (after `_TRIAGE_PATTERNS`):
+   ```python
+   ASSET_SAMPLE_SIZE = 5
+
+   def _get_path(d: dict, path: str):
+       """Dotted-path lookup into a nested dict, e.g. 'artifact.repository'."""
+       cur = d
+       for part in path.split("."):
+           if not isinstance(cur, dict):
+               return None
+           cur = cur.get(part)
+       return cur
+
+   ASSET_FIELD_SPECS = {
+       "harbor": {
+           "source_fields": ["artifact.repository", "artifact.tag"],
+           "format": lambda src: (
+               f"{_get_path(src, 'artifact.repository') or '?'}:"
+               f"{_get_path(src, 'artifact.tag') or '?'}"
+           ),
+       },
+       "greenbone": {
+           "source_fields": ["target.host", "target.port", "target.zone"],
+           "format": lambda src: (
+               f"{_get_path(src, 'target.host') or '?'}:"
+               f"{_get_path(src, 'target.port') or '?'}"
+               f" ({_get_path(src, 'target.zone') or '?'})"
+           ),
+       },
+       "wazuh": {
+           "source_fields": ["target.agent_id", "target.agent_name"],
+           "format": lambda src: (
+               _get_path(src, "target.agent_name")
+               or _get_path(src, "target.agent_id")
+               or "?"
+           ),
+       },
+   }
+
+
+   def build_assets_summary(sources_list: list[dict]) -> str:
+       """Flatten sources[] (each already carrying an 'assets' list and
+       'assets_truncated' flag) into one human-readable text block, for
+       direct display via a top_hit/concat table column -- the same
+       pattern already proven live for risk_band/llm_narrative."""
+       lines = []
+       for s in sources_list:
+           assets = s.get("assets") or []
+           if not assets:
+               continue
+           label = f"{s['source']} ({s.get('count', len(assets))}): " + ", ".join(assets)
+           if s.get("assets_truncated"):
+               label += f" (+{s.get('count', 0) - len(assets)} more)"
+           lines.append(label)
+       return "\n".join(lines)
+   ```
+
+2. Replace `fetch_cve_instances()` with an asset-aware version (same
+   name kept so call sites don't change beyond the return shape):
+   ```python
+   def fetch_cve_instances(
+       es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
+       *, auth_header: str, verify_tls: bool
+   ) -> dict[str, dict]:
+       """Terms-aggregate distinct CVE values + doc counts from one findings
+       index, plus a top_hits sub-aggregation sampling up to
+       ASSET_SAMPLE_SIZE of the most-recently-seen documents' asset
+       identifier fields per CVE. Works unchanged whether the field is a
+       single keyword (harbor-findings.finding_id) or a keyword array
+       (gvm-findings.cve) -- a terms agg on an array field buckets each
+       value independently, which is the correct behaviour here (a
+       finding with 2 CVEs should count toward both)."""
+       body = {
+           "size": 0,
+           "aggs": {
+               "cves": {
+                   "terms": {"field": cve_field, "size": 10000},
+                   "aggs": {
+                       "assets": {
+                           "top_hits": {
+                               "size": ASSET_SAMPLE_SIZE,
+                               "_source": asset_source_fields,
+                               "sort": [{"last_seen": {"order": "desc"}}],
+                           }
+                       }
+                   },
+               }
+           },
+       }
+       status, result = _es_request(
+           es_url, f"/{index}/_search", method="POST", body=body,
+           auth_header=auth_header, verify_tls=verify_tls,
+       )
+       if status != 200 or not result:
+           print(f"WARN: failed to aggregate {index} ({status}): {result}", file=sys.stderr)
+           return {}
+       buckets = result.get("aggregations", {}).get("cves", {}).get("buckets", [])
+       out: dict[str, dict] = {}
+       for b in buckets:
+           if not b.get("key"):
+               continue
+           hits = b.get("assets", {}).get("hits", {}).get("hits", [])
+           out[b["key"]] = {"count": b["doc_count"], "raw_assets": [h.get("_source", {}) for h in hits]}
+       return out
+   ```
+
+3. In `main()`, update the `sources` list to also carry
+   `asset_fields`/`formatter`, and update the aggregation loop:
+   ```python
+   sources = [
+       {"source": "harbor", "index": "harbor-findings", "field": "finding_id"},
+       {"source": "greenbone", "index": "gvm-findings", "field": "cve"},
+       {"source": "wazuh", "index": "wazuh-findings", "field": "finding_id"},
+   ]
+
+   cve_map: dict[str, dict] = {}
+   for src in sources:
+       spec = ASSET_FIELD_SPECS[src["source"]]
+       counts = fetch_cve_instances(
+           args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
+           auth_header=auth_header, verify_tls=verify_tls,
+       )
+       for cve_id, info in counts.items():
+           entry = cve_map.setdefault(cve_id, {"sources": [], "total_instances": 0})
+           assets = [spec["format"](raw) for raw in info["raw_assets"]]
+           entry["sources"].append({
+               "source": src["source"],
+               "finding_id": cve_id,
+               "count": info["count"],
+               "assets": assets,
+               "assets_truncated": info["count"] > len(assets),
+           })
+           entry["total_instances"] += info["count"]
+   ```
+
+4. In the `--force-refresh`-skip branch (the `existing is not None`
+   block), change the refresh-trigger condition from:
+   ```python
+   if (
+       new_source_names != existing_source_names
+       or existing.get("total_instances") != entry["total_instances"]
+   ):
+   ```
+   to:
+   ```python
+   if (
+       new_source_names != existing_source_names
+       or existing.get("total_instances") != entry["total_instances"]
+       or "assets_summary" not in existing
+   ):
+   ```
+
+5. `refresh_exposure_sources()`'s `_update` body gains the new field:
+   ```python
+   body={"doc": {
+       "sources": sources_list,
+       "total_instances": total_instances,
+       "assets_summary": build_assets_summary(sources_list),
+   }},
+   ```
+   (function signature unchanged — `build_assets_summary` is computed
+   from the `sources_list` parameter already passed in.)
+
+6. In the main enrichment path's `doc` dict (the `upsert_exposure_doc`
+   call), add the same field:
+   ```python
+   doc = {
+       "cve_id": cve_id,
+       "sources": entry["sources"],
+       "total_instances": entry["total_instances"],
+       "assets_summary": build_assets_summary(entry["sources"]),
+       **parsed,
+       ...
+   }
+   ```
+
+**Scope**: only
+`terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py`.
+No other file. Forbidden: touching `harbor_findings_sync.py`/
+`gvm_findings_sync.py`/`wazuh_findings_sync.py` (their documents already
+carry everything needed; this phase only reads them differently).
+
+**Gates**:
+- `python3 -m py_compile terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py` — must exit 0.
+- `bash -n scripts/provision.sh` — unaffected by this phase, run anyway as
+  a cheap regression check per this repo's standing Ansible-changes rule.
+
+#### threat-vuln-04-02: index template mapping
+
+**Change**: in
+`terraform/lxc/ansible/roles/cve_enrichment_sync/files/assets/templates/unified-cve-exposure.json`,
+extend the `sources` object mapping and add `assets_summary`:
+```json
+"sources": {
+  "properties": {
+    "source": { "type": "keyword" },
+    "finding_id": { "type": "keyword" },
+    "count": { "type": "integer" },
+    "assets": { "type": "keyword" },
+    "assets_truncated": { "type": "boolean" }
+  }
+},
+"assets_summary": { "type": "text" },
+```
+inserted between the existing `"sources"` block and `"total_instances"`.
+Also update the template's `_meta.description` to mention asset-level
+exposure alongside cross-source correlation.
+
+**Scope**: only that one template file.
+
+**Gates**: `python3 -m json.tool <file>` must exit 0 (valid JSON).
+
+#### threat-vuln-04-03: dashboard columns
+
+**Change**: add one new `top_hit`/`concat` metric aggregation on
+`assets_summary` to each of the two "Top CVEs" table visualizations
+(`threat-top-by-risk-score`, `threat-top-by-exposure`), matching the
+exact pattern already live for their `risk_band`/`kev_listed` columns —
+`{"type": "top_hit", "schema": "metric", "params": {"field":
+"assets_summary", "aggregate": "concat", "size": 1, "sortField":
+"_score", "sortOrder": "desc", "customLabel": "Assets Affected"}}`,
+appended to each visualization's `aggs` array (new `id`, one higher than
+the current max in that panel) before the existing `terms` bucket agg on
+`cve_id`. Applied live via the OpenSearch Dashboards saved-objects API
+(`PUT /api/saved_objects/visualization/<id>`) with the admin credential,
+same technique already used for the `wazuh-findings` index pattern
+migration — read each visualization's current `attributes.visState` via
+`GET`, splice in the new agg, `PUT` it back unchanged otherwise. No
+dashboard-level (`panelsJSON`) change needed — the dashboard already
+references these two visualization IDs; editing the visualization in
+place is sufficient.
+
+**Scope**: live Dashboards saved objects only (`threat-top-by-risk-score`,
+`threat-top-by-exposure`) — no repo file changes for this step (there is
+no dashboard-definition file checked into this repo; it was always
+built/edited live, see "Dashboard" section above).
+
+**Gates**: after the `PUT`, re-`GET` the same saved object and confirm
+the new agg is present in the returned `visState`.
+
+### Validation (after all three steps deployed)
+
+1. Redeploy `secpipe-stack` (`provision.sh --stack secpipe-stack`) to
+   ship the updated `cve_enrichment_sync.py` + template.
+2. Confirm the template re-applied:
+   `GET /unified-cve-exposure/_mapping` shows `sources.assets` and
+   `assets_summary`.
+3. Run `cve-enrichment-sync.service` once (manual `systemctl start`, same
+   as Phase 2's validation) — expect a `sources_refreshed` count close to
+   the full ~10,151 existing docs (the `"assets_summary" not in
+   existing"` trigger fires for literally all of them on this first run,
+   same one-time-migration shape already proven for the Phase 2 wazuh
+   backfill), `enriched` only for genuinely new CVEs since the last run,
+   and no new LLM/triage_cve spend for the backfilled majority.
+4. Spot-check one multi-source CVE (e.g. `CVE-2026-12087`, already known
+   to span harbor+wazuh) via `_doc/<id>` and confirm `assets_summary`
+   reads sensibly.
+5. Confirm live in the Dashboards UI: open "Threat & Vulnerability
+   Overview", confirm both top-CVE tables now show an "Assets Affected"
+   column with real asset labels, not just counts.
