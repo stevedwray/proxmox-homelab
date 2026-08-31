@@ -473,6 +473,62 @@ fix needs another `provision.sh --stack wazuh-stack` run plus a manual
 now shows all 7 agents and genuinely active CVEs (Critical/High counts
 that make sense for a live fleet, not a historical "Solved" log).
 
+## CORRECTION 2, same day: a third real idempotency bug, found running the fix above
+
+Re-running `provision.sh --stack wazuh-stack` to apply the correction
+above (`failed=0`, `changed=18`) looked clean, but a manual sync run
+immediately failed: `urllib.error.HTTPError: HTTP Error 401:
+Unauthorized`, from `wazuh_findings_sync.py`'s very first request.
+
+**Root cause, confirmed live**: querying Wazuh's own security API
+directly found the role (`wazuh_findings_reader`) present and correctly
+updated — the unconditional-role-PUT fix from Correction 1 worked — but
+the **user** (`wazuh_findings_ingest`) had been deleted entirely
+(`"status": "NOT_FOUND"`), while the local credential file on
+`wazuh-stack` still held a password for that now-nonexistent user.
+`deploy-wazuh-stack.yml`'s own "Wire real Authentik OIDC onto the Wazuh
+dashboard" play conditionally runs `securityadmin.sh -cd $CONFIG_DIR
+-icl` — a **full security-config-directory reapply** — whenever its own
+OIDC-domain/all-access-wildcard check trips. That reapply restores
+Wazuh Indexer's entire security config from the on-disk
+`internal_users.yml` this playbook writes (`admin`/`kibanaserver`/
+`kibanaro` only, a literal transcription of upstream's vendor file) —
+silently deleting any user that only ever existed via the live REST API,
+this role's own included. This ran on the *first* deploy too, presumably
+consistently every deploy — the first sync worked anyway purely because
+that manual test happened to run before the user got wiped, not because
+the user survived.
+
+**The actual bug, generalized**: the local credential-file `stat` check
+this role used for "does this user already exist, skip creating it
+again" — the exact same idempotent shape every sibling role
+(`es_findings_ingest`/`gvm_findings_ingest`/`cve_enrichment_sync`) uses
+for their own OpenSearch-side users — is a cheap proxy for remote state,
+and it goes stale the moment something *else* (here, Wazuh's own OIDC
+play) can delete the remote object independently of the local file. This
+is the same principle already learned and documented once this session
+(Correction 1, for the role-PUT being wrongly gated) and once before in
+this repo (`docs/wazuh-stack/README.md`'s own "idempotency checks need
+to verify real state, not a cheap proxy for it" lesson, for agent
+enrollment) — worth remembering as a recurring failure mode specifically
+around Wazuh, whose own OIDC play has this real config-reapply side
+effect that OpenSearch's own equivalent security plugin does not
+exhibit under normal operation (sibling roles targeting `opensearch-stack`
+directly have not hit this class of bug).
+
+**Fix, applied directly**: replaced the local `ansible.builtin.stat`
+check with a live `GET /_plugins/_security/api/internalusers/
+wazuh_findings_ingest` against the Wazuh Indexer itself
+(`status_code: [200, 404]`), and gated password-generation/user-creation/
+credential-file-write on that GET returning `404`, not on the local
+file's existence. This means every deploy now correctly detects and
+repairs a wiped user, no matter what wiped it or when — including a
+future OIDC-play run.
+
+**Not yet re-verified live at the time this section was written** — a
+third `provision.sh --stack wazuh-stack` run is needed to confirm the
+user gets recreated and a manual sync succeeds end-to-end this time.
+
 ### wazuh-findings-01: provision.sh key whitelist
 
 ```yaml

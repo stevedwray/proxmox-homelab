@@ -95,17 +95,11 @@
     # wazuh-states-vulnerabilities-*, NOT wazuh-alerts-* -- see
     # wazuh_findings_sync.py's own module docstring and
     # docs/threat-vuln-platform/plan.md's 2026-09-01 correction note for
-    # why) --
-    # same idempotent "credential file is the only existence check" shape
-    # every other role in this family uses. UNVERIFIED against Wazuh's
-    # own Indexer build until this runs live -- see defaults/main.yml's
-    # comment on wazuh_findings_ingest_wazuh_role_name.
+    # why). Existence is checked against Wazuh's own live security API,
+    # not a local credential file -- see the correction note directly
+    # below on why the file-based check (every sibling role's own
+    # pattern) doesn't hold here.
     # ---------------------------------------------------------------
-
-    - name: Check for existing Wazuh Indexer reader credential
-      ansible.builtin.stat:
-        path: "{{ wazuh_findings_ingest_dir }}/wazuh-user.env"
-      register: wazuh_findings_ingest_wazuh_credential_stat
 
     - name: Check if Wazuh Indexer is reachable
       ansible.builtin.wait_for:
@@ -123,12 +117,44 @@
           re-run provision once wazuh-stack's indexer is up.
       when: wazuh_findings_ingest_wazuh_reachable.failed | default(true)
 
+    # Checks the REMOTE user's actual existence, not a local file --
+    # real bug found and fixed 2026-09-01: the local credential-file stat
+    # check this replaced is a cheap proxy that goes stale whenever the
+    # remote object can be wiped independently of the local file, which
+    # is exactly what happens here. deploy-wazuh-stack.yml's own "Wire
+    # real Authentik OIDC" play conditionally runs
+    # `securityadmin.sh -cd $CONFIG_DIR -icl` (a FULL config-directory
+    # reapply) whenever its own OIDC-domain/all-access-wildcard check
+    # trips -- that reapply restores Wazuh Indexer's security config from
+    # the on-disk internal_users.yml this playbook writes (admin/
+    # kibanaserver/kibanaro only), silently deleting any user created
+    # only via the live REST API, this role's own user included. The
+    # role definition itself survived (a separate object, recreated
+    # earlier in this same task file, unconditionally), but the local
+    # wazuh-user.env file was left pointing at a password for a user
+    # that no longer existed -- confirmed live: real 401s from
+    # wazuh_findings_sync.py on the very next scheduled/manual run,
+    # despite a "successful" prior deploy. Always check the actual
+    # remote state before trusting a local artifact as a proxy for it.
+    - name: Check if the scoped Wazuh Indexer user actually exists remotely
+      ansible.builtin.uri:
+        url: "{{ wazuh_findings_ingest_wazuh_url }}/_plugins/_security/api/internalusers/{{ wazuh_findings_ingest_wazuh_user_name }}"
+        method: GET
+        url_username: "{{ wazuh_findings_ingest_wazuh_admin_user }}"
+        url_password: "{{ wazuh_findings_ingest_wazuh_admin_password }}"
+        validate_certs: "{{ not wazuh_findings_ingest_wazuh_no_verify_tls }}"
+        force_basic_auth: true
+        status_code: [200, 404]
+      register: wazuh_findings_ingest_wazuh_user_get
+      when: not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+      delegate_to: localhost
+
     - name: Generate a random password for the scoped Wazuh Indexer user
       ansible.builtin.set_fact:
         wazuh_findings_ingest_wazuh_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
       when:
-        - not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
         - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
       no_log: true
 
     # Unconditional (not gated on "credential file missing") -- unlike the
@@ -174,8 +200,8 @@
           description: "wazuh_findings_ingest service account (wazuh-stack) -- read-only, never the admin superuser"
         status_code: [200, 201]
       when:
-        - not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
         - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
       delegate_to: localhost
       no_log: true
 
@@ -190,8 +216,8 @@
           WAZUH_USER={{ wazuh_findings_ingest_wazuh_user_name }}
           WAZUH_PASSWORD={{ wazuh_findings_ingest_wazuh_password }}
       when:
-        - not wazuh_findings_ingest_wazuh_credential_stat.stat.exists
         - not (wazuh_findings_ingest_wazuh_reachable.failed | default(true))
+        - wazuh_findings_ingest_wazuh_user_get.status == 404
       no_log: true
 
     # ---------------------------------------------------------------
