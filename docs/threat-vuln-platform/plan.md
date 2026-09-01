@@ -2312,19 +2312,61 @@ results to classify).
 not `pentagi-integration`. The `pentagi-integration` GMP user and its own
 create-user/set-password tasks are left in place, just unused by the
 bridge now — not deleted, in case anything else still keys off that
-identity. **Real tradeoff, accepted knowingly**: `gvm-bridge` also gives
-PentAGI a network-reachable way to drive GVM scans — this widens
-whatever PentAGI can do through that same bridge from the scoped
-`pentagi-integration` user's rights to full admin. No code change needed
-in `gvm_findings_sync.py` itself — it already pulls unfiltered via
-`/findings/all`, so once the bridge's own identity changes, it should
-see all 23 tasks' results automatically. `REDTEAM_EXCLUDE`'s zone/host
-list already covers every zone the real LAN-scan tasks target.
+identity. **Original tradeoff note, now moot**: this widens whatever
+PentAGI can do through the same bridge from `pentagi-integration`'s
+scoped rights to full admin — accepted knowingly at the time, but
+PentAGI is declared defunct (see `project_harbor_vuln_remediation_status`
+memory) and out of scope for any further design consideration; nothing
+here needs to cater to it. No code change needed in `gvm_findings_sync.py`
+itself — it already pulls unfiltered via `/findings/all`.
+`REDTEAM_EXCLUDE`'s zone/host list already covers every zone the real
+LAN-scan tasks target.
 
-**Not yet validated live** — the credential swap is written and
-syntax-checked, not yet deployed. Expect the next `gvm-findings-ingest`
-resync to bring in a real, likely much larger dataset (19 more tasks
-across every VLAN zone, weeks of accumulated scan history) — re-run
+**Deployed 2026-09-01** — `greenbone-stack` redeployed clean
+(`ok=96 changed=11 failed=0`). First `gvm-findings-ingest` resync after
+the swap jumped from raw=63/13-after-filter (the old `pentagi-integration`
+dataset) to raw=1000/94-after-filter — **but 1000 turned out to be a
+truncation, not the real total**.
+
+### Found immediately after: gvmd's global "Max Rows Per Page" cap silently truncated the bridge to 1000 of 9,356 real results
+
+`gvm_findings_sync.py`'s docstring assumed `rows=-1` in the GMP filter
+string meant "unlimited." It doesn't — gvmd enforces a separate,
+independent ceiling via a global GMP setting literally named
+"Max Rows Per Page" (confirmed via direct `pg-gvm` query:
+`SELECT name, value FROM settings` → `Max Rows Per Page = 1000`,
+`owner` blank). This was invisible before today because
+`pentagi-integration`'s 3-task dataset (63 raw results) never came
+close to it; the real total in the `results` table is 9,356, confirmed
+via `SELECT count(*) FROM results`.
+
+Tried raising the setting directly via GMP `modify_setting` against its
+setting_id (`76374a7a-0569-11e6-b6da-28d24461215b`, a well-known GVM
+built-in UUID, confirmed via the same `pg-gvm` query) — this failed with
+`<modify_setting_response status="400" status_text="Failed to find
+setting"/>`. Root cause: that settings row has no `owner` (a bare global
+default, not a per-user override), and gvmd's `modify_setting` looks up
+settings scoped to the calling user — it can't find or create a row to
+update for a global default. Not worth fighting GMP's settings model
+further for a one-off ceiling raise.
+
+**Real fix**: made `gvm-bridge` itself paginate explicitly
+(`first=`/`rows=1000` loop, capped at 200 pages = 200,000 results as an
+infinite-loop sanity guard) in `/findings/all`
+([app.py](../../terraform/lxc/ansible/files/gvm-bridge/app.py)), rather
+than depending on `rows=-1` bypassing a cap it never actually bypasses.
+This is a code-level fix under our own control — no GMP settings
+manipulation needed, works regardless of what "Max Rows Per Page" is set
+to. `scan_results()` (the single-task endpoint PentAGI used) was left
+alone — out of scope now that PentAGI is defunct, and 1000 results for a
+single task is in practice never going to be hit.
+
+**Not yet redeployed** — the pagination fix needs `greenbone-stack`
+rebuilt (gvm-bridge is a `build: context: ./gvm-bridge` service, already
+rebuilt on every `provision.sh` run per this stack's existing
+`build: always` policy) and `gvm-findings-ingest` re-run afterward.
+Expect the real total to land somewhere near 9,356 raw / a few hundred
+to low thousands after the threat=Log filter — re-run
 `cve-enrichment-sync` afterward to correlate/backfill
 `unified-cve-exposure`, and expect the "production vs lab" split
 reported at the end of Phase 6 to change materially once this lands.

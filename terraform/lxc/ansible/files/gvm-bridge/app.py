@@ -178,24 +178,47 @@ def scan_results(task_id):
 
 @app.get("/findings/all")
 def findings_all():
-    # Same get_results/never-get_reports, rows=-1 reasoning as
-    # /scan/results/<task_id> above -- but with NO task_id filter term at
-    # all, which is what actually returns results across every task
-    # (confirmed live 2026-08-17: task_id is only ever a note/override
-    # scoping kwarg, not a results filter, so omitting it entirely -- not
-    # passing an empty value -- is what makes this a real sweep). Used by
-    # gvm_findings_ingest's scheduled sync, not by PentAGI's on-demand
-    # single-task flow above; richer field extraction than scan_results()
-    # to match the OpenSearch document shape in
+    # Same get_results/never-get_reports reasoning as /scan/results/<task_id>
+    # above -- but with NO task_id filter term at all, which is what
+    # actually returns results across every task (confirmed live
+    # 2026-08-17: task_id is only ever a note/override scoping kwarg, not a
+    # results filter, so omitting it entirely -- not passing an empty
+    # value -- is what makes this a real sweep). Used by
+    # gvm_findings_ingest's scheduled sync; richer field extraction than
+    # scan_results() to match the OpenSearch document shape in
     # docs/elasticsearch-stack/README.md section 3 -- confirmed live
     # against a real result element (not guessed) which fields actually
     # exist and at what path.
+    #
+    # rows=-1 does NOT disable paging the way GMP's own docs imply --
+    # gvmd enforces a hard ceiling via its global "Max Rows Per Page"
+    # setting (1000 by default) regardless of what the client requests.
+    # Confirmed live 2026-09-01: with gvm-bridge's real admin-scoped
+    # dataset at 9,356 total results, a rows=-1 call silently truncated to
+    # exactly 1000. Raising that setting via modify_setting isn't
+    # possible either -- it's a bare global default with no owner row, and
+    # gvmd's modify_setting looks up settings scoped to the calling user
+    # ("Failed to find setting", status 400, confirmed live). So this
+    # paginates explicitly with first=/rows= instead of depending on
+    # rows=-1 at all. page_limit is a sanity cap against an infinite loop
+    # if gvmd ever returns a full page forever; 200 pages * 1000 = 200,000
+    # results is far beyond anything this lab will realistically produce.
+    all_result_els = []
+    page_size = 1000
+    first = 1
+    page_limit = 200
     with _open_gmp() as gmp:
         gmp.authenticate(GVM_USERNAME, GVM_PASSWORD)
-        response = gmp.get_results(filter_string="rows=-1", details=True)
+        for _ in range(page_limit):
+            response = gmp.get_results(filter_string=f"first={first} rows={page_size}", details=True)
+            page_els = response.findall("result")
+            all_result_els.extend(page_els)
+            if len(page_els) < page_size:
+                break
+            first += page_size
 
     results = []
-    for r in response.findall("result"):
+    for r in all_result_els:
         nvt = r.find("nvt")
         cve_refs = nvt.findall('refs/ref[@type="cve"]') if nvt is not None else []
         hostname_el = r.find("host/hostname")
