@@ -2474,11 +2474,17 @@ Verified against the real aggregations (not just that the panels saved):
 `harbor` 10,131 CVEs (avg risk 12.45), `wazuh` 177 (avg risk 9.93),
 `greenbone` 19 (avg risk 20.18 — smaller finding set, skews higher-risk).
 Filtered to `in_production:true`: 4,185 total, `harbor` 4,134 +
-`wazuh` 177 (sums exceed the total since a CVE can span both sources) —
-**and `greenbone` contributes zero production findings**, a real,
-concrete confirmation that GVM's current scan scope is 100%
-pentest-target/lab, not production, exactly the kind of signal this
-whole phase was built to surface.
+`wazuh` 177 (sums exceed the total since a CVE can span both sources).
+**Correction, 2026-09-01, same day**: the "`greenbone` contributes zero
+production findings" conclusion originally written here was wrong — see
+the gvm-bridge GMP-user-scoping bug below. `gvm-bridge` was only ever
+authenticating as a scoped `pentagi-integration` GMP user that could see
+3 of 23 real GVM tasks; once fixed to authenticate as `admin`, GVM's
+production-finding contribution went from 0% to 96%. Left the original
+paragraph above intact (not deleted) as a record of the mistake and how
+it was caught (operator directly challenged it, see the CORRECTION
+section further down) — do not cite "greenbone contributes zero
+production findings" as current fact anywhere else in this doc.
 
 Not done as part of this pass (fine as follow-on, not blocking): the two
 existing "Top CVEs" tables (`threat-top-by-risk-score`/
@@ -2512,3 +2518,135 @@ properties, applied directly to the live index (mapping *additions* are
 always backward-compatible in OpenSearch — no reindex required). Verified
 via a follow-up `GET` that all three fields are now present on the live
 index's own mapping, not just the template.
+
+## Phase 9 (next session, not started): stack-centric UVM view — "which of my stacks is broken"
+
+Operator feedback 2026-09-01, after Phase 8's dashboard rebuild and the
+GVM visibility fix both landed: **the dashboard still has nothing on it
+about which stacks have which findings.** Every panel built so far
+(by-source, by-zone, production-split, the two top-CVE tables) answers
+"where does risk come from" and "is it real" — none of them answer the
+question that actually drives action in a home lab: *what do I need to
+go patch, on which of my stacks, this week.* That's an asset-centric
+axis, and it was never built. This is a real, correctly-scoped gap, not
+scope creep — write it up in full so next session can start straight
+into implementation rather than re-deriving this diagnosis.
+
+### Root cause (confirmed in code, not guessed)
+
+Stack identity exists inconsistently across the three findings sources,
+and — separately, more importantly — **it never survives the
+cross-source correlation step even where it does exist**:
+
+- **Harbor**: already computes `artifact.stack` per document (Phase 6's
+  `classify_artifact()` against `known_production_images.json`).
+- **Wazuh**: has it for free — `target.stack` is set to the literal
+  agent name, which *is* the stack name (see
+  `wazuh_findings_sync.py`'s `build_document()`).
+- **Greenbone**: `target.stack` is hardcoded `None` —
+  [gvm_findings_sync.py:131](../../terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py#L131):
+  `"stack": None,  # not automatic -- GVM scans raw IPs, not stacks`.
+  GVM only ever sees IP:port, with no reverse lookup to a stack name
+  attempted.
+- **`cve_enrichment_sync.py`'s per-CVE rollup carries `zones[]` into
+  `unified-cve-exposure` (Phase 6) but never `stacks[]`.** Even for CVEs
+  whose Harbor/Wazuh source documents already have a populated `stack`
+  field, that identity is dropped at the correlation step — `zones` and
+  `production_count` sub-aggs exist in `fetch_cve_instances()`, a
+  `stacks` sub-agg does not. So today, no query anywhere in the pipeline
+  can answer "show me everything wrong with authentik-stack" — the only
+  per-CVE asset detail is the free-text `assets_summary` column (Phase
+  4), which is CVE→assets, not stack→CVEs, and isn't a real
+  keyword/aggregatable field a dashboard panel can bucket on.
+
+### What a real home-lab UVM needs (reasoned from first principles, not enterprise-tool cargo-culting)
+
+The asset/stack axis needs to be the **primary** view, not a filter
+bolted onto a CVE-centric one:
+
+1. **Stack Risk table** (the front page) — one row per known deployed
+   stack: critical/high/medium/low finding counts, which source(s)
+   actually cover it (Harbor image scan? GVM network scan? Wazuh
+   agent?), last-seen timestamp per source.
+2. **Coverage gaps** — genuinely valuable once stack identity is
+   populated everywhere: which stacks have zero Wazuh agent, or have
+   never had a GVM scan hit them. Not a hypothetical — per
+   `project_wazuh_stack_status` memory, only 6 of the ~20 real deployed
+   stacks have a Wazuh agent enrolled today, so this table starts
+   non-empty and immediately useful.
+3. **Drill-through**: click a stack, see its actual CVE list (the
+   inverse of what Phase 4's `assets_summary` already gives — that's
+   CVE→assets; this needs stack→CVEs, which requires `stacks` to be a
+   real terms-aggregatable field on `unified-cve-exposure`, not a text
+   blob).
+4. Keep by-source/by-zone/production-split (Phase 8) as macro filters
+   layered on top of the stack view, not the primary lens.
+
+### Concrete technical plan for next session
+
+1. **`gvm_findings_ingest` role** (`gvm_findings_sync.py`): replace the
+   hardcoded `"stack": None` with a reverse IP→stack lookup. Reuse
+   `.env`'s existing `LAB_IP_*` registry (already the canonical
+   IP→stack mapping in this repo — do not invent a second one) rather
+   than a new hand-maintained JSON file, matching this project's own
+   "don't duplicate a registry that already exists" lesson from
+   `known_production_images.json`'s design in Phase 6. IPs that don't
+   match anything (workstations, RPis, IoT, `pve` itself, `pve-test-vm`)
+   stay `stack: null` — same graceful-degrade pattern already used for
+   `zone: null` on non-VLAN-zoned hosts. Needs a small helper to parse
+   `.env`'s `LAB_IP_<NAME>='<ip>'` lines into a `{ip: stack_name}` dict
+   at role-deploy time (templated into the role's own assets, similar
+   to how `known_production_images.json` is templated in) — build this
+   fresh next session rather than guessing the exact stack-name string
+   per IP, since a couple of `.env` entries (`LAB_IP_FRAMEWORK`,
+   `LAB_IP_COMFYUI`, `LAB_IP_LLM_GPU` all resolve to the same host,
+   `192.168.1.8`, which is bare-metal `framework.gibbsgreatly.xyz`, not
+   a "stack") need an explicit non-stack judgment call, not an
+   auto-derived one.
+2. **`gvm-findings.json` template**: no change needed — `target.stack`
+   already exists as a mapped keyword field (added in Phase 6), just
+   unpopulated.
+3. **`cve_enrichment_sync.py`**: add a `stack_field` entry per source to
+   `ASSET_FIELD_SPECS` (`"artifact.stack"` for harbor, `"target.stack"`
+   for greenbone/wazuh — all three already exist as real keyword fields
+   on their respective source indices, no template changes needed
+   there). Add a `"stacks": {"terms": {"field": stack_field, "size":
+   20}}` sub-agg to `fetch_cve_instances()`, parallel to the existing
+   `zones` sub-agg. Thread `entry["stacks"] = set()` /
+   `entry["stacks"].update(info["stacks"])` through `main()`'s
+   aggregation loop the same way `zones` is threaded today, and add
+   `"stacks": entry["stacks"]` to both the skip-fresh refresh-trigger
+   condition and the final upsert `doc` dict.
+4. **`unified-cve-exposure.json` template**: add `"stacks": {"type":
+   "keyword"}` alongside the existing `zones` field.
+5. **Live mapping PUT**: same "index templates don't retroactively
+   remap an existing index" gotcha documented immediately above this
+   section applies again — `unified-cve-exposure` is long-lived, so a
+   `PUT /unified-cve-exposure/_mapping` with just the new `stacks` field
+   will be needed after the template change, before the next
+   `cve-enrichment-sync` run, exactly like every other field added this
+   way so far.
+6. **Dashboard**: two new panels via the same OpenSearch Dashboards
+   saved-objects API technique already proven three times over (Phase
+   4, Phase 8) — a "Risk by Stack" table (terms on `stacks` + counts by
+   severity/risk band) and a "Coverage Gaps" panel (requires a small
+   amount of extra thought at build time: this likely needs a *known
+   stacks list* to diff against, not just "what appears in the data,"
+   since a stack with zero findings from a given source is invisible to
+   a plain terms-agg on that source's own index — probably best solved
+   by aggregating `stacks` per source independently and diffing against
+   the full `.env` `LAB_IP_*` list client-side in the panel build
+   script, not something OpenSearch's own aggregation DSL does for free).
+
+### Deploy sequence (matches this project's established pattern)
+
+`gvm_findings_ingest` role change → redeploy `greenbone-stack` → resync
+`gvm-findings-ingest` → `cve_enrichment_sync` template/role change →
+redeploy `secpipe-stack` → live `PUT` mapping on `unified-cve-exposure`
+→ resync `cve-enrichment-sync` (full corpus, not `--max-cves`-capped,
+since this is a schema change affecting every CVE, not a narrow test) →
+rebuild dashboard panels → verify against real aggregation numbers, not
+just that the panels saved.
+
+**Not started.** No code written yet — this section is the design and
+technical plan only, to pick up fresh next session.
