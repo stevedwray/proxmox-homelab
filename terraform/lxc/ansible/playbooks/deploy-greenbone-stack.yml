@@ -475,8 +475,24 @@
                 restart_policy:
                   condition: any
               environment:
-                GVM_BRIDGE_USERNAME: "{{ gvm_bridge_username }}"
-                GVM_BRIDGE_PASSWORD: "{{ gvm_bridge_password }}"
+                # Switched to the admin GMP identity 2026-09-01 (operator
+                # decision) -- GMP enforces per-user task/result
+                # visibility, and the scoped "pentagi-integration" user
+                # this was previously pinned to could only ever see its
+                # own 3 ad-hoc tasks. It had zero visibility into the 19
+                # real admin-owned "LAN scan: <zone> full-vuln"/
+                # credentialed-scan tasks (the actual production
+                # vulnerability scan rollout, live since 2026-08-17) --
+                # confirmed via a direct query against gvmd's own
+                # Postgres DB, bypassing GMP's user-scoping entirely. See
+                # docs/threat-vuln-platform/plan.md's Phase 6 correction
+                # for the full incident. gvm_bridge_username/password
+                # (the pentagi-integration user + its own create-user
+                # tasks below) are left in place, just no longer used
+                # here -- not deleted, in case something else still keys
+                # off that identity.
+                GVM_BRIDGE_USERNAME: "admin"
+                GVM_BRIDGE_PASSWORD: "{{ greenbone_admin_password }}"
               ports:
                 - 0.0.0.0:8010:8010
               volumes:

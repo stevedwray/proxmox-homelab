@@ -2278,6 +2278,57 @@ the next run, the same shape already proven live for `assets_summary`.
 6. `secpipe-stack` (cve_enrichment_sync) redeploy, then one manual run to
    backfill `in_production`/`zones` onto `unified-cve-exposure`.
 
+### CORRECTION 2026-09-01: `gvm-findings` was only ever seeing 3 of 23 real GVM tasks
+
+After Phase 6 shipped, the dashboard's new production-split panel showed
+`greenbone` contributing **zero** production findings — reported as "GVM's
+current scope is 100% pentest-target/lab." Operator correctly pushed
+back: GVM's real scope is absolutely not lab-only — the
+`network-scan-rollout` project (see `project_gvm_lan_scan_rollout`
+memory) has a genuine weekly full-LAN vulnerability scan live in
+production since 2026-08-17.
+
+Root cause, confirmed by querying `pg-gvm`'s Postgres DB directly
+(`SELECT t.name, u.name FROM tasks t LEFT JOIN users u ON t.owner=u.id`),
+bypassing GMP's own user-scoping entirely — not guessed: **23 real tasks
+exist**, only 3 of which (the two ad-hoc PentAGI-triggered scans against
+`192.168.1.113`/`.55`) belong to `pentagi-integration`, the GMP identity
+`gvm-bridge` (and therefore `gvm_findings_sync.py`, which pulls
+exclusively through it) has always authenticated as. The other **19
+tasks — the actual production scan rollout** (`LAN scan: <zone>
+full-vuln`/`discovery` for every VLAN zone, plus credentialed scans of
+`pve`, managed Debian services, Linux workstations, Raspberry Pis) — all
+belong to `admin`. GMP enforces per-user task/result visibility, so
+`gvm-bridge` has never been able to see any of them. `gvm-findings` has
+held exactly 10 documents, from exactly 2 hosts, for its entire
+existence — a real, complete blind spot in the "production vs lab"
+picture Phase 6 reported, not a classification bug (`REDTEAM_EXCLUDE`
+itself was correct all along, it just never saw the other 19 tasks'
+results to classify).
+
+**Fix, operator-approved ("yes as admin")**: `deploy-greenbone-stack.yml`'s
+`gvm-bridge` container now authenticates to GMP as `admin` directly
+(`GVM_BRIDGE_USERNAME`/`PASSWORD` → `admin`/`greenbone_admin_password`),
+not `pentagi-integration`. The `pentagi-integration` GMP user and its own
+create-user/set-password tasks are left in place, just unused by the
+bridge now — not deleted, in case anything else still keys off that
+identity. **Real tradeoff, accepted knowingly**: `gvm-bridge` also gives
+PentAGI a network-reachable way to drive GVM scans — this widens
+whatever PentAGI can do through that same bridge from the scoped
+`pentagi-integration` user's rights to full admin. No code change needed
+in `gvm_findings_sync.py` itself — it already pulls unfiltered via
+`/findings/all`, so once the bridge's own identity changes, it should
+see all 23 tasks' results automatically. `REDTEAM_EXCLUDE`'s zone/host
+list already covers every zone the real LAN-scan tasks target.
+
+**Not yet validated live** — the credential swap is written and
+syntax-checked, not yet deployed. Expect the next `gvm-findings-ingest`
+resync to bring in a real, likely much larger dataset (19 more tasks
+across every VLAN zone, weeks of accumulated scan history) — re-run
+`cve-enrichment-sync` afterward to correlate/backfill
+`unified-cve-exposure`, and expect the "production vs lab" split
+reported at the end of Phase 6 to change materially once this lands.
+
 ## Phase 7: local LLM migration + fast test-iteration (2026-09-01, code built)
 
 Operator direction: full-corpus `cve_enrichment_sync` runs during Phase 6
