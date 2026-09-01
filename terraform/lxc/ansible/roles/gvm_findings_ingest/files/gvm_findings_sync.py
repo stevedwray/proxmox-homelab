@@ -113,6 +113,7 @@ def build_documents(raw_results: list[dict], *, scan_time_fallback: str) -> list
         except (TypeError, ValueError):
             qod = None
 
+        pentest_target = bool(host in REDTEAM_EXCLUDE) if host else False
         docs.append(
             {
                 "source": "greenbone",
@@ -127,9 +128,14 @@ def build_documents(raw_results: list[dict], *, scan_time_fallback: str) -> list
                     "hostname": r.get("hostname") or None,
                     "port": r.get("port"),
                     "zone": _resolve_zone(host) if host else None,
-                    "stack": None,  # not automatic -- see README section 3, same as Harbor's artifact.stack
-                    "in_production": None,  # same as above
-                    "pentest_target": bool(host in REDTEAM_EXCLUDE) if host else False,
+                    "stack": None,  # not automatic -- GVM scans raw IPs, not stacks (see README section 3)
+                    # Derived, not guessed, per docs/threat-vuln-platform/plan.md's UVM
+                    # redesign phase (2026-09-01): a pentest_target is by definition
+                    # not production; a host with unknown pentest_target status (no
+                    # host resolved) is also treated as unknown/false, never assumed
+                    # production.
+                    "in_production": (not pentest_target) if host else False,
+                    "pentest_target": pentest_target,
                 },
                 "scan_task": r.get("task_name"),
                 "scan_time": r.get("creation_time") or scan_time_fallback,

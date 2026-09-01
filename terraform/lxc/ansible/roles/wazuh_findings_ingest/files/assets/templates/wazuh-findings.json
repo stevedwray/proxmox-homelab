@@ -23,7 +23,10 @@
         "target": {
           "properties": {
             "agent_id": { "type": "keyword" },
-            "agent_name": { "type": "keyword" }
+            "agent_name": { "type": "keyword" },
+            "stack": { "type": "keyword" },
+            "zone": { "type": "keyword" },
+            "in_production": { "type": "boolean" }
           }
         },
         "scan_time": { "type": "date" },

@@ -105,6 +105,8 @@ ASSET_FIELD_SPECS = {
             f"{_get_path(src, 'artifact.repository') or '?'}:"
             f"{_get_path(src, 'artifact.tag') or '?'}"
         ),
+        "production_field": "artifact.in_production",
+        "zone_field": "artifact.zone",
     },
     "greenbone": {
         "source_fields": ["target.host", "target.port", "target.zone"],
@@ -113,6 +115,8 @@ ASSET_FIELD_SPECS = {
             f"{_get_path(src, 'target.port') or '?'}"
             f" ({_get_path(src, 'target.zone') or '?'})"
         ),
+        "production_field": "target.in_production",
+        "zone_field": "target.zone",
     },
     "wazuh": {
         "source_fields": ["target.agent_id", "target.agent_name"],
@@ -121,6 +125,8 @@ ASSET_FIELD_SPECS = {
             or _get_path(src, "target.agent_id")
             or "?"
         ),
+        "production_field": "target.in_production",
+        "zone_field": "target.zone",
     },
 }
 
@@ -144,16 +150,20 @@ def build_assets_summary(sources_list: list[dict]) -> str:
 
 def fetch_cve_instances(
     es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
-    *, auth_header: str, verify_tls: bool
+    *, auth_header: str, verify_tls: bool, production_field: str, zone_field: str,
 ) -> dict[str, dict]:
     """Terms-aggregate distinct CVE values + doc counts from one findings
-    index, plus a top_hits sub-aggregation sampling up to
+    index, plus: (1) a top_hits sub-aggregation sampling up to
     ASSET_SAMPLE_SIZE of the most-recently-seen documents' asset
-    identifier fields per CVE. Works unchanged whether the field is a
-    single keyword (harbor-findings.finding_id) or a keyword array
-    (gvm-findings.cve) -- a terms agg on an array field buckets each
-    value independently, which is the correct behaviour here (a finding
-    with 2 CVEs should count toward both)."""
+    identifier fields per CVE, (2) a filter sub-agg counting how many of
+    this CVE's instances are in_production:true, (3) a terms sub-agg
+    collecting the distinct zones this CVE appears in -- the UVM
+    redesign's production/zone rollup (docs/threat-vuln-platform/plan.md,
+    2026-09-01). Works unchanged whether the field is a single keyword
+    (harbor-findings.finding_id) or a keyword array (gvm-findings.cve) --
+    a terms agg on an array field buckets each value independently, which
+    is the correct behaviour here (a finding with 2 CVEs should count
+    toward both)."""
     body = {
         "size": 0,
         "aggs": {
@@ -166,7 +176,9 @@ def fetch_cve_instances(
                             "_source": asset_source_fields,
                             "sort": [{"last_seen": {"order": "desc"}}],
                         }
-                    }
+                    },
+                    "production_count": {"filter": {"term": {production_field: True}}},
+                    "zones": {"terms": {"field": zone_field, "size": 10}},
                 },
             }
         },
@@ -184,7 +196,13 @@ def fetch_cve_instances(
         if not b.get("key"):
             continue
         hits = b.get("assets", {}).get("hits", {}).get("hits", [])
-        out[b["key"]] = {"count": b["doc_count"], "raw_assets": [h.get("_source", {}) for h in hits]}
+        zones = [z["key"] for z in b.get("zones", {}).get("buckets", []) if z.get("key")]
+        out[b["key"]] = {
+            "count": b["doc_count"],
+            "raw_assets": [h.get("_source", {}) for h in hits],
+            "production_count": b.get("production_count", {}).get("doc_count", 0),
+            "zones": zones,
+        }
     return out
 
 
@@ -375,15 +393,18 @@ def writeback_findings(
 
 
 def refresh_exposure_sources(
-    es_url: str, cve_id: str, sources_list: list[dict], total_instances: int, *, auth_header: str, verify_tls: bool, dry_run: bool
+    es_url: str, cve_id: str, sources_list: list[dict], total_instances: int,
+    in_production: bool, zones: list[str],
+    *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> bool:
-    """Cheap update for an already-enriched CVE whose sources/counts have
-    changed (e.g. a newly-added findings source, like wazuh-findings
-    joining harbor-findings/gvm-findings on 2026-09-01) -- updates only
-    sources/total_instances via a partial _update, with NO triage_cve or
-    LLM call. This is what backfills existing enrichments onto a newly
-    added source without re-running the expensive full enrichment for
-    every already-enriched CVE. Returns True if updated."""
+    """Cheap update for an already-enriched CVE whose sources/counts/
+    production-or-zone status have changed (e.g. a newly-added findings
+    source, like wazuh-findings joining harbor-findings/gvm-findings on
+    2026-09-01, or the UVM redesign's in_production/zones fields backfilling
+    onto every existing doc) -- updates only these fields via a partial
+    _update, with NO triage_cve or LLM call. This is what backfills
+    existing enrichments without re-running the expensive full enrichment
+    for every already-enriched CVE. Returns True if updated."""
     if dry_run:
         return False
     status, result = _es_request(
@@ -393,6 +414,8 @@ def refresh_exposure_sources(
             "sources": sources_list,
             "total_instances": total_instances,
             "assets_summary": build_assets_summary(sources_list),
+            "in_production": in_production,
+            "zones": zones,
         }},
         auth_header=auth_header, verify_tls=verify_tls,
     )
@@ -464,9 +487,12 @@ def main() -> int:
         counts = fetch_cve_instances(
             args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
             auth_header=auth_header, verify_tls=verify_tls,
+            production_field=spec["production_field"], zone_field=spec["zone_field"],
         )
         for cve_id, info in counts.items():
-            entry = cve_map.setdefault(cve_id, {"sources": [], "total_instances": 0})
+            entry = cve_map.setdefault(
+                cve_id, {"sources": [], "total_instances": 0, "production_count": 0, "zones": set()}
+            )
             assets = [spec["format"](raw) for raw in info["raw_assets"]]
             entry["sources"].append({
                 "source": src["source"],
@@ -476,6 +502,15 @@ def main() -> int:
                 "assets_truncated": info["count"] > len(assets),
             })
             entry["total_instances"] += info["count"]
+            entry["production_count"] += info["production_count"]
+            entry["zones"].update(info["zones"])
+
+    # Normalize the per-CVE production/zone rollup computed above (sets
+    # aren't JSON-serializable, and in_production is a simple derived
+    # bool: true if ANY instance across ANY source is production).
+    for entry in cve_map.values():
+        entry["in_production"] = entry["production_count"] > 0
+        entry["zones"] = sorted(entry["zones"])
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
@@ -515,9 +550,13 @@ def main() -> int:
                     new_source_names != existing_source_names
                     or existing.get("total_instances") != entry["total_instances"]
                     or "assets_summary" not in existing
+                    or "in_production" not in existing
+                    or existing.get("in_production") != entry["in_production"]
+                    or existing.get("zones") != entry["zones"]
                 ):
                     if refresh_exposure_sources(
                         args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
+                        entry["in_production"], entry["zones"],
                         auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
                     ):
                         sources_refreshed += 1
@@ -563,6 +602,8 @@ def main() -> int:
             "sources": entry["sources"],
             "total_instances": entry["total_instances"],
             "assets_summary": build_assets_summary(entry["sources"]),
+            "in_production": entry["in_production"],
+            "zones": entry["zones"],
             **parsed,
             "triage_raw_text": triage_text,
             "llm_narrative": narrative,

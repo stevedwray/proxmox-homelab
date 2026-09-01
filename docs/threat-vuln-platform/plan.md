@@ -1836,10 +1836,13 @@ time, dashboard first:
    `unified-cve-exposure` to carry real asset identifiers per source, not
    just a count, and surface them on the dashboard.
 2. **Phase 5** (next): a daily "CISO brief" — LLM-synthesized top-findings
-   summary. Dashboard-only for now (a new saved panel/doc), delivery
-   (email/Slack/etc.) explicitly deferred — no outbound-notification
-   capability exists anywhere in this repo yet, and building one is a
-   separate decision from the content itself.
+   summary. Refined 2026-09-01: the first pass outputs plain markdown,
+   readable directly in a chat/terminal session (not an OpenSearch
+   Dashboards panel, and not any outbound delivery mechanism) — proves
+   out the content/selection logic before deciding how it's automated or
+   delivered. Dashboard embedding and actual delivery (email/Slack/etc.)
+   both remain explicitly deferred, separate decisions from the content
+   itself.
 3. **Phase 6** (last): migrate the LLM narrative calls — both the
    per-CVE `cve_enrichment_sync` triage narrative (currently Anthropic,
    ~50-150 real triages/night) and the new Phase 5 daily-brief synthesis
@@ -2177,6 +2180,113 @@ the new agg is present in the returned `visState`.
 5. Confirm live in the Dashboards UI: open "Threat & Vulnerability
    Overview", confirm both top-CVE tables now show an "Assets Affected"
    column with real asset labels, not just counts.
+
+## Phase 6: UVM redesign — production/zone classification (2026-09-01)
+
+Operator direction: rebuild the dashboard completely as a real
+Unified Vulnerability Management tool (Avalor/Ivanti-Neurons-style),
+showing risk across the home lab, where it comes from, and what's
+finding it — not just a CVE-bucketed counter. Sequenced one phase at a
+time, this phase first: classify every finding as production vs. lab/
+practice, and by network zone, at ingestion time, before touching the
+dashboard itself (Phase 7).
+
+### Per-source classification design (all three sources structurally different)
+
+- **Wazuh — trivially production.** An agent only exists on a real
+  enrolled host, and `agent.name` already IS the owning stack's name.
+  `target.stack = agent_name`, `target.in_production = True`
+  unconditionally, `target.zone` via a small hardcoded `AGENT_ZONE_MAP`
+  (5 known stacks + `pve` itself, `wazuh_findings_sync.py`) — an agent
+  not yet in the map still gets `stack`/`in_production` right, just
+  `zone: null` until added, never guessed.
+- **GVM — already half-built.** `target.pentest_target` already existed
+  and is correctly populated; `target.zone` already existed and is
+  already populated. Only `in_production` needed fixing:
+  `not pentest_target` when a host is known, else `False` (unknown, not
+  assumed production). `target.stack` stays `null` — GVM scans raw IPs,
+  not named stacks.
+- **Harbor — genuinely mixed, needed a real registry.** Built
+  `known_production_images.json`, an **exact-match** (not
+  substring/prefix) registry of every real `artifact.repository` value
+  observed live in `harbor-findings` (pulled via a terms aggregation,
+  not guessed) against this repo's actual `terraform/lxc/stacks/*/` +
+  each stack's real `network_zone`. Exact match deliberately chosen over
+  substring matching after finding a real collision risk during design:
+  a naive `"community/"` substring pattern for greenbone-stack's images
+  would have silently matched `netboxcommunity/netbox` too.
+
+### Two edge cases resolved by direct operator decision, not guessed
+
+- **`vulhub/*` and `vxcontrol/*` (PentAGI) are explicit non-production
+  overrides**, applied before any registry lookup, regardless of whether
+  they'd otherwise match a deployed stack. `vxcontrol/*` genuinely is
+  deployed (pentagi-stack is real and running) — operator chose to
+  exclude it anyway since PentAGI's remediation is closed/deprioritized.
+- **The legacy `elastic-stack` LXC (vmid 112) was actually decommissioned**,
+  not just special-cased in the classifier. Confirmed live (`pvesh get
+  .../status/current` showed `status: stopped`, `uptime: 0s`) before
+  destroying — see `project_elasticsearch_stack_ideas` memory's
+  2026-09-01 correction. `terraform/lxc/stacks/elastic-stack/` removed
+  from the repo entirely. `elastic/kibana`/`elastic/elasticsearch`
+  Harbor findings are stale historical scans from this host and
+  correctly fall through the registry's default (unmatched →
+  `in_production: false`) with no explicit entry needed.
+
+### Cross-source rollup onto `unified-cve-exposure`
+
+`cve_enrichment_sync.py`'s per-source aggregation (`fetch_cve_instances()`,
+already extended once for Phase 4's asset sampling) gained two more
+sub-aggregations per CVE bucket: a `filter` agg counting
+`in_production:true` instances, and a `terms` agg collecting distinct
+zones. Rolled up per CVE across all three sources into two new top-level
+fields: `in_production` (`true` if ANY instance from ANY source is
+production) and `zones` (sorted list of every zone this CVE appears in).
+The existing Phase 4 backfill-trigger pattern (refresh already-enriched
+CVEs without a triage_cve/LLM call when a tracked field is missing or has
+drifted) was extended to also catch `in_production`/`zones` — this is
+what backfills the new fields onto the ~10,151 already-enriched CVEs on
+the next run, the same shape already proven live for `assets_summary`.
+
+### Files changed
+
+- `terraform/lxc/ansible/roles/es_findings_ingest/files/assets/known_production_images.json` — new, the Harbor registry.
+- `terraform/lxc/ansible/roles/es_findings_ingest/files/harbor_findings_sync.py` — `load_production_registry()`/`classify_artifact()`, wired into `build_documents()`.
+- `terraform/lxc/ansible/roles/es_findings_ingest/files/assets/templates/harbor-findings.json` — added `artifact.zone` (in_production/stack already existed, unpopulated).
+- `terraform/lxc/ansible/roles/es_findings_ingest/tasks/main.yml` — copy task for the new registry file.
+- `terraform/lxc/ansible/roles/gvm_findings_ingest/files/gvm_findings_sync.py` — `in_production = not pentest_target`. No template change needed (field already existed).
+- `terraform/lxc/ansible/roles/wazuh_findings_ingest/files/wazuh_findings_sync.py` — `AGENT_ZONE_MAP`, `target.stack`/`target.zone`/`target.in_production`.
+- `terraform/lxc/ansible/roles/wazuh_findings_ingest/files/assets/templates/wazuh-findings.json` — added all three new `target.*` fields (none existed before).
+- `terraform/lxc/ansible/roles/cve_enrichment_sync/files/cve_enrichment_sync.py` — aggregation rollup, `refresh_exposure_sources()` signature extended, main upsert doc extended.
+- `terraform/lxc/ansible/roles/cve_enrichment_sync/files/assets/templates/unified-cve-exposure.json` — added `in_production`/`zones`.
+
+### Deploy sequence (dependency order — source classifiers before the rollup that reads them)
+
+1. `harbor-stack` (es_findings_ingest) — ships the registry + classifier.
+2. `greenbone-stack` (gvm_findings_ingest) — ships the pentest_target-derived fix.
+3. `wazuh-stack` (wazuh_findings_ingest) — ships the new template fields + classifier.
+4. Full resync of all three (existing `putAll` upsert pattern means a
+   normal scheduled/manual resync run naturally refreshes every
+   already-indexed document's `in_production`/`stack`/`zone` fields —
+   no separate backfill script needed, unlike Phase 2/4's `*-findings`→
+   `unified-cve-exposure` situation).
+5. **Live `PUT _mapping`** on each of `harbor-findings`/`gvm-findings`/
+   `wazuh-findings` for any genuinely new field (`artifact.zone`,
+   `target.stack`/`target.zone`/`target.in_production` on wazuh-findings)
+   — same index-template-doesn't-retroactively-remap gotcha as Phase 4,
+   confirmed to still apply, must not be skipped.
+6. `secpipe-stack` (cve_enrichment_sync) redeploy, then one manual run to
+   backfill `in_production`/`zones` onto `unified-cve-exposure`.
+
+### Phase 7 (next, not yet started): dashboard rebuild
+
+Once the above is verified live (spot-check a known lab CVE shows
+`in_production:false`, a known real-infra CVE shows `true` + correct
+zones), rebuild "Threat & Vulnerability Overview": production-only
+default view (operator's decision — lab/practice findings de-emphasized,
+not deleted, still queryable), a by-source breakdown panel, and a
+by-zone risk panel. Not step-blocked yet — do after Phase 6 is proven
+live, per this project's own "literal, not guessed" planning rule.
 
 ### CORRECTION 2026-09-01: index templates don't retroactively remap an existing index
 

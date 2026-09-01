@@ -118,6 +118,27 @@ def _wazuh_search_after(base_url, auth_header, verify_tls, batch_size=BATCH_SIZE
             break
 
 
+# Wazuh's agent.name IS the owning stack name for every currently
+# enrolled infra agent (confirmed live, not guessed -- see
+# project_wazuh_stack_status memory: 6 agents, 5 stacks + pve itself).
+# A Wazuh agent only exists on a host that was deliberately enrolled onto
+# real infrastructure, so in_production is unconditionally True here --
+# unlike Harbor (mixed real/lab images) or GVM (pentest_target scans),
+# there's no "lab" case for an enrolled agent. Zone needs a small lookup
+# since agent_name alone doesn't carry it; an agent not in this map still
+# gets stack=agent_name and in_production=True, just zone=None until
+# added here -- never guessed. See docs/threat-vuln-platform/plan.md's
+# UVM redesign phase (2026-09-01).
+AGENT_ZONE_MAP = {
+    "authentik-stack": "mgmt_seg",
+    "proxy-stack": "edge_seg",
+    "harbor-stack": "infra_seg",
+    "technitium-stack": "mgmt_seg",
+    "apt-cacher-stack": "infra_seg",
+    "pve": None,  # the Proxmox hypervisor host itself, not a VLAN-zoned stack
+}
+
+
 def build_document(hit: dict) -> dict | None:
     src = hit.get("_source", {})
     vuln = src.get("vulnerability") or {}
@@ -127,6 +148,7 @@ def build_document(hit: dict) -> dict | None:
     agent = src.get("agent") or {}
     package = src.get("package") or {}
     now = _now_iso()
+    agent_name = agent.get("name")
     return {
         "source": "wazuh",
         "finding_id": cve,
@@ -137,7 +159,10 @@ def build_document(hit: dict) -> dict | None:
         "description": (vuln.get("description") or "")[:2000] or None,
         "target": {
             "agent_id": agent.get("id"),
-            "agent_name": agent.get("name"),
+            "agent_name": agent_name,
+            "stack": agent_name,
+            "zone": AGENT_ZONE_MAP.get(agent_name),
+            "in_production": True,
         },
         "scan_time": vuln.get("detected_at") or now,
         "last_seen": now,
