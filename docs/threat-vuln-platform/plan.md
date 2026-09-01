@@ -2347,6 +2347,37 @@ not deleted, still queryable), a by-source breakdown panel, and a
 by-zone risk panel. Not step-blocked yet — do after Phase 6 is proven
 live, per this project's own "literal, not guessed" planning rule.
 
+**Done, 2026-09-01.** Added three new panels to "Threat & Vulnerability
+Overview" via the OpenSearch Dashboards saved-objects API (same
+Global-tenant-as-admin technique already proven for the `wazuh-findings`
+index pattern): `threat-by-source` (terms on `sources.source` + avg
+`risk_score`), `threat-by-zone` (terms on `zones` + avg `risk_score` +
+summed `total_instances`), `threat-production-split` (terms on
+`in_production`). Also set the dashboard's own default query to
+`in_production: true` (KQL, in `kibanaSavedObjectMeta.searchSourceJSON`)
+— filters every panel to production-only by default, fully clearable in
+the viewer's own search bar; nothing is deleted or hidden from the
+underlying index.
+
+Verified against the real aggregations (not just that the panels saved):
+`harbor` 10,131 CVEs (avg risk 12.45), `wazuh` 177 (avg risk 9.93),
+`greenbone` 19 (avg risk 20.18 — smaller finding set, skews higher-risk).
+Filtered to `in_production:true`: 4,185 total, `harbor` 4,134 +
+`wazuh` 177 (sums exceed the total since a CVE can span both sources) —
+**and `greenbone` contributes zero production findings**, a real,
+concrete confirmation that GVM's current scan scope is 100%
+pentest-target/lab, not production, exactly the kind of signal this
+whole phase was built to surface.
+
+Not done as part of this pass (fine as follow-on, not blocking): the two
+existing "Top CVEs" tables (`threat-top-by-risk-score`/
+`threat-top-by-exposure`) weren't updated to also respect the new
+production/zone fields as explicit columns — they already inherit the
+dashboard-level `in_production:true` default query, so they show
+production-only results too, just without a dedicated column calling
+that out (their existing `assets_summary` column from Phase 4 already
+surfaces per-source detail).
+
 ### CORRECTION 2026-09-01: index templates don't retroactively remap an existing index
 
 Deployed threat-vuln-04-01/02 to `secpipe-stack`, confirmed the updated
