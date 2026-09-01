@@ -315,6 +315,46 @@ issue. A simple retry is the expected fix, matching what resolved it here.
   *works* end-to-end (not just "container didn't crash") is still an open
   question for Phase 4's authorized test scan.
 
+## Known issue (found 2026-09-01, not yet fixed): unpinned image tags
+
+`deploy-greenbone-stack.yml`'s "Bring up Greenbone stack" task runs with
+`pull: always`, and **not one service in the compose file is pinned to a
+specific version** — everything is on a floating tag: `:stable`/
+`:stable-slim` (`pg-gvm`, `pg-gvm-migrator`, `gvmd`, `gsad`, `gsa`,
+`openvas-scanner` ×3, `ospd-openvas`), explicit `:latest` (`gvm-config`,
+`nginx`), or no tag at all — which Docker defaults to `:latest` — on
+everything else (`vulnerability-tests`, `notus-data`, `scap-data`,
+`cert-bund-data`, `dfn-cert-data`, `data-objects`, `report-formats`,
+`gpg-data`, `redis-server`, `gvm-tools`).
+
+This is very likely deliberate for the vulnerability-signature feed
+containers specifically (`scap-data`/`cert-bund-data`/`dfn-cert-data`/
+`notus-data`/`vulnerability-tests` — Greenbone's own official Community
+Edition compose reference uses these same floating tags, since pinning a
+data feed to an old digest would defeat its purpose), but it means
+**every redeploy of this stack — for any reason, including an unrelated
+one-line change elsewhere in the same playbook run — always re-pulls and
+can recreate every container**, with zero reproducibility and no way to
+roll back to a known-good version if an upstream image regresses.
+
+**Confirmed to actually bite in practice, not just theoretical**: a
+2026-09-01 redeploy (unrelated `gvm_findings_ingest` role change) pulled
+in new upstream digests across the board after ~2-4 weeks of drift, and
+a `scap-data` healthcheck timing race during the resulting recreate
+cascade left `gvmd`/`gsad`/`nginx`/`gvm-tools`/`gvm-bridge` stuck in
+`Created` (never started) — a real, if transient, production outage of
+GVM's own daemon and web UI. A retry succeeded once `scap-data` settled,
+but the underlying exposure (any redeploy can do this) remains.
+
+**Operator directive, not yet actioned**: pin versions and move to a
+controlled upgrade process instead of floating tags — at minimum for the
+non-data-feed services (`gvmd`, `gsad`, `gsa`, `nginx`,
+`openvas-scanner`, `ospd-openvas`); the data-feed containers may
+legitimately want to stay on `:stable`/`:latest` by design, worth a
+separate call. Not scoped or step-blocked yet — flagged here to come
+back to, not fixed as part of the 2026-09-01 UVM classification work
+that surfaced it.
+
 ## Related documentation
 
 - [pentagi-integration.md](./pentagi-integration.md) — PentAGI↔GVM
