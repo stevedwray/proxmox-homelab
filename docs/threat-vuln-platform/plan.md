@@ -2361,15 +2361,33 @@ to. `scan_results()` (the single-task endpoint PentAGI used) was left
 alone — out of scope now that PentAGI is defunct, and 1000 results for a
 single task is in practice never going to be hit.
 
-**Not yet redeployed** — the pagination fix needs `greenbone-stack`
-rebuilt (gvm-bridge is a `build: context: ./gvm-bridge` service, already
-rebuilt on every `provision.sh` run per this stack's existing
-`build: always` policy) and `gvm-findings-ingest` re-run afterward.
-Expect the real total to land somewhere near 9,356 raw / a few hundred
-to low thousands after the threat=Log filter — re-run
-`cve-enrichment-sync` afterward to correlate/backfill
-`unified-cve-exposure`, and expect the "production vs lab" split
-reported at the end of Phase 6 to change materially once this lands.
+**Deployed and verified live 2026-09-01.** `greenbone-stack` redeployed
+clean (`ok=96 changed=11 failed=0`). `gvm-findings-ingest` re-run:
+raw=8,060 (vs the DB's raw `results` count of 9,356 — the gap is
+unexplained but not a pagination bug, since 8,060 is nowhere near the
+1000-row ceiling and the loop runs to a short final page, not the
+200-page safety cap), 655 findings after the threat=Log filter.
+`gvm-findings` index: **264 total docs** (up from 10), of which **254
+(96%) are production** — spread across every real VLAN zone (`lan`=126,
+`mgmt_seg`=41, `edge_seg`=39, `infra_seg`=28, `ai_seg`=15,
+`build_seg`=9, `game_seg`=6). Only 10 remain pentest-lab-only. This
+directly confirms the operator's original correction: GVM was never
+lab-only, it just wasn't *visible* to the ingest pipeline.
+
+`cve-enrichment-sync` re-run afterward: `cves_seen=10152 enriched=79
+skipped_fresh=10073 errors=0`. `unified-cve-exposure` totals moved from
+10,070/4,185 (Phase 6 report) to **10,280 total / 4,307 production**
+(41.6%→41.9%) — the aggregate split barely moved, since most GVM CVEs
+overlap with ones Harbor/Wazuh already surfaced. What actually changed
+is *source attribution*, not the topline number: GVM went from
+contributing 0% of production findings to 96% of its own findings being
+production — the earlier "GVM contributes zero production findings"
+conclusion from Phase 6/8 is now corrected, not just caveated.
+
+(The known-benign `409 version_conflict` writeback warnings on
+`gvm-findings` recurred during this run, same pre-existing
+multi-CVE-per-finding race documented earlier in this section — no
+action needed.)
 
 ## Phase 7: local LLM migration + fast test-iteration (2026-09-01, code built)
 
