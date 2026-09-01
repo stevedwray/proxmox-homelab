@@ -23,15 +23,30 @@ cve_enrichment_sync_mcp_host: "{{ lookup('env', 'LAB_IP_MCP_UTILITY') | mandator
 cve_enrichment_sync_mcp_url: "http://{{ cve_enrichment_sync_mcp_host }}:8000/mcp"
 cve_enrichment_sync_triage_depth: standard
 
-# --- LLM provider (temporary -- see cve_enrichment_sync.py's module
-# docstring and plan.md's "LLM narrative step" section) ------------------
-# The local Ollama runtime is occupied with benchmarking work as of
-# 2026-08-18 -- using Anthropic/OpenAI for now, operator instruction.
-# Swap back to a local-LLM provider later by changing this default, not
-# the script.
+# --- LLM provider (see cve_enrichment_sync.py's module docstring and
+# plan.md's "LLM narrative step" / Phase 6 sections) ----------------------
+# Still anthropic for the standing scheduled timer as of 2026-09-01 --
+# the operator has confirmed framework's local Ollama GPU now has
+# standing capacity (the 2026-08-18 "occupied with benchmarking" reason
+# no longer applies) and wants to migrate, but that switch happens after
+# validating output quality via small --max-cves-capped manual test runs
+# (cve_enrichment_sync_max_cves below), not by flipping this default
+# blind. Swap this default once that validation is done.
 cve_enrichment_sync_llm_provider: anthropic
 cve_enrichment_sync_anthropic_api_key: "{{ lookup('env', 'ANTHROPIC_API_KEY') | default('', true) }}"
 cve_enrichment_sync_openai_api_key: "{{ lookup('env', 'OPENAI_API_KEY') | default('', true) }}"
+# framework.gibbsgreatly.xyz's Ollama endpoint -- confirmed live and
+# reachable from secpipe-stack's network 2026-09-01. laguna-s-2.1 MUST
+# run on Ollama, not llama.cpp, for usable output quality (17-point BFCL
+# accuracy gap, confirmed -- see project_laguna_ollama_runtime memory).
+cve_enrichment_sync_ollama_url: "http://192.168.1.8:11434"
+cve_enrichment_sync_ollama_model: "laguna-s-2.1:q4_k_m-ctx131k"
+
+# Caps CVEs processed per run (0 = unlimited, the standing scheduled
+# timer's behavior). Set to a small number (e.g. 10-20) for a fast manual
+# test run -- see the "quick test run" invocation in plan.md's Phase 6
+# section -- without waiting on or paying for a full-corpus sweep.
+cve_enrichment_sync_max_cves: 0
 
 # --- OpenSearch connection -----------------------------------------------
 # Same opensearch-stack target and HTTPS/self-signed-cert reasoning as

@@ -306,12 +306,13 @@ def call_cve_mcp_triage(mcp_url: str, cve_id: str, *, depth: str = "standard", t
     raise RuntimeError(f"unexpected cve-mcp-server response for {cve_id}: {raw[:300]}")
 
 
-# --- LLM narrative (Anthropic/OpenAI -- temporary provider, see module
-# docstring) -------------------------------------------------------------
+# --- LLM narrative (Anthropic/OpenAI/Ollama -- see module docstring for
+# the local-LLM migration this is moving toward) --------------------------
 
 
 def synthesize_narrative(
-    provider: str, api_key: str, cve_id: str, triage_text: str, sources: list[dict], total_instances: int
+    provider: str, api_key: str, cve_id: str, triage_text: str, sources: list[dict], total_instances: int,
+    *, ollama_url: str = "", ollama_model: str = "",
 ) -> str:
     prompt = (
         f"You are a security analyst. Given this automated CVE triage for {cve_id}, "
@@ -324,6 +325,8 @@ def synthesize_narrative(
         return _call_anthropic(api_key, prompt)
     if provider == "openai":
         return _call_openai(api_key, prompt)
+    if provider == "ollama":
+        return _call_ollama(ollama_url, ollama_model, prompt)
     raise ValueError(f"unknown LLM provider: {provider}")
 
 
@@ -355,6 +358,29 @@ def _call_openai(api_key: str, prompt: str, *, model: str = "gpt-4o-mini", timeo
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         result = json.loads(resp.read())
     return result["choices"][0]["message"]["content"].strip()
+
+
+def _call_ollama(ollama_url: str, model: str, prompt: str, *, timeout: int = 120) -> str:
+    """Local Framework LLM via Ollama's /api/generate -- confirmed live
+    2026-09-01: framework.gibbsgreatly.xyz:11434, reachable from
+    secpipe-stack's network, laguna-s-2.1:q4_k_m-ctx131k confirmed loaded
+    (see docs/threat-vuln-platform/plan.md). No API key -- Ollama has none.
+    Longer default timeout than Anthropic/OpenAI (120s not 30s): a local
+    117B-param model genuinely takes longer per call than a hosted API,
+    confirmed by this project's own BFCL numbers for this exact model
+    (project_laguna_ollama_runtime memory)."""
+    if not ollama_url or not model:
+        raise ValueError("ollama provider requires both --ollama-url and --ollama-model")
+    body = {"model": model, "prompt": prompt, "stream": False}
+    req = urllib.request.Request(
+        f"{ollama_url.rstrip('/')}/api/generate",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
+        headers={"Content-Type": "application/json"},
+    )
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        result = json.loads(resp.read())
+    return (result.get("response") or "").strip()
 
 
 # --- write-back ------------------------------------------------------------
@@ -450,10 +476,18 @@ def main() -> int:
     parser.add_argument("--cve-mcp-url", default=os.environ.get("CVE_MCP_URL", "http://127.0.0.1:8000/mcp"))
     parser.add_argument(
         "--llm-provider", default=os.environ.get("LLM_PROVIDER", "anthropic"),
-        choices=["anthropic", "openai", "none"],
+        choices=["anthropic", "openai", "ollama", "none"],
     )
     parser.add_argument("--anthropic-api-key", default=os.environ.get("ANTHROPIC_API_KEY"))
     parser.add_argument("--openai-api-key", default=os.environ.get("OPENAI_API_KEY"))
+    parser.add_argument(
+        "--ollama-url", default=os.environ.get("OLLAMA_URL", "http://192.168.1.8:11434"),
+        help="local Framework Ollama endpoint (see docs/threat-vuln-platform/plan.md)",
+    )
+    parser.add_argument(
+        "--ollama-model", default=os.environ.get("OLLAMA_MODEL", "laguna-s-2.1:q4_k_m-ctx131k"),
+        help="Ollama model tag -- Laguna S 2.1 must run on Ollama not llama.cpp for this task, see project_laguna_ollama_runtime memory",
+    )
     parser.add_argument("--triage-depth", default=os.environ.get("TRIAGE_DEPTH", "standard"))
     parser.add_argument(
         "--max-cves", type=int, default=int(os.environ.get("MAX_CVES", "0")) or None,
@@ -514,8 +548,18 @@ def main() -> int:
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
-    llm_api_key = args.anthropic_api_key if args.llm_provider == "anthropic" else args.openai_api_key
-    if args.llm_provider != "none" and not llm_api_key:
+    # Ollama needs no API key (it's a local, unauthenticated endpoint) --
+    # only anthropic/openai are gated on one being present.
+    llm_api_key = None
+    if args.llm_provider == "anthropic":
+        llm_api_key = args.anthropic_api_key
+    elif args.llm_provider == "openai":
+        llm_api_key = args.openai_api_key
+    llm_ready = (
+        args.llm_provider == "ollama"
+        or (args.llm_provider in ("anthropic", "openai") and bool(llm_api_key))
+    )
+    if args.llm_provider != "none" and not llm_ready:
         print(f"WARN: --llm-provider={args.llm_provider} but no API key set -- narratives will be skipped.", file=sys.stderr)
 
     enriched = 0
@@ -586,11 +630,12 @@ def main() -> int:
 
         narrative = ""
         llm_provider_used = None
-        if args.llm_provider != "none" and llm_api_key:
+        if args.llm_provider != "none" and llm_ready:
             try:
                 narrative = synthesize_narrative(
                     args.llm_provider, llm_api_key, cve_id, triage_text,
                     entry["sources"], entry["total_instances"],
+                    ollama_url=args.ollama_url, ollama_model=args.ollama_model,
                 )
                 llm_provider_used = args.llm_provider
             except Exception as exc:  # noqa: BLE001

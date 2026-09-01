@@ -1843,7 +1843,7 @@ time, dashboard first:
    delivered. Dashboard embedding and actual delivery (email/Slack/etc.)
    both remain explicitly deferred, separate decisions from the content
    itself.
-3. **Phase 6** (last): migrate the LLM narrative calls — both the
+3. **Phase 7** (last — renumbered 2026-09-01, see note below): migrate the LLM narrative calls — both the
    per-CVE `cve_enrichment_sync` triage narrative (currently Anthropic,
    ~50-150 real triages/night) and the new Phase 5 daily-brief synthesis
    — to the local Framework LLM (Ollama, `laguna-s-2.1:q4_k_m-ctx131k`,
@@ -2278,7 +2278,66 @@ the next run, the same shape already proven live for `assets_summary`.
 6. `secpipe-stack` (cve_enrichment_sync) redeploy, then one manual run to
    backfill `in_production`/`zones` onto `unified-cve-exposure`.
 
-### Phase 7 (next, not yet started): dashboard rebuild
+## Phase 7: local LLM migration + fast test-iteration (2026-09-01, code built)
+
+Operator direction: full-corpus `cve_enrichment_sync` runs during Phase 6
+took 20-75 minutes each (mostly OpenSearch write-back contention, not
+enrichment itself), which is far too slow a feedback loop for iterating
+on a genuinely new capability like local-LLM narratives. Two changes,
+built together since the second only has value once the first exists:
+
+1. **`--llm-provider ollama`** added alongside the existing anthropic/
+   openai/none choices. New `_call_ollama()` hits Ollama's `/api/generate`
+   (`{"model", "prompt", "stream": false}` → `{"response": ...}`) —
+   confirmed live and reachable from `secpipe-stack`'s network at
+   `framework.gibbsgreatly.xyz:11434`, `laguna-s-2.1:q4_k_m-ctx131k`
+   confirmed loaded (both re-verified 2026-09-01, not assumed from an
+   older memory note). No API key needed (`llm_ready` gating logic
+   updated so ollama doesn't false-WARN on a missing anthropic/openai
+   key). Longer default timeout (120s vs 30s) — a local 117B model
+   genuinely takes longer per call than a hosted API, matching this
+   project's own BFCL timing numbers for this exact model
+   (`project_laguna_ollama_runtime` memory).
+2. **`--max-cves`/`MAX_CVES` wired into the systemd unit** as
+   `cve_enrichment_sync_max_cves` (role default `0` = unlimited, the
+   standing scheduled timer's real behavior unchanged). The CLI flag
+   itself already existed and already capped the per-CVE loop regardless
+   of which path (full enrich or the cheap backfill) a given CVE takes —
+   it just wasn't exposed as a documented, repeatable lever before.
+
+**Quick test-run invocation** (fast, small-scope, no redeploy needed —
+run directly on `secpipe-stack` once this phase's code is live there):
+```bash
+ansible secpipe-stack -i terraform/lxc/environments/pve/secpipe-stack/inventory.yml -u root \
+  -m shell -a "bash -c 'set -a; source /opt/cve-enrichment-sync/es-user.env; \
+  export ELASTICSEARCH_URL=https://<opensearch-ip>:9200 ES_FINDINGS_NO_VERIFY_TLS=1 \
+  CVE_MCP_URL=http://<mcp-utility-ip>:8000/mcp LLM_PROVIDER=ollama MAX_CVES=10 \
+  FORCE_REFRESH... ; python3 /opt/cve-enrichment-sync/cve_enrichment_sync.py'"
+```
+(`--force-refresh`/`FORCE_REFRESH` isn't currently read from an env var —
+pass it as a literal CLI arg appended to the python3 invocation, since
+this is a manual/direct run, not going through the systemd
+EnvironmentFile mechanism — needed to actually exercise the LLM call
+path on CVEs that are already enriched, since the cheap skip-fresh path
+would otherwise short-circuit before reaching `synthesize_narrative()`.)
+`MAX_CVES=10` bounds this to the top 10 CVEs by exposure breadth —
+seconds to low-single-digit-minutes even with a slower local model, not
+20-75 minutes.
+
+**Not yet done**: no actual comparison test run against Ollama has been
+executed — this phase built the capability, validation is next. The
+standing scheduled timer's `cve_enrichment_sync_llm_provider` default
+stays `anthropic` until that validation happens; this is a deliberate
+gate, not an oversight — see the defaults file's own comment.
+
+### Phase 8 (next, not yet started): dashboard rebuild
+
+(Numbering note: this section was originally "Phase 7" in the same
+paragraph that scoped local-LLM migration as "Phase 6" — that collided
+with the production/zone classification work this document's own Phase 6
+heading above actually covers. Renumbered 2026-09-01: LLM migration is
+now Phase 7, dashboard rebuild is Phase 8. No content changed, only the
+numbers.)
 
 Once the above is verified live (spot-check a known lab CVE shows
 `in_production:false`, a known real-infra CVE shows `true` + correct
