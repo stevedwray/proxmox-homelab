@@ -135,7 +135,12 @@ AGENT_ZONE_MAP = {
     "harbor-stack": "infra_seg",
     "technitium-stack": "mgmt_seg",
     "apt-cacher-stack": "infra_seg",
-    "pve": None,  # the Proxmox hypervisor host itself, not a VLAN-zoned stack
+    # Real agent names confirmed live 2026-09-01, not guessed -- the pve
+    # agent enrolls under its FQDN, not the bare "pve", and Wazuh's own
+    # manager self-monitors as a distinct agent (wazuh.manager, on
+    # wazuh-stack itself, same infra_seg placement).
+    "pve.gibbsgreatly.xyz": None,  # the Proxmox hypervisor host itself, not a VLAN-zoned stack
+    "wazuh.manager": "infra_seg",
 }
 
 
