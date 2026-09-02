@@ -931,6 +931,19 @@
   # /findings/all endpoint is new code within its existing container,
   # not a new service). Gated the same way es_findings_ingest is:
   # explicit opt-in via a stack.yaml flag, off by default.
+  #
+  # Tagged so a routine code-only change to this role (a new
+  # gvm_findings_sync.py, ip_to_stack.json, or template) can be pushed
+  # WITHOUT running the huge "Deploy Greenbone Community Edition compose
+  # stack" play above -- that play unconditionally resets the gvmd admin
+  # password, re-enables LDAP auth, and re-creates both GMP users on
+  # every single run regardless of what actually changed (a real,
+  # confirmed-live design gap, see docs/threat-vuln-platform/plan.md's
+  # "operator feedback" note 2026-09-01 -- not fixed yet, this tag is the
+  # narrow workaround until it is). Use:
+  #   ANSIBLE_TAGS=findings-ingest ./with-secrets-prod scripts/provision.sh --stack greenbone-stack
+  # to touch ONLY this play.
+  tags: [findings-ingest]
   roles:
     - role: gvm_findings_ingest
       when: gvm_findings_ingest_enabled | default(false) | bool
