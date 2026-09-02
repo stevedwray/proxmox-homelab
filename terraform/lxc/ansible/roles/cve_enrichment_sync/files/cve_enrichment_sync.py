@@ -461,6 +461,99 @@ def refresh_exposure_sources(
     return True
 
 
+def compute_stack_rollup(es_url: str, *, auth_header: str, verify_tls: bool, dry_run: bool) -> int:
+    """Materialize a per-stack severity breakdown into stack-risk-summary,
+    one document per stack (docs/threat-vuln-platform/plan.md, Phase 9
+    follow-up, 2026-09-02). Exists because classic OpenSearch Dashboards
+    visualizations cannot pivot an aggregation bucket (risk_band) into
+    real table columns -- a dashboard panel on unified-cve-exposure
+    directly can show "count of CRITICAL CVEs, split by stack" OR
+    "stack | count" but never "stack | critical | high | medium | low"
+    as one row with real columns. This precomputes that pivot server-side
+    using the same terms-bucket-with-filter-sub-aggs technique already
+    proven in fetch_cve_instances() (production_count), just aggregating
+    unified-cve-exposure's own already-correlated stacks/risk_band fields
+    instead of a raw findings index. Full recompute every run (cheap --
+    a few dozen stacks at most) rather than incremental, avoiding drift
+    between this rollup and unified-cve-exposure's own state. Returns the
+    number of stack documents written."""
+    body = {
+        "size": 0,
+        "aggs": {
+            "stacks": {
+                "terms": {"field": "stacks", "size": 50},
+                "aggs": {
+                    "critical": {"filter": {"term": {"risk_band": "CRITICAL"}}},
+                    "high": {"filter": {"term": {"risk_band": "HIGH"}}},
+                    "medium": {"filter": {"term": {"risk_band": "MEDIUM"}}},
+                    "low": {"filter": {"term": {"risk_band": "LOW"}}},
+                    "avg_risk": {"avg": {"field": "risk_score"}},
+                    "sources": {"cardinality": {"field": "sources.source"}},
+                },
+            }
+        },
+    }
+    status, result = _es_request(
+        es_url, "/unified-cve-exposure/_search", method="POST", body=body,
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    if status != 200 or not result:
+        print(f"WARN: stack rollup aggregation failed ({status}): {result}", file=sys.stderr)
+        return 0
+
+    buckets = result.get("aggregations", {}).get("stacks", {}).get("buckets", [])
+    now = _now_iso()
+    seen_stacks = set()
+    written = 0
+    for b in buckets:
+        stack = b.get("key")
+        if not stack:
+            continue
+        seen_stacks.add(stack)
+        doc = {
+            "stack": stack,
+            "total_cves": b["doc_count"],
+            "critical": b.get("critical", {}).get("doc_count", 0),
+            "high": b.get("high", {}).get("doc_count", 0),
+            "medium": b.get("medium", {}).get("doc_count", 0),
+            "low": b.get("low", {}).get("doc_count", 0),
+            "avg_risk_score": b.get("avg_risk", {}).get("value"),
+            "sources_reporting": b.get("sources", {}).get("value", 0),
+            "updated_at": now,
+        }
+        if dry_run:
+            continue
+        put_status, put_result = _es_request(
+            es_url, f"/stack-risk-summary/_doc/{urllib.parse.quote(stack, safe='')}",
+            method="PUT", body=doc, auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if put_status not in (200, 201):
+            print(f"WARN: failed to write stack-risk-summary doc for {stack}: {put_status} {put_result}", file=sys.stderr)
+            continue
+        written += 1
+
+    # Clean up stale rows for stacks that no longer appear at all (e.g. a
+    # decommissioned stack, or REDTEAM_EXCLUDE-only findings aging out) --
+    # otherwise this index only ever grows and can show a stack as still
+    # having risk long after every underlying CVE is gone.
+    if not dry_run:
+        existing_status, existing_result = _es_request(
+            es_url, "/stack-risk-summary/_search", method="POST",
+            body={"size": 100, "_source": False},
+            auth_header=auth_header, verify_tls=verify_tls,
+        )
+        if existing_status == 200 and existing_result:
+            for hit in existing_result.get("hits", {}).get("hits", []):
+                stale_id = hit.get("_id")
+                if stale_id and stale_id not in seen_stacks:
+                    _es_request(
+                        es_url, f"/stack-risk-summary/_doc/{urllib.parse.quote(stale_id, safe='')}",
+                        method="DELETE", auth_header=auth_header, verify_tls=verify_tls,
+                    )
+
+    return written
+
+
 def upsert_exposure_doc(
     es_url: str, cve_id: str, doc: dict, *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> None:
@@ -693,9 +786,14 @@ def main() -> int:
         # cve-mcp-server, plus an external LLM API call.
         time.sleep(1)
 
+    stack_rows_written = compute_stack_rollup(
+        args.elasticsearch_url, auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
+    )
+
     print(
         f"Done — cves_seen={len(cve_map)} enriched={enriched} skipped_fresh={skipped_fresh} "
-        f"sources_refreshed={sources_refreshed} errors={errors} dry_run={args.dry_run}"
+        f"sources_refreshed={sources_refreshed} stack_rows_written={stack_rows_written} "
+        f"errors={errors} dry_run={args.dry_run}"
     )
     return 1 if errors > 0 else 0
 

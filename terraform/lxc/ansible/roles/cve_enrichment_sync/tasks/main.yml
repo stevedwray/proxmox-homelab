@@ -76,6 +76,7 @@
         mode: "0640"
       loop:
         - unified-cve-exposure.json
+        - stack-risk-summary.json
 
     - name: Write LLM provider credential file
       ansible.builtin.copy:
@@ -150,6 +151,7 @@
                 - "es-findings-sync-state"
                 - "unified-cve-exposure*"
                 - "wazuh-findings*"
+                - "stack-risk-summary*"
               allowed_actions:
                 - "create_index"
                 - "write"
