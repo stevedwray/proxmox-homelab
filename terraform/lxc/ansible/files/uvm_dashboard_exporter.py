@@ -145,8 +145,14 @@ class SnapshotStore:
             return json.dumps(self.stack_rows)
 
     def render_funnel(self) -> str:
+        # Wrapped in a single-element array, not a bare object -- Grafana's
+        # yesoreyeram-infinity-datasource "table" format with
+        # root_selector: "" expects to iterate an array of row-objects;
+        # a bare object resolves to zero rows/fields (confirmed live via
+        # Grafana's /api/ds/query returning fields: [] for a bare-object
+        # response, even though the underlying HTTP fetch succeeded).
         with self._lock:
-            return json.dumps(self.funnel)
+            return json.dumps([self.funnel])
 
     def render_health(self) -> str:
         with self._lock:
