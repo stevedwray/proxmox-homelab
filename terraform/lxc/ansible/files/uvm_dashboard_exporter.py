@@ -141,18 +141,20 @@ class SnapshotStore:
             self.last_error = error
 
     def render_stack_rows(self) -> str:
+        # Wrapped as {"rows": [...]}, not a bare array -- confirmed live
+        # (Grafana server logs: this plugin's queryData call for a bare
+        # array + root_selector:"" completes in ~2-4ms with zero output
+        # rows, versus ~270ms and real rows for harbor_findings_exporter's
+        # identically-shaped {"rows": [...]} + root_selector:"rows" query).
+        # An empty root_selector is NOT treated as "the response root is
+        # already the row array" -- match the proven-working shape exactly
+        # instead of relying on that assumption.
         with self._lock:
-            return json.dumps(self.stack_rows)
+            return json.dumps({"rows": self.stack_rows})
 
     def render_funnel(self) -> str:
-        # Wrapped in a single-element array, not a bare object -- Grafana's
-        # yesoreyeram-infinity-datasource "table" format with
-        # root_selector: "" expects to iterate an array of row-objects;
-        # a bare object resolves to zero rows/fields (confirmed live via
-        # Grafana's /api/ds/query returning fields: [] for a bare-object
-        # response, even though the underlying HTTP fetch succeeded).
         with self._lock:
-            return json.dumps([self.funnel])
+            return json.dumps({"rows": [self.funnel]})
 
     def render_health(self) -> str:
         with self._lock:
