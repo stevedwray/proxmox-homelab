@@ -2648,5 +2648,98 @@ since this is a schema change affecting every CVE, not a narrow test) →
 rebuild dashboard panels → verify against real aggregation numbers, not
 just that the panels saved.
 
-**Not started.** No code written yet — this section is the design and
-technical plan only, to pick up fresh next session.
+**Done and deployed live, 2026-09-01 (same day, not "next session" —
+operator asked to start immediately).** Full pipeline built and
+verified end-to-end:
+
+- `ip_to_stack.json` (reverse IP->stack registry from `.env`'s
+  `LAB_IP_*`) + `gvm_findings_sync.py`'s `target.stack` lookup, deployed
+  via a NEW `findings-ingest` tag on the `gvm_findings_ingest` play
+  (see below) rather than a full `greenbone-stack` redeploy.
+- `stacks[]` threaded through `cve_enrichment_sync.py`'s correlation
+  rollup exactly parallel to `zones[]`, `stacks: keyword` added to
+  `unified-cve-exposure`'s template + a live `PUT` mapping (same
+  templates-don't-retroactively-remap gotcha as every time before).
+- Full `cve-enrichment-sync` resync: `cves_seen=10152
+  sources_refreshed=10152 errors=0`.
+- **Verified real per-stack numbers**: `authentik-stack` 3,010 CVEs,
+  `greenbone-stack` 1,471 (expected -- it scans itself), `proxy-stack`
+  595, `opensearch-stack` 567, `wazuh-stack` 539, plus Wazuh's own
+  agent-name-as-stack entries flowing through independently of the new
+  GVM registry (`pve.gibbsgreatly.xyz`, `wazuh.manager`,
+  `gaming-stack`) -- confirms Harbor/Wazuh's pre-existing stack identity
+  and GVM's newly-added one both correctly feed the same `stacks[]`
+  field. Crit/High counts are 0 for almost every stack right now --
+  genuinely sparse data (only 14 Critical / 11 High exist across all
+  10,152 CVEs total), not a pipeline bug.
+
+### Dashboard rebuilt from scratch, same session
+
+Operator feedback mid-session: the Phase 8 panels were "pretty useless"
+(2 were actually broken -- see below) and didn't show per-stack risk at
+all. Discarded all 7 existing panels (unlinked from the dashboard, saved
+objects left in `.kibana` in case anything's wanted back) and replaced
+with 6 new ones:
+
+1. **Vulnerability Exploitability Funnel** (`vuln-exploit-funnel`) --
+   horizontal bar chart, a `filters` bucket agg with 3 stages: "All
+   Vulnerabilities" (match-all) -> "Exploit Exists (PoC or Active)"
+   (`poc_available:true OR kev_listed:true`) -> "Actively Exploited
+   (CISA KEV)" (`kev_listed:true`). Real numbers: 10,280 -> 58 -> 14
+   unfiltered; 4,307 -> 19 -> 0 under the dashboard's `in_production:true`
+   default (zero actively-exploited-in-production right now -- genuine
+   good news, confirmed not a bug).
+2. **Risk by Stack - Overview** (`stack-risk-overview`) -- table, terms
+   on `stacks`, metrics: Total CVEs, Avg Risk Score, Sources Reporting
+   (cardinality of `sources.source`).
+3-6. **Critical/High/Medium/Low by Stack** (`stack-risk-critical/high/
+   medium/low`) -- 4 near-identical tables, same `stacks` terms bucket,
+   each with its own `risk_band` search-level filter and a plain Count
+   metric, laid out as 4 narrow columns side by side. **Not a single
+   pivoted table** -- classic OpenSearch Dashboards visualizations
+   cannot pivot a bucket into columns (that needs Lens or a hand-written
+   Vega spec, neither used here); this is 4 separate panels achieving
+   the same "crit/high/med/low as columns" visual layout the operator
+   asked for, built from the same proven filtered-table pattern already
+   used elsewhere on this dashboard. Revisit with Vega if a genuine
+   single-widget pivot table is wanted later.
+
+**Two real bugs found and fixed as part of this, unrelated to the new
+panels**: the operator reported `threat-by-zone`/`threat-production-split`
+showing "Could not locate that index-pattern-field (id: zones)" /
+"(id: in_production)". Root cause: the `unified-cve-exposure`
+index-pattern saved object's own cached `fields` list (a JSON blob
+Dashboards uses for field autocomplete/validation, separate from the
+live index mapping) was stale from 2026-08-18 -- creating/updating an
+index's *mapping* does NOT refresh a Dashboards index-pattern's cached
+field list; that only happens via an explicit "Refresh field list"
+action (the UI button, or replaying its logic by hand). Fixed twice this
+session (once after adding `zones`/`in_production`/`stacks_summary`
+fields, again after adding `stacks`) by fetching the live `_mapping`,
+flattening it into Dashboards' expected field-descriptor shape, and
+`POST`ing it onto `index-pattern:unified-cve-exposure` directly. **Add
+this as a required step any time a new field is added to
+`unified-cve-exposure`'s template** -- it's now the third
+mapping-related gotcha for this index family (see the two entries
+above), and unlike those, it's specific to Dashboards' own saved object,
+not the index itself.
+
+### Also fixed this session: `gvm_findings_ingest` tagged for scoped redeploys
+
+Operator feedback: routine code-only changes to this role (like the
+`ip_to_stack.json` addition above) still forced running the ENTIRE
+`deploy-greenbone-stack.yml` playbook, including the compose play that
+unconditionally resets the gvmd admin password, re-enables LDAP auth,
+and re-creates both GMP users on every single run -- "it's scary every
+time I run this playbook." That play was already documented as purely
+additive (new role, new systemd timer, doesn't touch gvmd/gvm-bridge/
+credentials) but had no way to run it alone. Fixed by adding
+`tags: [findings-ingest]` to the play -- `ANSIBLE_TAGS=findings-ingest`
+(provision.sh already passes this through, same mechanism the existing
+`scan-program` tag uses) now skips straight to it. Verified live:
+`ok=14 changed=1` vs. the usual `ok=96 changed=11` for a full run. The
+underlying "the compose play has no real idempotency, it just always
+reports changed" design gap (see "operator feedback" note above) is
+still not fixed -- this tag is a scoped workaround for changes that
+only touch `gvm_findings_ingest`, not a general fix for every future
+change to this playbook.
