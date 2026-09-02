@@ -87,11 +87,31 @@ def _fetch_stack_rows(base_url: str, *, auth_header: str, verify_tls: bool) -> l
 def _fetch_remediation_rows(base_url: str, *, auth_header: str, verify_tls: bool) -> list[dict[str, Any]]:
     # cve-remediation-assessment is small (Phase 11's shortlist is
     # top-N, currently 15) -- a plain sorted search, no aggregation
-    # needed, same as _fetch_stack_rows above.
-    result = _es_request(
-        base_url, "/cve-remediation-assessment/_search?size=100&sort=risk_score:desc",
-        auth_header=auth_header, verify_tls=verify_tls,
+    # needed, same as _fetch_stack_rows above. Excludes resolved:true --
+    # this panel is "Top CVEs Needing Attention", and mark_cve_resolved.py
+    # (see docs/threat-vuln-platform/remediation-runbook.md) is how an
+    # operator records that one no longer does. A POST-with-body query,
+    # not a plain GET like _fetch_stack_rows above, since the filter needs
+    # a real query body -- same reason _fetch_funnel below does its own
+    # raw POST rather than using _es_request (GET-only).
+    body = {
+        "size": 100,
+        "sort": [{"risk_score": {"order": "desc"}}],
+        "query": {"bool": {"must_not": [{"term": {"resolved": True}}]}},
+    }
+    req = urllib.request.Request(
+        f"{base_url}/cve-remediation-assessment/_search",
+        data=json.dumps(body).encode("utf-8"),
+        method="POST",
     )
+    req.add_header("Authorization", auth_header)
+    req.add_header("Content-Type", "application/json")
+    ctx = ssl.create_default_context()
+    if not verify_tls:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    with urllib.request.urlopen(req, context=ctx, timeout=20) as resp:  # nosec B310 — internal OpenSearch API on private SDN
+        result = json.loads(resp.read())
     rows = []
     for hit in result.get("hits", {}).get("hits", []):
         src = hit["_source"]

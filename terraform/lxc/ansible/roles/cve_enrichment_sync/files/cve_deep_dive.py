@@ -185,8 +185,28 @@ def parse_assessment(text: str) -> tuple[str | None, str]:
 def upsert_assessment(
     es_url: str, cve_id: str, doc: dict, *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> bool:
+    """A plain PUT would silently clobber resolved/resolved_at/resolved_note
+    every week -- mark_cve_resolved.py's whole point is to persist across
+    the next scheduled run, not just until it happens to fire again.
+    Carry those fields forward from the existing doc, but ONLY if
+    risk_score hasn't changed since resolution: a changed score means new
+    instances or a triage-data shift, i.e. something material enough that
+    a resolved CVE genuinely needs a fresh look, not a silently-inherited
+    flag hiding it forever (see docs/threat-vuln-platform/
+    remediation-runbook.md)."""
     if dry_run:
         return False
+    status, existing = ces._es_request(
+        es_url, f"/cve-remediation-assessment/_doc/{urllib.parse.quote(cve_id, safe='')}",
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    if status == 200 and existing and existing.get("found"):
+        prev = existing.get("_source", {})
+        if prev.get("resolved") and prev.get("resolved_at_risk_score") == doc.get("risk_score"):
+            doc["resolved"] = True
+            doc["resolved_at"] = prev.get("resolved_at")
+            doc["resolved_note"] = prev.get("resolved_note")
+            doc["resolved_at_risk_score"] = prev.get("resolved_at_risk_score")
     status, result = ces._es_request(
         es_url, f"/cve-remediation-assessment/_doc/{urllib.parse.quote(cve_id, safe='')}",
         method="PUT", body=doc, auth_header=auth_header, verify_tls=verify_tls,
@@ -254,6 +274,12 @@ def main() -> int:
             "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "llm_provider": "ollama",
             "llm_model": args.ollama_model,
+            # Default for a first-ever insert -- upsert_assessment() carries
+            # forward a real resolved:true from a prior run when applicable.
+            "resolved": False,
+            "resolved_at": None,
+            "resolved_note": None,
+            "resolved_at_risk_score": None,
         }
         if upsert_assessment(args.elasticsearch_url, cve_id, doc, auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run):
             assessed += 1

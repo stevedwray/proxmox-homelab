@@ -3103,3 +3103,36 @@ by the first two panels' own troubleshooting history above -- the actual
 in-browser column order/rendering for this third panel has not yet been
 confirmed by the operator, same open item class as the "Risk by Stack"
 table's column order.
+
+### Follow-up (2026-09-03, same day): resolved-state tracking + runbook
+
+Operator asked whether Phase 11 was "written up so that it can be used
+in a session to go over the recommended actions" -- it wasn't: the write-up
+above is a build/status record, not an operational workflow, and nothing
+tracked which recommendations had actually been acted on (a resolved CVE
+would just get silently regenerated with the same text every week).
+Added:
+
+- `resolved`/`resolved_at`/`resolved_note`/`resolved_at_risk_score`
+  fields on `cve-remediation-assessment` documents (template updated;
+  the already-existing live index needed an explicit additive
+  `_mapping` PUT too, since OpenSearch index templates only apply at
+  index-*creation* time, not retroactively).
+- `cve_deep_dive.py`'s `upsert_assessment()` now carries `resolved`
+  forward across its weekly re-run, but ONLY if `risk_score` hasn't
+  changed since resolution -- a changed score means something material
+  shifted, so the CVE reappears unresolved on purpose rather than
+  silently staying hidden forever.
+- New `mark_cve_resolved.py` (colocated, same role) -- the actual
+  write-path an operator/session uses to record `--note "what was done"`
+  or `--reopen` a mistaken resolution.
+- `uvm-dashboard-exporter`'s `/remediation.json` now excludes
+  `resolved:true` server-side (a real query body, not the plain GET the
+  other two endpoints use) -- the "Top CVEs Needing Attention" panel
+  only ever shows what still needs attention.
+- New `docs/threat-vuln-platform/remediation-runbook.md` -- the
+  operational counterpart this section was missing: where the
+  recommendations live, what to do per `recommended_action`, the exact
+  `mark_cve_resolved.py` invocation, and why a resolved CVE can still
+  legitimately reappear. `README.md` also refreshed -- it was still
+  describing Phase 1 as "not built yet" through Phase 11.

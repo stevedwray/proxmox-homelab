@@ -57,6 +57,7 @@
         - /etc/systemd/system/cve-deep-dive.timer
         - /etc/systemd/system/cve-deep-dive.service
         - "{{ cve_enrichment_sync_dir }}/cve_deep_dive.py"
+        - "{{ cve_enrichment_sync_dir }}/mark_cve_resolved.py"
         - "{{ cve_enrichment_sync_dir }}/stack-architecture.json"
       notify: Reload systemd
 
@@ -105,6 +106,15 @@
       ansible.builtin.copy:
         src: cve_deep_dive.py
         dest: "{{ cve_enrichment_sync_dir }}/cve_deep_dive.py"
+        owner: root
+        group: root
+        mode: "0750"
+      when: cve_enrichment_sync_deep_dive_enabled | bool
+
+    - name: Copy mark_cve_resolved.py
+      ansible.builtin.copy:
+        src: mark_cve_resolved.py
+        dest: "{{ cve_enrichment_sync_dir }}/mark_cve_resolved.py"
         owner: root
         group: root
         mode: "0750"
@@ -269,6 +279,40 @@
         or 'updated' in cve_enrichment_sync_setup_assets_result.stdout
       when: not (cve_enrichment_sync_es_reachable_for_assets.failed | default(true))
       no_log: true
+
+    # Index templates only apply at index-CREATION time -- since
+    # cve-remediation-assessment was first created before the
+    # resolved/resolved_at/resolved_note/resolved_at_risk_score fields
+    # existed in this template (Phase 11's own resolved-state tracking
+    # follow-up), the already-existing live index's mapping needs an
+    # explicit, additive _mapping PUT too, or those fields would be
+    # accepted (dynamic:false doesn't reject unknown fields on write) but
+    # NOT queryable -- and mark_cve_resolved.py/the exporter's "exclude
+    # resolved" filter both need to query on them. Purely additive/
+    # idempotent: PUT-ing an already-present field mapping is a no-op.
+    - name: Ensure cve-remediation-assessment mapping includes resolved-state fields
+      ansible.builtin.uri:
+        url: "{{ cve_enrichment_sync_elasticsearch_url }}/cve-remediation-assessment/_mapping"
+        method: PUT
+        url_username: "{{ cve_enrichment_sync_elastic_admin_user }}"
+        url_password: "{{ cve_enrichment_sync_elastic_admin_password }}"
+        validate_certs: "{{ not cve_enrichment_sync_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          properties:
+            resolved: {type: boolean}
+            resolved_at: {type: date}
+            resolved_note: {type: text}
+            resolved_at_risk_score: {type: float}
+        status_code: [200, 404]
+      register: cve_enrichment_sync_remediation_mapping_result
+      changed_when: false
+      failed_when: false
+      delegate_to: localhost
+      when:
+        - cve_enrichment_sync_deep_dive_enabled | bool
+        - not (cve_enrichment_sync_es_reachable_for_assets.failed | default(true))
 
     - name: Report asset setup skipped
       ansible.builtin.debug:
