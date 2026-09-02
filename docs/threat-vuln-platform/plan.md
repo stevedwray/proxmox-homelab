@@ -2724,6 +2724,57 @@ mapping-related gotcha for this index family (see the two entries
 above), and unlike those, it's specific to Dashboards' own saved object,
 not the index itself.
 
+### CORRECTION 2026-09-02: dashboard rebuilt again -- funnel error fixed, stack view is now one real table
+
+Operator feedback on the just-shipped rebuild: the funnel visualization
+errored (`horizontal_bar` type, custom `categoryAxes`/`valueAxes`
+params -- exact cause not confirmed, but this cluster's classic-viz bar
+chart params schema is evidently more version-sensitive than the
+already-proven table type), and the 5-panel stack view (overview + 4
+severity columns as separate panels) wasn't what was wanted -- operator
+explicitly asked for ONE table, each stack a row, with
+critical/high/medium/low + risk as real columns.
+
+**Funnel**: converted from `horizontal_bar` to `table` type, same 3-stage
+`filters` bucket aggregation, now rendering correctly (matches every
+other panel on this dashboard, all of which use `table`).
+
+**Stack view**: classic OpenSearch Dashboards visualizations genuinely
+cannot pivot an aggregation bucket (`risk_band`) into real table columns
+from a live query against `unified-cve-exposure` -- confirmed this is a
+hard limitation (Lens or a hand-written Vega spec would be needed
+otherwise, neither in use in this repo). Solved by materializing the
+pivot server-side instead: added `compute_stack_rollup()` to
+`cve_enrichment_sync.py`, called unconditionally at the end of `main()`.
+It aggregates `unified-cve-exposure` (terms on `stacks` + a `filter`
+sub-agg per `risk_band`, the exact same technique already proven in
+`fetch_cve_instances()`'s `production_count`) and writes one flat
+document per stack into a new `stack-risk-summary` index --
+`{stack, total_cves, critical, high, medium, low, avg_risk_score,
+sources_reporting, updated_at}`. Full recompute every run (cheap -- at
+most a few dozen stacks) plus a cleanup pass deleting rows for stacks
+that no longer appear at all, so the index can't accumulate stale
+entries for decommissioned stacks. New `stack-risk-summary.json`
+template (wired into `es_setup_assets.py`'s existing glob-all-templates
+pattern) and the `es_findings_writer` role's `index_patterns` extended
+to cover it.
+
+The dashboard panel itself is now trivial by construction: a plain
+`table` viz on `stack-risk-summary` with a `terms` bucket on `stack` and
+`max` metrics on each numeric field (valid, since there's exactly one
+document per stack -- `max` just returns that document's value; no
+`filter`-as-metric mistake this time, that only works as a `bucket`
+schema in classic viz, not `metric`). Verified live: `wazuh-stack`
+(C0/H1/M4/L516), `authentik-stack` (3,010 total, avg risk 10.8),
+`greenbone-stack` (1,471, expected -- self-scanning), 19 stacks total.
+The old 5-panel version (`stack-risk-overview` +
+`stack-risk-critical/high/medium/low`) was fully deleted, not just
+unlinked -- explicitly superseded, unlike the original Phase 8 panels
+which were only unlinked.
+
+Dashboard is now exactly 2 panels: the funnel, and this one stack risk
+table.
+
 ### Also fixed this session: `gvm_findings_ingest` tagged for scoped redeploys
 
 Operator feedback: routine code-only changes to this role (like the
