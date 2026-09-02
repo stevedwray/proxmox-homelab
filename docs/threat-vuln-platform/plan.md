@@ -2441,7 +2441,27 @@ standing scheduled timer's `cve_enrichment_sync_llm_provider` default
 stays `anthropic` until that validation happens; this is a deliberate
 gate, not an oversight — see the defaults file's own comment.
 
-### Phase 8 (next, not yet started): dashboard rebuild
+> **ABANDONED 2026-09-02 — do not build new OpenSearch Dashboards
+> visualizations/dashboards this way.** All of Phase 8 below, plus the
+> "Dashboard rebuilt from scratch" and its "CORRECTION 2026-09-02"
+> subsection under Phase 9, were built by hand-authoring classic-viz
+> `visState` JSON and writing it directly into the `.kibana` system index
+> via raw `curl` — not a supported API. This produced a bad feedback loop
+> (no rendering feedback, a stale in-browser saved-object cache that made
+> real fixes look broken, at least one genuinely version-sensitive
+> classic-viz params schema) and the operator correctly called the
+> results "not good" after repeated rounds of this. **The
+> dashboard/visualization layer is moving to Grafana — see Phase 10 at
+> the end of this document.** Everything ELSE in Phase 9 (the root-cause
+> analysis, the design reasoning, the `stacks[]`/`stack-risk-summary`
+> pipeline implementation, the deploy sequence) is NOT abandoned and
+> reflects real, still-correct, still-live work — only the rendering
+> layer on top of it is being replaced. This section is kept, not
+> deleted, as the historical record of what was tried and why it didn't
+> work; do not resume this approach or use it as a reference for how to
+> build a new panel.
+
+### Phase 8 (ABANDONED, see note above): dashboard rebuild
 
 (Numbering note: this section was originally "Phase 7" in the same
 paragraph that scoped local-LLM migration as "Phase 6" — that collided
@@ -2673,7 +2693,7 @@ verified end-to-end:
   genuinely sparse data (only 14 Critical / 11 High exist across all
   10,152 CVEs total), not a pipeline bug.
 
-### Dashboard rebuilt from scratch, same session
+### Dashboard rebuilt from scratch, same session (ABANDONED — see note above Phase 8; superseded by Phase 10/Grafana)
 
 Operator feedback mid-session: the Phase 8 panels were "pretty useless"
 (2 were actually broken -- see below) and didn't show per-stack risk at
@@ -2724,7 +2744,7 @@ mapping-related gotcha for this index family (see the two entries
 above), and unlike those, it's specific to Dashboards' own saved object,
 not the index itself.
 
-### CORRECTION 2026-09-02: dashboard rebuilt again -- funnel error fixed, stack view is now one real table
+### CORRECTION 2026-09-02: dashboard rebuilt again -- funnel error fixed, stack view is now one real table (ABANDONED — see note above Phase 8; superseded by Phase 10/Grafana)
 
 Operator feedback on the just-shipped rebuild: the funnel visualization
 errored (`horizontal_bar` type, custom `categoryAxes`/`valueAxes`
@@ -2794,3 +2814,132 @@ reports changed" design gap (see "operator feedback" note above) is
 still not fixed -- this tag is a scoped workaround for changes that
 only touch `gvm_findings_ingest`, not a general fix for every future
 change to this playbook.
+
+## Phase 10 (planned, not started): move the dashboard/visualization layer to Grafana
+
+Operator decision 2026-09-02, after repeated rounds of hand-authored
+OpenSearch Dashboards `visState` JSON produced results the operator
+called "not good": stop building visualizations/dashboards by writing
+directly into OpenSearch Dashboards' internal `.kibana` storage (see the
+ABANDONED note above Phase 8) and build them in Grafana instead, where
+`monitoring-stack`'s existing dashboards are already good and trusted.
+
+### Why Grafana, concretely -- not just "try something else"
+
+- Grafana's dashboard JSON is a documented, stable, versioned schema
+  intended to be authored/provisioned from files -- unlike `.kibana`,
+  which is Kibana/OpenSearch Dashboards' own internal storage with no
+  public write API for saved objects (everything built this session
+  went in via raw `curl` against a system index, which is why it broke
+  in ways with no error detail and a stale client-side cache).
+- **This repo already has a proven, working pattern for exactly this
+  shape of problem**: `harbor_findings_exporter.py` (Harbor's own scan
+  API -> a small Python HTTP server -> a `/findings.json` endpoint ->
+  Grafana's `yesoreyeram-infinity-datasource` plugin, already installed
+  and configured in `monitoring-stack`'s Grafana). This sidesteps
+  needing to hand-author Elasticsearch/OpenSearch Query DSL or Lucene
+  syntax inside a Grafana panel -- the exact same "write a query
+  language blind, with no rendering feedback" risk that just went badly
+  in OpenSearch Dashboards. A Python script querying OpenSearch and
+  reshaping the result into plain JSON is something this project already
+  has a strong, tested track record with (every `*_findings_sync.py` /
+  `cve_enrichment_sync.py` in this repo).
+- The hard work -- correlating Harbor/GVM/Wazuh into
+  `unified-cve-exposure`, then rolling that up per-stack into
+  `stack-risk-summary` with real Critical/High/Medium/Low columns via
+  `compute_stack_rollup()` -- is already built, deployed, and verified
+  correct, entirely independent of any dashboard tool. Only the
+  rendering layer changes; nothing about the correlation/rollup pipeline
+  needs to be touched for this phase.
+
+### Architecture
+
+```
+opensearch-stack (infra_seg, 192.168.40.14:9200)
+        ^
+        | new: mgmt_seg -> infra_seg:9200 (MikroTik rule, see below)
+        |
+monitoring-stack (mgmt_seg, 192.168.20.12)
+  uvm-dashboard-exporter (new container, modeled directly on
+    harbor-findings-exporter's shape)
+    - polls stack-risk-summary + unified-cve-exposure on a refresh
+      interval (matches HARBOR_FINDINGS_REFRESH_INTERVAL_SECONDS'
+      pattern -- e.g. 300s), caches in memory, serves plain JSON
+    - GET /stack-risk.json  -> flat array, one object per stack,
+      straight passthrough of stack-risk-summary's own documents
+      (already exactly the right shape -- no reshaping needed)
+    - GET /funnel.json      -> {"all": N, "has_exploit": N, "kev": N},
+      computed via the same terms/filter-agg technique already used in
+      compute_stack_rollup()/fetch_cve_instances(), just a single
+      three-way filter aggregation against unified-cve-exposure
+  Grafana
+    - new datasource: "UVM Findings" (yesoreyeram-infinity-datasource,
+      same type/access/jsonData shape as the existing "Harbor Findings"
+      entry), url http://uvm-dashboard-exporter:{{ port }}
+    - new dashboard JSON (checked into
+      terraform/lxc/stacks/monitoring-stack/dashboards/, same
+      with_fileglob pattern that already picks up every *.json there):
+      a Table panel on /stack-risk.json (real columns for free -- the
+      infinity datasource maps JSON object keys straight to table
+      columns, no transform needed) + a Bar gauge or Stat-row panel on
+      /funnel.json for the 3-stage exploitability funnel
+```
+
+### Concrete steps (not yet started)
+
+1. **MikroTik rule**: `mgmt_seg -> infra_seg:9200` (TCP), same shape as
+   the existing `ai_seg -> infra_seg:9200` rule added for
+   `secpipe-stack`. Manual RouterOS change -- MikroTik isn't
+   Terraform-managed in this repo. Operator applies this directly, same
+   as every prior MikroTik change this project has needed.
+2. **New scoped OpenSearch user**, read-only, covering
+   `unified-cve-exposure*` and `stack-risk-summary*` -- same
+   `_plugins/_security/api/roles`/`internalusers` PUT pattern already
+   used by every other OpenSearch credential in this repo
+   (`cve_enrichment_sync`'s own role setup is the closest template),
+   just `allowed_actions: ["read"]` instead of `["create_index",
+   "write", "read"]`. Provisioned from `deploy-monitoring-stack.yml`
+   itself (the consuming stack provisions its own scoped credential
+   against the producer's OpenSearch, matching the pattern
+   `cve_enrichment_sync`/`gvm_findings_ingest`/etc. already use).
+3. **New exporter script**, `uvm_dashboard_exporter.py`, living
+   alongside `harbor_findings_exporter.py` under
+   `terraform/lxc/ansible/files/` -- same `ThreadingHTTPServer` +
+   background refresh-thread shape, `/stack-risk.json` and
+   `/funnel.json` GET handlers, `OPENSEARCH_URL`/`OPENSEARCH_USER`/
+   `OPENSEARCH_PASSWORD`/`UVM_DASHBOARD_REFRESH_INTERVAL_SECONDS` env
+   vars mirroring `HARBOR_API_URL`/etc.'s naming convention.
+4. **`deploy-monitoring-stack.yml` additions** (all mirroring the
+   existing `harbor-findings-exporter` blocks exactly):
+   - a new compose service `uvm-dashboard-exporter` (same `image:
+     {{ harbor_findings_exporter_image }}` python base image, mounted
+     script, `command: [python3, /app/uvm_dashboard_exporter.py]`)
+   - a new entry in the `datasources.yml` content block
+   - a new `Copy uvm_dashboard_exporter.py` task alongside the existing
+     "Copy Harbor findings exporter script" task
+   - the credential from step 2 written the same way
+     `HARBOR_API_PASSWORD` is (a `.env`-style file the compose service's
+     `env_file:` picks up, never templated as a literal into the
+     compose YAML itself)
+5. **New dashboard JSON file** under
+   `terraform/lxc/stacks/monitoring-stack/dashboards/` (picked up
+   automatically by the existing `with_fileglob` task, no playbook
+   change needed for this part) -- author as a real Grafana dashboard
+   JSON export shape (`panels[]`, `targets[]` referencing the new
+   datasource's UID), not hand-guessed; if practical, build one panel
+   first via Grafana's own UI against the real running exporter once
+   step 3/4 are live, then export its JSON as the starting point for the
+   checked-in file, rather than hand-authoring Grafana's panel JSON
+   blind the same way `visState` was hand-authored blind this session.
+
+### Deploy sequence
+
+Build exporter script + playbook changes locally -> `--syntax-check` ->
+operator applies the MikroTik rule -> `provision.sh --stack
+monitoring-stack` -> verify `/stack-risk.json`/`/funnel.json` return
+real data (`curl` the exporter's Docker-internal port from inside the
+LXC, or its published host port) -> add the Grafana datasource and
+dashboard -> verify against real numbers in the Grafana UI, not just
+that the panels saved.
+
+**Not started.** This section is the plan only.
