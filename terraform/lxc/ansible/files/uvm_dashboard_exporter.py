@@ -153,8 +153,19 @@ class SnapshotStore:
             return json.dumps({"rows": self.stack_rows})
 
     def render_funnel(self) -> str:
+        # "Long" format (one row per funnel stage, a string category field
+        # + a numeric value field), not one row with 3 numeric columns --
+        # Grafana's core Bar Chart panel requires a string/time field for
+        # its X-axis category and errors ("Bar charts require a string or
+        # time field") on an all-numeric wide-format row.
         with self._lock:
-            return json.dumps({"rows": [self.funnel]})
+            f = self.funnel
+            rows = [
+                {"stage": "1. All Vulnerabilities", "count": f.get("all", 0)},
+                {"stage": "2. Exploit Exists (PoC or Active)", "count": f.get("has_exploit", 0)},
+                {"stage": "3. Actively Exploited (CISA KEV)", "count": f.get("kev", 0)},
+            ]
+            return json.dumps({"rows": rows})
 
     def render_health(self) -> str:
         with self._lock:
