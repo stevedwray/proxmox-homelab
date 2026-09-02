@@ -2942,4 +2942,164 @@ LXC, or its published host port) -> add the Grafana datasource and
 dashboard -> verify against real numbers in the Grafana UI, not just
 that the panels saved.
 
-**Not started.** This section is the plan only.
+**DONE, deployed, and verified live 2026-09-02/09-03.** All of the above
+was built and confirmed working: MikroTik rule applied, scoped
+`uvm_dashboard_reader` OpenSearch user live, `uvm_dashboard_exporter.py`
+serving real `/stack-risk.json`/`/funnel.json` data, Grafana datasource +
+`uvm-threat-vulnerability-overview` dashboard live with a working funnel
+bar chart and a correctly-columned "Risk by Stack" table (via a core
+"organize" transformation, since the Infinity datasource's backend parser
+returns fields alphabetically regardless of the query's own column
+order). See Phase 11 below for the third panel added on top of this.
+
+## Phase 11 (DONE, deployed and verified live 2026-09-03): architecture-aware CVE deep-dive via local LLM
+
+**Goal**: not just "which CVEs are worst" (Phase 9's stack-risk-summary
+already answers that), but "given the worst/most-exploitable CVEs, what
+should actually be done about each one, given where it really sits in
+this environment's architecture" -- a genuine remediation call, not a
+repeat of CVE facts. Operator's framing: "analysing architecture etc
+where the worst, most exploitable CVE are found and giving an assessment
+on remediation."
+
+### Design decisions (operator-confirmed 2026-09-03, not defaulted silently)
+
+- **Ollama runtime**: confirmed free (the 2026-08-18 "occupied with
+  benchmarking" reason no longer applies, `laguna-s-2.1:q4_k_m-ctx131k`
+  confirmed loaded/idle via a live `/api/ps` check) -- use it for this new
+  work from day one.
+- **Scope**: a narrow, separate weekly deep-dive over only the
+  worst/most-exploitable shortlist (KEV-listed or PoC-available, in
+  production, top 15 by risk score) -- NOT an extension of
+  `cve_enrichment_sync.py`'s existing per-CVE narrative, which runs
+  against all ~10,000 CVEs and stays exactly as-is (still Anthropic,
+  still generic, still gated behind its own separate quality-validation
+  step before any provider switch -- see that script's defaults comment).
+- **Output surface**: a new Grafana panel ("Top CVEs Needing Attention")
+  on the existing UVM dashboard, same exporter/Infinity-datasource
+  pattern as the other two panels.
+- **Shortlist criteria**: `in_production:true` AND (`kev_listed:true` OR
+  `poc_available:true`), sorted by `risk_score` desc, top 15 -- all
+  fields `cve_enrichment_sync.py` already computes, no new data
+  collection needed.
+
+### What "architecture-aware" actually means
+
+A new `generate-stack-architecture.py` (sibling to the existing
+`generate-zone-members-index.py`, same technique: read structured
+`stack.yaml`/`edge.yaml` YAML, not prose `STACK_CONTRACT.md`) produces a
+per-stack snapshot: network zone, that zone's real containment-policy
+description (pulled straight from `network/pve.yaml`'s own `zones[].
+description` field), whether the stack has a Traefik/edge route at all,
+and if so what auth mode gates it (`none`/`forwardAuth`/`oidc`/`native`).
+Deliberately does NOT attempt a full stack-to-stack dependency graph --
+`STACK_CONTRACT.md`'s "Inputs" tables reference other stacks in free
+text, not a structured field, so that graph doesn't actually exist
+anywhere in this repo yet; zone + edge exposure is real, structured
+signal without guessing at one.
+
+This snapshot is regenerated from the current repo state and copied onto
+`secpipe-stack` on every `cve_enrichment_sync` deploy (a `tempfile` +
+`command` + `copy` task sequence, `delegate_to: localhost` for the first
+two) -- always fresh, never hand-maintained.
+
+### New script: `cve_deep_dive.py`
+
+Colocated with `cve_enrichment_sync.py` on `secpipe-stack`, imports its
+`_es_request`/`_call_ollama` helpers directly rather than duplicating
+them (both scripts live in the same directory on disk -- this isn't the
+cross-role shared-library refactor that's still deliberately deferred).
+For each shortlisted CVE, builds a prompt containing the real CVSS/EPSS/
+KEV/PoC facts, the CVE's zone/stack architecture context from the
+snapshot above, and asks for a structured response: `RECOMMENDED ACTION`
+(one of PATCH/UPGRADE/ISOLATE/ACCEPT_RISK/INVESTIGATE) plus a 3-5
+sentence assessment. Upserts one document per CVE into a new
+`cve-remediation-assessment` index (own index template, own line in
+`es_findings_writer`'s permitted index patterns). Own systemd
+service/timer (`cve-deep-dive.timer`, weekly Sundays 23:00 UTC -- the
+shortlist doesn't meaningfully change day to day, and each call is a
+heavier prompt than the routine narrative), gated behind its own
+`cve_enrichment_sync_deep_dive_enabled` flag (nested inside the parent
+role's existing enabled gate).
+
+### A real bug found and fixed before trusting any of this output
+
+First live run (15/15 assessed, 0 errors) looked clean at the metrics
+level, but manual inspection of the actual generated text caught a real
+problem: for CVE-2023-48795, the model wrote "Patch Harbor within 72
+hours," while the structured `stacks` field correctly said
+`wazuh-stack`. Root cause: `unified-cve-exposure`'s `sources[].source`
+field records which **scanner** found a CVE (`"source": "harbor"` means
+"Harbor's own vulnerability scanner found this while scanning an image
+in its registry"), not which **application** is vulnerable. The
+*existing*, separate Anthropic-driven narrative (`llm_narrative`, written
+months earlier by `cve_enrichment_sync.py`'s own prompt) already
+conflated the two ("Patch Harbor..." for a CVE actually found *via*
+Harbor's scanner *in* the `wazuh/wazuh-manager:4.14.7` image) -- and
+because `cve_deep_dive.py`'s prompt quoted that narrative verbatim as
+context, the new model inherited the same confusion despite having the
+correct `stacks: ["wazuh-stack"]` fact sitting right next to it.
+
+Fixed by making the prompt itself state the distinction explicitly
+(scanner-vs-affected-app, with a worked example) and labeling the old
+narrative as "background context ONLY -- defer to the authoritative
+fields above if they conflict." Re-verified live: the same CVE now
+correctly says "The vulnerable wazuh/wazuh-manager:4.14.7 instance..."
+and explicitly notes "the Harbor scanner finding for vxcontrol/
+scraper:latest is irrelevant... focus should remain on Wazuh." This is
+the same class of lesson as
+[[reference_verify_technical_claims_before_encoding]]/
+[[feedback_verify_remembered_blockers]] -- a plausible-looking automated
+result still needs its actual generated text read before being trusted,
+not just its error count.
+
+### Real gotchas hit deploying this (all fixed, all confirmed live)
+
+1. `scripts/provision.sh`'s `render_stack_ansible_extra_vars` uses an
+   explicit per-feature allowlist of `stack.yaml` keys (`CVE_ENRICHMENT_
+   SYNC_KEYS`, `GVM_FINDINGS_INGEST_KEYS`, etc.), not a blanket
+   pass-through -- a brand new `stack.yaml` key silently never reaches
+   Ansible as an extra var until it's added to a `*_KEYS` tuple in that
+   script. Added `CVE_DEEP_DIVE_KEYS`.
+2. `ansible.builtin.tempfile`'s default mode (0600, owner-only) caused a
+   `Permission denied` on the very next task reading that same path --
+   confirmed live that the `copy` module's local-src read for a
+   non-delegated task runs under a different effective read context than
+   the `delegate_to: localhost` task that wrote it, even under the same
+   invoking user. Root cause not fully chased down (not worth the time
+   for a file with no sensitive content); fixed pragmatically by
+   chmod'ing the tempfile to 0644 before use -- fine, since this file
+   only ever holds public `stack.yaml`/`edge.yaml` metadata already
+   checked into the repo in plaintext.
+3. The `uvm-dashboard-exporter` container needed an explicit `docker
+   restart` after its script file changed -- the file gets copied onto
+   the host via the deploy playbook, but the already-running Python
+   process doesn't reload it on its own and there's no compose-level
+   restart trigger wired to that specific file's checksum yet (same
+   general shape of gap as other "the file changed but the process
+   didn't restart" issues in this repo; not fixed generally here, just
+   worked around with a manual restart this time).
+
+### Verified live, final state
+
+`cve-remediation-assessment` holds exactly 15 documents, all correctly
+attributed after the fix above (spot-checked several: `CVE-2026-5435`
+correctly spans 5 real stacks -- authentik/greenbone/netbox/opensearch/
+technitium-stack -- `CVE-2020-8559` on `wazuh-stack` recommended
+`INVESTIGATE` rather than a default `PATCH`/`UPGRADE`, showing the model
+isn't just pattern-matching to one answer). `uvm-dashboard-exporter`'s
+new `/remediation.json` endpoint confirmed serving all 15 rows with a
+fault-tolerant fetch (a missing `cve-remediation-assessment` index --
+e.g. before this timer's first-ever run -- degrades to an empty
+`remediation_rows` list rather than failing the whole exporter refresh
+cycle, since the funnel/stack-risk panels shouldn't go blank just because
+this newer index doesn't exist yet). Grafana dashboard confirmed at
+`version: 9` with all three panels (`Vulnerability Exploitability
+Funnel`, `Risk by Stack`, `Top CVEs Needing Attention`); the new panel's
+`/api/ds/query` raw test confirmed real data flowing through (15 rows,
+5 fields) using the same `parser: backend` + object-form `datasource` +
+"organize" column-order transformation patterns already proven correct
+by the first two panels' own troubleshooting history above -- the actual
+in-browser column order/rendering for this third panel has not yet been
+confirmed by the operator, same open item class as the "Risk by Stack"
+table's column order.

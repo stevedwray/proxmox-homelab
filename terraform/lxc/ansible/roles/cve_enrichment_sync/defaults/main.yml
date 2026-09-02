@@ -76,3 +76,34 @@ cve_enrichment_sync_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_
 # alone -- update this comment once confirmed.
 cve_enrichment_sync_es_role_name: es_findings_writer
 cve_enrichment_sync_es_user_name: cve_enrichment_sync
+
+# --- CVE deep-dive (Phase 11) ---------------------------------------------
+# Separate, narrower, architecture-aware pass over only the worst/most-
+# exploitable CVEs -- see cve_deep_dive.py's module docstring. Explicit
+# opt-in, independent of cve_enrichment_sync_enabled's own gate (though it
+# only ever actually runs nested inside that flag's block, since it reuses
+# that role's directory/credentials). Operator-confirmed 2026-09-03: use
+# Ollama/laguna from day one for this new work -- NOT a switch of
+# cve_enrichment_sync_llm_provider's own standing default above, which
+# stays gated behind its own separate quality-validation step.
+cve_enrichment_sync_deep_dive_enabled: false
+
+# Weekly, not daily -- the shortlist (KEV-listed/PoC-available CVEs
+# already in production) doesn't meaningfully change day to day, and each
+# assessment is a heavier prompt (full architecture context) than the
+# routine narrative. Sundays, well after the daily 21:00 UTC enrichment
+# sync plus margin.
+cve_enrichment_sync_deep_dive_on_calendar: "Sun *-*-* 23:00:00"
+
+# How many of the worst CVEs (by risk_score, KEV-listed or PoC-available,
+# in_production:true) get a full architecture-aware assessment per run.
+cve_enrichment_sync_deep_dive_top_n: 15
+
+# Same Framework Ollama endpoint cve_enrichment_sync_ollama_url/_model
+# already point at (confirmed reachable from secpipe-stack's network,
+# confirmed loaded/idle 2026-09-03) -- kept as its own variable rather
+# than reusing cve_enrichment_sync_ollama_url/_model directly so this can
+# move independently once the routine narrative's own provider migration
+# happens.
+cve_enrichment_sync_deep_dive_ollama_url: "{{ cve_enrichment_sync_ollama_url }}"
+cve_enrichment_sync_deep_dive_ollama_model: "{{ cve_enrichment_sync_ollama_model }}"

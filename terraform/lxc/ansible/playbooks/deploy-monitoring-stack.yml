@@ -487,6 +487,7 @@
             - index_patterns:
                 - "unified-cve-exposure*"
                 - "stack-risk-summary*"
+                - "cve-remediation-assessment*"
               allowed_actions:
                 - "read"
         status_code: [200, 201]

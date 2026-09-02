@@ -23,6 +23,11 @@ Two endpoints:
     terms/filter-agg technique already used in compute_stack_rollup()/
     fetch_cve_instances() (a single three-way filter aggregation
     against unified-cve-exposure).
+  GET /remediation.json -- flat array, one row per shortlisted CVE, a
+    straight passthrough of cve-remediation-assessment's own documents
+    (Phase 11: cve_deep_dive.py's architecture-aware assessment of the
+    worst/most-exploitable CVEs, sourced from cve-mcp-server via a local
+    Ollama LLM -- see docs/threat-vuln-platform/plan.md Phase 11).
   GET /healthz -- {"up": bool, "last_success_ts": float, "last_error": str|None}
 
 Intentionally stdlib-only, matching every other findings-related script
@@ -79,6 +84,27 @@ def _fetch_stack_rows(base_url: str, *, auth_header: str, verify_tls: bool) -> l
     return [hit["_source"] for hit in result.get("hits", {}).get("hits", [])]
 
 
+def _fetch_remediation_rows(base_url: str, *, auth_header: str, verify_tls: bool) -> list[dict[str, Any]]:
+    # cve-remediation-assessment is small (Phase 11's shortlist is
+    # top-N, currently 15) -- a plain sorted search, no aggregation
+    # needed, same as _fetch_stack_rows above.
+    result = _es_request(
+        base_url, "/cve-remediation-assessment/_search?size=100&sort=risk_score:desc",
+        auth_header=auth_header, verify_tls=verify_tls,
+    )
+    rows = []
+    for hit in result.get("hits", {}).get("hits", []):
+        src = hit["_source"]
+        rows.append({
+            "cve_id": src.get("cve_id"),
+            "stacks": ", ".join(src.get("stacks") or []),
+            "risk_score": src.get("risk_score"),
+            "recommended_action": src.get("recommended_action"),
+            "assessment": src.get("assessment"),
+        })
+    return rows
+
+
 def _fetch_funnel(base_url: str, *, auth_header: str, verify_tls: bool) -> dict[str, int]:
     body = {
         "size": 0,
@@ -126,14 +152,19 @@ class SnapshotStore:
         self.last_error: str | None = None
         self.stack_rows: list[dict[str, Any]] = []
         self.funnel: dict[str, int] = {"all": 0, "has_exploit": 0, "kev": 0}
+        self.remediation_rows: list[dict[str, Any]] = []
 
-    def update_success(self, stack_rows: list[dict[str, Any]], funnel: dict[str, int]) -> None:
+    def update_success(
+        self, stack_rows: list[dict[str, Any]], funnel: dict[str, int],
+        remediation_rows: list[dict[str, Any]],
+    ) -> None:
         with self._lock:
             self.up = True
             self.last_success_ts = time.time()
             self.last_error = None
             self.stack_rows = stack_rows
             self.funnel = funnel
+            self.remediation_rows = remediation_rows
 
     def update_failure(self, error: str) -> None:
         with self._lock:
@@ -167,6 +198,10 @@ class SnapshotStore:
             ]
             return json.dumps({"rows": rows})
 
+    def render_remediation_rows(self) -> str:
+        with self._lock:
+            return json.dumps({"rows": self.remediation_rows})
+
     def render_health(self) -> str:
         with self._lock:
             return json.dumps({
@@ -188,7 +223,17 @@ class UvmDashboardExporter:
     def _refresh_once(self) -> None:
         stack_rows = _fetch_stack_rows(self.es_url, auth_header=self.auth_header, verify_tls=self.verify_tls)
         funnel = _fetch_funnel(self.es_url, auth_header=self.auth_header, verify_tls=self.verify_tls)
-        self.snapshot.update_success(stack_rows, funnel)
+        try:
+            # Separate try/except: cve-remediation-assessment (Phase 11)
+            # doesn't exist until cve_deep_dive.py's first run creates it
+            # (index templates only take effect on first write, not
+            # pre-created) -- a missing index here shouldn't fail the
+            # whole refresh and blank out the stack-risk/funnel panels too.
+            remediation_rows = _fetch_remediation_rows(self.es_url, auth_header=self.auth_header, verify_tls=self.verify_tls)
+        except Exception as exc:  # noqa: BLE001 — see comment above
+            print(f"WARN: remediation fetch failed (index may not exist yet): {exc}", file=sys.stderr)
+            remediation_rows = []
+        self.snapshot.update_success(stack_rows, funnel, remediation_rows)
 
     def refresh_forever(self) -> None:
         while True:
@@ -217,6 +262,9 @@ class UvmDashboardHandler(BaseHTTPRequestHandler):
             return
         if self.path in {"/funnel.json", "/funnel.json/"}:
             self._write_json(self.exporter.snapshot.render_funnel())
+            return
+        if self.path in {"/remediation.json", "/remediation.json/"}:
+            self._write_json(self.exporter.snapshot.render_remediation_rows())
             return
         if self.path in {"/healthz", "/healthz/"}:
             self._write_json(self.exporter.snapshot.render_health())

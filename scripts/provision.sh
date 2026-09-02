@@ -367,6 +367,10 @@ CVE_ENRICHMENT_SYNC_KEYS = (
     "cve_enrichment_sync_enabled",
 )
 
+CVE_DEEP_DIVE_KEYS = (
+    "cve_enrichment_sync_deep_dive_enabled",
+)
+
 
 def resolve_placeholders(value):
     if isinstance(value, str):
@@ -442,6 +446,10 @@ for key in WAZUH_FINDINGS_INGEST_KEYS:
         extra_vars[key] = resolve_placeholders(stack[key])
 
 for key in CVE_ENRICHMENT_SYNC_KEYS:
+    if key in stack and stack[key] is not None:
+        extra_vars[key] = resolve_placeholders(stack[key])
+
+for key in CVE_DEEP_DIVE_KEYS:
     if key in stack and stack[key] is not None:
         extra_vars[key] = resolve_placeholders(stack[key])
 
