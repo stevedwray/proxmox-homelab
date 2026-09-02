@@ -70,6 +70,17 @@
         group: root
         mode: "0750"
 
+    # Phase 9 (docs/threat-vuln-platform/plan.md, 2026-09-01) -- reverse
+    # IP->stack registry, same pattern as es_findings_ingest's
+    # known_production_images.json.
+    - name: Copy IP-to-stack registry
+      ansible.builtin.copy:
+        src: assets/ip_to_stack.json
+        dest: "{{ gvm_findings_ingest_dir }}/assets/ip_to_stack.json"
+        owner: root
+        group: root
+        mode: "0640"
+
     - name: Copy index template assets
       ansible.builtin.copy:
         src: "assets/templates/{{ item }}"

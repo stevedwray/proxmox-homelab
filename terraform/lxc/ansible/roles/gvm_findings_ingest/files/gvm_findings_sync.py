@@ -41,6 +41,7 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime, timezone
+from pathlib import Path
 
 # Duplicated from terraform/lxc/ansible/files/greenbone-scan-setup/
 # setup_scan_program.py, same "hardcode the cross-role constant rather
@@ -59,6 +60,27 @@ ZONES = [
 _ZONE_NETWORKS = [(z["key"], ipaddress.ip_network(z["cidr"])) for z in ZONES]
 
 REDTEAM_EXCLUDE = ["192.168.1.113", "192.168.1.55"]
+
+# Reverse IP->stack registry (Phase 9, docs/threat-vuln-platform/plan.md,
+# 2026-09-01) -- same graceful-degrade-to-empty-dict pattern as
+# harbor_findings_sync.py's load_production_registry(). Derived from
+# .env's LAB_IP_* vars (the canonical IP registry in this repo); GVM
+# only ever sees raw IPs, so this is what makes "which stack does this
+# scanned host belong to" answerable at all. Hosts not in the registry
+# (workstations, RPis, IoT, pve/pve-test-vm themselves, unrecognized
+# devices) stay stack: null -- same graceful-degrade already used for
+# zone: null on non-VLAN-zoned hosts.
+_STACK_REGISTRY_PATH = Path(__file__).parent / "assets" / "ip_to_stack.json"
+
+
+def load_stack_registry() -> dict:
+    try:
+        with open(_STACK_REGISTRY_PATH) as f:
+            data = json.load(f)
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"WARN: failed to load stack registry ({exc}), all hosts will show stack=null", file=sys.stderr)
+        return {}
+    return {k: v for k, v in data.items() if not k.startswith("_")}
 
 
 def _now_iso() -> str:
@@ -88,7 +110,7 @@ def fetch_gvm_findings(bridge_url: str, *, timeout: int = 120) -> list[dict]:
     return body.get("results", [])
 
 
-def build_documents(raw_results: list[dict], *, scan_time_fallback: str) -> list[dict]:
+def build_documents(raw_results: list[dict], *, scan_time_fallback: str, stack_registry: dict) -> list[dict]:
     docs = []
     now = _now_iso()
     for r in raw_results:
@@ -128,7 +150,7 @@ def build_documents(raw_results: list[dict], *, scan_time_fallback: str) -> list
                     "hostname": r.get("hostname") or None,
                     "port": r.get("port"),
                     "zone": _resolve_zone(host) if host else None,
-                    "stack": None,  # not automatic -- GVM scans raw IPs, not stacks (see README section 3)
+                    "stack": stack_registry.get(host) if host else None,
                     # Derived, not guessed, per docs/threat-vuln-platform/plan.md's UVM
                     # redesign phase (2026-09-01): a pentest_target is by definition
                     # not production; a host with unknown pentest_target status (no
@@ -285,7 +307,8 @@ def main() -> int:
         return 1
 
     print(f"Fetched {len(raw_results)} raw GVM results (before Log-severity filtering).")
-    docs = build_documents(raw_results, scan_time_fallback=started)
+    stack_registry = load_stack_registry()
+    docs = build_documents(raw_results, scan_time_fallback=started, stack_registry=stack_registry)
     print(f"{len(docs)} findings after dropping threat=Log.")
 
     indexed, errors = bulk_upsert(

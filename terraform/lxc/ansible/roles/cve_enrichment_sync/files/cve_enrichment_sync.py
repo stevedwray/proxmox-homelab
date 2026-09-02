@@ -107,6 +107,7 @@ ASSET_FIELD_SPECS = {
         ),
         "production_field": "artifact.in_production",
         "zone_field": "artifact.zone",
+        "stack_field": "artifact.stack",
     },
     "greenbone": {
         "source_fields": ["target.host", "target.port", "target.zone"],
@@ -117,6 +118,7 @@ ASSET_FIELD_SPECS = {
         ),
         "production_field": "target.in_production",
         "zone_field": "target.zone",
+        "stack_field": "target.stack",
     },
     "wazuh": {
         "source_fields": ["target.agent_id", "target.agent_name"],
@@ -127,6 +129,7 @@ ASSET_FIELD_SPECS = {
         ),
         "production_field": "target.in_production",
         "zone_field": "target.zone",
+        "stack_field": "target.stack",
     },
 }
 
@@ -150,7 +153,7 @@ def build_assets_summary(sources_list: list[dict]) -> str:
 
 def fetch_cve_instances(
     es_url: str, index: str, cve_field: str, asset_source_fields: list[str],
-    *, auth_header: str, verify_tls: bool, production_field: str, zone_field: str,
+    *, auth_header: str, verify_tls: bool, production_field: str, zone_field: str, stack_field: str,
 ) -> dict[str, dict]:
     """Terms-aggregate distinct CVE values + doc counts from one findings
     index, plus: (1) a top_hits sub-aggregation sampling up to
@@ -159,7 +162,9 @@ def fetch_cve_instances(
     this CVE's instances are in_production:true, (3) a terms sub-agg
     collecting the distinct zones this CVE appears in -- the UVM
     redesign's production/zone rollup (docs/threat-vuln-platform/plan.md,
-    2026-09-01). Works unchanged whether the field is a single keyword
+    2026-09-01), (4) a terms sub-agg collecting the distinct stacks this
+    CVE appears on -- Phase 9's stack-centric rollup, same day. Works
+    unchanged whether the field is a single keyword
     (harbor-findings.finding_id) or a keyword array (gvm-findings.cve) --
     a terms agg on an array field buckets each value independently, which
     is the correct behaviour here (a finding with 2 CVEs should count
@@ -179,6 +184,7 @@ def fetch_cve_instances(
                     },
                     "production_count": {"filter": {"term": {production_field: True}}},
                     "zones": {"terms": {"field": zone_field, "size": 10}},
+                    "stacks": {"terms": {"field": stack_field, "size": 10}},
                 },
             }
         },
@@ -197,11 +203,13 @@ def fetch_cve_instances(
             continue
         hits = b.get("assets", {}).get("hits", {}).get("hits", [])
         zones = [z["key"] for z in b.get("zones", {}).get("buckets", []) if z.get("key")]
+        stacks = [s["key"] for s in b.get("stacks", {}).get("buckets", []) if s.get("key")]
         out[b["key"]] = {
             "count": b["doc_count"],
             "raw_assets": [h.get("_source", {}) for h in hits],
             "production_count": b.get("production_count", {}).get("doc_count", 0),
             "zones": zones,
+            "stacks": stacks,
         }
     return out
 
@@ -420,17 +428,18 @@ def writeback_findings(
 
 def refresh_exposure_sources(
     es_url: str, cve_id: str, sources_list: list[dict], total_instances: int,
-    in_production: bool, zones: list[str],
+    in_production: bool, zones: list[str], stacks: list[str],
     *, auth_header: str, verify_tls: bool, dry_run: bool
 ) -> bool:
     """Cheap update for an already-enriched CVE whose sources/counts/
-    production-or-zone status have changed (e.g. a newly-added findings
-    source, like wazuh-findings joining harbor-findings/gvm-findings on
-    2026-09-01, or the UVM redesign's in_production/zones fields backfilling
-    onto every existing doc) -- updates only these fields via a partial
-    _update, with NO triage_cve or LLM call. This is what backfills
-    existing enrichments without re-running the expensive full enrichment
-    for every already-enriched CVE. Returns True if updated."""
+    production-or-zone-or-stack status have changed (e.g. a newly-added
+    findings source, like wazuh-findings joining harbor-findings/
+    gvm-findings on 2026-09-01, or the UVM redesign's in_production/
+    zones/stacks fields backfilling onto every existing doc) -- updates
+    only these fields via a partial _update, with NO triage_cve or LLM
+    call. This is what backfills existing enrichments without re-running
+    the expensive full enrichment for every already-enriched CVE. Returns
+    True if updated."""
     if dry_run:
         return False
     status, result = _es_request(
@@ -442,6 +451,7 @@ def refresh_exposure_sources(
             "assets_summary": build_assets_summary(sources_list),
             "in_production": in_production,
             "zones": zones,
+            "stacks": stacks,
         }},
         auth_header=auth_header, verify_tls=verify_tls,
     )
@@ -522,10 +532,11 @@ def main() -> int:
             args.elasticsearch_url, src["index"], src["field"], spec["source_fields"],
             auth_header=auth_header, verify_tls=verify_tls,
             production_field=spec["production_field"], zone_field=spec["zone_field"],
+            stack_field=spec["stack_field"],
         )
         for cve_id, info in counts.items():
             entry = cve_map.setdefault(
-                cve_id, {"sources": [], "total_instances": 0, "production_count": 0, "zones": set()}
+                cve_id, {"sources": [], "total_instances": 0, "production_count": 0, "zones": set(), "stacks": set()}
             )
             assets = [spec["format"](raw) for raw in info["raw_assets"]]
             entry["sources"].append({
@@ -538,13 +549,15 @@ def main() -> int:
             entry["total_instances"] += info["count"]
             entry["production_count"] += info["production_count"]
             entry["zones"].update(info["zones"])
+            entry["stacks"].update(info["stacks"])
 
-    # Normalize the per-CVE production/zone rollup computed above (sets
-    # aren't JSON-serializable, and in_production is a simple derived
-    # bool: true if ANY instance across ANY source is production).
+    # Normalize the per-CVE production/zone/stack rollup computed above
+    # (sets aren't JSON-serializable, and in_production is a simple
+    # derived bool: true if ANY instance across ANY source is production).
     for entry in cve_map.values():
         entry["in_production"] = entry["production_count"] > 0
         entry["zones"] = sorted(entry["zones"])
+        entry["stacks"] = sorted(entry["stacks"])
 
     print(f"Found {len(cve_map)} distinct CVEs across {len(sources)} findings indices.")
 
@@ -597,10 +610,11 @@ def main() -> int:
                     or "in_production" not in existing
                     or existing.get("in_production") != entry["in_production"]
                     or existing.get("zones") != entry["zones"]
+                    or existing.get("stacks") != entry["stacks"]
                 ):
                     if refresh_exposure_sources(
                         args.elasticsearch_url, cve_id, entry["sources"], entry["total_instances"],
-                        entry["in_production"], entry["zones"],
+                        entry["in_production"], entry["zones"], entry["stacks"],
                         auth_header=auth_header, verify_tls=verify_tls, dry_run=args.dry_run,
                     ):
                         sources_refreshed += 1
@@ -649,6 +663,7 @@ def main() -> int:
             "assets_summary": build_assets_summary(entry["sources"]),
             "in_production": entry["in_production"],
             "zones": entry["zones"],
+            "stacks": entry["stacks"],
             **parsed,
             "triage_raw_text": triage_text,
             "llm_narrative": narrative,

@@ -1,0 +1,23 @@
+{
+  "_comment": "Reverse IP->stack registry, derived directly from .env's LAB_IP_* vars (the canonical IP registry in this repo -- do not maintain a second one by hand, regenerate from .env if it drifts). Hosts that are bare-metal/hypervisor, not an application stack, map to null (matches the existing zone:null precedent for non-VLAN-zoned hosts like pve itself).",
+  "192.168.20.10": "authentik-stack",
+  "192.168.20.11": "step-ca-stack",
+  "192.168.20.12": "monitoring-stack",
+  "192.168.20.13": "dns-stack",
+  "192.168.20.14": "graylog-stack",
+  "192.168.20.15": "technitium-stack",
+  "192.168.20.20": "portainer-stack",
+  "192.168.30.10": "proxy-stack",
+  "192.168.40.10": "harbor-stack",
+  "192.168.40.11": "apt-cacher-stack",
+  "192.168.40.12": "netbox-stack",
+  "192.168.40.14": "opensearch-stack",
+  "192.168.40.15": "wazuh-stack",
+  "192.168.10.63": "ci-runner-01",
+  "192.168.70.10": "pentagi-stack",
+  "192.168.70.11": "greenbone-stack",
+  "192.168.50.10": "mcp-utility-stack",
+  "192.168.50.11": "ai-services-stack",
+  "192.168.50.12": "secpipe-stack",
+  "192.168.1.8": null
+}
