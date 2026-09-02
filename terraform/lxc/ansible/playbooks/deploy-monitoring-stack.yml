@@ -110,6 +110,22 @@
     harbor_api_username: "admin"
     harbor_api_password: "{{ lookup('env', 'HARBOR_ADMIN_PASSWORD') | mandatory('HARBOR_ADMIN_PASSWORD env var is not set') }}"
     node_exporter_scrape_password: "{{ lookup('env', 'NODE_EXPORTER_SCRAPE_PASSWORD') | mandatory('NODE_EXPORTER_SCRAPE_PASSWORD env var is not set') }}"
+    # uvm-dashboard-exporter -- docs/threat-vuln-platform/plan.md Phase 10.
+    # Read-only OpenSearch reader feeding Grafana's UVM dashboard via
+    # plain JSON, same exporter+infinity-datasource shape as
+    # harbor-findings-exporter above. Needs the new
+    # mgmt_seg -> opensearch-stack:9200 MikroTik rule (ansible/00-initial-
+    # setup/mikrotik-firewall-monitoring-to-opensearch-stack.yml) applied
+    # first.
+    uvm_dashboard_listen_port: "9415"
+    uvm_dashboard_refresh_interval_seconds: "300"
+    uvm_dashboard_elasticsearch_host: "{{ lookup('env', 'LAB_IP_OPENSEARCH') | mandatory('LAB_IP_OPENSEARCH env var is required') }}"
+    uvm_dashboard_elasticsearch_url: "https://{{ uvm_dashboard_elasticsearch_host }}:9200"
+    uvm_dashboard_es_no_verify_tls: true
+    uvm_dashboard_elastic_admin_user: admin
+    uvm_dashboard_elastic_admin_password: "{{ lookup('env', 'OPENSEARCH_ADMIN_PASSWORD') | mandatory('OPENSEARCH_ADMIN_PASSWORD env var is required') }}"
+    uvm_dashboard_es_role_name: uvm_dashboard_reader
+    uvm_dashboard_es_user_name: uvm_dashboard_exporter
 
   pre_tasks:
     - name: Reconcile Grafana Authentik OIDC client
@@ -147,6 +163,7 @@
         - { path: "{{ monitoring_compose_dir }}/grafana/provisioning/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/grafana/dashboards", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/harbor-findings-exporter", mode: "0750" }
+        - { path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter", mode: "0750" }
         - { path: "{{ monitoring_compose_dir }}/victoria-metrics", mode: "0750" }
 
     - name: Write VictoriaMetrics scrape config
@@ -355,6 +372,14 @@
                 dataType: json
                 useBackend: false
               editable: true
+            - name: UVM Findings
+              type: yesoreyeram-infinity-datasource
+              access: proxy
+              url: http://uvm-dashboard-exporter:{{ uvm_dashboard_listen_port }}  # nosonar: ansible:S5332 — Docker-internal hostname, never reaches SDN
+              jsonData:
+                dataType: json
+                useBackend: false
+              editable: true
 
     - name: Write Grafana dashboard provider config
       ansible.builtin.copy:
@@ -394,6 +419,114 @@
         dest: "{{ monitoring_compose_dir }}/harbor-findings-exporter/harbor_findings_exporter.py"
         mode: "0750"
       register: harbor_findings_exporter_script
+
+    - name: Copy UVM dashboard exporter script
+      ansible.builtin.copy:
+        src: "{{ playbook_dir }}/../files/uvm_dashboard_exporter.py"
+        dest: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter/uvm_dashboard_exporter.py"
+        mode: "0750"
+      register: uvm_dashboard_exporter_script
+
+    # ---------------------------------------------------------------
+    # Scoped, read-only OpenSearch user for uvm-dashboard-exporter --
+    # same provisioning pattern cve_enrichment_sync/es_findings_ingest/
+    # gvm_findings_ingest already use, just "read" only instead of
+    # "write"/"create_index". Requires the new
+    # mgmt_seg -> opensearch-stack:9200 MikroTik rule to actually reach
+    # opensearch-stack; this task itself runs from the workstation
+    # (delegate_to: localhost), which already has reachability, so it
+    # can succeed even before that rule exists -- only the exporter
+    # container itself would fail to refresh until the rule is applied.
+    # ---------------------------------------------------------------
+
+    - name: Check for existing OpenSearch uvm-dashboard credential
+      ansible.builtin.stat:
+        path: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter/es-user.env"
+      register: uvm_dashboard_es_credential_stat
+
+    - name: Check if OpenSearch is reachable before provisioning its scoped user
+      ansible.builtin.wait_for:
+        host: "{{ uvm_dashboard_elasticsearch_host }}"
+        port: 9200
+        timeout: 5
+      register: uvm_dashboard_es_reachable
+      ignore_errors: true
+      when: not uvm_dashboard_es_credential_stat.stat.exists
+      delegate_to: localhost
+
+    - name: Warn and skip uvm-dashboard user provisioning when OpenSearch is not yet reachable
+      ansible.builtin.debug:
+        msg: >-
+          OpenSearch at {{ uvm_dashboard_elasticsearch_host }}:9200 is not
+          reachable (timeout). Skipping uvm-dashboard-exporter user creation --
+          re-run provision once the mgmt_seg -> opensearch-stack:9200 MikroTik
+          rule is applied and opensearch-stack is reachable.
+      when:
+        - not uvm_dashboard_es_credential_stat.stat.exists
+        - uvm_dashboard_es_reachable.failed | default(true)
+
+    - name: Generate a random password for the scoped OpenSearch user
+      ansible.builtin.set_fact:
+        uvm_dashboard_es_password: "{{ lookup('password', '/dev/null length=32 chars=ascii_letters,digits') }}"
+      when:
+        - not uvm_dashboard_es_credential_stat.stat.exists
+        - not (uvm_dashboard_es_reachable.failed | default(true))
+      no_log: true
+
+    - name: Ensure uvm_dashboard_reader role exists in OpenSearch (read-only)
+      ansible.builtin.uri:
+        url: "{{ uvm_dashboard_elasticsearch_url }}/_plugins/_security/api/roles/{{ uvm_dashboard_es_role_name }}"
+        method: PUT
+        url_username: "{{ uvm_dashboard_elastic_admin_user }}"
+        url_password: "{{ uvm_dashboard_elastic_admin_password }}"
+        validate_certs: "{{ not uvm_dashboard_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          index_permissions:
+            - index_patterns:
+                - "unified-cve-exposure*"
+                - "stack-risk-summary*"
+              allowed_actions:
+                - "read"
+        status_code: [200, 201]
+      delegate_to: localhost
+
+    - name: Ensure scoped OpenSearch user exists
+      ansible.builtin.uri:
+        url: "{{ uvm_dashboard_elasticsearch_url }}/_plugins/_security/api/internalusers/{{ uvm_dashboard_es_user_name }}"
+        method: PUT
+        url_username: "{{ uvm_dashboard_elastic_admin_user }}"
+        url_password: "{{ uvm_dashboard_elastic_admin_password }}"
+        validate_certs: "{{ not uvm_dashboard_es_no_verify_tls }}"
+        force_basic_auth: true
+        body_format: json
+        body:
+          password: "{{ uvm_dashboard_es_password }}"
+          opendistro_security_roles:
+            - "{{ uvm_dashboard_es_role_name }}"
+          description: "uvm-dashboard-exporter service account (monitoring-stack) -- read-only, never the admin superuser"
+        status_code: [200, 201]
+      when:
+        - not uvm_dashboard_es_credential_stat.stat.exists
+        - not (uvm_dashboard_es_reachable.failed | default(true))
+      delegate_to: localhost
+      no_log: true
+
+    - name: Write OpenSearch uvm-dashboard credential file
+      ansible.builtin.copy:
+        dest: "{{ monitoring_compose_dir }}/uvm-dashboard-exporter/es-user.env"
+        owner: root
+        group: root
+        mode: "0600"
+        content: |
+          # uvm-dashboard-exporter OpenSearch user credential - managed by Ansible, do not edit by hand
+          OPENSEARCH_USER={{ uvm_dashboard_es_user_name }}
+          OPENSEARCH_PASSWORD={{ uvm_dashboard_es_password }}
+      when:
+        - not uvm_dashboard_es_credential_stat.stat.exists
+        - not (uvm_dashboard_es_reachable.failed | default(true))
+      no_log: true
 
     - name: Write monitoring secrets env file
       ansible.builtin.copy:
@@ -486,6 +619,27 @@
                 - /app/harbor_findings_exporter.py
               volumes:
                 - ./harbor-findings-exporter/harbor_findings_exporter.py:/app/harbor_findings_exporter.py:ro
+
+            uvm-dashboard-exporter:
+              image: {{ harbor_findings_exporter_image }}
+              container_name: uvm-dashboard-exporter
+              restart: unless-stopped
+              env_file:
+                - .env
+                - ./uvm-dashboard-exporter/es-user.env
+              ports:
+                - "{{ uvm_dashboard_listen_port }}:{{ uvm_dashboard_listen_port }}"
+              environment:
+                OPENSEARCH_URL: "{{ uvm_dashboard_elasticsearch_url }}"
+                OPENSEARCH_NO_VERIFY_TLS: "{{ 'true' if uvm_dashboard_es_no_verify_tls else 'false' }}"
+                UVM_DASHBOARD_REFRESH_INTERVAL_SECONDS: "{{ uvm_dashboard_refresh_interval_seconds }}"
+                UVM_DASHBOARD_LISTEN_ADDRESS: "0.0.0.0"
+                UVM_DASHBOARD_LISTEN_PORT: "{{ uvm_dashboard_listen_port }}"
+              command:
+                - python3
+                - /app/uvm_dashboard_exporter.py
+              volumes:
+                - ./uvm-dashboard-exporter/uvm_dashboard_exporter.py:/app/uvm_dashboard_exporter.py:ro
 
             cadvisor:
               image: {{ cadvisor_image }}
