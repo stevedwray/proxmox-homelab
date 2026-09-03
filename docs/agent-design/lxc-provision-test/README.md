@@ -1,6 +1,6 @@
 # LXC Provision Test Workspace
 
-Status: **kept as a durable worked example**, alongside `docs/media-stack-v2/`
+Status: **kept as a durable worked example**, alongside `docs/media-stack-lab/`
 -- the second pass ran clean end to end and both real infrastructure
 mutations (`lxcprov-05-terragrunt-apply`, `lxcprov-06-provision`) were
 torn down afterward (`terragrunt destroy`, confirmed via `pct list` --

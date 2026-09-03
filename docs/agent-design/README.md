@@ -8,7 +8,7 @@ proxy-observed tests exercising the real failure modes (retry loops,
 gate failures, dependency gating, no-chaining). One model plans
 (frontier), one model executes (local) -- there is no third tier and no
 per-step judgment call for the executor to make. See
-`docs/media-stack-v2/` for the worked example.
+`docs/media-stack-lab/` for the worked example.
 
 ## How to use this, starting from nothing
 
@@ -30,7 +30,7 @@ stack, a cross-cutting change.
 2. **Once the plan is committed**, switch to your local model (VS Code Copilot,
    `Repo Tools` agent mode) and run `/implement-step`, naming the plan
    and the step id (e.g. "run implement-step against
-   docs/media-stack-v2/plan.md, step media-v2-01-stack-request"). It
+   docs/media-stack-lab/plan.md, step media-lab-01-stack-request"). It
    fetches the plan itself via `get_document` -- committing to `docs/`
    triggers this repo's auto-reindex hook, so there's no copy-pasting
    content into chat. `.github/prompts/implement-step.prompt.md` is what
@@ -76,7 +76,7 @@ genuinely useful against this repo, not just technically wired up.
 
 ## Worked examples
 
-- `docs/media-stack-v2/` -- a real plan (replace legacy `media-stack`
+- `docs/media-stack-lab/` -- a real plan (replace legacy `media-stack`
   with Jellyfin+Immich, Authentik SSO, watch-history migration) taken
   through two full passes: the first described decisions rather than
   resolving them, leaving most steps unbounded; the second rewrote

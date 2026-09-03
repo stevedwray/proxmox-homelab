@@ -88,7 +88,7 @@ silently, then write `docs/<workspace>/plan.md` as bounded steps per
 `docs/agent-design/step-packet-schema.md` — converting every step's
 judgment into literal file content or exact commands before calling it
 done, not leaving it as something to figure out at execution time. See
-`docs/media-stack-v2/` for a real worked example.
+`docs/media-stack-lab/` for a real worked example.
 
 ## Production Credential Controls
 
