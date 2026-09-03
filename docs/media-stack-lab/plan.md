@@ -339,6 +339,18 @@ gates:
     critical: true
 ```
 
+**Done 2026-09-04 -- see `docs/media-stack-lab/README.md`'s hand-back for
+this step.** Two things above were incomplete as originally written,
+fixed in the real file: `playbook_content` was missing entirely (this
+step's `change:` block above never included one, but
+`terraform/lxc/scaffold-stack.py` requires `request["playbook_content"]`
+unconditionally -- `media-lab-02-scaffold` would have failed immediately
+without it); and `DB_PASSWORD` was renamed to
+`MEDIA_STACK_LAB_DB_PASSWORD` throughout to match this repo's per-stack
+secret-naming convention. The real
+`terraform/lxc/stacks/media-stack-lab/stack-request.yaml` is the
+authoritative version now, not the `change:` text above.
+
 ## Operator step: media-lab-02-scaffold
 
 Not a step block -- this is the operator running a command directly, not

@@ -75,7 +75,29 @@ authoring or approving the next step.
   as a Terraform-plannable resource regardless of gate wording.
   Not yet applied to production -- `terragrunt apply` and the real SDN
   zone creation are still ahead, out of scope for this plan-only step.
-- `media-lab-01-stack-request`: not started
+- `media-lab-01-stack-request`: **done 2026-09-04.** Created
+  `terraform/lxc/stacks/media-stack-lab/stack-request.yaml`. Two real
+  gaps found and fixed while authoring it (documented in the file's own
+  header comment):
+  - `playbook_content` was entirely missing from the plan's step block --
+    `terraform/lxc/scaffold-stack.py` requires it unconditionally
+    (`request["playbook_content"]`, no default). Without it,
+    `media-lab-02-scaffold` would have failed immediately. Authored one
+    modeled on `stack-request.example.yaml`'s minecraft-stack exemplar
+    (lxc_base + docker_base roles, write compose, validate, up -d,
+    wait_for) plus `deploy-netbox-stack.yml`'s secrets-`.env` pattern.
+    Syntax-checked clean (`ansible-playbook --syntax-check`).
+  - Jellyfin tag placeholder resolved to the real current stable
+    (`10.11.11ubu2604-ls47`, confirmed via Docker Hub 2026-09-04), not
+    left as a placeholder.
+  - Renamed `DB_PASSWORD` -> `MEDIA_STACK_LAB_DB_PASSWORD` throughout
+    (compose requirements + playbook's `.env` templating task) to match
+    this repo's per-stack secret-naming convention and avoid a
+    flat-environment collision risk. Not yet added to
+    `terraform/secrets.common.enc.yaml` -- flagged in `contract_facts`,
+    needed before any real deploy, out of scope for this step.
+  All 4 gates pass: file exists, parses, NFS paths present, no hardcoded
+  password.
 - `media-lab-02-scaffold` (operator step, not run via `implement-step`): not started
 - `media-lab-03-edge-yaml`: not started
 - `media-lab-04-extend-oidc-whitelist`: not started

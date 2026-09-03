@@ -1,0 +1,211 @@
+# Input for terraform/lxc/scaffold-stack.sh media-stack-lab.
+# Authored per docs/media-stack-lab/plan.md, step media-lab-01-stack-request.
+#
+# Two things filled in beyond the plan's literal text, both real gaps found
+# while authoring this file:
+#   - Jellyfin image tag: looked up 2026-09-04 (Docker Hub, linuxserver/jellyfin)
+#     -- current stable is 10.11.11ubu2604-ls47, not a placeholder.
+#   - playbook_content: scaffold-stack.py (terraform/lxc/scaffold-stack.py)
+#     requires request["playbook_content"] unconditionally -- the plan step
+#     never included one. Modeled on stack-request.example.yaml's
+#     minecraft-stack exemplar (lxc_base + docker_base roles, write compose,
+#     validate, up -d, wait_for) plus deploy-netbox-stack.yml's secrets-.env
+#     pattern (a stack-local .env file templated from SOPS-backed env vars,
+#     no_log: true, mode 0600 -- not a literal password in any tracked file).
+#   - DB_PASSWORD renamed to MEDIA_STACK_LAB_DB_PASSWORD throughout (compose
+#     requirements and playbook) -- every other stack in this repo namespaces
+#     its DB secret per-stack (NETBOX_DB_PASSWORD, etc.); with-secrets loads
+#     all common secrets into one flat environment, so a bare DB_PASSWORD is
+#     a latent collision risk for any future stack that also wants one.
+
+stack_yaml:
+  hostname: media-stack-lab
+  ip_address: "192.168.80.10/24"
+  gateway: "192.168.80.1"
+  dns_server: "192.168.80.1"
+  vmid: 80010
+  cores: 6
+  memory: 6144
+  swap: 512
+  rootfs_size: 8
+  storage_profile: platform-default
+  docker_storage_size: "30G"
+  template_name: "debian-13.1-2-docker-template.tar.gz"
+  tags:
+    - docker
+    - media
+    - jellyfin
+    - immich
+  depends_on: []
+  provides:
+    - service: jellyfin
+      port: 8096
+      protocol: tcp
+    - service: immich
+      port: 2283
+      protocol: tcp
+  ansible_playbook: deploy-media-stack-lab
+  deployment_tier: apps
+  portainer_agent: false
+
+compose_requirements: |
+  Five services in one compose file, container_name prefixed
+  media-stack-lab-<service>, restart: unless-stopped on all five:
+
+  jellyfin:
+    image: lscr.io/linuxserver/jellyfin:10.11.11ubu2604-ls47
+    environment:
+      - PUID=1000
+      - PGID=1000
+      - TZ=Pacific/Auckland
+      - JELLYFIN_PublishedServerUrl=https://jellyfin.${LAB_DOMAIN}
+    volumes:
+      - jellyfin-config:/config
+      - /nas-media/video/movies:/movies
+      - /nas-media/video/tv:/tv
+      - /nas-media/music:/music
+    ports: [8096:8096, 8920:8920, 7359:7359/udp, 1900:1900/udp]
+    group_add: ["44", "104"]
+    security_opt: [seccomp:unconfined]
+
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
+    environment:
+      - IMMICH_CONFIG_FILE=/immich-config.json
+    volumes:
+      - /nas-media/immich-photos:/data
+      - /etc/localtime:/etc/localtime:ro
+      - ./immich-config.json:/immich-config.json:ro
+    ports: [2283:2283]
+    depends_on: [redis, database]
+
+  immich-machine-learning:
+    image: ghcr.io/immich-app/immich-machine-learning:${IMMICH_VERSION:-release}
+    volumes: [model-cache:/cache]
+
+  redis:
+    image: docker.io/valkey/valkey:9@sha256:3acc0687f2a2e1091fae6450d7842dd658c941338cf0a873ddd9e14b9e4ea4dd
+
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0@sha256:bcf63357191b76a916ae5eb93464d65c07511da41e3bf7a8416db519b40b1c23
+    environment:
+      - POSTGRES_PASSWORD=${MEDIA_STACK_LAB_DB_PASSWORD}
+      - POSTGRES_USER=immich
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+    volumes: [immich-db-data:/var/lib/postgresql/data]
+    shm_size: 128mb
+
+  top-level volumes: block declaring jellyfin-config, model-cache,
+  immich-db-data as named Docker volumes.
+
+  MEDIA_STACK_LAB_DB_PASSWORD must be a real SOPS-backed secret referenced
+  as ${MEDIA_STACK_LAB_DB_PASSWORD} (env-file substitution -- the deploy
+  playbook templates a stack-local .env file from this env var, matching
+  this repo's existing with-secrets/deploy-netbox-stack.yml pattern) --
+  never a literal password in this file or in this text.
+
+compose_forbidden: |
+  a custom top-level networks: block, exposing database/redis ports
+  externally, a plain postgres/pgvector image instead of the pinned
+  vectorchord fork, UPLOAD_LOCATION as a named volume instead of the
+  /nas-media/immich-photos bind mount, changing the three Jellyfin
+  NFS mount paths from what legacy already uses, an unpinned
+  Jellyfin image tag, a literal database password anywhere in this
+  file.
+
+contract_facts: |
+  - Zone: media_seg (VLAN 80)
+  - Nothing depends on this stack
+  - Legacy media-stack (VMID 102) keeps running unaffected --
+    additive, not migration-then-destroy
+  - Prerequisite: /nas-media/immich-photos must already be
+    NFS-mounted on the LXC before first compose up (manual, not
+    IaC-managed, same gap as legacy's own NFS mounts)
+  - OAuth/SSO configured in media-lab-04/05/06, not at first boot
+  - Watch history brought across in media-lab-07, not at first boot
+  - Secret: MEDIA_STACK_LAB_DB_PASSWORD must exist in
+    terraform/secrets.common.enc.yaml (SOPS) before first real deploy --
+    not added by this step, this step only references the env var name
+  - Implementation files: terraform/lxc/stacks/media-stack-lab/
+    stack.yaml, terragrunt.hcl, docker-compose.yml,
+    STACK_CONTRACT.md (all new), plus
+    terraform/lxc/ansible/playbooks/deploy-media-stack-lab.yml (new)
+    -- none of these exist yet.
+
+# Literal playbook content -- hand-authored input, not generated (same
+# reasoning as stack-request.example.yaml: scaffold-stack.py passes this
+# verbatim to the playbook-writer agent as "write this exact content").
+# media-lab-05 adds one more task here (templating immich-config.json)
+# before "Validate docker compose configuration" -- not included yet,
+# that file doesn't exist until that step runs.
+playbook_content: |
+  ---
+  - name: Deploy media-stack-lab
+    hosts: all
+    become: true
+    gather_facts: true
+
+    vars:
+      stack_name: media-stack-lab
+      media_stack_lab_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+      media_stack_lab_dir: "/opt/stacks/{{ stack_name }}"
+
+    roles:
+      - lxc_base
+      - docker_base
+
+    tasks:
+      - name: Create stack directory
+        ansible.builtin.file:
+          path: "{{ media_stack_lab_dir }}"
+          state: directory
+          mode: "0755"
+
+      - name: Write docker-compose.yml to stack directory
+        ansible.builtin.copy:
+          content: "{{ media_stack_lab_compose_content }}"
+          dest: "{{ media_stack_lab_dir }}/docker-compose.yml"
+          mode: "0644"
+
+      - name: Write compose secrets env file
+        ansible.builtin.copy:
+          dest: "{{ media_stack_lab_dir }}/.env"
+          mode: "0600"
+          owner: root
+          group: root
+          content: |
+            MEDIA_STACK_LAB_DB_PASSWORD={{ lookup('env', 'MEDIA_STACK_LAB_DB_PASSWORD') }}
+        no_log: true
+
+      - name: Validate docker compose configuration
+        ansible.builtin.command:
+          cmd: docker compose config
+          chdir: "{{ media_stack_lab_dir }}"
+        register: compose_config_check
+        changed_when: false
+        when: not ansible_check_mode
+
+      - name: Start media-stack-lab via docker compose
+        ansible.builtin.command:
+          cmd: docker compose up -d
+          chdir: "{{ media_stack_lab_dir }}"
+        register: compose_up
+        changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+        when: not ansible_check_mode
+
+      - name: Wait for Jellyfin to accept TCP connections
+        ansible.builtin.wait_for:
+          host: "{{ ansible_host }}"
+          port: 8096
+          timeout: 120
+        when: not ansible_check_mode
+        ignore_errors: "{{ ansible_check_mode }}"
+
+      - name: Wait for Immich to accept TCP connections
+        ansible.builtin.wait_for:
+          host: "{{ ansible_host }}"
+          port: 2283
+          timeout: 180
+        when: not ansible_check_mode
+        ignore_errors: "{{ ansible_check_mode }}"
