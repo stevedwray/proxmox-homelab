@@ -22,11 +22,27 @@ Supersedes `docs/immich-stack/` -- see that workspace's README for why.
   inventory. No Docker services deployed yet -- the container exists,
   Docker/compose deployment is Stage C.
 - **Stage B -- MikroTik router config: NOT DONE, needs the operator.**
-  VLAN 80 gateway (`192.168.80.1`) and the 4 firewall policy rules from
-  `media-lab-00` (edge_seg->media_seg:8096,2283; media_seg->mgmt_seg:9443;
-  media_seg->192.168.1.3 tcp+udp/2049) don't exist on the router yet --
-  no automated path for this in this repo. Without it the container has
-  no working default gateway.
+  Checked the real current router state read-only via
+  `terraform/lxc/stacks/netbox-stack/integrations/mikrotik_client.py`
+  (the existing RouterOS REST API discovery client) rather than assume:
+  no `vlan80-media` interface exists yet (10 VLANs live, 80 not among
+  them), `bridgeLocal` has `vlan-filtering: true` so a matching
+  `/interface bridge vlan` entry is required too, not just
+  `/interface vlan` -- every existing VLAN has one
+  (`tagged=bridgeLocal,ether1,ether5`). Firewall-rule inspection also
+  found **2 rules beyond what `pve.yaml`'s `policies:` ever documented,
+  needed for this stack to actually provision and pull images**:
+  `media_seg -> infra_seg` (Harbor/apt-cacher, ports 80/443/3142) and
+  `media_seg` internet egress (80/443, since this stack's images come
+  from `ghcr.io`/`docker.io`/`lscr.io` directly, not through Harbor) --
+  matching the pattern every other zone (`game_seg`, `pentest_seg`,
+  `ai_seg`, `research_seg`) already has on the router, just never
+  mirrored back into the YAML (true of those zones too, not a gap
+  unique to this one). Full exact RouterOS command set (8 rules +
+  interface/bridge-vlan/IP setup) handed to the operator in chat
+  2026-09-04 -- not run by this session, no router config access path
+  exists here. VLAN 80 gateway (`192.168.80.1`) doesn't exist yet;
+  without it the container has no working default gateway.
 - **Stage C -- `provision.sh --stack media-stack-lab`: NOT DONE,
   blocked on Stage B.** `MEDIA_STACK_LAB_DB_PASSWORD` is now in SOPS
   (added 2026-09-04); `/nas-media/immich-photos` still needs manual NFS
