@@ -47,6 +47,8 @@ OIDC_ROUTE_CLIENT_IDS: dict[tuple[str, str], tuple[str, str]] = {
     ("ai-services-stack", "openwebui"): ("OPENWEBUI_OIDC_CLIENT_ID", "openwebui"),
     ("opensearch-stack", "dashboards"): ("OPENSEARCH_OIDC_CLIENT_ID", "opensearch-dashboards"),
     ("wazuh-stack", "dashboard"): ("WAZUH_OIDC_CLIENT_ID", "wazuh-dashboard"),
+    ("media-stack-lab", "jellyfin"): ("JELLYFIN_OAUTH_CLIENT_ID", "jellyfin"),
+    ("media-stack-lab", "immich"): ("IMMICH_OAUTH_CLIENT_ID", "immich"),
 }
 OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("harbor-stack", "harbor"): "HARBOR_OIDC_CLIENT_SECRET",
@@ -56,6 +58,8 @@ OIDC_ROUTE_CLIENT_SECRETS: dict[tuple[str, str], str] = {
     ("ai-services-stack", "openwebui"): "OPENWEBUI_OIDC_CLIENT_SECRET",
     ("opensearch-stack", "dashboards"): "OPENSEARCH_OIDC_CLIENT_SECRET",
     ("wazuh-stack", "dashboard"): "WAZUH_OIDC_CLIENT_SECRET",
+    ("media-stack-lab", "jellyfin"): "JELLYFIN_OAUTH_CLIENT_SECRET",
+    ("media-stack-lab", "immich"): "IMMICH_OAUTH_CLIENT_SECRET",
 }
 
 
@@ -478,6 +482,10 @@ def _oidc_redirect_uris(intent: RouteIntent) -> tuple[str, ...]:
         # /application/o/authorize/ rejected the real login with a
         # "Redirect URI Error", confirmed via the actual browser flow.
         return (f"{base_url}/auth/openid/login",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "jellyfin"):
+        return (f"{base_url}/authentik/callback",)
+    if _oidc_route_key(intent) == ("media-stack-lab", "immich"):
+        return (f"{base_url}/auth/login",)
     return ()
 
 

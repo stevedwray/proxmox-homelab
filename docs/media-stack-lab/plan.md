@@ -545,6 +545,17 @@ gates:
     critical: true
 ```
 
+**Done 2026-09-04.** The `change:` text above is stale -- a 7th entry
+(`wazuh-stack`) was added to both dicts on 2026-08-29, after this plan
+was written; inserted after the real last entry, not the 6-entry text
+shown. `existing-six-entries-untouched`'s regex was also widened to
+include `wazuh-stack` before running it -- as originally written it
+wouldn't have detected an accidental edit to that entry. All 3 gates
+pass; also ran the real `test_discover_authentik_edge.py` suite (11/11
+pass, beyond what this step's own gates require) as extra confidence
+given this file's blast radius. See
+`docs/media-stack-lab/README.md`'s hand-back for the full diff.
+
 ## Step: media-lab-05-immich-oauth-config
 
 ```yaml

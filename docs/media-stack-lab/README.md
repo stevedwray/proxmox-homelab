@@ -131,7 +131,24 @@ authoring or approving the next step.
   `edge.yaml` files repo-wide (it doesn't expand `${LAB_DOMAIN}` before
   checking the literal suffix), not something specific to this file --
   a pre-existing repo-tooling gap, not fixed here.
-- `media-lab-04-extend-oidc-whitelist`: not started
+- `media-lab-04-extend-oidc-whitelist`: **done 2026-09-04.** Real
+  discrepancy found before editing: there's actually a **7th** existing
+  entry (`wazuh-stack`, added 2026-08-29, after this plan was written) --
+  the plan's "find this exact dictionary" text only showed 6. Inserted
+  after the real 7th entry, not the stale 6-entry text, in both
+  `OIDC_ROUTE_CLIENT_IDS` and `OIDC_ROUTE_CLIENT_SECRETS`, plus two new
+  branches in `_oidc_redirect_uris`. Also widened this step's own
+  `existing-six-entries-untouched` gate check to include `wazuh-stack`
+  in the protected-names regex -- as written it wouldn't have caught an
+  accidental edit to that 7th entry at all.
+  All 3 gates pass (no existing entry touched -- checked against all 7,
+  not just 6; file parses; new entries present). Went further than the
+  plan's own gates: ran the real `test_discover_authentik_edge.py` suite
+  -- all 11 existing tests still pass, confirming no regression to any
+  of the 7 live integrations. `git diff` is exactly the 4 intended
+  insertions, nothing else touched.
+  No live `reconcile-authentik-edge.py` run against real Authentik --
+  out of scope for this step, per its own forbidden_actions.
 - `media-lab-05-immich-oauth-config`: not started
 - `media-lab-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started
 - `media-lab-07-bring-across-existing-users`: not started
