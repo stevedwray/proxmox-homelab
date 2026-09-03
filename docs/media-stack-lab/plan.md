@@ -464,6 +464,17 @@ gates:
     critical: true
 ```
 
+**Done 2026-09-04.** One deliberate deviation from the `change:` text
+above: backend URLs use `${LAB_IP_MEDIA_STACK_LAB}` (added to `.env`),
+not the literal `192.168.80.10` shown -- every other stack's `edge.yaml`
+in this repo uses a `${LAB_IP_<STACK>}` var, so the literal IP here was
+the plan's own inconsistency, not a real requirement. See
+`docs/media-stack-lab/README.md`'s hand-back for the full detail,
+including a pre-existing, repo-wide `validate-edge-manifests.py` gap
+found (unrelated to this file) and confirmation that technitium-stack,
+not the retired `dns-stack`, is what actually consumes this file's
+`dns:` block.
+
 ## Step: media-lab-04-extend-oidc-whitelist
 
 Touches a shared script 6 live integrations depend on -- the gate is

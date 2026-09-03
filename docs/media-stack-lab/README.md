@@ -112,7 +112,25 @@ authoring or approving the next step.
   arbitrary stack; flagging as a real repo-tooling gap, not something
   this step introduced. See `plan.md`'s hand-back on this step for the
   full detail.
-- `media-lab-03-edge-yaml`: not started
+- `media-lab-03-edge-yaml`: **done 2026-09-04.** Created
+  `terraform/lxc/stacks/media-stack-lab/edge.yaml` with both routes
+  (jellyfin, immich). One deliberate deviation from the plan's literal
+  text: used `${LAB_IP_MEDIA_STACK_LAB}` for the backend URLs instead of
+  the plan's hardcoded `192.168.80.10` -- every one of this repo's other
+  12 `edge.yaml` files uses a `${LAB_IP_<STACK>}` var, none hardcode an
+  IP, so the plan's literal content was the actual outlier here. Added
+  `LAB_IP_MEDIA_STACK_LAB='192.168.80.10'` to `.env` (tracked,
+  non-secret, matches the real established pattern next to
+  `LAB_IP_WAZUH`/`LAB_IP_SECPIPE`) to back it. Confirmed technitium-stack
+  is the live DNS target for this (not the retired CoreDNS `dns-stack`)
+  via `render-edge-technitium.py` being the actual consumer of this
+  file's `dns:` block.
+  Both of this step's real gates pass (parses, has both routes: jellyfin
+  and immich). Also ran `validate-edge-manifests.py` as a bonus check --
+  found it fails on `host: ...${LAB_DOMAIN}` for ALL 16 pre-existing
+  `edge.yaml` files repo-wide (it doesn't expand `${LAB_DOMAIN}` before
+  checking the literal suffix), not something specific to this file --
+  a pre-existing repo-tooling gap, not fixed here.
 - `media-lab-04-extend-oidc-whitelist`: not started
 - `media-lab-05-immich-oauth-config`: not started
 - `media-lab-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started

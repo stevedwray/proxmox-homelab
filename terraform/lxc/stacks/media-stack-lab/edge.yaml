@@ -1,0 +1,36 @@
+apiVersion: homelab.gibbsgreatly.xyz/v1alpha1
+kind: EdgeManifest
+metadata:
+  name: media-stack-lab-edge
+  stack: media-stack-lab
+  annotations:
+    repo.auth.oidc.client_id_env: JELLYFIN_OAUTH_CLIENT_ID
+    repo.auth.oidc.client_secret_env: JELLYFIN_OAUTH_CLIENT_SECRET
+spec:
+  routes:
+    - name: jellyfin
+      host: jellyfin.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_MEDIA_STACK_LAB}:8096
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc
+    - name: immich
+      host: immich.${LAB_DOMAIN}
+      backend:
+        type: url
+        url: http://${LAB_IP_MEDIA_STACK_LAB}:2283
+      dns:
+        enabled: true
+        target: ${LAB_IP_PROXY}
+        ttl: 5m
+      tls:
+        resolver: letsencrypt
+      auth:
+        mode: oidc
