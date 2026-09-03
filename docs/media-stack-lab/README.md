@@ -98,7 +98,20 @@ authoring or approving the next step.
     needed before any real deploy, out of scope for this step.
   All 4 gates pass: file exists, parses, NFS paths present, no hardcoded
   password.
-- `media-lab-02-scaffold` (operator step, not run via `implement-step`): not started
+- `media-lab-02-scaffold` (operator step, not run via `implement-step`):
+  **done 2026-09-04, done by hand -- no `opencode`/local model, per
+  explicit operator direction.** Wrote all 5 files directly:
+  `stack.yaml`, `docker-compose.yml`, `STACK_CONTRACT.md`,
+  `terragrunt.hcl`, `terraform/lxc/ansible/playbooks/deploy-media-stack-lab.yml`.
+  Ran the same real validators the script would have --
+  `validate-compose.sh --stack media-stack-lab` and
+  `ansible-playbook --syntax-check` both pass; the `## Provides`/
+  `## Dependencies` contract-section check passes (verified manually).
+  `validate-stack-metadata.sh` passes but doesn't actually cover this
+  stack -- its `ACTIVE_STACKS` list is fixed and has no way to check an
+  arbitrary stack; flagging as a real repo-tooling gap, not something
+  this step introduced. See `plan.md`'s hand-back on this step for the
+  full detail.
 - `media-lab-03-edge-yaml`: not started
 - `media-lab-04-extend-oidc-whitelist`: not started
 - `media-lab-05-immich-oauth-config`: not started

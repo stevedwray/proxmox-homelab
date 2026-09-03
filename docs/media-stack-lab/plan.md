@@ -362,6 +362,33 @@ Run `terraform/lxc/scaffold-stack.sh media-stack-lab` directly. If it fails
 partway, don't hand-edit any of the five generated files -- check which
 validator failed and re-run instead.
 
+**Done differently 2026-09-04, by explicit operator direction: no local
+model / `opencode` for this stack** (operator called `opencode` a
+deprecated path). `scaffold-stack.sh`'s real job -- drive
+`stack-yaml-writer`/`compose-writer`/`contract-writer`/
+`terragrunt-writer`/`playbook-writer` opencode agents, each gated by a
+real validator -- was done by hand instead: the frontier session
+authored `stack.yaml` (literal dump of `stack_yaml`, matching what
+`run_stack_yaml_writer` would produce), `docker-compose.yml` (from
+`compose_requirements`/`compose_forbidden`), `STACK_CONTRACT.md` (from
+`contract_facts`, modeled on `apt-cacher-stack`'s contract for section
+shape), `terragrunt.hcl` (fixed boilerplate, copied from
+`gaming-stack-lab`'s), and
+`terraform/lxc/ansible/playbooks/deploy-media-stack-lab.yml` (the
+literal `playbook_content` from `stack-request.yaml`, byte-identical).
+Ran the same real validators `scaffold-stack.py` would have:
+`validate-stack-metadata.sh` (passes, but doesn't actually check this
+stack -- its `ACTIVE_STACKS` tuple is a fixed list that doesn't include
+`media-stack-lab` and has no `--stack` flag to override; a real gap in
+this repo's tooling for any new stack, not something this step caused
+or fixed), `validate-compose.sh --stack media-stack-lab` (passes, this
+one does support single-stack checking), the `## Provides`/
+`## Dependencies` section check from `--check-contract-sections`
+(verified manually, both present), and
+`ansible-playbook --syntax-check` (passes). `stack-request.yaml` kept
+as a record of intent, matching its own stated convention ("keep it or
+delete it, either is fine").
+
 ## Step: media-lab-03-edge-yaml
 
 ```yaml

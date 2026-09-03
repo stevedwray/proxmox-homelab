@@ -1,0 +1,28 @@
+hostname: media-stack-lab
+ip_address: 192.168.80.10/24
+gateway: 192.168.80.1
+dns_server: 192.168.80.1
+vmid: 80010
+cores: 6
+memory: 6144
+swap: 512
+rootfs_size: 8
+storage_profile: platform-default
+docker_storage_size: 30G
+template_name: debian-13.1-2-docker-template.tar.gz
+tags:
+- docker
+- media
+- jellyfin
+- immich
+depends_on: []
+provides:
+- service: jellyfin
+  port: 8096
+  protocol: tcp
+- service: immich
+  port: 2283
+  protocol: tcp
+ansible_playbook: deploy-media-stack-lab
+deployment_tier: apps
+portainer_agent: false

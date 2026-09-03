@@ -1,0 +1,69 @@
+---
+- name: Deploy media-stack-lab
+  hosts: all
+  become: true
+  gather_facts: true
+
+  vars:
+    stack_name: media-stack-lab
+    media_stack_lab_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
+    media_stack_lab_dir: "/opt/stacks/{{ stack_name }}"
+
+  roles:
+    - lxc_base
+    - docker_base
+
+  tasks:
+    - name: Create stack directory
+      ansible.builtin.file:
+        path: "{{ media_stack_lab_dir }}"
+        state: directory
+        mode: "0755"
+
+    - name: Write docker-compose.yml to stack directory
+      ansible.builtin.copy:
+        content: "{{ media_stack_lab_compose_content }}"
+        dest: "{{ media_stack_lab_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Write compose secrets env file
+      ansible.builtin.copy:
+        dest: "{{ media_stack_lab_dir }}/.env"
+        mode: "0600"
+        owner: root
+        group: root
+        content: |
+          MEDIA_STACK_LAB_DB_PASSWORD={{ lookup('env', 'MEDIA_STACK_LAB_DB_PASSWORD') }}
+      no_log: true
+
+    - name: Validate docker compose configuration
+      ansible.builtin.command:
+        cmd: docker compose config
+        chdir: "{{ media_stack_lab_dir }}"
+      register: compose_config_check
+      changed_when: false
+      when: not ansible_check_mode
+
+    - name: Start media-stack-lab via docker compose
+      ansible.builtin.command:
+        cmd: docker compose up -d
+        chdir: "{{ media_stack_lab_dir }}"
+      register: compose_up
+      changed_when: "'Started' in compose_up.stdout or 'Created' in compose_up.stdout"
+      when: not ansible_check_mode
+
+    - name: Wait for Jellyfin to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 8096
+        timeout: 120
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
+
+    - name: Wait for Immich to accept TCP connections
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 2283
+        timeout: 180
+      when: not ansible_check_mode
+      ignore_errors: "{{ ansible_check_mode }}"
