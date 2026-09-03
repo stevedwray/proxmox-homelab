@@ -8,6 +8,7 @@
     stack_name: media-stack-lab
     media_stack_lab_compose_content: "{{ lookup('file', '../../stacks/' + stack_name + '/docker-compose.yml') }}"
     media_stack_lab_dir: "/opt/stacks/{{ stack_name }}"
+    media_stack_lab_fqdn_authentik: "{{ lookup('env', 'LAB_FQDN_AUTHENTIK') | default('authentik.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
 
   roles:
     - lxc_base
@@ -34,6 +35,15 @@
         group: root
         content: |
           MEDIA_STACK_LAB_DB_PASSWORD={{ lookup('env', 'MEDIA_STACK_LAB_DB_PASSWORD') }}
+      no_log: true
+
+    - name: Template Immich OAuth config
+      ansible.builtin.template:
+        src: "{{ playbook_dir }}/../templates/media-stack-lab/immich-config.json.j2"
+        dest: "{{ media_stack_lab_dir }}/immich-config.json"
+        mode: "0600"
+        owner: root
+        group: root
       no_log: true
 
     - name: Validate docker compose configuration

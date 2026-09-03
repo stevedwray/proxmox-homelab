@@ -593,7 +593,7 @@ change: >
 
 scope:
   allowed_paths:
-    - terraform/lxc/ansible/files/media-stack-lab/immich-config.json.j2
+    - terraform/lxc/ansible/templates/media-stack-lab/immich-config.json.j2
     - terraform/lxc/ansible/playbooks/deploy-media-stack-lab.yml
   forbidden_actions:
     - "Writing real client_id/secret values directly into the .j2 template or committing a rendered immich-config.json with real values"
@@ -605,10 +605,21 @@ gates:
     expect: "exit 0"
     critical: true
   - id: no-real-secret-committed
-    cmd: "grep '\"clientSecret\"' terraform/lxc/ansible/files/media-stack-lab/immich-config.json.j2 | grep -q '{{'"
+    cmd: "grep '\"clientSecret\"' terraform/lxc/ansible/templates/media-stack-lab/immich-config.json.j2 | grep -q '{{'"
     expect: "exit 0 (i.e. the clientSecret line still contains a Jinja placeholder, not a real value)"
     critical: true
 ```
+
+**Done 2026-09-04, two path/variable corrections from the `change:` text
+above (see `docs/media-stack-lab/README.md`'s hand-back for detail):**
+the file moved from `ansible/files/media-stack-lab/` (this repo has zero
+other `.j2` files there) to `ansible/templates/media-stack-lab/`
+(matches every real template in this repo); `{{ lab_fqdn_authentik }}`
+replaced with a real computed var, `media_stack_lab_fqdn_authentik`
+(the literal text wasn't a variable that exists anywhere -- would have
+rendered undefined). The `allowed_paths`/gate command above are updated
+to the real `templates/` location. Both gates pass; playbook still
+syntax-checks clean.
 
 ## Operator step: media-lab-06-jellyfin-sso-plugin
 

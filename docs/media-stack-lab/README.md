@@ -149,6 +149,32 @@ authoring or approving the next step.
   insertions, nothing else touched.
   No live `reconcile-authentik-edge.py` run against real Authentik --
   out of scope for this step, per its own forbidden_actions.
-- `media-lab-05-immich-oauth-config`: not started
+- `media-lab-05-immich-oauth-config`: **done 2026-09-04.** Two real gaps
+  found and fixed while authoring this step:
+  - Location: the plan put the `.j2` template under
+    `terraform/lxc/ansible/files/media-stack-lab/` -- but that directory
+    has zero other `.j2` files anywhere in this repo; every real Jinja
+    template lives under `terraform/lxc/ansible/templates/` instead
+    (e.g. `deploy-ci-runner.yml`'s `terraformrc.j2`). Moved it to
+    `terraform/lxc/ansible/templates/media-stack-lab/immich-config.json.j2`
+    to match.
+  - Variable: the plan's literal `{{ lab_fqdn_authentik }}` isn't a real
+    variable anywhere in this repo -- would have rendered empty/undefined.
+    Every other stack computes its own `<stack>_fqdn_authentik` from
+    `lookup('env', 'LAB_FQDN_AUTHENTIK')` with a fallback (see
+    `deploy-monitoring-stack.yml`'s `monitoring_lab_fqdn_authentik`).
+    Added the equivalent `media_stack_lab_fqdn_authentik` var to the
+    playbook and referenced that instead.
+  Also added the templating task itself to
+  `deploy-media-stack-lab.yml` (before "Validate docker compose
+  configuration", per the plan's own instruction), matching
+  `deploy-ci-runner.yml`'s `ansible.builtin.template` idiom.
+  Both of this step's gates pass (renders as valid JSON once
+  placeholders substituted; `clientSecret` still holds a Jinja
+  placeholder, no real value). Playbook still syntax-checks clean after
+  the new task and var. `stack-request.yaml`'s embedded
+  `playbook_content` intentionally left un-synced -- it's a historical
+  record of intent, already diverged from the real playbook since
+  `media-lab-02`.
 - `media-lab-06-jellyfin-sso-plugin` (operator step, not run via `implement-step`): not started
 - `media-lab-07-bring-across-existing-users`: not started

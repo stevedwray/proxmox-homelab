@@ -1,0 +1,13 @@
+{
+  "oauth": {
+    "enabled": true,
+    "issuerUrl": "https://{{ media_stack_lab_fqdn_authentik }}/application/o/immich/",
+    "clientId": "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_ID') }}",
+    "clientSecret": "{{ lookup('env', 'IMMICH_OAUTH_CLIENT_SECRET') }}",
+    "scope": "openid email profile",
+    "mobileOverrideEnabled": true,
+    "mobileRedirectUri": "app.immich:///oauth-callback",
+    "autoRegister": true,
+    "buttonText": "Login with Authentik"
+  }
+}
