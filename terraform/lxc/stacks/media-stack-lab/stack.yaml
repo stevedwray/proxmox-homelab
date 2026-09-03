@@ -2,6 +2,8 @@ hostname: media-stack-lab
 ip_address: 192.168.80.10/24
 gateway: 192.168.80.1
 dns_server: 192.168.80.1
+network:
+  zone: media_seg
 vmid: 80010
 cores: 6
 memory: 6144

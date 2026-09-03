@@ -1,14 +1,36 @@
 # media-stack-lab (planning workspace)
 
-Status: **plan written, not yet built.** One combined stack -- Jellyfin +
-Immich together in a single new LXC -- standing up **alongside** legacy
-`media-stack`, not replacing it destructively. Existing Jellyfin
-users/watch-history get brought across so the new stack is a real
-alternative, but legacy stays running; retiring it is a separate,
-future, operator-initiated decision this plan does not assume or
-schedule.
+Status: **partially deployed, real infrastructure now exists.** One
+combined stack -- Jellyfin + Immich together in a single new LXC --
+standing up **alongside** legacy `media-stack`, not replacing it
+destructively. Existing Jellyfin users/watch-history get brought across
+so the new stack is a real alternative, but legacy stays running;
+retiring it is a separate, future, operator-initiated decision this
+plan does not assume or schedule.
 
 Supersedes `docs/immich-stack/` -- see that workspace's README for why.
+
+## Deployment status (real infrastructure, beyond the 8 plan steps below)
+
+- **Stage A -- `terragrunt apply` for `media-stack-lab`: DONE 2026-09-04.**
+  `./with-secrets-prod terragrunt apply --working-dir
+  terraform/lxc/stacks/media-stack-lab`. `Apply complete! Resources: 5
+  added, 0 changed, 0 destroyed` -- LXC container (VMID `80010`,
+  `media-stack-lab`, confirmed `running` live via the Proxmox API), the
+  `tvmedia` SDN zone/vnet/subnet (confirmed live in
+  `/cluster/sdn/zones`, alongside all 7 other zones), and the Ansible
+  inventory. No Docker services deployed yet -- the container exists,
+  Docker/compose deployment is Stage C.
+- **Stage B -- MikroTik router config: NOT DONE, needs the operator.**
+  VLAN 80 gateway (`192.168.80.1`) and the 4 firewall policy rules from
+  `media-lab-00` (edge_seg->media_seg:8096,2283; media_seg->mgmt_seg:9443;
+  media_seg->192.168.1.3 tcp+udp/2049) don't exist on the router yet --
+  no automated path for this in this repo. Without it the container has
+  no working default gateway.
+- **Stage C -- `provision.sh --stack media-stack-lab`: NOT DONE,
+  blocked on Stage B.** `MEDIA_STACK_LAB_DB_PASSWORD` is now in SOPS
+  (added 2026-09-04); `/nas-media/immich-photos` still needs manual NFS
+  mounting on the LXC once it has real network connectivity.
 
 Written with `.github/prompts/plan-change.prompt.md` per
 `docs/agent-design/step-packet-schema.md`. See `plan.md` for the full
@@ -112,6 +134,26 @@ authoring or approving the next step.
   arbitrary stack; flagging as a real repo-tooling gap, not something
   this step introduced. See `plan.md`'s hand-back on this step for the
   full detail.
+  **Correction 2026-09-04, found only at actual `terragrunt plan` time
+  (not by any of this step's own validators): `stack.yaml` was missing
+  the `network:\n  zone: media_seg` block entirely.** Per
+  `terraform/lxc/network/NETWORK_CONTRACT.md`, stack-to-zone membership
+  is declared exactly there -- without it, Terraform resolved this
+  stack as a plain untagged `vmbr0` bridge attachment instead of the
+  `media_seg` SDN VLAN (confirmed live: a first `terragrunt plan` showed
+  `attachment_type = "bridge"`, `zone = null`, `sdn_vnet = null`), and
+  would have created the container on the wrong network entirely --
+  the SDN zone/vnet/subnet resources wouldn't even have been created,
+  since those are gated on `attachment_type == "sdn_vnet"`. Never caught
+  by `validate-compose.sh`, the syntax-check, or any gate in this plan --
+  this field simply wasn't in the plan's original `stack_yaml` content
+  at all (media-lab-01), and wasn't cross-checked against a real
+  SDN-attached exemplar (`gaming-stack-lab`'s `stack.yaml`) until this
+  point. Fixed in both the live `stack.yaml` and `stack-request.yaml`'s
+  historical record. Re-ran `terragrunt plan`: `attachment_type =
+  "sdn_vnet"`, `zone = "media_seg"`, `bridge = "tvmedia"`,
+  `Plan: 5 to add, 0 to change, 0 to destroy` -- matches the real
+  `pentest_seg`/pentagi-stack precedent exactly.
 - `media-lab-03-edge-yaml`: **done 2026-09-04.** Created
   `terraform/lxc/stacks/media-stack-lab/edge.yaml` with both routes
   (jellyfin, immich). One deliberate deviation from the plan's literal

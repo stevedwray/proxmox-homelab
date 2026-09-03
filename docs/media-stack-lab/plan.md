@@ -351,6 +351,17 @@ secret-naming convention. The real
 `terraform/lxc/stacks/media-stack-lab/stack-request.yaml` is the
 authoritative version now, not the `change:` text above.
 
+**Third gap, found later (at actual `terragrunt plan` time, not by
+anything in this step): the `stack_yaml` block above never included a
+`network:\n  zone: media_seg` field.** Per
+`terraform/lxc/network/NETWORK_CONTRACT.md`, that's exactly how
+stack-to-zone membership gets declared -- without it, `stack.yaml`
+resolved as a plain `vmbr0` bridge attachment instead of the
+`media_seg` SDN VLAN, which would have deployed the container onto the
+wrong network entirely. Fixed in the real files; see
+`docs/media-stack-lab/README.md`'s `media-lab-02-scaffold` hand-back
+for the full detail and how it was caught.
+
 ## Operator step: media-lab-02-scaffold
 
 Not a step block -- this is the operator running a command directly, not
