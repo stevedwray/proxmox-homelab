@@ -31,7 +31,7 @@ not a zone).
 
 | Input | Source | Notes |
 |-------|--------|-------|
-| `MEDIA_STACK_LAB_DB_PASSWORD` | SOPS `terraform/secrets.common.enc.yaml` | **New secret**, not yet added as of `media-lab-01`. Required before first real deploy — Immich's Postgres password. |
+| `MEDIA_STACK_LAB_DB_PASSWORD` | SOPS `terraform/secrets.common.enc.yaml` | Added 2026-09-04 via `sops --set` (random 48-char hex). Immich's Postgres password. |
 | `IMMICH_OAUTH_CLIENT_ID` / `IMMICH_OAUTH_CLIENT_SECRET` | SOPS | Added by `media-lab-04`, consumed by `media-lab-05`'s `immich-config.json.j2` template. Not present yet. |
 | `JELLYFIN_OAUTH_CLIENT_ID` / `JELLYFIN_OAUTH_CLIENT_SECRET` | SOPS | Added by `media-lab-04`, typed into Jellyfin's Authentik SSO plugin manually in `media-lab-06`. Not present yet. |
 | `LAB_DOMAIN` | `.env` | Already exists — used for Jellyfin's `JELLYFIN_PublishedServerUrl` and both Traefik routes. |
