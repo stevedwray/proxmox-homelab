@@ -21,7 +21,7 @@ Supersedes `docs/immich-stack/` -- see that workspace's README for why.
   `/cluster/sdn/zones`, alongside all 7 other zones), and the Ansible
   inventory. No Docker services deployed yet -- the container exists,
   Docker/compose deployment is Stage C.
-- **Stage B -- MikroTik router config: NOT DONE, needs the operator.**
+- **Stage B -- MikroTik router config: DONE 2026-09-04, verified live.**
   Checked the real current router state read-only via
   `terraform/lxc/stacks/netbox-stack/integrations/mikrotik_client.py`
   (the existing RouterOS REST API discovery client) rather than assume:
@@ -40,11 +40,18 @@ Supersedes `docs/immich-stack/` -- see that workspace's README for why.
   mirrored back into the YAML (true of those zones too, not a gap
   unique to this one). Full exact RouterOS command set (8 rules +
   interface/bridge-vlan/IP setup) handed to the operator in chat
-  2026-09-04 -- not run by this session, no router config access path
-  exists here. VLAN 80 gateway (`192.168.80.1`) doesn't exist yet;
-  without it the container has no working default gateway.
-- **Stage C -- `provision.sh --stack media-stack-lab`: NOT DONE,
-  blocked on Stage B.** `MEDIA_STACK_LAB_DB_PASSWORD` is now in SOPS
+  2026-09-04, applied by the operator on the router. **One real gap hit
+  live**: the router-level config alone wasn't enough -- a physical
+  switch between the router and the Proxmox host also needed VLAN 80
+  added to its own trunk. Found via the router's ARP table showing
+  `192.168.80.10` stuck at `status: failed` (no L2 path) even though
+  every router-side object (VLAN interface, bridge-vlan entry, firewall
+  rules, gateway IP) was confirmed correct; operator added VLAN 80 on
+  the switch, then ARP flipped to `complete: true, status: reachable`
+  and ping succeeded (4/4, MAC matches the container's real `hwaddr`
+  exactly). Fully verified end-to-end, not just router-config-exists.
+- **Stage C -- `provision.sh --stack media-stack-lab`: NOT DONE, ready
+  to start now that B is verified.** `MEDIA_STACK_LAB_DB_PASSWORD` is now in SOPS
   (added 2026-09-04); `/nas-media/immich-photos` still needs manual NFS
   mounting on the LXC once it has real network connectivity.
 
