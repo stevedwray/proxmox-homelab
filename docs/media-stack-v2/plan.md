@@ -50,12 +50,25 @@ Administration > Settings in the browser."
   login, no real identity integration -- rejected for that reason).
 - Additive, not destructive: legacy `media-stack` is never modified or
   destroyed by this plan.
-- **Genuinely unknown, flagged rather than guessed**: the NAS's actual
-  reachable address/zone for the new `media_seg -> NAS` firewall rule
-  (legacy media-stack reaches it over plain LAN with no zone rule at
-  all, since it predates the SDN model -- the exact NFS version/ports
-  needed aren't in this repo anywhere). `media-v2-00`'s NAS rule is a
-  placeholder for this reason, not a step failure.
+- **NAS address/ports resolved 2026-09-04**: `192.168.1.3`, stays on the
+  flat LAN bridge (not migrating into any VLAN), NFS is tcp+udp/2049 --
+  confirmed from `docs/greenbone-stack/network-scan-rollout-plan.md` and
+  the shelved `terraform/lxc/stacks/.hold/media/stack.yaml` (an earlier,
+  never-executed migration draft that already documented this exact
+  rule). `media-v2-00` below now includes the real `media_seg -> NAS`
+  rule instead of a placeholder.
+- **IP/VMID collision checked 2026-09-04** (read-only `pvesh`-equivalent
+  API query against production `pve`, operator-approved in chat): VMID
+  `80010` is not in use by any LXC or QEMU guest on `pve`; `192.168.80.0/24`
+  is an as-yet-uncreated VLAN so nothing could already be on it. Both
+  candidates in `media-v2-01` below are confirmed free, not assumed.
+- **Still genuinely open**: GPU/hardware transcoding passthrough status
+  on legacy Jellyfin (VMID 102) -- would need
+  `pvesh get /nodes/pve/lxc/102/config` read against production `pve`,
+  deferred by the operator for now. If legacy Jellyfin turns out to use
+  hardware transcoding, `media-v2-01`'s stack-request will need the same
+  device passthrough added before first deploy -- check this before
+  running `media-v2-02-scaffold`, not after.
 
 ---
 
@@ -114,13 +127,27 @@ change: >
       protocol: tcp
       ports: [9443]
       description: media-stack-v2 (Jellyfin+Immich) to Authentik for OIDC
+    - from: media_seg
+      to: 192.168.1.3
+      protocol: tcp
+      ports: [2049]
+      description: media-stack-v2 (Jellyfin+Immich) to NAS NFS exports (192.168.1.3, flat LAN, not a zone)
+    - from: media_seg
+      to: 192.168.1.3
+      protocol: udp
+      ports: [2049]
+      description: media-stack-v2 (Jellyfin+Immich) to NAS NFS exports, UDP (192.168.1.3, flat LAN, not a zone)
 
-  Do NOT add a media_seg -> NAS rule yet -- the NAS's real address/zone
-  and required NFS ports aren't established anywhere in this repo
-  (legacy media-stack reaches it over flat LAN with no zone rule at
-  all). Flag this gap in your report rather than guessing a subnet or
-  port; it needs a real answer from the operator before that rule can be
-  written.
+  The NAS rule targets a plain LAN host, not another zone -- copy the
+  exact `to: 192.168.1.8` bare-IP shape already used by the
+  `pentest_seg -> 192.168.1.8` rules elsewhere in this file (no CIDR
+  suffix, no quotes). This file has no combined tcp+udp protocol value
+  anywhere -- every existing rule is `protocol: tcp` or `protocol: all`
+  -- so NFS needs two separate rules, one per protocol, not one
+  `tcp_udp` rule. Confirmed source: NAS is `192.168.1.3`, stays on the
+  flat LAN bridge permanently (see
+  `docs/greenbone-stack/network-scan-rollout-plan.md` and
+  `terraform/lxc/stacks/.hold/media/stack.yaml`), NFS is tcp+udp/2049.
 
 scope:
   allowed_paths:
@@ -546,15 +573,16 @@ change: >
     LEGACY_TAG=$(docker inspect --format '{{.Config.Image}}' jellyfin)
     echo "Legacy tag: $LEGACY_TAG -- confirm media-stack-v2's jellyfin service uses this exact tag before continuing"
     docker stop media-stack-v2-jellyfin
-    docker run --rm -v jellyfin-config:/dest -v /opt/media-stack/config/jellyfin:/src:ro alpine \
+    docker run --rm -v jellyfin-config:/dest -v /config/jellyfin:/src:ro alpine \
       sh -c "cp -a /src/. /dest/"
     docker start media-stack-v2-jellyfin
 
-  (Adjust the legacy source path if it differs from
-  /opt/media-stack/config/jellyfin -- confirm the real bind-mount source
-  path from media-stack's own compose/inventory before running the copy,
-  do not assume.) This is a copy, not a move -- legacy's own /config is
-  never written to. After the copy, log in to media-stack-v2's Jellyfin
+  (`/config/jellyfin` is the real host bind-mount source, confirmed
+  2026-09-04 from `terraform/lxc/stacks/media-stack/
+  jellyfin-docker-compose.yml`'s actual `volumes:` entry -- an earlier
+  version of this step guessed `/opt/media-stack/config/jellyfin`,
+  which is wrong and would have copied from an empty directory.) This
+  is a copy, not a move -- legacy's own /config is never written to. After the copy, log in to media-stack-v2's Jellyfin
   as an existing user with their existing password and manually confirm
   watch history/continue-watching matches legacy. Only after that human
   check passes should media-v2-06 (SSO plugin) or a Jellyfin image
@@ -588,12 +616,21 @@ gates:
 
 ## Not covered by this plan
 
-- Confirming the candidate IP/VMID (`192.168.80.10`/`80010`) are
-  actually free, and the real legacy Jellyfin config bind-mount source
-  path (assumed `/opt/media-stack/config/jellyfin` in media-v2-07 --
-  confirm before running).
-- The `media_seg -> NAS` firewall rule -- genuinely unknown NAS
-  address/NFS version, flagged in media-v2-00 rather than guessed.
+- **Resolved 2026-09-04** (was open before): `192.168.80.10`/`80010`
+  confirmed free via a read-only production API check against `pve`
+  (operator-approved); the `media_seg -> NAS` rule now has real values
+  in media-v2-00 instead of a placeholder; media-v2-07's legacy config
+  bind-mount path corrected to the real `/config/jellyfin` (confirmed
+  from `terraform/lxc/stacks/media-stack/jellyfin-docker-compose.yml`
+  -- the earlier `/opt/media-stack/config/jellyfin` guess was wrong and
+  would have copied from an empty directory).
+- **Still open**: GPU/hardware transcoding passthrough status on
+  legacy Jellyfin (VMID 102) -- needs
+  `pvesh get /nodes/pve/lxc/102/config` against production `pve`,
+  deferred by the operator 2026-09-04. Check this before
+  `media-v2-02-scaffold` if hardware transcoding turns out to be in use
+  -- `media-v2-01`'s stack-request doesn't currently include any device
+  passthrough.
 - `terragrunt apply` for the zone and the stack,
   `provision.sh --stack media-stack-v2`, and health-check validation --
   real infrastructure steps, stay manual/operator-run.

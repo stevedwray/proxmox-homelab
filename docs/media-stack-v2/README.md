@@ -37,6 +37,9 @@ into this file -- see the Status section below.
 | Jellyfin SSO | `jellyfin-plugin-authentik` (scottfridwin) |
 | Auth wiring | **not** a drop-in -- `discover-authentik-edge.py` has a hardcoded per-`(stack, route)` whitelist (6 existing entries: Harbor/Grafana/Portainer/Technitium/OpenWebUI/OpenSearch), each with its own redirect-URI branch. Adding Jellyfin+Immich means editing that shared script carefully, not just writing an `edge.yaml`. |
 | Legacy media-stack | stays running, untouched. Not destroyed, not scheduled for retirement by this plan. |
+| NAS rule | resolved 2026-09-04: `192.168.1.3`, flat LAN (not a zone), tcp+udp/2049 -- was a placeholder before, now real values in media-v2-00 |
+| IP/VMID free? | confirmed 2026-09-04 via read-only production API check against `pve`: `192.168.80.10`/`80010` not in use by any LXC or QEMU guest |
+| GPU passthrough | still open -- legacy Jellyfin's (VMID 102) hardware transcoding status not yet checked (`pvesh get /nodes/pve/lxc/102/config`), deferred by operator 2026-09-04 |
 
 ## Step status
 
