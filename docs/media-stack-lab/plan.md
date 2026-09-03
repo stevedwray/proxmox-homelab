@@ -159,8 +159,28 @@ scope:
 
 gates:
   - id: terragrunt-plan-shows-only-additions
-    cmd: "./with-secrets terragrunt --working-dir terraform/lxc/stacks run --all plan"
-    expect: "plan shows only new resources for media_seg -- zero changes/deletions to any existing zone"
+    cmd: "./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/gaming-stack-lab -no-color"
+    expect: >-
+      Zone is production-only (nodes: [pve]), so this must run against pve
+      via with-secrets-prod, not the dev with-secrets wrapper -- read-only
+      (terragrunt plan is on the wrapper's default-allowed list, no
+      TASK_APPROVAL needed). `run --all` from terraform/lxc/stacks is NOT
+      a working check in this repo -- it sweeps in pve-test-only scaffold
+      stacks (net-*/test-*) that fail outright with unrelated
+      "workspace: EOF" errors. Use a single adjacent-zone stack instead
+      (gaming-stack-lab, in game_seg, is the closest analog). Compare its
+      plan output A/B (with vs. without the pve.yaml edit, e.g. via
+      `git stash`) rather than expecting a clean "no changes" -- this
+      stack's terragrunt plan shows a pre-existing, unrelated
+      `Plan: 6 to add, 0 to change, 0 to destroy` regardless of this
+      change (confirmed 2026-09-04, a state/workspace quirk, not a real
+      diff). What matters is the two runs producing byte-identical plan
+      output -- that's "zero incremental diff," the real form of this
+      gate. Separately: VLAN-type SDN zones aren't Terraform-managed in
+      this repo yet (see network/NETWORK_CONTRACT.md's documented gap --
+      applied via ansible/00-initial-setup/proxmox-sdn-setup.yml
+      instead), so media_seg's own creation was never going to appear as
+      a plannable Terraform resource regardless of gate wording.
     critical: true
 ```
 

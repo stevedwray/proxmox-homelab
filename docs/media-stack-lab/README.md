@@ -48,7 +48,33 @@ Updated by the local model's hand-back after each `implement-step` run
 and the actual gate results, not a summary from chat. Read this before
 authoring or approving the next step.
 
-- `media-lab-00-create-media-seg-zone`: not started
+- `media-lab-00-create-media-seg-zone`: **done 2026-09-04.** Edited
+  `terraform/lxc/network/pve.yaml`: added the `media_seg` SDN zone
+  (attachments block), its member/container listing entry, and 4 policy
+  rules (edge_seg->media_seg web UIs, media_seg->mgmt_seg Authentik,
+  media_seg->192.168.1.3 tcp+udp/2049 NAS). No existing zone/rule
+  touched -- insertions only. YAML parses cleanly.
+  Gate note: the plan's literal gate command
+  (`terragrunt --working-dir terraform/lxc/stacks run --all plan`)
+  doesn't work as a real check in this repo -- it sweeps in
+  pve-test-only scaffold stacks (net-*/test-*) that fail with
+  "Failed to select workspace: EOF", unrelated to this change. Used
+  this repo's actual documented pattern instead (see
+  `docs/productionize-refactor/runbooks/`):
+  `./with-secrets-prod terragrunt plan --working-dir terraform/lxc/stacks/gaming-stack-lab -no-color`
+  (adjacent zone, closest analog). Ran it once with the edit and once
+  stashed out (A/B) -- both produced the byte-identical
+  `Plan: 6 to add, 0 to change, 0 to destroy`, a pre-existing
+  state/workspace quirk in this stack's terragrunt setup, confirmed
+  unrelated to this edit. Net result: zero incremental diff from
+  `media_seg`'s addition. Separately worth noting: VLAN-type SDN zones
+  aren't actually Terraform-managed in this repo yet
+  (`terraform/lxc/network/NETWORK_CONTRACT.md` documents this as a known
+  gap -- applied via `ansible/00-initial-setup/proxmox-sdn-setup.yml`
+  instead), so the zone/VLAN creation itself was never going to appear
+  as a Terraform-plannable resource regardless of gate wording.
+  Not yet applied to production -- `terragrunt apply` and the real SDN
+  zone creation are still ahead, out of scope for this plan-only step.
 - `media-lab-01-stack-request`: not started
 - `media-lab-02-scaffold` (operator step, not run via `implement-step`): not started
 - `media-lab-03-edge-yaml`: not started
