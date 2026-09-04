@@ -2,10 +2,13 @@
 
 Status: **all 8 plan steps done.** Stages A/B/C (Terraform, MikroTik,
 `provision.sh`), the edge/OIDC hookup, the Jellyfin SSO plugin
-(automated, not manual UI after all), and legacy's config/users/watch
-history are all done -- see Deployment status below. Only a real
-browser-based SSO login test (`media-lab-06`) and the watch-history
-eyeball check (`media-lab-07`) remain, both needing the operator. One
+(automated, not manual UI after all), legacy's config/users/watch
+history, and Immich's NAS-photos external library are all done -- see
+Deployment status below. `steve`'s SSO login is confirmed to have
+landed on the migrated account (operator-verified 2026-09-04). Only
+the same watch-history eyeball check for Glyn (`media-lab-07`) remains,
+needing the operator. **Not yet merged to `stable` or `main`** -- still
+on `task/media-stack-v2-plan-refresh`, no PR opened yet. One
 combined stack --
 Jellyfin + Immich together in a single new LXC --
 standing up **alongside** legacy `media-stack`, not replacing it
@@ -415,11 +418,13 @@ authoring or approving the next step.
   rather than repeating it. **Verified working end-to-end**: operator
   confirmed a successful login; the new rule's packet counter
   incremented from 0 to 1, confirming real traffic actually took the
-  fixed path. Still to confirm: that the login landed on the existing
-  migrated `steve` account rather than creating a fresh one (expected
-  per `UserSyncService.cs`'s lookup-before-create logic, verified via
-  source earlier, but not yet eyeballed by the operator), and the same
-  test for Glyn once their Jellyfin/Authentik usernames match exactly.
+  fixed path. **Confirmed 2026-09-04 (operator): `steve`'s SSO login
+  landed on the existing migrated account**, not a fresh one --
+  matches `UserSyncService.cs`'s lookup-before-create logic verified
+  via source earlier. Still open: the same test for Glyn, whose
+  Jellyfin and Authentik usernames are both currently `Glyn`
+  (case matches, which is what the plugin's lookup needs) but who
+  hasn't logged in via SSO yet to confirm live.
 
   **"Sign in with Authentik" button added to the normal login page**,
   automated (not manual UI) via Jellyfin's real core config API:
@@ -435,8 +440,46 @@ authoring or approving the next step.
   so that's what got set instead -- one click on
   `https://jellyfin.lab.gibbsgreatly.xyz`, not a separate URL to
   remember.
+
+  **Immich OAuth: also had a real bug, found and fixed 2026-09-04.**
+  `immich-config.json.j2` hardcoded `issuerUrl` as
+  `.../application/o/immich/`, but Authentik's real application slug
+  (per `discover-authentik-edge.py`'s deterministic
+  `edge-<stack>-<route>` naming, the same convention Grafana's OAuth
+  config already relies on) is `edge-media-stack-lab-immich` --
+  discovery returned a real 404, not a network/firewall failure.
+  `clientId`/`clientSecret` also rendered empty: the template did a raw
+  `lookup("env", ...)` with no default and no `mandatory()`, and
+  neither `IMMICH_OAUTH_CLIENT_ID` nor (at original deploy time) the
+  SOPS-backed `IMMICH_OAUTH_CLIENT_SECRET` was actually in the
+  playbook's env. Fixed by adding vars to `deploy-media-stack-lab.yml`
+  matching the established pattern
+  (`deploy-monitoring-stack.yml`'s `grafana_oauth_client_id`):
+  `default('immich', true)` for the client id, `mandatory()` for the
+  secret, and the literal `edge-media-stack-lab-immich` issuer URL.
+  Verified live: OIDC discovery now returns 200 from inside the
+  `immich-server` container.
+
+  **Immich connected to the NAS photos library, 2026-09-04.** Added a
+  read-only bind mount of `/nas-media/pictures` (the NAS's existing
+  photo library, distinct from `/nas-media/immich-photos` which is
+  Immich's own upload storage) into `immich-server` at
+  `/nas-photos-import` (`docker-compose.yml`), backing a new Immich
+  **External Library** owned by `steve`. Registered and scanned live
+  via the Libraries API (`POST /libraries`, `POST
+  /libraries/{id}/scan`) -- found **9,136 photos + 218 videos** on the
+  first scan. The LXC-level `mp3` mount point (host
+  `/mnt/nas-media-ct80010/pictures`, already correctly UID/GID-remapped
+  by the existing whole-tree `bindfs` unit backing `mp1`/`mp2`) was
+  added by the operator directly via root SSH `pct set`, since it's a
+  `root@pam`-only field and this session's harness permission layer
+  blocked driving `pct` commands straight against the `pve` hypervisor
+  host. A personal `IMMICH_API_KEY` (Steve's, via Account Settings ->
+  API Keys) was added to SOPS for reuse by future Immich API
+  automation, matching the existing `JELLYFIN_API_KEY` pattern.
 - `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
-  human login/history check still pending (operator).** Real correction
+  `steve`'s login/history check confirmed by the operator; Glyn's still
+  pending (operator hasn't been able to check it yet).** Real correction
   to the plan's literal commands: legacy (`192.168.1.6`, VMID 102) and
   media-stack-lab (`192.168.80.10`, VMID 80010) are on **different
   hosts/LXCs** -- the plan's original single `docker run` with two `-v`
@@ -460,8 +503,11 @@ authoring or approving the next step.
   users). `Startup complete 0:00:07`, zero errors. Legacy confirmed
   still running normally afterward (`10.11.5` unchanged), never
   stopped or written to. Temp tarballs cleaned up on both hosts.
-  **Still required per the plan's own mandatory gate**: log in to
-  media-stack-lab's Jellyfin as an existing user with their real
-  password and confirm watch history/continue-watching matches legacy
-  -- not done yet, this is a human check, not something to mark done
-  from the copy succeeding alone.
+  **Per the plan's own mandatory gate**: `steve` logged in and confirmed
+  watch history/continue-watching matches legacy (2026-09-04). **Still
+  open for Glyn** -- same check, not done yet; this is a human check,
+  not something to mark done from the copy succeeding alone. Note:
+  Glyn's username is currently `Glyn` in both Authentik and Jellyfin
+  (matching case), which is what the SSO plugin's lookup-before-create
+  needs to land on the existing account rather than creating a new
+  one -- but this hasn't been proven by an actual login yet.
