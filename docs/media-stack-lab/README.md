@@ -1,7 +1,11 @@
 # media-stack-lab (planning workspace)
 
-Status: **partially deployed, real infrastructure now exists.** One
-combined stack -- Jellyfin + Immich together in a single new LXC --
+Status: **deployed and live.** Stages A/B/C (Terraform, MikroTik, and
+`provision.sh`) are all done and verified -- see Deployment status
+below. Remaining work is the OAuth/SSO steps (`media-lab-04` is done;
+`media-lab-06` is a manual UI step) and bringing across legacy's
+existing users/watch history (`media-lab-07`). One combined stack --
+Jellyfin + Immich together in a single new LXC --
 standing up **alongside** legacy `media-stack`, not replacing it
 destructively. Existing Jellyfin users/watch-history get brought across
 so the new stack is a real alternative, but legacy stays running;
@@ -50,10 +54,48 @@ Supersedes `docs/immich-stack/` -- see that workspace's README for why.
   the switch, then ARP flipped to `complete: true, status: reachable`
   and ping succeeded (4/4, MAC matches the container's real `hwaddr`
   exactly). Fully verified end-to-end, not just router-config-exists.
-- **Stage C -- `provision.sh --stack media-stack-lab`: NOT DONE, ready
-  to start now that B is verified.** `MEDIA_STACK_LAB_DB_PASSWORD` is now in SOPS
-  (added 2026-09-04); `/nas-media/immich-photos` still needs manual NFS
-  mounting on the LXC once it has real network connectivity.
+- **Stage C -- `provision.sh --stack media-stack-lab`: DONE 2026-09-04,
+  verified live.** All 5 compose services up and healthy: `database`,
+  `redis`, `immich-machine-learning`, `jellyfin` (port 8096),
+  `immich-server` (port 2283, `Nest application successfully started`,
+  no crash loop). NFS mounts (`mp1` raw `/mnt/nas-media` for Jellyfin,
+  `mp2` bindfs-remapped `immich-photos` for Immich) confirmed real and
+  correctly owned. This took several real, live-found bugs to get
+  clean -- none caught by any gate in this plan, all found by actually
+  reading container/router state during the deploy attempts:
+  1. **MikroTik `input` chain ordering**: the 3 media_seg input rules
+     from `media-lab-00` were appended *after* an existing global
+     `Drop all other unhandled input traffic` catch-all -- completely
+     dead on arrival. Confirmed via rule packet counters (0 hits) before
+     the fix, and by watching the DNS-UDP rule immediately start
+     counting hits after moving them before the catch-all. This blocked
+     the container from resolving DNS via its own gateway at all,
+     triggering `lxc_base`'s public-DNS fallback, which my forward-chain
+     egress rule (80/443 only) then also blocked -- total DNS dead-end.
+     Fixed with `/ip firewall filter move ... destination=[find where
+     comment="Drop all other unhandled input traffic"]`.
+  2. **`immich-server` was never given its own DB credentials.** Crash
+     looped on `password authentication failed for user "postgres"` --
+     the `database` service's own `POSTGRES_USER=immich`/`PASSWORD`
+     don't propagate automatically; confirmed against
+     docs.immich.app/install/environment-variables/ that `DB_HOSTNAME`/
+     `DB_PORT`/`DB_USERNAME`/`DB_PASSWORD`/`DB_DATABASE_NAME` must be
+     set explicitly on `immich-server` itself. Missing from the plan's
+     original `compose_requirements` too, not just this session's
+     authoring.
+  3. **`immich-config.json` unreadable by `immich-server`'s own UID.**
+     Templated `owner: root, group: root, mode: 0600`, but the service
+     runs as `user: "1000:1000"` (set for NFS write ownership) -- zero
+     permission bits for that UID. Fixed to `owner: "1000", group: "1000"`,
+     kept `mode: 0600` (still not world-readable -- this file will hold
+     a real Authentik client secret once `media-lab-04` reconciles).
+  4. **`mp1`/`mp2` NFS mounts didn't land on the first `pct set` attempt**
+     (operator-run, cause not fully diagnosed -- confirmed missing from
+     live `pct config`, re-run fixed it). Until fixed, Docker had
+     silently auto-created empty root-owned placeholder directories at
+     the bind-mount targets, which is why the *first* Immich failure was
+     a storage-permission error (`EACCES` creating `/data/encoded-video`)
+     before the DB-credentials bug was even reached.
 
 Written with `.github/prompts/plan-change.prompt.md` per
 `docs/agent-design/step-packet-schema.md`. See `plan.md` for the full
