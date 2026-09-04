@@ -420,6 +420,21 @@ authoring or approving the next step.
   per `UserSyncService.cs`'s lookup-before-create logic, verified via
   source earlier, but not yet eyeballed by the operator), and the same
   test for Glyn once their Jellyfin/Authentik usernames match exactly.
+
+  **"Sign in with Authentik" button added to the normal login page**,
+  automated (not manual UI) via Jellyfin's real core config API:
+  `POST /System/Configuration/branding`, fields confirmed against the
+  actual `BrandingOptions` class (`LoginDisclaimer`, `CustomCss`).
+  Deliberately *not* a true auto-redirect on page load -- checked
+  first: Jellyfin renders `LoginDisclaimer` via
+  `element.innerHTML = DOMPurify.sanitize(...)`, which strips both
+  `<script>` (never executes via `innerHTML` anyway) and
+  `<meta http-equiv="refresh">` (DOMPurify hardens against exactly
+  this auto-redirect pattern by design). A real `<form>`/`<button>`
+  survives sanitization and is the plugin's own documented approach,
+  so that's what got set instead -- one click on
+  `https://jellyfin.lab.gibbsgreatly.xyz`, not a separate URL to
+  remember.
 - `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
   human login/history check still pending (operator).** Real correction
   to the plan's literal commands: legacy (`192.168.1.6`, VMID 102) and
