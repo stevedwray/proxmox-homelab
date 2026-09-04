@@ -1,29 +1,20 @@
-services:
-  jellyfin:
-    image: lscr.io/linuxserver/jellyfin:10.11.11ubu2604-ls47
-    container_name: media-stack-lab-jellyfin
-    environment:
-      - PUID=1000
-      - PGID=1000
-      - TZ=Pacific/Auckland
-      - JELLYFIN_PublishedServerUrl=https://jellyfin.${LAB_DOMAIN}
-    volumes:
-      - jellyfin-config:/config
-      - /nas-media/video/movies:/movies
-      - /nas-media/video/tv:/tv
-      - /nas-media/music:/music
-    ports:
-      - 8096:8096
-      - 8920:8920
-      - 7359:7359/udp
-      - 1900:1900/udp
-    group_add:
-      - "44"
-      - "104"
-    restart: unless-stopped
-    security_opt:
-      - seccomp:unconfined
+# Split from the original combined docker-compose.yml 2026-09-04 into
+# separate Portainer-controllable stacks, one per app (operator request).
+# cadvisor stays here (arbitrary but documented choice -- it monitors the
+# whole host via bind mounts, not scoped to either app specifically).
+# `name:` pins the Compose project name explicitly so it's identical
+# regardless of whether this is invoked by Ansible (docker compose up -d
+# from this directory) or by Portainer's own agent (stacks API) -- both
+# resolve to the same project, so either one recognizes the other's
+# already-running containers as up to date instead of conflicting.
+# Must match the "Name" registered with Portainer (stack.yaml
+# portainer_stacks) exactly -- confirmed live that Portainer's own
+# compose invocation uses its own "Name" as the project, ignoring this
+# file's name: key entirely, so a mismatch here causes a real container
+# name conflict rather than a clean idempotent no-op.
+name: media-stack-lab-immich
 
+services:
   immich-server:
     image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
     container_name: media-stack-lab-immich-server
@@ -86,6 +77,12 @@ services:
       - /etc/machine-id:/etc/machine-id:ro
 
 volumes:
-  jellyfin-config:
+  # External: preserves the volumes created under the original combined
+  # "media-stack-lab" project name -- the Immich Postgres DB and the ML
+  # model cache must not be orphaned by this split.
   model-cache:
+    external: true
+    name: media-stack-lab_model-cache
   immich-db-data:
+    external: true
+    name: media-stack-lab_immich-db-data
