@@ -72,6 +72,19 @@ services:
     shm_size: 128mb
     restart: unless-stopped
 
+  cadvisor:
+    image: ${REGISTRY_HOST}/ghcr/google/cadvisor:v0.60.5
+    container_name: media-stack-lab-cadvisor
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker:/var/lib/docker:ro
+      - /etc/machine-id:/etc/machine-id:ro
+
 volumes:
   jellyfin-config:
   model-cache:

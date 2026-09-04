@@ -14,12 +14,42 @@
     # Matches the reconciler's deterministic application slug: edge-<stack>-<route>
     # (see discover-authentik-edge.py OIDC_ROUTE_CLIENT_IDS / _oidc_route_key).
     media_stack_lab_immich_issuer_url: "https://{{ media_stack_lab_fqdn_authentik }}/application/o/edge-media-stack-lab-immich/"
+    # Must be the FQDN (routed through Traefik), not LAB_IP_HARBOR -- see
+    # docs/harbor-stack/image-sourcing-enforcement.md.
+    docker_registry_host: "{{ registry_host | default(lookup('env', 'LAB_FQDN_HARBOR'), true) | default('harbor.' ~ (lookup('env', 'LAB_DOMAIN') | default('lab.gibbsgreatly.xyz', true)), true) }}"
 
   roles:
     - lxc_base
     - docker_base
 
+  handlers:
+    - name: Restart Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: restarted
+
   tasks:
+    - name: Trust Harbor HTTP registry and forward Docker container logs to Graylog
+      ansible.builtin.copy:
+        dest: /etc/docker/daemon.json
+        mode: "0644"
+        content: |
+          {
+            "insecure-registries": ["{{ docker_registry_host }}"],
+            "log-driver": "syslog",
+            "log-opts": {
+              "syslog-address": "tcp://127.0.0.1:10514",
+              "syslog-format": "rfc5424",
+              "tag": "{% raw %}docker-{{.Name}}{% endraw %}"
+            },
+            "storage-driver": "overlay2"
+          }
+      notify: Restart Docker
+      register: media_stack_lab_docker_daemon_config
+
+    - name: Flush handlers to apply Docker daemon config before stack deploy
+      ansible.builtin.meta: flush_handlers
+
     - name: Create stack directory
       ansible.builtin.file:
         path: "{{ media_stack_lab_dir }}"
@@ -41,6 +71,7 @@
         content: |
           MEDIA_STACK_LAB_DB_PASSWORD={{ lookup('env', 'MEDIA_STACK_LAB_DB_PASSWORD') }}
           LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
+          REGISTRY_HOST={{ docker_registry_host }}
       no_log: true
 
     - name: Template Immich OAuth config
