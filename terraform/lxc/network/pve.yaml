@@ -524,6 +524,29 @@ policies:
       default-deny). Added with place-before targeting the deny rule
       explicitly, applying the lesson from the earlier input-chain
       ordering bug rather than repeating it.
+  - from: media_seg
+    to: 192.168.20.14
+    protocol: tcp
+    ports: [514]
+    description: >-
+      media-stack-lab rsyslog forwarding to Graylog. Real gap found live
+      2026-09-04: every other zone with syslog forwarding (game_seg,
+      pentest_seg) had this rule, media_seg never did -- rsyslog was
+      running (via lxc_base) but every log, including plain host
+      syslog, was silently dropped at the zone boundary. Added with
+      place-before targeting the deny rule.
+  - from: media_seg
+    to: 192.168.20.11
+    protocol: tcp
+    ports: [443]
+    description: >-
+      media-stack-lab node_exporter TLS cert issuance from step-ca.
+      Real gap found live 2026-09-04, same class as the Graylog rule
+      above: node_exporter's role silently skips its step-ca TLS setup
+      block (wait_for on step-ca:443, ignore_errors) when unreachable,
+      leaving it serving plain HTTP -- which VictoriaMetrics' HTTPS
+      scrape config then rejected outright. Added with place-before
+      targeting the deny rule.
 
 inventory:
   proxmox_nodes:
