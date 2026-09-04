@@ -27,6 +27,7 @@ services:
   immich-server:
     image: ghcr.io/immich-app/immich-server:${IMMICH_VERSION:-release}
     container_name: media-stack-lab-immich-server
+    user: "1000:1000"
     environment:
       - IMMICH_CONFIG_FILE=/immich-config.json
     volumes:
