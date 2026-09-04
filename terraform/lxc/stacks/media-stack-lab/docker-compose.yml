@@ -37,6 +37,7 @@ services:
       - DB_DATABASE_NAME=immich
     volumes:
       - /nas-media/immich-photos:/data
+      - /nas-media/pictures:/nas-photos-import:ro
       - /etc/localtime:/etc/localtime:ro
       - ./immich-config.json:/immich-config.json:ro
     ports:
