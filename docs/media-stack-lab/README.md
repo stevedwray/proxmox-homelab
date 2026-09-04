@@ -377,10 +377,29 @@ authoring or approving the next step.
     OIDC gate on the route already restricts who reaches Jellyfin's
     login at all) -- group-based permission sync is a future opt-in
     once real Authentik groups exist for it, not now.
+  **First real browser test found a genuine bug**: operator's first
+  SSO attempt (`/authentik/login`) redirected to
+  `/authentik/callback?error=invalid_request&error_description=...`,
+  Jellyfin then threw `"The code field is required."` trying to
+  process the error response. Root cause confirmed via Authentik's own
+  provider API (`GET /api/v3/providers/oauth2/?search=jellyfin`):
+  `grant_types: []`. This is the exact same documented bug that hit
+  `opensearch-stack` before (`_oidc_provider_payload`'s comment in
+  `reconcile-authentik-edge.py`: Authentik defaults an omitted
+  `grant_types` to `[]` on create, which makes
+  `/application/o/authorize/` reject every request as malformed) --
+  `jellyfin` and `immich` were both newly-*created* providers via this
+  script (unlike the 7 pre-existing/patched ones), so both hit it;
+  `immich` was never actually tested yet but would have failed
+  identically. Fixed by adding both to `_oidc_grant_types`'s explicit
+  list (matching the `opensearch-stack`/`wazuh-stack` baseline) and
+  re-running the same full-discovery `reconcile-edge.py --apply` --
+  confirmed live via the provider API afterward: both now show
+  `['authorization_code', 'client_credentials', 'password']`.
   **Still needs a real browser-based login to fully verify** (I can
   confirm the plugin is Active and correctly configured via API, but
   not the actual OAuth redirect/callback round-trip) -- operator to
-  test logging in via Authentik as `steve` and confirm it lands on the
+  retry logging in via Authentik as `steve` and confirm it lands on the
   existing migrated account (not a fresh one), then the same for Glyn
   once their Jellyfin/Authentik usernames match exactly.
 - `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
