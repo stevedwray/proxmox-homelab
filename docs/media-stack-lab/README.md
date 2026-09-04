@@ -1,10 +1,11 @@
 # media-stack-lab (planning workspace)
 
-Status: **deployed and live.** Stages A/B/C (Terraform, MikroTik, and
-`provision.sh`) are all done and verified -- see Deployment status
-below. Remaining work is the OAuth/SSO steps (`media-lab-04` is done;
-`media-lab-06` is a manual UI step) and bringing across legacy's
-existing users/watch history (`media-lab-07`). One combined stack --
+Status: **deployed and live, fully hooked into Authentik + Traefik +
+DNS.** Stages A/B/C (Terraform, MikroTik, `provision.sh`) plus the
+edge/OIDC hookup are all done and verified live -- see Deployment
+status below. Only `media-lab-06` (Jellyfin's SSO plugin, a manual UI
+step) and `media-lab-07` (bring across legacy's existing users/watch
+history) remain. One combined stack --
 Jellyfin + Immich together in a single new LXC --
 standing up **alongside** legacy `media-stack`, not replacing it
 destructively. Existing Jellyfin users/watch-history get brought across
@@ -96,6 +97,60 @@ Supersedes `docs/immich-stack/` -- see that workspace's README for why.
      the bind-mount targets, which is why the *first* Immich failure was
      a storage-permission error (`EACCES` creating `/data/encoded-video`)
      before the DB-credentials bug was even reached.
+
+- **Authentik + Traefik + DNS hookup: DONE 2026-09-04, verified live.**
+  `media-lab-03`/`04`/`05` only got the *code* in place (edge.yaml, the
+  OIDC whitelist, the config template) -- none of it was actually live
+  until this pass:
+  1. Added `JELLYFIN_OAUTH_CLIENT_SECRET`/`IMMICH_OAUTH_CLIENT_SECRET`
+     to SOPS (same surgical `sops --set` approach as
+     `MEDIA_STACK_LAB_DB_PASSWORD`, verified the same way).
+  2. Ran `./with-secrets-prod python3 terraform/lxc/reconcile-edge.py
+     --stacks-dir terraform/lxc/stacks --apply --json` (full discovery
+     scope, production target). **Two real mistakes caught before this
+     ran for real**: an initial dry-run used the wrong wrapper
+     (`./with-secrets`, defaulting to `pve-test-vm`) and a single-manifest
+     scope that would have looked like it deleted every other stack's DNS
+     records in the diff (discovery-vs-apply scope must always match --
+     `--stacks-dir` full discovery, never a narrowed manifest list, once
+     `--apply` is anywhere in the picture). Corrected both before
+     touching production. Also inspected the 7 unrelated stacks the full
+     apply would also touch (pre-existing drift, not caused by this
+     work) by reusing the reconciler's own `_patch_from_existing` logic
+     with `apply=False` hardcoded -- confirmed all 7 were cosmetic
+     no-ops (identical URLs/matching-mode, just a reordered
+     `property_mappings` list and an echoed-back default field).
+     `write_count: 12` (4 creates for jellyfin/immich's app+provider, 8
+     benign updates).
+  3. **Realized DNS/Traefik don't self-push**: `reconcile-edge.py` only
+     *renders* `.generated/technitium/zone-records.json` and
+     `.generated/traefik/*.yml` -- getting them live is each target
+     stack's own normal provisioning, same as it's always been for every
+     other stack (confirmed directly: `deploy-technitium-stack.yml` and
+     `deploy-proxy-stack.yml` are what actually push/copy them). Ran
+     `./with-secrets-prod scripts/provision.sh --stack proxy-stack`
+     (established path, same as any other stack) -- 91 tasks ok, smoke
+     test passed. For Technitium, used a narrow standalone play reusing
+     the real `technitium_dns_record` role instead of the full
+     `--stack technitium-stack` provision, specifically because it's the
+     homelab's one live authoritative DNS server (a full provision risks
+     touching SSO/zone config and briefly restarting it) -- a
+     deliberate, narrower exception for that one stack's outsized blast
+     radius, not the general pattern.
+  4. **Operator also asked for `media-stack-lab-bg` (192.168.80.10),
+     the container's own reverse/breakglass record** -- added to the
+     shared seed zone (`terraform/lxc/ansible/files/coredns-lab.zone`),
+     matching the established pattern used by `authentik-bg`/
+     `harbor-bg`/`netbox-bg`/`portainer-bg`/`proxy-bg`. Confirmed via
+     `render-edge-technitium.py`'s own PTR-ownership logic
+     (`_assign_ptr_ownership`) that it correctly auto-gets `ptr: true`
+     (a unique IP, unlike jellyfin/immich which correctly stay
+     `ptr: false` since they share Traefik's already-PTR'd IP with ~15
+     other hostnames).
+  - **Verified live end-to-end**: `dig` confirms all 4 DNS records
+    (jellyfin, immich, media-stack-lab-bg forward, and its reverse);
+    `curl` through Traefik with real TLS returns `302` for Jellyfin and
+    `200` for Immich.
 
 Written with `.github/prompts/plan-change.prompt.md` per
 `docs/agent-design/step-packet-schema.md`. See `plan.md` for the full
