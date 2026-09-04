@@ -30,6 +30,11 @@ services:
     user: "1000:1000"
     environment:
       - IMMICH_CONFIG_FILE=/immich-config.json
+      - DB_HOSTNAME=database
+      - DB_PORT=5432
+      - DB_USERNAME=immich
+      - DB_PASSWORD=${MEDIA_STACK_LAB_DB_PASSWORD}
+      - DB_DATABASE_NAME=immich
     volumes:
       - /nas-media/immich-photos:/data
       - /etc/localtime:/etc/localtime:ro

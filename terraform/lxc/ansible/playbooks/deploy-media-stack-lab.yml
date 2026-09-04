@@ -35,6 +35,7 @@
         group: root
         content: |
           MEDIA_STACK_LAB_DB_PASSWORD={{ lookup('env', 'MEDIA_STACK_LAB_DB_PASSWORD') }}
+          LAB_DOMAIN={{ lookup('env', 'LAB_DOMAIN') }}
       no_log: true
 
     - name: Template Immich OAuth config
