@@ -25,11 +25,31 @@ Operator noticed media-stack-lab was missing from Portainer, Grafana,
 and NetBox, and asked to check Graylog specifically. Findings and
 fixes, in the order found:
 
-- **Portainer: not a gap.** `portainer_agent: false` in `stack.yaml` is
-  correct and matches the majority of current real production stacks
-  (netbox-stack, harbor-stack, authentik-stack, proxy-stack,
-  monitoring-stack, opensearch-stack, wazuh-stack). `true` is now
-  mostly the older single-container stacks.
+- **Portainer: real gap, first assessment was wrong.** Initially
+  reasoned "most current production stacks are `portainer_agent: false`
+  too, so this is fine" -- operator pushed back, and checking
+  Portainer's live `/api/endpoints` directly (not just `stack.yaml`
+  convention) showed every one of those `false` stacks (netbox-stack,
+  harbor-stack, authentik-stack, proxy-stack, ...) simply doesn't
+  appear in Portainer at all, by design -- they're automation-only.
+  The real comparison was `gaming-stack-lab`, media-stack-lab's actual
+  sibling by naming/purpose (an interactive, operator-facing `-lab`
+  stack), which has `portainer_agent: true`. Flipped it, added the
+  `portainer_agent` + `portainer_api`/`portainer_stack` roles to
+  `deploy-media-stack-lab.yml` (Ansible-only, deliberately no
+  `terragrunt apply` -- see the drift warning below). Verified live:
+  registered as Portainer endpoint ID 11, Status up, 7 containers
+  detected.
+  **Real, separate, unrelated finding surfaced while checking this**:
+  `terragrunt plan --working-dir terraform/lxc/stacks/media-stack-lab`
+  shows pre-existing drift that would **destroy and recreate the whole
+  container** on a real `apply` (mount points + `container_epoch`
+  forced replacement) -- confirmed unrelated to this change by
+  stashing it out and re-running plan, same result. Likely from the
+  earlier manual `pct set` NAS-`mp3`-mount work (root@pam-only field,
+  applied outside Terraform). **Do not run `terragrunt apply` on this
+  stack until this drift is investigated and reconciled** -- flagged
+  here for the operator, not fixed in this pass.
 - **Graylog: real bug, chased through 3 layers before actually fixed.**
   1. `deploy-media-stack-lab.yml` never wrote `/etc/docker/daemon.json`
      with the syslog log-driver every other stack's playbook has --
