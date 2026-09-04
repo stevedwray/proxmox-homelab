@@ -509,6 +509,21 @@ policies:
     protocol: udp
     ports: [2049]
     description: media-stack-lab (Jellyfin+Immich) to NAS NFS exports, UDP (192.168.1.3, flat LAN, not a zone)
+  - from: media_seg
+    to: 192.168.30.10
+    protocol: tcp
+    ports: [443]
+    description: >-
+      media-stack-lab (jellyfin-plugin-authentik) to Authentik via
+      Traefik for OIDC token exchange. Real gap found live 2026-09-04:
+      the media_seg -> mgmt_seg:9443 rule above assumed a direct
+      internal call, but the plugin's AuthentikUrl is the public
+      Traefik-fronted address, so its server-to-server token exchange
+      actually goes out via edge_seg on 443 -- no rule covered that
+      path at all (confirmed via 1500 packets absorbed by the
+      default-deny). Added with place-before targeting the deny rule
+      explicitly, applying the lesson from the earlier input-chain
+      ordering bug rather than repeating it.
 
 inventory:
   proxmox_nodes:

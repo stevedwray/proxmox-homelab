@@ -396,12 +396,30 @@ authoring or approving the next step.
   re-running the same full-discovery `reconcile-edge.py --apply` --
   confirmed live via the provider API afterward: both now show
   `['authorization_code', 'client_credentials', 'password']`.
-  **Still needs a real browser-based login to fully verify** (I can
-  confirm the plugin is Active and correctly configured via API, but
-  not the actual OAuth redirect/callback round-trip) -- operator to
-  retry logging in via Authentik as `steve` and confirm it lands on the
-  existing migrated account (not a fresh one), then the same for Glyn
-  once their Jellyfin/Authentik usernames match exactly.
+  **Second real browser test found a second, distinct genuine bug.**
+  The grant_types fix got login past the redirect and Authentik's own
+  auth prompt cleanly, but the callback then failed: Jellyfin logs
+  showed `Error processing request: The request was canceled due to
+  the configured HttpClient.Timeout of 100 seconds elapsing. URL GET
+  /authentik/callback` -- a classic silent-firewall-drop symptom, not
+  an application error. Root cause: the plugin's `AuthentikUrl`
+  (`https://authentik.lab.gibbsgreatly.xyz`) is the *public*,
+  Traefik-fronted address, so the plugin's server-to-server token
+  exchange goes out via `edge_seg` on port 443 -- not the direct
+  `mgmt_seg:9443` path `media-lab-00`'s original firewall rule assumed.
+  No rule existed for that path at all (confirmed via the router's own
+  rule counters: the default-deny had absorbed 1500 dropped packets).
+  Added the missing rule (`media_seg -> 192.168.30.10:443`), this time
+  using `place-before` targeting the existing deny rule explicitly --
+  applying the lesson from the earlier `input`-chain ordering bug
+  rather than repeating it. **Verified working end-to-end**: operator
+  confirmed a successful login; the new rule's packet counter
+  incremented from 0 to 1, confirming real traffic actually took the
+  fixed path. Still to confirm: that the login landed on the existing
+  migrated `steve` account rather than creating a fresh one (expected
+  per `UserSyncService.cs`'s lookup-before-create logic, verified via
+  source earlier, but not yet eyeballed by the operator), and the same
+  test for Glyn once their Jellyfin/Authentik usernames match exactly.
 - `media-lab-07-bring-across-existing-users`: **config copy done 2026-09-04,
   human login/history check still pending (operator).** Real correction
   to the plan's literal commands: legacy (`192.168.1.6`, VMID 102) and
