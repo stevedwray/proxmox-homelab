@@ -8,14 +8,16 @@ Deployment status below. `steve`'s SSO login is confirmed to have
 landed on the migrated account (operator-verified 2026-09-04). Only
 the same watch-history eyeball check for Glyn (`media-lab-07`) remains,
 needing the operator. **Not yet merged to `stable` or `main`** -- still
-on `task/media-stack-v2-plan-refresh`, no PR opened yet. One
-combined stack --
-Jellyfin + Immich together in a single new LXC --
-standing up **alongside** legacy `media-stack`, not replacing it
-destructively. Existing Jellyfin users/watch-history get brought across
-so the new stack is a real alternative, but legacy stays running;
-retiring it is a separate, future, operator-initiated decision this
-plan does not assume or schedule.
+on `task/media-stack-v2-plan-refresh`, no PR opened yet. Jellyfin +
+Immich share one LXC, but as of 2026-09-04 run as **two independent
+Docker Compose projects / Portainer stacks** (`media-stack-lab-jellyfin`,
+`media-stack-lab-immich`), not one combined stack -- see "Split into two
+independently-controllable Portainer stacks" below. Standing up
+**alongside** legacy `media-stack`, not replacing it destructively.
+Existing Jellyfin users/watch-history get brought across so the new
+stack is a real alternative, but legacy stays running; retiring it is a
+separate, future, operator-initiated decision this plan does not
+assume or schedule.
 
 Supersedes `docs/immich-stack/` -- see that workspace's README for why.
 
@@ -42,14 +44,90 @@ fixes, in the order found:
   detected.
   **Real, separate, unrelated finding surfaced while checking this**:
   `terragrunt plan --working-dir terraform/lxc/stacks/media-stack-lab`
-  shows pre-existing drift that would **destroy and recreate the whole
-  container** on a real `apply` (mount points + `container_epoch`
-  forced replacement) -- confirmed unrelated to this change by
-  stashing it out and re-running plan, same result. Likely from the
-  earlier manual `pct set` NAS-`mp3`-mount work (root@pam-only field,
-  applied outside Terraform). **Do not run `terragrunt apply` on this
-  stack until this drift is investigated and reconciled** -- flagged
-  here for the operator, not fixed in this pass.
+  showed pre-existing drift that would have **destroyed and recreated
+  the whole container** on a real `apply` (mount points +
+  `container_epoch` forced replacement) -- confirmed unrelated to this
+  change by stashing it out and re-running plan, same result. Root
+  cause: the module already had `ignore_changes = [features[0].keyctl]`
+  for exactly this class of problem (root@pam-only fields applied via
+  direct SSH `pct set`, outside the API token's reach) and already had
+  a `host_bind_mounts` variable documented as "flows through Terraform
+  for documentation/consistency" -- but `mount_point` itself was never
+  added to `ignore_changes`, so the provider's live-state refresh kept
+  diffing the 3 hand-added NFS mounts against the shorter declared list
+  and proposing to drop them. **Fixed 2026-09-04**: extended
+  `ignore_changes` to include `mount_point` in
+  `terraform/lxc/modules/lxc-docker-host/main.tf` (a shared module --
+  checked 2 other stacks for regressions first, none found), and
+  populated `host_bind_mounts` in `stack.yaml` with the 3 real live
+  mounts for documentation parity. `terragrunt plan` no longer touches
+  the container at all. Tradeoff: Terraform no longer actively
+  reconciles `docker_storage_size`/`extra_mount` resizes either for any
+  stack using `host_bind_mounts` -- those need a manual `pct set` +
+  refresh-only apply going forward, an accepted cost given they're
+  already `grow-only`/manual in practice.
+
+- **Split into two independently-controllable Portainer stacks,
+  2026-09-04 (operator request)**: registering the single combined
+  compose project with Portainer wasn't enough to make it genuinely
+  *controllable* there -- Portainer's Stack API needs its own
+  compose-file-per-app boundary, and the operator wanted Jellyfin and
+  Immich manageable independently rather than as one blob. Split
+  `docker-compose.yml` into `jellyfin-docker-compose.yml` and
+  `immich-docker-compose.yml` (same LXC, same IP -- not the separate-LXC
+  option, operator confirmed scope explicitly), each with its own
+  Compose project `name:` and a subdirectory
+  (`/opt/stacks/media-stack-lab/{jellyfin,immich}/`). Both reference
+  their persistent volumes (`jellyfin-config`, `immich-db-data`,
+  `model-cache`) as `external: true` pointing at the *original*
+  `media-stack-lab_*`-prefixed volume names, so the split carried no
+  data loss -- verified live both before and after (Immich photo count,
+  Jellyfin's `steve`/`glyn` user list, both unchanged).
+  **Two real bugs found live during the cutover, both fixed**:
+  1. Portainer's own stack-create API (`POST
+     /api/stacks/create/standalone/string`) derives its Compose
+     **project name from the "Name" field in the API call, not from
+     the compose file's own `name:` key** -- confirmed via a real 409
+     ("stack already exists") and then a real container-name conflict
+     when the two disagreed. Fixed by renaming the Portainer stacks to
+     `media-stack-lab-jellyfin`/`media-stack-lab-immich` (the bare
+     `jellyfin` name was already taken -- legacy `media-stack` (VMID 102)
+     registered a stack with that exact name years ago) and setting
+     each compose file's `name:` to match exactly, so Ansible's own
+     `docker compose up -d` and Portainer's create call agree on the
+     same project and cooperate instead of conflicting.
+  2. Portainer's stack-create API also does **not** read the `.env`
+     file Ansible writes alongside each compose file on the host --
+     only the explicit `Env` list passed in the API body. Left
+     unset the first time, `immich`'s `${REGISTRY_HOST}` resolved
+     empty, producing `image: /ghcr/google/cadvisor:v0.60.5` -- an
+     "invalid reference format" 500. Fixed by adding `env:` entries to
+     `stack.yaml`'s `portainer_stacks` (same `${VAR}` placeholder
+     resolution as `portainer_server_ip`, not literal secrets).
+  **Real, sharper problem found after that, also fixed but not solved
+  at the root**: Portainer's create call deploys from **its own**
+  project directory (`/data/compose/<id>/` inside the Portainer agent),
+  not `/opt/stacks/media-stack-lab/immich/` where Ansible's template
+  task writes the real `immich-config.json` (containing the Authentik
+  OAuth client secret). Immich mounts that file with
+  `./immich-config.json:/immich-config.json:ro` -- a relative path --
+  so when Portainer's own compose invocation ran, the file didn't exist
+  at *its* resolved path, and Docker's default behavior for a
+  missing bind-mount source is to silently create an empty **directory**
+  instead of erroring, which crashed immich-server on boot
+  (`EISDIR: illegal operation on a directory, read`). Immich has no
+  env-var equivalent for its OAuth config (it's JSON-file-only) so this
+  can't be designed away cheaply. Fixed for *this* cutover by
+  re-running Ansible's own `docker compose up -d --force-recreate`
+  from the correct directory (which does have the real file) --
+  verified live afterward (Immich healthy, photo count unchanged).
+  **This is not fixed at the root**: clicking "Redeploy"/"Update the
+  stack" on `media-stack-lab-immich` from Portainer's own UI in the
+  future will hit this exact same crash again. Config changes to
+  Immich must keep going through `provision.sh --stack media-stack-lab`
+  (Ansible), not Portainer's UI, until/unless this gets a real fix.
+  Jellyfin has no such side-file dependency and is safe to
+  redeploy from either path.
 - **Graylog: real bug, chased through 3 layers before actually fixed.**
   1. `deploy-media-stack-lab.yml` never wrote `/etc/docker/daemon.json`
      with the syslog log-driver every other stack's playbook has --
