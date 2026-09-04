@@ -27,4 +27,5 @@ provides:
   protocol: tcp
 ansible_playbook: deploy-media-stack-lab
 deployment_tier: apps
-portainer_agent: false
+portainer_agent: true
+portainer_server_ip: "${lab_ip_portainer}"
