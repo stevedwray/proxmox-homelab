@@ -43,8 +43,8 @@
         src: "{{ playbook_dir }}/../templates/media-stack-lab/immich-config.json.j2"
         dest: "{{ media_stack_lab_dir }}/immich-config.json"
         mode: "0600"
-        owner: root
-        group: root
+        owner: "1000"
+        group: "1000"
       no_log: true
 
     - name: Validate docker compose configuration
